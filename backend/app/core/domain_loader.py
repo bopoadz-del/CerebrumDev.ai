@@ -1,43 +1,51 @@
+import os
+import httpx
+import logging
 from typing import Dict, Optional, List
 
-# Mock store (in production, fetch from Cerebrum‑Blocks /store/containers)
-AVAILABLE_DOMAINS = {
-    "construction": {
-        "id": "construction",
-        "name": "Construction",
-        "status": "available",
-        "description": "Construction project management, BIM, BOQ, and site operations"
-    },
-    "medical": {
-        "id": "medical",
-        "name": "Medical",
-        "status": "coming_soon",
-        "description": "Clinical decision support, EHR integration, diagnosis assistance"
-    },
-    "finance": {
-        "id": "finance",
-        "name": "Finance",
-        "status": "coming_soon",
-        "description": "Financial analysis, risk assessment, regulatory compliance"
-    },
-    "hotel": {
-        "id": "hotel_operations",
-        "name": "Hotel Operations",
-        "status": "coming_soon",
-        "description": "Hotel management, guest services, revenue optimization"
-    },
-    "legal": {
-        "id": "legal",
-        "name": "Legal",
-        "status": "coming_soon",
-        "description": "Legal research, contract analysis, citation formatting"
-    },
-}
+logger = logging.getLogger(__name__)
 
-def load_domain_manifest(domain_id: str) -> Optional[Dict]:
-    """Load domain manifest from store (mock)."""
-    return AVAILABLE_DOMAINS.get(domain_id)
+CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "http://localhost:8000")
 
-def list_available_domains() -> List[Dict]:
-    """Return all domains with status."""
-    return list(AVAILABLE_DOMAINS.values())
+
+def _normalize_status(container: Dict) -> str:
+    """Derive a simple available / coming_soon status from container metadata."""
+    if container.get("coming_soon"):
+        return "coming_soon"
+    if container.get("installable") or container.get("bundle_ready") or container.get("skeleton_ready"):
+        return "available"
+    return "coming_soon"
+
+
+async def load_domain_manifest(domain_id: str) -> Optional[Dict]:
+    """Load a single domain manifest from the Cerebrum store."""
+    domains = await list_available_domains()
+    for d in domains:
+        if d["id"] == domain_id:
+            return d
+    return None
+
+
+async def list_available_domains() -> List[Dict]:
+    """Return all domains from the Cerebrum store."""
+    url = f"{CEREBRUM_API_URL}/store/containers"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+    except Exception as exc:
+        logger.error("Failed to fetch domains from Cerebrum store at %s: %s", url, exc)
+        return []
+
+    containers = data.get("containers", [])
+    return [
+        {
+            "id": c.get("id"),
+            "name": c.get("name") or c.get("id"),
+            "status": _normalize_status(c),
+            "description": c.get("description") or "",
+        }
+        for c in containers
+        if c.get("id")
+    ]

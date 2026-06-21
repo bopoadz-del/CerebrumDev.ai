@@ -24,11 +24,12 @@ Open http://localhost:5173
 
 ## API
 
-Backend runs on http://localhost:8000
+Backend runs on http://localhost:8001 (Cerebrum-Blocks store runs on 8000)
 
 - `POST /v1/sessions` – create session
 - `GET /v1/sessions/{id}` – get session state
 - `POST /v1/sessions/{id}/config` – save config
+- `GET /v1/domains/` – list available domain kits from the store
 
 ## Next Phases
 

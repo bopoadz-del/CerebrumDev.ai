@@ -4,9 +4,11 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       - ENV=dev
+      - CEREBRUM_API_URL=http://host.docker.internal:8000
+      - CEREBRUM_API_KEY=${CEREBRUM_API_KEY:-cb_dev_key}
     volumes:
       - ./backend/app:/app/app
     restart: unless-stopped
@@ -16,7 +18,7 @@ services:
     ports:
       - "5173:5173"
     environment:
-      - VITE_API_URL=http://localhost:8000
+      - VITE_API_URL=http://localhost:8001
     volumes:
       - ./frontend/src:/app/src
     depends_on:
