@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: cerebrumdev-backend
+    env: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    envVars:
+      - key: ENV
+        value: production
+      - key: CEREBRUM_API_URL
+        value: https://cerebrum-blocks.onrender.com
+      - key: CEREBRUM_API_KEY
+        generateValue: true
+      - key: CEREBRUM_LLM_API_KEY
+        sync: false
+      - key: STORAGE_PATH
+        value: /app/storage
+      - key: PYTHONIOENCODING
+        value: utf-8
+    disk:
+      name: cerebrumdev-storage
+      mountPath: /app/storage
+      sizeGB: 1
+
+  - type: static
+    name: cerebrumdev-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://cerebrumdev-backend.onrender.com
