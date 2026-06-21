@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Upload, FileText, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
 import { uploadFiles, getUploadStatus, getUploadResult } from '../api/client';
 
@@ -93,7 +93,7 @@ const DataUploader: React.FC<DataUploaderProps> = ({ sessionId, onComplete }) =>
       <div
         onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
         onDragLeave={() => setIsDragging(false)}
-        onDrop={e => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer); }}
+        onDrop={e => { e.preventDefault(); setIsDragging(false); handleFiles(e.dataTransfer.files); }}
         className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
           isDragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300'
         }`}

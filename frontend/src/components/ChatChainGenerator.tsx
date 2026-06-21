@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Check, Loader2 } from 'lucide-react';
-import { postChatMessage, previewChain, approveChain } from '../api/client';
+import { postChatMessage, approveChain } from '../api/client';
 
 interface Message {
   role: 'user' | 'assistant';

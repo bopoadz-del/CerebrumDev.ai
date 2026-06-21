@@ -19,7 +19,7 @@ export const getUploadStatus = (sessionId: string) =>
 export const getUploadResult = (sessionId: string) =>
   api.get(`/sessions/${sessionId}/upload/result`);
 
-export const sendChatMessage = (sessionId: string, message: string): EventSource => {
+export const sendChatMessage = (sessionId: string, _message: string): EventSource => {
   const url = `/v1/sessions/${sessionId}/chat`;
   const es = new EventSource(url, {
     withCredentials: false,
