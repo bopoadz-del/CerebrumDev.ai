@@ -125,7 +125,7 @@ logger = logging.getLogger(__name__)
 
 DOMAIN = os.getenv("CEREBRUM_DOMAIN", "{domain}")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "")
 CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY", "")
 RAG_K = int(os.getenv("RAG_K", "3"))
@@ -465,7 +465,7 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
         "CORS_ORIGINS": "*",
         "CHROMA_PERSIST_DIR": "/app/chroma",
         "OLLAMA_URL": os.getenv("OLLAMA_URL", ""),
-        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud"),
+        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
         "ENV": "production",
         "PORT": "8000",
     }

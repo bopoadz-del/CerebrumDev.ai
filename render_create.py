@@ -24,7 +24,7 @@ BACKEND_VARS = [
     {"key": "QWEN_BASE_URL", "value": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")},
     {"key": "QWEN_MODEL", "value": os.getenv("QWEN_MODEL", "qwen-plus")},
     {"key": "OLLAMA_URL", "value": os.getenv("OLLAMA_URL", "")},
-    {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")},
+    {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")},
     {"key": "CHROMA_PERSIST_DIR", "value": os.getenv("CHROMA_PERSIST_DIR", "/app/storage/chroma")},
     {"key": "STORAGE_PATH", "value": "/app/storage"},
     {"key": "PYTHONIOENCODING", "value": "utf-8"},
