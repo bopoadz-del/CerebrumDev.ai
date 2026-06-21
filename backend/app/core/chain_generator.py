@@ -69,6 +69,50 @@ async def _call_qwen(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         return json.loads(content)
 
 
+def _extract_json(text: str) -> Dict[str, Any]:
+    """Strip Markdown fences and parse the first JSON object in *text*."""
+    text = text.strip()
+    if text.startswith("```"):
+        # Drop the opening fence line
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+    if text.endswith("```"):
+        text = text.rsplit("\n", 1)[0] if "\n" in text else ""
+    text = text.strip()
+    # Some models emit explanatory text before/after the JSON block.
+    # Grab the first balanced {} object.
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in model output")
+    depth = 0
+    end = start
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if depth != 0:
+        raise ValueError("Unbalanced JSON object in model output")
+    return json.loads(text[start:end])
+
+
 async def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call a local/remote Ollama server. Returns parsed JSON."""
     base = OLLAMA_URL.rstrip("/")
@@ -87,7 +131,7 @@ async def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         content = data.get("message", {}).get("content", "")
         if not content:
             raise RuntimeError("Ollama returned empty content")
-        return json.loads(content)
+        return _extract_json(content)
 
 
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
