@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api/client';
-import FeaturePicker from './FeaturePicker';
 import DomainSelector from './DomainSelector';
 import AIConfigPanel from './AIConfigPanel';
 import DataUploader from './DataUploader';
+import ChatChainGenerator from './ChatChainGenerator';
 
 interface PhaseWizardProps {
   sessionId: string;
 }
 
 interface ConfigData {
-  features: string[];
   domain: string;
   ai_config: {
     base_model: string;
@@ -27,7 +26,6 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
   }, [sessionId]);
 
   const [config, setConfig] = useState<ConfigData>({
-    features: ['chat', 'ocr', 'pdf'],
     domain: 'construction',
     ai_config: {
       base_model: 'Llama-3.2-3B',
@@ -39,6 +37,8 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
   });
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [uploadComplete, setUploadComplete] = useState(false);
+  const [chainApproved, setChainApproved] = useState(false);
 
   const handleSave = async () => {
     setLoading(true);
@@ -59,11 +59,6 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
         <h2 className="text-xl font-semibold">Phase 1: Configure Your Instance</h2>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700">Select Features</label>
-          <FeaturePicker selected={config.features} onChange={(features) => setConfig({ ...config, features })} />
-        </div>
-
-        <div>
           <label className="block text-sm font-medium text-gray-700">Select Domain</label>
           <DomainSelector selected={config.domain} onChange={(domain) => setConfig({ ...config, domain })} />
         </div>
@@ -82,7 +77,20 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
         </button>
       </div>
 
-      {saved && <DataUploader sessionId={sessionId} />}
+      {saved && (
+        <DataUploader sessionId={sessionId} onComplete={() => setUploadComplete(true)} />
+      )}
+
+      {saved && uploadComplete && (
+        <ChatChainGenerator sessionId={sessionId} onApproved={() => setChainApproved(true)} />
+      )}
+
+      {chainApproved && (
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-semibold">Phase 4: Train & Deploy</h2>
+          <p className="text-gray-600 mt-2">Your instance is ready for training and deployment.</p>
+        </div>
+      )}
     </div>
   );
 };
