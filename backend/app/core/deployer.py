@@ -157,8 +157,8 @@ def deploy_to_render(
     branch = _push_package_to_branch(session_id, package_dir)
     if not branch:
         return {
-            "status": "failed",
-            "message": "Could not push deployment package to GitHub branch",
+            "status": "packaged",
+            "message": "Package generated. Set GITHUB_TOKEN (or push the package branch manually) to enable Render auto-deploy.",
         }
 
     root_dir = f"deployments/{session_id}"

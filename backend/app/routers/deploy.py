@@ -84,6 +84,19 @@ async def start_deploy(session_id: str, target: str = "cloud", background_tasks:
         package_info["env_vars"],
     )
 
+    if deploy_info.get("status") == "packaged":
+        _update_deployment(
+            state,
+            status="packaged",
+            progress=1.0,
+            message=deploy_info.get("message", "Package ready for manual deploy"),
+        )
+        return {
+            "status": "packaged",
+            "download_url": f"/v1/sessions/{session_id}/deploy/package",
+            "message": deploy_info.get("message"),
+        }
+
     if deploy_info.get("status") == "failed":
         _update_deployment(
             state,
