@@ -67,6 +67,20 @@ CHROMA_PERSIST_DIR=./storage/chroma
 
 The Render blueprint mounts a disk at `/app/storage`. ChromaDB writes its SQLite index to `/app/storage/chroma`, so vectors survive redeploys. For production, increase the disk size as needed.
 
+### Cloudflare AI Gateway (optional)
+
+You can route Qwen API calls through Cloudflare AI Gateway for logging, caching, and rate limiting:
+
+1. Create a gateway in the Cloudflare Dashboard (AI → AI Gateway).
+2. Add a **custom provider** named `qwen` with base URL `https://dashscope.aliyuncs.com/compatible-mode/v1`.
+3. Set the environment variable:
+   ```env
+   QWEN_BASE_URL=https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/custom-qwen
+   ```
+4. Keep `QWEN_API_KEY` set to your DashScope key so the gateway can forward authenticated requests.
+
+See the Cloudflare docs for adding caching, rate limiting, and fallbacks.
+
 ## License
 
 MIT
