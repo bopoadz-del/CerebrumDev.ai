@@ -10,7 +10,7 @@ services:
       - key: ENV
         value: production
       - key: CEREBRUM_API_URL
-        value: https://cerebrum-blocks.onrender.com  # update after deploying Cerebrum-Blocks
+        value: https://cerebrum-blocks.onrender.com
       - key: CEREBRUM_API_KEY
         generateValue: true
       - key: CEREBRUM_LLM_API_KEY

@@ -18,7 +18,7 @@ if not OWNER_ID:
 
 BACKEND_VARS = [
     {"key": "ENV", "value": "production"},
-    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},
+    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},  # live Cerebrum-Blocks service
     {"key": "CEREBRUM_API_KEY", "value": os.getenv("CEREBRUM_API_KEY", "")},
     {"key": "CEREBRUM_LLM_API_KEY", "value": os.getenv("CEREBRUM_LLM_API_KEY", "")},
     {"key": "STORAGE_PATH", "value": "/app/storage"},
