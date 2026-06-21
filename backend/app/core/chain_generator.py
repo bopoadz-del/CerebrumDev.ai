@@ -12,6 +12,9 @@ QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("CEREBRUM_LLM_API_KEY")
 QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
 
+OLLAMA_URL = os.getenv("OLLAMA_URL", "")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+
 
 def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
     block_list = "\n".join(
@@ -37,11 +40,16 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
     )
 
 
-async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call the configured Qwen/DashScope LLM. Returns parsed JSON."""
-    if not QWEN_API_KEY:
-        raise RuntimeError("QWEN_API_KEY not configured")
+def _active_provider() -> str:
+    if QWEN_API_KEY:
+        return "qwen"
+    if OLLAMA_URL:
+        return "ollama"
+    return ""
 
+
+async def _call_qwen(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Call Qwen/DashScope. Returns parsed JSON."""
     url = f"{QWEN_BASE_URL.rstrip('/')}/chat/completions"
     payload = {
         "model": QWEN_MODEL,
@@ -49,7 +57,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             url,
             json=payload,
@@ -61,8 +69,39 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         return json.loads(content)
 
 
+async def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Call a local/remote Ollama server. Returns parsed JSON."""
+    base = OLLAMA_URL.rstrip("/")
+    url = f"{base}/api/chat"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.3},
+    }
+    async with httpx.AsyncClient(timeout=300.0) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("message", {}).get("content", "")
+        if not content:
+            raise RuntimeError("Ollama returned empty content")
+        return json.loads(content)
+
+
+async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Call the configured LLM. Returns parsed JSON."""
+    provider = _active_provider()
+    if provider == "qwen":
+        return await _call_qwen(messages)
+    if provider == "ollama":
+        return await _call_ollama(messages)
+    raise RuntimeError("No LLM provider configured")
+
+
 def _mock_response(user_message: str, domain: str, available_blocks: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Mock response for testing without an LLM key."""
+    """Mock response for testing without an LLM."""
     block_names = [b.get("name") for b in available_blocks]
     chain_blocks = []
     connections = []
@@ -109,11 +148,11 @@ async def generate_chain_suggestion(
     try:
         result = await _call_llm(messages)
     except Exception as exc:
-        if not QWEN_API_KEY:
-            logger.warning("QWEN_API_KEY not set, using mock generator: %s", exc)
+        if not _active_provider():
+            logger.warning("No LLM provider configured, using mock generator: %s", exc)
             result = _mock_response(user_message, domain, available_blocks)
         else:
-            logger.exception("Qwen LLM call failed")
+            logger.exception("LLM call failed")
             raise
 
     return {

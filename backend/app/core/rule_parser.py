@@ -10,23 +10,35 @@ QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("CEREBRUM_LLM_API_KEY")
 QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
 
+OLLAMA_URL = os.getenv("OLLAMA_URL", "")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3-coder:480b-cloud")
+
 
 def parse_rules(rule_texts: List[str]) -> List[Dict[str, str]]:
     """Convert free-text rules into structured rule objects.
 
-    Uses Qwen/DashScope when QWEN_API_KEY is configured; otherwise falls back
+    Uses the configured LLM (Qwen or Ollama) when available; otherwise falls back
     to the deterministic parser.
     """
     if not rule_texts:
         return []
 
-    if QWEN_API_KEY:
+    provider = _active_provider()
+    if provider:
         try:
-            return _parse_with_llm(rule_texts)
+            return _parse_with_llm(provider, rule_texts)
         except Exception as exc:
             logger.warning("LLM rule parsing failed, falling back to deterministic parser: %s", exc)
 
     return _parse_naive(rule_texts)
+
+
+def _active_provider() -> str:
+    if QWEN_API_KEY:
+        return "qwen"
+    if OLLAMA_URL:
+        return "ollama"
+    return ""
 
 
 def _parse_naive(rule_texts: List[str]) -> List[Dict[str, str]]:
@@ -66,8 +78,28 @@ def _call_qwen(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         return json.loads(content)
 
 
-def _parse_with_llm(rule_texts: List[str]) -> List[Dict[str, str]]:
-    """Ask Qwen to extract trigger/action/snippet for each rule."""
+def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Call Ollama /api/chat (synchronous)."""
+    url = f"{OLLAMA_URL.rstrip('/')}/api/chat"
+    payload = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.1},
+    }
+    with httpx.Client(timeout=300.0) as client:
+        resp = client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data.get("message", {}).get("content", "")
+        if not content:
+            raise RuntimeError("Ollama returned empty content")
+        return json.loads(content)
+
+
+def _parse_with_llm(provider: str, rule_texts: List[str]) -> List[Dict[str, str]]:
+    """Ask the configured LLM to extract trigger/action/snippet for each rule."""
     system_prompt = (
         "You are a business-rule parser. Given a list of free-text rules, "
         "return a JSON object with a single key 'rules' containing a list of objects. "
@@ -80,7 +112,10 @@ def _parse_with_llm(rule_texts: List[str]) -> List[Dict[str, str]]:
         {"role": "user", "content": user_prompt},
     ]
 
-    result = _call_qwen(messages)
+    if provider == "qwen":
+        result = _call_qwen(messages)
+    else:
+        result = _call_ollama(messages)
 
     parsed = []
     for item in result.get("rules", []):
