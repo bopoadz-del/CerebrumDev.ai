@@ -4,6 +4,7 @@ import DomainSelector from './DomainSelector';
 import AIConfigPanel from './AIConfigPanel';
 import DataUploader from './DataUploader';
 import ChatChainGenerator from './ChatChainGenerator';
+import DeployPanel from './DeployPanel';
 
 interface PhaseWizardProps {
   sessionId: string;
@@ -86,10 +87,7 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
       )}
 
       {chainApproved && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-xl font-semibold">Phase 4: Train & Deploy</h2>
-          <p className="text-gray-600 mt-2">Your instance is ready for training and deployment.</p>
-        </div>
+        <DeployPanel sessionId={sessionId} />
       )}
     </div>
   );

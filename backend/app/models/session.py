@@ -25,6 +25,18 @@ class UploadResult(BaseModel):
     message: Optional[str] = None
 
 
+class DeploymentResult(BaseModel):
+    status: str = "pending"  # pending, packaging, deploying, live, failed, packaged
+    target: str = "cloud"  # cloud, edge
+    progress: float = 0.0
+    url: Optional[str] = None
+    api_key: Optional[str] = None
+    service_id: Optional[str] = None
+    deploy_id: Optional[str] = None
+    message: Optional[str] = None
+    package_path: Optional[str] = None
+
+
 class SessionState(BaseModel):
     session_id: str
     user_id: str
@@ -44,5 +56,7 @@ class SessionState(BaseModel):
     rules_injected: bool = False
     container_modified_path: Optional[str] = None
     validation_passed: bool = False
+    # Phase 5: deploy / ship
+    deployment: DeploymentResult = Field(default_factory=DeploymentResult)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
