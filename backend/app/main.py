@@ -6,7 +6,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routers import sessions, config, domains
+from .routers import sessions, config, domains, upload
 
 app = FastAPI(title="CerebrumDev.ai API", version="0.1.0")
 
@@ -21,6 +21,7 @@ app.add_middleware(
 app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"])
 app.include_router(config.router, prefix="/v1/sessions", tags=["config"])
 app.include_router(domains.router, prefix="/v1/domains", tags=["domains"])
+app.include_router(upload.router, prefix="/v1/sessions", tags=["upload"])
 
 @app.get("/health")
 async def health():

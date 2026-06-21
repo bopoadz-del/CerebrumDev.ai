@@ -3,6 +3,7 @@ import api from '../api/client';
 import FeaturePicker from './FeaturePicker';
 import DomainSelector from './DomainSelector';
 import AIConfigPanel from './AIConfigPanel';
+import DataUploader from './DataUploader';
 
 interface PhaseWizardProps {
   sessionId: string;
@@ -53,31 +54,35 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow p-6 space-y-6">
-      <h2 className="text-xl font-semibold">Phase 1: Configure Your Instance</h2>
+    <div className="space-y-6">
+      <div className="bg-white rounded-lg shadow p-6 space-y-6">
+        <h2 className="text-xl font-semibold">Phase 1: Configure Your Instance</h2>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Select Features</label>
-        <FeaturePicker selected={config.features} onChange={(features) => setConfig({ ...config, features })} />
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Select Features</label>
+          <FeaturePicker selected={config.features} onChange={(features) => setConfig({ ...config, features })} />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Select Domain</label>
+          <DomainSelector selected={config.domain} onChange={(domain) => setConfig({ ...config, domain })} />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700">AI Configuration</label>
+          <AIConfigPanel config={config.ai_config} onChange={(ai_config) => setConfig({ ...config, ai_config })} />
+        </div>
+
+        <button
+          onClick={handleSave}
+          disabled={loading}
+          className="w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+        >
+          {loading ? 'Saving...' : saved ? 'Saved ✓' : 'Save Configuration'}
+        </button>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Select Domain</label>
-        <DomainSelector selected={config.domain} onChange={(domain) => setConfig({ ...config, domain })} />
-      </div>
-
-      <div>
-        <label className="block text-sm font-medium text-gray-700">AI Configuration</label>
-        <AIConfigPanel config={config.ai_config} onChange={(ai_config) => setConfig({ ...config, ai_config })} />
-      </div>
-
-      <button
-        onClick={handleSave}
-        disabled={loading}
-        className="w-full py-2 px-4 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-      >
-        {loading ? 'Saving...' : saved ? 'Saved ✓' : 'Save Configuration'}
-      </button>
+      {saved && <DataUploader sessionId={sessionId} />}
     </div>
   );
 };
