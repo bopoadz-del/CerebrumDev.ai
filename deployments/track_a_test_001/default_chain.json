@@ -1,0 +1,9 @@
+{
+  "blocks": [
+    {
+      "id": "chat",
+      "params": {}
+    }
+  ],
+  "connections": []
+}

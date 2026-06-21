@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: cerebrumdev-construction-track_a_test_001
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    envVars:
+      - key: CEREBRUM_DOMAIN_KITS
+        value: construction
+      - key: CEREBRUM_MASTER_KEY
+        value: cd-deploy-93c53d4347b8d30c73c9e46c70d962ed
+      - key: CEREBRUM_API_KEY_CDEV
+        value: cd-deploy-93c53d4347b8d30c73c9e46c70d962ed
+      - key: CORS_ORIGINS
+        value: *
+      - key: CHROMA_PERSIST_DIR
+        value: /app/chroma
+      - key: OLLAMA_URL
+        value: https://cerebrumdev-ollama.theshovel.ai
+      - key: OLLAMA_MODEL
+        value: gpt-oss:120b-cloud
+      - key: ENV
+        value: production
+      - key: PORT
+        value: 8000
+    disk:
+      name: cerebrumdev-construction-track_a_test_001-data
+      mountPath: /app/data
+      sizeGB: 1
