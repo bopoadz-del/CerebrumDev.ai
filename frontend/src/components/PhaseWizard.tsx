@@ -5,6 +5,7 @@ import AIConfigPanel from './AIConfigPanel';
 import DataUploader from './DataUploader';
 import ChatChainGenerator from './ChatChainGenerator';
 import DeployPanel from './DeployPanel';
+import TrainingPanel from './TrainingPanel';
 
 interface PhaseWizardProps {
   sessionId: string;
@@ -40,6 +41,7 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
   const [saved, setSaved] = useState(false);
   const [uploadComplete, setUploadComplete] = useState(false);
   const [chainApproved, setChainApproved] = useState(false);
+  const [trainingComplete, setTrainingComplete] = useState(false);
 
   const handleSave = async () => {
     setLoading(true);
@@ -86,7 +88,11 @@ const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
         <ChatChainGenerator sessionId={sessionId} onApproved={() => setChainApproved(true)} />
       )}
 
-      {chainApproved && (
+      {chainApproved && !trainingComplete && (
+        <TrainingPanel sessionId={sessionId} onComplete={() => setTrainingComplete(true)} />
+      )}
+
+      {chainApproved && trainingComplete && (
         <DeployPanel sessionId={sessionId} />
       )}
     </div>

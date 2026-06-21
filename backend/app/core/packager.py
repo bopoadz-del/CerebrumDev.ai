@@ -469,6 +469,8 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
         "ENV": "production",
         "PORT": "8000",
     }
+    if state.training_job.status == "succeeded" and state.training_job.fine_tuned_model_id:
+        env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
     _write_dotenv(package_root, env_vars)
     _write_render_yaml(package_root, service_name, env_vars)
 

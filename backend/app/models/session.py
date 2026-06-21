@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -37,6 +37,18 @@ class DeploymentResult(BaseModel):
     package_path: Optional[str] = None
 
 
+class TrainingJob(BaseModel):
+    job_id: str = ""
+    status: Literal["idle", "preparing", "queued", "running", "succeeded", "failed"] = "idle"
+    fine_tuned_model_id: Optional[str] = None
+    progress: float = 0.0
+    error: Optional[str] = None
+    dataset_size: int = 0
+    dataset_url: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class SessionState(BaseModel):
     session_id: str
     user_id: str
@@ -56,6 +68,10 @@ class SessionState(BaseModel):
     rules_injected: bool = False
     container_modified_path: Optional[str] = None
     validation_passed: bool = False
+    # Phase 4: Tinker – user-provided Q&A pairs for fine-tuning
+    training_data: List[Dict[str, str]] = Field(default_factory=list)
+    training_job: TrainingJob = Field(default_factory=TrainingJob)
+    training_enabled: bool = True
     # Phase 5: deploy / ship
     deployment: DeploymentResult = Field(default_factory=DeploymentResult)
     created_at: datetime = Field(default_factory=datetime.utcnow)

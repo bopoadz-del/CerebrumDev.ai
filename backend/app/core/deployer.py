@@ -20,6 +20,8 @@ RENDER_API_KEY = os.getenv("RENDER_API_KEY", "")
 RENDER_OWNER_ID = os.getenv("RENDER_OWNER_ID", "")
 REPO = os.getenv("DEPLOY_REPO", "https://github.com/bopoadz-del/CerebrumDev.ai")
 REPO_DIR = os.getenv("DEPLOY_REPO_DIR", str(Path(__file__).parent.parent.parent.parent))
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "bopoadz-del")
 
 
 def _safe_name(name: str) -> str:
@@ -86,7 +88,12 @@ def _push_package_to_branch(session_id: str, package_dir: str) -> Optional[str]:
         logger.error("Git commit failed: %s", commit.stderr)
         return None
 
-    push = _run_git(["push", "-u", "origin", branch])
+    # Use the GitHub token for authenticated pushes when running in Render.
+    if GITHUB_TOKEN:
+        push_url = REPO.replace("https://github.com", f"https://x-access-token:{GITHUB_TOKEN}@github.com")
+        push = _run_git(["push", "-u", push_url, branch])
+    else:
+        push = _run_git(["push", "-u", "origin", branch])
     if push.returncode != 0:
         logger.error("Git push failed: %s", push.stderr)
         return None
