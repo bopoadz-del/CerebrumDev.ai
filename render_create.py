@@ -57,7 +57,7 @@ backend_payload = {
         "env": "docker",
         "plan": "starter",
         "region": "oregon",
-        "envSpecificDetails": {"dockerfilePath": "backend/Dockerfile"},
+        "envSpecificDetails": {"dockerfilePath": "./Dockerfile"},
         "healthCheckPath": "/health",
         "numInstances": 1,
     },

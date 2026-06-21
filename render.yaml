@@ -2,7 +2,6 @@ services:
   - type: web
     name: cerebrumdev-backend
     env: docker
-    rootDir: backend
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     plan: starter
@@ -11,7 +10,7 @@ services:
       - key: ENV
         value: production
       - key: CEREBRUM_API_URL
-        value: https://cerebrum-blocks.onrender.com
+        value: https://cerebrum-blocks.onrender.com  # update after deploying Cerebrum-Blocks
       - key: CEREBRUM_API_KEY
         generateValue: true
       - key: CEREBRUM_LLM_API_KEY
