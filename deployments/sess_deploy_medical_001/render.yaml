@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: cerebrumdev-medical-sess_deploy_medi
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    envVars:
+      - key: CEREBRUM_DOMAIN_KITS
+        value: medical
+      - key: CEREBRUM_MASTER_KEY
+        value: cd-deploy-ae115e8282204185fd34390beac5679c
+      - key: CEREBRUM_API_KEY_CDEV
+        value: cd-deploy-ae115e8282204185fd34390beac5679c
+      - key: CORS_ORIGINS
+        value: *
+      - key: CHROMA_PERSIST_DIR
+        value: /app/chroma
+      - key: OLLAMA_URL
+        value: 
+      - key: OLLAMA_MODEL
+        value: qwen3-coder:480b-cloud
+      - key: ENV
+        value: production
+      - key: PORT
+        value: 8000
+    disk:
+      name: cerebrumdev-medical-sess_deploy_medi-data
+      mountPath: /app/data
+      sizeGB: 1
