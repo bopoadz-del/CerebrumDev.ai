@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import api from '../api/client';
 import FeaturePicker from './FeaturePicker';
 import DomainSelector from './DomainSelector';
@@ -21,6 +21,10 @@ interface ConfigData {
 }
 
 const PhaseWizard: React.FC<PhaseWizardProps> = ({ sessionId }) => {
+  useEffect(() => {
+    api.post('/sessions/', null, { headers: { 'X-Session-ID': sessionId } }).catch(console.error);
+  }, [sessionId]);
+
   const [config, setConfig] = useState<ConfigData>({
     features: ['chat', 'ocr', 'pdf'],
     domain: 'construction',
