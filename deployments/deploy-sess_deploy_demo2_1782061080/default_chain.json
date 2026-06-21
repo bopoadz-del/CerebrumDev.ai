@@ -1,0 +1,34 @@
+{
+  "blocks": [
+    {
+      "id": "pdf_v2",
+      "params": {}
+    },
+    {
+      "id": "ocr_v2",
+      "params": {}
+    },
+    {
+      "id": "chat",
+      "params": {}
+    },
+    {
+      "id": "email",
+      "params": {}
+    }
+  ],
+  "connections": [
+    {
+      "from": 0,
+      "to": 1
+    },
+    {
+      "from": 1,
+      "to": 2
+    },
+    {
+      "from": 2,
+      "to": 3
+    }
+  ]
+}
