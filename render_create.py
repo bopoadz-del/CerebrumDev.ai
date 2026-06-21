@@ -20,7 +20,10 @@ BACKEND_VARS = [
     {"key": "ENV", "value": "production"},
     {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},  # live Cerebrum-Blocks service
     {"key": "CEREBRUM_API_KEY", "value": os.getenv("CEREBRUM_API_KEY", "")},
-    {"key": "CEREBRUM_LLM_API_KEY", "value": os.getenv("CEREBRUM_LLM_API_KEY", "")},
+    {"key": "QWEN_API_KEY", "value": os.getenv("QWEN_API_KEY", "")},
+    {"key": "QWEN_BASE_URL", "value": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")},
+    {"key": "QWEN_MODEL", "value": os.getenv("QWEN_MODEL", "qwen-plus")},
+    {"key": "CHROMA_PERSIST_DIR", "value": os.getenv("CHROMA_PERSIST_DIR", "/app/storage/chroma")},
     {"key": "STORAGE_PATH", "value": "/app/storage"},
     {"key": "PYTHONIOENCODING", "value": "utf-8"},
 ]

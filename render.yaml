@@ -13,8 +13,14 @@ services:
         value: https://cerebrum-blocks.onrender.com
       - key: CEREBRUM_API_KEY
         generateValue: true
-      - key: CEREBRUM_LLM_API_KEY
+      - key: QWEN_API_KEY
         sync: false
+      - key: QWEN_BASE_URL
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1
+      - key: QWEN_MODEL
+        value: qwen-plus
+      - key: CHROMA_PERSIST_DIR
+        value: /app/storage/chroma
       - key: STORAGE_PATH
         value: /app/storage
       - key: PYTHONIOENCODING

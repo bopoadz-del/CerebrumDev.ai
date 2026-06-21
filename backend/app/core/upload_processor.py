@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "http://localhost:8000")
 CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", os.path.join(STORAGE_PATH, "chroma"))
+
+# Lazy import: chromadb is only required when indexing.
+_chroma_client = None
 
 
 def _headers() -> Dict[str, str]:
@@ -27,6 +31,45 @@ def _session_storage_dir(session_id: str) -> Path:
     path = Path(STORAGE_PATH) / "sessions" / session_id / "files"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _get_chroma_client():
+    global _chroma_client
+    if _chroma_client is None:
+        import chromadb
+        Path(CHROMA_PERSIST_DIR).mkdir(parents=True, exist_ok=True)
+        _chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+    return _chroma_client
+
+
+def _collection_name(session_id: str) -> str:
+    # Chroma collection names must be 3-63 chars, alphanumeric, underscores, or hyphens.
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
+    return f"session_{safe}"[:63]
+
+
+def _store_in_chroma(session_id: str, chunks: List[str], embeddings: List[List[float]]):
+    """Persist chunks and embeddings in a per-session ChromaDB collection."""
+    if not chunks:
+        return
+    try:
+        client = _get_chroma_client()
+        collection = client.get_or_create_collection(
+            name=_collection_name(session_id),
+            metadata={"session_id": session_id, "hnsw:space": "cosine"},
+        )
+        ids = [f"chunk_{i}" for i in range(len(chunks))]
+        metadatas = [{"session_id": session_id, "index": i} for i in range(len(chunks))]
+        collection.upsert(
+            ids=ids,
+            documents=chunks,
+            embeddings=embeddings if embeddings and len(embeddings) == len(chunks) else None,
+            metadatas=metadatas,
+        )
+        logger.info("Stored %d chunks in Chroma collection %s", len(chunks), _collection_name(session_id))
+    except Exception as exc:
+        logger.exception("Failed to store chunks in ChromaDB: %s", exc)
+        raise
 
 
 def _file_type(file_path: str) -> str:
@@ -229,14 +272,28 @@ async def process_upload(session_id: str, file_paths: List[str]):
     state.upload.message = f"Embedding {len(chunks)} chunks..."
     update_session(session_id, state)
 
+    embeddings: List[List[float]] = []
     if chunks:
         embeddings = await embed_chunks(chunks)
         state.embeddings = embeddings
 
+    state.upload.progress = 0.85
+    state.upload.message = "Persisting vector index..."
+    update_session(session_id, state)
+
+    try:
+        _store_in_chroma(session_id, chunks, embeddings)
+        state.upload.indexed_collection = _collection_name(session_id)
+    except Exception as exc:
+        logger.exception("ChromaDB persistence failed for session %s: %s", session_id, exc)
+        state.upload.status = "failed"
+        state.upload.message = f"Indexing failed: {exc}"
+        update_session(session_id, state)
+        return
+
     state.upload.progress = 1.0
     state.upload.status = "completed" if not failed else "completed_with_warnings"
     state.upload.failed_files = failed
-    state.upload.indexed_collection = f"session_{session_id}"
     state.upload.message = f"Indexed {len(chunks)} chunks"
     state.phase = 3
     state.updated_at = __import__("datetime").datetime.utcnow()

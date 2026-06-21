@@ -2,15 +2,15 @@ import os
 import json
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from .feature_mapper import fetch_block_registry
 
 logger = logging.getLogger(__name__)
 
-LLM_API_KEY = os.getenv("CEREBRUM_LLM_API_KEY")
-LLM_BASE_URL = os.getenv("CEREBRUM_LLM_BASE_URL", "https://api.moonshot.cn/v1")
-LLM_MODEL = os.getenv("CEREBRUM_LLM_MODEL", "moonshot-v1-8k")
+QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("CEREBRUM_LLM_API_KEY")
+QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
 
 
 def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
@@ -31,27 +31,30 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
         "4. Also extract any business rules the user mentions (e.g., 'always flag urgent RFIs') as a list of strings.\n\n"
         "Chain JSON format:\n"
         '{"blocks": [{"id": "<block_name>", "params": {...}}], "connections": [{"from": 0, "to": 1}]}\n\n'
-        "Return your response as JSON with two top-level keys:\n"
+        "Return your response as JSON with three top-level keys:\n"
         '{"message": "<conversational reply to user>", "chain": <chain JSON or null>, "rules": ["rule 1", "rule 2"]}\n'
         "Only include 'chain' when you are ready to propose one."
     )
 
 
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call the configured LLM. Returns parsed JSON. Falls back to mock if no key."""
-    if not LLM_API_KEY:
-        logger.warning("No CEREBRUM_LLM_API_KEY set; using mock chain generator")
-        raise RuntimeError("LLM API key not configured")
+    """Call the configured Qwen/DashScope LLM. Returns parsed JSON."""
+    if not QWEN_API_KEY:
+        raise RuntimeError("QWEN_API_KEY not configured")
 
-    url = f"{LLM_BASE_URL.rstrip('/')}/chat/completions"
+    url = f"{QWEN_BASE_URL.rstrip('/')}/chat/completions"
     payload = {
-        "model": LLM_MODEL,
+        "model": QWEN_MODEL,
         "messages": messages,
         "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, json=payload, headers={"Authorization": f"Bearer {LLM_API_KEY}"})
+        resp = await client.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {QWEN_API_KEY}", "Content-Type": "application/json"},
+        )
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
@@ -106,8 +109,12 @@ async def generate_chain_suggestion(
     try:
         result = await _call_llm(messages)
     except Exception as exc:
-        logger.warning("LLM call failed, using mock generator: %s", exc)
-        result = _mock_response(user_message, domain, available_blocks)
+        if not QWEN_API_KEY:
+            logger.warning("QWEN_API_KEY not set, using mock generator: %s", exc)
+            result = _mock_response(user_message, domain, available_blocks)
+        else:
+            logger.exception("Qwen LLM call failed")
+            raise
 
     return {
         "message": result.get("message", ""),
