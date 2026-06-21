@@ -8,16 +8,13 @@ from fastapi import HTTPException
 
 from ..models.session import SessionState
 from .session_store import get_session, update_session
+from .chroma_store import store_chunks, collection_name
 
 logger = logging.getLogger(__name__)
 
 CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "http://localhost:8000")
 CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
-CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", os.path.join(STORAGE_PATH, "chroma"))
-
-# Lazy import: chromadb is only required when indexing.
-_chroma_client = None
 
 
 def _headers() -> Dict[str, str]:
@@ -31,45 +28,6 @@ def _session_storage_dir(session_id: str) -> Path:
     path = Path(STORAGE_PATH) / "sessions" / session_id / "files"
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-def _get_chroma_client():
-    global _chroma_client
-    if _chroma_client is None:
-        import chromadb
-        Path(CHROMA_PERSIST_DIR).mkdir(parents=True, exist_ok=True)
-        _chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
-    return _chroma_client
-
-
-def _collection_name(session_id: str) -> str:
-    # Chroma collection names must be 3-63 chars, alphanumeric, underscores, or hyphens.
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in session_id)
-    return f"session_{safe}"[:63]
-
-
-def _store_in_chroma(session_id: str, chunks: List[str], embeddings: List[List[float]]):
-    """Persist chunks and embeddings in a per-session ChromaDB collection."""
-    if not chunks:
-        return
-    try:
-        client = _get_chroma_client()
-        collection = client.get_or_create_collection(
-            name=_collection_name(session_id),
-            metadata={"session_id": session_id, "hnsw:space": "cosine"},
-        )
-        ids = [f"chunk_{i}" for i in range(len(chunks))]
-        metadatas = [{"session_id": session_id, "index": i} for i in range(len(chunks))]
-        collection.upsert(
-            ids=ids,
-            documents=chunks,
-            embeddings=embeddings if embeddings and len(embeddings) == len(chunks) else None,
-            metadatas=metadatas,
-        )
-        logger.info("Stored %d chunks in Chroma collection %s", len(chunks), _collection_name(session_id))
-    except Exception as exc:
-        logger.exception("Failed to store chunks in ChromaDB: %s", exc)
-        raise
 
 
 def _file_type(file_path: str) -> str:
@@ -231,7 +189,12 @@ async def embed_chunks(chunks: List[str]) -> List[List[float]]:
 
 
 async def process_upload(session_id: str, file_paths: List[str]):
-    """Background pipeline: parse, chunk, embed and store indexed data."""
+    """Background pipeline: parse, chunk, embed and persist indexed data.
+
+    Chunks are stored in a persistent ChromaDB collection per session. If ChromaDB
+    fails, the pipeline falls back to an in-memory store so the user can still
+    proceed (with a warning).
+    """
     state = get_session(session_id)
     if not state:
         logger.error("process_upload called for unknown session %s", session_id)
@@ -243,58 +206,63 @@ async def process_upload(session_id: str, file_paths: List[str]):
     update_session(session_id, state)
 
     failed: List[str] = []
-    all_texts: List[str] = []
+    all_chunks: List[str] = []
+    source_files: List[str] = []
 
     total = len(file_paths)
     for idx, path in enumerate(file_paths):
+        file_name = Path(path).name
         try:
             text = await parse_document(path)
             if text.strip():
-                all_texts.append(text)
+                chunks = chunk_text(text)
+                all_chunks.extend(chunks)
+                source_files.extend([file_name] * len(chunks))
             else:
-                failed.append(Path(path).name)
+                failed.append(file_name)
         except Exception as exc:
             logger.exception("Failed to parse %s: %s", path, exc)
-            failed.append(Path(path).name)
+            failed.append(file_name)
         state.upload.progress = 0.1 + 0.3 * ((idx + 1) / total)
         update_session(session_id, state)
 
-    corpus = "\n\n".join(all_texts)
-    state.corpus = corpus
+    state.corpus = "\n\n".join(all_chunks)
+    state.chunks = all_chunks
+    state.upload.total_chunks = len(all_chunks)
     state.upload.progress = 0.45
     state.upload.message = "Chunking text..."
     update_session(session_id, state)
 
-    chunks = chunk_text(corpus)
-    state.chunks = chunks
-    state.upload.total_chunks = len(chunks)
-    state.upload.progress = 0.6
-    state.upload.message = f"Embedding {len(chunks)} chunks..."
-    update_session(session_id, state)
-
     embeddings: List[List[float]] = []
-    if chunks:
-        embeddings = await embed_chunks(chunks)
+    if all_chunks:
+        state.upload.progress = 0.6
+        state.upload.message = f"Embedding {len(all_chunks)} chunks..."
+        update_session(session_id, state)
+        embeddings = await embed_chunks(all_chunks)
         state.embeddings = embeddings
 
     state.upload.progress = 0.85
     state.upload.message = "Persisting vector index..."
     update_session(session_id, state)
 
-    try:
-        _store_in_chroma(session_id, chunks, embeddings)
-        state.upload.indexed_collection = _collection_name(session_id)
-    except Exception as exc:
-        logger.exception("ChromaDB persistence failed for session %s: %s", session_id, exc)
-        state.upload.status = "failed"
-        state.upload.message = f"Indexing failed: {exc}"
-        update_session(session_id, state)
-        return
+    chroma_ok = store_chunks(session_id, all_chunks, embeddings, source_files=source_files)
+    if chroma_ok:
+        state.upload.indexed_collection = collection_name(session_id)
+        state.upload.message = f"Indexed {len(all_chunks)} chunks"
+    else:
+        logger.warning("ChromaDB persistence failed for session %s; falling back to in-memory store", session_id)
+        state.upload.indexed_collection = None
+        state.upload.message = f"Indexed {len(all_chunks)} chunks (in-memory fallback; ChromaDB unavailable)"
 
     state.upload.progress = 1.0
-    state.upload.status = "completed" if not failed else "completed_with_warnings"
+    if failed and chroma_ok:
+        state.upload.status = "completed_with_warnings"
+    elif not chroma_ok:
+        state.upload.status = "completed_with_warnings"
+    else:
+        state.upload.status = "completed"
     state.upload.failed_files = failed
-    state.upload.message = f"Indexed {len(chunks)} chunks"
     state.phase = 3
     state.updated_at = __import__("datetime").datetime.utcnow()
     update_session(session_id, state)
+
