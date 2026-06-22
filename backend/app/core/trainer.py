@@ -1,63 +1,45 @@
-"""Cloudflare Workers AI fine-tune orchestrator (Phase 4: Tinker).
+"""Together AI fine-tune orchestrator (Phase 4: Tinker)."""
 
-This module assumes Cloudflare's training API accepts a public dataset URL.
-If the endpoint shape changes, only the payload in `_create_fine_tune_job`
-needs to be updated.
-"""
-
-import base64
 import json
 import logging
 import os
-import urllib.request
-import urllib.error
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import httpx
 from fastapi import HTTPException
 
-from ..models.session import SessionState, TrainingJob
+from ..models.session import TrainingJob
 from .session_store import get_session, update_session
 
 logger = logging.getLogger(__name__)
 
-CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
-CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
-GITHUB_USERNAME = os.getenv("GITHUB_USERNAME", "bopoadz-del")
-DEPLOY_REPO = os.getenv("DEPLOY_REPO", "https://github.com/bopoadz-del/CerebrumDev.ai")
+# ---------------------------------------------------------------------------
+# Environment variables (set in .env / Render)
+#   TOGETHER_API_KEY   – required Together AI API key
+#   TOGETHER_BASE_URL  – optional, defaults to https://api.together.xyz
+#   FINE_TUNE_BASE_MODEL – base model to fine-tune (default Qwen 7B)
+# ---------------------------------------------------------------------------
 
-# Optional R2 upload (preferred when credentials are provided).
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME", "")
-R2_ACCESS_KEY = os.getenv("R2_ACCESS_KEY", "")
-R2_SECRET_KEY = os.getenv("R2_SECRET_KEY", "")
-R2_ENDPOINT = os.getenv("R2_ENDPOINT", "")
-
-# Base model for the fine-tune job.  Cloudflare's actual supported models may
-# differ; override via FINE_TUNE_BASE_MODEL if needed.
-FINE_TUNE_BASE_MODEL = os.getenv(
+TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
+TOGETHER_BASE_URL = os.environ.get("TOGETHER_BASE_URL", "https://api.together.xyz")
+FINE_TUNE_BASE_MODEL = os.environ.get(
     "FINE_TUNE_BASE_MODEL",
-    os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
+    os.environ.get("TOGETHER_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
 )
 
 
-def _repo_owner_and_name() -> tuple:
-    """Extract owner/repo from DEPLOY_REPO."""
-    repo = DEPLOY_REPO.rstrip("/").replace("https://github.com/", "").replace(".git", "")
-    parts = repo.split("/")
-    return parts[0] if len(parts) > 0 else GITHUB_USERNAME, parts[1] if len(parts) > 1 else "CerebrumDev.ai"
-
-
 def validate_training_data(pairs: List[Dict[str, str]], min_pairs: int = 10) -> bool:
-    """Validate that every pair has non-empty question/answer strings."""
+    """Validate that each pair has non-empty 'question' and 'answer'."""
+    if not pairs:
+        raise ValueError("Training data is empty.")
     if len(pairs) < min_pairs:
         raise ValueError(f"Need at least {min_pairs} Q&A pairs, got {len(pairs)}")
     for i, pair in enumerate(pairs):
         q = (pair.get("question") or "").strip()
         a = (pair.get("answer") or "").strip()
         if not q or not a:
-            raise ValueError(f"Pair {i + 1} has an empty question or answer")
+            raise ValueError(f"Pair {i + 1} has empty question or answer")
     return True
 
 
@@ -65,8 +47,8 @@ def format_jsonl(
     pairs: List[Dict[str, str]],
     system_prompt: str = "You are a helpful assistant.",
 ) -> str:
-    """Convert Q&A pairs to the Cloudflare chat-completion JSONL format."""
-    lines: List[str] = []
+    """Convert Q&A pairs to the Together AI chat-completion JSONL format."""
+    lines = []
     for p in pairs:
         messages = [
             {"role": "system", "content": system_prompt},
@@ -77,188 +59,120 @@ def format_jsonl(
     return "\n".join(lines) + ("\n" if lines else "")
 
 
-def _upload_to_r2(key: str, content: str) -> Optional[str]:
-    """Upload content to Cloudflare R2 if credentials are configured."""
-    if not all([R2_BUCKET_NAME, R2_ACCESS_KEY, R2_SECRET_KEY, R2_ENDPOINT]):
-        return None
-    try:
-        import boto3
-        session = boto3.Session(
-            aws_access_key_id=R2_ACCESS_KEY,
-            aws_secret_access_key=R2_SECRET_KEY,
+async def _upload_file(content: str, purpose: str = "fine-tune") -> str:
+    """Upload JSONL content to Together AI and return the file id."""
+    if not TOGETHER_API_KEY:
+        raise ValueError("TOGETHER_API_KEY is not set.")
+
+    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/files"
+    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            url,
+            headers=headers,
+            files={
+                "file": ("training.jsonl", content.encode("utf-8"), "application/jsonl"),
+                "purpose": (None, purpose),
+            },
         )
-        s3 = session.client("s3", endpoint_url=R2_ENDPOINT)
-        s3.put_object(
-            Bucket=R2_BUCKET_NAME,
-            Key=key,
-            Body=content.encode("utf-8"),
-            ContentType="application/jsonl",
-        )
-        host = R2_ENDPOINT.replace("https://", "").rstrip("/")
-        return f"https://{R2_BUCKET_NAME}.{host}/{key}"
-    except Exception as exc:
-        logger.warning("R2 upload failed: %s", exc)
-        return None
+        if resp.status_code >= 300:
+            logger.error("Together AI file upload failed: %s", resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=f"Together AI file upload error: {resp.text}")
+        data = resp.json()
+        file_id = data.get("id")
+        if not file_id:
+            raise HTTPException(status_code=500, detail="No file ID returned from Together AI")
+        return file_id
 
 
-def _github_api_request(path: str, method: str = "GET", data: Optional[bytes] = None) -> Dict[str, Any]:
-    """Call the GitHub REST API with the configured GITHUB_TOKEN."""
-    url = f"https://api.github.com{path}"
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-            "Content-Type": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode()
-        logger.error("GitHub API error %s %s: %s", method, path, body)
-        raise RuntimeError(f"GitHub API {exc.code}: {body[:200]}") from exc
-
-
-def _upload_to_github_raw(session_id: str, content: str) -> str:
-    """Push the dataset to a dedicated branch/file on GitHub and return the raw URL."""
-    if not GITHUB_TOKEN:
-        raise RuntimeError("GITHUB_TOKEN is not set; cannot upload training dataset")
-
-    owner, repo = _repo_owner_and_name()
-    branch = "training-data"
-    path = f"training/{session_id}.jsonl"
-    encoded_content = base64.b64encode(content.encode("utf-8")).decode()
-
-    # Ensure branch exists.
-    try:
-        _github_api_request(f"/repos/{owner}/{repo}/git/ref/heads/{branch}")
-    except RuntimeError:
-        # Create branch from default branch.
-        default = _github_api_request(f"/repos/{owner}/{repo}")
-        default_branch = default.get("default_branch", "master")
-        ref = _github_api_request(f"/repos/{owner}/{repo}/git/ref/heads/{default_branch}")
-        sha = ref["object"]["sha"]
-        _github_api_request(
-            f"/repos/{owner}/{repo}/git/refs",
-            method="POST",
-            data=json.dumps({"ref": f"refs/heads/{branch}", "sha": sha}).encode(),
-        )
-
-    # Get current file SHA if it exists.
-    file_sha = None
-    try:
-        existing = _github_api_request(f"/repos/{owner}/{repo}/contents/{path}?ref={branch}")
-        file_sha = existing.get("sha")
-    except RuntimeError:
-        pass
-
-    payload = {
-        "message": f"Add training data for session {session_id}",
-        "content": encoded_content,
-        "branch": branch,
-    }
-    if file_sha:
-        payload["sha"] = file_sha
-
-    _github_api_request(
-        f"/repos/{owner}/{repo}/contents/{path}",
-        method="PUT",
-        data=json.dumps(payload).encode(),
-    )
-
-    return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
-
-
-def upload_dataset(session_id: str, content: str) -> str:
-    """Upload the JSONL dataset somewhere publicly reachable.
-
-    Prefers R2 when credentials are available; otherwise falls back to a raw
-    GitHub URL so Cloudflare can fetch the training file.
-    """
-    key = f"training_data/{session_id}.jsonl"
-    url = _upload_to_r2(key, content)
-    if url:
-        logger.info("Uploaded dataset to R2 for %s", session_id)
-        return url
-    url = _upload_to_github_raw(session_id, content)
-    logger.info("Uploaded dataset to GitHub raw URL for %s", session_id)
-    return url
-
-
-async def _create_fine_tune_job(
-    session_id: str,
-    dataset_url: str,
-) -> str:
-    """Call Cloudflare's fine-tunes endpoint and return the job ID."""
-    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
-        raise RuntimeError("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set")
-
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/finetunes"
+async def _start_fine_tune_job(file_id: str, base_model: str, session_id: str) -> str:
+    """Start a fine-tune job and return the Together AI job ID."""
+    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs"
     headers = {
-        "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+        "Authorization": f"Bearer {TOGETHER_API_KEY}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": FINE_TUNE_BASE_MODEL,
-        "training_file": dataset_url,
-        "name": f"cerebrumdev-{session_id[:20]}",
-        "description": f"Fine-tune for session {session_id}",
+        "model": base_model,
+        "training_file": file_id,
+        "suffix": f"cerebrum-{session_id[:8]}",
+        "hyperparameters": {
+            "n_epochs": 3,
+            "learning_rate_multiplier": 1.0,
+        },
     }
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(url, json=payload, headers=headers)
+        if resp.status_code >= 300:
+            logger.error("Together AI job creation failed: %s", resp.text)
+            raise HTTPException(status_code=resp.status_code, detail=f"Together AI job creation error: {resp.text}")
         data = resp.json()
-        if resp.status_code >= 300 or not data.get("success"):
-            detail = data.get("errors") or data.get("message") or resp.text
-            raise RuntimeError(f"Cloudflare fine-tune creation failed: {detail}")
-        result = data.get("result", {})
-        job_id = result.get("id") or result.get("finetune_id")
+        job_id = data.get("id")
         if not job_id:
-            raise RuntimeError(f"Cloudflare response did not contain a job ID: {result}")
-        return str(job_id)
+            raise HTTPException(status_code=500, detail="No job ID returned from Together AI")
+        return job_id
+
+
+async def _get_fine_tune_status(job_id: str) -> dict:
+    """Poll Together AI for job status."""
+    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs/{job_id}"
+    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.get(url, headers=headers)
+        if resp.status_code >= 300:
+            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch training status from Together AI")
+        data = resp.json()
+        status = data.get("status", "unknown")
+        progress = data.get("progress", 0.0)
+        fine_tuned_model = data.get("fine_tuned_model")
+        error = data.get("error") if status == "failed" else None
+        return {
+            "status": status,
+            "progress": progress,
+            "fine_tuned_model": fine_tuned_model,
+            "error": error,
+        }
 
 
 async def start_training(session_id: str) -> TrainingJob:
-    """Validate data, upload dataset, and start a Cloudflare fine-tune job."""
+    """Validate data, upload to Together AI, and start a fine-tune job."""
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if not state.training_data:
-        raise HTTPException(status_code=400, detail="No training_data found for this session")
-
+    pairs = state.training_data
     try:
-        validate_training_data(state.training_data)
+        validate_training_data(pairs)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Reset/update job record.
+    jsonl_content = format_jsonl(pairs)
+
     state.training_job = TrainingJob(
         status="preparing",
-        dataset_size=len(state.training_data),
+        dataset_size=len(pairs),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
     update_session(session_id, state)
 
     try:
-        jsonl_content = format_jsonl(state.training_data)
-        dataset_url = upload_dataset(session_id, jsonl_content)
-        state.training_job.dataset_url = dataset_url
-        state.training_job.status = "queued"
-        update_session(session_id, state)
+        file_id = await _upload_file(jsonl_content)
+        job_id = await _start_fine_tune_job(file_id, FINE_TUNE_BASE_MODEL, session_id)
 
-        job_id = await _create_fine_tune_job(session_id, dataset_url)
         state.training_job.job_id = job_id
         state.training_job.status = "queued"
         state.training_job.updated_at = datetime.utcnow()
         update_session(session_id, state)
         return state.training_job
+    except HTTPException:
+        state.training_job.status = "failed"
+        state.training_job.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+        raise
     except Exception as exc:
         logger.exception("Failed to start training for %s", session_id)
         state.training_job.status = "failed"
@@ -268,82 +182,58 @@ async def start_training(session_id: str) -> TrainingJob:
         raise HTTPException(status_code=500, detail=f"Training start failed: {exc}")
 
 
-def _map_cf_status(status: Optional[str]) -> str:
-    if not status:
-        return "idle"
-    mapping = {
-        "pending": "queued",
-        "queued": "queued",
-        "running": "running",
-        "completed": "succeeded",
-        "succeeded": "succeeded",
-        "failed": "failed",
-        "cancelled": "failed",
-    }
-    return mapping.get(status.lower(), "running")
-
-
 async def get_training_status(session_id: str) -> TrainingJob:
-    """Poll Cloudflare for the latest job status and update the session."""
+    """Poll Together AI for status and update the session."""
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    job = state.training_job
-    if not job.job_id:
+    if not state.training_job.job_id:
         raise HTTPException(status_code=404, detail="No training job found for this session")
 
-    if not CLOUDFLARE_ACCOUNT_ID or not CLOUDFLARE_API_TOKEN:
-        raise HTTPException(status_code=500, detail="Cloudflare credentials are not configured")
-
-    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/finetunes/{job.job_id}"
-    headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
-
+    job_id = state.training_job.job_id
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(url, headers=headers)
-            data = resp.json()
-            if resp.status_code >= 300 or not data.get("success"):
-                detail = data.get("errors") or data.get("message") or resp.text
-                raise RuntimeError(f"Cloudflare status fetch failed: {detail}")
-
-            result = data.get("result", {})
-            job.status = _map_cf_status(result.get("status"))
-            job.progress = float(result.get("progress", 0.0) or 0.0)
-            job.updated_at = datetime.utcnow()
-
-            if job.status == "succeeded":
-                job.fine_tuned_model_id = result.get("model_id") or result.get("fine_tuned_model")
-            elif job.status == "failed":
-                job.error = result.get("error") or result.get("errors") or "Unknown training error"
-
-            update_session(session_id, state)
-            return job
+        status_info = await _get_fine_tune_status(job_id)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Failed to fetch training status for %s", session_id)
         raise HTTPException(status_code=500, detail=f"Status fetch failed: {exc}")
 
+    status_map = {
+        "pending": "queued",
+        "running": "running",
+        "succeeded": "succeeded",
+        "failed": "failed",
+        "cancelled": "idle",
+    }
+    mapped_status = status_map.get(status_info["status"], "idle")
+
+    state.training_job.status = mapped_status
+    state.training_job.progress = float(status_info.get("progress", 0.0) or 0.0)
+    if status_info["status"] == "succeeded":
+        state.training_job.fine_tuned_model_id = status_info.get("fine_tuned_model")
+    elif status_info["status"] == "failed":
+        state.training_job.error = status_info.get("error") or "Unknown error"
+    state.training_job.updated_at = datetime.utcnow()
+    update_session(session_id, state)
+    return state.training_job
+
 
 async def cancel_training(session_id: str) -> bool:
-    """Attempt to cancel the fine-tune job; always clears the local job record."""
+    """Cancel a running fine-tune job on Together AI."""
     state = get_session(session_id)
     if not state or not state.training_job.job_id:
         return False
 
     job_id = state.training_job.job_id
-    if CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN:
-        url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/finetunes/{job_id}"
-        headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.delete(url, headers=headers)
-        except Exception as exc:
-            logger.warning("Cloudflare cancel request failed (non-fatal): %s", exc)
+    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs/{job_id}/cancel"
+    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
 
-    state.training_job.status = "idle"
-    state.training_job.progress = 0.0
-    state.training_job.updated_at = datetime.utcnow()
-    update_session(session_id, state)
-    return True
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, headers=headers)
+        if resp.status_code == 200:
+            state.training_job.status = "idle"
+            state.training_job.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            return True
+    return False
