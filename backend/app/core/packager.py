@@ -12,6 +12,9 @@ from typing import Any, Dict, List, Optional
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
 
+# Absolute path to the Tinker adapter so we can copy it into deployed packages.
+_TINKER_ADAPTER_SOURCE = Path(__file__).parent / "llm" / "tinker_adapter.py"
+
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
@@ -53,6 +56,17 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
         "embeddings": embeddings,
         "metadatas": metadatas,
     }
+
+
+def _copy_tinker_adapter(package_root: Path) -> None:
+    """Copy the grounded Tinker adapter into the deployable package."""
+    if not _TINKER_ADAPTER_SOURCE.exists():
+        logger.warning("Tinker adapter source not found at %s", _TINKER_ADAPTER_SOURCE)
+        return
+    dest_dir = package_root / "app" / "core" / "llm"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(_TINKER_ADAPTER_SOURCE, dest_dir / "tinker_adapter.py")
+    logger.info("Copied Tinker adapter into package")
 
 
 def _copy_or_generate_container(session_id: str, state: SessionState, package_root: Path) -> Path:
@@ -129,6 +143,14 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "")
 CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY", "")
 RAG_K = int(os.getenv("RAG_K", "3"))
+
+# Optional grounded Tinker LoRA inference. Imported lazily so the package still
+# boots when the tinker SDK is not installed.
+try:
+    from app.core.llm.tinker_adapter import TinkerAdapter
+except Exception as _tinker_exc:
+    TinkerAdapter = None  # type: ignore
+    logger.debug("Tinker adapter not available in deployed runtime: %s", _tinker_exc)
 
 BASE_DIR = Path(__file__).parent.parent.parent
 CHAIN_PATH = BASE_DIR / "default_chain.json"
@@ -211,6 +233,25 @@ async def chat(payload: Dict[str, Any]):
     if context_chunks:
         system += "\\n\\nRelevant context:\\n" + "\\n\\n".join(context_chunks)
 
+    # Prefer a grounded Tinker LoRA when one is configured.
+    if TinkerAdapter is not None and TinkerAdapter.is_available():
+        try:
+            result = await TinkerAdapter.call(
+                message=message,
+                system_prompt=system,
+                max_tokens=1024,
+                temperature=0.7,
+            )
+            if result.get("status") == "success":
+                return {{
+                    "text": result["response"],
+                    "provider": result.get("provider", "tinker"),
+                    "model": result.get("model", OLLAMA_MODEL),
+                }}
+            logger.warning("Tinker adapter returned error: %s", result.get("error"))
+        except Exception as exc:
+            logger.warning("Tinker adapter call failed: %s", exc)
+
     messages = [{{"role": "system", "content": system}}] + history + [{{"role": "user", "content": message}}]
 
     if OLLAMA_URL:
@@ -233,7 +274,7 @@ async def chat(payload: Dict[str, Any]):
             logger.warning("Ollama chat failed: %s", exc)
 
     return {{
-        "text": "Chat is offline. Configure OLLAMA_URL to restore AI responses.",
+        "text": "Chat is offline. Configure OLLAMA_URL or a Tinker fine-tuned model to restore AI responses.",
         "provider": "offline_template",
         "model": "offline",
     }}
@@ -361,6 +402,12 @@ RUN git clone --depth 1 https://github.com/bopoadz-del/Cerebrum-Blocks.git /app
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
     pip install --no-cache-dir -r requirements.txt
 
+# If you are serving a Tinker fine-tuned model, the runtime needs the
+# ``tinker`` package installed (it is not on PyPI). Mount or COPY the vendored
+# wheel/source here and install it, e.g.:
+# COPY tinker-*.whl /tmp/
+# RUN pip install --no-cache-dir /tmp/tinker-*.whl
+
 # Inject session-specific files and patch the runtime
 COPY . /app
 RUN python patch_blocks.py
@@ -450,6 +497,7 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
                 shutil.copy2(f, docs_dir / f.name)
 
     # 5. Runtime integration
+    _copy_tinker_adapter(package_root)
     _write_deployed_router(package_root, domain)
     _write_patch_script(package_root)
     _write_bootstrap_script(package_root)
@@ -478,6 +526,10 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
             env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
             env_vars.setdefault("GROUNDED_ADAPTER_REWRITE_PASS", "false")
             env_vars.setdefault("GROUNDED_ADAPTER_TIMEOUT", "60")
+            # The deployed runtime needs to authenticate with Tinker Cloud.
+            tinker_key = os.getenv("TINKER_API_KEY", "")
+            if tinker_key:
+                env_vars["TINKER_API_KEY"] = tinker_key
     _write_dotenv(package_root, env_vars)
     _write_render_yaml(package_root, service_name, env_vars)
 
