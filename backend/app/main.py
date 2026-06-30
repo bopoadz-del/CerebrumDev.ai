@@ -4,9 +4,12 @@ from dotenv import load_dotenv
 # Load .env before any module reads environment variables
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from .core.auth import require_api_key, verify_production_auth
 from .routers import sessions, config, domains, upload, chat, deploy, train
+
+verify_production_auth()
 
 app = FastAPI(title="CerebrumDev.ai API", version="0.1.0")
 
@@ -18,13 +21,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"])
-app.include_router(config.router, prefix="/v1/sessions", tags=["config"])
-app.include_router(domains.router, prefix="/v1/domains", tags=["domains"])
-app.include_router(upload.router, prefix="/v1/sessions", tags=["upload"])
-app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"])
-app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"])
-app.include_router(train.router, prefix="/v1/sessions", tags=["training"])
+app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_api_key)])
+app.include_router(config.router, prefix="/v1/sessions", tags=["config"], dependencies=[Depends(require_api_key)])
+app.include_router(domains.router, prefix="/v1/domains", tags=["domains"], dependencies=[Depends(require_api_key)])
+app.include_router(upload.router, prefix="/v1/sessions", tags=["upload"], dependencies=[Depends(require_api_key)])
+app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"], dependencies=[Depends(require_api_key)])
+app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], dependencies=[Depends(require_api_key)])
+app.include_router(train.router, prefix="/v1/sessions", tags=["training"], dependencies=[Depends(require_api_key)])
 
 @app.get("/health")
 async def health():
