@@ -469,8 +469,15 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
         "ENV": "production",
         "PORT": "8000",
     }
-    if state.training_job.status == "succeeded" and state.training_job.fine_tuned_model_id:
+    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
+        # A completed Tinker LoRA produces a tinker:// path; prefer the grounded
+        # adapter when the deployed runtime is configured for Tinker inference.
         env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
+        if state.training_job.fine_tuned_model_id.startswith("tinker://"):
+            env_vars["GROUNDED_ADAPTER_ENABLED"] = "true"
+            env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
+            env_vars.setdefault("GROUNDED_ADAPTER_REWRITE_PASS", "false")
+            env_vars.setdefault("GROUNDED_ADAPTER_TIMEOUT", "60")
     _write_dotenv(package_root, env_vars)
     _write_render_yaml(package_root, service_name, env_vars)
 

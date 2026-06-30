@@ -19,6 +19,22 @@ services:
         value: https://dashscope.aliyuncs.com/compatible-mode/v1
       - key: QWEN_MODEL
         value: qwen-plus
+      - key: TINKER_API_KEY
+        sync: false
+      - key: TINKER_BASE_MODEL
+        value: Qwen/Qwen2.5-7B-Instruct
+      - key: TINKER_LORA_RANK
+        value: "16"
+      - key: TINKER_BATCH_SIZE
+        value: "4"
+      - key: TINKER_MAX_STEPS
+        value: "10"
+      - key: GROUNDED_ADAPTER_ENABLED
+        value: "false"
+      - key: GROUNDED_ADAPTER_REWRITE_PASS
+        value: "false"
+      - key: GROUNDED_ADAPTER_TIMEOUT
+        value: "60"
       - key: CHROMA_PERSIST_DIR
         value: /app/storage/chroma
       - key: STORAGE_PATH

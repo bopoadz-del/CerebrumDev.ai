@@ -1,12 +1,14 @@
-"""Together AI fine-tune orchestrator (Phase 4: Tinker)."""
+"""Tinker fine-tune orchestrator (Phase 4: Tinker)."""
 
 import json
 import logging
 import os
+import threading
+import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List
 
-import httpx
 from fastapi import HTTPException
 
 from ..models.session import TrainingJob
@@ -14,19 +16,22 @@ from .session_store import get_session, update_session
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Environment variables (set in .env / Render)
-#   TOGETHER_API_KEY   – required Together AI API key
-#   TOGETHER_BASE_URL  – optional, defaults to https://api.together.xyz
-#   FINE_TUNE_BASE_MODEL – base model to fine-tune (default Qwen 7B)
-# ---------------------------------------------------------------------------
+TINKER_API_KEY = os.environ.get("TINKER_API_KEY")
+TINKER_BASE_MODEL = os.environ.get("TINKER_BASE_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+TINKER_LORA_RANK = int(os.environ.get("TINKER_LORA_RANK", "16"))
+TINKER_BATCH_SIZE = int(os.environ.get("TINKER_BATCH_SIZE", "4"))
+TINKER_MAX_STEPS = int(os.environ.get("TINKER_MAX_STEPS", "10"))
+TINKER_LEARNING_RATE = float(os.environ.get("TINKER_LEARNING_RATE", "1e-4"))
+STORAGE_PATH = os.environ.get("STORAGE_PATH", "./storage")
 
-TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY")
-TOGETHER_BASE_URL = os.environ.get("TOGETHER_BASE_URL", "https://api.together.xyz")
-FINE_TUNE_BASE_MODEL = os.environ.get(
-    "FINE_TUNE_BASE_MODEL",
-    os.environ.get("TOGETHER_MODEL", "Qwen/Qwen2.5-7B-Instruct"),
-)
+# Cancel events for in-flight training threads.
+_cancel_events: Dict[str, threading.Event] = {}
+
+
+def _training_dir(session_id: str) -> Path:
+    path = Path(STORAGE_PATH) / "sessions" / session_id / "training"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def validate_training_data(pairs: List[Dict[str, str]], min_pairs: int = 10) -> bool:
@@ -43,102 +48,182 @@ def validate_training_data(pairs: List[Dict[str, str]], min_pairs: int = 10) -> 
     return True
 
 
-def format_jsonl(
-    pairs: List[Dict[str, str]],
-    system_prompt: str = "You are a helpful assistant.",
-) -> str:
-    """Convert Q&A pairs to the Together AI chat-completion JSONL format."""
-    lines = []
-    for p in pairs:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": (p.get("question") or "").strip()},
-            {"role": "assistant", "content": (p.get("answer") or "").strip()},
-        ]
-        lines.append(json.dumps({"messages": messages}, ensure_ascii=False))
-    return "\n".join(lines) + ("\n" if lines else "")
+def _write_jsonl(session_id: str, pairs: List[Dict[str, str]]) -> str:
+    """Write session Q&A pairs to a JSONL file for audit/reproducibility."""
+    path = _training_dir(session_id) / "scenarios.jsonl"
+    with path.open("w", encoding="utf-8") as f:
+        for pair in pairs:
+            row = {
+                "instruction": pair["question"].strip(),
+                "response": pair["answer"].strip(),
+                "source": f"session.{session_id}",
+            }
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return str(path)
 
 
-async def _upload_file(content: str, purpose: str = "fine-tune") -> str:
-    """Upload JSONL content to Together AI and return the file id."""
-    if not TOGETHER_API_KEY:
-        raise ValueError("TOGETHER_API_KEY is not set.")
+def _build_datum_for_pair(tokenizer, instruction: str, response: str, max_tokens: int):
+    """Tokenize one (instruction, response) into a Tinker Datum.
 
-    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/files"
-    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
+    Loss weights are 0 on prompt tokens and 1 on response tokens so only the
+    assistant continuation contributes gradient.
+    """
+    import tinker
+    from tinker.types import ModelInput
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(
-            url,
-            headers=headers,
-            files={
-                "file": ("training.jsonl", content.encode("utf-8"), "application/jsonl"),
-                "purpose": (None, purpose),
-            },
+    user_msg = {"role": "user", "content": instruction}
+    assistant_msg = {"role": "assistant", "content": response}
+
+    prompt_ids = tokenizer.encode_message_with_chat_template(user_msg, [user_msg])
+    response_ids = tokenizer.encode_message_with_chat_template(
+        assistant_msg, [user_msg, assistant_msg]
+    )
+
+    full_ids = prompt_ids + response_ids
+    if len(full_ids) > max_tokens:
+        full_ids = full_ids[:max_tokens]
+        if len(full_ids) <= len(prompt_ids):
+            return None
+
+    eos = getattr(tokenizer, "eos_token_id", None) or 0
+    input_ids = full_ids[:-1]
+    target_ids = full_ids[1:] + [eos][: 1 if len(full_ids) == len(input_ids) else 0]
+    if len(target_ids) != len(input_ids):
+        target_ids = full_ids[1:]
+    weights = [0.0] * len(input_ids)
+    prompt_len_minus_one = max(0, len(prompt_ids) - 1)
+    for i in range(prompt_len_minus_one, len(weights)):
+        weights[i] = 1.0
+    if sum(weights) == 0:
+        return None
+
+    return tinker.Datum(
+        model_input=ModelInput.from_ints(input_ids),
+        loss_fn_inputs={"target_tokens": target_ids, "weights": weights},
+    )
+
+
+def _run_training(
+    session_id: str,
+    job_id: str,
+    rows: List[Dict[str, str]],
+    base_model: str,
+    lora_rank: int,
+    batch_size: int,
+    max_steps: int,
+    learning_rate: float,
+) -> None:
+    """Background thread: tokenize, train, and update session state."""
+    cancel_event = _cancel_events.get(session_id)
+
+    def _update(**kwargs) -> None:
+        state = get_session(session_id)
+        if not state:
+            return
+        for key, value in kwargs.items():
+            setattr(state.training_job, key, value)
+        state.training_job.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+
+    _update(status="running", progress=0.0)
+
+    try:
+        import tinker
+
+        service = tinker.ServiceClient()
+        training_client = service.create_lora_training_client(
+            base_model=base_model,
+            rank=lora_rank,
         )
-        if resp.status_code >= 300:
-            logger.error("Together AI file upload failed: %s", resp.text)
-            raise HTTPException(status_code=resp.status_code, detail=f"Together AI file upload error: {resp.text}")
-        data = resp.json()
-        file_id = data.get("id")
-        if not file_id:
-            raise HTTPException(status_code=500, detail="No file ID returned from Together AI")
-        return file_id
+        tokenizer = training_client.get_tokenizer()
+        info = training_client.get_info()
+        logger.info(
+            "Tinker training client ready for %s: model_id=%s lora_rank=%d",
+            session_id,
+            info.model_id,
+            info.lora_rank,
+        )
 
+        data = []
+        for row in rows:
+            datum = _build_datum_for_pair(
+                tokenizer,
+                row["question"],
+                row["answer"],
+                max_tokens=4096,
+            )
+            if datum is not None:
+                data.append(datum)
 
-async def _start_fine_tune_job(file_id: str, base_model: str, session_id: str) -> str:
-    """Start a fine-tune job and return the Together AI job ID."""
-    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs"
-    headers = {
-        "Authorization": f"Bearer {TOGETHER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": base_model,
-        "training_file": file_id,
-        "suffix": f"cerebrum-{session_id[:8]}",
-        "hyperparameters": {
-            "n_epochs": 3,
-            "learning_rate_multiplier": 1.0,
-        },
-    }
+        if not data:
+            raise ValueError("No valid training examples after tokenization")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code >= 300:
-            logger.error("Together AI job creation failed: %s", resp.text)
-            raise HTTPException(status_code=resp.status_code, detail=f"Together AI job creation error: {resp.text}")
-        data = resp.json()
-        job_id = data.get("id")
-        if not job_id:
-            raise HTTPException(status_code=500, detail="No job ID returned from Together AI")
-        return job_id
+        n = len(data)
+        losses: List[float] = []
+        from tinker import AdamParams
 
+        for step in range(max_steps):
+            if cancel_event and cancel_event.is_set():
+                _update(status="cancelled", error="Cancelled by user")
+                return
 
-async def _get_fine_tune_status(job_id: str) -> dict:
-    """Poll Together AI for job status."""
-    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs/{job_id}"
-    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
+            start = (step * batch_size) % n
+            end = start + batch_size
+            if end <= n:
+                batch = data[start:end]
+            else:
+                batch = data[start:] + data[: end - n]
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(url, headers=headers)
-        if resp.status_code >= 300:
-            raise HTTPException(status_code=resp.status_code, detail="Failed to fetch training status from Together AI")
-        data = resp.json()
-        status = data.get("status", "unknown")
-        progress = data.get("progress", 0.0)
-        fine_tuned_model = data.get("fine_tuned_model")
-        error = data.get("error") if status == "failed" else None
-        return {
-            "status": status,
-            "progress": progress,
-            "fine_tuned_model": fine_tuned_model,
-            "error": error,
-        }
+            fb_future = training_client.forward_backward(batch, loss_fn="cross_entropy")
+            fb_result = fb_future.result()
+            opt_future = training_client.optim_step(
+                AdamParams(learning_rate=learning_rate)
+            )
+            opt_future.result()
+
+            metrics = getattr(fb_result, "metrics", None) or {}
+            loss_sum = metrics.get("loss:sum") if isinstance(metrics, dict) else None
+            avg = (loss_sum / len(batch)) if loss_sum is not None else None
+            if avg is not None:
+                losses.append(avg)
+
+            progress = min((step + 1) / max_steps, 0.99)
+            _update(progress=progress)
+
+            if step % 10 == 0 or step == max_steps - 1:
+                logger.info(
+                    "Tinker training %s step %d/%d  loss/sample=%.4f",
+                    session_id,
+                    step + 1,
+                    max_steps,
+                    avg if avg is not None else float("nan"),
+                )
+
+        safe_model = base_model.replace("/", "_")
+        checkpoint_name = f"checkpoints-{safe_model}-{session_id}"
+        save_future = training_client.save_state(checkpoint_name)
+        save_result = save_future.result()
+        tinker_path = getattr(save_result, "path", None) or checkpoint_name
+
+        _update(
+            status="completed",
+            progress=1.0,
+            fine_tuned_model_id=tinker_path,
+        )
+        logger.info("Tinker training completed for %s: %s", session_id, tinker_path)
+
+    except Exception as exc:
+        logger.exception("Tinker training failed for %s", session_id)
+        _update(status="failed", error=str(exc))
+    finally:
+        _cancel_events.pop(session_id, None)
 
 
 async def start_training(session_id: str) -> TrainingJob:
-    """Validate data, upload to Together AI, and start a fine-tune job."""
+    """Validate data and start a Tinker fine-tune job in the background."""
+    if not TINKER_API_KEY:
+        raise HTTPException(status_code=500, detail="TINKER_API_KEY is not configured")
+
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -149,91 +234,62 @@ async def start_training(session_id: str) -> TrainingJob:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    jsonl_content = format_jsonl(pairs)
+    # Persist the JSONL dataset for audit/reproducibility.
+    _write_jsonl(session_id, pairs)
+
+    job_id = f"tinker-{uuid.uuid4().hex[:12]}"
+    _cancel_events[session_id] = threading.Event()
 
     state.training_job = TrainingJob(
-        status="preparing",
+        provider="tinker",
+        job_id=job_id,
+        status="queued",
         dataset_size=len(pairs),
-        created_at=datetime.utcnow(),
+        started_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
     )
     update_session(session_id, state)
 
-    try:
-        file_id = await _upload_file(jsonl_content)
-        job_id = await _start_fine_tune_job(file_id, FINE_TUNE_BASE_MODEL, session_id)
+    thread = threading.Thread(
+        target=_run_training,
+        args=(
+            session_id,
+            job_id,
+            pairs,
+            TINKER_BASE_MODEL,
+            TINKER_LORA_RANK,
+            TINKER_BATCH_SIZE,
+            TINKER_MAX_STEPS,
+            TINKER_LEARNING_RATE,
+        ),
+        daemon=True,
+    )
+    thread.start()
 
-        state.training_job.job_id = job_id
-        state.training_job.status = "queued"
-        state.training_job.updated_at = datetime.utcnow()
-        update_session(session_id, state)
-        return state.training_job
-    except HTTPException:
-        state.training_job.status = "failed"
-        state.training_job.updated_at = datetime.utcnow()
-        update_session(session_id, state)
-        raise
-    except Exception as exc:
-        logger.exception("Failed to start training for %s", session_id)
-        state.training_job.status = "failed"
-        state.training_job.error = str(exc)
-        state.training_job.updated_at = datetime.utcnow()
-        update_session(session_id, state)
-        raise HTTPException(status_code=500, detail=f"Training start failed: {exc}")
+    # Briefly yield so the thread can transition to running if possible.
+    return state.training_job
 
 
 async def get_training_status(session_id: str) -> TrainingJob:
-    """Poll Together AI for status and update the session."""
+    """Return the current training job state for the session."""
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not state.training_job.job_id:
-        raise HTTPException(status_code=404, detail="No training job found for this session")
-
-    job_id = state.training_job.job_id
-    try:
-        status_info = await _get_fine_tune_status(job_id)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to fetch training status for %s", session_id)
-        raise HTTPException(status_code=500, detail=f"Status fetch failed: {exc}")
-
-    status_map = {
-        "pending": "queued",
-        "running": "running",
-        "succeeded": "succeeded",
-        "failed": "failed",
-        "cancelled": "idle",
-    }
-    mapped_status = status_map.get(status_info["status"], "idle")
-
-    state.training_job.status = mapped_status
-    state.training_job.progress = float(status_info.get("progress", 0.0) or 0.0)
-    if status_info["status"] == "succeeded":
-        state.training_job.fine_tuned_model_id = status_info.get("fine_tuned_model")
-    elif status_info["status"] == "failed":
-        state.training_job.error = status_info.get("error") or "Unknown error"
-    state.training_job.updated_at = datetime.utcnow()
-    update_session(session_id, state)
     return state.training_job
 
 
 async def cancel_training(session_id: str) -> bool:
-    """Cancel a running fine-tune job on Together AI."""
+    """Cancel a running Tinker training job."""
     state = get_session(session_id)
     if not state or not state.training_job.job_id:
         return False
 
-    job_id = state.training_job.job_id
-    url = f"{TOGETHER_BASE_URL.rstrip('/')}/v1/fine-tuning/jobs/{job_id}/cancel"
-    headers = {"Authorization": f"Bearer {TOGETHER_API_KEY}"}
+    event = _cancel_events.get(session_id)
+    if event:
+        event.set()
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(url, headers=headers)
-        if resp.status_code == 200:
-            state.training_job.status = "idle"
-            state.training_job.updated_at = datetime.utcnow()
-            update_session(session_id, state)
-            return True
-    return False
+    state.training_job.status = "cancelled"
+    state.training_job.updated_at = datetime.utcnow()
+    update_session(session_id, state)
+    _cancel_events.pop(session_id, None)
+    return True

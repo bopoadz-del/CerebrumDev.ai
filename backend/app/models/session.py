@@ -38,14 +38,14 @@ class DeploymentResult(BaseModel):
 
 
 class TrainingJob(BaseModel):
+    provider: str = "tinker"
     job_id: str = ""
-    status: Literal["idle", "preparing", "queued", "running", "succeeded", "failed"] = "idle"
+    status: Literal["queued", "running", "completed", "failed", "cancelled"] = "queued"
     fine_tuned_model_id: Optional[str] = None
     progress: float = 0.0
     error: Optional[str] = None
     dataset_size: int = 0
-    dataset_url: Optional[str] = None
-    created_at: Optional[datetime] = None
+    started_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
 

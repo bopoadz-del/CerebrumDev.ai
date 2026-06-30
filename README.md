@@ -20,7 +20,7 @@ That process takes **6 to 12 months** — and costs millions.
 1. **Select** a pre-built domain kit (18 available: Medical, Retail, Construction, etc.)
 2. **Upload** their proprietary documents (PDFs, spreadsheets, manuals)
 3. **Chat** with AI to design a custom processing chain (using 50+ reusable blocks)
-4. **Fine-tune** the model on their data (via Together AI, at near-zero cost)
+4. **Fine-tune** the model on their data via **Tinker** (LoRA, at near-zero cost)
 5. **Deploy** a production-ready, isolated AI instance to the cloud (Render) with one click
 
 No months of infrastructure work. No ML engineering team required. Just your data, your rules, and a live API endpoint serving your customized AI.
@@ -56,9 +56,9 @@ The platform consists of two repos:
 - The approved chain is saved for deployment
 
 ### Phase 4 – Tinker (Fine-Tuning)
-- **Backend**: Powered by **Together AI** – upload your Q&A pairs (≥10) and fine-tune Qwen/Llama models
+- **Backend**: Powered by **Tinker** – upload your Q&A pairs (≥10) and fine-tune Qwen/Llama models
 - **Frontend**: Dedicated `TrainingPanel` to manage pairs, start training, and poll progress
-- On success, you receive a `fine_tuned_model_id` that becomes the model for your deployed instance
+- On success, the resulting `fine_tuned_model_id` (a `tinker://` path) is used for inference in the deployed instance
 
 ### Phase 5 – Ship (Deploy)
 - **Packager** generates a deployable package:
@@ -79,7 +79,7 @@ The platform consists of two repos:
 - Python 3.10+
 - Node.js 18+
 - Docker (optional, for local container testing)
-- A [Together AI](https://api.together.ai) API key (for fine-tuning)
+- A [Tinker](https://tinker-console.thinkingmachineslabinc.com) API key (for fine-tuning)
 - A [Render](https://render.com) account (for deployment)
 
 ### Local Development
@@ -130,10 +130,17 @@ QWEN_MODEL=qwen-plus
 STORAGE_PATH=./storage
 CHROMA_PERSIST_DIR=./storage/chroma
 
-# Fine-tuning (Together AI)
-TOGETHER_API_KEY=
-TOGETHER_BASE_URL=https://api.together.xyz
-FINE_TUNE_BASE_MODEL=Qwen/Qwen2.5-7B-Instruct
+# Fine-tuning (Tinker)
+TINKER_API_KEY=
+TINKER_BASE_MODEL=Qwen/Qwen2.5-7B-Instruct
+TINKER_LORA_RANK=16
+TINKER_BATCH_SIZE=4
+TINKER_MAX_STEPS=10
+
+# Tinker grounded adapter (inference)
+GROUNDED_ADAPTER_ENABLED=false
+GROUNDED_ADAPTER_REWRITE_PASS=false
+GROUNDED_ADAPTER_TIMEOUT=60
 
 # Auto-deploy (Render + GitHub)
 RENDER_API_KEY=
@@ -169,7 +176,7 @@ Backend runs on `http://localhost:8001` (Cerebrum-Blocks store runs on `8000`).
 - `GET /v1/sessions/{id}/upload/status` – indexing progress
 - `POST /v1/sessions/{id}/chat` – chat with AI (SSE)
 - `POST /v1/sessions/{id}/train/data` – save Q&A training data
-- `POST /v1/sessions/{id}/train` – start a Together AI fine-tune job
+- `POST /v1/sessions/{id}/train` – start a Tinker fine-tune job
 - `GET /v1/sessions/{id}/train/status` – poll fine-tune status
 - `DELETE /v1/sessions/{id}/train` – cancel the fine-tune job
 - `POST /v1/sessions/{id}/deploy?target=cloud` – package and deploy to Render
@@ -210,7 +217,7 @@ The platform fetches available blocks and domain kits from the **Cerebrum-Blocks
 
 - **Frontend**: React, TypeScript, Tailwind CSS, Lucide Icons
 - **Backend**: FastAPI, Pydantic, ChromaDB, httpx
-- **AI**: Ollama Cloud, Together AI (fine-tuning)
+- **AI**: Ollama Cloud, Tinker (fine-tuning)
 - **Deployment**: Render, Docker, GitHub API
 - **Storage**: ChromaDB (vectors), local files (documents)
 

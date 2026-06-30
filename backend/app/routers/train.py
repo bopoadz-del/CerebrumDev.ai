@@ -50,13 +50,13 @@ async def save_training_data(session_id: str, payload: Dict[str, Any]):
 
 @router.post("/{session_id}/train")
 async def trigger_training(session_id: str) -> TrainingJob:
-    """Validate training data and start a Cloudflare fine-tune job."""
+    """Validate training data and start a Tinker fine-tune job."""
     return await start_training(session_id)
 
 
 @router.get("/{session_id}/train/status")
 async def training_status(session_id: str) -> TrainingJob:
-    """Return the current training job status (polling Cloudflare if needed)."""
+    """Return the current Tinker training job status."""
     return await get_training_status(session_id)
 
 
