@@ -7,3 +7,23 @@ python-dotenv==1.0.1
 pypdf>=5.0.0
 python-docx>=1.1.0
 chromadb>=0.5.0
+
+# High-quality PDF -> Markdown parsing (optional; pulls torch/transformers).
+# If not installed, the upload pipeline falls back to pypdf.
+marker-pdf>=1.10.0
+
+# Tinker SDK and its transitive dependencies.
+# The `tinker` package is vendored from The_Fork; install it manually on this
+# machine (it is not available on PyPI).
+anyio>=3.5.0,<5
+click>=8.0.0
+distro>=1.7.0,<2
+numpy>=2.0.0
+orjson>=3.10.0
+protobuf>=4.21
+pyqwest>=0.4.1
+rich>=13.0.0
+sniffio>=1.3.0
+transformers>=4.36.0
+typing-extensions>=4.10.0,<5
+zstandard>=0.22.0

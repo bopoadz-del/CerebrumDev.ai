@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "http://localhost:8000")
 CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY")
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
+MARKER_ENABLED = os.getenv("MARKER_ENABLED", "true").lower() in ("1", "true", "yes")
 
 
 def _headers() -> Dict[str, str]:
@@ -66,11 +67,28 @@ async def parse_document(file_path: str) -> str:
     text = ""
 
     if doc_type == "pdf":
-        try:
-            result = await _execute_block("pdf", {"file_path": file_path})
-            text = _extract_text_from_result(result)
-        except Exception as exc:
-            logger.warning("PDF block failed for %s: %s", file_path, exc)
+        # 1. Prefer the Cerebrum-Blocks marker block for high-quality Markdown.
+        if not text.strip() and MARKER_ENABLED:
+            try:
+                result = await _execute_block("marker", {"file_path": file_path})
+                text = _extract_text_from_result(result)
+                logger.info("Parsed %s with Cerebrum-Blocks marker block", file_path)
+            except Exception as exc:
+                logger.warning("Marker block failed for %s: %s", file_path, exc)
+
+        # 2. Fall back to the generic PDF block.
+        if not text.strip():
+            try:
+                result = await _execute_block("pdf", {"file_path": file_path})
+                text = _extract_text_from_result(result)
+            except Exception as exc:
+                logger.warning("PDF block failed for %s: %s", file_path, exc)
+
+        # 3. Local Marker if the remote blocks didn't work.
+        if not text.strip():
+            text = _parse_pdf_with_marker(file_path)
+
+        # 4. Final pypdf fallback.
         if not text.strip():
             text = _parse_pdf_local(file_path)
 
@@ -122,6 +140,31 @@ def _extract_text_from_result(result: Dict[str, Any]) -> str:
                 return "\n".join(str(x) for x in val)
             return str(val)
     return str(data)
+
+
+def _parse_pdf_with_marker(file_path: str) -> str:
+    """Convert PDF to Markdown using Marker (optional dependency).
+
+    If marker-pdf is not installed or fails, returns an empty string so the
+    existing pypdf fallback can take over.
+    """
+    if not MARKER_ENABLED:
+        return ""
+    try:
+        from marker.converters.pdf_converter import PdfConverter
+        from marker.models import create_model_dict
+        from marker.output import text_from_rendered
+
+        converter = PdfConverter(artifact_dict=create_model_dict())
+        rendered = converter(file_path)
+        text, _, _ = text_from_rendered(rendered)
+        return text or ""
+    except ImportError:
+        logger.info("marker-pdf not installed; skipping Marker PDF parser")
+        return ""
+    except Exception as exc:
+        logger.warning("Marker PDF parse failed for %s: %s", file_path, exc)
+        return ""
 
 
 def _parse_pdf_local(file_path: str) -> str:
