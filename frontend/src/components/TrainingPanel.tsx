@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 
 interface TrainingPanelProps {
@@ -20,6 +20,8 @@ A: Reinforced concrete.
 Q: Who approves change orders?
 A: The site engineer and project manager.`;
 
+const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
+
 const TrainingPanel: React.FC<TrainingPanelProps> = ({ sessionId, onComplete }) => {
   const [rawText, setRawText] = useState(EXAMPLE_TEXT);
   const [pairs, setPairs] = useState<{ question: string; answer: string }[]>([]);
@@ -27,6 +29,14 @@ const TrainingPanel: React.FC<TrainingPanelProps> = ({ sessionId, onComplete }) 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const parsePairs = (text: string): { question: string; answer: string }[] => {
     try {
@@ -110,25 +120,27 @@ const TrainingPanel: React.FC<TrainingPanelProps> = ({ sessionId, onComplete }) 
   };
 
   const pollStatus = () => {
-    const interval = setInterval(async () => {
+    clearPolling();
+    intervalRef.current = setInterval(async () => {
       try {
         const res = await api.get(`/sessions/${sessionId}/train/status`);
         setStatus(res.data);
-        if (['succeeded', 'failed', 'idle'].includes(res.data.status)) {
-          clearInterval(interval);
-          if (res.data.status === 'succeeded') {
+        if (TERMINAL_STATUSES.includes(res.data.status)) {
+          clearPolling();
+          if (res.data.status === 'completed') {
             onComplete();
           }
         }
       } catch (err: any) {
         setError(err.response?.data?.detail || err.message);
-        clearInterval(interval);
+        clearPolling();
       }
     }, 5000);
   };
 
   useEffect(() => {
     handleParse();
+    return clearPolling;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -138,7 +150,7 @@ const TrainingPanel: React.FC<TrainingPanelProps> = ({ sessionId, onComplete }) 
       <p className="text-gray-600">
         Paste question/answer pairs below (use <code className="bg-gray-100 px-1 rounded">Q:</code> and{' '}
         <code className="bg-gray-100 px-1 rounded">A:</code> prefixes), or paste a JSON array. Then start a
-        Cloudflare fine-tune job.
+        Tinker fine-tune job.
       </p>
 
       <textarea
@@ -153,7 +165,9 @@ const TrainingPanel: React.FC<TrainingPanelProps> = ({ sessionId, onComplete }) 
       />
 
       <div className="flex justify-between text-sm text-gray-700">
-        <span>Parsed pairs: <strong>{pairs.length}</strong></span>
+        <span>
+          Parsed pairs: <strong>{pairs.length}</strong>
+        </span>
         <span className={saved ? 'text-green-600' : 'text-gray-500'}>
           {saved ? 'Saved ✓' : 'Not saved yet'}
         </span>

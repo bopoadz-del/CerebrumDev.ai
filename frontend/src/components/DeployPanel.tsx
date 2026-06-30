@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 
 interface DeployPanelProps {
@@ -14,12 +14,22 @@ interface DeployStatus {
   message: string | null;
 }
 
+const TERMINAL_STATUSES = ['live', 'packaged', 'failed'];
+
 const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
   const [target, setTarget] = useState<'cloud' | 'edge'>('cloud');
   const [status, setStatus] = useState<DeployStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearPolling = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  };
 
   const addLog = (msg: string) => setLogs((prev) => [...prev, msg]);
 
@@ -44,17 +54,18 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
   };
 
   const pollStatus = () => {
-    const interval = setInterval(async () => {
+    clearPolling();
+    intervalRef.current = setInterval(async () => {
       try {
         const res = await api.get(`/sessions/${sessionId}/deploy/status`);
         setStatus(res.data);
         if (res.data.message) addLog(res.data.message);
-        if (['live', 'packaged', 'failed'].includes(res.data.status)) {
-          clearInterval(interval);
+        if (TERMINAL_STATUSES.includes(res.data.status)) {
+          clearPolling();
         }
       } catch (err: any) {
         addLog(`Status poll error: ${err.message}`);
-        clearInterval(interval);
+        clearPolling();
       }
     }, 4000);
   };
@@ -62,6 +73,10 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
   const downloadPackage = (variant: 'cloud' | 'edge' = 'cloud') => {
     window.open(`/v1/sessions/${sessionId}/deploy/package?variant=${variant}`, '_blank');
   };
+
+  useEffect(() => {
+    return clearPolling;
+  }, []);
 
   return (
     <div className="bg-white rounded-lg shadow p-6 space-y-4">
@@ -95,7 +110,9 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
       {status && (
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
-            <span>Status: <strong>{status.status}</strong></span>
+            <span>
+              Status: <strong>{status.status}</strong>
+            </span>
             <span>Progress: {Math.round(status.progress * 100)}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded h-2">

@@ -1,8 +1,13 @@
 import axios from 'axios';
 
+const API_KEY = import.meta.env.VITE_API_KEY || '';
+
 const api = axios.create({
   baseURL: '/v1',
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+  },
 });
 
 export const uploadFiles = (sessionId: string, files: File[]) => {
@@ -34,9 +39,16 @@ export const postChatMessage = async (
   message: string,
   onEvent: (event: string, data: string) => void
 ) => {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (API_KEY) {
+    headers['X-API-Key'] = API_KEY;
+  }
+
   const response = await fetch(`/v1/sessions/${sessionId}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ message }),
   });
 
