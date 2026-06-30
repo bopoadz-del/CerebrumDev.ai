@@ -119,6 +119,9 @@ Copy `backend/.env.example` to `backend/.env` and fill in:
 CEREBRUM_API_URL=http://localhost:8000
 CEREBRUM_API_KEY=cb_dev_key
 
+# Configurator backend auth (required in production)
+CEREBRUM_DEV_API_KEY=cb_dev_secret_key
+
 # LLM provider: Ollama (Qwen fallback is also supported)
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=gpt-oss:120b-cloud
@@ -129,6 +132,9 @@ QWEN_MODEL=qwen-plus
 # Storage
 STORAGE_PATH=./storage
 CHROMA_PERSIST_DIR=./storage/chroma
+
+# Document parsing
+MARKER_ENABLED=true  # set false to skip marker-pdf even when installed
 
 # Fine-tuning (Tinker)
 TINKER_API_KEY=
@@ -141,6 +147,9 @@ TINKER_MAX_STEPS=10
 GROUNDED_ADAPTER_ENABLED=false
 GROUNDED_ADAPTER_REWRITE_PASS=false
 GROUNDED_ADAPTER_TIMEOUT=60
+
+# Note: fine-tuned models are served via Tinker Cloud (internet required).
+# Base Ollama inference works offline, but a deployed LoRA needs TINKER_API_KEY.
 
 # Auto-deploy (Render + GitHub)
 RENDER_API_KEY=
@@ -196,6 +205,10 @@ A new instance (deployed from a session) is created as a separate web service wi
 - `DEPLOY_REPO` must exist and be accessible
 
 Without a GitHub token, the deployer falls back to returning a downloadable zip.
+
+### Session State Persistence
+
+Session progress (domain, chain, training job, deployment status) is now saved to `storage/sessions/{id}/state.json` using atomic writes with a `.bak` fallback. On Render, the disk mount at `/app/storage` ensures this state survives redeploys. If `STORAGE_PATH` is not on a persistent disk, sessions will be lost on restart.
 
 ### ChromaDB Persistence on Render
 
