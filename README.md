@@ -133,8 +133,8 @@ QWEN_MODEL=qwen-plus
 STORAGE_PATH=./storage
 CHROMA_PERSIST_DIR=./storage/chroma
 
-# Document parsing
-MARKER_ENABLED=true  # set false to skip marker-pdf even when installed
+# Document parsing (local-only; disabled by default on Render)
+MARKER_ENABLED=false  # set true only if marker-pdf is installed locally
 
 # Fine-tuning (Tinker)
 TINKER_API_KEY=
@@ -158,6 +158,23 @@ DEPLOY_REPO=https://github.com/bopoadz-del/CerebrumDev.ai
 GITHUB_TOKEN=
 GITHUB_USERNAME=bopoadz-del
 ```
+
+---
+
+### Local-only Marker PDF parsing (optional)
+
+The configurator can use [`marker-pdf`](https://github.com/VikParuchuri/marker) for higher-quality PDF → Markdown extraction, but it is **disabled by default** and is **not installed in production images**. Marker pulls `torch`, `transformers`, and ~1.35 GB of model weights, so it is intended only for local development machines with sufficient disk and RAM.
+
+To enable it locally:
+
+```bash
+cd backend
+pip install -r requirements-marker.txt
+# edit .env
+MARKER_ENABLED=true
+```
+
+If Marker is not installed or `MARKER_ENABLED=false`, the upload pipeline falls back to the Cerebrum-Blocks PDF block and then to `pypdf`.
 
 ---
 

@@ -8,9 +8,9 @@ pypdf>=5.0.0
 python-docx>=1.1.0
 chromadb>=0.5.0
 
-# High-quality PDF -> Markdown parsing (optional; pulls torch/transformers).
-# If not installed, the upload pipeline falls back to pypdf.
-marker-pdf>=1.10.0
+# High-quality PDF -> Markdown parsing is optional and local-only.
+# See requirements-marker.txt. It is NOT installed in production images
+# because it pulls torch, transformers, and ~1.35 GB of model weights.
 
 # Tinker SDK and its transitive dependencies.
 # The `tinker` package is vendored from The_Fork; install it manually on this

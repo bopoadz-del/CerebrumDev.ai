@@ -35,6 +35,8 @@ services:
         value: "false"
       - key: GROUNDED_ADAPTER_TIMEOUT
         value: "60"
+      - key: MARKER_ENABLED
+        value: "false"
       - key: CHROMA_PERSIST_DIR
         value: /app/storage/chroma
       - key: STORAGE_PATH

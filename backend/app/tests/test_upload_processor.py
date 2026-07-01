@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 
 import pytest
@@ -10,6 +11,7 @@ class TestParsePdfWithMarker:
     def test_returns_empty_when_marker_not_installed(self, monkeypatch):
         """If marker-pdf is missing, the helper should gracefully fall back."""
         monkeypatch.setattr(upload_processor, "MARKER_ENABLED", True)
+        monkeypatch.setitem(sys.modules, "marker.converters.pdf", None)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             f.write(b"%PDF-1.4 fake pdf content")
             path = f.name

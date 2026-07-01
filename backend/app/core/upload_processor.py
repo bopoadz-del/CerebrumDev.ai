@@ -151,7 +151,7 @@ def _parse_pdf_with_marker(file_path: str) -> str:
     if not MARKER_ENABLED:
         return ""
     try:
-        from marker.converters.pdf_converter import PdfConverter
+        from marker.converters.pdf import PdfConverter
         from marker.models import create_model_dict
         from marker.output import text_from_rendered
 
