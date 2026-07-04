@@ -17,7 +17,7 @@ interface DeployStatus {
 const TERMINAL_STATUSES = ['live', 'packaged', 'failed'];
 
 const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
-  const [target, setTarget] = useState<'cloud' | 'edge'>('cloud');
+  const [target, setTarget] = useState<'cloud' | 'edge' | 'platform'>('cloud');
   const [status, setStatus] = useState<DeployStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,7 +70,7 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
     }, 4000);
   };
 
-  const downloadPackage = (variant: 'cloud' | 'edge' = 'cloud') => {
+  const downloadPackage = (variant: 'cloud' | 'edge' | 'platform' = 'cloud') => {
     window.open(`/v1/sessions/${sessionId}/deploy/package?variant=${variant}`, '_blank');
   };
 
@@ -89,11 +89,12 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
         <label className="font-medium">Target:</label>
         <select
           value={target}
-          onChange={(e) => setTarget(e.target.value as 'cloud' | 'edge')}
+          onChange={(e) => setTarget(e.target.value as 'cloud' | 'edge' | 'platform')}
           className="border rounded px-2 py-1"
         >
           <option value="cloud">Cloud (Render)</option>
           <option value="edge">Edge (Docker)</option>
+          <option value="platform">Full Platform (The Fork)</option>
         </select>
       </div>
 

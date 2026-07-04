@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from ..core.session_store import get_session, update_session
 from ..core.packager import package_session
+from ..core.platform_packager import package_platform_session, PlatformPackagerError
 from ..core.deployer import deploy_to_render, poll_deploy_status, generate_edge_package
 from ..models.session import SessionState
 
@@ -18,6 +19,7 @@ router = APIRouter()
 class DeployTarget:
     CLOUD = "cloud"
     EDGE = "edge"
+    PLATFORM = "platform"
 
 
 def _update_deployment(state: SessionState, **kwargs):
@@ -36,8 +38,8 @@ async def start_deploy(session_id: str, target: str = "cloud", background_tasks:
     if not state.chain_approved or not state.proposed_chain:
         raise HTTPException(status_code=400, detail="Chain must be approved before deployment")
 
-    if target not in (DeployTarget.CLOUD, DeployTarget.EDGE):
-        raise HTTPException(status_code=400, detail="Target must be 'cloud' or 'edge'")
+    if target not in (DeployTarget.CLOUD, DeployTarget.EDGE, DeployTarget.PLATFORM):
+        raise HTTPException(status_code=400, detail="Target must be 'cloud', 'edge', or 'platform'")
 
     _update_deployment(
         state,
@@ -48,19 +50,33 @@ async def start_deploy(session_id: str, target: str = "cloud", background_tasks:
     )
 
     try:
-        package_info = package_session(state)
+        if target == DeployTarget.PLATFORM:
+            package_info = package_platform_session(state)
+        else:
+            package_info = package_session(state)
+    except PlatformPackagerError as exc:
+        _update_deployment(state, status="failed", progress=0.0, message=f"Platform packaging failed: {exc}")
+        raise HTTPException(status_code=400, detail=f"Platform packaging failed: {exc}")
     except Exception as exc:
         _update_deployment(state, status="failed", progress=0.0, message=f"Packaging failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Packaging failed: {exc}")
 
+    variant = "platform" if target == DeployTarget.PLATFORM else "cloud"
     _update_deployment(
         state,
-        status="packaged" if target == DeployTarget.EDGE else "deploying",
+        status="packaged" if target in (DeployTarget.EDGE, DeployTarget.PLATFORM) else "deploying",
         progress=0.5,
         message="Package ready",
         package_path=package_info["zip_path"],
         api_key=package_info["api_key"],
     )
+
+    if target == DeployTarget.PLATFORM:
+        return {
+            "status": "packaged",
+            "download_url": f"/v1/sessions/{session_id}/deploy/package?variant=platform",
+            "message": "Full platform package ready. Use docker compose up or apply render.yaml.",
+        }
 
     if target == DeployTarget.EDGE:
         try:

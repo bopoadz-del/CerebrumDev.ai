@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from datetime import datetime
 from typing import AsyncGenerator
 from fastapi import APIRouter, HTTPException
@@ -29,6 +30,73 @@ def _docs_summary(state) -> str:
     return f"Document preview: {preview}"
 
 
+def _parse_command(message: str):
+    """Detect natural-language config commands. Returns (command, args) or (None, None)."""
+    lowered = message.lower().strip()
+
+    domain_match = re.search(
+        r"(?:set\s+(?:the\s+)?domain\s+(?:to\s+)?|use\s+domain\s+|domain\s+(?:is\s+)?)([a-z0-9_-]+)",
+        lowered,
+    )
+    if domain_match:
+        return "set_domain", {"domain": domain_match.group(1)}
+
+    model_match = re.search(
+        r"(?:set\s+(?:the\s+)?(?:base\s+)?model\s+(?:to\s+)?|use\s+(?:model\s+)?)([a-zA-Z0-9_.-]+\-[0-9]+[a-zA-Z0-9_-]*)",
+        message,
+    )
+    if model_match:
+        return "set_model", {"model": model_match.group(1)}
+
+    lora_match = re.search(
+        r"(?:set\s+(?:the\s+)?lora\s+rank\s+(?:to\s+)?|lora\s+rank\s+(?:to\s+)?)(\d+)",
+        lowered,
+    )
+    if lora_match:
+        return "set_lora_rank", {"lora_rank": int(lora_match.group(1))}
+
+    lr_match = re.search(
+        r"(?:set\s+(?:the\s+)?learning\s+rate\s+(?:to\s+)?|learning\s+rate\s+(?:to\s+)?)([0-9.e-]+)",
+        lowered,
+    )
+    if lr_match:
+        try:
+            return "set_learning_rate", {"learning_rate": float(lr_match.group(1))}
+        except ValueError:
+            pass
+
+    vdb_match = re.search(
+        r"(?:set\s+(?:the\s+)?vector\s+db\s+(?:to\s+)?|use\s+vector\s+db\s+|vector\s+db\s+(?:is\s+)?)([a-z0-9]+)",
+        lowered,
+    )
+    if vdb_match:
+        return "set_vector_db", {"vector_db": vdb_match.group(1).capitalize()}
+
+    hnsw_match = re.search(
+        r"(?:set\s+(?:the\s+)?hnsw\s+(?:preset\s+)?(?:to\s+)?|hnsw\s+(?:preset\s+)?(?:to\s+)?)(fast|balanced|accurate)",
+        lowered,
+    )
+    if hnsw_match:
+        return "set_hnsw_preset", {"hnsw_preset": hnsw_match.group(1)}
+
+    return None, None
+
+
+def _apply_command(state, command: str, args: dict):
+    if command == "set_domain":
+        state.config.domain = args["domain"]
+    elif command == "set_model":
+        state.config.ai_config.base_model = args["model"]
+    elif command == "set_lora_rank":
+        state.config.ai_config.lora_rank = args["lora_rank"]
+    elif command == "set_learning_rate":
+        state.config.ai_config.learning_rate = args["learning_rate"]
+    elif command == "set_vector_db":
+        state.config.ai_config.vector_db = args["vector_db"]
+    elif command == "set_hnsw_preset":
+        state.config.ai_config.hnsw_preset = args["hnsw_preset"]
+
+
 async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator[str, None]:
     state = get_session(session_id)
     if not state:
@@ -37,6 +105,20 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
 
     state.chat_history.append({"role": "user", "content": user_message})
     state.updated_at = datetime.utcnow()
+
+    command, args = _parse_command(user_message)
+    if command:
+        _apply_command(state, command, args)
+        update_session(session_id, state)
+        yield _sse_event("command", json.dumps({"command": command, "args": args}))
+        confirm = f"Updated: {command.replace('_', ' ')}."
+        state.chat_history.append({"role": "assistant", "content": confirm})
+        update_session(session_id, state)
+        for word in confirm.split(" "):
+            yield _sse_event("delta", word + " ")
+        yield _sse_event("done", "")
+        return
+
     update_session(session_id, state)
 
     yield _sse_event("status", "thinking")

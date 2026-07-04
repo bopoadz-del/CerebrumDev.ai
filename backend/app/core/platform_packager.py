@@ -1,0 +1,521 @@
+"""Package a CerebrumDev.ai session into a production-hardened, Fork-class platform.
+
+Unlike the lightweight packager, this produces a multi-stage Docker build with
+Postgres/pgvector support, alembic migrations, and a hardened entrypoint. The
+runtime is still Cerebrum-Blocks, but the packaging follows The_Fork's
+production patterns and is fully domain-neutral.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from ..models.session import SessionState
+from .chroma_store import load_chunks, collection_exists
+from .packager import _safe_name
+
+logger = logging.getLogger(__name__)
+
+STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
+CEREBRUM_BLOCKS_REPO = os.getenv(
+    "CEREBRUM_BLOCKS_REPO",
+    "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
+)
+
+
+class PlatformPackagerError(Exception):
+    """Raised when a platform package cannot be generated."""
+
+
+class MissingKitError(PlatformPackagerError):
+    """Raised when the requested domain kit cannot be found."""
+
+
+class MissingForkTemplateError(PlatformPackagerError):
+    """Raised when The_Fork template files are not available."""
+
+
+def _package_dir(session_id: str) -> Path:
+    path = Path(STORAGE_PATH) / "sessions" / session_id / "deploy" / "platform"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
+    """Export the session's vector index to a JSON-serializable structure."""
+    chunks: List[str] = []
+    embeddings: List[List[float]] = []
+    metadatas: List[Dict[str, Any]] = []
+
+    if collection_exists(session_id):
+        try:
+            chunks, embeddings, metadatas = load_chunks(session_id)
+            logger.info("Exported %d vectors from ChromaDB for %s", len(chunks), session_id)
+        except Exception as exc:
+            logger.warning("Could not load Chroma vectors for %s: %s", session_id, exc)
+
+    if not chunks and state.chunks:
+        chunks = state.chunks
+        embeddings = state.embeddings or []
+        metadatas = [{"session_id": session_id, "index": i} for i in range(len(chunks))]
+
+    return {
+        "session_id": session_id,
+        "domain": state.config.domain,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "chunks": chunks,
+        "embeddings": embeddings,
+        "metadatas": metadatas,
+    }
+
+
+def _find_kit_root(domain: str) -> Path:
+    """Locate the domain kit on disk.
+
+    Checks ``CEREBRUM_BLOCKS_ROOT`` first, then falls back to a sibling
+    ``Cerebrum-Blocks`` directory relative to this backend.
+    """
+    explicit = os.getenv("CEREBRUM_BLOCKS_ROOT")
+    candidates: List[Path] = []
+    if explicit:
+        candidates.append(Path(explicit) / "block_store" / "kits" / domain)
+    backend_root = Path(__file__).resolve().parents[4]
+    candidates.append(backend_root.parent / "Cerebrum-Blocks" / "block_store" / "kits" / domain)
+    candidates.append(backend_root.parent.parent / "Cerebrum-Blocks" / "block_store" / "kits" / domain)
+
+    for candidate in candidates:
+        if candidate.is_dir() and (candidate / "manifest.json").exists():
+            return candidate
+    raise MissingKitError(f"Domain kit '{domain}' not found in any of: {candidates}")
+
+
+def _copy_kit_artifacts(kit_root: Path, package_root: Path) -> None:
+    """Copy kit bundle artifacts into the package tree."""
+    manifest_path = kit_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    bundle_dir = kit_root / "bundle"
+
+    artifacts = manifest.get("artifacts", [])
+    if not artifacts and bundle_dir.exists():
+        # Fallback: copy the whole bundle tree preserving structure.
+        for src in bundle_dir.rglob("*"):
+            if src.is_file():
+                rel = src.relative_to(bundle_dir)
+                dest = package_root / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+        return
+
+    for artifact in artifacts:
+        src = bundle_dir / artifact["src"]
+        dest = package_root / artifact["dest"]
+        if not src.exists():
+            logger.warning("Kit artifact missing: %s", src)
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
+
+def _write_dockerfile(package_root: Path) -> None:
+    """Write a multi-stage, production-hardened Dockerfile based on The_Fork."""
+    dockerfile = package_root / "Dockerfile"
+    dockerfile.write_text(
+        '''# Production-hardened Cerebrum-Blocks platform (Fork-class).
+# Multi-stage build: compile deps, build frontend (if present), then runtime.
+FROM python:3.11-slim AS builder
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential gcc g++ gfortran pkg-config git \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone the Cerebrum-Blocks runtime. Override CEREBRUM_BLOCKS_REPO at build time
+# to use a private fork or a specific branch.
+ARG CEREBRUM_BLOCKS_REPO=''' + CEREBRUM_BLOCKS_REPO + '''
+RUN git clone --depth 1 "${CEREBRUM_BLOCKS_REPO}" /app
+
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
+    pip install --no-cache-dir -r requirements.txt
+
+# ---------------------------------------------------------------------------
+# Frontend build stage (optional — only if the runtime has a frontend folder).
+# ---------------------------------------------------------------------------
+FROM node:20-slim AS frontend
+WORKDIR /frontend
+COPY --from=builder /app/frontend/package*.json ./
+RUN if [ -f package.json ]; then npm ci; fi
+COPY --from=builder /app/frontend ./
+ENV VITE_API_BASE=""
+RUN if [ -f package.json ]; then npm run build; fi
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim
+WORKDIR /app
+
+# System libraries needed by PDF/OCR/image blocks and healthchecks.
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    libgl1 libglib2.0-0 curl ffmpeg tesseract-ocr tesseract-ocr-eng \\
+    libxext6 libsm6 libxrender1 libice6 libxi6 libxcomposite1 libxcursor1 \\
+    libxdamage1 libxfixes3 libxrandr2 libxtst6 libnss3 \\
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Bring in the runtime plus session-specific injections.
+COPY --from=builder /app /app
+COPY . /app
+
+# Replace the (gitignored) frontend/dist with the freshly built one if it exists.
+COPY --from=frontend /frontend/dist /app/frontend/dist 2>/dev/null || true
+
+# Create an unprivileged user. /app/data is the persistent volume mount.
+RUN useradd --system --uid 1000 --shell /usr/sbin/nologin cerebrum \\
+    && mkdir -p /app/data && chown -R cerebrum:cerebrum /app
+USER cerebrum
+
+ENV PORT=8000
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \\
+    CMD curl -f "http://localhost:${PORT}/health" || exit 1
+
+ENTRYPOINT ["./entrypoint.sh"]
+''',
+        encoding="utf-8",
+    )
+
+
+def _write_entrypoint(package_root: Path) -> None:
+    """Write the production entrypoint with alembic migrations."""
+    entrypoint = package_root / "entrypoint.sh"
+    entrypoint.write_text(
+        '''#!/bin/bash
+set -e
+
+echo "🚀 Cerebrum Blocks platform starting on $(uname -m)"
+
+if command -v nvidia-smi &> /dev/null; then
+    export HARDWARE="gpu"
+elif [ -d "/proc/device-tree" ] && grep -q "nvidia" /proc/device-tree/model 2>/dev/null; then
+    export HARDWARE="jetson"
+else
+    export HARDWARE="cpu"
+fi
+echo "ℹ️  Hardware profile: ${HARDWARE}"
+
+PORT=${PORT:-8000}
+echo "📡 Listening on 0.0.0.0:${PORT}"
+
+# Run alembic migrations when a Postgres DATABASE_URL is configured.
+if [ -n "${DATABASE_URL:-}" ] && [[ "${DATABASE_URL}" == postgresql* ]]; then
+    echo "🗄️  DATABASE_URL set — running alembic upgrade head"
+    if ! python -m alembic upgrade head; then
+        echo "❌ alembic upgrade failed"
+        exit 1
+    fi
+fi
+
+exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" --no-access-log
+''',
+        encoding="utf-8",
+    )
+
+
+def _write_docker_compose(package_root: Path) -> None:
+    """Write a docker-compose stack with Postgres/pgvector."""
+    compose = package_root / "docker-compose.yml"
+    compose.write_text(
+        '''version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cerebrum-platform-postgres
+    environment:
+      POSTGRES_USER: cerebrum
+      POSTGRES_PASSWORD: cerebrum
+      POSTGRES_DB: cerebrum
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cerebrum -d cerebrum"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cerebrum:
+    build: .
+    container_name: cerebrum-platform
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - DATA_DIR=/app/data
+      - DATABASE_URL=postgresql+psycopg://cerebrum:cerebrum@postgres:5432/cerebrum
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+''',
+        encoding="utf-8",
+    )
+
+
+def _write_render_yaml(
+    package_root: Path,
+    service_name: str,
+    env_vars: Dict[str, str],
+) -> None:
+    """Write a Render blueprint with a managed Postgres database."""
+    safe_envs = []
+    secret_keys = {"SECRET_KEY", "DATA_ENCRYPTION_KEY", "CEREBRUM_MASTER_KEY"}
+    for key, value in env_vars.items():
+        if key in secret_keys:
+            safe_envs.append(f"      - key: {key}\n        sync: false")
+        else:
+            safe_envs.append(f"      - key: {key}\n        value: {value}")
+    env_lines = "\n".join(safe_envs)
+
+    render = package_root / "render.yaml"
+    render.write_text(
+        f'''# Render Blueprint — production-hardened Cerebrum Blocks platform.
+# Set secret keys in the Render dashboard after the first apply.
+
+databases:
+  - name: {service_name}-db
+    databaseName: cerebrum
+    user: cerebrum
+    plan: starter
+
+services:
+  - type: web
+    name: {service_name}
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    plan: starter
+    region: oregon
+    envVars:
+{env_lines}
+      - key: DATABASE_URL
+        fromDatabase:
+          name: {service_name}-db
+          property: connectionString
+    disk:
+      name: {service_name}-data
+      mountPath: /app/data
+      sizeGB: 1
+''',
+        encoding="utf-8",
+    )
+
+
+def _write_bootstrap(package_root: Path) -> None:
+    """Write a bootstrap script that restores the vector index."""
+    bootstrap = package_root / "bootstrap.py"
+    bootstrap.write_text(
+        '''"""Restore the session vector index into ChromaDB on first boot."""
+import json
+import os
+from pathlib import Path
+
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "/app/chroma")
+vectors_path = Path(__file__).parent / "vectors.json"
+if not vectors_path.exists():
+    print("No vectors.json found; skipping bootstrap.")
+    raise SystemExit(0)
+
+with open(vectors_path, encoding="utf-8") as f:
+    data = json.load(f)
+
+chunks = data.get("chunks", [])
+embeddings = data.get("embeddings", [])
+metadatas = data.get("metadatas", []) or [{"index": i} for i in range(len(chunks))]
+
+if not chunks:
+    print("No chunks to index.")
+    raise SystemExit(0)
+
+os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
+try:
+    import chromadb
+    client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+    collection = client.get_or_create_collection(
+        name="session_default",
+        metadata={"domain": data.get("domain", "general"), "source": "platform_bootstrap"},
+    )
+    ids = [f"chunk_{i}" for i in range(len(chunks))]
+    collection.upsert(
+        ids=ids,
+        documents=chunks,
+        embeddings=embeddings if embeddings and len(embeddings) == len(chunks) else None,
+        metadatas=metadatas,
+    )
+    print(f"Bootstrapped {len(chunks)} chunks into ChromaDB at {CHROMA_PERSIST_DIR}")
+except Exception as exc:
+    print(f"Bootstrap failed (non-fatal): {exc}")
+''',
+        encoding="utf-8",
+    )
+
+
+def _write_readme(package_root: Path, service_name: str) -> None:
+    readme = package_root / "README.platform.md"
+    readme.write_text(
+        f'''# {service_name}
+
+Production-hardened Cerebrum Blocks platform generated by CerebrumDev.ai.
+
+## Local development
+
+```bash
+docker compose up --build
+```
+
+The first startup runs `alembic upgrade head` automatically when `DATABASE_URL`
+is set.
+
+## Deploy to Render
+
+1. Push this folder to a Git repository.
+2. In Render, choose **Blueprint** and point it at `render.yaml`.
+3. Enter the secret keys in the dashboard:
+   - `SECRET_KEY`
+   - `DATA_ENCRYPTION_KEY`
+   - `CEREBRUM_MASTER_KEY`
+4. Apply the blueprint.
+
+## Domain kit
+
+The selected domain kit is installed at build time via `CEREBRUM_DOMAIN_KITS`.
+Session documents are in `data/docs/` and the approved chain is in
+`default_chain.json`.
+''',
+        encoding="utf-8",
+    )
+
+
+def package_platform_session(state: SessionState, api_key: Optional[str] = None) -> Dict[str, Any]:
+    """Create a Fork-class platform package for *state* and return metadata."""
+    session_id = state.session_id
+    domain = state.config.domain
+    package_root = _package_dir(session_id) / "platform"
+    if package_root.exists():
+        shutil.rmtree(package_root)
+    package_root.mkdir(parents=True, exist_ok=True)
+
+    # 1. Domain kit
+    kit_root = _find_kit_root(domain)
+    _copy_kit_artifacts(kit_root, package_root)
+
+    # 2. Session assets
+    chain_path = package_root / "default_chain.json"
+    chain_path.write_text(
+        json.dumps(state.proposed_chain or {"blocks": [], "connections": []}, indent=2),
+        encoding="utf-8",
+    )
+
+    vectors = _export_vectors(session_id, state)
+    (package_root / "vectors.json").write_text(
+        json.dumps(vectors, indent=2),
+        encoding="utf-8",
+    )
+
+    docs_dir = package_root / "data" / "docs"
+    session_files = Path(STORAGE_PATH) / "sessions" / session_id / "files"
+    if session_files.exists():
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        for f in session_files.iterdir():
+            if f.is_file():
+                shutil.copy2(f, docs_dir / f.name)
+
+    # 3. Runtime / deployment files
+    _write_dockerfile(package_root)
+    _write_entrypoint(package_root)
+    _write_docker_compose(package_root)
+    _write_bootstrap(package_root)
+
+    # 4. Env + Render blueprint
+    service_name = f"cerebrum-platform-{_safe_name(domain)}-{_safe_name(session_id)[:16]}"
+    deploy_api_key = api_key or f"cd-platform-{os.urandom(16).hex()}"
+    env_vars: Dict[str, str] = {
+        "ENV": "production",
+        "PORT": "8000",
+        "HOST": "0.0.0.0",
+        "DATA_DIR": "/app/data",
+        "DATABASE_URL": "postgresql+psycopg://cerebrum:cerebrum@postgres:5432/cerebrum",
+        "CEREBRUM_DOMAIN_KITS": domain,
+        "CEREBRUM_MASTER_KEY": deploy_api_key,
+        "CEREBRUM_API_KEY_PLATFORM": deploy_api_key,
+        "CORS_ORIGINS": "*",
+        "CHROMA_PERSIST_DIR": "/app/chroma",
+        "SECRET_KEY": deploy_api_key,
+        "DATA_ENCRYPTION_KEY": deploy_api_key,
+    }
+    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
+        env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
+        if state.training_job.fine_tuned_model_id.startswith("tinker://"):
+            env_vars["GROUNDED_ADAPTER_ENABLED"] = "true"
+            env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
+            env_vars.setdefault("GROUNDED_ADAPTER_REWRITE_PASS", "false")
+            env_vars.setdefault("GROUNDED_ADAPTER_TIMEOUT", "60")
+            tinker_key = os.getenv("TINKER_API_KEY", "")
+            if tinker_key:
+                env_vars["TINKER_API_KEY"] = tinker_key
+
+    dotenv = package_root / ".env"
+    dotenv.write_text(
+        "\n".join(f'{key}={value}' for key, value in env_vars.items()),
+        encoding="utf-8",
+    )
+    _write_render_yaml(package_root, service_name, env_vars)
+    _write_readme(package_root, service_name)
+
+    # 5. Zip package
+    zip_path = _package_dir(session_id) / "platform.zip"
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in package_root.rglob("*"):
+            if file_path.is_file():
+                zf.write(file_path, file_path.relative_to(package_root))
+
+    logger.info(
+        "Packaged platform session %s into %s (%d bytes)",
+        session_id,
+        zip_path,
+        zip_path.stat().st_size,
+    )
+    return {
+        "package_dir": str(package_root),
+        "zip_path": str(zip_path),
+        "service_name": service_name,
+        "api_key": deploy_api_key,
+        "env_vars": env_vars,
+    }

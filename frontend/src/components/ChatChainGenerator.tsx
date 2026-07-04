@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Check, Loader2 } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
 import { postChatMessage, approveChain } from '../api/client';
 
 interface Message {
@@ -28,6 +29,7 @@ interface ChatChainGeneratorProps {
 }
 
 const ChatChainGenerator: React.FC<ChatChainGeneratorProps> = ({ sessionId, onApproved }) => {
+  const { addToast } = useToast();
   const [messages, setMessages] = useState<Message[]>([
     {
       role: 'assistant',
@@ -87,7 +89,7 @@ const ChatChainGenerator: React.FC<ChatChainGeneratorProps> = ({ sessionId, onAp
       onApproved?.();
     } catch (err) {
       console.error(err);
-      alert('Failed to approve chain');
+      addToast({ type: 'error', title: 'Approval failed', message: 'Failed to approve chain.' });
     }
   };
 
