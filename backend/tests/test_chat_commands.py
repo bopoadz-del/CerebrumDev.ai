@@ -44,3 +44,18 @@ def test_apply_command_updates_state():
 
     _apply_command(state, "set_learning_rate", {"learning_rate": 1e-4})
     assert state.config.ai_config.learning_rate == 1e-4
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "what blocks are available",
+        "list blocks",
+        "available blocks",
+        "show blocks",
+    ],
+)
+def test_parse_list_blocks_command(message):
+    command, args = _parse_command(message)
+    assert command == "list_blocks"
+    assert args == {}

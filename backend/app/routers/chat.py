@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..core.session_store import get_session, update_session
 from ..core.chain_generator import generate_chain_suggestion, validate_chain, fetch_block_registry
 from ..core.rule_injector import inject_rules
+from ..core.block_taxonomy import list_optional_blocks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -79,6 +80,9 @@ def _parse_command(message: str):
     if hnsw_match:
         return "set_hnsw_preset", {"hnsw_preset": hnsw_match.group(1)}
 
+    if re.search(r"^(what\s+blocks|list\s+blocks|available\s+blocks|show\s+blocks)", lowered):
+        return "list_blocks", {}
+
     return None, None
 
 
@@ -108,6 +112,20 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
 
     command, args = _parse_command(user_message)
     if command:
+        if command == "list_blocks":
+            optional = list_optional_blocks()
+            confirm = (
+                "Your instance already includes the domain kit plus all built-in blocks "
+                "(orchestrator, vector search, OCR, PDF, image, chat, auth, etc.).\n\n"
+                "Optional primitives you can add:\n- " + "\n- ".join(optional)
+            )
+            state.chat_history.append({"role": "assistant", "content": confirm})
+            update_session(session_id, state)
+            for word in confirm.split(" "):
+                yield _sse_event("delta", word + " ")
+            yield _sse_event("done", "")
+            return
+
         _apply_command(state, command, args)
         update_session(session_id, state)
         yield _sse_event("command", json.dumps({"command": command, "args": args}))

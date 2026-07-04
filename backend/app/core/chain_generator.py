@@ -5,6 +5,7 @@ import logging
 from typing import List, Dict, Any
 
 from .feature_mapper import fetch_block_registry
+from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +18,29 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 
 
 def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
-    block_list = "\n".join(
-        f"- {b.get('name')}: {b.get('description', 'No description')}" for b in available_blocks
-    )
+    optional_available = [b for b in available_blocks if b.get("name") in OPTIONAL_BLOCKS]
+    optional_list = "\n".join(
+        f"- {b.get('name')}: {b.get('description', 'No description')}" for b in optional_available
+    ) or "- (none)"
     docs_section = f"\nUploaded documents summary:\n{docs_summary}\n" if docs_summary else ""
     return (
         "You are an AI solution architect for CerebrumDev.ai. "
-        "Your job is to help users design an orchestrator chain of Cerebrum Blocks for their domain.\n\n"
+        "Your job is to help users configure and optionally extend their sovereign AI instance.\n\n"
         f"Domain: {domain}\n"
-        f"Available blocks:\n{block_list}\n"
+        "The platform already includes these built-in blocks automatically: "
+        f"{', '.join(BUILTIN_BLOCKS)}.\n"
+        "You do NOT need to propose these in the chain; they are always available.\n\n"
+        "Optional Fork primitives the user can add on top:\n"
+        f"{optional_list}\n"
         f"{docs_section}\n"
         "When responding:\n"
         "1. Be concise and conversational.\n"
         "2. Ask clarifying questions if the request is vague.\n"
-        "3. When you have enough information, propose a chain in the exact JSON format below.\n"
-        "4. Also extract any business rules the user mentions (e.g., 'always flag urgent RFIs') as a list of strings.\n\n"
+        "3. If the user asks what blocks are available, tell them the domain kit + built-ins are already included, "
+        "and list the optional primitives they can add.\n"
+        "4. Only propose optional blocks in the chain when the user explicitly asks for that capability.\n"
+        "5. When you have enough information, propose a chain in the exact JSON format below.\n"
+        "6. Also extract any business rules the user mentions (e.g., 'always flag urgent RFIs') as a list of strings.\n\n"
         "Chain JSON format:\n"
         '{"blocks": [{"id": "<block_name>", "params": {...}}], "connections": [{"from": 0, "to": 1}]}\n\n'
         "Return your response as JSON with three top-level keys:\n"
