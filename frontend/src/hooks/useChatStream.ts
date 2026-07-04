@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
-import { API_KEY } from '../api/client';
+import { API_KEY, API_BASE_URL } from '../api/client';
 
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
@@ -56,7 +56,7 @@ export function useChatStream(sessionId: string) {
       if (API_KEY) headers['X-API-Key'] = API_KEY;
 
       try {
-        const response = await fetch(`/v1/sessions/${sessionId}/chat`, {
+        const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/chat`, {
           method: 'POST',
           headers,
           body: JSON.stringify({ message: userMsg }),

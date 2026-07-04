@@ -2,8 +2,14 @@ import axios from 'axios';
 
 export const API_KEY = import.meta.env.VITE_API_KEY || '';
 
+// In production, the frontend calls the backend directly. In local dev, Vite can
+// proxy /v1 when VITE_API_URL is not set.
+export const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/v1`
+  : '/v1';
+
 const api = axios.create({
-  baseURL: '/v1',
+  baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
     ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
@@ -25,12 +31,10 @@ export const getUploadResult = (sessionId: string) =>
   api.get(`/sessions/${sessionId}/upload/result`);
 
 export const sendChatMessage = (sessionId: string, _message: string): EventSource => {
-  const url = `/v1/sessions/${sessionId}/chat`;
+  const url = `${API_BASE_URL}/sessions/${sessionId}/chat`;
   const es = new EventSource(url, {
     withCredentials: false,
   } as EventSourceInit);
-  // EventSource only supports GET, so we send the message via a POST first?
-  // FastAPI route is POST. EventSource cannot POST. We use fetch + ReadableStream instead.
   return es;
 };
 
@@ -46,7 +50,7 @@ export const postChatMessage = async (
     headers['X-API-Key'] = API_KEY;
   }
 
-  const response = await fetch(`/v1/sessions/${sessionId}/chat`, {
+  const response = await fetch(`${API_BASE_URL}/sessions/${sessionId}/chat`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ message }),
