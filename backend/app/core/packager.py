@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
+from .llm_config import get_llm_config
 
 # Absolute path to the Tinker adapter so we can copy it into deployed packages.
 _TINKER_ADAPTER_SOURCE = Path(__file__).parent / "llm" / "tinker_adapter.py"
@@ -506,17 +507,27 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
     # 6. Env + Render blueprint
     service_name = f"cerebrumdev-{_safe_name(domain)}-{_safe_name(session_id)[:16]}"
     deploy_api_key = api_key or f"cd-deploy-{os.urandom(16).hex()}"
+    llm_cfg = get_llm_config()
     env_vars = {
         "CEREBRUM_DOMAIN_KITS": domain,
         "CEREBRUM_MASTER_KEY": deploy_api_key,
         "CEREBRUM_API_KEY_CDEV": deploy_api_key,
         "CORS_ORIGINS": "*",
         "CHROMA_PERSIST_DIR": "/app/chroma",
+        "LLM_PROVIDER": llm_cfg["provider"],
         "OLLAMA_URL": os.getenv("OLLAMA_URL", ""),
         "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
+        "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
         "ENV": "production",
         "PORT": "8000",
     }
+    if llm_cfg["provider"] == "qwen":
+        env_vars["QWEN_API_KEY"] = llm_cfg["api_key"]
+    elif llm_cfg["provider"] == "moonshot":
+        env_vars["CEREBRUM_LLM_API_KEY"] = llm_cfg["api_key"]
+        env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
+        env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
         # A completed Tinker LoRA produces a tinker:// path; prefer the grounded
         # adapter when the deployed runtime is configured for Tinker inference.

@@ -6,15 +6,9 @@ from typing import List, Dict, Any
 
 from .feature_mapper import fetch_block_registry
 from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
+from .llm_config import get_llm_config, active_provider
 
 logger = logging.getLogger(__name__)
-
-QWEN_API_KEY = os.getenv("QWEN_API_KEY") or os.getenv("CEREBRUM_LLM_API_KEY")
-QWEN_BASE_URL = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen-plus")
-
-OLLAMA_URL = os.getenv("OLLAMA_URL", "")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
 
 
 def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
@@ -49,46 +43,14 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
     )
 
 
-def _active_provider() -> str:
-    if QWEN_API_KEY:
-        return "qwen"
-    if OLLAMA_URL:
-        return "ollama"
-    return ""
-
-
-async def _call_qwen(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call Qwen/DashScope. Returns parsed JSON."""
-    url = f"{QWEN_BASE_URL.rstrip('/')}/chat/completions"
-    payload = {
-        "model": QWEN_MODEL,
-        "messages": messages,
-        "temperature": 0.3,
-        "response_format": {"type": "json_object"},
-    }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            url,
-            json=payload,
-            headers={"Authorization": f"Bearer {QWEN_API_KEY}", "Content-Type": "application/json"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
-
-
 def _extract_json(text: str) -> Dict[str, Any]:
     """Strip Markdown fences and parse the first JSON object in *text*."""
     text = text.strip()
     if text.startswith("```"):
-        # Drop the opening fence line
         text = text.split("\n", 1)[1] if "\n" in text else ""
     if text.endswith("```"):
         text = text.rsplit("\n", 1)[0] if "\n" in text else ""
     text = text.strip()
-    # Some models emit explanatory text before/after the JSON block.
-    # Grab the first balanced {} object.
     start = text.find("{")
     if start == -1:
         raise ValueError("No JSON object found in model output")
@@ -122,12 +84,33 @@ def _extract_json(text: str) -> Dict[str, Any]:
     return json.loads(text[start:end])
 
 
-async def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call a local/remote Ollama server. Returns parsed JSON."""
-    base = OLLAMA_URL.rstrip("/")
-    url = f"{base}/api/chat"
+async def _call_openai_compatible(
+    base_url: str, api_key: str, model: str, messages: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Call an OpenAI-compatible chat completion endpoint (Qwen, Moonshot, etc.)."""
+    url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": model,
+        "messages": messages,
+        "temperature": 0.3,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        return json.loads(content)
+
+
+async def _call_ollama(base_url: str, model: str, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Call a local/remote Ollama server. Returns parsed JSON."""
+    url = f"{base_url.rstrip('/')}/api/chat"
+    payload = {
+        "model": model,
         "messages": messages,
         "stream": False,
         "format": "json",
@@ -145,11 +128,12 @@ async def _call_ollama(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the configured LLM. Returns parsed JSON."""
-    provider = _active_provider()
-    if provider == "qwen":
-        return await _call_qwen(messages)
+    cfg = get_llm_config()
+    provider = cfg["provider"]
+    if provider in ("qwen", "moonshot"):
+        return await _call_openai_compatible(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
     if provider == "ollama":
-        return await _call_ollama(messages)
+        return await _call_ollama(cfg["base_url"], cfg["model"], messages)
     raise RuntimeError("No LLM provider configured")
 
 
@@ -201,7 +185,7 @@ async def generate_chain_suggestion(
     try:
         result = await _call_llm(messages)
     except Exception as exc:
-        if not _active_provider():
+        if not active_provider():
             logger.warning("No LLM provider configured, using mock generator: %s", exc)
             result = _mock_response(user_message, domain, available_blocks)
         else:

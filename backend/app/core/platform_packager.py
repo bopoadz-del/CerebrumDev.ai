@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
 from .packager import _safe_name
+from .llm_config import get_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +465,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
     # 4. Env + Render blueprint
     service_name = f"cerebrum-platform-{_safe_name(domain)}-{_safe_name(session_id)[:16]}"
     deploy_api_key = api_key or f"cd-platform-{os.urandom(16).hex()}"
+    llm_cfg = get_llm_config()
     env_vars: Dict[str, str] = {
         "ENV": "production",
         "PORT": "8000",
@@ -477,7 +479,18 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "CHROMA_PERSIST_DIR": "/app/chroma",
         "SECRET_KEY": deploy_api_key,
         "DATA_ENCRYPTION_KEY": deploy_api_key,
+        "LLM_PROVIDER": llm_cfg["provider"],
+        "OLLAMA_URL": os.getenv("OLLAMA_URL", ""),
+        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
+        "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
     }
+    if llm_cfg["provider"] == "qwen":
+        env_vars["QWEN_API_KEY"] = llm_cfg["api_key"]
+    elif llm_cfg["provider"] == "moonshot":
+        env_vars["CEREBRUM_LLM_API_KEY"] = llm_cfg["api_key"]
+        env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
+        env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
         env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
         if state.training_job.fine_tuned_model_id.startswith("tinker://"):

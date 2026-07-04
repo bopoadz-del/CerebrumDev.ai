@@ -13,12 +13,24 @@ services:
         value: https://cerebrum-blocks.onrender.com
       - key: CEREBRUM_API_KEY
         generateValue: true
+      - key: LLM_PROVIDER
+        value: ollama
+      - key: OLLAMA_URL
+        value: https://cerebrumdev-ollama.theshovel.ai
+      - key: OLLAMA_MODEL
+        value: gpt-oss:120b-cloud
       - key: QWEN_API_KEY
         sync: false
       - key: QWEN_BASE_URL
         value: https://dashscope.aliyuncs.com/compatible-mode/v1
       - key: QWEN_MODEL
         value: qwen-plus
+      - key: CEREBRUM_LLM_API_KEY
+        sync: false
+      - key: CEREBRUM_LLM_BASE_URL
+        value: https://api.moonshot.cn/v1
+      - key: CEREBRUM_LLM_MODEL
+        value: moonshot-v1-8k
       - key: TINKER_API_KEY
         sync: false
       - key: TINKER_BASE_MODEL
