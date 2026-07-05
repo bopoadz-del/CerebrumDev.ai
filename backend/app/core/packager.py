@@ -70,6 +70,46 @@ def _copy_tinker_adapter(package_root: Path) -> None:
     logger.info("Copied Tinker adapter into package")
 
 
+def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[str, str]) -> None:
+    """Drop a cerebrum CLI folder into the package so the instance ships with a working client."""
+    cli_dir = package_root / "cli"
+    cli_dir.mkdir(parents=True, exist_ok=True)
+
+    # Install script: pip-installs the bundled CLI package.
+    install_sh = cli_dir / "install.sh"
+    install_sh.write_text(
+        "#!/bin/sh\n"
+        "# Install the cerebrum CLI bundled with this instance.\n"
+        "set -e\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "pip install \"$SCRIPT_DIR/cerebrum_cli\"\n"
+        "echo \"cerebrum CLI installed. Run: cerebrum --help\"\n",
+        encoding="utf-8",
+    )
+    install_sh.chmod(0o755)
+
+    # Pre-filled config pointing the CLI at this instance.
+    config_toml = cli_dir / "config.toml"
+    base_url = f"https://{service_name}.onrender.com"
+    config_toml.write_text(
+        f"# Cerebrum CLI configuration for this deployed instance.\n"
+        f'base_url = "{base_url}"\n'
+        f'api_key = "{env_vars.get("CEREBRUM_MASTER_KEY", "")}"\n'
+        f'domain = "{env_vars.get("CEREBRUM_DOMAIN_KITS", "construction")}"\n'
+        f'instance_name = "{service_name}"\n'
+        f'session_id = ""\n',
+        encoding="utf-8",
+    )
+
+    # Best-effort copy of the local CLI package source so install.sh works offline.
+    local_cli = Path(__file__).parent.parent.parent.parent.parent / "cli" / "cerebrum_cli"
+    if local_cli.exists():
+        shutil.copytree(local_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
+        logger.info("Copied cerebrum_cli source into package")
+    else:
+        logger.warning("Local cerebrum_cli source not found at %s; install.sh will need network", local_cli)
+
+
 def _copy_or_generate_container(session_id: str, state: SessionState, package_root: Path) -> Path:
     domain = state.config.domain
     dest_dir = package_root / "app" / "containers"
@@ -543,6 +583,7 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
                 env_vars["TINKER_API_KEY"] = tinker_key
     _write_dotenv(package_root, env_vars)
     _write_render_yaml(package_root, service_name, env_vars)
+    _drop_cli_artifacts(package_root, service_name, env_vars)
 
     # 7. Zip package
     zip_path = _package_dir(session_id) / "package.zip"

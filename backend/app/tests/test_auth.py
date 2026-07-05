@@ -80,6 +80,7 @@ def test_create_session_generates_id(session_client):
     response = session_client.post("/v1/sessions/")
     assert response.status_code == 200
     data = response.json()
+    assert "session_id" in data
     assert data["session_id"].startswith("sess_")
     assert len(data["session_id"]) > len("sess_")
 

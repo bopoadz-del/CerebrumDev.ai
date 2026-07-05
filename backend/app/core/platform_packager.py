@@ -422,6 +422,43 @@ Session documents are in `data/docs/` and the approved chain is in
     )
 
 
+def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[str, str]) -> None:
+    """Drop a cerebrum CLI folder into the platform package."""
+    cli_dir = package_root / "cli"
+    cli_dir.mkdir(parents=True, exist_ok=True)
+
+    install_sh = cli_dir / "install.sh"
+    install_sh.write_text(
+        "#!/bin/sh\n"
+        "# Install the cerebrum CLI bundled with this instance.\n"
+        "set -e\n"
+        "SCRIPT_DIR=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\n"
+        "pip install \"$SCRIPT_DIR/cerebrum_cli\"\n"
+        "echo \"cerebrum CLI installed. Run: cerebrum --help\"\n",
+        encoding="utf-8",
+    )
+    install_sh.chmod(0o755)
+
+    config_toml = cli_dir / "config.toml"
+    base_url = f"https://{service_name}.onrender.com"
+    config_toml.write_text(
+        f"# Cerebrum CLI configuration for this deployed instance.\n"
+        f'base_url = "{base_url}"\n'
+        f'api_key = "{env_vars.get("CEREBRUM_MASTER_KEY", "")}"\n'
+        f'domain = "{env_vars.get("CEREBRUM_DOMAIN_KITS", "construction")}"\n'
+        f'instance_name = "{service_name}"\n'
+        f'session_id = ""\n',
+        encoding="utf-8",
+    )
+
+    local_cli = Path(__file__).parent.parent.parent.parent.parent / "cli" / "cerebrum_cli"
+    if local_cli.exists():
+        shutil.copytree(local_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
+        logger.info("Copied cerebrum_cli source into platform package")
+    else:
+        logger.warning("Local cerebrum_cli source not found at %s; install.sh will need network", local_cli)
+
+
 def package_platform_session(state: SessionState, api_key: Optional[str] = None) -> Dict[str, Any]:
     """Create a Fork-class platform package for *state* and return metadata."""
     session_id = state.session_id
@@ -509,6 +546,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
     )
     _write_render_yaml(package_root, service_name, env_vars)
     _write_readme(package_root, service_name)
+    _drop_cli_artifacts(package_root, service_name, env_vars)
 
     # 5. Zip package
     zip_path = _package_dir(session_id) / "platform.zip"
