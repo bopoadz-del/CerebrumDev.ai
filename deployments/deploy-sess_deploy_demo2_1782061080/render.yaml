@@ -9,10 +9,12 @@ services:
     envVars:
       - key: CEREBRUM_DOMAIN_KITS
         value: construction
+      # Secrets: set these via the Render dashboard (Settings > Environment) and
+      # never commit real values to version control.
       - key: CEREBRUM_MASTER_KEY
-        value: cd-deploy-3f2d70a5c38dacbdbff99b3e4857cc9d
+        sync: false
       - key: CEREBRUM_API_KEY_CDEV
-        value: cd-deploy-3f2d70a5c38dacbdbff99b3e4857cc9d
+        sync: false
       - key: CORS_ORIGINS
         value: *
       - key: CHROMA_PERSIST_DIR
