@@ -15,16 +15,12 @@ _API_KEY = os.getenv("CEREBRUM_DEV_API_KEY", "").strip()
 
 
 def verify_production_auth() -> None:
-    """Warn if production mode is enabled without an API key.
+    """Refuse to boot in production without an API key.
 
-    The app still boots so deployments don't fail on missing env vars,
-    but auth will be disabled until a key is configured.
+    In local development (ENV != production) auth remains optional.
     """
     if os.getenv("ENV") == "production" and not os.getenv("CEREBRUM_DEV_API_KEY", "").strip():
-        import logging
-        logging.getLogger(__name__).warning(
-            "CEREBRUM_DEV_API_KEY is not set. API key enforcement is disabled."
-        )
+        raise RuntimeError("CEREBRUM_DEV_API_KEY must be set in production")
 
 
 def require_api_key(

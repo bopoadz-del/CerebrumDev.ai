@@ -50,7 +50,6 @@ export function useSession(sessionId: string) {
       setLoading(true);
       setError(null);
       try {
-        await api.post('/sessions/', null, { headers: { 'X-Session-ID': sessionId } });
         const res = await api.get(`/sessions/${sessionId}`);
         if (!cancelled) {
           setState((prev) => ({

@@ -9,6 +9,8 @@ services:
     envVars:
       - key: ENV
         value: production
+      - key: CEREBRUM_DEV_API_KEY
+        generateValue: true
       - key: CEREBRUM_API_URL
         value: https://cerebrum-blocks.onrender.com
       - key: CEREBRUM_API_KEY

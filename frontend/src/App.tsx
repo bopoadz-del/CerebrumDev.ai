@@ -4,10 +4,7 @@ import { AppShell } from './components/layout/AppShell';
 import { ChatSidebar } from './components/chat/ChatSidebar';
 import { ConfigCanvas } from './components/canvas/ConfigCanvas';
 import { ToastProvider, useToast } from './hooks/useToast';
-
-function generateSessionId(): string {
-  return 'sess_' + Math.random().toString(36).slice(2, 11);
-}
+import api from './api/client';
 
 function AppContent() {
   const [location, setLocation] = useLocation();
@@ -15,21 +12,49 @@ function AppContent() {
   const { addToast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [sessionId, setSessionId] = useState<string>(() => {
+  const [sessionId, setSessionId] = useState<string | null>(() => {
     if (match && params?.sessionId) return params.sessionId;
-    const stored = localStorage.getItem('cerebrumdev:last-session-id');
-    if (stored) return stored;
-    return generateSessionId();
+    return localStorage.getItem('cerebrumdev:last-session-id');
   });
 
   useEffect(() => {
-    localStorage.setItem('cerebrumdev:last-session-id', sessionId);
+    let cancelled = false;
+
+    async function initSession() {
+      if (sessionId) return;
+      try {
+        const res = await api.post('/sessions/');
+        if (!cancelled) {
+          setSessionId(res.data.session_id);
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          addToast({
+            type: 'error',
+            title: 'Session error',
+            message: err.response?.data?.detail || err.message || 'Failed to create session',
+          });
+        }
+      }
+    }
+
+    initSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, addToast]);
+
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem('cerebrumdev:last-session-id', sessionId);
+    }
   }, [sessionId]);
 
   useEffect(() => {
     if (match && params?.sessionId && params.sessionId !== sessionId) {
       setSessionId(params.sessionId);
-    } else if (!match && location !== `/s/${sessionId}`) {
+    } else if (sessionId && !match && location !== `/s/${sessionId}`) {
       setLocation(`/s/${sessionId}`, { replace: true });
     }
   }, [match, params, location, sessionId, setLocation]);
@@ -54,6 +79,14 @@ function AppContent() {
         addToast({ type: 'info', message: `Command: ${command}` });
     }
   };
+
+  if (!sessionId) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
 
   return (
     <AppShell
