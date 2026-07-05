@@ -8,12 +8,16 @@ import sys
 import urllib.request
 import urllib.error
 
-RENDER_API_KEY = os.getenv("RENDER_API_KEY", "rnd_FNAX8sgCiqOWBOTqXbUjkN2jAPaN")
+RENDER_API_KEY = os.getenv("RENDER_API_KEY", "")
 OWNER_ID = os.getenv("RENDER_OWNER_ID", "")
 REPO = "https://github.com/bopoadz-del/CerebrumDev.ai"
 
 if not OWNER_ID:
     print("ERROR: Set RENDER_OWNER_ID environment variable")
+    sys.exit(1)
+
+if not RENDER_API_KEY:
+    print("ERROR: Set RENDER_API_KEY environment variable")
     sys.exit(1)
 
 BACKEND_VARS = [
