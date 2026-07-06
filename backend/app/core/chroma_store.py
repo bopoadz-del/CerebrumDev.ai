@@ -4,6 +4,7 @@ This module is deliberately small and free of FastAPI/session-store cycles so it
 can be imported safely by both `upload_processor` and `session_store`.
 """
 
+import hashlib
 import json
 import os
 import logging
@@ -46,11 +47,21 @@ def collection_exists(session_id: str) -> bool:
         return False
 
 
+def _stable_file_hash(file_path: str) -> str:
+    """Return a short, deterministic hash for a file path's content."""
+    try:
+        h = hashlib.sha256(Path(file_path).read_bytes()).hexdigest()[:16]
+    except Exception:
+        h = hashlib.sha256(file_path.encode("utf-8")).hexdigest()[:16]
+    return h
+
+
 def store_chunks(
     session_id: str,
     chunks: List[str],
     embeddings: Optional[List[List[float]]] = None,
     source_files: Optional[List[str]] = None,
+    source_hashes: Optional[List[str]] = None,
     embedding_meta: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Persist chunks + embeddings + metadata to a per-session ChromaDB collection.
@@ -60,6 +71,9 @@ def store_chunks(
         chunks: List of text chunks.
         embeddings: Optional parallel list of dense vectors.
         source_files: Optional parallel list of source file names.
+        source_hashes: Optional parallel list of per-file content hashes used as
+            chunk ID prefixes. Re-uploading a file with the same hash replaces
+            only that file's chunks; different files coexist.
         embedding_meta: Optional dict describing the embedding model/space.
 
     Returns:
@@ -86,7 +100,55 @@ def store_chunks(
             metadata=collection_metadata,
         )
 
-        ids = [f"chunk_{i}" for i in range(len(chunks))]
+        ids = [
+            f"{source_hashes[i]}:{i}" if source_hashes and i < len(source_hashes) else f"chunk_{i}"
+            for i in range(len(chunks))
+        ]
+
+        # Track source filename -> content hash so re-uploading the same file
+        # (even with changed content) can evict its previous chunks.
+        raw_hash_map = (collection.metadata or {}).get("source_hash_map_json", "{}")
+        try:
+            old_hash_map: Dict[str, str] = json.loads(raw_hash_map)
+        except Exception:
+            old_hash_map = {}
+        new_hash_map: Dict[str, str] = {
+            source_files[i]: source_hashes[i]
+            for i in range(len(source_files))
+            if i < len(source_hashes)
+        } if source_files and source_hashes else {}
+
+        # Any previously-uploaded file being uploaded again is stale, regardless
+        # of whether its content hash changed.
+        stale_prefixes = sorted(
+            {old_hash_map[f] for f in new_hash_map if f in old_hash_map}
+            | set(new_hash_map.values())
+        )
+
+        # Remove any chunks from previous uploads of the same file(s) so a
+        # smaller re-upload does not leave stale tail chunks behind.
+        try:
+            existing = collection.get(include=["metadatas"])
+            existing_ids = existing.get("ids") or []
+            stale_ids = [cid for cid in existing_ids if any(cid.startswith(p + ":") for p in stale_prefixes)]
+            if stale_ids:
+                collection.delete(ids=stale_ids)
+                logger.info("Deleted %d stale chunks for prefixes %s", len(stale_ids), stale_prefixes)
+        except Exception as exc:
+            logger.warning("Could not delete stale chunks for %s: %s", name, exc)
+
+        # Update the persisted filename -> hash map with the latest hashes.
+        if new_hash_map:
+            merged_hash_map = {**old_hash_map, **new_hash_map}
+            try:
+                # Only update the hash-map key; Chroma does not allow changing
+                # collection options (e.g., hnsw:space) after creation.
+                collection.modify(metadata={
+                    "source_hash_map_json": json.dumps(merged_hash_map),
+                })
+            except Exception as exc:
+                logger.warning("Could not update source_hash_map metadata for %s: %s", name, exc)
+
         metadatas: List[Dict[str, Any]] = []
         for i, chunk in enumerate(chunks):
             meta = {

@@ -2,11 +2,13 @@
 
 import asyncio
 import time
+from datetime import datetime, timedelta
 from typing import List
 
 import pytest
 
-from app.core.session_store import create_session, get_session
+import app.core.session_store as session_store
+from app.core.session_store import create_session, get_session, update_session
 from app.core.trainer import (
     TINKER_API_KEY as TRAINER_KEY,
     cancel_training,
@@ -147,3 +149,34 @@ async def test_cancel_training(monkeypatch):
 
     status = await get_training_status("s-cancel")
     assert status.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_training_watchdog_fails_stale_running_job(monkeypatch, tmp_path):
+    """A running job older than TRAINING_MAX_RUNTIME_S is marked failed on read."""
+    import app.core.session_persistence as sp
+    import app.core.session_store as session_store_module
+
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setattr(sp, "STORAGE_PATH", str(tmp_path / "storage"))
+
+    # Use a very short timeout so a job from the recent past is considered stale.
+    monkeypatch.setattr(session_store_module, "TRAINING_MAX_RUNTIME_S", 1)
+
+    session = create_session("s-stale", "tester")
+    session.training_data = _make_pairs(10)
+    session.training_job.status = "running"
+    session.training_job.started_at = datetime.utcnow() - timedelta(seconds=3600)
+    update_session("s-stale", session)
+
+    # get_session should trigger the watchdog.
+    state = get_session("s-stale")
+    assert state is not None
+    assert state.training_job.status == "failed"
+    assert state.training_job.error == "exceeded max runtime or interrupted by restart"
+
+    # After a restart (cleared memory), get_training_status should also catch it.
+    session_store._session_store.clear()
+    status = await get_training_status("s-stale")
+    assert status.status == "failed"
+    assert status.error == "exceeded max runtime or interrupted by restart"

@@ -1,9 +1,8 @@
 """Persistent JSON snapshot for SessionState.
 
 Keeps a small, atomic, versioned state file on disk so backend restarts do not
-lose session progress. Large mutable fields (chat_history, training_data) are
-intentionally excluded from the snapshot; they can be rebuilt from uploaded
-files / ChromaDB or kept in memory only.
+lose session progress. chat_history is capped to the most recent
+``MAX_PERSISTED_CHAT_MESSAGES`` entries to keep snapshots bounded.
 """
 
 import json
@@ -18,7 +17,8 @@ from ..models.session import SessionState
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
-STATE_VERSION = 1
+STATE_VERSION = 2
+MAX_PERSISTED_CHAT_MESSAGES = 200
 
 
 def _session_dir(session_id: str) -> Path:
@@ -38,14 +38,16 @@ def _backup_path(session_id: str) -> Path:
 def save_session_state(state: SessionState) -> None:
     """Atomically persist a versioned snapshot of *state* to disk.
 
-    Excludes ``chat_history`` and ``training_data`` to keep the snapshot small
-    and avoid serializing frequently-changing large arrays. Keeps the previous
-    snapshot as ``state.json.bak`` for recovery.
+    Persist chat_history and training_data so restarts preserve conversational
+    context and fine-tuning data. chat_history is capped to
+    ``MAX_PERSISTED_CHAT_MESSAGES`` entries. Keeps the previous snapshot as
+    ``state.json.bak`` for recovery.
     """
     try:
-        snapshot = state.model_dump(
-            mode="json",
-            exclude={"chat_history", "training_data"},
+        snapshot = state.model_dump(mode="json")
+        # Bound the snapshot size while keeping the most recent context.
+        snapshot["chat_history"] = list(
+            state.chat_history[-MAX_PERSISTED_CHAT_MESSAGES:]
         )
         snapshot["version"] = STATE_VERSION
 
@@ -67,8 +69,10 @@ def save_session_state(state: SessionState) -> None:
 def load_session_state(session_id: str) -> Optional[SessionState]:
     """Load a session snapshot from disk.
 
-    Returns ``None`` if no snapshot exists, the version is unsupported, or the
-    file is corrupt. Falls back to ``state.json.bak`` if the main file is bad.
+    Supports both version 1 (chat_history/training_data excluded) and version 2
+    snapshots. Missing fields fall back to Pydantic defaults. Returns ``None``
+    if no snapshot exists, the version is unsupported, or the file is corrupt.
+    Falls back to ``state.json.bak`` if the main file is bad.
     """
     state_path = _state_path(session_id)
     backup_path = _backup_path(session_id)
@@ -80,12 +84,11 @@ def load_session_state(session_id: str) -> Optional[SessionState]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             version = data.get("version", 0)
-            if version != STATE_VERSION:
+            if version not in (1, 2):
                 logger.warning(
-                    "Session %s state file version %s does not match current %s; skipping",
+                    "Session %s state file version %s is unsupported; skipping",
                     session_id,
                     version,
-                    STATE_VERSION,
                 )
                 continue
             # Remove version metadata before handing to Pydantic.

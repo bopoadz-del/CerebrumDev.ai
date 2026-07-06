@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from ..models.session import SessionState
 from .session_store import get_session, update_session
-from .chroma_store import store_chunks, collection_name
+from .chroma_store import store_chunks, collection_name, _stable_file_hash
 
 logger = logging.getLogger(__name__)
 
@@ -276,16 +276,19 @@ async def process_upload(session_id: str, file_paths: List[str]):
     failed: List[str] = []
     all_chunks: List[str] = []
     source_files: List[str] = []
+    source_hashes: List[str] = []
 
     total = len(file_paths)
     for idx, path in enumerate(file_paths):
         file_name = Path(path).name
+        file_hash = _stable_file_hash(path)
         try:
             text = await parse_document(path)
             if text.strip():
                 chunks = chunk_text(text)
                 all_chunks.extend(chunks)
                 source_files.extend([file_name] * len(chunks))
+                source_hashes.extend([file_hash] * len(chunks))
             else:
                 failed.append(file_name)
         except Exception as exc:
@@ -330,7 +333,14 @@ async def process_upload(session_id: str, file_paths: List[str]):
         state.upload.indexed_collection = None
         state.upload.message = state.upload.message or "Indexing degraded: embeddings unavailable"
     else:
-        chroma_ok = store_chunks(session_id, all_chunks, embeddings, source_files=source_files, embedding_meta=embedding_meta)
+        chroma_ok = store_chunks(
+            session_id,
+            all_chunks,
+            embeddings,
+            source_files=source_files,
+            source_hashes=source_hashes,
+            embedding_meta=embedding_meta,
+        )
         if chroma_ok:
             state.upload.indexed_collection = collection_name(session_id)
             state.upload.message = f"Indexed {len(all_chunks)} chunks"
