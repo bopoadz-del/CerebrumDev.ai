@@ -133,6 +133,46 @@ def test_package_cli_sourced_from_engine(session: SessionState, fake_medical_kit
         assert "cli/config.toml" in names
 
 
+def test_package_cli_config_stamps_deployed_mode(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """The packaged CLI config.toml declares mode = 'deployed'."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+
+    config_path = Path(info["package_dir"]) / "cli" / "config.toml"
+    assert config_path.exists()
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    assert cfg.get("mode") == "deployed"
+
+
+def test_vectors_json_includes_embedding_meta(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """Platform package vectors.json always contains an embedding stanza."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+    session.embedding_meta = {
+        "provider": "zvec",
+        "backend": "model2vec",
+        "dimensions": 256,
+        "model": "minishlab/potion-base-8M",
+    }
+    session.chunks = ["chunk one"]
+    session.embeddings = [[0.1] * 256]
+
+    info = package_platform_session(session)
+    vectors = json.loads((Path(info["package_dir"]) / "vectors.json").read_text(encoding="utf-8"))
+    assert vectors["embedding"] == {
+        "provider": "zvec",
+        "model": "minishlab/potion-base-8M",
+        "dim": 256,
+    }
+
+
 def test_package_cli_missing_engine_cli_raises(session: SessionState, fake_medical_kit: Path, monkeypatch):
     """A missing engine cli/ directory raises the mandated RuntimeError."""
     engine_root = fake_medical_kit.parent.parent.parent

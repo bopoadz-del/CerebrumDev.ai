@@ -117,7 +117,7 @@ class TestProcessUpload:
         assert state.upload.status == "completed"
 
     @pytest.mark.asyncio
-    async def test_marks_degraded_on_embed_failure(self, monkeypatch, tmp_path):
+    async def test_uses_fallback_embeddings_on_embed_failure(self, monkeypatch, tmp_path):
         async def _fake_embed(chunks):
             raise ValueError("zvec unavailable")
 
@@ -129,14 +129,15 @@ class TestProcessUpload:
         await upload_processor.process_upload("sess_embed_fail", [str(txt)])
 
         state = get_session("sess_embed_fail")
-        assert state.index_status == "degraded"
-        assert state.embeddings == []
+        assert state.index_status == "fallback"
+        assert len(state.embeddings) == len(state.chunks)
+        assert state.embedding_meta["provider"] == upload_processor.FALLBACK_EMBED_PROVIDER
         assert "zvec unavailable" in state.upload.message
         assert state.upload.status == "completed_with_warnings"
 
     @pytest.mark.asyncio
-    async def test_reupload_after_degraded_persists_to_chroma(self, monkeypatch, tmp_path):
-        """After a degraded upload, a successful re-upload resets index_status and persists."""
+    async def test_reupload_after_fallback_persists_to_chroma(self, monkeypatch, tmp_path):
+        """After a fallback upload, a successful re-upload resets index_status and persists."""
         import app.core.chroma_store as chroma_store
 
         async def _fail_embed(chunks):
@@ -149,9 +150,11 @@ class TestProcessUpload:
         txt.write_text("First upload.\n\nSecond paragraph.", encoding="utf-8")
         await upload_processor.process_upload("sess_reupload", [str(txt)])
 
-        degraded = get_session("sess_reupload")
-        assert degraded.index_status == "degraded"
-        assert degraded.upload.indexed_collection is None
+        fallback = get_session("sess_reupload")
+        assert fallback.index_status == "fallback"
+        assert fallback.upload.indexed_collection == chroma_store.collection_name("sess_reupload")
+        first_count = chroma_store.count_chunks("sess_reupload")
+        assert first_count == len(fallback.chunks)
 
         async def _ok_embed(chunks):
             return [[float(i)] * 8 for i in range(len(chunks))], {

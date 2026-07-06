@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import subprocess
@@ -103,6 +104,23 @@ def test_package_cli_sourced_from_engine(fake_engine_checkout: Path, monkeypatch
         assert "cli/config.toml" in names
 
 
+def test_package_cli_config_stamps_deployed_mode(fake_engine_checkout: Path, monkeypatch):
+    """The packaged CLI config.toml declares mode = 'deployed'."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    result = package_session(state)
+
+    config_path = Path(result["package_dir"]) / "cli" / "config.toml"
+    assert config_path.exists()
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    assert cfg.get("mode") == "deployed"
+
+
 def test_find_engine_root_falls_back_to_sibling_checkout(monkeypatch, tmp_path: Path):
     """When CEREBRUM_BLOCKS_ROOT is unset, the sibling Cerebrum-Blocks checkout is discovered."""
     from app.core.engine_discovery import _find_engine_root
@@ -131,6 +149,29 @@ def test_vectors_json_includes_embedding_meta(fake_engine_checkout: Path, monkey
     assert vectors["embedding"] == {
         "provider": "zvec",
         "model": "minishlab/potion-base-8M",
+        "dim": 256,
+    }
+
+
+def test_vectors_json_includes_embedding_meta_for_fallback_provider(fake_engine_checkout: Path, monkeypatch):
+    """Fallback-indexed sessions still stamp an embedding stanza in vectors.json."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    state.embedding_meta = {
+        "provider": "hash_fallback",
+        "backend": "hash_fallback",
+        "dimensions": 256,
+        "model": "hash_fallback",
+    }
+    state.chunks = ["chunk one", "chunk two"]
+    state.embeddings = [[0.1] * 256, [0.2] * 256]
+    result = package_session(state)
+
+    package_dir = Path(result["package_dir"])
+    vectors = json.loads((package_dir / "vectors.json").read_text(encoding="utf-8"))
+    assert vectors["embedding"] == {
+        "provider": "hash_fallback",
+        "model": "hash_fallback",
         "dim": 256,
     }
 
@@ -347,3 +388,145 @@ def test_root_health_patch_fails_loudly_when_anchor_missing(tmp_path: Path):
     assert result.returncode != 0
     assert "Could not patch app/routers/health.py" in result.stderr
     assert "from app.blocks import BLOCK_REGISTRY" in result.stderr
+
+
+
+def _load_deployed_router(package_root: Path):
+    """Load the generated deployed router from *package_root* in a fresh module."""
+    router_path = package_root / "app" / "routers" / "deployed.py"
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("deployed_router_under_test", router_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _run(coro):
+    """Run an async coroutine in a sync test."""
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def test_package_cli_config_stamps_deployed_mode(fake_engine_checkout: Path, monkeypatch):
+    """The packaged CLI config.toml declares mode = 'deployed'."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    result = package_session(state)
+
+    config_path = Path(result["package_dir"]) / "cli" / "config.toml"
+    assert config_path.exists()
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(config_path, "rb") as f:
+        cfg = tomllib.load(f)
+    assert cfg.get("mode") == "deployed"
+
+
+def test_deployed_router_health_reports_rag_mismatch(tmp_path: Path):
+    """Fallback-indexed vectors + zvec query embedder -> RAG unavailable with detail."""
+    from app.core.packager import _write_deployed_router
+
+    package_root = tmp_path / "pkg"
+    package_root.mkdir()
+    _write_deployed_router(package_root, "construction")
+    (package_root / "default_chain.json").write_text(
+        json.dumps({"blocks": [], "connections": []}), encoding="utf-8"
+    )
+    (package_root / "vectors.json").write_text(
+        json.dumps(
+            {
+                "chunks": ["fallback chunk"],
+                "embeddings": [[0.1] * 256],
+                "embedding": {
+                    "provider": "hash_fallback",
+                    "model": "hash_fallback",
+                    "dim": 256,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mod = _load_deployed_router(package_root)
+
+    async def _fake_probe():
+        return {"provider": "zvec", "model": "test-model", "dim": 8}
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "_probe_query_embedder", _fake_probe)
+    try:
+        health = _run(mod.health())
+        assert health["rag"]["available"] is False
+        assert "hash_fallback" in health["rag"]["detail"]
+        assert "zvec" in health["rag"]["detail"]
+
+        events = _run(_collect_stream(mod._canonical_stream("query", [])))
+        parsed = [json.loads(line[len("data: ") :]) for line in events]
+        assert parsed[0]["type"] == "start"
+        assert parsed[0]["rag_available"] is False
+        assert "hash_fallback" in parsed[0]["note"]
+        assert all(e["type"] != "sources" for e in parsed)
+    finally:
+        monkeypatch.undo()
+
+
+def test_deployed_router_emits_sources_before_tokens_on_match(tmp_path: Path):
+    """Same-embedder index and query -> sources event precedes token events."""
+    from app.core.packager import _write_deployed_router
+
+    package_root = tmp_path / "pkg"
+    package_root.mkdir()
+    _write_deployed_router(package_root, "construction")
+    (package_root / "default_chain.json").write_text(
+        json.dumps({"blocks": [], "connections": []}), encoding="utf-8"
+    )
+    (package_root / "vectors.json").write_text(
+        json.dumps(
+            {
+                "chunks": ["hello world chunk"],
+                "embeddings": [[0.1] * 8],
+                "embedding": {
+                    "provider": "zvec",
+                    "model": "test-model",
+                    "dim": 8,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mod = _load_deployed_router(package_root)
+
+    async def _fake_probe():
+        return {"provider": "zvec", "model": "test-model", "dim": 8}
+
+    async def _fake_embed(text: str):
+        return [0.1] * 8
+
+    async def _fake_llm(message: str, history, context_chunks):
+        return "response text"
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "_probe_query_embedder", _fake_probe)
+    monkeypatch.setattr(mod, "_embed_query", _fake_embed)
+    monkeypatch.setattr(mod, "_llm_response_text", _fake_llm)
+    try:
+        events = _run(_collect_stream(mod._canonical_stream("hello", [])))
+        parsed = [json.loads(line[len("data: ") :]) for line in events if line.startswith("data: ")]
+        types = [e["type"] for e in parsed]
+        assert types[0] == "start"
+        assert parsed[0]["rag_available"] is True
+        assert "sources" in types
+        sources_idx = types.index("sources")
+        token_idx = types.index("token")
+        assert sources_idx < token_idx
+        assert parsed[sources_idx]["sources"] == ["hello world chunk"]
+    finally:
+        monkeypatch.undo()
+
+
+async def _collect_stream(agen):
+    """Helper to drain an async generator into a list."""
+    return [item async for item in agen]

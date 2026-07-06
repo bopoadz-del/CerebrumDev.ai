@@ -60,9 +60,17 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
     }
     if state.embedding_meta:
         vectors["embedding"] = {
-            "provider": "zvec",
+            "provider": state.embedding_meta.get("provider", "zvec"),
             "model": state.embedding_meta.get("model"),
             "dim": state.embedding_meta.get("dimensions"),
+        }
+    elif embeddings:
+        # Legacy/fallback data without explicit metadata: still stamp a stanza
+        # so the deployed router can validate instead of silently degrading.
+        vectors["embedding"] = {
+            "provider": "unknown",
+            "model": "unknown",
+            "dim": len(embeddings[0]),
         }
     return vectors
 
@@ -101,6 +109,7 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
     base_url = f"https://{service_name}.onrender.com"
     config_toml.write_text(
         f"# Cerebrum CLI configuration for this deployed instance.\n"
+        f'mode = "deployed"\n'
         f'base_url = "{base_url}"\n'
         f'api_key = "{env_vars.get("CEREBRUM_MASTER_KEY", "")}"\n'
         f'domain = "{env_vars.get("CEREBRUM_DOMAIN_KITS", "construction")}"\n'
@@ -221,6 +230,7 @@ except (json.JSONDecodeError, OSError) as _vectors_load_exc:
     VECTORS = {{"chunks": [], "embeddings": []}}
 
 _RAG_STATUS: Optional[Dict[str, Any]] = None
+_QUERY_EMBEDDER: Optional[Dict[str, Any]] = None
 
 
 def _load_container():
@@ -254,8 +264,55 @@ def _retrieve(query_embedding: List[float], k: int = RAG_K) -> List[str]:
         return []
 
 
-def _validate_embedding_meta() -> Dict[str, Any]:
-    """Validate vectors.json embedding metadata. Does not raise."""
+async def _probe_query_embedder() -> Dict[str, Any]:
+    """Probe the runtime query embedder (zvec) and record its capability.
+
+    The result is cached for the lifetime of the process so /health remains
+    cheap after the first call.
+    """
+    global _QUERY_EMBEDDER
+    if _QUERY_EMBEDDER is not None:
+        return _QUERY_EMBEDDER
+
+    url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
+    payload = {{
+        "block": "zvec",
+        "input": {{"text": "__rag_probe__", "query": "__rag_probe__"}},
+        "params": {{"operation": "embed"}},
+    }}
+    headers: Dict[str, str] = {{"Content-Type": "application/json"}}
+    if CEREBRUM_MASTER_KEY:
+        headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        logger.warning("Could not probe query embedder: %s", exc)
+        return {{"provider": "zvec", "model": "", "dim": 0, "error": str(exc)}}
+
+    if data.get("status") != "success":
+        error = data.get("result") or data.get("error") or "zvec embed returned error"
+        logger.warning("Query embedder probe returned error: %s", error)
+        return {{"provider": "zvec", "model": "", "dim": 0, "error": str(error)}}
+
+    result = data.get("result", {{}})
+    vector = result.get("vector", [])
+    if not vector:
+        return {{"provider": "zvec", "model": "", "dim": 0, "error": "zvec embed returned empty vector"}}
+
+    _QUERY_EMBEDDER = {{
+        "provider": "zvec",
+        "model": result.get("model", ""),
+        "dim": len(vector),
+    }}
+    return _QUERY_EMBEDDER
+
+
+async def _validate_embedding_meta() -> Dict[str, Any]:
+    """Validate vectors.json embedding metadata against the query embedder."""
     try:
         if not VECTORS_PATH.exists():
             return {{"available": False, "detail": "No vectors.json found; RAG unavailable."}}
@@ -277,14 +334,11 @@ def _validate_embedding_meta() -> Dict[str, Any]:
         model = embedding.get("model")
         dim = embedding.get("dim")
 
-        if provider != "zvec":
-            return {{"available": False, "detail": f"Unsupported embedding provider '{{provider}}'; expected 'zvec'."}}
-
         if not model:
             return {{"available": False, "detail": "Missing embedding model identifier."}}
 
         try:
-            expected_dim = int(dim)
+            index_dim = int(dim)
         except (TypeError, ValueError):
             return {{"available": False, "detail": "Malformed embedding dimension."}}
 
@@ -292,18 +346,43 @@ def _validate_embedding_meta() -> Dict[str, Any]:
         if not embeddings:
             return {{"available": False, "detail": "No embeddings present in vectors.json."}}
 
-        if len(embeddings[0]) != expected_dim:
+        if len(embeddings[0]) != index_dim:
             return {{
                 "available": False,
-                "detail": f"Embedding dimension mismatch: expected {{expected_dim}}, got {{len(embeddings[0])}}.",
+                "detail": f"Embedding dimension mismatch: expected {{index_dim}}, got {{len(embeddings[0])}}.",
+            }}
+
+        query = await _probe_query_embedder()
+        if query.get("error"):
+            return {{
+                "available": False,
+                "detail": f"Query embedder probe failed: {{query['error']}}",
+            }}
+
+        if provider != query["provider"]:
+            return {{
+                "available": False,
+                "detail": (
+                    f"Index provider '{{provider}}' dim {{index_dim}} does not match "
+                    f"query embedder '{{query['provider']}}' dim {{query['dim']}}."
+                ),
+            }}
+
+        if index_dim != query["dim"]:
+            return {{
+                "available": False,
+                "detail": (
+                    f"Index provider '{{provider}}' dim {{index_dim}} does not match "
+                    f"query embedder '{{query['provider']}}' dim {{query['dim']}}."
+                ),
             }}
 
         return {{
             "available": True,
-            "detail": f"zvec model '{{model}}' dim {{expected_dim}} validated.",
+            "detail": f"Index '{{provider}}' model '{{model}}' dim {{index_dim}} matches query embedder.",
             "provider": provider,
             "model": model,
-            "dim": expected_dim,
+            "dim": index_dim,
         }}
     except Exception as exc:
         logger.warning("RAG metadata validation failed: %s", exc)
@@ -313,7 +392,7 @@ def _validate_embedding_meta() -> Dict[str, Any]:
 async def _ensure_rag_status() -> Dict[str, Any]:
     global _RAG_STATUS
     if _RAG_STATUS is None:
-        _RAG_STATUS = _validate_embedding_meta()
+        _RAG_STATUS = await _validate_embedding_meta()
     return _RAG_STATUS
 
 
@@ -328,10 +407,6 @@ async def health():
 
 async def _embed_query(text: str) -> Optional[List[float]]:
     """Compute a query embedding using the local zvec block."""
-    rag = await _ensure_rag_status()
-    if not rag.get("available", False):
-        return None
-
     url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
     payload = {{
         "block": "zvec",
@@ -361,6 +436,7 @@ async def _embed_query(text: str) -> Optional[List[float]]:
         logger.warning("zvec embed query returned empty vector")
         return None
 
+    rag = await _ensure_rag_status()
     expected_dim = rag.get("dim")
     if expected_dim and len(vector) != expected_dim:
         logger.warning(
@@ -441,7 +517,11 @@ async def _produce_tokens(
 async def _canonical_stream(
     message: str, history: List[Dict[str, str]]
 ) -> AsyncGenerator[str, None]:
-    """Emit the canonical SSE envelope for a chat turn."""
+    """Emit the canonical SSE envelope for a chat turn.
+
+    RAG availability is validated up front; a mismatch is surfaced in the
+    ``start`` event instead of silently returning empty retrieval results.
+    """
     rag = await _ensure_rag_status()
     rag_available = rag.get("available", False)
     note = "" if rag_available else rag.get("detail", "RAG unavailable.")
@@ -450,10 +530,12 @@ async def _canonical_stream(
     context_chunks: List[str] = []
     if rag_available:
         query_embedding = await _embed_query(message)
-        if query_embedding:
+        if query_embedding is not None:
             context_chunks = _retrieve(query_embedding)
             if context_chunks:
                 yield _sse_event({{"type": "sources", "sources": context_chunks}})
+        else:
+            logger.warning("Query embedding failed after RAG was reported available; continuing without context.")
 
     queue: asyncio.Queue = asyncio.Queue()
     producer = asyncio.create_task(_produce_tokens(queue, message, history, context_chunks))
