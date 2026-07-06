@@ -198,3 +198,72 @@ def test_find_engine_root_falls_back_to_sibling_checkout(monkeypatch, tmp_path: 
     sibling.mkdir()
     anchor = project_root / "backend" / "app" / "core" / "engine_discovery.py"
     assert _find_engine_root(anchor) == sibling
+
+
+def _load_dotenv(package_dir: Path) -> dict:
+    """Parse a simple KEY=VALUE .env file."""
+    env: Dict[str, str] = {}
+    dotenv = package_dir / ".env"
+    for line in dotenv.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            env[key] = value
+    return env
+
+
+def _engine_auth_validate(key: str, env: Dict[str, str]) -> bool:
+    """Mirror the production key-loading path in Cerebrum-Blocks app/core/auth.py.
+
+    Returns True when *key* is one of the keys the engine would load from the
+    packaged environment in production.
+    """
+    valid = {env.get("CEREBRUM_MASTER_KEY", ""), env.get("CB_DEV_KEY", "")}
+    for k, v in env.items():
+        if k.startswith("CEREBRUM_API_KEY_") and v:
+            valid.add(v)
+    return key in valid and key != ""
+
+
+def test_platform_auth_single_source_of_truth(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """The minted key is wired consistently across .env, render.yaml, and CLI config."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    deploy_key = info["api_key"]
+    package_dir = Path(info["package_dir"])
+
+    env = _load_dotenv(package_dir)
+    assert env["CEREBRUM_MASTER_KEY"] == deploy_key
+    assert env["CB_DEV_KEY"] == deploy_key
+    assert env["CEREBRUM_API_KEY_PLATFORM"] == deploy_key
+
+    render = (package_dir / "render.yaml").read_text(encoding="utf-8")
+    assert f"key: CEREBRUM_MASTER_KEY" in render
+
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(package_dir / "cli" / "config.toml", "rb") as f:
+        cfg = tomllib.load(f)
+    assert cfg["api_key"] == deploy_key
+
+
+def test_platform_auth_boots_with_its_own_key(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """The generated platform package authenticates with its own key and rejects others."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    deploy_key = info["api_key"]
+    env = _load_dotenv(Path(info["package_dir"]))
+
+    assert _engine_auth_validate(deploy_key, env) is True
+    assert _engine_auth_validate("cb_dev_key", env) is False
+    assert _engine_auth_validate("wrong-key", env) is False
+    assert _engine_auth_validate("", env) is False

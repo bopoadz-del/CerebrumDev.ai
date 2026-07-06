@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
-from .engine_discovery import _find_engine_root
+from .engine_discovery import CEREBRUM_BLOCKS_REPO, EngineDiscoveryError, resolve_engine_source
 from .llm_config import get_llm_config
 
 # Absolute path to the Tinker adapter so we can copy it into deployed packages.
@@ -86,7 +86,12 @@ def _copy_tinker_adapter(package_root: Path) -> None:
     logger.info("Copied Tinker adapter into package")
 
 
-def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[str, str]) -> None:
+def _drop_cli_artifacts(
+    package_root: Path,
+    service_name: str,
+    env_vars: Dict[str, str],
+    engine_root: Path,
+) -> None:
     """Drop a cerebrum CLI folder into the package so the instance ships with a working client."""
     cli_dir = package_root / "cli"
     cli_dir.mkdir(parents=True, exist_ok=True)
@@ -119,7 +124,6 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
     )
 
     # Copy the CLI package source from the engine checkout so install.sh works offline.
-    engine_root = _find_engine_root()
     engine_cli = engine_root / "cli" / "cerebrum_cli"
     if engine_cli.exists():
         shutil.copytree(engine_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
@@ -727,10 +731,19 @@ except Exception as exc:
     )
 
 
-def _write_dockerfile(package_root: Path) -> None:
+def _write_dockerfile(
+    package_root: Path,
+    repo: str = CEREBRUM_BLOCKS_REPO,
+    ref: str = os.getenv("CEREBRUM_BLOCKS_REF", ""),
+) -> None:
     dockerfile = package_root / "Dockerfile"
+    ref_arg = f'ARG CEREBRUM_BLOCKS_REF="{ref}"' if ref else "ARG CEREBRUM_BLOCKS_REF"
+    clone_cmd = (
+        'RUN git clone --depth 1 --branch "${CEREBRUM_BLOCKS_REF}" '
+        '"${CEREBRUM_BLOCKS_REPO}" /app'
+    )
     dockerfile.write_text(
-        '''# Deployed Cerebrum-Blocks instance with injected domain container and chain.
+        f'''# Deployed Cerebrum-Blocks instance with injected domain container and chain.
 FROM python:3.11-slim
 WORKDIR /app
 
@@ -741,8 +754,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     poppler-utils tesseract-ocr libtesseract-dev curl \\
     && rm -rf /var/lib/apt/lists/*
 
-# Clone Cerebrum-Blocks runtime
-RUN git clone --depth 1 https://github.com/bopoadz-del/Cerebrum-Blocks.git /app
+# Clone Cerebrum-Blocks runtime at the pinned ref.
+ARG CEREBRUM_BLOCKS_REPO={repo}
+{ref_arg}
+{clone_cmd}
 
 # Install Python deps
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
@@ -763,7 +778,7 @@ RUN python bootstrap.py
 
 ENV PORT=8000
 EXPOSE 8000
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${{PORT}}
 ''',
         encoding="utf-8",
     )
@@ -816,6 +831,9 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
         shutil.rmtree(package_root)
     package_root.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the engine checkout up front so the fetch path fails loud and early.
+    engine_root, engine_metadata = resolve_engine_source()
+
     # 1. Container
     _copy_or_generate_container(session_id, state, package_root)
 
@@ -847,7 +865,11 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
     _write_deployed_router(package_root, domain)
     _write_patch_script(package_root)
     _write_bootstrap_script(package_root)
-    _write_dockerfile(package_root)
+    _write_dockerfile(
+        package_root,
+        repo=engine_metadata.get("repo", CEREBRUM_BLOCKS_REPO),
+        ref=engine_metadata.get("ref", os.getenv("CEREBRUM_BLOCKS_REF", "")),
+    )
 
     # 6. Env + Render blueprint
     service_name = f"cerebrumdev-{_safe_name(domain)}-{_safe_name(session_id)[:16]}"
@@ -855,7 +877,11 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
     llm_cfg = get_llm_config()
     env_vars = {
         "CEREBRUM_DOMAIN_KITS": domain,
+        # Single source of truth for cloud/edge authentication. The engine's
+        # APIKeyAuth reads CEREBRUM_MASTER_KEY; CB_DEV_KEY covers legacy
+        # container paths that still consult it in non-production modes.
         "CEREBRUM_MASTER_KEY": deploy_api_key,
+        "CB_DEV_KEY": deploy_api_key,
         "CEREBRUM_API_KEY_CDEV": deploy_api_key,
         "CORS_ORIGINS": "*",
         "CHROMA_PERSIST_DIR": "/app/chroma",
@@ -888,9 +914,23 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
                 env_vars["TINKER_API_KEY"] = tinker_key
     _write_dotenv(package_root, env_vars)
     _write_render_yaml(package_root, service_name, env_vars)
-    _drop_cli_artifacts(package_root, service_name, env_vars)
+    _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)
 
-    # 7. Zip package
+    # 7. Build metadata
+    build_metadata = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generator": "cerebrumdev.packager",
+        "session_id": session_id,
+        "domain": domain,
+        "service_name": service_name,
+        "engine": engine_metadata,
+    }
+    (package_root / "build_metadata.json").write_text(
+        json.dumps(build_metadata, indent=2),
+        encoding="utf-8",
+    )
+
+    # 8. Zip package
     zip_path = _package_dir(session_id) / "package.zip"
     if zip_path.exists():
         zip_path.unlink()
@@ -906,4 +946,5 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
         "service_name": service_name,
         "api_key": deploy_api_key,
         "env_vars": env_vars,
+        "build_metadata": build_metadata,
     }

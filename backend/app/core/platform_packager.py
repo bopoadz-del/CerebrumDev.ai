@@ -19,17 +19,13 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
-from .engine_discovery import _find_engine_root
+from .engine_discovery import CEREBRUM_BLOCKS_REPO, EngineDiscoveryError, resolve_engine_source
 from .packager import _safe_name
 from .llm_config import get_llm_config
 
 logger = logging.getLogger(__name__)
 
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
-CEREBRUM_BLOCKS_REPO = os.getenv(
-    "CEREBRUM_BLOCKS_REPO",
-    "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
-)
 
 
 class PlatformPackagerError(Exception):
@@ -91,13 +87,8 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
     return vectors
 
 
-def _find_kit_root(domain: str) -> Path:
-    """Locate the domain kit on disk.
-
-    Checks ``CEREBRUM_BLOCKS_ROOT`` first, then falls back to a sibling
-    ``Cerebrum-Blocks`` directory relative to this backend.
-    """
-    engine_root = _find_engine_root()
+def _find_kit_root(domain: str, engine_root: Path) -> Path:
+    """Locate the domain kit inside the resolved engine checkout."""
     kit_root = engine_root / "block_store" / "kits" / domain
     if kit_root.is_dir() and (kit_root / "manifest.json").exists():
         return kit_root
@@ -131,11 +122,20 @@ def _copy_kit_artifacts(kit_root: Path, package_root: Path) -> None:
         shutil.copy2(src, dest)
 
 
-def _write_dockerfile(package_root: Path) -> None:
+def _write_dockerfile(
+    package_root: Path,
+    repo: str = CEREBRUM_BLOCKS_REPO,
+    ref: str = os.getenv("CEREBRUM_BLOCKS_REF", ""),
+) -> None:
     """Write a multi-stage, production-hardened Dockerfile based on The_Fork."""
     dockerfile = package_root / "Dockerfile"
+    ref_arg = f'ARG CEREBRUM_BLOCKS_REF="{ref}"' if ref else "ARG CEREBRUM_BLOCKS_REF"
+    clone_cmd = (
+        'RUN git clone --depth 1 --branch "${CEREBRUM_BLOCKS_REF}" '
+        '"${CEREBRUM_BLOCKS_REPO}" /app'
+    )
     dockerfile.write_text(
-        '''# Production-hardened Cerebrum-Blocks platform (Fork-class).
+        f'''# Production-hardened Cerebrum-Blocks platform (Fork-class).
 # Multi-stage build: compile deps, build frontend (if present), then runtime.
 FROM python:3.11-slim AS builder
 WORKDIR /app
@@ -144,10 +144,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     build-essential gcc g++ gfortran pkg-config git \\
     && rm -rf /var/lib/apt/lists/*
 
-# Clone the Cerebrum-Blocks runtime. Override CEREBRUM_BLOCKS_REPO at build time
-# to use a private fork or a specific branch.
-ARG CEREBRUM_BLOCKS_REPO=''' + CEREBRUM_BLOCKS_REPO + '''
-RUN git clone --depth 1 "${CEREBRUM_BLOCKS_REPO}" /app
+# Clone the Cerebrum-Blocks runtime at the pinned ref. Override
+# CEREBRUM_BLOCKS_REPO / CEREBRUM_BLOCKS_REF at build time to use a private
+# fork or a different branch/tag.
+ARG CEREBRUM_BLOCKS_REPO={repo}
+{ref_arg}
+{clone_cmd}
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
     pip install --no-cache-dir -r requirements.txt
@@ -194,7 +196,7 @@ USER cerebrum
 ENV PORT=8000
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \\
-    CMD curl -f "http://localhost:${PORT}/health" || exit 1
+    CMD curl -f "http://localhost:${{PORT}}/health" || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]
 ''',
@@ -429,7 +431,12 @@ Session documents are in `data/docs/` and the approved chain is in
     )
 
 
-def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[str, str]) -> None:
+def _drop_cli_artifacts(
+    package_root: Path,
+    service_name: str,
+    env_vars: Dict[str, str],
+    engine_root: Path,
+) -> None:
     """Drop a cerebrum CLI folder into the platform package."""
     cli_dir = package_root / "cli"
     cli_dir.mkdir(parents=True, exist_ok=True)
@@ -459,7 +466,6 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
         encoding="utf-8",
     )
 
-    engine_root = _find_engine_root()
     engine_cli_dir = engine_root / "cli"
     if not engine_cli_dir.is_dir():
         raise RuntimeError(
@@ -479,8 +485,14 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         shutil.rmtree(package_root)
     package_root.mkdir(parents=True, exist_ok=True)
 
+    # Resolve the engine checkout up front so the fetch path fails loud and early.
+    try:
+        engine_root, engine_metadata = resolve_engine_source()
+    except EngineDiscoveryError as exc:
+        raise PlatformPackagerError(f"Engine resolution failed: {exc}") from exc
+
     # 1. Domain kit
-    kit_root = _find_kit_root(domain)
+    kit_root = _find_kit_root(domain, engine_root)
     _copy_kit_artifacts(kit_root, package_root)
 
     # 2. Session assets
@@ -505,7 +517,11 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
                 shutil.copy2(f, docs_dir / f.name)
 
     # 3. Runtime / deployment files
-    _write_dockerfile(package_root)
+    _write_dockerfile(
+        package_root,
+        repo=engine_metadata.get("repo", CEREBRUM_BLOCKS_REPO),
+        ref=engine_metadata.get("ref", os.getenv("CEREBRUM_BLOCKS_REF", "")),
+    )
     _write_entrypoint(package_root)
     _write_docker_compose(package_root)
     _write_bootstrap(package_root)
@@ -521,7 +537,11 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "DATA_DIR": "/app/data",
         "DATABASE_URL": "postgresql+psycopg://cerebrum:cerebrum@postgres:5432/cerebrum",
         "CEREBRUM_DOMAIN_KITS": domain,
+        # Single source of truth for platform authentication. The engine's
+        # APIKeyAuth reads CEREBRUM_MASTER_KEY; CB_DEV_KEY covers legacy
+        # container paths that still consult it in non-production modes.
         "CEREBRUM_MASTER_KEY": deploy_api_key,
+        "CB_DEV_KEY": deploy_api_key,
         "CEREBRUM_API_KEY_PLATFORM": deploy_api_key,
         "CORS_ORIGINS": "*",
         "CHROMA_PERSIST_DIR": "/app/chroma",
@@ -557,9 +577,23 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
     )
     _write_render_yaml(package_root, service_name, env_vars)
     _write_readme(package_root, service_name)
-    _drop_cli_artifacts(package_root, service_name, env_vars)
+    _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)
 
-    # 5. Zip package
+    # 5. Build metadata
+    build_metadata = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generator": "cerebrumdev.platform_packager",
+        "session_id": session_id,
+        "domain": domain,
+        "service_name": service_name,
+        "engine": engine_metadata,
+    }
+    (package_root / "build_metadata.json").write_text(
+        json.dumps(build_metadata, indent=2),
+        encoding="utf-8",
+    )
+
+    # 6. Zip package
     zip_path = _package_dir(session_id) / "platform.zip"
     if zip_path.exists():
         zip_path.unlink()
@@ -580,4 +614,5 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "service_name": service_name,
         "api_key": deploy_api_key,
         "env_vars": env_vars,
+        "build_metadata": build_metadata,
     }

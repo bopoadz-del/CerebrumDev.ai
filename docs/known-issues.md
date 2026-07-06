@@ -22,13 +22,20 @@ On Windows systems using the cp1252 code page, the `cerebrum` CLI can crash when
 
 **Scope note:** This fix lands in the `Cerebrum-Blocks` CLI, not in this repository.
 
-## 3. Edge package internal auth mismatch
+## 3. Edge/package internal auth mismatch — RESOLVED
 
 **Source:** Smoke test — edge package runtime.
 
 The edge packager generates a random `CEREBRUM_MASTER_KEY` for the deployed package, but the Cerebrum-Blocks engine expects `cb_dev_key` (or another configured dev key) for internal self-calls. This mismatch causes authenticated endpoints inside the edge package to fail with 401/403 errors.
 
-**Fix direction:** Align the packager-generated master key with the engine's expected dev key, or make the engine runtime read `CEREBRUM_MASTER_KEY` consistently for self-authentication.
+**Resolution:** Both packagers now wire the generated key as the single source of truth:
+- `CEREBRUM_MASTER_KEY` is set to the minted key so the engine's `APIKeyAuth` validates it.
+- `CB_DEV_KEY` is set to the same key for legacy container paths.
+- `CEREBRUM_API_KEY_CDEV` / `CEREBRUM_API_KEY_PLATFORM` are set to the same key.
+- The dropped CLI `config.toml` uses the same key.
+- A boot test verifies the generated package accepts its own key and rejects a wrong key.
+
+**Commit reference:** `feat/platform-default-pinned-engine`.
 
 ## 4. No semantic embedding backend in bare requirements → RAG unavailable on default install
 

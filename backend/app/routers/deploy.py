@@ -29,9 +29,21 @@ def _update_deployment(state: SessionState, **kwargs):
     update_session(state.session_id, state)
 
 
-@router.post("/{session_id}/deploy")
-# Default target selection is under active review; see docs/decisions/platform-packager-default.md.
-async def start_deploy(session_id: str, target: str = "cloud", background_tasks: BackgroundTasks = None):
+@router.post(
+    "/{session_id}/deploy",
+    summary="Package or deploy a session",
+    description=(
+        "Packages the approved chain for the requested target. "
+        "`platform` (default) produces a production-hardened docker-compose stack. "
+        "`cloud` deploys to Render. `edge` is a lightweight preview — no orchestrator "
+        "runtime, not standalone; requires an engine checkout to run."
+    ),
+)
+async def start_deploy(
+    session_id: str,
+    target: str = DeployTarget.PLATFORM,
+    background_tasks: BackgroundTasks = None,
+):
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -82,11 +94,17 @@ async def start_deploy(session_id: str, target: str = "cloud", background_tasks:
     if target == DeployTarget.EDGE:
         try:
             edge_zip = generate_edge_package(state, package_info["package_dir"])
-            _update_deployment(state, status="packaged", progress=1.0, message="Edge package ready", package_path=edge_zip)
+            _update_deployment(
+                state,
+                status="packaged",
+                progress=1.0,
+                message="Edge preview package ready (lightweight preview — no orchestrator runtime, not standalone; requires engine checkout to run)",
+                package_path=edge_zip,
+            )
             return {
                 "status": "packaged",
                 "download_url": f"/v1/sessions/{session_id}/deploy/package?variant=edge",
-                "message": "Edge package generated",
+                "message": "Edge preview package ready (lightweight preview — no orchestrator runtime, not standalone; requires engine checkout to run)",
             }
         except Exception as exc:
             _update_deployment(state, status="failed", message=f"Edge packaging failed: {exc}")
