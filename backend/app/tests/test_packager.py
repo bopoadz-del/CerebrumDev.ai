@@ -43,6 +43,18 @@ def _make_state(session_id: str = "sess_pkg") -> SessionState:
     return state
 
 
+def test_package_empty_proposed_chain_fallback():
+    """A None/empty proposed_chain must serialize as a valid empty chain."""
+    state = _make_state()
+    state.proposed_chain = None
+    result = package_session(state)
+
+    chain_path = Path(result["package_dir"]) / "default_chain.json"
+    assert chain_path.exists()
+    chain = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain == {"blocks": [], "connections": []}
+
+
 def test_package_copies_tinker_adapter():
     state = _make_state()
     result = package_session(state)

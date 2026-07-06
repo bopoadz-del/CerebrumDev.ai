@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -74,24 +75,24 @@ async def test_embedding_meta_persists_in_snapshot():
 
 
 @pytest.mark.asyncio
-async def test_large_fields_excluded_from_snapshot():
+async def test_large_fields_persisted_in_snapshot():
     state = session_store.create_session("sess_large", "u3")
     state.chat_history = [{"role": "user", "content": "hello"}]
     state.training_data = [{"question": "q", "answer": "a"}]
     session_store.update_session("sess_large", state)
 
-    # Snapshot should exist but not contain the large fields.
+    # Snapshot should now contain the previously-excluded fields.
     snapshot_path = _state_path("sess_large")
     assert snapshot_path.exists()
     text = snapshot_path.read_text(encoding="utf-8")
-    assert "chat_history" not in text
-    assert "training_data" not in text
+    assert "chat_history" in text
+    assert "training_data" in text
 
-    # Restored state should have empty defaults for excluded fields.
+    # Restored state should preserve the persisted values.
     session_store._session_store.clear()
     restored = session_store.get_session("sess_large")
-    assert restored.chat_history == []
-    assert restored.training_data == []
+    assert restored.chat_history == state.chat_history
+    assert restored.training_data == state.training_data
 
 
 @pytest.mark.asyncio
@@ -134,9 +135,75 @@ async def test_unknown_version_is_skipped():
 
     path = _state_path("sess_version")
     data = path.read_text(encoding="utf-8")
-    data = data.replace('"version": 1', '"version": 999')
+    data = data.replace('"version": 2', '"version": 999')
     path.write_text(data, encoding="utf-8")
 
     session_store._session_store.clear()
     restored = session_store.get_session("sess_version")
     assert restored is None
+
+
+@pytest.mark.asyncio
+async def test_chat_history_and_training_data_restored_after_restart():
+    state = session_store.create_session("sess_restore", "u7")
+    state.chat_history = [
+        {"role": "user", "content": f"message {i}"} for i in range(5)
+    ]
+    state.training_data = [
+        {"question": f"q{i}", "answer": f"a{i}"} for i in range(3)
+    ]
+    session_store.update_session("sess_restore", state)
+
+    session_store._session_store.clear()
+    restored = session_store.get_session("sess_restore")
+    assert restored is not None
+    assert restored.chat_history == state.chat_history
+    assert restored.training_data == state.training_data
+
+
+@pytest.mark.asyncio
+async def test_chat_history_capped_to_max_persisted_messages(monkeypatch):
+    import app.core.session_persistence as sp
+
+    monkeypatch.setattr(sp, "MAX_PERSISTED_CHAT_MESSAGES", 5)
+    state = session_store.create_session("sess_cap", "u8")
+    state.chat_history = [
+        {"role": "user", "content": f"message {i}"} for i in range(10)
+    ]
+    session_store.update_session("sess_cap", state)
+
+    snapshot = json.loads(_state_path("sess_cap").read_text(encoding="utf-8"))
+    assert len(snapshot["chat_history"]) == 5
+    assert snapshot["chat_history"][0]["content"] == "message 5"
+    assert snapshot["chat_history"][-1]["content"] == "message 9"
+
+    session_store._session_store.clear()
+    restored = session_store.get_session("sess_cap")
+    assert restored is not None
+    assert len(restored.chat_history) == 5
+    assert restored.chat_history[-1]["content"] == "message 9"
+
+
+@pytest.mark.asyncio
+async def test_version_1_snapshot_loads_with_defaults():
+    """A version-1 snapshot missing chat_history/training_data loads successfully."""
+    session_dir = _state_path("sess_v1").parent
+    session_dir.mkdir(parents=True, exist_ok=True)
+    version_1 = {
+        "version": 1,
+        "session_id": "sess_v1",
+        "user_id": "u9",
+        "phase": 3,
+        "phase_status": "in_progress",
+    }
+    _state_path("sess_v1").write_text(
+        json.dumps(version_1, indent=2), encoding="utf-8"
+    )
+
+    session_store._session_store.clear()
+    restored = session_store.get_session("sess_v1")
+    assert restored is not None
+    assert restored.session_id == "sess_v1"
+    assert restored.user_id == "u9"
+    assert restored.chat_history == []
+    assert restored.training_data == []

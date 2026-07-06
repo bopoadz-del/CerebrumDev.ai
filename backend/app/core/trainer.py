@@ -12,7 +12,7 @@ from typing import Dict, List
 from fastapi import HTTPException
 
 from ..models.session import TrainingJob
-from .session_store import get_session, update_session
+from .session_store import get_session, update_session, _apply_training_watchdog
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +275,8 @@ async def get_training_status(session_id: str) -> TrainingJob:
     state = get_session(session_id)
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
+    if _apply_training_watchdog(state):
+        update_session(session_id, state)
     return state.training_job
 
 

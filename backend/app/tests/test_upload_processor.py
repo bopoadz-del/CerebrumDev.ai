@@ -169,6 +169,81 @@ class TestProcessUpload:
         assert state.upload.indexed_collection == chroma_store.collection_name("sess_reupload")
         assert chroma_store.count_chunks("sess_reupload") == len(state.chunks)
 
+    @pytest.mark.asyncio
+    async def test_two_files_chunks_coexist(self, monkeypatch, tmp_path):
+        """Chunks from two different source files coexist in one session collection."""
+        import app.core.chroma_store as chroma_store
+
+        async def _fake_embed(chunks):
+            return [[float(i)] * 8 for i in range(len(chunks))], {
+                "backend": "model2vec",
+                "dimensions": 8,
+                "model": "minishlab/potion-base-8M",
+            }
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
+
+        file_a = tmp_path / "alpha.txt"
+        file_a.write_text("Alpha one.\n\nAlpha two.\n\nAlpha three.", encoding="utf-8")
+        file_b = tmp_path / "beta.txt"
+        file_b.write_text("Beta one.\n\nBeta two.", encoding="utf-8")
+
+        create_session("sess_two_files", "u1")
+        await upload_processor.process_upload("sess_two_files", [str(file_a), str(file_b)])
+
+        state = get_session("sess_two_files")
+        assert state.upload.status == "completed"
+        assert chroma_store.count_chunks("sess_two_files") == len(state.chunks)
+
+        reloaded = chroma_store.load_session_upload("sess_two_files")
+        assert reloaded is not None
+        assert sorted(reloaded["source_files"]) == ["alpha.txt", "beta.txt"]
+
+    @pytest.mark.asyncio
+    async def test_reupload_same_file_with_fewer_chunks_removes_stale_tail(self, monkeypatch, tmp_path):
+        """Re-uploading the same file with fewer chunks leaves no stale tail chunks."""
+        import app.core.chroma_store as chroma_store
+
+        async def _fake_embed(chunks):
+            return [[float(i)] * 8 for i in range(len(chunks))], {
+                "backend": "model2vec",
+                "dimensions": 8,
+                "model": "minishlab/potion-base-8M",
+            }
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
+
+        txt = tmp_path / "doc.txt"
+        # Make each paragraph long enough that chunk_text splits into >2 chunks.
+        long_paragraphs = [
+            f"Paragraph {i} has a substantial amount of content so that the chunking "
+            "logic, which targets roughly eight hundred characters per chunk, is forced "
+            "to split this text into multiple pieces rather than keeping everything in a "
+            "single chunk. We need at least three chunks for the stale-tail assertion."
+            for i in range(10)
+        ]
+        txt.write_text("\n\n".join(long_paragraphs), encoding="utf-8")
+
+        create_session("sess_stale_tail", "u1")
+        await upload_processor.process_upload("sess_stale_tail", [str(txt)])
+        first_state = get_session("sess_stale_tail")
+        first_count = chroma_store.count_chunks("sess_stale_tail")
+        assert first_count == len(first_state.chunks)
+        assert first_count > 2
+
+        # Truncate the same file to fewer paragraphs and re-upload.
+        txt.write_text("Only one paragraph remains.\n\nSecond final paragraph.", encoding="utf-8")
+        await upload_processor.process_upload("sess_stale_tail", [str(txt)])
+
+        second_state = get_session("sess_stale_tail")
+        second_count = chroma_store.count_chunks("sess_stale_tail")
+        assert second_count == len(second_state.chunks)
+        assert second_count < first_count
+
+        # No extra chunks from the first upload should still be present.
+        docs, _, _ = chroma_store.load_chunks("sess_stale_tail")
+        assert len(docs) == second_count
+
 
 class TestParsePdfWithMarker:
     def test_returns_empty_when_marker_not_installed(self, monkeypatch):
