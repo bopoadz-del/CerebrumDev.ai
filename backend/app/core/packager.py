@@ -221,6 +221,39 @@ except Exception as _tinker_exc:
     TinkerAdapter = None  # type: ignore
     logger.debug("Tinker adapter not available in deployed runtime: %s", _tinker_exc)
 
+# Default ONNX sentence embedder. The model must match the one used during
+# indexing in upload_processor.py so vectors.json validates at query time.
+try:
+    from fastembed import TextEmbedding
+except Exception as _fastembed_exc:
+    TextEmbedding = None  # type: ignore
+    logger.debug("fastembed not available in deployed runtime: %s", _fastembed_exc)
+
+FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"
+_fastembed_model_instance: Optional[Any] = None
+
+
+def _get_fastembed_model() -> Optional[Any]:
+    """Lazily load the fastembed ONNX model as a singleton."""
+    global _fastembed_model_instance
+    if _fastembed_model_instance is None and TextEmbedding is not None:
+        logger.info("Loading fastembed model %s ...", FASTEMBED_MODEL)
+        _fastembed_model_instance = TextEmbedding(model_name=FASTEMBED_MODEL)
+    return _fastembed_model_instance
+
+
+def _fastembed_embed(texts: List[str]) -> List[List[float]]:
+    """Embed *texts* locally using fastembed and return plain Python floats."""
+    model = _get_fastembed_model()
+    if model is None:
+        raise RuntimeError("fastembed is not installed")
+    vectors = []
+    for vec in model.embed(texts):
+        arr = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+        vectors.append([float(v) for v in arr])
+    return vectors
+
+
 BASE_DIR = Path(__file__).parent.parent.parent
 CHAIN_PATH = BASE_DIR / "default_chain.json"
 VECTORS_PATH = BASE_DIR / "vectors.json"
@@ -269,50 +302,78 @@ def _retrieve(query_embedding: List[float], k: int = RAG_K) -> List[str]:
 
 
 async def _probe_query_embedder() -> Dict[str, Any]:
-    """Probe the runtime query embedder (zvec) and record its capability.
+    """Probe the runtime query embedder and record its capability.
 
-    The result is cached for the lifetime of the process so /health remains
-    cheap after the first call.
+    The embedder used at query time must match the provider recorded in
+    vectors.json (zvec or fastembed). The result is cached for the lifetime of
+    the process so /health remains cheap after the first call.
     """
     global _QUERY_EMBEDDER
     if _QUERY_EMBEDDER is not None:
         return _QUERY_EMBEDDER
 
-    url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
-    payload = {{
-        "block": "zvec",
-        "input": {{"text": "__rag_probe__", "query": "__rag_probe__"}},
-        "params": {{"operation": "embed"}},
+    embedding = VECTORS.get("embedding", {{}})
+    provider = embedding.get("provider", "zvec")
+    index_model = embedding.get("model", "")
+
+    if provider == "zvec":
+        url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
+        payload = {{
+            "block": "zvec",
+            "input": {{"text": "__rag_probe__", "query": "__rag_probe__"}},
+            "params": {{"operation": "embed"}},
+        }}
+        headers: Dict[str, str] = {{"Content-Type": "application/json"}}
+        if CEREBRUM_MASTER_KEY:
+            headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            logger.warning("Could not probe query embedder: %s", exc)
+            return {{"provider": "zvec", "model": "", "dim": 0, "error": str(exc)}}
+
+        if data.get("status") != "success":
+            error = data.get("result") or data.get("error") or "zvec embed returned error"
+            logger.warning("Query embedder probe returned error: %s", error)
+            return {{"provider": "zvec", "model": "", "dim": 0, "error": str(error)}}
+
+        result = data.get("result", {{}})
+        vector = result.get("vector", [])
+        if not vector:
+            return {{"provider": "zvec", "model": "", "dim": 0, "error": "zvec embed returned empty vector"}}
+
+        _QUERY_EMBEDDER = {{
+            "provider": "zvec",
+            "model": result.get("model", ""),
+            "dim": len(vector),
+        }}
+        return _QUERY_EMBEDDER
+
+    if provider == "fastembed":
+        try:
+            vectors = _fastembed_embed(["__rag_probe__"])
+            vector = vectors[0]
+        except Exception as exc:
+            logger.warning("fastembed probe failed: %s", exc)
+            return {{"provider": "fastembed", "model": FASTEMBED_MODEL, "dim": 0, "error": str(exc)}}
+
+        _QUERY_EMBEDDER = {{
+            "provider": "fastembed",
+            "model": FASTEMBED_MODEL,
+            "dim": len(vector),
+        }}
+        return _QUERY_EMBEDDER
+
+    return {{
+        "provider": provider,
+        "model": index_model,
+        "dim": 0,
+        "error": f"Unknown embedding provider '{{provider}}'",
     }}
-    headers: Dict[str, str] = {{"Content-Type": "application/json"}}
-    if CEREBRUM_MASTER_KEY:
-        headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning("Could not probe query embedder: %s", exc)
-        return {{"provider": "zvec", "model": "", "dim": 0, "error": str(exc)}}
-
-    if data.get("status") != "success":
-        error = data.get("result") or data.get("error") or "zvec embed returned error"
-        logger.warning("Query embedder probe returned error: %s", error)
-        return {{"provider": "zvec", "model": "", "dim": 0, "error": str(error)}}
-
-    result = data.get("result", {{}})
-    vector = result.get("vector", [])
-    if not vector:
-        return {{"provider": "zvec", "model": "", "dim": 0, "error": "zvec embed returned empty vector"}}
-
-    _QUERY_EMBEDDER = {{
-        "provider": "zvec",
-        "model": result.get("model", ""),
-        "dim": len(vector),
-    }}
-    return _QUERY_EMBEDDER
 
 
 async def _validate_embedding_meta() -> Dict[str, Any]:
@@ -410,45 +471,67 @@ async def health():
 
 
 async def _embed_query(text: str) -> Optional[List[float]]:
-    """Compute a query embedding using the local zvec block."""
-    url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
-    payload = {{
-        "block": "zvec",
-        "input": {{"text": text, "query": text}},
-        "params": {{"operation": "embed"}},
-    }}
-    headers: Dict[str, str] = {{"Content-Type": "application/json"}}
-    if CEREBRUM_MASTER_KEY:
-        headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-    except Exception as exc:
-        logger.warning("zvec embed query failed: %s", exc)
-        return None
-
-    if data.get("status") != "success":
-        logger.warning("zvec embed query returned error: %s", data.get("result"))
-        return None
-
-    result = data.get("result", {{}})
-    vector = result.get("vector", [])
-    if not vector:
-        logger.warning("zvec embed query returned empty vector")
-        return None
-
+    """Compute a query embedding using the provider recorded in vectors.json."""
     rag = await _ensure_rag_status()
     expected_dim = rag.get("dim")
-    if expected_dim and len(vector) != expected_dim:
-        logger.warning(
-            "zvec embed dimension mismatch: expected %s, got %s", expected_dim, len(vector)
-        )
-        return None
+    provider = rag.get("provider", "zvec")
 
-    return vector
+    if provider == "zvec":
+        url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
+        payload = {{
+            "block": "zvec",
+            "input": {{"text": text, "query": text}},
+            "params": {{"operation": "embed"}},
+        }}
+        headers: Dict[str, str] = {{"Content-Type": "application/json"}}
+        if CEREBRUM_MASTER_KEY:
+            headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            logger.warning("zvec embed query failed: %s", exc)
+            return None
+
+        if data.get("status") != "success":
+            logger.warning("zvec embed query returned error: %s", data.get("result"))
+            return None
+
+        result = data.get("result", {{}})
+        vector = result.get("vector", [])
+        if not vector:
+            logger.warning("zvec embed query returned empty vector")
+            return None
+
+        if expected_dim and len(vector) != expected_dim:
+            logger.warning(
+                "zvec embed dimension mismatch: expected %s, got %s", expected_dim, len(vector)
+            )
+            return None
+
+        return vector
+
+    if provider == "fastembed":
+        try:
+            vectors = _fastembed_embed([text])
+            vector = vectors[0]
+        except Exception as exc:
+            logger.warning("fastembed embed query failed: %s", exc)
+            return None
+
+        if expected_dim and len(vector) != expected_dim:
+            logger.warning(
+                "fastembed embed dimension mismatch: expected %s, got %s", expected_dim, len(vector)
+            )
+            return None
+
+        return vector
+
+    logger.warning("Cannot embed query for unknown provider '%s'", provider)
+    return None
 
 
 async def _llm_response_text(
@@ -761,7 +844,8 @@ ARG CEREBRUM_BLOCKS_REPO={repo}
 
 # Install Python deps
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \\
+    pip install --no-cache-dir "fastembed>=0.6.0"
 
 # If you are serving a Tinker fine-tuned model, the runtime needs the
 # ``tinker`` package installed (it is not on PyPI). Mount or COPY the vendored
