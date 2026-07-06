@@ -524,42 +524,58 @@ async def chat(payload: Dict[str, Any]):
 def _write_patch_script(package_root: Path) -> None:
     patch = package_root / "patch_blocks.py"
     patch.write_text(
-        '''"""Inject the deployed-session router into Cerebrum-Blocks app/main.py."""
+        """'''Inject the deployed-session router into Cerebrum-Blocks app/main.py.'''
 from pathlib import Path
 
-main = Path("app/main.py")
-text = main.read_text(encoding="utf-8")
+main = Path('app/main.py')
+text = main.read_text(encoding='utf-8')
 
-if "deployed" in text:
-    print("deployed router already present")
+if 'deployed' in text:
+    print('deployed router already present')
     raise SystemExit(0)
 
 # Add import inside the existing from app.routers import block
-marker = "from app.routers import (\\n"
+marker = 'from app.routers import (\\n'
 if marker in text:
-    text = text.replace(marker, marker + "    deployed,\\n")
+    text = text.replace(marker, marker + '    deployed,\\n')
 else:
     # Fallback: insert after the import block
     text = text.replace(
-        "from app.routers.metrics import _record_metrics",
-        "from app.routers.metrics import _record_metrics\\nfrom app.routers import deployed",
+        'from app.routers.metrics import _record_metrics',
+        'from app.routers.metrics import _record_metrics\\nfrom app.routers import deployed',
     )
     text = text.replace(
-        "app.include_router(workflow.router)\\n",
-        "app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n",
+        'app.include_router(workflow.router)\\n',
+        'app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n',
     )
-    main.write_text(text, encoding="utf-8")
+    main.write_text(text, encoding='utf-8')
     raise SystemExit(0)
 
 # Add router include after workflow router
 text = text.replace(
-    "app.include_router(workflow.router)\\n",
-    "app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n",
+    'app.include_router(workflow.router)\\n',
+    'app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n',
 )
 
-main.write_text(text, encoding="utf-8")
-print("patched app/main.py with deployed router")
-''',
+main.write_text(text, encoding='utf-8')
+print('patched app/main.py with deployed router')
+
+# Also augment the engine's root /health so Render and operators see RAG status.
+health = Path('app/routers/health.py')
+if health.exists():
+    health_text = health.read_text(encoding='utf-8')
+    if 'rag' not in health_text:
+        health_text = health_text.replace(
+            'from app.blocks import BLOCK_REGISTRY\\n',
+            'from app.blocks import BLOCK_REGISTRY\\nfrom app.routers import deployed\\n',
+        )
+        health_text = health_text.replace(
+            '''@router.get(\"/health\")\ndef health():\n    \"\"\"Health check.\"\"\"\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
+            '''@router.get(\"/health\")\nasync def health():\n    'Health check, including deployed-session RAG status.'\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"rag\": await deployed._ensure_rag_status(),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
+        )
+        health.write_text(health_text, encoding='utf-8')
+        print('patched app/routers/health.py with RAG status')
+""",
         encoding="utf-8",
     )
 

@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import zipfile
 from datetime import datetime
@@ -187,3 +189,93 @@ def test_chroma_rehydration_restores_embedding_meta(fake_engine_checkout: Path, 
     reloaded = session_store.get_session("sess_chroma")
     assert reloaded is not None
     assert reloaded.embedding_meta == embedding_meta
+
+
+def test_root_health_reports_rag_status_after_patch(tmp_path: Path):
+    """patch_blocks.py augments the engine's root /health with the deployed RAG status."""
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    from app.core.packager import _write_patch_script
+
+    _write_patch_script(package_root)
+
+    # Build a minimal fake engine checkout that resembles Cerebrum-Blocks.
+    engine = tmp_path / "engine"
+    (engine / "app/routers").mkdir(parents=True)
+    (engine / "app/__init__.py").write_text("", encoding="utf-8")
+    (engine / "app/routers/__init__.py").write_text("", encoding="utf-8")
+    (engine / "app/blocks.py").write_text(
+        "BLOCK_REGISTRY = {}\nblock_instances = []\n", encoding="utf-8"
+    )
+    (engine / "app/dependencies.py").write_text(
+        "block_instances = []\n", encoding="utf-8"
+    )
+    (engine / "app/main.py").write_text(
+        'from fastapi import FastAPI\n'
+        'from app.routers import (\n'
+        '    workflow,\n'
+        '    health,\n'
+        ')\n'
+        'app = FastAPI()\n'
+        'app.include_router(workflow.router)\n'
+        'app.include_router(health.router)\n',
+        encoding="utf-8",
+    )
+    (engine / "app/routers/health.py").write_text(
+        'from datetime import datetime, timezone\n'
+        'from fastapi import APIRouter\n'
+        'from app.blocks import BLOCK_REGISTRY\n'
+        'from app.dependencies import block_instances\n'
+        '\n'
+        'router = APIRouter()\n'
+        '\n'
+        '@router.get("/health")\n'
+        'def health():\n'
+        '    """Health check."""\n'
+        '    return {\n'
+        '        "status": "healthy",\n'
+        '        "blocks_loaded": len(block_instances),\n'
+        '        "blocks_available": len(BLOCK_REGISTRY),\n'
+        '        "timestamp": datetime.now(timezone.utc).isoformat(),\n'
+        '    }\n',
+        encoding="utf-8",
+    )
+    # A fake deployed router that reports a degraded RAG state.
+    (engine / "app/routers/deployed.py").write_text(
+        'from fastapi import APIRouter\n'
+        '\n'
+        'router = APIRouter()\n'
+        '\n'
+        'async def _ensure_rag_status():\n'
+        '    return {"available": False, "detail": "degraded by test"}\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(package_root / "patch_blocks.py")],
+        cwd=engine,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    # Verify the patched root /health in an isolated subprocess so we don't
+    # pollute this process's sys.modules with the fake engine package.
+    probe_script = engine / "probe_health.py"
+    probe_script.write_text(
+        "import asyncio, json\n"
+        "from app.routers import health as patched_health\n"
+        "print(json.dumps(asyncio.run(patched_health.health())))\n",
+        encoding="utf-8",
+    )
+    probe = subprocess.run(
+        [sys.executable, str(probe_script)],
+        cwd=engine,
+        capture_output=True,
+        text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+    response = json.loads(probe.stdout)
+    assert response["status"] == "healthy"
+    assert response["rag"]["available"] is False
+    assert "degraded by test" in response["rag"]["detail"]
