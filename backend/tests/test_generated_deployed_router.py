@@ -15,6 +15,11 @@ from fastapi.testclient import TestClient
 from app.core.packager import _write_deployed_router
 
 
+async def _fake_probe_query_embedder() -> Dict[str, Any]:
+    """Default query embedder capability used by router tests."""
+    return {"provider": "zvec", "model": "test", "dim": 3}
+
+
 def _load_deployed_module(tmp_path: Path, domain: str = "testdomain") -> Any:
     """Render the template into tmp_path and load the generated module."""
     _write_deployed_router(tmp_path, domain)
@@ -28,6 +33,8 @@ def _load_deployed_module(tmp_path: Path, domain: str = "testdomain") -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module._RAG_STATUS = None  # fresh validation for every test
+    module._QUERY_EMBEDDER = None
+    module._probe_query_embedder = _fake_probe_query_embedder
     return module
 
 

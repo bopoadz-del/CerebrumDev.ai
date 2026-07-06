@@ -100,6 +100,36 @@ def store_chunks(
             metadata=collection_metadata,
         )
 
+        # If the collection already contains embeddings with a different
+        # dimension (e.g. a hash fallback index followed by a real zvec index),
+        # recreate it so the new embedding space is authoritative.
+        if embeddings:
+            try:
+                peek = collection.peek(limit=1)
+                raw_embeddings = peek.get("embeddings")
+                if raw_embeddings is not None:
+                    if hasattr(raw_embeddings, "tolist"):
+                        peeked = raw_embeddings.tolist()
+                    else:
+                        peeked = list(raw_embeddings)
+                    if peeked:
+                        existing_dim = len(peeked[0])
+                        new_dim = len(embeddings[0])
+                        if existing_dim != new_dim:
+                            logger.warning(
+                                "Embedding dimension changed for %s from %s to %s; recreating collection",
+                                name,
+                                existing_dim,
+                                new_dim,
+                            )
+                            client.delete_collection(name=name)
+                            collection = client.get_or_create_collection(
+                                name=name,
+                                metadata=collection_metadata,
+                            )
+            except Exception as exc:
+                logger.warning("Could not check existing embedding dimension for %s: %s", name, exc)
+
         ids = [
             f"{source_hashes[i]}:{i}" if source_hashes and i < len(source_hashes) else f"chunk_{i}"
             for i in range(len(chunks))

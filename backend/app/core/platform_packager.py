@@ -78,9 +78,15 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
     }
     if state.embedding_meta:
         vectors["embedding"] = {
-            "provider": "zvec",
+            "provider": state.embedding_meta.get("provider", "zvec"),
             "model": state.embedding_meta.get("model"),
             "dim": state.embedding_meta.get("dimensions"),
+        }
+    elif embeddings:
+        vectors["embedding"] = {
+            "provider": "unknown",
+            "model": "unknown",
+            "dim": len(embeddings[0]),
         }
     return vectors
 
@@ -444,6 +450,7 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
     base_url = f"https://{service_name}.onrender.com"
     config_toml.write_text(
         f"# Cerebrum CLI configuration for this deployed instance.\n"
+        f'mode = "deployed"\n'
         f'base_url = "{base_url}"\n'
         f'api_key = "{env_vars.get("CEREBRUM_MASTER_KEY", "")}"\n'
         f'domain = "{env_vars.get("CEREBRUM_DOMAIN_KITS", "construction")}"\n'
