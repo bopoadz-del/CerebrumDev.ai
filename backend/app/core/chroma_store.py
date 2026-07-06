@@ -4,6 +4,7 @@ This module is deliberately small and free of FastAPI/session-store cycles so it
 can be imported safely by both `upload_processor` and `session_store`.
 """
 
+import json
 import os
 import logging
 from pathlib import Path
@@ -50,6 +51,7 @@ def store_chunks(
     chunks: List[str],
     embeddings: Optional[List[List[float]]] = None,
     source_files: Optional[List[str]] = None,
+    embedding_meta: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Persist chunks + embeddings + metadata to a per-session ChromaDB collection.
 
@@ -58,6 +60,7 @@ def store_chunks(
         chunks: List of text chunks.
         embeddings: Optional parallel list of dense vectors.
         source_files: Optional parallel list of source file names.
+        embedding_meta: Optional dict describing the embedding model/space.
 
     Returns:
         True on success, False on failure.
@@ -69,15 +72,18 @@ def store_chunks(
         client = _get_chroma_client()
         name = collection_name(session_id)
         now = datetime.now(timezone.utc).isoformat()
+        collection_metadata: Dict[str, Any] = {
+            "session_id": session_id,
+            "hnsw:space": "cosine",
+            "created_at": now,
+            "updated_at": now,
+            "source_files": ",".join(source_files or []),
+        }
+        if embedding_meta:
+            collection_metadata["embedding_meta_json"] = json.dumps(embedding_meta)
         collection = client.get_or_create_collection(
             name=name,
-            metadata={
-                "session_id": session_id,
-                "hnsw:space": "cosine",
-                "created_at": now,
-                "updated_at": now,
-                "source_files": ",".join(source_files or []),
-            },
+            metadata=collection_metadata,
         )
 
         ids = [f"chunk_{i}" for i in range(len(chunks))]
@@ -157,6 +163,13 @@ def load_session_upload(session_id: str) -> Optional[Dict[str, Any]]:
     if not collection_exists(session_id):
         return None
     try:
+        client = _get_chroma_client()
+        name = collection_name(session_id)
+        collection = client.get_collection(name=name)
+        collection_metadata = collection.metadata or {}
+        embedding_meta_json = collection_metadata.get("embedding_meta_json")
+        embedding_meta = json.loads(embedding_meta_json) if embedding_meta_json else None
+
         chunks, embeddings, metadatas = load_chunks(session_id)
         source_files = sorted({m.get("source_file") for m in metadatas if m.get("source_file")})
         return {
@@ -165,6 +178,7 @@ def load_session_upload(session_id: str) -> Optional[Dict[str, Any]]:
             "indexed_collection": collection_name(session_id),
             "total_chunks": len(chunks),
             "source_files": source_files,
+            "embedding_meta": embedding_meta,
         }
     except Exception as exc:
         logger.exception("Failed to reload session %s from ChromaDB: %s", session_id, exc)

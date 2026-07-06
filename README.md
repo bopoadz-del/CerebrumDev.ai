@@ -108,7 +108,12 @@ The platform consists of two repos:
    npm run dev
    ```
 
-4. **Open** `http://localhost:5173`
+4. **CLI (optional developer install)**
+   ```bash
+   pip install "cerebrum-cli @ git+https://github.com/bopoadz-del/Cerebrum-Blocks#subdirectory=cli"
+   ```
+
+5. **Open** `http://localhost:5173`
 
 ### Environment Variables (.env)
 

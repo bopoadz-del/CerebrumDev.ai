@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -32,7 +34,8 @@ def session(tmp_path: Path) -> SessionState:
 @pytest.fixture
 def fake_medical_kit(tmp_path: Path) -> Path:
     """Create a fake domain kit with a manifest and one artifact."""
-    kit_root = tmp_path / "Cerebrum-Blocks" / "block_store" / "kits" / "medical"
+    engine_root = tmp_path / "Cerebrum-Blocks"
+    kit_root = engine_root / "block_store" / "kits" / "medical"
     bundle = kit_root / "bundle"
     bundle.mkdir(parents=True)
     (bundle / "app" / "containers").mkdir(parents=True)
@@ -49,6 +52,11 @@ def fake_medical_kit(tmp_path: Path) -> Path:
         ],
     }
     (kit_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    # Engine checkout must also contain the relocated CLI.
+    cli_pkg = engine_root / "cli" / "cerebrum_cli"
+    cli_pkg.mkdir(parents=True)
+    (cli_pkg / "__init__.py").write_text("__version__ = '0.0.0'\n", encoding="utf-8")
+    (cli_pkg / "marker_from_engine.txt").write_text("engine\n", encoding="utf-8")
     return kit_root
 
 
@@ -107,3 +115,46 @@ def test_package_neutral_no_construction_strings(session: SessionState, fake_med
             text = zf.read(name).decode(errors="ignore").lower()
             for word in forbidden:
                 assert word not in text, f"forbidden word {word!r} found in {name}"
+
+
+def test_package_cli_sourced_from_engine(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """The packaged CLI is copied from the engine checkout."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+
+    with zipfile.ZipFile(info["zip_path"], "r") as zf:
+        names = zf.namelist()
+        assert "cli/cerebrum_cli/__init__.py" in names
+        assert "cli/cerebrum_cli/marker_from_engine.txt" in names
+        assert zf.read("cli/cerebrum_cli/marker_from_engine.txt").decode().strip() == "engine"
+        assert "cli/install.sh" in names
+        assert "cli/config.toml" in names
+
+
+def test_package_cli_missing_engine_cli_raises(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """A missing engine cli/ directory raises the mandated RuntimeError."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+    # Remove the relocated CLI from the fake engine checkout.
+    shutil.rmtree(engine_root / "cli")
+
+    expected = (
+        f"Engine checkout at {engine_root} lacks cli/ — requires Cerebrum-Blocks "
+        "with the relocated CLI (Spec 2, commit c8176867 or later)"
+    )
+    with pytest.raises(RuntimeError, match=re.escape(expected)):
+        package_platform_session(session)
+
+
+def test_find_engine_root_falls_back_to_sibling_checkout(monkeypatch, tmp_path: Path):
+    """When CEREBRUM_BLOCKS_ROOT is unset, the sibling Cerebrum-Blocks checkout is discovered."""
+    from app.core.engine_discovery import _find_engine_root
+
+    monkeypatch.delenv("CEREBRUM_BLOCKS_ROOT", raising=False)
+    project_root = tmp_path / "CerebrumDev.ai"
+    sibling = tmp_path / "Cerebrum-Blocks"
+    sibling.mkdir()
+    anchor = project_root / "backend" / "app" / "core" / "engine_discovery.py"
+    assert _find_engine_root(anchor) == sibling

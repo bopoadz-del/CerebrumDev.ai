@@ -60,6 +60,8 @@ class SessionState(BaseModel):
     corpus: Optional[str] = None
     chunks: List[str] = Field(default_factory=list)
     embeddings: List[List[float]] = Field(default_factory=list)
+    embedding_meta: Optional[dict] = None
+    index_status: Optional[str] = None
     # Phase 3: AI chat + chain generation + rule injection
     chat_history: List[Dict[str, str]] = Field(default_factory=list)
     proposed_chain: Optional[Dict[str, Any]] = None

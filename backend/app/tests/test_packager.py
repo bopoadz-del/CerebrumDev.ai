@@ -1,11 +1,14 @@
+import json
 import os
 import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from app.core.packager import package_session
+from app.core import session_store
 from app.models.session import SessionState, TrainingJob
 
 
@@ -14,7 +17,21 @@ def _use_temp_storage(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("TINKER_API_KEY", "test-tinker-key")
     import app.core.packager as packager
+    import app.core.chroma_store as chroma_store
     monkeypatch.setattr(packager, "STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setattr(chroma_store, "CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
+    chroma_store._chroma_client = None
+
+
+@pytest.fixture
+def fake_engine_checkout(tmp_path: Path) -> Path:
+    """Create a fake Cerebrum-Blocks engine checkout with the relocated CLI."""
+    engine_root = tmp_path / "Cerebrum-Blocks"
+    cli_pkg = engine_root / "cli" / "cerebrum_cli"
+    cli_pkg.mkdir(parents=True)
+    (cli_pkg / "__init__.py").write_text("__version__ = '0.0.0'\n", encoding="utf-8")
+    (cli_pkg / "marker_from_engine.txt").write_text("engine\n", encoding="utf-8")
+    return engine_root
 
 
 def _make_state(session_id: str = "sess_pkg") -> SessionState:
@@ -55,3 +72,118 @@ def test_package_does_not_set_tinker_env_for_untrained_session():
     env = result["env_vars"]
     assert env.get("GROUNDED_ADAPTER_ENABLED") != "true"
     assert "GROUNDED_ADAPTER_TINKER_PATH" not in env
+
+
+def test_package_cli_sourced_from_engine(fake_engine_checkout: Path, monkeypatch):
+    """The packaged CLI is copied from the engine checkout."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    result = package_session(state)
+
+    with zipfile.ZipFile(result["zip_path"], "r") as zf:
+        names = zf.namelist()
+        assert "cli/cerebrum_cli/__init__.py" in names
+        assert "cli/cerebrum_cli/marker_from_engine.txt" in names
+        assert zf.read("cli/cerebrum_cli/marker_from_engine.txt").decode().strip() == "engine"
+        assert "cli/install.sh" in names
+        assert "cli/config.toml" in names
+
+
+def test_find_engine_root_falls_back_to_sibling_checkout(monkeypatch, tmp_path: Path):
+    """When CEREBRUM_BLOCKS_ROOT is unset, the sibling Cerebrum-Blocks checkout is discovered."""
+    from app.core.engine_discovery import _find_engine_root
+
+    monkeypatch.delenv("CEREBRUM_BLOCKS_ROOT", raising=False)
+    project_root = tmp_path / "CerebrumDev.ai"
+    sibling = tmp_path / "Cerebrum-Blocks"
+    sibling.mkdir()
+    anchor = project_root / "backend" / "app" / "core" / "engine_discovery.py"
+    assert _find_engine_root(anchor) == sibling
+
+
+def test_vectors_json_includes_embedding_meta(fake_engine_checkout: Path, monkeypatch):
+    """Packaged vectors.json contains the embedding-space metadata stanza."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    state.embedding_meta = {
+        "backend": "model2vec",
+        "dimensions": 256,
+        "model": "minishlab/potion-base-8M",
+    }
+    result = package_session(state)
+
+    package_dir = Path(result["package_dir"])
+    vectors = json.loads((package_dir / "vectors.json").read_text(encoding="utf-8"))
+    assert vectors["embedding"] == {
+        "provider": "zvec",
+        "model": "minishlab/potion-base-8M",
+        "dim": 256,
+    }
+
+
+def test_snapshot_rehydration_restores_embedding_meta(fake_engine_checkout: Path, monkeypatch, tmp_path: Path):
+    """After clearing memory, reloading from snapshot restores embedding_meta and packages it."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    # Ensure session persistence uses the temp storage.
+    import app.core.session_persistence as sp
+    monkeypatch.setattr(sp, "STORAGE_PATH", str(tmp_path / "storage"))
+
+    state = session_store.create_session("sess_rehydrate", "u1")
+    state.embedding_meta = {
+        "backend": "model2vec",
+        "dimensions": 256,
+        "model": "minishlab/potion-base-8M",
+    }
+    state.chunks = ["chunk one", "chunk two"]
+    state.embeddings = [[0.1] * 256, [0.2] * 256]
+    session_store.update_session("sess_rehydrate", state)
+
+    # Simulate restart: drop in-memory store and reload.
+    session_store._session_store.clear()
+    reloaded = session_store.get_session("sess_rehydrate")
+    assert reloaded is not None
+    assert reloaded.embedding_meta == state.embedding_meta
+
+    result = package_session(reloaded)
+    vectors = json.loads((Path(result["package_dir"]) / "vectors.json").read_text(encoding="utf-8"))
+    assert vectors["embedding"] == {
+        "provider": "zvec",
+        "model": "minishlab/potion-base-8M",
+        "dim": 256,
+    }
+
+
+def test_chroma_rehydration_restores_embedding_meta(fake_engine_checkout: Path, monkeypatch, tmp_path: Path):
+    """Rehydrating a session from its ChromaDB collection restores embedding_meta."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    import app.core.chroma_store as chroma_store
+    import app.core.session_persistence as sp
+    monkeypatch.setattr(chroma_store, "STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setattr(sp, "STORAGE_PATH", str(tmp_path / "storage"))
+
+    session_store.create_session("sess_chroma", "u1")
+    embedding_meta = {
+        "backend": "model2vec",
+        "dimensions": 8,
+        "model": "minishlab/potion-base-8M",
+    }
+    ok = chroma_store.store_chunks(
+        "sess_chroma",
+        ["chunk one", "chunk two"],
+        embeddings=[[0.1] * 8, [0.2] * 8],
+        embedding_meta=embedding_meta,
+    )
+    assert ok
+
+    # Remove the JSON snapshot so get_session is forced to rehydrate from ChromaDB.
+    state_path = sp._state_path("sess_chroma")
+    if state_path.exists():
+        state_path.unlink()
+    backup_path = sp._backup_path("sess_chroma")
+    if backup_path.exists():
+        backup_path.unlink()
+
+    session_store._session_store.clear()
+    reloaded = session_store.get_session("sess_chroma")
+    assert reloaded is not None
+    assert reloaded.embedding_meta == embedding_meta

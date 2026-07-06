@@ -17,7 +17,11 @@ def _clear_sessions(monkeypatch, tmp_path):
     # Re-import session_persistence picks up STORAGE_PATH from env at import
     # time, so patch its constant directly as well.
     import app.core.session_persistence as sp
+    import app.core.chroma_store as chroma_store
     monkeypatch.setattr(sp, "STORAGE_PATH", str(tmp_path / "storage"))
+    # Keep tests from writing into ./storage/chroma or sharing the global client.
+    monkeypatch.setattr(chroma_store, "CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
+    chroma_store._chroma_client = None
     yield
 
 
@@ -46,6 +50,27 @@ async def test_update_session_persists():
     restored = session_store.get_session("sess_update")
     assert restored.phase == 3
     assert restored.phase_status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_embedding_meta_persists_in_snapshot():
+    state = session_store.create_session("sess_embedding_meta", "u2")
+    state.embedding_meta = {
+        "backend": "model2vec",
+        "dimensions": 256,
+        "model": "minishlab/potion-base-8M",
+    }
+    session_store.update_session("sess_embedding_meta", state)
+
+    # Verify the snapshot contains the metadata.
+    snapshot_path = _state_path("sess_embedding_meta")
+    assert snapshot_path.exists()
+    text = snapshot_path.read_text(encoding="utf-8")
+    assert '"embedding_meta"' in text
+
+    session_store._session_store.clear()
+    restored = session_store.get_session("sess_embedding_meta")
+    assert restored.embedding_meta == state.embedding_meta
 
 
 @pytest.mark.asyncio
