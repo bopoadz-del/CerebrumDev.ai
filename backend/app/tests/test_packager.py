@@ -279,3 +279,59 @@ def test_root_health_reports_rag_status_after_patch(tmp_path: Path):
     assert response["status"] == "healthy"
     assert response["rag"]["available"] is False
     assert "degraded by test" in response["rag"]["detail"]
+
+
+def test_root_health_patch_fails_loudly_when_anchor_missing(tmp_path: Path):
+    """patch_blocks.py raises if the engine health file no longer matches expected anchors."""
+    package_root = tmp_path / "package"
+    package_root.mkdir()
+    from app.core.packager import _write_patch_script
+
+    _write_patch_script(package_root)
+
+    engine = tmp_path / "engine"
+    (engine / "app/routers").mkdir(parents=True)
+    (engine / "app/__init__.py").write_text("", encoding="utf-8")
+    (engine / "app/routers/__init__.py").write_text("", encoding="utf-8")
+    (engine / "app/main.py").write_text(
+        'from fastapi import FastAPI\n'
+        'from app.routers import (\n'
+        '    workflow,\n'
+        '    health,\n'
+        ')\n'
+        'app = FastAPI()\n'
+        'app.include_router(workflow.router)\n'
+        'app.include_router(health.router)\n',
+        encoding="utf-8",
+    )
+    # Altered health.py: missing the BLOCK_REGISTRY import and the expected /health shape.
+    (engine / "app/routers/health.py").write_text(
+        'from datetime import datetime, timezone\n'
+        'from fastapi import APIRouter\n'
+        '\n'
+        'router = APIRouter()\n'
+        '\n'
+        '@router.get("/health")\n'
+        'async def health():\n'
+        '    return {"status": "ok"}\n',
+        encoding="utf-8",
+    )
+    (engine / "app/routers/deployed.py").write_text(
+        'from fastapi import APIRouter\n'
+        '\n'
+        'router = APIRouter()\n'
+        '\n'
+        'async def _ensure_rag_status():\n'
+        '    return {"available": False, "detail": "degraded by test"}\n',
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(package_root / "patch_blocks.py")],
+        cwd=engine,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "Could not patch app/routers/health.py" in result.stderr
+    assert "from app.blocks import BLOCK_REGISTRY" in result.stderr

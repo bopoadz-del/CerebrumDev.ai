@@ -569,10 +569,20 @@ if health.exists():
             'from app.blocks import BLOCK_REGISTRY\\n',
             'from app.blocks import BLOCK_REGISTRY\\nfrom app.routers import deployed\\n',
         )
+        if 'from app.routers import deployed' not in health_text:
+            raise RuntimeError(
+                "Could not patch app/routers/health.py: expected anchor "
+                "'from app.blocks import BLOCK_REGISTRY' was not found."
+            )
         health_text = health_text.replace(
             '''@router.get(\"/health\")\ndef health():\n    \"\"\"Health check.\"\"\"\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
             '''@router.get(\"/health\")\nasync def health():\n    'Health check, including deployed-session RAG status.'\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"rag\": await deployed._ensure_rag_status(),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
         )
+        if 'rag' not in health_text:
+            raise RuntimeError(
+                "Could not patch app/routers/health.py: expected anchor "
+                "'/health route definition' was not found."
+            )
         health.write_text(health_text, encoding='utf-8')
         print('patched app/routers/health.py with RAG status')
 """,
