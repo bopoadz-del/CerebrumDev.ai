@@ -30,6 +30,7 @@ def _update_deployment(state: SessionState, **kwargs):
 
 
 @router.post("/{session_id}/deploy")
+# Default target selection is under active review; see docs/decisions/platform-packager-default.md.
 async def start_deploy(session_id: str, target: str = "cloud", background_tasks: BackgroundTasks = None):
     state = get_session(session_id)
     if not state:
