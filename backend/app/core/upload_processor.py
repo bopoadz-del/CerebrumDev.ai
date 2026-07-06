@@ -3,7 +3,7 @@ import httpx
 import logging
 import mimetypes
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 
 from ..models.session import SessionState
@@ -213,22 +213,43 @@ def chunk_text(text: str, max_chars: int = 800, overlap: int = 100) -> List[str]
     return chunks
 
 
-async def embed_chunks(chunks: List[str]) -> List[List[float]]:
-    """Get embeddings for chunks using the Cerebrum zvec block."""
+def _model_from_backend(backend: str) -> str:
+    """Map a zvec backend identifier to its canonical model name."""
+    mapping = {
+        "model2vec": "minishlab/potion-base-8M",
+        "sentence_transformers": "all-MiniLM-L6-v2",
+        "tfidf_fallback": "tfidf_fallback",
+    }
+    return mapping.get(backend, backend)
+
+
+async def embed_chunks(chunks: List[str]) -> Tuple[List[List[float]], Optional[Dict[str, Any]]]:
+    """Get embeddings for chunks using the Cerebrum zvec block.
+
+    Returns the embeddings plus metadata describing the embedding space so the
+    same model can be used at query time. Raises ValueError on any failure;
+    zero-vector fallbacks are intentionally not produced.
+    """
     if not chunks:
-        return []
+        return [], None
+
     try:
         result = await _execute_block("zvec", {}, {"operation": "batch_embed", "texts": chunks})
         data = result.get("result", {})
         embeddings = data.get("embeddings", data.get("result", []))
-        if embeddings and len(embeddings) == len(chunks):
-            return embeddings
+        if not embeddings or len(embeddings) != len(chunks):
+            raise ValueError(
+                f"zvec returned {len(embeddings)} embeddings for {len(chunks)} chunks"
+            )
+
+        backend = data.get("backend", "unknown")
+        dimensions = data.get("dimensions", len(embeddings[0]) if embeddings else 0)
+        model = data.get("model") or _model_from_backend(backend)
+        meta = {"backend": backend, "dimensions": dimensions, "model": model}
+        return embeddings, meta
     except Exception as exc:
         logger.error("zvec embedding failed: %s", exc)
-    # Fallback: zero vectors so the pipeline can continue
-    logger.warning("Using zero-vector fallback for embeddings")
-    dimensions = 256
-    return [[0.0] * dimensions for _ in chunks]
+        raise ValueError(f"Embedding failed: {exc}") from exc
 
 
 async def process_upload(session_id: str, file_paths: List[str]):
@@ -242,6 +263,10 @@ async def process_upload(session_id: str, file_paths: List[str]):
     if not state:
         logger.error("process_upload called for unknown session %s", session_id)
         return
+
+    # Each upload is a fresh attempt; clear any previous degradation so a
+    # successful re-upload can persist to ChromaDB.
+    state.index_status = None
 
     state.upload.status = "processing"
     state.upload.progress = 0.05
@@ -277,25 +302,42 @@ async def process_upload(session_id: str, file_paths: List[str]):
     update_session(session_id, state)
 
     embeddings: List[List[float]] = []
+    embedding_meta: Optional[Dict[str, Any]] = None
     if all_chunks:
         state.upload.progress = 0.6
         state.upload.message = f"Embedding {len(all_chunks)} chunks..."
         update_session(session_id, state)
-        embeddings = await embed_chunks(all_chunks)
-        state.embeddings = embeddings
+        try:
+            embeddings, embedding_meta = await embed_chunks(all_chunks)
+            state.embeddings = embeddings
+            state.embedding_meta = embedding_meta
+        except ValueError as exc:
+            logger.error("Embedding failed for session %s: %s", session_id, exc)
+            state.index_status = "degraded"
+            state.upload.message = f"Embedding failed: {exc}"
+            # Do not poison the index with zero vectors; keep embeddings empty.
+            embeddings = []
+            state.embeddings = embeddings
 
     state.upload.progress = 0.85
-    state.upload.message = "Persisting vector index..."
+    if state.index_status != "degraded":
+        state.upload.message = "Persisting vector index..."
     update_session(session_id, state)
 
-    chroma_ok = store_chunks(session_id, all_chunks, embeddings, source_files=source_files)
-    if chroma_ok:
-        state.upload.indexed_collection = collection_name(session_id)
-        state.upload.message = f"Indexed {len(all_chunks)} chunks"
-    else:
-        logger.warning("ChromaDB persistence failed for session %s; falling back to in-memory store", session_id)
+    if state.index_status == "degraded":
+        # Do not persist a degraded index to ChromaDB; keep chunks in memory only.
+        chroma_ok = False
         state.upload.indexed_collection = None
-        state.upload.message = f"Indexed {len(all_chunks)} chunks (in-memory fallback; ChromaDB unavailable)"
+        state.upload.message = state.upload.message or "Indexing degraded: embeddings unavailable"
+    else:
+        chroma_ok = store_chunks(session_id, all_chunks, embeddings, source_files=source_files, embedding_meta=embedding_meta)
+        if chroma_ok:
+            state.upload.indexed_collection = collection_name(session_id)
+            state.upload.message = f"Indexed {len(all_chunks)} chunks"
+        else:
+            logger.warning("ChromaDB persistence failed for session %s; falling back to in-memory store", session_id)
+            state.upload.indexed_collection = None
+            state.upload.message = f"Indexed {len(all_chunks)} chunks (in-memory fallback; ChromaDB unavailable)"
 
     state.upload.progress = 1.0
     if failed and chroma_ok:

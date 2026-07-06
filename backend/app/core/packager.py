@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
+from .engine_discovery import _find_engine_root
 from .llm_config import get_llm_config
 
 # Absolute path to the Tinker adapter so we can copy it into deployed packages.
@@ -49,7 +50,7 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
         embeddings = state.embeddings or []
         metadatas = [{"session_id": session_id, "index": i} for i in range(len(chunks))]
 
-    return {
+    vectors = {
         "session_id": session_id,
         "domain": state.config.domain,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -57,6 +58,13 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
         "embeddings": embeddings,
         "metadatas": metadatas,
     }
+    if state.embedding_meta:
+        vectors["embedding"] = {
+            "provider": "zvec",
+            "model": state.embedding_meta.get("model"),
+            "dim": state.embedding_meta.get("dimensions"),
+        }
+    return vectors
 
 
 def _copy_tinker_adapter(package_root: Path) -> None:
@@ -101,13 +109,16 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
         encoding="utf-8",
     )
 
-    # Best-effort copy of the local CLI package source so install.sh works offline.
-    local_cli = Path(__file__).parent.parent.parent.parent.parent / "cli" / "cerebrum_cli"
-    if local_cli.exists():
-        shutil.copytree(local_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
-        logger.info("Copied cerebrum_cli source into package")
+    # Copy the CLI package source from the engine checkout so install.sh works offline.
+    engine_root = _find_engine_root()
+    engine_cli = engine_root / "cli" / "cerebrum_cli"
+    if engine_cli.exists():
+        shutil.copytree(engine_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
+        logger.info("Copied cerebrum_cli source from %s into package", engine_cli)
     else:
-        logger.warning("Local cerebrum_cli source not found at %s; install.sh will need network", local_cli)
+        logger.warning(
+            "Engine cerebrum_cli source not found at %s; install.sh will need network", engine_cli
+        )
 
 
 def _copy_or_generate_container(session_id: str, state: SessionState, package_root: Path) -> Path:
@@ -165,15 +176,18 @@ def _write_deployed_router(package_root: Path, domain: str) -> None:
     router.write_text(
         f'''"""Deployed-session router – exposes the approved chain and container."""
 
+import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 import numpy as np
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -181,9 +195,10 @@ logger = logging.getLogger(__name__)
 DOMAIN = os.getenv("CEREBRUM_DOMAIN", "{domain}")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")
-CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "")
-CEREBRUM_API_KEY = os.getenv("CEREBRUM_API_KEY", "")
+CEREBRUM_API_URL = os.getenv("CEREBRUM_API_URL", "http://127.0.0.1:8000")
+CEREBRUM_MASTER_KEY = os.getenv("CEREBRUM_MASTER_KEY", "")
 RAG_K = int(os.getenv("RAG_K", "3"))
+HEARTBEAT_INTERVAL = float(os.getenv("HEARTBEAT_INTERVAL", "5.0"))
 
 # Optional grounded Tinker LoRA inference. Imported lazily so the package still
 # boots when the tinker SDK is not installed.
@@ -198,7 +213,14 @@ CHAIN_PATH = BASE_DIR / "default_chain.json"
 VECTORS_PATH = BASE_DIR / "vectors.json"
 
 CHAIN = json.loads(CHAIN_PATH.read_text(encoding="utf-8")) if CHAIN_PATH.exists() else {{"blocks": [], "connections": []}}
-VECTORS = json.loads(VECTORS_PATH.read_text(encoding="utf-8")) if VECTORS_PATH.exists() else {{"chunks": [], "embeddings": []}}
+try:
+    _raw_vectors = VECTORS_PATH.read_text(encoding="utf-8") if VECTORS_PATH.exists() else "{{}}"
+    VECTORS = json.loads(_raw_vectors)
+except (json.JSONDecodeError, OSError) as _vectors_load_exc:
+    logger.warning("Could not load vectors.json; treating as legacy/missing: %s", _vectors_load_exc)
+    VECTORS = {{"chunks": [], "embeddings": []}}
+
+_RAG_STATUS: Optional[Dict[str, Any]] = None
 
 
 def _load_container():
@@ -232,6 +254,242 @@ def _retrieve(query_embedding: List[float], k: int = RAG_K) -> List[str]:
         return []
 
 
+def _validate_embedding_meta() -> Dict[str, Any]:
+    """Validate vectors.json embedding metadata. Does not raise."""
+    try:
+        if not VECTORS_PATH.exists():
+            return {{"available": False, "detail": "No vectors.json found; RAG unavailable."}}
+
+        if not isinstance(VECTORS, dict):
+            return {{"available": False, "detail": "Malformed vectors.json: top-level value is not an object."}}
+
+        embedding = VECTORS.get("embedding")
+        if embedding is None:
+            return {{
+                "available": False,
+                "detail": "Index predates embedding metadata and must be re-packaged.",
+            }}
+
+        if not isinstance(embedding, dict):
+            return {{"available": False, "detail": "Malformed embedding metadata: not an object."}}
+
+        provider = embedding.get("provider")
+        model = embedding.get("model")
+        dim = embedding.get("dim")
+
+        if provider != "zvec":
+            return {{"available": False, "detail": f"Unsupported embedding provider '{{provider}}'; expected 'zvec'."}}
+
+        if not model:
+            return {{"available": False, "detail": "Missing embedding model identifier."}}
+
+        try:
+            expected_dim = int(dim)
+        except (TypeError, ValueError):
+            return {{"available": False, "detail": "Malformed embedding dimension."}}
+
+        embeddings = VECTORS.get("embeddings", [])
+        if not embeddings:
+            return {{"available": False, "detail": "No embeddings present in vectors.json."}}
+
+        if len(embeddings[0]) != expected_dim:
+            return {{
+                "available": False,
+                "detail": f"Embedding dimension mismatch: expected {{expected_dim}}, got {{len(embeddings[0])}}.",
+            }}
+
+        return {{
+            "available": True,
+            "detail": f"zvec model '{{model}}' dim {{expected_dim}} validated.",
+            "provider": provider,
+            "model": model,
+            "dim": expected_dim,
+        }}
+    except Exception as exc:
+        logger.warning("RAG metadata validation failed: %s", exc)
+        return {{"available": False, "detail": f"RAG metadata validation failed: {{exc}}"}}
+
+
+async def _ensure_rag_status() -> Dict[str, Any]:
+    global _RAG_STATUS
+    if _RAG_STATUS is None:
+        _RAG_STATUS = _validate_embedding_meta()
+    return _RAG_STATUS
+
+
+@router.get("/health")
+async def health():
+    return {{
+        "domain": DOMAIN,
+        "rag": await _ensure_rag_status(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }}
+
+
+async def _embed_query(text: str) -> Optional[List[float]]:
+    """Compute a query embedding using the local zvec block."""
+    rag = await _ensure_rag_status()
+    if not rag.get("available", False):
+        return None
+
+    url = f"{{CEREBRUM_API_URL.rstrip('/')}}/v1/execute"
+    payload = {{
+        "block": "zvec",
+        "input": {{"text": text, "query": text}},
+        "params": {{"operation": "embed"}},
+    }}
+    headers: Dict[str, str] = {{"Content-Type": "application/json"}}
+    if CEREBRUM_MASTER_KEY:
+        headers["Authorization"] = f"Bearer {{CEREBRUM_MASTER_KEY}}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        logger.warning("zvec embed query failed: %s", exc)
+        return None
+
+    if data.get("status") != "success":
+        logger.warning("zvec embed query returned error: %s", data.get("result"))
+        return None
+
+    result = data.get("result", {{}})
+    vector = result.get("vector", [])
+    if not vector:
+        logger.warning("zvec embed query returned empty vector")
+        return None
+
+    expected_dim = rag.get("dim")
+    if expected_dim and len(vector) != expected_dim:
+        logger.warning(
+            "zvec embed dimension mismatch: expected %s, got %s", expected_dim, len(vector)
+        )
+        return None
+
+    return vector
+
+
+async def _llm_response_text(
+    message: str, history: List[Dict[str, str]], context_chunks: List[str]
+) -> str:
+    system = "You are a helpful assistant."
+    if context_chunks:
+        system += "\\n\\nRelevant context:\\n" + "\\n\\n".join(context_chunks)
+
+    if TinkerAdapter is not None and TinkerAdapter.is_available():
+        try:
+            result = await TinkerAdapter.call(
+                message=message,
+                system_prompt=system,
+                max_tokens=1024,
+                temperature=0.7,
+            )
+            if result.get("status") == "success":
+                return str(result.get("response", ""))
+            logger.warning("Tinker adapter returned error: %s", result.get("error"))
+        except Exception as exc:
+            logger.warning("Tinker adapter call failed: %s", exc)
+
+    messages = [{{"role": "system", "content": system}}] + history + [{{"role": "user", "content": message}}]
+
+    if OLLAMA_URL:
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{{OLLAMA_URL.rstrip('/')}}/api/chat",
+                    json={{
+                        "model": OLLAMA_MODEL,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {{"temperature": 0.7}},
+                    }},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return str((data.get("message") or {{}}).get("content", ""))
+        except Exception as exc:
+            logger.warning("Ollama chat failed: %s", exc)
+
+    return "Chat is offline. Configure OLLAMA_URL or a Tinker fine-tuned model to restore AI responses."
+
+
+def _sse_event(payload: Dict[str, Any]) -> str:
+    """Canonical SSE line per Cerebrum-Blocks/docs/SSE_ENVELOPE.md."""
+    return f"data: {{json.dumps(payload)}}\\n\\n"
+
+
+async def _produce_tokens(
+    queue: asyncio.Queue,
+    message: str,
+    history: List[Dict[str, str]],
+    context_chunks: List[str],
+) -> None:
+    try:
+        text = await _llm_response_text(message, history, context_chunks)
+        words = text.split(" ") if text.strip() else []
+        for idx, word in enumerate(words):
+            trailing = " " if idx < len(words) - 1 else ""
+            await queue.put(word + trailing)
+    except Exception as exc:
+        await queue.put(("__error__", str(exc)))
+    finally:
+        await queue.put(None)
+
+
+async def _canonical_stream(
+    message: str, history: List[Dict[str, str]]
+) -> AsyncGenerator[str, None]:
+    """Emit the canonical SSE envelope for a chat turn."""
+    rag = await _ensure_rag_status()
+    rag_available = rag.get("available", False)
+    note = "" if rag_available else rag.get("detail", "RAG unavailable.")
+    yield _sse_event({{"type": "start", "rag_available": rag_available, "note": note}})
+
+    context_chunks: List[str] = []
+    if rag_available:
+        query_embedding = await _embed_query(message)
+        if query_embedding:
+            context_chunks = _retrieve(query_embedding)
+            if context_chunks:
+                yield _sse_event({{"type": "sources", "sources": context_chunks}})
+
+    queue: asyncio.Queue = asyncio.Queue()
+    producer = asyncio.create_task(_produce_tokens(queue, message, history, context_chunks))
+    terminal = False
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL)
+            except asyncio.TimeoutError:
+                yield _sse_event({{"type": "heartbeat"}})
+                continue
+
+            if item is None:
+                if not terminal:
+                    yield _sse_event({{"type": "end", "complete": True}})
+                    terminal = True
+                break
+
+            if isinstance(item, tuple) and item[0] == "__error__":
+                if not terminal:
+                    yield _sse_event({{"type": "error", "message": item[1]}})
+                    terminal = True
+                break
+
+            yield _sse_event({{"type": "token", "content": item}})
+    finally:
+        if not producer.done():
+            producer.cancel()
+            try:
+                await producer
+            except asyncio.CancelledError:
+                pass
+        if not terminal:
+            yield _sse_event({{"type": "end", "complete": True}})
+
+
 @router.get("/chain")
 async def get_chain():
     return {{"domain": DOMAIN, "chain": CHAIN}}
@@ -254,71 +512,10 @@ async def run_chain(payload: Dict[str, Any]):
 async def chat(payload: Dict[str, Any]):
     message = payload.get("message", "")
     history = payload.get("history", [])
-
-    context_chunks = []
-    if OLLAMA_URL and VECTORS.get("embeddings"):
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                emb_resp = await client.post(
-                    f"{{OLLAMA_URL.rstrip('/')}}/api/embeddings",
-                    json={{"model": OLLAMA_MODEL, "prompt": message}},
-                )
-                emb_resp.raise_for_status()
-                emb = emb_resp.json().get("embedding", [])
-                if emb:
-                    context_chunks = _retrieve(emb)
-        except Exception as exc:
-            logger.warning("Embedding for RAG failed: %s", exc)
-
-    system = "You are a helpful assistant."
-    if context_chunks:
-        system += "\\n\\nRelevant context:\\n" + "\\n\\n".join(context_chunks)
-
-    # Prefer a grounded Tinker LoRA when one is configured.
-    if TinkerAdapter is not None and TinkerAdapter.is_available():
-        try:
-            result = await TinkerAdapter.call(
-                message=message,
-                system_prompt=system,
-                max_tokens=1024,
-                temperature=0.7,
-            )
-            if result.get("status") == "success":
-                return {{
-                    "text": result["response"],
-                    "provider": result.get("provider", "tinker"),
-                    "model": result.get("model", OLLAMA_MODEL),
-                }}
-            logger.warning("Tinker adapter returned error: %s", result.get("error"))
-        except Exception as exc:
-            logger.warning("Tinker adapter call failed: %s", exc)
-
-    messages = [{{"role": "system", "content": system}}] + history + [{{"role": "user", "content": message}}]
-
-    if OLLAMA_URL:
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                resp = await client.post(
-                    f"{{OLLAMA_URL.rstrip('/')}}/api/chat",
-                    json={{
-                        "model": OLLAMA_MODEL,
-                        "messages": messages,
-                        "stream": False,
-                        "options": {{"temperature": 0.7}},
-                    }},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                text = (data.get("message") or {{}}).get("content", "")
-                return {{"text": text, "provider": "ollama", "model": OLLAMA_MODEL}}
-        except Exception as exc:
-            logger.warning("Ollama chat failed: %s", exc)
-
-    return {{
-        "text": "Chat is offline. Configure OLLAMA_URL or a Tinker fine-tuned model to restore AI responses.",
-        "provider": "offline_template",
-        "model": "offline",
-    }}
+    return StreamingResponse(
+        _canonical_stream(message, history),
+        media_type="text/event-stream",
+    )
 ''',
         encoding="utf-8",
     )
@@ -327,42 +524,68 @@ async def chat(payload: Dict[str, Any]):
 def _write_patch_script(package_root: Path) -> None:
     patch = package_root / "patch_blocks.py"
     patch.write_text(
-        '''"""Inject the deployed-session router into Cerebrum-Blocks app/main.py."""
+        """'''Inject the deployed-session router into Cerebrum-Blocks app/main.py.'''
 from pathlib import Path
 
-main = Path("app/main.py")
-text = main.read_text(encoding="utf-8")
+main = Path('app/main.py')
+text = main.read_text(encoding='utf-8')
 
-if "deployed" in text:
-    print("deployed router already present")
+if 'deployed' in text:
+    print('deployed router already present')
     raise SystemExit(0)
 
 # Add import inside the existing from app.routers import block
-marker = "from app.routers import (\\n"
+marker = 'from app.routers import (\\n'
 if marker in text:
-    text = text.replace(marker, marker + "    deployed,\\n")
+    text = text.replace(marker, marker + '    deployed,\\n')
 else:
     # Fallback: insert after the import block
     text = text.replace(
-        "from app.routers.metrics import _record_metrics",
-        "from app.routers.metrics import _record_metrics\\nfrom app.routers import deployed",
+        'from app.routers.metrics import _record_metrics',
+        'from app.routers.metrics import _record_metrics\\nfrom app.routers import deployed',
     )
     text = text.replace(
-        "app.include_router(workflow.router)\\n",
-        "app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n",
+        'app.include_router(workflow.router)\\n',
+        'app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n',
     )
-    main.write_text(text, encoding="utf-8")
+    main.write_text(text, encoding='utf-8')
     raise SystemExit(0)
 
 # Add router include after workflow router
 text = text.replace(
-    "app.include_router(workflow.router)\\n",
-    "app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n",
+    'app.include_router(workflow.router)\\n',
+    'app.include_router(workflow.router)\\napp.include_router(deployed.router, prefix=\\"/v1/deployed\\", tags=[\\"deployed\\"])\\n',
 )
 
-main.write_text(text, encoding="utf-8")
-print("patched app/main.py with deployed router")
-''',
+main.write_text(text, encoding='utf-8')
+print('patched app/main.py with deployed router')
+
+# Also augment the engine's root /health so Render and operators see RAG status.
+health = Path('app/routers/health.py')
+if health.exists():
+    health_text = health.read_text(encoding='utf-8')
+    if 'rag' not in health_text:
+        health_text = health_text.replace(
+            'from app.blocks import BLOCK_REGISTRY\\n',
+            'from app.blocks import BLOCK_REGISTRY\\nfrom app.routers import deployed\\n',
+        )
+        if 'from app.routers import deployed' not in health_text:
+            raise RuntimeError(
+                "Could not patch app/routers/health.py: expected anchor "
+                "'from app.blocks import BLOCK_REGISTRY' was not found."
+            )
+        health_text = health_text.replace(
+            '''@router.get(\"/health\")\ndef health():\n    \"\"\"Health check.\"\"\"\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
+            '''@router.get(\"/health\")\nasync def health():\n    'Health check, including deployed-session RAG status.'\n    return {\n        \"status\": \"healthy\",\n        \"blocks_loaded\": len(block_instances),\n        \"blocks_available\": len(BLOCK_REGISTRY),\n        \"rag\": await deployed._ensure_rag_status(),\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }''',
+        )
+        if 'rag' not in health_text:
+            raise RuntimeError(
+                "Could not patch app/routers/health.py: expected anchor "
+                "'/health route definition' was not found."
+            )
+        health.write_text(health_text, encoding='utf-8')
+        print('patched app/routers/health.py with RAG status')
+""",
         encoding="utf-8",
     )
 
@@ -517,7 +740,7 @@ def package_session(state: SessionState, api_key: Optional[str] = None) -> Dict[
     # 2. Approved chain
     chain_path = package_root / "default_chain.json"
     chain_path.write_text(
-        json.dumps(state.proposed_chain or {{"blocks": [], "connections": []}}, indent=2),
+        json.dumps(state.proposed_chain or {"blocks": [], "connections": []}, indent=2),
         encoding="utf-8",
     )
 

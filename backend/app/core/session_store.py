@@ -36,6 +36,9 @@ def _rehydrate_from_chroma(session_id: str) -> Optional[SessionState]:
     )
     state.chunks = data.get("chunks", [])
     state.embeddings = data.get("embeddings", [])
+    state.embedding_meta = data.get("embedding_meta")
+    if state.embedding_meta is None:
+        state.index_status = "degraded"
     state.upload = UploadResult(
         status="completed",
         progress=1.0,

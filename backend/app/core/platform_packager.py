@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
+from .engine_discovery import _find_engine_root
 from .packager import _safe_name
 from .llm_config import get_llm_config
 
@@ -67,7 +68,7 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
         embeddings = state.embeddings or []
         metadatas = [{"session_id": session_id, "index": i} for i in range(len(chunks))]
 
-    return {
+    vectors = {
         "session_id": session_id,
         "domain": state.config.domain,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -75,6 +76,13 @@ def _export_vectors(session_id: str, state: SessionState) -> Dict[str, Any]:
         "embeddings": embeddings,
         "metadatas": metadatas,
     }
+    if state.embedding_meta:
+        vectors["embedding"] = {
+            "provider": "zvec",
+            "model": state.embedding_meta.get("model"),
+            "dim": state.embedding_meta.get("dimensions"),
+        }
+    return vectors
 
 
 def _find_kit_root(domain: str) -> Path:
@@ -83,18 +91,11 @@ def _find_kit_root(domain: str) -> Path:
     Checks ``CEREBRUM_BLOCKS_ROOT`` first, then falls back to a sibling
     ``Cerebrum-Blocks`` directory relative to this backend.
     """
-    explicit = os.getenv("CEREBRUM_BLOCKS_ROOT")
-    candidates: List[Path] = []
-    if explicit:
-        candidates.append(Path(explicit) / "block_store" / "kits" / domain)
-    backend_root = Path(__file__).resolve().parents[4]
-    candidates.append(backend_root.parent / "Cerebrum-Blocks" / "block_store" / "kits" / domain)
-    candidates.append(backend_root.parent.parent / "Cerebrum-Blocks" / "block_store" / "kits" / domain)
-
-    for candidate in candidates:
-        if candidate.is_dir() and (candidate / "manifest.json").exists():
-            return candidate
-    raise MissingKitError(f"Domain kit '{domain}' not found in any of: {candidates}")
+    engine_root = _find_engine_root()
+    kit_root = engine_root / "block_store" / "kits" / domain
+    if kit_root.is_dir() and (kit_root / "manifest.json").exists():
+        return kit_root
+    raise MissingKitError(f"Domain kit '{domain}' not found in: {kit_root}")
 
 
 def _copy_kit_artifacts(kit_root: Path, package_root: Path) -> None:
@@ -451,12 +452,15 @@ def _drop_cli_artifacts(package_root: Path, service_name: str, env_vars: Dict[st
         encoding="utf-8",
     )
 
-    local_cli = Path(__file__).parent.parent.parent.parent.parent / "cli" / "cerebrum_cli"
-    if local_cli.exists():
-        shutil.copytree(local_cli, cli_dir / "cerebrum_cli", dirs_exist_ok=True)
-        logger.info("Copied cerebrum_cli source into platform package")
-    else:
-        logger.warning("Local cerebrum_cli source not found at %s; install.sh will need network", local_cli)
+    engine_root = _find_engine_root()
+    engine_cli_dir = engine_root / "cli"
+    if not engine_cli_dir.is_dir():
+        raise RuntimeError(
+            f"Engine checkout at {engine_root} lacks cli/ — requires Cerebrum-Blocks "
+            "with the relocated CLI (Spec 2, commit c8176867 or later)"
+        )
+    shutil.copytree(engine_cli_dir, cli_dir, dirs_exist_ok=True)
+    logger.info("Copied CLI from engine checkout %s into platform package", engine_cli_dir)
 
 
 def package_platform_session(state: SessionState, api_key: Optional[str] = None) -> Dict[str, Any]:

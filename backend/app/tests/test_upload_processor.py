@@ -5,6 +5,169 @@ import tempfile
 import pytest
 
 from app.core import upload_processor
+from app.core.session_store import create_session, get_session
+
+
+@pytest.fixture(autouse=True)
+def _chroma_isolation(monkeypatch, tmp_path):
+    """Keep Chroma tests from writing into ./storage/chroma or sharing a client."""
+    import app.core.chroma_store as chroma_store
+    monkeypatch.setattr(chroma_store, "CHROMA_PERSIST_DIR", str(tmp_path / "chroma"))
+    chroma_store._chroma_client = None
+
+
+class TestEmbedChunks:
+    @pytest.mark.asyncio
+    async def test_returns_embeddings_and_meta(self, monkeypatch):
+        async def _fake_execute(block, input_data, params=None):
+            return {
+                "status": "success",
+                "result": {
+                    "operation": "batch_embed",
+                    "backend": "model2vec",
+                    "dimensions": 256,
+                    "embeddings": [[0.1] * 256, [0.2] * 256],
+                    "count": 2,
+                },
+            }
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        embeddings, meta = await upload_processor.embed_chunks(["a", "b"])
+        assert len(embeddings) == 2
+        assert meta == {
+            "backend": "model2vec",
+            "dimensions": 256,
+            "model": "minishlab/potion-base-8M",
+        }
+
+    @pytest.mark.asyncio
+    async def test_uses_model_field_when_present(self, monkeypatch):
+        async def _fake_execute(block, input_data, params=None):
+            return {
+                "status": "success",
+                "result": {
+                    "operation": "batch_embed",
+                    "backend": "custom",
+                    "model": "custom-model",
+                    "dimensions": 128,
+                    "embeddings": [[0.1] * 128],
+                    "count": 1,
+                },
+            }
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        embeddings, meta = await upload_processor.embed_chunks(["a"])
+        assert meta["model"] == "custom-model"
+
+    @pytest.mark.asyncio
+    async def test_raises_on_mismatched_embedding_count(self, monkeypatch):
+        async def _fake_execute(block, input_data, params=None):
+            return {
+                "status": "success",
+                "result": {
+                    "backend": "model2vec",
+                    "dimensions": 256,
+                    "embeddings": [[0.1] * 256],
+                },
+            }
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        with pytest.raises(ValueError):
+            await upload_processor.embed_chunks(["a", "b"])
+
+    @pytest.mark.asyncio
+    async def test_raises_on_block_failure_no_zero_vectors(self, monkeypatch):
+        async def _fake_execute(block, input_data, params=None):
+            raise RuntimeError("zvec unavailable")
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        with pytest.raises(ValueError):
+            await upload_processor.embed_chunks(["a"])
+
+
+class TestProcessUpload:
+    @pytest.fixture(autouse=True)
+    def _use_temp_storage(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+
+    @pytest.mark.asyncio
+    async def test_captures_embedding_meta(self, monkeypatch, tmp_path):
+        async def _fake_embed(chunks):
+            return [[float(i)] * 8 for i in range(len(chunks))], {
+                "backend": "model2vec",
+                "dimensions": 8,
+                "model": "minishlab/potion-base-8M",
+            }
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
+
+        session = create_session("sess_embed_ok", "u1")
+        txt = tmp_path / "doc.txt"
+        txt.write_text("Line one.\n\nLine two.\n\nLine three.", encoding="utf-8")
+        await upload_processor.process_upload("sess_embed_ok", [str(txt)])
+
+        state = get_session("sess_embed_ok")
+        assert state.index_status is None
+        assert state.embedding_meta == {
+            "backend": "model2vec",
+            "dimensions": 8,
+            "model": "minishlab/potion-base-8M",
+        }
+        assert len(state.embeddings) == state.upload.total_chunks
+        assert state.upload.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_marks_degraded_on_embed_failure(self, monkeypatch, tmp_path):
+        async def _fake_embed(chunks):
+            raise ValueError("zvec unavailable")
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
+
+        session = create_session("sess_embed_fail", "u1")
+        txt = tmp_path / "doc.txt"
+        txt.write_text("Line one.\n\nLine two.", encoding="utf-8")
+        await upload_processor.process_upload("sess_embed_fail", [str(txt)])
+
+        state = get_session("sess_embed_fail")
+        assert state.index_status == "degraded"
+        assert state.embeddings == []
+        assert "zvec unavailable" in state.upload.message
+        assert state.upload.status == "completed_with_warnings"
+
+    @pytest.mark.asyncio
+    async def test_reupload_after_degraded_persists_to_chroma(self, monkeypatch, tmp_path):
+        """After a degraded upload, a successful re-upload resets index_status and persists."""
+        import app.core.chroma_store as chroma_store
+
+        async def _fail_embed(chunks):
+            raise ValueError("zvec unavailable")
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _fail_embed)
+
+        session = create_session("sess_reupload", "u1")
+        txt = tmp_path / "doc.txt"
+        txt.write_text("First upload.\n\nSecond paragraph.", encoding="utf-8")
+        await upload_processor.process_upload("sess_reupload", [str(txt)])
+
+        degraded = get_session("sess_reupload")
+        assert degraded.index_status == "degraded"
+        assert degraded.upload.indexed_collection is None
+
+        async def _ok_embed(chunks):
+            return [[float(i)] * 8 for i in range(len(chunks))], {
+                "backend": "model2vec",
+                "dimensions": 8,
+                "model": "minishlab/potion-base-8M",
+            }
+
+        monkeypatch.setattr(upload_processor, "embed_chunks", _ok_embed)
+        await upload_processor.process_upload("sess_reupload", [str(txt)])
+
+        state = get_session("sess_reupload")
+        assert state.index_status is None
+        assert state.upload.status == "completed"
+        assert state.upload.indexed_collection == chroma_store.collection_name("sess_reupload")
+        assert chroma_store.count_chunks("sess_reupload") == len(state.chunks)
 
 
 class TestParsePdfWithMarker:
