@@ -227,14 +227,21 @@ def _model_from_backend(backend: str) -> str:
 FALLBACK_EMBED_DIM = int(os.getenv("FALLBACK_EMBED_DIM", "256"))
 FALLBACK_EMBED_PROVIDER = os.getenv("FALLBACK_EMBED_PROVIDER", "hash_fallback")
 
+# Default ONNX sentence embedder. We use BAAI/bge-small-en-v1.5 because it is
+# the smallest supported fastembed model (~67 MB ONNX weights, 384 dims,
+# CPU-only via ONNX Runtime). This keeps the base install lightweight while
+# still providing real semantic embeddings for RAG.
+ONNX_EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+_onnx_embedder_instance: Optional[Any] = None
+
 
 def _hash_embedding(text: str, dim: int = FALLBACK_EMBED_DIM) -> List[float]:
-    """Deterministic hash-based embedding used when zvec is unavailable.
+    """Deterministic hash-based embedding used only when no real backend works.
 
-    The resulting vectors are not semantically meaningful, but they are
-    stable, non-zero, and carry enough entropy for nearest-neighbour retrieval
-    to return *something*. The deployed router will detect the provider
-    mismatch and mark RAG unavailable rather than silently skipping retrieval.
+    The resulting vectors are not semantically meaningful. They are a last-resort
+    placeholder so the upload pipeline can persist chunks; the deployed router
+    will detect a non-matching provider and mark RAG unavailable rather than
+    silently returning nonsense retrieval results.
     """
     h = hashlib.sha256(text.encode("utf-8")).digest()
     seed = int.from_bytes(h[:8], "big")
@@ -243,7 +250,13 @@ def _hash_embedding(text: str, dim: int = FALLBACK_EMBED_DIM) -> List[float]:
 
 
 def _fallback_embeddings(chunks: List[str]) -> Tuple[List[List[float]], Dict[str, Any]]:
-    """Produce deterministic fallback embeddings and metadata for *chunks*."""
+    """Produce deterministic, non-semantic fallback embeddings and metadata.
+
+    This path is reached only when both the engine's zvec block and the default
+    fastembed ONNX backend fail. It lets the upload complete, but RAG is
+    intentionally disabled in the deployed runtime because the provider is not
+    a semantic embedder.
+    """
     dim = FALLBACK_EMBED_DIM
     embeddings = [_hash_embedding(chunk, dim) for chunk in chunks]
     meta = {
@@ -255,12 +268,55 @@ def _fallback_embeddings(chunks: List[str]) -> Tuple[List[List[float]], Dict[str
     return embeddings, meta
 
 
+def _onnx_embed_model() -> Any:
+    """Lazily load the default fastembed ONNX sentence embedder as a singleton."""
+    global _onnx_embedder_instance
+    if _onnx_embedder_instance is None:
+        from fastembed import TextEmbedding
+
+        logger.info("Loading ONNX embedding model %s ...", ONNX_EMBED_MODEL)
+        _onnx_embedder_instance = TextEmbedding(model_name=ONNX_EMBED_MODEL)
+    return _onnx_embedder_instance
+
+
+def _embed_with_onnx(chunks: List[str]) -> Tuple[List[List[float]], Dict[str, Any]]:
+    """Embed *chunks* using the default fastembed ONNX model.
+
+    Returns real-valued dense vectors plus metadata that matches the stanza
+    expected by the deployed router's embedding validation.
+    """
+    model = _onnx_embed_model()
+    raw_embeddings = list(model.embed(chunks))
+    embeddings: List[List[float]] = []
+    for vec in raw_embeddings:
+        # fastembed may return numpy arrays or sequences.
+        arr = vec.tolist() if hasattr(vec, "tolist") else list(vec)
+        embeddings.append([float(v) for v in arr])
+
+    if not embeddings or len(embeddings) != len(chunks):
+        raise ValueError(
+            f"ONNX embedder returned {len(embeddings)} vectors for {len(chunks)} chunks"
+        )
+
+    meta = {
+        "provider": "fastembed",
+        "backend": "fastembed",
+        "model": ONNX_EMBED_MODEL,
+        "dimensions": len(embeddings[0]),
+    }
+    return embeddings, meta
+
+
 async def embed_chunks(chunks: List[str]) -> Tuple[List[List[float]], Optional[Dict[str, Any]]]:
-    """Get embeddings for chunks using the Cerebrum zvec block.
+    """Get embeddings for chunks using the Cerebrum zvec block, falling back to ONNX.
+
+    Priority:
+      1. Engine zvec block (when available).
+      2. Default fastembed ONNX sentence embedder (bare-install fallback).
+      3. Raise ValueError so the caller can use the non-semantic hash fallback.
 
     Returns the embeddings plus metadata describing the embedding space so the
-    same model can be used at query time. Raises ValueError on any failure;
-    zero-vector fallbacks are intentionally not produced.
+    same model family can be used at query time.
     """
     if not chunks:
         return [], None
@@ -277,11 +333,23 @@ async def embed_chunks(chunks: List[str]) -> Tuple[List[List[float]], Optional[D
         backend = data.get("backend", "unknown")
         dimensions = data.get("dimensions", len(embeddings[0]) if embeddings else 0)
         model = data.get("model") or _model_from_backend(backend)
-        meta = {"backend": backend, "dimensions": dimensions, "model": model}
+        meta = {
+            "provider": "zvec",
+            "backend": backend,
+            "dimensions": dimensions,
+            "model": model,
+        }
         return embeddings, meta
     except Exception as exc:
-        logger.error("zvec embedding failed: %s", exc)
-        raise ValueError(f"Embedding failed: {exc}") from exc
+        logger.warning("zvec embedding failed: %s; trying ONNX fallback", exc)
+
+    try:
+        embeddings, meta = _embed_with_onnx(chunks)
+        logger.info("ONNX fallback embedded %d chunks with model %s", len(embeddings), meta["model"])
+        return embeddings, meta
+    except Exception as exc:
+        logger.error("ONNX fallback embedding failed: %s", exc)
+        raise ValueError(f"Embedding backends unavailable: {exc}") from exc
 
 
 async def process_upload(session_id: str, file_paths: List[str]):
@@ -348,46 +416,43 @@ async def process_upload(session_id: str, file_paths: List[str]):
             state.embedding_meta = embedding_meta
         except ValueError as exc:
             logger.warning(
-                "zvec embedding failed for session %s: %s; using fallback embeddings",
+                "Embedding backends failed for session %s: %s; using non-semantic hash fallback",
                 session_id,
                 exc,
             )
             embeddings, embedding_meta = _fallback_embeddings(all_chunks)
             state.embeddings = embeddings
             state.embedding_meta = embedding_meta
-            state.index_status = "fallback"
-            state.upload.message = f"zvec unavailable; using fallback embeddings: {exc}"
+            state.index_status = "degraded"
+            state.upload.message = (
+                f"RAG unavailable: embedding backend failed ({exc}). "
+                "Chunks are stored with non-semantic placeholders; install the embedding extras to restore RAG."
+            )
 
     state.upload.progress = 0.85
     if state.index_status != "degraded":
         state.upload.message = state.upload.message or "Persisting vector index..."
     update_session(session_id, state)
 
-    if state.index_status == "degraded":
-        # Fallback also failed; keep chunks in memory only.
-        chroma_ok = False
-        state.upload.indexed_collection = None
-        state.upload.message = state.upload.message or "Indexing degraded: embeddings unavailable"
+    chroma_ok = store_chunks(
+        session_id,
+        all_chunks,
+        embeddings,
+        source_files=source_files,
+        source_hashes=source_hashes,
+        embedding_meta=embedding_meta,
+    )
+    if chroma_ok:
+        state.upload.indexed_collection = collection_name(session_id)
+        if state.index_status is None:
+            state.upload.message = f"Indexed {len(all_chunks)} chunks"
     else:
-        chroma_ok = store_chunks(
-            session_id,
-            all_chunks,
-            embeddings,
-            source_files=source_files,
-            source_hashes=source_hashes,
-            embedding_meta=embedding_meta,
-        )
-        if chroma_ok:
-            state.upload.indexed_collection = collection_name(session_id)
-            if state.index_status != "fallback":
-                state.upload.message = f"Indexed {len(all_chunks)} chunks"
-        else:
-            logger.warning("ChromaDB persistence failed for session %s; falling back to in-memory store", session_id)
-            state.upload.indexed_collection = None
-            state.upload.message = f"Indexed {len(all_chunks)} chunks (in-memory fallback; ChromaDB unavailable)"
+        logger.warning("ChromaDB persistence failed for session %s; falling back to in-memory store", session_id)
+        state.upload.indexed_collection = None
+        state.upload.message = f"Indexed {len(all_chunks)} chunks (in-memory fallback; ChromaDB unavailable)"
 
     state.upload.progress = 1.0
-    if failed or state.index_status == "fallback" or not chroma_ok:
+    if failed or state.index_status == "degraded" or not chroma_ok:
         state.upload.status = "completed_with_warnings"
     else:
         state.upload.status = "completed"

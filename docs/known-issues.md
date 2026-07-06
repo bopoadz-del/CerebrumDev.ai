@@ -37,10 +37,17 @@ The edge packager generates a random `CEREBRUM_MASTER_KEY` for the deployed pack
 
 **Commit reference:** `feat/platform-default-pinned-engine`.
 
-## 4. No semantic embedding backend in bare requirements → RAG unavailable on default install
+## 4. No semantic embedding backend in bare requirements → RAG unavailable on default install — RESOLVED
 
 **Source:** Smoke test — default install RAG path.
 
-The bare requirements (`requirements.txt`) do not include a semantic embedding backend. As a result, RAG is unavailable on a default install even when vectors have been uploaded. The deployed router falls back to a degraded note, and retrieval cannot run.
+The bare requirements (`requirements.txt`) did not include a semantic embedding backend. As a result, RAG was unavailable on a default install even when vectors had been uploaded. The deployed router fell back to a degraded note, and retrieval could not run.
 
-**Fix direction:** Add a default semantic embedding backend (e.g., `sentence-transformers` or the configured `zvec` block dependency) to the base requirements, or clearly document that RAG requires an extra dependency group.
+**Resolution:**
+- Added `fastembed>=0.6.0` to `backend/requirements.txt` as the default ONNX sentence embedder.
+- The default model is `BAAI/bge-small-en-v1.5` (~67 MB ONNX weights, 384 dimensions, CPU-only, no torch).
+- `upload_processor.py` now tries the engine's `zvec` block first, then fastembed, then a non-semantic hash fallback of last resort marked as `degraded`.
+- The deployed router probes/embeds queries using the same provider recorded in `vectors.json` (zvec or fastembed).
+- Heavier backends (`sentence-transformers`, `marker-pdf`) are grouped in the new `backend/requirements-embeddings-full.txt` extras file.
+
+**Commit reference:** `feat/default-onnx-embedding`.

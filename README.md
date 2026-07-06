@@ -101,6 +101,11 @@ The platform consists of two repos:
    uvicorn app.main:app --reload
    ```
 
+   The base `requirements.txt` now includes `fastembed`, a lightweight ONNX
+   sentence embedder (~67 MB, CPU-only, no torch). This means RAG works out of
+   the box on a bare install; you do not need the heavier extras unless you want
+   models not available via fastembed or higher-quality local PDF parsing.
+
 3. **Frontend**
    ```bash
    cd ../frontend
@@ -180,6 +185,19 @@ MARKER_ENABLED=true
 ```
 
 If Marker is not installed or `MARKER_ENABLED=false`, the upload pipeline falls back to the Cerebrum-Blocks PDF block and then to `pypdf`.
+
+### Optional heavier embedding / parsing extras
+
+If you need models that are not in the fastembed ONNX hub, or you want both
+heavier embeddings and Marker PDF parsing together, install the extras group:
+
+```bash
+cd backend
+pip install -r requirements-embeddings-full.txt
+```
+
+This file is **not** part of the default install and is not included in deployed
+images, keeping production builds small.
 
 ---
 

@@ -139,6 +139,7 @@ def test_vectors_json_includes_embedding_meta(fake_engine_checkout: Path, monkey
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
     state = _make_state()
     state.embedding_meta = {
+        "provider": "zvec",
         "backend": "model2vec",
         "dimensions": 256,
         "model": "minishlab/potion-base-8M",
@@ -177,6 +178,35 @@ def test_vectors_json_includes_embedding_meta_for_fallback_provider(fake_engine_
     }
 
 
+def test_package_includes_fastembed_for_onnx_fallback(fake_engine_checkout: Path, monkeypatch):
+    """An ONNX-fallback package ships a deployed router that can embed queries locally."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+    state.embedding_meta = {
+        "provider": "fastembed",
+        "backend": "fastembed",
+        "dimensions": 384,
+        "model": "BAAI/bge-small-en-v1.5",
+    }
+    state.chunks = ["chunk one", "chunk two"]
+    state.embeddings = [[0.1] * 384, [0.2] * 384]
+    result = package_session(state)
+
+    package_dir = Path(result["package_dir"])
+    vectors = json.loads((package_dir / "vectors.json").read_text(encoding="utf-8"))
+    assert vectors["embedding"]["provider"] == "fastembed"
+
+    router_path = package_dir / "app" / "routers" / "deployed.py"
+    router_src = router_path.read_text(encoding="utf-8")
+    assert "from fastembed import TextEmbedding" in router_src
+    assert 'provider == "fastembed"' in router_src
+    assert 'FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"' in router_src
+
+    dockerfile = package_dir / "Dockerfile"
+    dockerfile_src = dockerfile.read_text(encoding="utf-8")
+    assert 'pip install --no-cache-dir "fastembed>=0.6.0"' in dockerfile_src
+
+
 def test_snapshot_rehydration_restores_embedding_meta(fake_engine_checkout: Path, monkeypatch, tmp_path: Path):
     """After clearing memory, reloading from snapshot restores embedding_meta and packages it."""
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
@@ -186,6 +216,7 @@ def test_snapshot_rehydration_restores_embedding_meta(fake_engine_checkout: Path
 
     state = session_store.create_session("sess_rehydrate", "u1")
     state.embedding_meta = {
+        "provider": "zvec",
         "backend": "model2vec",
         "dimensions": 256,
         "model": "minishlab/potion-base-8M",
@@ -219,6 +250,7 @@ def test_chroma_rehydration_restores_embedding_meta(fake_engine_checkout: Path, 
 
     session_store.create_session("sess_chroma", "u1")
     embedding_meta = {
+        "provider": "zvec",
         "backend": "model2vec",
         "dimensions": 8,
         "model": "minishlab/potion-base-8M",
@@ -468,6 +500,54 @@ def test_deployed_router_health_reports_rag_mismatch(tmp_path: Path):
         assert parsed[0]["type"] == "start"
         assert parsed[0]["rag_available"] is False
         assert "hash_fallback" in parsed[0]["note"]
+        assert all(e["type"] != "sources" for e in parsed)
+    finally:
+        monkeypatch.undo()
+
+
+def test_deployed_router_health_reports_fastembed_zvec_mismatch(tmp_path: Path):
+    """ONNX-fallback index probed by a zvec query embedder -> RAG unavailable."""
+    from app.core.packager import _write_deployed_router
+
+    package_root = tmp_path / "pkg"
+    package_root.mkdir()
+    _write_deployed_router(package_root, "construction")
+    (package_root / "default_chain.json").write_text(
+        json.dumps({"blocks": [], "connections": []}), encoding="utf-8"
+    )
+    (package_root / "vectors.json").write_text(
+        json.dumps(
+            {
+                "chunks": ["onnx chunk"],
+                "embeddings": [[0.1] * 384],
+                "embedding": {
+                    "provider": "fastembed",
+                    "model": "BAAI/bge-small-en-v1.5",
+                    "dim": 384,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mod = _load_deployed_router(package_root)
+
+    async def _fake_probe():
+        return {"provider": "zvec", "model": "test-model", "dim": 384}
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "_probe_query_embedder", _fake_probe)
+    try:
+        health = _run(mod.health())
+        assert health["rag"]["available"] is False
+        assert "fastembed" in health["rag"]["detail"]
+        assert "zvec" in health["rag"]["detail"]
+
+        events = _run(_collect_stream(mod._canonical_stream("query", [])))
+        parsed = [json.loads(line[len("data: ") :]) for line in events if line.startswith("data: ")]
+        assert parsed[0]["type"] == "start"
+        assert parsed[0]["rag_available"] is False
+        assert "fastembed" in parsed[0]["note"]
         assert all(e["type"] != "sources" for e in parsed)
     finally:
         monkeypatch.undo()

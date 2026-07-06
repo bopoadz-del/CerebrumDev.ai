@@ -8,9 +8,17 @@ pypdf>=5.0.0
 python-docx>=1.1.0
 chromadb>=0.5.0
 
+# Default semantic embedding backend. fastembed uses lightweight ONNX models
+# (CPU-only, no torch), so RAG works on a bare install. The default model is
+# BAAI/bge-small-en-v1.5: ~67 MB ONNX weights, 384 dimensions.
+fastembed>=0.6.0
+
 # High-quality PDF -> Markdown parsing is optional and local-only.
 # See requirements-marker.txt. It is NOT installed in production images
 # because it pulls torch, transformers, and ~1.35 GB of model weights.
+
+# Heavier embedding / parsing backends are grouped in
+# requirements-embeddings-full.txt and installed only when needed.
 
 # Tinker SDK and its transitive dependencies.
 # The `tinker` package is vendored from The_Fork; install it manually on this

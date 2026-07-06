@@ -35,6 +35,7 @@ class TestEmbedChunks:
         embeddings, meta = await upload_processor.embed_chunks(["a", "b"])
         assert len(embeddings) == 2
         assert meta == {
+            "provider": "zvec",
             "backend": "model2vec",
             "dimensions": 256,
             "model": "minishlab/potion-base-8M",
@@ -90,10 +91,42 @@ class TestProcessUpload:
     def _use_temp_storage(self, monkeypatch, tmp_path):
         monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
 
+    @pytest.fixture
+    def _fake_fastembed(self, monkeypatch):
+        """Replace fastembed.TextEmbedding with a deterministic fake (no network)."""
+        import numpy as np
+
+        class _FakeModel:
+            def __init__(self, model_name):
+                self.model_name = model_name
+
+            def embed(self, texts):
+                # Deterministic 384-dim float vectors; stable but not semantic.
+                for i, text in enumerate(texts):
+                    rng = __import__("random").Random(hash(text) & 0xFFFFFFFF)
+                    vec = np.array([rng.uniform(-0.5, 0.5) for _ in range(384)], dtype=np.float32)
+                    # Give each chunk a slightly different norm so retrieval has signal.
+                    vec *= 1.0 + 0.1 * i
+                    yield vec
+
+        class _FakeTextEmbedding:
+            def __init__(self, model_name):
+                self._model = _FakeModel(model_name)
+
+            def embed(self, texts):
+                return self._model.embed(texts)
+
+        monkeypatch.setattr(
+            upload_processor,
+            "_onnx_embed_model",
+            lambda: _FakeTextEmbedding(upload_processor.ONNX_EMBED_MODEL),
+        )
+
     @pytest.mark.asyncio
     async def test_captures_embedding_meta(self, monkeypatch, tmp_path):
         async def _fake_embed(chunks):
             return [[float(i)] * 8 for i in range(len(chunks))], {
+                "provider": "zvec",
                 "backend": "model2vec",
                 "dimensions": 8,
                 "model": "minishlab/potion-base-8M",
@@ -109,6 +142,7 @@ class TestProcessUpload:
         state = get_session("sess_embed_ok")
         assert state.index_status is None
         assert state.embedding_meta == {
+            "provider": "zvec",
             "backend": "model2vec",
             "dimensions": 8,
             "model": "minishlab/potion-base-8M",
@@ -117,9 +151,72 @@ class TestProcessUpload:
         assert state.upload.status == "completed"
 
     @pytest.mark.asyncio
-    async def test_uses_fallback_embeddings_on_embed_failure(self, monkeypatch, tmp_path):
+    async def test_uses_onnx_fallback_when_zvec_fails(self, monkeypatch, tmp_path, _fake_fastembed):
+        """When zvec raises, the default fastembed ONNX backend indexes successfully."""
+        async def _failing_zvec(block, input_data, params=None):
+            raise RuntimeError("zvec block unavailable")
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _failing_zvec)
+
+        session = create_session("sess_onnx_fallback", "u1")
+        txt = tmp_path / "doc.txt"
+        txt.write_text(
+            "The quick brown fox jumps over the lazy dog.\n\n"
+            "A second paragraph provides more content to chunk.",
+            encoding="utf-8",
+        )
+        await upload_processor.process_upload("sess_onnx_fallback", [str(txt)])
+
+        state = get_session("sess_onnx_fallback")
+        assert state.index_status is None
+        assert state.embedding_meta is not None
+        assert state.embedding_meta["provider"] == "fastembed"
+        assert state.embedding_meta["backend"] == "fastembed"
+        assert state.embedding_meta["model"] == upload_processor.ONNX_EMBED_MODEL
+        assert state.embedding_meta["dimensions"] == 384
+        assert len(state.embeddings) == state.upload.total_chunks
+        assert all(len(e) == 384 for e in state.embeddings)
+        assert any(isinstance(v, float) and v != 0.0 for e in state.embeddings for v in e)
+        assert state.upload.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_onnx_fallback_reupload_replaces_previous_chunks(self, monkeypatch, tmp_path, _fake_fastembed):
+        """Re-uploading the same file with ONNX fallback evicts stale chunks."""
+        import app.core.chroma_store as chroma_store
+
+        async def _failing_zvec(block, input_data, params=None):
+            raise RuntimeError("zvec block unavailable")
+
+        monkeypatch.setattr(upload_processor, "_execute_block", _failing_zvec)
+
+        txt = tmp_path / "doc.txt"
+        long_paragraphs = [
+            f"Paragraph {i} has a substantial amount of content so that the chunking "
+            "logic, which targets roughly eight hundred characters per chunk, is forced "
+            "to split this text into multiple pieces rather than keeping everything in a "
+            "single chunk. We need at least three chunks for the stale-tail assertion."
+            for i in range(5)
+        ]
+        txt.write_text("\n\n".join(long_paragraphs), encoding="utf-8")
+
+        create_session("sess_onnx_reupload", "u1")
+        await upload_processor.process_upload("sess_onnx_reupload", [str(txt)])
+        first_state = get_session("sess_onnx_reupload")
+        first_count = chroma_store.count_chunks("sess_onnx_reupload")
+        assert first_count == len(first_state.chunks)
+        assert first_state.embedding_meta["provider"] == "fastembed"
+
+        txt.write_text("Only one paragraph remains.", encoding="utf-8")
+        await upload_processor.process_upload("sess_onnx_reupload", [str(txt)])
+        second_state = get_session("sess_onnx_reupload")
+        second_count = chroma_store.count_chunks("sess_onnx_reupload")
+        assert second_count == len(second_state.chunks)
+        assert second_count < first_count
+
+    @pytest.mark.asyncio
+    async def test_uses_hash_fallback_and_degraded_on_total_embed_failure(self, monkeypatch, tmp_path):
         async def _fake_embed(chunks):
-            raise ValueError("zvec unavailable")
+            raise ValueError("all embedding backends unavailable")
 
         monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
 
@@ -129,19 +226,19 @@ class TestProcessUpload:
         await upload_processor.process_upload("sess_embed_fail", [str(txt)])
 
         state = get_session("sess_embed_fail")
-        assert state.index_status == "fallback"
+        assert state.index_status == "degraded"
         assert len(state.embeddings) == len(state.chunks)
         assert state.embedding_meta["provider"] == upload_processor.FALLBACK_EMBED_PROVIDER
-        assert "zvec unavailable" in state.upload.message
+        assert "RAG unavailable" in state.upload.message
         assert state.upload.status == "completed_with_warnings"
 
     @pytest.mark.asyncio
-    async def test_reupload_after_fallback_persists_to_chroma(self, monkeypatch, tmp_path):
-        """After a fallback upload, a successful re-upload resets index_status and persists."""
+    async def test_reupload_after_degraded_persists_to_chroma(self, monkeypatch, tmp_path):
+        """After a degraded (hash-fallback) upload, a successful re-upload resets index_status and persists."""
         import app.core.chroma_store as chroma_store
 
         async def _fail_embed(chunks):
-            raise ValueError("zvec unavailable")
+            raise ValueError("all embedding backends unavailable")
 
         monkeypatch.setattr(upload_processor, "embed_chunks", _fail_embed)
 
@@ -150,14 +247,15 @@ class TestProcessUpload:
         txt.write_text("First upload.\n\nSecond paragraph.", encoding="utf-8")
         await upload_processor.process_upload("sess_reupload", [str(txt)])
 
-        fallback = get_session("sess_reupload")
-        assert fallback.index_status == "fallback"
-        assert fallback.upload.indexed_collection == chroma_store.collection_name("sess_reupload")
+        degraded = get_session("sess_reupload")
+        assert degraded.index_status == "degraded"
+        assert degraded.upload.indexed_collection == chroma_store.collection_name("sess_reupload")
         first_count = chroma_store.count_chunks("sess_reupload")
-        assert first_count == len(fallback.chunks)
+        assert first_count == len(degraded.chunks)
 
         async def _ok_embed(chunks):
             return [[float(i)] * 8 for i in range(len(chunks))], {
+                "provider": "zvec",
                 "backend": "model2vec",
                 "dimensions": 8,
                 "model": "minishlab/potion-base-8M",

@@ -152,7 +152,8 @@ ARG CEREBRUM_BLOCKS_REPO={repo}
 {clone_cmd}
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \\
+    pip install --no-cache-dir "fastembed>=0.6.0"
 
 # ---------------------------------------------------------------------------
 # Frontend build stage (optional — only if the runtime has a frontend folder).
