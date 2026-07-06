@@ -86,7 +86,7 @@ export const defaultUploadState: UploadState = {
 
 export const defaultDeploymentState: DeploymentState = {
   status: 'pending',
-  target: 'cloud',
+  target: 'platform',
   progress: 0,
   url: null,
   api_key: null,

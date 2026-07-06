@@ -7,7 +7,7 @@ The deploy router currently defaults to `target="cloud"`, which routes through `
 - `package_platform_session` — a production-hardened "Fork-class" platform package.
 - Edge packaging — a self-contained zip built from the `package_session` output.
 
-This brief compares three options for the default target without making an implementation change. The final decision is deferred to the human maintainers.
+This brief compares three options for the default target.
 
 ## Options
 
@@ -24,8 +24,8 @@ This brief compares three options for the default target without making an imple
 - **Image size**: Larger because it is multi-stage, copies `site-packages` and `/usr/local/bin` from the builder, and may include a built frontend.
 - **Build time**: Longer; multi-stage Docker build, optional `npm ci` + `npm run build`, Postgres/pgvector via docker-compose, alembic migrations on boot.
 - **Operational complexity**: Higher locally (needs Postgres), but lower for production because secrets, migrations, healthchecks, and a non-root user are built in.
-- **Self-containment**: Better. The package contains the session artifacts, Dockerfile, docker-compose, Render blueprint, and entrypoint. It still clones `Cerebrum-Blocks` inside the builder stage via `CEREBRUM_BLOCKS_REPO`, but that is a controlled, configurable source.
-- **Smoke-test friction**: The platform packager currently requires a local `Cerebrum-Blocks` checkout on the *packaging* host (for kit resolution and CLI sourcing). On the Render backend this checkout does not exist, so packaging fails unless `CEREBRUM_BLOCKS_ROOT` is set to a valid engine path. Making platform the default would force us to resolve this dependency — e.g., by vendoring a minimal kit/CLI snapshot into the backend container or by making the packager fetch the engine at packaging time.
+- **Self-containment**: Better. The package contains the session artifacts, Dockerfile, docker-compose, Render blueprint, and entrypoint. It still clones `Cerebrum-Blocks` inside the builder stage via `CEREBRUM_BLOCKS_REPO`, but that is a controlled, configurable source pinned by `CEREBRUM_BLOCKS_REF`.
+- **Packaging-time engine dependency**: Resolved by fetching the engine at packaging time when no local checkout is present. The fetch is shallow, cached by ref, and records `{repo, ref, commit_sha}` in `build_metadata.json`.
 - **How (b) resolves the edge limitation**: Platform packages are explicitly production-oriented; users receive a docker-compose stack rather than a "drop this into an engine checkout" zip, so the "not runnable standalone" confusion goes away.
 
 ### (c) Refactor the edge package to embed a minimal engine runtime
@@ -36,15 +36,16 @@ This brief compares three options for the default target without making an imple
 - **Trade-off**: True offline/standalone capability at the cost of package size, build time, and backend complexity.
 - **Smoke-test finding**: This is the only option that would make the edge package runnable without any external clone step.
 
-## Recommendation
+## Decision
 
-**Recommended: Option (b) — make `package_platform_session` the default**, but only after solving the local-engine-checkout dependency.
+**DECIDED — option (b): make `package_platform_session` the default deploy target.**
 
-Reasoning:
+Date: 2026-07-06
 
-1. The smoke test showed that the current cloud/edge package confuses users because it is not actually standalone.
-2. The platform package already includes the production hardening (Postgres, migrations, secrets, healthchecks, unprivileged user) that cloud deploys will eventually need.
-3. The operational complexity of (c) — embedding a runtime per package — is disproportionate to the current user base and would bloat every package.
-4. The blocker for (b) is packaging-time engine discovery, not runtime behavior. Vendoring or fetching the engine at package build time is a solvable, bounded problem.
+Rationale:
 
-DECISION PENDING
+1. The orchestrator-bearing platform package is the product CerebrumDev.ai ships; edge is a lightweight preview.
+2. The smoke test showed that the current cloud/edge package confuses users because it is not actually standalone.
+3. The platform package already includes the production hardening (Postgres, migrations, secrets, healthchecks, unprivileged user) that cloud deploys will eventually need.
+4. The operational complexity of (c) — embedding a runtime per package — is disproportionate to the current user base and would bloat every package.
+5. The blocker for (b) is solved by packaging-time engine discovery with a pinned ref and shallow cache.

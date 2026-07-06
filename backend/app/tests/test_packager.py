@@ -7,6 +7,7 @@ import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import Dict
 
 import pytest
 
@@ -530,3 +531,60 @@ def test_deployed_router_emits_sources_before_tokens_on_match(tmp_path: Path):
 async def _collect_stream(agen):
     """Helper to drain an async generator into a list."""
     return [item async for item in agen]
+
+
+def _load_dotenv(package_dir: Path) -> dict:
+    """Parse a simple KEY=VALUE .env file."""
+    env: Dict[str, str] = {}
+    dotenv = package_dir / ".env"
+    for line in dotenv.read_text(encoding="utf-8").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            env[key] = value
+    return env
+
+
+def _engine_auth_validate(key: str, env: Dict[str, str]) -> bool:
+    """Mirror the production key-loading path in Cerebrum-Blocks app/core/auth.py."""
+    valid = {env.get("CEREBRUM_MASTER_KEY", ""), env.get("CB_DEV_KEY", "")}
+    for k, v in env.items():
+        if k.startswith("CEREBRUM_API_KEY_") and v:
+            valid.add(v)
+    return key in valid and key != ""
+
+
+def test_cloud_auth_single_source_of_truth(fake_engine_checkout: Path, monkeypatch):
+    """The minted key is wired consistently across .env and CLI config."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+
+    result = package_session(state)
+    deploy_key = result["api_key"]
+    package_dir = Path(result["package_dir"])
+
+    env = _load_dotenv(package_dir)
+    assert env["CEREBRUM_MASTER_KEY"] == deploy_key
+    assert env["CB_DEV_KEY"] == deploy_key
+    assert env["CEREBRUM_API_KEY_CDEV"] == deploy_key
+
+    try:
+        import tomllib
+    except ImportError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with open(package_dir / "cli" / "config.toml", "rb") as f:
+        cfg = tomllib.load(f)
+    assert cfg["api_key"] == deploy_key
+
+
+def test_cloud_auth_boots_with_its_own_key(fake_engine_checkout: Path, monkeypatch):
+    """The generated cloud/edge package authenticates with its own key and rejects others."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
+    state = _make_state()
+
+    result = package_session(state)
+    deploy_key = result["api_key"]
+    env = _load_dotenv(Path(result["package_dir"]))
+
+    assert _engine_auth_validate(deploy_key, env) is True
+    assert _engine_auth_validate("cb_dev_key", env) is False
+    assert _engine_auth_validate("wrong-key", env) is False
