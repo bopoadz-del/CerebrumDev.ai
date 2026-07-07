@@ -55,6 +55,7 @@ OPTIONAL_BLOCKS: List[str] = [
     "jetson_gateway",
     "legal_v2",
     "finance_v2",
+    "insurance_v2",
 ]
 
 
