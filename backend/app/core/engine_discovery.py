@@ -28,7 +28,7 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
 )
 
 # Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
-DEFAULT_CEREBRUM_BLOCKS_REF = "bb4bf695"
+DEFAULT_CEREBRUM_BLOCKS_REF = "bb4bf69563fb059cff2da7375379f1e4b767543f"
 
 
 class EngineDiscoveryError(Exception):
@@ -73,8 +73,7 @@ def _fetch_engine_checkout(repo: str, ref: str) -> Path:
     The checkout is cached under ``<tmp>/cerebrumdev/engine-cache/<ref>``.
     Existing cache entries are reused without re-cloning.
 
-    Supports branch/tag names and commit SHAs (including short SHAs such as
-    the pinned default ``bb4bf695``).
+    Supports branch/tag names and commit SHAs (short or full).
     """
     cache = _cache_dir() / ref.replace("/", "_")
 
