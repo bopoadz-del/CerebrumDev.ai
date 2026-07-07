@@ -321,6 +321,23 @@ def test_package_dockerfile_uses_vendored_engine(
     assert "COPY . /app" in dockerfile
 
 
+def test_package_dockerfile_frontend_copy_is_valid(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """The frontend stage always produces /frontend/dist and the runtime COPY is valid."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    package_dir = Path(info["package_dir"])
+    dockerfile = (package_dir / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "2>/dev/null" not in dockerfile
+    assert "|| true" not in dockerfile
+    assert "mkdir -p /frontend/dist" in dockerfile
+    assert "COPY --from=frontend /frontend/dist /app/frontend/dist" in dockerfile
+
+
 def test_package_build_metadata_records_vendored_engine(
     session: SessionState, fake_medical_kit: Path, monkeypatch
 ):
