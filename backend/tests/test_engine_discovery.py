@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from app.core.engine_discovery import (
+    DEFAULT_CEREBRUM_BLOCKS_REF,
     EngineDiscoveryError,
     _fetch_engine_checkout,
     _git_rev_parse,
@@ -36,49 +37,58 @@ def no_local_engine(monkeypatch, tmp_path: Path):
     )
 
 
-def _fake_clone(
+def _fake_fetch(
     clone_dir: Path,
     ref: str,
     repo: str,
     should_fail: bool = False,
     fail_stderr: str = "",
 ) -> Any:
-    """Build a mock subprocess.run result for git clone."""
+    """Build a mock subprocess.run result for git init/fetch/checkout."""
 
     class _Result:
-        def __init__(self, returncode: int, stderr: str = ""):
+        def __init__(self, returncode: int, stderr: str = "", stdout: str = ""):
             self.returncode = returncode
             self.stderr = stderr
-            self.stdout = ""
+            self.stdout = stdout
 
     def _run(args: List[str], **kwargs: Dict[str, Any]):
-        if args[:2] == ["git", "clone"]:
+        if args[:2] == ["git", "init"]:
+            if should_fail and fail_stderr:
+                return _Result(128, fail_stderr)
+            cwd = Path(kwargs.get("cwd", clone_dir))
+            (cwd / ".git").mkdir(parents=True, exist_ok=True)
+            return _Result(0)
+        if args[:3] == ["git", "remote", "add"]:
+            return _Result(0)
+        if args[:2] == ["git", "fetch"]:
             if should_fail:
                 return _Result(128, fail_stderr)
-            # Simulate a shallow clone.
-            target = Path(args[-1])
-            target.mkdir(parents=True, exist_ok=True)
-            git_dir = target / ".git"
-            git_dir.mkdir()
-            head = target / ".git" / "HEAD"
+            cwd = Path(kwargs.get("cwd", clone_dir))
+            head = cwd / ".git" / "HEAD"
             head.write_text(f"ref: refs/heads/{ref}\n", encoding="utf-8")
             return _Result(0)
-        if args == ["git", "rev-parse", "HEAD"]:
+        if args[:2] == ["git", "checkout"]:
+            cwd = Path(kwargs.get("cwd", clone_dir))
+            marker = cwd / "fetched"
+            marker.write_text(ref, encoding="utf-8")
             return _Result(0)
+        if args == ["git", "rev-parse", "HEAD"]:
+            return _Result(0, "", "deadbeef" * 5)
         raise ValueError(f"unexpected git call: {args}")
 
     return _run
 
 
 def test_fetch_engine_checkout_caches_by_ref(no_local_engine, tmp_path: Path, monkeypatch):
-    """A shallow clone is performed once per ref and cached."""
+    """A shallow fetch is performed once per ref and cached."""
     monkeypatch.setenv("CEREBRUM_BLOCKS_REF", "v1.2.3")
     repo = "https://github.com/example/repo.git"
     calls: List[List[str]] = []
 
     def _counting_run(args: List[str], **kwargs: Dict[str, Any]):
         calls.append(args)
-        return _fake_clone(tmp_path, "v1.2.3", repo)(args, **kwargs)
+        return _fake_fetch(tmp_path, "v1.2.3", repo)(args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _counting_run)
 
@@ -86,9 +96,9 @@ def test_fetch_engine_checkout_caches_by_ref(no_local_engine, tmp_path: Path, mo
     path2 = _fetch_engine_checkout(repo, "v1.2.3")
 
     assert path1 == path2
-    # Only one clone call; rev-parse may be called twice (once per invocation).
-    clone_calls = [c for c in calls if c[:2] == ["git", "clone"]]
-    assert len(clone_calls) == 1
+    # Only one fetch call; rev-parse may be called twice (once per invocation).
+    fetch_calls = [c for c in calls if c[:2] == ["git", "fetch"]]
+    assert len(fetch_calls) == 1
 
 
 def test_resolve_engine_source_records_metadata_for_fetched_engine(
@@ -98,7 +108,7 @@ def test_resolve_engine_source_records_metadata_for_fetched_engine(
     monkeypatch.setenv("CEREBRUM_BLOCKS_REF", "main")
 
     def _run(args: List[str], **kwargs: Dict[str, Any]):
-        return _fake_clone(tmp_path, "main", "https://github.com/bopoadz-del/Cerebrum-Blocks.git")(
+        return _fake_fetch(tmp_path, "main", "https://github.com/bopoadz-del/Cerebrum-Blocks.git")(
             args, **kwargs
         )
 
@@ -113,12 +123,34 @@ def test_resolve_engine_source_records_metadata_for_fetched_engine(
     assert root.is_dir()
 
 
-def test_resolve_engine_source_aborts_when_ref_missing(no_local_engine, monkeypatch):
-    """Without a local checkout and without CEREBRUM_BLOCKS_REF, packaging aborts."""
+def test_resolve_engine_source_uses_default_ref_when_unset(
+    no_local_engine, tmp_path: Path, monkeypatch
+):
+    """Without a local checkout and without CEREBRUM_BLOCKS_REF, the pinned default is used."""
     monkeypatch.delenv("CEREBRUM_BLOCKS_REF", raising=False)
 
-    with pytest.raises(EngineDiscoveryError, match="CEREBRUM_BLOCKS_REF is unset"):
-        resolve_engine_source()
+    def _run(args: List[str], **kwargs: Dict[str, Any]):
+        return _fake_fetch(
+            tmp_path, "bb4bf695", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+        )(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    from app.core.engine_discovery import DEFAULT_CEREBRUM_BLOCKS_REF
+
+    root, metadata = resolve_engine_source()
+
+    assert metadata["source"] == "fetched"
+    assert metadata["repo"] == "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+    assert metadata["ref"] == DEFAULT_CEREBRUM_BLOCKS_REF
+    assert metadata["ref"] == "bb4bf695"
+    assert "commit_sha" in metadata
+    assert root.is_dir()
+
+
+def test_default_ref_is_pinned_commit(no_local_engine):
+    """The default engine ref is the known-good pinned commit."""
+    assert DEFAULT_CEREBRUM_BLOCKS_REF == "bb4bf695"
 
 
 def test_fetch_engine_checkout_aborts_on_unreachable_repo(no_local_engine, tmp_path: Path, monkeypatch):
@@ -129,7 +161,7 @@ def test_fetch_engine_checkout_aborts_on_unreachable_repo(no_local_engine, tmp_p
     monkeypatch.setattr(
         subprocess,
         "run",
-        _fake_clone(
+        _fake_fetch(
             tmp_path,
             "main",
             repo,
@@ -150,7 +182,7 @@ def test_fetch_engine_checkout_aborts_on_missing_ref(no_local_engine, tmp_path: 
     monkeypatch.setattr(
         subprocess,
         "run",
-        _fake_clone(
+        _fake_fetch(
             tmp_path,
             "nonexistent-ref",
             repo,

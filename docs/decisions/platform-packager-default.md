@@ -24,9 +24,11 @@ This brief compares three options for the default target.
 - **Image size**: Larger because it is multi-stage, copies `site-packages` and `/usr/local/bin` from the builder, and may include a built frontend.
 - **Build time**: Longer; multi-stage Docker build, optional `npm ci` + `npm run build`, Postgres/pgvector via docker-compose, alembic migrations on boot.
 - **Operational complexity**: Higher locally (needs Postgres), but lower for production because secrets, migrations, healthchecks, and a non-root user are built in.
-- **Self-containment**: Better. The package contains the session artifacts, Dockerfile, docker-compose, Render blueprint, and entrypoint. It still clones `Cerebrum-Blocks` inside the builder stage via `CEREBRUM_BLOCKS_REPO`, but that is a controlled, configurable source pinned by `CEREBRUM_BLOCKS_REF`.
-- **Packaging-time engine dependency**: Resolved by fetching the engine at packaging time when no local checkout is present. The fetch is shallow, cached by ref, and records `{repo, ref, commit_sha}` in `build_metadata.json`.
+- **Self-containment**: Better. The package contains the session artifacts, Dockerfile, docker-compose, Render blueprint, entrypoint, and a vendored copy of the resolved `Cerebrum-Blocks` engine under `engine/`. The generated Dockerfile uses `COPY engine/ /app` and does not run `git clone` during the build.
+- **Packaging-time engine dependency**: Resolved by fetching the engine at packaging time when no local checkout is present. The fetch is shallow, cached by ref, and records `{repo, ref, commit_sha, vendored: true, vendored_path: "engine/"}` in `build_metadata.json`.
 - **How (b) resolves the edge limitation**: Platform packages are explicitly production-oriented; users receive a docker-compose stack rather than a "drop this into an engine checkout" zip, so the "not runnable standalone" confusion goes away.
+
+CerebrumDev.ai vendors the resolved Cerebrum-Blocks engine snapshot into generated platform packages. This makes exports reproducible and avoids deployment-time dependency on floating GitHub clones.
 
 ### (c) Refactor the edge package to embed a minimal engine runtime
 

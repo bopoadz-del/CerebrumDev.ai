@@ -27,6 +27,34 @@ logger = logging.getLogger(__name__)
 
 STORAGE_PATH = os.getenv("STORAGE_PATH", "./storage")
 
+# Files/directories excluded when vendoring the engine into a platform package.
+_ENGINE_COPY_EXCLUDES = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".env",
+    "*.pyc",
+}
+
+# Name-based skip list for hidden/cache artifacts.
+_ENGINE_COPY_SKIP_SUFFIXES = (".pyc",)
+_ENGINE_COPY_SKIP_NAMES = {
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".env",
+}
+
 
 class PlatformPackagerError(Exception):
     """Raised when a platform package cannot be generated."""
@@ -122,20 +150,48 @@ def _copy_kit_artifacts(kit_root: Path, package_root: Path) -> None:
         shutil.copy2(src, dest)
 
 
-def _write_dockerfile(
-    package_root: Path,
-    repo: str = CEREBRUM_BLOCKS_REPO,
-    ref: str = os.getenv("CEREBRUM_BLOCKS_REF", ""),
-) -> None:
+def _copy_engine(engine_root: Path, package_root: Path) -> None:
+    """Copy the resolved engine checkout into the package under ``engine/``.
+
+    Excludes VCS metadata, Python caches, dependency trees, local secrets, and
+    other large or machine-specific artifacts so the vendored snapshot stays
+    reproducible and lean.
+    """
+    engine_dest = package_root / "engine"
+    if engine_dest.exists():
+        shutil.rmtree(engine_dest)
+    engine_dest.mkdir(parents=True, exist_ok=True)
+
+    for src in engine_root.rglob("*"):
+        rel = src.relative_to(engine_root)
+
+        # Skip top-level and nested excluded directories by name.
+        if any(part in _ENGINE_COPY_SKIP_NAMES for part in rel.parts):
+            continue
+
+        # Skip dotenv files anywhere in the tree.
+        if src.name.startswith(".env"):
+            continue
+
+        # Skip compiled Python artifacts.
+        if src.name.endswith(_ENGINE_COPY_SKIP_SUFFIXES):
+            continue
+
+        if src.is_dir():
+            (engine_dest / rel).mkdir(parents=True, exist_ok=True)
+        elif src.is_file():
+            dest = engine_dest / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+
+    logger.info("Vendored engine from %s into %s", engine_root, engine_dest)
+
+
+def _write_dockerfile(package_root: Path) -> None:
     """Write a multi-stage, production-hardened Dockerfile based on The_Fork."""
     dockerfile = package_root / "Dockerfile"
-    ref_arg = f'ARG CEREBRUM_BLOCKS_REF="{ref}"' if ref else "ARG CEREBRUM_BLOCKS_REF"
-    clone_cmd = (
-        'RUN git clone --depth 1 --branch "${CEREBRUM_BLOCKS_REF}" '
-        '"${CEREBRUM_BLOCKS_REPO}" /app'
-    )
     dockerfile.write_text(
-        f'''# Production-hardened Cerebrum-Blocks platform (Fork-class).
+        '''# Production-hardened Cerebrum-Blocks platform (Fork-class).
 # Multi-stage build: compile deps, build frontend (if present), then runtime.
 FROM python:3.11-slim AS builder
 WORKDIR /app
@@ -144,12 +200,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     build-essential gcc g++ gfortran pkg-config git \\
     && rm -rf /var/lib/apt/lists/*
 
-# Clone the Cerebrum-Blocks runtime at the pinned ref. Override
-# CEREBRUM_BLOCKS_REPO / CEREBRUM_BLOCKS_REF at build time to use a private
-# fork or a different branch/tag.
-ARG CEREBRUM_BLOCKS_REPO={repo}
-{ref_arg}
-{clone_cmd}
+# The Cerebrum-Blocks runtime is vendored into the package at engine/.
+# No runtime clone happens at Docker build time.
+COPY engine/ /app
+COPY . /app
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \\
     pip install --no-cache-dir -r requirements.txt && \\
@@ -197,7 +251,7 @@ USER cerebrum
 ENV PORT=8000
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \\
-    CMD curl -f "http://localhost:${{PORT}}/health" || exit 1
+    CMD curl -f "http://localhost:${PORT}/health" || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]
 ''',
@@ -517,12 +571,9 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
             if f.is_file():
                 shutil.copy2(f, docs_dir / f.name)
 
-    # 3. Runtime / deployment files
-    _write_dockerfile(
-        package_root,
-        repo=engine_metadata.get("repo", CEREBRUM_BLOCKS_REPO),
-        ref=engine_metadata.get("ref", os.getenv("CEREBRUM_BLOCKS_REF", "")),
-    )
+    # 3. Vendor the engine snapshot and write runtime / deployment files
+    _copy_engine(engine_root, package_root)
+    _write_dockerfile(package_root)
     _write_entrypoint(package_root)
     _write_docker_compose(package_root)
     _write_bootstrap(package_root)
@@ -581,13 +632,20 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
     _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)
 
     # 5. Build metadata
+    engine_meta = dict(engine_metadata)
+    engine_meta.update(
+        {
+            "vendored": True,
+            "vendored_path": "engine/",
+        }
+    )
     build_metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "generator": "cerebrumdev.platform_packager",
         "session_id": session_id,
         "domain": domain,
         "service_name": service_name,
-        "engine": engine_metadata,
+        "engine": engine_meta,
     }
     (package_root / "build_metadata.json").write_text(
         json.dumps(build_metadata, indent=2),
