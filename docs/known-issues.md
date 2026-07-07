@@ -2,25 +2,31 @@
 
 This file tracks smoke-test friction items and other actionable issues that are not yet fixed. Each entry should contain enough detail to be picked up independently.
 
-## 1. `cerebrum init` cannot select deployed mode from a pipe
+## 1. `cerebrum init` cannot select deployed mode from a pipe — RESOLVED
 
 **Source:** Smoke test — CLI onboarding.
 
-`cerebrum init` currently requires an interactive TTY to select the deployed mode. When the command is run from a pipe or non-interactive environment (e.g., CI, heredoc, or redirected stdin), the mode-selection prompt cannot be answered and the flow blocks or fails.
+`cerebrum init` now accepts a `--mode {configurator,deployed}` flag and defaults to `configurator` with a visible stderr notice when stdin is not a TTY.
 
-**Fix direction:** Add a `--mode` flag to `cerebrum init` and handle non-TTY stdin gracefully so the mode can be provided non-interactively.
+**Resolution:**
+- `cerebrum init --mode deployed` selects deployed mode non-interactively.
+- Non-TTY stdin no longer blocks; it defaults to `configurator` and prints instructions for using `--mode`.
+- Tests cover flag selection, non-TTY defaulting, interactive prompt choice, and invalid prompt fallback.
 
-**Scope note:** This fix lands in the `Cerebrum-Blocks` CLI, not in this repository.
+**Commit reference:** `fix/cli-friction-pipe-utf8` (Cerebrum-Blocks PR #24, merge `f0ea8a74`).
 
-## 2. CLI crashes on Windows cp1252 without `PYTHONIOENCODING=utf-8`
+## 2. CLI crashes on Windows cp1252 without `PYTHONIOENCODING=utf-8` — RESOLVED
 
 **Source:** Smoke test — Windows CLI usage.
 
-On Windows systems using the cp1252 code page, the `cerebrum` CLI can crash when printing UTF-8 characters (e.g., emoji, non-ASCII block names, or document content) unless the user has explicitly set `PYTHONIOENCODING=utf-8`.
+The CLI now forces UTF-8 output at import time by reconfiguring `sys.stdout` and `sys.stderr` to `encoding="utf-8"` with `errors="replace"`. This prevents `UnicodeEncodeError` on Windows cp1252 terminals when printing box-drawing characters, non-ASCII block names, or document content.
 
-**Fix direction:** The CLI should force UTF-8 output itself instead of relying on the environment. This can be done by configuring `sys.stdout`/`sys.stderr` to use UTF-8 with `errors="replace"` or equivalent at CLI startup.
+**Resolution:**
+- Added `cli/cerebrum_cli/_encoding.py` with `ensure_utf8_output()`.
+- Called from `main.py` at import time.
+- Tests verify stream reconfiguration on Windows and that non-ASCII text prints without raising.
 
-**Scope note:** This fix lands in the `Cerebrum-Blocks` CLI, not in this repository.
+**Commit reference:** `fix/cli-friction-pipe-utf8` (Cerebrum-Blocks PR #24, merge `f0ea8a74`).
 
 ## 3. Edge/package internal auth mismatch — RESOLVED
 
