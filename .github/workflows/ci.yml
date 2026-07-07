@@ -20,6 +20,10 @@ jobs:
         working-directory: backend
     env:
       ENV: test
+      # Packager tests need an engine source. In CI there is no local checkout,
+      # so pin the fetch path to main. A real ref avoids EngineDiscoveryError
+      # while still exercising the fetch code path.
+      CEREBRUM_BLOCKS_REF: main
     steps:
       - uses: actions/checkout@v4
 
