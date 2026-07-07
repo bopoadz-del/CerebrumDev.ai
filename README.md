@@ -122,15 +122,16 @@ The platform consists of two repos:
 
 ### Environment Variables (.env)
 
-Copy `backend/.env.example` to `backend/.env` and fill in:
+Copy `backend/.env.example` to `backend/.env` and paste values from your vault
+(Bitwarden/1Password). No real keys are committed in this repo.
 
 ```env
 # Cerebrum-Blocks store
 CEREBRUM_API_URL=http://localhost:8000
-CEREBRUM_API_KEY=cb_dev_key
+CEREBRUM_API_KEY=
 
 # Configurator backend auth (required in production)
-CEREBRUM_DEV_API_KEY=cb_dev_secret_key
+CEREBRUM_DEV_API_KEY=
 
 # LLM provider: Ollama (Qwen fallback is also supported)
 OLLAMA_URL=http://localhost:11434
