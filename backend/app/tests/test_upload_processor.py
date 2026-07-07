@@ -73,6 +73,9 @@ class TestEmbedChunks:
             }
 
         monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        # Force the ONNX fallback to fail so embed_chunks raises rather than
+        # silently recovering.
+        monkeypatch.setattr(upload_processor, "_embed_with_onnx", lambda _chunks: (_ for _ in ()).throw(ValueError("ONNX unavailable")))
         with pytest.raises(ValueError):
             await upload_processor.embed_chunks(["a", "b"])
 
@@ -82,6 +85,9 @@ class TestEmbedChunks:
             raise RuntimeError("zvec unavailable")
 
         monkeypatch.setattr(upload_processor, "_execute_block", _fake_execute)
+        # Force the ONNX fallback to fail so the test proves no zero-vector
+        # fallback is written when all embedding backends fail.
+        monkeypatch.setattr(upload_processor, "_embed_with_onnx", lambda _chunks: (_ for _ in ()).throw(ValueError("ONNX unavailable")))
         with pytest.raises(ValueError):
             await upload_processor.embed_chunks(["a"])
 
