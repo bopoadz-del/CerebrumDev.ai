@@ -218,7 +218,7 @@ COPY --from=builder /app/frontend/package*.json ./
 RUN if [ -f package.json ]; then npm ci; fi
 COPY --from=builder /app/frontend ./
 ENV VITE_API_BASE=""
-RUN if [ -f package.json ]; then npm run build; fi
+RUN if [ -f package.json ]; then npm run build; else mkdir -p /frontend/dist; fi
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -240,8 +240,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 COPY . /app
 
-# Replace the (gitignored) frontend/dist with the freshly built one if it exists.
-COPY --from=frontend /frontend/dist /app/frontend/dist 2>/dev/null || true
+# Replace the (gitignored) frontend/dist with the freshly built one.
+COPY --from=frontend /frontend/dist /app/frontend/dist
 
 # Create an unprivileged user. /app/data is the persistent volume mount.
 RUN useradd --system --uid 1000 --shell /usr/sbin/nologin cerebrum \\
