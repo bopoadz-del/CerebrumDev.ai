@@ -3,7 +3,14 @@ dist
 *.pyc
 __pycache__
 .env
+.env.local
+.env.*.local
+*.pem
+*.key
 *.log
 .DS_Store
 storage
 .venv
+
+# Generated deployment packages contain per-session secrets and build artifacts.
+deployments/
