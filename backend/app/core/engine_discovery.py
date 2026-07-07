@@ -197,7 +197,8 @@ def resolve_engine_source() -> Tuple[Path, dict]:
         return local, {
             "source": "local",
             "repo": CEREBRUM_BLOCKS_REPO,
-            "ref": os.getenv("CEREBRUM_BLOCKS_REF", ""),
+            "ref": os.getenv("CEREBRUM_BLOCKS_REF")
+            or (commit_sha if commit_sha != "unknown" else DEFAULT_CEREBRUM_BLOCKS_REF),
             "path": str(local),
             "commit_sha": commit_sha,
         }
