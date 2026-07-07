@@ -27,9 +27,21 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
     "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
 )
 
+# Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
+DEFAULT_CEREBRUM_BLOCKS_REF = "bb4bf695"
+
 
 class EngineDiscoveryError(Exception):
     """Raised when the engine checkout cannot be discovered or fetched."""
+
+
+def _effective_ref() -> str:
+    """Return the engine ref to use when fetching.
+
+    Prefers ``CEREBRUM_BLOCKS_REF``; falls back to the pinned default so
+    packaging does not fail simply because the env var is unset.
+    """
+    return os.getenv("CEREBRUM_BLOCKS_REF") or DEFAULT_CEREBRUM_BLOCKS_REF
 
 
 def _cache_dir() -> Path:
@@ -60,6 +72,9 @@ def _fetch_engine_checkout(repo: str, ref: str) -> Path:
 
     The checkout is cached under ``<tmp>/cerebrumdev/engine-cache/<ref>``.
     Existing cache entries are reused without re-cloning.
+
+    Supports branch/tag names and commit SHAs (including short SHAs such as
+    the pinned default ``bb4bf695``).
     """
     cache = _cache_dir() / ref.replace("/", "_")
 
@@ -77,25 +92,45 @@ def _fetch_engine_checkout(repo: str, ref: str) -> Path:
 
     cache.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Cloning engine %s at ref %s into %s", repo, ref, cache)
-    clone = subprocess.run(
-        ["git", "clone", "--depth", "1", "--branch", ref, repo, str(cache)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if clone.returncode != 0:
+    logger.info("Fetching engine %s at ref %s into %s", repo, ref, cache)
+    cache.mkdir(parents=True, exist_ok=True)
+
+    def _git(cmd: list[str], cwd: Path = cache) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            cmd,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result
+
+    init = _git(["git", "init"])
+    if init.returncode != 0:
         raise EngineDiscoveryError(
-            f"Failed to clone engine repo {repo} at ref {ref}: {clone.stderr.strip()}"
+            f"Failed to initialise engine cache for {repo} at ref {ref}: {init.stderr.strip()}"
         )
 
-    if not (cache / ".git").is_dir():
+    remote_add = _git(["git", "remote", "add", "origin", repo])
+    if remote_add.returncode != 0:
         raise EngineDiscoveryError(
-            f"Engine clone succeeded but .git is missing at {cache}; repo={repo}, ref={ref}"
+            f"Failed to add remote for engine {repo} at ref {ref}: {remote_add.stderr.strip()}"
+        )
+
+    fetch = _git(["git", "fetch", "--depth", "1", "origin", ref])
+    if fetch.returncode != 0:
+        raise EngineDiscoveryError(
+            f"Failed to fetch engine {repo} at ref {ref}: {fetch.stderr.strip()}"
+        )
+
+    checkout = _git(["git", "checkout", "FETCH_HEAD"])
+    if checkout.returncode != 0:
+        raise EngineDiscoveryError(
+            f"Failed to checkout engine {repo} at ref {ref}: {checkout.stderr.strip()}"
         )
 
     commit_sha = _git_rev_parse(cache)
-    logger.info("Cloned engine %s at ref %s (%s)", repo, ref, commit_sha)
+    logger.info("Fetched engine %s at ref %s (%s)", repo, ref, commit_sha)
     return cache
 
 
@@ -125,26 +160,19 @@ def find_engine_root(anchor: Optional[Path] = None) -> Path:
     """Locate the Cerebrum-Blocks engine checkout.
 
     Prefer a local checkout (``CEREBRUM_BLOCKS_ROOT`` or sibling directory). If
-    none is found, clone ``CEREBRUM_BLOCKS_REPO`` at the pinned ref
-    ``CEREBRUM_BLOCKS_REF`` into a temp cache.
+    none is found, fetch ``CEREBRUM_BLOCKS_REPO`` at the effective ref
+    (``CEREBRUM_BLOCKS_REF`` or ``DEFAULT_CEREBRUM_BLOCKS_REF``) into a temp
+    cache.
 
     Raises:
-        EngineDiscoveryError: if no local checkout exists and fetching is
-            disabled, the ref is unset, or the clone/checkout fails.
+        EngineDiscoveryError: if no local checkout exists and fetching fails.
     """
     local = _find_local_engine_root(anchor)
     if local is not None:
         logger.debug("Using local engine checkout at %s", local)
         return local
 
-    ref = os.getenv("CEREBRUM_BLOCKS_REF")
-    if not ref:
-        raise EngineDiscoveryError(
-            "No local Cerebrum-Blocks checkout found and CEREBRUM_BLOCKS_REF is unset. "
-            "Set CEREBRUM_BLOCKS_ROOT to a local checkout or CEREBRUM_BLOCKS_REF to a "
-            "branch/tag to fetch."
-        )
-
+    ref = _effective_ref()
     return _fetch_engine_checkout(CEREBRUM_BLOCKS_REPO, ref)
 
 
@@ -169,18 +197,13 @@ def resolve_engine_source() -> Tuple[Path, dict]:
             commit_sha = "unknown"
         return local, {
             "source": "local",
+            "repo": CEREBRUM_BLOCKS_REPO,
+            "ref": os.getenv("CEREBRUM_BLOCKS_REF", ""),
             "path": str(local),
             "commit_sha": commit_sha,
         }
 
-    ref = os.getenv("CEREBRUM_BLOCKS_REF")
-    if not ref:
-        raise EngineDiscoveryError(
-            "No local Cerebrum-Blocks checkout found and CEREBRUM_BLOCKS_REF is unset. "
-            "Set CEREBRUM_BLOCKS_ROOT to a local checkout or CEREBRUM_BLOCKS_REF to a "
-            "branch/tag to fetch."
-        )
-
+    ref = _effective_ref()
     fetched = _fetch_engine_checkout(CEREBRUM_BLOCKS_REPO, ref)
     commit_sha = _git_rev_parse(fetched)
     return fetched, {

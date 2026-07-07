@@ -52,11 +52,21 @@ def fake_medical_kit(tmp_path: Path) -> Path:
         ],
     }
     (kit_root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    # Engine checkout must also contain the relocated CLI.
+    # Engine checkout must also contain the relocated CLI and top-level runtime dirs.
     cli_pkg = engine_root / "cli" / "cerebrum_cli"
     cli_pkg.mkdir(parents=True)
     (cli_pkg / "__init__.py").write_text("__version__ = '0.0.0'\n", encoding="utf-8")
     (cli_pkg / "marker_from_engine.txt").write_text("engine\n", encoding="utf-8")
+    (engine_root / "app" / "main.py").parent.mkdir(parents=True, exist_ok=True)
+    (engine_root / "app" / "main.py").write_text("app\n", encoding="utf-8")
+    (engine_root / "block_store" / "README.md").parent.mkdir(parents=True, exist_ok=True)
+    (engine_root / "block_store" / "README.md").write_text("store\n", encoding="utf-8")
+    # Excluded artifacts should not be copied into the vendored engine/ folder.
+    (engine_root / ".git" / "config").parent.mkdir(parents=True, exist_ok=True)
+    (engine_root / ".git" / "config").write_text("git\n", encoding="utf-8")
+    (engine_root / "__pycache__" / "cache.pyc").parent.mkdir(parents=True, exist_ok=True)
+    (engine_root / "__pycache__" / "cache.pyc").write_text("pyc\n", encoding="utf-8")
+    (engine_root / ".env").write_text("SECRET=xyz\n", encoding="utf-8")
     return kit_root
 
 
@@ -267,3 +277,68 @@ def test_platform_auth_boots_with_its_own_key(
     assert _engine_auth_validate("cb_dev_key", env) is False
     assert _engine_auth_validate("wrong-key", env) is False
     assert _engine_auth_validate("", env) is False
+
+
+def test_package_vendors_engine(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """The platform package contains a vendored copy of the engine."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    package_dir = Path(info["package_dir"])
+
+    assert (package_dir / "engine" / "app" / "main.py").exists()
+    assert (package_dir / "engine" / "block_store" / "README.md").exists()
+    assert (package_dir / "engine" / "cli" / "cerebrum_cli" / "__init__.py").exists()
+
+    # Excluded artifacts must not be vendored.
+    assert not (package_dir / "engine" / ".git").exists()
+    assert not (package_dir / "engine" / "__pycache__").exists()
+    assert not (package_dir / "engine" / ".env").exists()
+
+    with zipfile.ZipFile(info["zip_path"], "r") as zf:
+        names = zf.namelist()
+        assert "engine/app/main.py" in names
+        assert "engine/block_store/README.md" in names
+        assert "engine/.git/config" not in names
+        assert "engine/__pycache__/cache.pyc" not in names
+        assert "engine/.env" not in names
+
+
+def test_package_dockerfile_uses_vendored_engine(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """The generated Dockerfile copies the vendored engine and does not clone."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    package_dir = Path(info["package_dir"])
+    dockerfile = (package_dir / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "git clone" not in dockerfile.lower()
+    assert "COPY engine/ /app" in dockerfile
+    assert "COPY . /app" in dockerfile
+
+
+def test_package_build_metadata_records_vendored_engine(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """build_metadata.json records repo, ref, commit SHA, and vendored: true."""
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+
+    info = package_platform_session(session)
+    metadata = info["build_metadata"]["engine"]
+
+    assert metadata["source"] == "local"
+    assert metadata["repo"] == "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+    assert metadata["vendored"] is True
+    assert metadata["vendored_path"] == "engine/"
+    assert "commit_sha" in metadata
+
+    written = json.loads(
+        (Path(info["package_dir"]) / "build_metadata.json").read_text(encoding="utf-8")
+    )
+    assert written["engine"]["vendored"] is True
+    assert written["engine"]["vendored_path"] == "engine/"
