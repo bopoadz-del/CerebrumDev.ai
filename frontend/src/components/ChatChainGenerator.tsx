@@ -39,6 +39,7 @@ const ChatChainGenerator: React.FC<ChatChainGeneratorProps> = ({ sessionId, onAp
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentChain, setCurrentChain] = useState<Chain | null>(null);
+  const [currentQuality, setCurrentQuality] = useState<any | null>(null);
   const [currentRules, setCurrentRules] = useState<string[]>([]);
   const [approved, setApproved] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -67,7 +68,14 @@ const ChatChainGenerator: React.FC<ChatChainGeneratorProps> = ({ sessionId, onAp
             return [...prev, { role: 'assistant', content: assistantText }];
           });
         } else if (event === 'chain') {
-          setCurrentChain(JSON.parse(data));
+          const parsed = JSON.parse(data);
+          if (parsed && parsed.chain) {
+            setCurrentChain(parsed.chain);
+            setCurrentQuality(parsed.quality ?? null);
+          } else {
+            setCurrentChain(parsed);
+            setCurrentQuality(null);
+          }
         } else if (event === 'rules') {
           setCurrentRules(JSON.parse(data));
         } else if (event === 'error') {
@@ -149,6 +157,19 @@ const ChatChainGenerator: React.FC<ChatChainGeneratorProps> = ({ sessionId, onAp
               </React.Fragment>
             ))}
           </div>
+          {currentQuality?.status === 'needs_review' && (
+            <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+              <div className="font-semibold mb-1">Chain quality warning</div>
+              {currentQuality.warnings?.map((warning: any, idx: number) => (
+                <div key={idx} className="space-y-1">
+                  <div>{warning.message}</div>
+                  {warning.suggested_block && (
+                    <div>Suggested block: {warning.suggested_block}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {currentRules.length > 0 && (
             <div className="mt-2 text-sm text-gray-600">
               Rules: {currentRules.join(', ')}
