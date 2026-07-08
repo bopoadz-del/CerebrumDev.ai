@@ -8,7 +8,12 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..core.session_store import get_session, update_session
-from ..core.chain_generator import generate_chain_suggestion, validate_chain, fetch_block_registry
+from ..core.chain_generator import (
+    generate_chain_suggestion,
+    validate_chain,
+    fetch_block_registry,
+    check_chain_quality,
+)
 from ..core.rule_injector import inject_rules
 from ..core.block_taxonomy import list_optional_blocks
 
@@ -169,8 +174,14 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         if validate_chain(chain, list(registry.keys())):
             state.proposed_chain = chain
             state.validation_passed = True
-            yield _sse_event("chain", json.dumps(chain))
+            state.chain_quality = check_chain_quality(state.config.domain, chain, True)
+            chain_payload = {"chain": chain}
+            if state.chain_quality:
+                chain_payload["quality"] = state.chain_quality
+            yield _sse_event("chain", json.dumps(chain_payload))
         else:
+            state.validation_passed = False
+            state.chain_quality = None
             yield _sse_event("error", "Generated chain failed validation")
 
     if rules:
@@ -205,7 +216,10 @@ async def preview_chain(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     if not state.proposed_chain:
         raise HTTPException(status_code=404, detail="No chain proposed yet")
-    return {"chain": state.proposed_chain, "rules": state.extracted_rules}
+    response = {"chain": state.proposed_chain, "rules": state.extracted_rules}
+    if state.chain_quality:
+        response["quality"] = state.chain_quality
+    return response
 
 
 @router.post("/{session_id}/chain/approve")

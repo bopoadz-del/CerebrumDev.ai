@@ -70,6 +70,7 @@ class SessionState(BaseModel):
     rules_injected: bool = False
     container_modified_path: Optional[str] = None
     validation_passed: bool = False
+    chain_quality: Optional[Dict[str, Any]] = None
     # Phase 4: Tinker – user-provided Q&A pairs for fine-tuning
     training_data: List[Dict[str, str]] = Field(default_factory=list)
     training_job: TrainingJob = Field(default_factory=TrainingJob)
