@@ -37,7 +37,9 @@ def test_build_system_prompt_includes_source_pack_context():
     for block in LEGAL_SOURCE_PACK["blocks"]:
         assert block in prompt
     assert "Prefer the recommended source-pack blocks" in prompt
-    assert "Include the domain v2 block" in prompt
+    assert "The domain v2 block is the primary domain-specific analysis block" in prompt
+    assert "prefer the domain v2 block over generic built-in blocks" in prompt
+    assert "Do not replace the domain v2 block with generic built-ins" in prompt
     assert "Include chat when the user needs a conversational interface or Q&A" in prompt
     assert "Use recommended blocks only if they are present" in prompt
     assert "Never invent block IDs" in prompt
