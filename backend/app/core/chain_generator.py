@@ -35,6 +35,9 @@ def _build_source_pack_context(domain: str) -> str:
         f"Expert role: {pack.get('expert_prompt', '')}\n"
         f"Workflow: {pack.get('workflow', '')}\n"
         f"Recommended blocks: {blocks}\n"
+        "Prefer the recommended source-pack blocks when proposing a chain for this domain. "
+        "Include the domain v2 block when it is relevant to the user's request. "
+        "Include chat when the user needs a conversational interface or Q&A. "
         "Use recommended blocks only if they are present in the available block registry. "
         "Never invent block IDs.\n"
     )
