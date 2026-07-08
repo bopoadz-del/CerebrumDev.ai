@@ -46,7 +46,7 @@ def get_llm_config() -> Dict[str, Any]:
     if provider == "ollama":
         return {
             "provider": "ollama",
-            "api_key": "",
+            "api_key": os.getenv("OLLAMA_API_KEY", ""),
             "base_url": os.getenv("OLLAMA_URL", ""),
             "model": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
         }
