@@ -19,9 +19,9 @@ services:
       - key: LLM_PROVIDER
         value: ollama
       - key: OLLAMA_URL
-        value: https://cerebrumdev-ollama.theshovel.ai
+        value: https://ollama.com
       - key: OLLAMA_MODEL
-        value: gpt-oss:120b-cloud
+        value: glm-5.2:cloud
       - key: OLLAMA_API_KEY
         sync: false
       - key: QWEN_API_KEY
