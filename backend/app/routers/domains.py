@@ -1,5 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from ..core.domain_loader import list_available_domains
+from ..core.source_pack_loader import (
+    SourcePackLoaderError,
+    list_source_packs,
+)
 from ..core.virgin_shelf_loader import (
     VirginShelfLoaderError,
     list_virgin_domains,
@@ -29,3 +33,17 @@ async def get_virgin_domains():
     except VirginShelfLoaderError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"shelf_id": "virgin_domains", "editions": editions}
+
+
+@router.get("/source-packs")
+async def get_source_packs():
+    """List Domain Source Pack metadata from the Cerebrum-Blocks shelf.
+
+    Read-only: exposes how each domain should think, respond, and wire blocks.
+    Does not affect runtime chain generation.
+    """
+    try:
+        packs = list_source_packs()
+    except SourcePackLoaderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"shelf_id": "source_packs", "packs": packs}
