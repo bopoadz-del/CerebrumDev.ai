@@ -42,6 +42,7 @@ BUILTIN_BLOCKS: List[str] = [
 ]
 
 OPTIONAL_BLOCKS: List[str] = [
+    # Drive / communication / utility primitives
     "voice",
     "google_drive",
     "onedrive",
@@ -53,8 +54,24 @@ OPTIONAL_BLOCKS: List[str] = [
     "code",
     "capture",
     "jetson_gateway",
-    "legal_v2",
+    # Domain v2 blocks (one per kit; keep synced with block_store/kits/)
+    "agriculture_v2",
+    "automotive_v2",
+    "aviation_v2",
+    "construction_v2",
+    "education_v2",
     "finance_v2",
+    "hotel_management_v2",
+    "hr_v2",
+    "insurance_v2",
+    "legal_v2",
+    "manufacturing_v2",
+    "medical_v2",
+    "oil_gas_v2",
+    "pharma_v2",
+    "real_estate_v2",
+    "retail_v2",
+    "supply_chain_v2",
 ]
 
 
