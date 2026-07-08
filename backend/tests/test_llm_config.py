@@ -19,6 +19,7 @@ def _clear_env():
         "CEREBRUM_LLM_MODEL",
         "OLLAMA_URL",
         "OLLAMA_MODEL",
+        "OLLAMA_API_KEY",
     ]
     old = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -39,6 +40,19 @@ def test_explicit_ollama():
     assert cfg["provider"] == "ollama"
     assert cfg["model"] == "glm-5.2:cloud"
     assert cfg["base_url"] == "http://localhost:11434"
+    assert cfg["api_key"] == ""
+
+
+def test_explicit_ollama_cloud_with_api_key():
+    os.environ["LLM_PROVIDER"] = "ollama"
+    os.environ["OLLAMA_URL"] = "https://ollama.com"
+    os.environ["OLLAMA_MODEL"] = "kimi-k2.7-code:cloud"
+    os.environ["OLLAMA_API_KEY"] = "sk-ollama-cloud"
+    cfg = get_llm_config()
+    assert cfg["provider"] == "ollama"
+    assert cfg["model"] == "kimi-k2.7-code:cloud"
+    assert cfg["base_url"] == "https://ollama.com"
+    assert cfg["api_key"] == "sk-ollama-cloud"
 
 
 def test_explicit_qwen():
