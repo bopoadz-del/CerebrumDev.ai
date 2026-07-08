@@ -22,6 +22,8 @@ services:
         value: https://cerebrumdev-ollama.theshovel.ai
       - key: OLLAMA_MODEL
         value: gpt-oss:120b-cloud
+      - key: OLLAMA_API_KEY
+        sync: false
       - key: QWEN_API_KEY
         sync: false
       - key: QWEN_BASE_URL

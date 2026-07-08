@@ -29,6 +29,7 @@ BACKEND_VARS = [
     {"key": "QWEN_MODEL", "value": os.getenv("QWEN_MODEL", "qwen-plus")},
     {"key": "OLLAMA_URL", "value": os.getenv("OLLAMA_URL", "")},
     {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")},
+    {"key": "OLLAMA_API_KEY", "value": os.getenv("OLLAMA_API_KEY", "")},
     {"key": "CHROMA_PERSIST_DIR", "value": os.getenv("CHROMA_PERSIST_DIR", "/app/storage/chroma")},
     {"key": "STORAGE_PATH", "value": "/app/storage"},
     {"key": "PYTHONIOENCODING", "value": "utf-8"},
