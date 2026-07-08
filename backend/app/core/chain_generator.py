@@ -7,8 +7,37 @@ from typing import List, Dict, Any
 from .feature_mapper import fetch_block_registry
 from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
 from .llm_config import get_llm_config, active_provider
+from .source_pack_loader import get_source_pack
 
 logger = logging.getLogger(__name__)
+
+
+def _build_source_pack_context(domain: str) -> str:
+    """Return a source-pack guidance section for the system prompt.
+
+    Returns an empty string when the domain has no source pack or when the
+    shelf cannot be loaded, so chain generation never breaks because of
+    metadata issues.
+    """
+    try:
+        pack = get_source_pack(domain)
+    except Exception:
+        logger.exception("Failed to load source pack for domain=%s", domain)
+        return ""
+
+    if not pack:
+        return ""
+
+    blocks = ", ".join(pack.get("blocks", []))
+
+    return (
+        f"\nDomain guidance for {domain}:\n"
+        f"Expert role: {pack.get('expert_prompt', '')}\n"
+        f"Workflow: {pack.get('workflow', '')}\n"
+        f"Recommended blocks: {blocks}\n"
+        "Use recommended blocks only if they are present in the available block registry. "
+        "Never invent block IDs.\n"
+    )
 
 
 def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
@@ -17,6 +46,7 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
         f"- {b.get('name')}: {b.get('description', 'No description')}" for b in optional_available
     ) or "- (none)"
     docs_section = f"\nUploaded documents summary:\n{docs_summary}\n" if docs_summary else ""
+    source_pack_section = _build_source_pack_context(domain)
     return (
         "You are an AI solution architect for CerebrumDev.ai. "
         "Your job is to help users configure and optionally extend their sovereign AI instance.\n\n"
@@ -26,6 +56,7 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
         "You do NOT need to propose these in the chain; they are always available.\n\n"
         "Optional Fork primitives the user can add on top:\n"
         f"{optional_list}\n"
+        f"{source_pack_section}"
         f"{docs_section}\n"
         "When responding:\n"
         "1. Be concise and conversational.\n"
