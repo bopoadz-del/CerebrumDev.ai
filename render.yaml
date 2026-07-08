@@ -21,7 +21,7 @@ services:
       - key: OLLAMA_URL
         value: https://ollama.com
       - key: OLLAMA_MODEL
-        value: glm-5.2:cloud
+        value: kimi-k2.7-code:cloud
       - key: OLLAMA_API_KEY
         sync: false
       - key: QWEN_API_KEY
