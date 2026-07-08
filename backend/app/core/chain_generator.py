@@ -2,7 +2,7 @@ import os
 import json
 import httpx
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from .feature_mapper import fetch_block_registry
 from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
@@ -258,3 +258,54 @@ def validate_chain(chain: Dict[str, Any], available_block_names: List[str]) -> b
         if not isinstance(conn.get("from"), int) or not isinstance(conn.get("to"), int):
             return False
     return True
+
+
+def check_chain_quality(
+    domain: str, chain: Optional[Dict[str, Any]], validation_passed: bool
+) -> Optional[Dict[str, Any]]:
+    """Soft post-validation quality check returning metadata only.
+
+    This function never rejects a chain or mutates it. It inspects the
+    domain source pack and reports whether the primary domain v2 block is
+    present in the proposed chain.
+    """
+    if not validation_passed:
+        return None
+    if not chain or not isinstance(chain, dict):
+        return None
+
+    try:
+        pack = get_source_pack(domain)
+    except Exception:
+        logger.exception("Failed to load source pack for domain=%s", domain)
+        return None
+
+    if not pack:
+        return None
+
+    domain_v2_block = None
+    for block_id in pack.get("blocks", []):
+        if isinstance(block_id, str) and block_id.endswith("_v2"):
+            domain_v2_block = block_id
+            break
+
+    if not domain_v2_block:
+        return None
+
+    proposed_ids = {block.get("id") for block in chain.get("blocks", [])}
+    if domain_v2_block in proposed_ids:
+        return {"status": "ok", "warnings": []}
+
+    return {
+        "status": "needs_review",
+        "warnings": [
+            {
+                "code": "missing_domain_v2_block",
+                "message": (
+                    f"This {domain} chain does not include {domain_v2_block}, "
+                    f"the primary {domain} analysis block."
+                ),
+                "suggested_block": domain_v2_block,
+            }
+        ],
+    }
