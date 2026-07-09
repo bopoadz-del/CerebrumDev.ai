@@ -131,7 +131,7 @@ def test_resolve_engine_source_uses_default_ref_when_unset(
 
     def _run(args: List[str], **kwargs: Dict[str, Any]):
         return _fake_fetch(
-            tmp_path, "bb4bf69563fb059cff2da7375379f1e4b767543f", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+            tmp_path, "745ea4a77f2230dae662f394a4cfe0e4b31b7101", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
         )(args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _run)
@@ -143,14 +143,14 @@ def test_resolve_engine_source_uses_default_ref_when_unset(
     assert metadata["source"] == "fetched"
     assert metadata["repo"] == "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
     assert metadata["ref"] == DEFAULT_CEREBRUM_BLOCKS_REF
-    assert metadata["ref"] == "bb4bf69563fb059cff2da7375379f1e4b767543f"
+    assert metadata["ref"] == "745ea4a77f2230dae662f394a4cfe0e4b31b7101"
     assert "commit_sha" in metadata
     assert root.is_dir()
 
 
 def test_default_ref_is_pinned_commit(no_local_engine):
     """The default engine ref is the known-good pinned full commit SHA."""
-    assert DEFAULT_CEREBRUM_BLOCKS_REF == "bb4bf69563fb059cff2da7375379f1e4b767543f"
+    assert DEFAULT_CEREBRUM_BLOCKS_REF == "745ea4a77f2230dae662f394a4cfe0e4b31b7101"
 
 
 def test_fetch_engine_checkout_aborts_on_unreachable_repo(no_local_engine, tmp_path: Path, monkeypatch):
