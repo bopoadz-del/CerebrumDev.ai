@@ -25,7 +25,7 @@ LEGAL_SOURCE_PACK: Dict[str, Any] = {
     "example_prompts": ["flag risky clauses"],
     "expected_inputs": ["contracts"],
     "expected_outputs": ["risk flags"],
-    "blocks": ["pdf", "ocr", "chat", "image", "legal_v2"],
+    "blocks": ["pdf", "ocr", "chat", "image", "formula_executor_v2", "legal_v2"],
 }
 
 LEGAL_CHAIN_WITH_V2: Dict[str, Any] = {
@@ -102,13 +102,26 @@ class TestCheckChainQuality:
         assert result is None
 
     def test_check_chain_quality_no_v2_block_returns_none(self):
-        pack = {**LEGAL_SOURCE_PACK, "blocks": ["pdf", "ocr", "chat", "image"]}
+        pack = {**LEGAL_SOURCE_PACK, "blocks": ["pdf", "ocr", "chat", "image", "formula_executor_v2"]}
         chain = {"blocks": [{"id": "pdf"}, {"id": "ocr"}, {"id": "chat"}]}
 
         with patch("app.core.chain_generator.get_source_pack", return_value=pack):
             result = check_chain_quality("legal", chain, True)
 
         assert result is None
+
+    def test_check_chain_quality_ignores_formula_executor_v2_as_domain_v2(self):
+        """formula_executor_v2 is shared reasoning support, not the primary domain block."""
+        chain = {"blocks": [{"id": "pdf"}, {"id": "ocr"}, {"id": "formula_executor_v2"}, {"id": "chat"}]}
+
+        with patch(
+            "app.core.chain_generator.get_source_pack", return_value=LEGAL_SOURCE_PACK
+        ):
+            result = check_chain_quality("legal", chain, True)
+
+        assert result is not None
+        assert result["status"] == "needs_review"
+        assert result["warnings"][0]["suggested_block"] == "legal_v2"
 
 
 class TestStreamResponseQuality:

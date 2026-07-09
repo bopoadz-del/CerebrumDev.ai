@@ -285,7 +285,9 @@ def check_chain_quality(
 
     domain_v2_block = None
     for block_id in pack.get("blocks", []):
-        if isinstance(block_id, str) and block_id.endswith("_v2"):
+        # formula_executor_v2 is a shared reasoning support block, not the
+        # primary domain-specific v2 block we want to enforce here.
+        if isinstance(block_id, str) and block_id.endswith("_v2") and block_id != "formula_executor_v2":
             domain_v2_block = block_id
             break
 
