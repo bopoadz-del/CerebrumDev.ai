@@ -28,7 +28,7 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
 )
 
 # Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
-DEFAULT_CEREBRUM_BLOCKS_REF = "bb4bf69563fb059cff2da7375379f1e4b767543f"
+DEFAULT_CEREBRUM_BLOCKS_REF = "745ea4a77f2230dae662f394a4cfe0e4b31b7101"
 
 
 class EngineDiscoveryError(Exception):
