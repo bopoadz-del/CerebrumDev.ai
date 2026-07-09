@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from ..core.domain_loader import list_available_domains
+from ..core.rag_activation import build_rag_activation_status
 from ..core.rag_pack_loader import (
     RagPackLoaderError,
     list_rag_packs,
@@ -65,3 +66,16 @@ async def get_rag_packs():
     except RagPackLoaderError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"shelf_id": "rag_packs", "packs": packs}
+
+
+@router.get("/{domain_id}/rag-activation")
+async def get_rag_activation(domain_id: str):
+    """Return the activation/status contract for a domain's prebuilt RAG pack.
+
+    Read-only metadata status. Does not ingest documents, create embeddings,
+    or change chain generation.
+    """
+    try:
+        return build_rag_activation_status(domain_id)
+    except RagPackLoaderError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
