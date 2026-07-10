@@ -1,6 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
 from ..core.domain_loader import list_available_domains
 from ..core.rag_activation import build_rag_activation_status
+from ..core.rag_ingestion_store import get_job, list_jobs, save_job, save_source_record
+from ..core.rag_ingestion_validation import create_ingestion_job
 from ..core.rag_pack_loader import (
     RagPackLoaderError,
     list_rag_packs,
@@ -13,8 +19,28 @@ from ..core.virgin_shelf_loader import (
     VirginShelfLoaderError,
     list_virgin_domains,
 )
+from ..models.rag_ingestion import RagSourceRecord, SourceClass
 
 router = APIRouter()
+
+
+class CreateIngestionJobRequest(BaseModel):
+    """Request body for creating a dry-run RAG ingestion job."""
+
+    rag_pack_id: str
+    collection_id: str
+    source_class: SourceClass
+    title: str
+    source_uri: str
+    publisher: Optional[str] = None
+    license_name: Optional[str] = None
+    license_uri: Optional[str] = None
+    license_review_status: Optional[str] = None
+    authority_rating: Optional[str] = None
+    content_hash: str
+    external_document_id: Optional[str] = None
+    dry_run: bool = True
+    queue: bool = False
 
 
 @router.get("/")
@@ -79,3 +105,66 @@ async def get_rag_activation(domain_id: str):
         return build_rag_activation_status(domain_id)
     except RagPackLoaderError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/{domain_id}/rag-ingestion/jobs")
+async def create_rag_ingestion_job(
+    domain_id: str, request: CreateIngestionJobRequest
+):
+    """Create a dry-run RAG ingestion job (validation + optional queue).
+
+    Actual ingestion is not enabled. Use ``dry_run=true`` to validate or queue
+    a proposed source record without downloading, parsing, embedding, or writing
+    to a vector store.
+    """
+    if not request.dry_run:
+        raise HTTPException(
+            status_code=409,
+            detail="Actual ingestion is not enabled. Use dry_run=true.",
+        )
+
+    record = RagSourceRecord(
+        rag_pack_id=request.rag_pack_id,
+        collection_id=request.collection_id,
+        domain=domain_id,
+        source_class=request.source_class,
+        title=request.title,
+        source_uri=request.source_uri,
+        publisher=request.publisher,
+        license_name=request.license_name,
+        license_uri=request.license_uri,
+        license_review_status=request.license_review_status,
+        authority_rating=request.authority_rating,
+        content_hash=request.content_hash,
+        external_document_id=request.external_document_id,
+    )
+
+    # Persist the source record before validation so duplicate checks work.
+    save_source_record(record)
+
+    job = create_ingestion_job(record, dry_run=request.dry_run, queue=request.queue)
+    save_job(job)
+    return job.model_dump(mode="json")
+
+
+@router.get("/{domain_id}/rag-ingestion/jobs/{job_id}")
+async def get_rag_ingestion_job(domain_id: str, job_id: str):
+    """Retrieve a single ingestion job, scoped to its domain."""
+    job = get_job(domain_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job.model_dump(mode="json")
+
+
+@router.get("/{domain_id}/rag-ingestion/jobs")
+async def list_rag_ingestion_jobs(
+    domain_id: str,
+    status: Optional[str] = Query(None),
+    rag_pack_id: Optional[str] = Query(None),
+    collection_id: Optional[str] = Query(None),
+):
+    """List ingestion jobs for a domain, with optional filters."""
+    jobs = list_jobs(
+        domain_id, status=status, rag_pack_id=rag_pack_id, collection_id=collection_id
+    )
+    return {"domain": domain_id, "jobs": [j.model_dump(mode="json") for j in jobs]}
