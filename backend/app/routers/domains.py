@@ -1,6 +1,7 @@
-from typing import Optional
+from datetime import datetime
+from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
 
 from ..core.domain_loader import list_available_domains
@@ -9,15 +10,20 @@ from ..core.rag_canonical_documents import (
     CanonicalDocumentError,
     create_canonical_document,
 )
+from ..core.rag_embeddings import EmbeddingError, run_embedding_dry_run
 from ..core.rag_ingestion_store import (
     get_acquisition_report,
     get_canonical_chunk,
     get_canonical_document,
     get_canonical_text,
+    get_chunk_embedding,
+    get_chunk_embeddings,
+    get_embedding_run,
     get_job,
     list_acquisition_reports,
     list_canonical_chunks,
     list_canonical_documents,
+    list_embedding_runs,
     list_jobs,
     save_canonical_document,
     save_job,
@@ -76,6 +82,61 @@ class CanonicalDocumentRequest(BaseModel):
 
     dry_run: bool = True
     create_chunks: bool = True
+
+
+class EmbeddingDryRunRequest(BaseModel):
+    dry_run: bool = True
+    provider_id: str = "local_feature_hash_v1"
+
+
+class EmbeddingDryRunResponse(BaseModel):
+    run_id: str
+    status: str
+    provider_id: str
+    dimensions: int
+    document_chunk_count: int
+    eligible_chunk_count: int
+    embedded_chunk_count: int
+    failed_chunk_count: int
+    batch_count: int
+    vector_artifact_hash: Optional[str]
+    warnings: List[str]
+    errors: List[dict]
+
+
+class EmbeddingRunResponse(BaseModel):
+    run_id: str
+    document_id: str
+    provider_id: str
+    provider_version: str
+    status: str
+    dimensions: int
+    document_chunk_count: int
+    embedded_chunk_count: int
+    failed_chunk_count: int
+    batch_count: int
+    vector_artifact_hash: Optional[str]
+    production_approved: bool
+    index_status: str
+    warnings: List[str]
+    errors: List[dict]
+    created_at: datetime
+    completed_at: Optional[datetime]
+
+
+class ChunkEmbeddingListItem(BaseModel):
+    embedding_id: str
+    chunk_id: str
+    chunk_ordinal: int
+    chunk_text_hash: str
+    provider_id: str
+    provider_version: str
+    dimensions: int
+    distance_metric: str
+    normalization: str
+    vector_hash: str
+    index_status: str
+    vector: Optional[List[float]] = None
 
 
 @router.get("/")
@@ -380,3 +441,145 @@ async def get_canonical_chunk_endpoint(
     if chunk is None or chunk.document_id != document_id:
         raise HTTPException(status_code=404, detail="Chunk not found")
     return chunk.model_dump(mode="json")
+
+
+@router.post(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/embedding-dry-run"
+)
+def create_embedding_dry_run(
+    domain_id: str,
+    document_id: str,
+    request: EmbeddingDryRunRequest,
+):
+    if not request.dry_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "DRY_RUN_REQUIRED",
+                "message": "Actual embedding is not enabled. Use dry_run=true.",
+            },
+        )
+    try:
+        run, _ = run_embedding_dry_run(
+            domain=domain_id,
+            document_id=document_id,
+            provider_id=request.provider_id,
+            dry_run=True,
+        )
+    except EmbeddingError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": exc.message, "field": exc.field},
+        )
+    return EmbeddingDryRunResponse(
+        run_id=run.run_id,
+        status=run.status.value,
+        provider_id=run.provider_id,
+        dimensions=run.dimensions,
+        document_chunk_count=run.document_chunk_count,
+        eligible_chunk_count=run.eligible_chunk_count,
+        embedded_chunk_count=run.embedded_chunk_count,
+        failed_chunk_count=run.failed_chunk_count,
+        batch_count=run.batch_count,
+        vector_artifact_hash=run.vector_artifact_hash,
+        warnings=run.warnings,
+        errors=[e.model_dump(mode="json") for e in run.errors],
+    )
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/embedding-runs"
+)
+def list_embedding_runs_endpoint(domain_id: str, document_id: str):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    runs = list_embedding_runs(domain_id, document_id)
+    return [
+        EmbeddingRunResponse(
+            run_id=r.run_id,
+            document_id=r.document_id,
+            provider_id=r.provider_id,
+            provider_version=r.provider_version,
+            status=r.status.value,
+            dimensions=r.dimensions,
+            document_chunk_count=r.document_chunk_count,
+            embedded_chunk_count=r.embedded_chunk_count,
+            failed_chunk_count=r.failed_chunk_count,
+            batch_count=r.batch_count,
+            vector_artifact_hash=r.vector_artifact_hash,
+            production_approved=r.production_approved,
+            index_status=r.index_status.value,
+            warnings=r.warnings,
+            errors=[e.model_dump(mode="json") for e in r.errors],
+            created_at=r.created_at,
+            completed_at=r.completed_at,
+        )
+        for r in runs
+    ]
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/embedding-runs/{run_id}"
+)
+def get_embedding_run_endpoint(domain_id: str, document_id: str, run_id: str):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    run = get_embedding_run(domain_id, document_id, run_id)
+    if run is None or run.domain != domain_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+    return EmbeddingRunResponse(
+        run_id=run.run_id,
+        document_id=run.document_id,
+        provider_id=run.provider_id,
+        provider_version=run.provider_version,
+        status=run.status.value,
+        dimensions=run.dimensions,
+        document_chunk_count=run.document_chunk_count,
+        embedded_chunk_count=run.embedded_chunk_count,
+        failed_chunk_count=run.failed_chunk_count,
+        batch_count=run.batch_count,
+        vector_artifact_hash=run.vector_artifact_hash,
+        production_approved=run.production_approved,
+        index_status=run.index_status.value,
+        warnings=run.warnings,
+        errors=[e.model_dump(mode="json") for e in run.errors],
+        created_at=run.created_at,
+        completed_at=run.completed_at,
+    )
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/embedding-runs/{run_id}/embeddings"
+)
+def list_chunk_embeddings_endpoint(
+    domain_id: str,
+    document_id: str,
+    run_id: str,
+    include_vectors: bool = False,
+):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    run = get_embedding_run(domain_id, document_id, run_id)
+    if run is None or run.domain != domain_id or run.document_id != document_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found.")
+    embeddings = get_chunk_embeddings(domain_id, document_id, run_id, include_vectors=include_vectors)
+    return [
+        ChunkEmbeddingListItem(
+            embedding_id=e.embedding_id,
+            chunk_id=e.chunk_id,
+            chunk_ordinal=e.chunk_ordinal,
+            chunk_text_hash=e.chunk_text_hash,
+            provider_id=e.provider_id,
+            provider_version=e.provider_version,
+            dimensions=e.dimensions,
+            distance_metric=e.distance_metric,
+            normalization=e.normalization,
+            vector_hash=e.vector_hash,
+            index_status=e.index_status.value,
+            vector=e.vector if include_vectors else None,
+        )
+        for e in embeddings
+    ]
