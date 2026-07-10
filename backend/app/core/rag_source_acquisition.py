@@ -551,6 +551,7 @@ def run_acquisition_preview(
         collection_id=record.collection_id,
         domain=domain_id,
         source_uri=record.source_uri,
+        source_class=record.source_class,
         status=AcquisitionStatus.PENDING,
         parse_status=ParseStatus.NOT_REQUESTED if not parse else ParseStatus.NOT_STARTED,
         errors=errors,
@@ -631,6 +632,7 @@ def run_acquisition_preview(
             report.parser_version = parse_result.parser_version
             report.page_count = parse_result.page_count
             report.extracted_characters = len(parse_result.text)
+            report.extracted_text = parse_result.text
             report.text_preview = parse_result.text[:RAG_PARSE_PREVIEW_CHARACTERS]
             report.warnings.extend(parse_result.warnings)
             report.parse_status = ParseStatus.PARSED

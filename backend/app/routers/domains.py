@@ -5,11 +5,21 @@ from pydantic import BaseModel
 
 from ..core.domain_loader import list_available_domains
 from ..core.rag_activation import build_rag_activation_status
+from ..core.rag_canonical_documents import (
+    CanonicalDocumentError,
+    create_canonical_document,
+)
 from ..core.rag_ingestion_store import (
     get_acquisition_report,
+    get_canonical_chunk,
+    get_canonical_document,
+    get_canonical_text,
     get_job,
     list_acquisition_reports,
+    list_canonical_chunks,
+    list_canonical_documents,
     list_jobs,
+    save_canonical_document,
     save_job,
     save_source_record,
 )
@@ -59,6 +69,13 @@ class AcquisitionPreviewRequest(BaseModel):
 
     dry_run: bool = True
     parse: bool = True
+
+
+class CanonicalDocumentRequest(BaseModel):
+    """Request body for creating a canonical document."""
+
+    dry_run: bool = True
+    create_chunks: bool = True
 
 
 @router.get("/")
@@ -231,3 +248,135 @@ async def get_acquisition_preview(domain_id: str, job_id: str, acquisition_id: s
     if report is None or report.job_id != job_id:
         raise HTTPException(status_code=404, detail="Acquisition preview not found")
     return report.model_dump(mode="json")
+
+
+@router.post(
+    "/{domain_id}/rag-ingestion/jobs/{job_id}/acquisition-previews/{acquisition_id}/canonical-document"
+)
+async def create_canonical_document_endpoint(
+    domain_id: str,
+    job_id: str,
+    acquisition_id: str,
+    request: CanonicalDocumentRequest,
+):
+    """Create a canonical document and optional deterministic chunks.
+
+    The canonical text comes from the trusted parser output stored on the
+    acquisition report, not from the API client or the bounded preview.
+    """
+    job = get_job(domain_id, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    report = get_acquisition_report(domain_id, acquisition_id)
+    if report is None or report.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Acquisition preview not found")
+
+    try:
+        document, chunks, canonical_text = create_canonical_document(
+            job=job,
+            report=report,
+            dry_run=request.dry_run,
+            create_chunks=request.create_chunks,
+        )
+    except CanonicalDocumentError as exc:
+        status_code = 409 if exc.code == "DRY_RUN_REQUIRED" else 422
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message, "field": exc.field},
+        ) from exc
+
+    # Idempotency: if document already exists with matching identity and config,
+    # return the existing persisted document without overwriting.
+    existing = get_canonical_document(domain_id, document.document_id)
+    if existing is not None:
+        if (
+            existing.normalization_version != document.normalization_version
+            or existing.chunking_status != document.chunking_status
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "CANONICAL_DOCUMENT_CONFLICT",
+                    "message": "A canonical document already exists with incompatible configuration.",
+                },
+            )
+        return existing.model_dump(mode="json")
+
+    save_canonical_document(document, canonical_text, chunks)
+    return document.model_dump(mode="json")
+
+
+@router.get("/{domain_id}/rag-ingestion/documents")
+async def list_canonical_documents_endpoint(
+    domain_id: str,
+    rag_pack_id: Optional[str] = Query(None),
+    collection_id: Optional[str] = Query(None),
+    job_id: Optional[str] = Query(None),
+    source_id: Optional[str] = Query(None),
+    canonicalization_status: Optional[str] = Query(None),
+    chunking_status: Optional[str] = Query(None),
+):
+    """List canonical documents for a domain, with optional filters."""
+    documents = list_canonical_documents(
+        domain_id,
+        rag_pack_id=rag_pack_id,
+        collection_id=collection_id,
+        job_id=job_id,
+        source_id=source_id,
+        canonicalization_status=canonicalization_status,
+        chunking_status=chunking_status,
+    )
+    return {
+        "domain": domain_id,
+        "documents": [d.model_dump(mode="json") for d in documents],
+    }
+
+
+@router.get("/{domain_id}/rag-ingestion/documents/{document_id}")
+async def get_canonical_document_endpoint(domain_id: str, document_id: str):
+    """Retrieve a canonical document's metadata, scoped to its domain."""
+    document = get_canonical_document(domain_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Canonical document not found")
+    return document.model_dump(mode="json")
+
+
+@router.get("/{domain_id}/rag-ingestion/documents/{document_id}/text")
+async def get_canonical_document_text(domain_id: str, document_id: str):
+    """Retrieve the canonical text for a document, scoped to its domain."""
+    document = get_canonical_document(domain_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Canonical document not found")
+    text = get_canonical_text(domain_id, document_id)
+    if text is None:
+        raise HTTPException(status_code=404, detail="Canonical text not found")
+    return text
+
+
+@router.get("/{domain_id}/rag-ingestion/documents/{document_id}/chunks")
+async def list_canonical_chunks_endpoint(domain_id: str, document_id: str):
+    """List chunks for a canonical document in ordinal order."""
+    document = get_canonical_document(domain_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Canonical document not found")
+    chunks = list_canonical_chunks(domain_id, document_id)
+    return {
+        "domain": domain_id,
+        "document_id": document_id,
+        "chunks": [c.model_dump(mode="json") for c in chunks],
+    }
+
+
+@router.get("/{domain_id}/rag-ingestion/documents/{document_id}/chunks/{chunk_id}")
+async def get_canonical_chunk_endpoint(
+    domain_id: str, document_id: str, chunk_id: str
+):
+    """Retrieve a single chunk, scoped to its document and domain."""
+    document = get_canonical_document(domain_id, document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="Canonical document not found")
+    chunk = get_canonical_chunk(domain_id, document_id, chunk_id)
+    if chunk is None or chunk.document_id != document_id:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    return chunk.model_dump(mode="json")

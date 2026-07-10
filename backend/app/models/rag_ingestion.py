@@ -142,6 +142,7 @@ class RagAcquisitionReport(BaseModel):
     status: AcquisitionStatus = AcquisitionStatus.PENDING
     http_status: Optional[int] = None
     redirect_count: int = 0
+    source_class: SourceClass = SourceClass.PUBLIC_DOMAIN
     content_type: Optional[str] = None
     content_length_bytes: Optional[int] = None
     computed_content_hash: Optional[str] = None
@@ -152,6 +153,7 @@ class RagAcquisitionReport(BaseModel):
     parse_status: ParseStatus = ParseStatus.NOT_REQUESTED
     page_count: Optional[int] = None
     extracted_characters: int = 0
+    extracted_text: str = ""
     text_preview: str = ""
     warnings: List[str] = Field(default_factory=list)
     errors: List[ValidationError] = Field(default_factory=list)
@@ -160,3 +162,91 @@ class RagAcquisitionReport(BaseModel):
     completed_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CanonicalizationStatus(str, Enum):
+    """Lifecycle status for canonical document creation."""
+
+    PENDING = "pending"
+    CANONICALIZED = "canonicalized"
+    FAILED = "failed"
+
+
+class ChunkingStatus(str, Enum):
+    """Chunking outcome for a canonical document."""
+
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    CHUNKED = "chunked"
+    FAILED = "failed"
+
+
+class IndexStatus(str, Enum):
+    """Indexing state for documents and chunks."""
+
+    NOT_INDEXED = "not_indexed"
+
+
+class RagCanonicalDocument(BaseModel):
+    """A persisted, normalized canonical text document from a governed source."""
+
+    document_id: str
+    job_id: str
+    source_id: str
+    acquisition_id: str
+    rag_pack_id: str
+    collection_id: str
+    domain: str
+    source_uri: str
+    final_source_uri: Optional[str] = None
+    title: str
+    publisher: Optional[str] = None
+    source_class: SourceClass
+    content_type: Optional[str] = None
+    raw_content_hash: str
+    canonical_text_hash: str
+    normalization_algorithm: str
+    normalization_version: str
+    parser_id: Optional[str] = None
+    parser_version: Optional[str] = None
+    character_count: int = 0
+    line_count: int = 0
+    chunk_count: int = 0
+    parser_truncated: bool = False
+    canonicalization_status: CanonicalizationStatus = CanonicalizationStatus.PENDING
+    chunking_status: ChunkingStatus = ChunkingStatus.NOT_REQUESTED
+    index_status: IndexStatus = IndexStatus.NOT_INDEXED
+    untrusted_content: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_error: Optional[str] = None
+
+
+class RagCanonicalChunk(BaseModel):
+    """A deterministic structural chunk of a canonical document."""
+
+    chunk_id: str
+    document_id: str
+    job_id: str
+    source_id: str
+    acquisition_id: str
+    rag_pack_id: str
+    collection_id: str
+    domain: str
+    ordinal: int
+    text: str
+    text_hash: str
+    character_start: int
+    character_end: int
+    character_count: int
+    overlap_from_previous: int = 0
+    structural_type: Optional[str] = None
+    heading: Optional[str] = None
+    chunking_algorithm: str
+    chunking_version: str
+    target_characters: int
+    maximum_characters: int
+    overlap_characters: int
+    index_status: IndexStatus = IndexStatus.NOT_INDEXED
+    untrusted_content: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
