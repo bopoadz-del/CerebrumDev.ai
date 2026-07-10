@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -59,6 +60,9 @@ class _LocalFeatureHashProviderV1(RagEmbeddingProvider):
             maximum_input_characters=self._MAX_CHARS,
             production_approved=False,
         )
+        self._precision = int(os.getenv("RAG_EMBEDDING_VECTOR_PRECISION", "8"))
+        if self._precision < 1:
+            raise ValueError("RAG_EMBEDDING_VECTOR_PRECISION must be >= 1.")
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         if not texts:
@@ -80,12 +84,12 @@ class _LocalFeatureHashProviderV1(RagEmbeddingProvider):
         norm = math.sqrt(sum(v * v for v in vector))
         if norm == 0:
             raise ValueError("Embedding produced a zero vector.")
-        vector = [round(v / norm, 8) for v in vector]
+        vector = [round(v / norm, self._precision) for v in vector]
         # Renormalize after rounding to keep L2 norm ≈ 1.
         rounded_norm = math.sqrt(sum(v * v for v in vector))
         if rounded_norm == 0:
             raise ValueError("Embedding produced a zero vector after rounding.")
-        return [round(v / rounded_norm, 8) for v in vector]
+        return [round(v / rounded_norm, self._precision) for v in vector]
 
 
 _PROVIDERS: Dict[str, RagEmbeddingProvider] = {

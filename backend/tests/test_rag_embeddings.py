@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime
 
@@ -74,7 +75,7 @@ def _make_document(tmp_path, monkeypatch, text="hello world"):
         domain=domain,
         ordinal=0,
         text=text,
-        text_hash="hash1",
+        text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         character_start=0,
         character_end=len(text),
         character_count=len(text),

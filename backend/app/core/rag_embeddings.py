@@ -30,7 +30,6 @@ from .rag_embedding_providers import LOCAL_FEATURE_HASH_V1, get_provider
 from .rag_ingestion_store import (
     _embedding_artifact_hash,
     get_canonical_document,
-    get_canonical_chunk,
     get_chunk_embeddings,
     get_embedding_run,
     list_canonical_chunks,
@@ -206,6 +205,15 @@ def _validate_chunks(
                     message="Chunk collection does not match document.",
                 )
             )
+        expected_chunk_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
+        if chunk.text_hash != expected_chunk_hash:
+            errors.append(
+                ValidationError(
+                    code="CHUNK_TEXT_HASH_MISMATCH",
+                    field="text_hash",
+                    message="Chunk text hash does not match chunk text.",
+                )
+            )
         if chunk.index_status != IndexStatus.NOT_INDEXED:
             errors.append(
                 ValidationError(
@@ -297,9 +305,11 @@ def run_embedding_dry_run(
 
     config_errors = _validate_configuration()
     if config_errors:
+        first = config_errors[0]
         raise _error(
             code="EMBEDDING_CONFIGURATION_INVALID",
-            message="Invalid embedding configuration.",
+            message=first.message,
+            field=first.field,
         )
 
     document = get_canonical_document(domain, document_id)
@@ -317,14 +327,6 @@ def run_embedding_dry_run(
             message="Document is not eligible for embedding.",
         )
 
-    chunks = list_canonical_chunks(domain, document_id)
-    chunk_errors = _validate_chunks(document, chunks)
-    if chunk_errors:
-        raise _error(
-            code="DOCUMENT_NOT_ELIGIBLE",
-            message="Chunks are not eligible for embedding.",
-        )
-
     provider = get_provider(provider_id)
     if provider is None:
         raise _error(
@@ -333,12 +335,15 @@ def run_embedding_dry_run(
             field="provider_id",
         )
 
-    if (
-        provider.dimensions != RAG_EMBEDDING_DIMENSIONS
-        and provider_id == LOCAL_FEATURE_HASH_V1
-    ):
-        # Allow tests to override via env; otherwise provider contract wins.
-        pass
+    chunks = list_canonical_chunks(domain, document_id)
+    chunk_errors = _validate_chunks(document, chunks)
+    if chunk_errors:
+        first = chunk_errors[0]
+        raise _error(
+            code=first.code,
+            message=first.message,
+            field=first.field,
+        )
 
     run_id = _run_id(
         collection_id=document.collection_id,
@@ -374,6 +379,7 @@ def run_embedding_dry_run(
         status=EmbeddingRunStatus.EMBEDDING,
         document_chunk_count=len(chunks),
         eligible_chunk_count=len(chunks),
+        production_approved=provider.production_approved,
         warnings=warnings,
     )
 

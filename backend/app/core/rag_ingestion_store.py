@@ -406,7 +406,7 @@ def save_embedding_run(
 
 
 def _embedding_artifact_hash(records: List[dict]) -> str:
-    import hashlib, json
+    """Return a deterministic hash over chunk embedding records."""
     # Exclude timestamps so the hash is deterministic across reruns.
     excluded = {"created_at", "updated_at"}
     lines = [

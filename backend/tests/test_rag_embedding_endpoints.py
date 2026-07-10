@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
 from fastapi.testclient import TestClient
@@ -61,7 +62,7 @@ def _seed_document(client: TestClient, tmp_path, monkeypatch, domain="legal", do
         domain=domain,
         ordinal=0,
         text=text,
-        text_hash="hash1",
+        text_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
         character_start=0,
         character_end=len(text),
         character_count=len(text),
