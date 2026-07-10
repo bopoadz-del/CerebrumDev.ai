@@ -9,10 +9,12 @@ No documents, chunks, embeddings, or vector-store operations happen here.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -20,6 +22,8 @@ from app.models.rag_ingestion import (
     RagAcquisitionReport,
     RagCanonicalChunk,
     RagCanonicalDocument,
+    RagChunkEmbedding,
+    RagEmbeddingRun,
     RagIngestionJob,
     RagSourceRecord,
 )
@@ -363,3 +367,129 @@ def list_canonical_documents(
             continue
         documents.append(doc)
     return documents
+
+
+def _embeddings_dir(domain: str, document_id: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "embeddings" / document_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _embedding_run_path(domain: str, document_id: str, run_id: str) -> Path:
+    return _embeddings_dir(domain, document_id) / f"{run_id}.json"
+
+
+def _embedding_vectors_path(domain: str, document_id: str, run_id: str) -> Path:
+    return _embeddings_dir(domain, document_id) / f"{run_id}.vectors.jsonl"
+
+
+def save_embedding_run(
+    run: RagEmbeddingRun,
+    chunk_embeddings: List[RagChunkEmbedding],
+) -> RagEmbeddingRun:
+    """Persist an embedding run and its chunk embeddings atomically."""
+    domain = run.domain
+    document_id = run.document_id
+    run_id = run.run_id
+
+    run_path = _embedding_run_path(domain, document_id, run_id)
+    vectors_path = _embedding_vectors_path(domain, document_id, run_id)
+
+    vector_records = [ce.model_dump(mode="json") for ce in chunk_embeddings]
+    artifact_hash = _embedding_artifact_hash(vector_records)
+    run.vector_artifact_hash = artifact_hash
+    run.updated_at = datetime.utcnow()
+
+    _atomic_write(run_path, run.model_dump(mode="json"))
+    _atomic_write_jsonl(vectors_path, vector_records)
+    return run
+
+
+def _embedding_artifact_hash(records: List[dict]) -> str:
+    """Return a deterministic hash over chunk embedding records."""
+    # Exclude timestamps so the hash is deterministic across reruns.
+    excluded = {"created_at", "updated_at"}
+    lines = [
+        json.dumps(
+            {k: v for k, v in r.items() if k not in excluded},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        for r in records
+    ]
+    blob = "\n".join(lines).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def get_embedding_run(
+    domain: str, document_id: str, run_id: str
+) -> Optional[RagEmbeddingRun]:
+    """Fetch a single embedding run."""
+    path = _embedding_run_path(domain, document_id, run_id)
+    if not path.exists():
+        return None
+    try:
+        return RagEmbeddingRun(**json.loads(path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        logger.warning("Failed to load embedding run %s: %s", run_id, exc)
+        return None
+
+
+def list_embedding_runs(domain: str, document_id: str) -> List[RagEmbeddingRun]:
+    """List all embedding runs for a canonical document."""
+    doc_dir = _embeddings_dir(domain, document_id)
+    runs = []
+    for path in doc_dir.glob("*.json"):
+        if path.name.endswith(".vectors.jsonl"):
+            continue
+        try:
+            runs.append(RagEmbeddingRun(**json.loads(path.read_text(encoding="utf-8"))))
+        except Exception as exc:
+            logger.warning("Skipping corrupt embedding run %s: %s", path, exc)
+    return runs
+
+
+def get_chunk_embeddings(
+    domain: str,
+    document_id: str,
+    run_id: str,
+    include_vectors: bool = False,
+) -> List[RagChunkEmbedding]:
+    """List chunk embeddings for a run, optionally omitting vectors."""
+    path = _embedding_vectors_path(domain, document_id, run_id)
+    if not path.exists():
+        return []
+    embeddings = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            data = json.loads(line)
+            if not include_vectors:
+                data["vector"] = []
+            embeddings.append(RagChunkEmbedding(**data))
+    except Exception as exc:
+        logger.warning("Failed to load chunk embeddings for %s: %s", run_id, exc)
+    return sorted(embeddings, key=lambda e: e.chunk_ordinal)
+
+
+def get_chunk_embedding(
+    domain: str,
+    document_id: str,
+    run_id: str,
+    embedding_id: str,
+    include_vector: bool = False,
+) -> Optional[RagChunkEmbedding]:
+    """Fetch a single chunk embedding by ID."""
+    path = _embedding_vectors_path(domain, document_id, run_id)
+    if not path.exists():
+        return None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            data = json.loads(line)
+            if data.get("embedding_id") != embedding_id:
+                continue
+            if not include_vector:
+                data["vector"] = []
+            return RagChunkEmbedding(**data)
+    except Exception as exc:
+        logger.warning("Failed to load chunk embedding %s: %s", embedding_id, exc)
+    return None

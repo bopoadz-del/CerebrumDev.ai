@@ -15,3 +15,4 @@ storage
 # Generated deployment packages contain per-session secrets and build artifacts.
 deployments/
 .worktrees/
+.superpowers/sdd/
