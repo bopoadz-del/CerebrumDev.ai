@@ -7,8 +7,12 @@ from app.core.rag_canonical_documents import create_canonical_document
 from app.core.rag_embeddings import run_embedding_dry_run
 from app.core.rag_ingestion_store import (
     get_canonical_document,
+    get_chunk_embeddings,
+    get_embedding_run,
     list_canonical_chunks,
+    list_embedding_runs,
     save_canonical_document,
+    save_embedding_run,
 )
 from app.models.rag_ingestion import (
     AcquisitionStatus,
@@ -144,3 +148,12 @@ def test_run_embedding_dry_run_truncated_document_warns(tmp_path, monkeypatch):
     run, _ = run_embedding_dry_run(doc.domain, doc.document_id)
     assert "SOURCE_DOCUMENT_TRUNCATED" in run.warnings
     assert "VALIDATION_ONLY_PROVIDER" in run.warnings
+
+
+def test_save_and_retrieve_embedding_run(tmp_path, monkeypatch):
+    doc, _ = _make_document(tmp_path, monkeypatch)
+    run, embeddings = run_embedding_dry_run(doc.domain, doc.document_id)
+    assert get_embedding_run(doc.domain, doc.document_id, run.run_id) is not None
+    assert len(list_embedding_runs(doc.domain, doc.document_id)) == 1
+    assert len(get_chunk_embeddings(doc.domain, doc.document_id, run.run_id, include_vectors=True)) == 1
+    assert len(get_chunk_embeddings(doc.domain, doc.document_id, run.run_id, include_vectors=False)[0].vector) == 0

@@ -28,9 +28,13 @@ from app.models.rag_ingestion import (
 
 from .rag_embedding_providers import LOCAL_FEATURE_HASH_V1, get_provider
 from .rag_ingestion_store import (
+    _embedding_artifact_hash,
     get_canonical_document,
     get_canonical_chunk,
+    get_chunk_embeddings,
+    get_embedding_run,
     list_canonical_chunks,
+    save_embedding_run,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,12 +90,6 @@ def _embedding_id(
 def _vector_hash(vector: List[float]) -> str:
     serialized = json.dumps(vector, separators=(",", ":"))
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
-
-def _artifact_hash(records: List[dict]) -> str:
-    lines = [json.dumps(r, separators=(",", ":"), sort_keys=True) for r in records]
-    blob = "\n".join(lines).encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()
 
 
 def _validate_configuration() -> List[ValidationError]:
@@ -439,5 +437,19 @@ def run_embedding_dry_run(
         )
 
     run.status = EmbeddingRunStatus.COMPLETED
+
+    vector_records = [ce.model_dump(mode="json") for ce in chunk_embeddings]
+    # Check for existing run artifact conflicts before persisting.
+    existing = get_embedding_run(domain, document_id, run_id)
+    if existing is not None:
+        if existing.vector_artifact_hash != _embedding_artifact_hash(vector_records):
+            raise _error(
+                code="EMBEDDING_RUN_CONFLICT",
+                message="A conflicting embedding run already exists.",
+            )
+        # Idempotent return: reload persisted embeddings.
+        return existing, get_chunk_embeddings(domain, document_id, run_id, include_vectors=True)
+
     run.completed_at = datetime.utcnow()
+    save_embedding_run(run, chunk_embeddings)
     return run, chunk_embeddings
