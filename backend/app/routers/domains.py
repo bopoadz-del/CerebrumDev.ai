@@ -5,11 +5,22 @@ from pydantic import BaseModel
 
 from ..core.domain_loader import list_available_domains
 from ..core.rag_activation import build_rag_activation_status
-from ..core.rag_ingestion_store import get_job, list_jobs, save_job, save_source_record
+from ..core.rag_ingestion_store import (
+    get_acquisition_report,
+    get_job,
+    list_acquisition_reports,
+    list_jobs,
+    save_job,
+    save_source_record,
+)
 from ..core.rag_ingestion_validation import create_ingestion_job
 from ..core.rag_pack_loader import (
     RagPackLoaderError,
     list_rag_packs,
+)
+from ..core.rag_source_acquisition import (
+    AcquisitionError,
+    run_acquisition_preview,
 )
 from ..core.source_pack_loader import (
     SourcePackLoaderError,
@@ -37,10 +48,17 @@ class CreateIngestionJobRequest(BaseModel):
     license_uri: Optional[str] = None
     license_review_status: Optional[str] = None
     authority_rating: Optional[str] = None
-    content_hash: str
+    content_hash: Optional[str] = None
     external_document_id: Optional[str] = None
     dry_run: bool = True
     queue: bool = False
+
+
+class AcquisitionPreviewRequest(BaseModel):
+    """Request body for running an acquisition preview."""
+
+    dry_run: bool = True
+    parse: bool = True
 
 
 @router.get("/")
@@ -168,3 +186,48 @@ async def list_rag_ingestion_jobs(
         domain_id, status=status, rag_pack_id=rag_pack_id, collection_id=collection_id
     )
     return {"domain": domain_id, "jobs": [j.model_dump(mode="json") for j in jobs]}
+
+
+@router.post("/{domain_id}/rag-ingestion/jobs/{job_id}/acquisition-preview")
+async def create_acquisition_preview(
+    domain_id: str,
+    job_id: str,
+    request: AcquisitionPreviewRequest,
+):
+    """Fetch and preview-parse the source for an eligible dry-run ingestion job.
+
+    Does not chunk, embed, index, or persist raw source bytes. Actual
+    acquisition is rejected; use ``dry_run=true``.
+    """
+    try:
+        report = run_acquisition_preview(
+            domain_id=domain_id,
+            job_id=job_id,
+            dry_run=request.dry_run,
+            parse=request.parse,
+        )
+    except AcquisitionError as exc:
+        status_code = 409 if exc.code == "DRY_RUN_REQUIRED" else 422
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message, "field": exc.field},
+        ) from exc
+    return report.model_dump(mode="json")
+
+
+@router.get("/{domain_id}/rag-ingestion/jobs/{job_id}/acquisition-previews")
+async def list_acquisition_previews(domain_id: str, job_id: str):
+    """List acquisition preview reports for a job, scoped to its domain."""
+    reports = list_acquisition_reports(domain_id, job_id=job_id)
+    return {"domain": domain_id, "job_id": job_id, "acquisitions": [r.model_dump(mode="json") for r in reports]}
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/jobs/{job_id}/acquisition-previews/{acquisition_id}"
+)
+async def get_acquisition_preview(domain_id: str, job_id: str, acquisition_id: str):
+    """Retrieve a single acquisition preview report, scoped to its domain."""
+    report = get_acquisition_report(domain_id, acquisition_id)
+    if report is None or report.job_id != job_id:
+        raise HTTPException(status_code=404, detail="Acquisition preview not found")
+    return report.model_dump(mode="json")
