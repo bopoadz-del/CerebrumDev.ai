@@ -15,9 +15,21 @@ LEGAL_ACTIVATION = {
     "rag_pack": {
         "id": "legal_core_rag",
         "collection_id": "prebuilt_legal_core",
-        "ingestion_status": "not_ingested",
+        "ingestion_status": {
+            "state": "not_ingested",
+            "documents_total": 0,
+            "documents_indexed": 0,
+            "chunks_total": 0,
+            "last_ingested_at": None,
+            "last_error": None,
+        },
         "fetch_mode": "metadata_only",
         "enterprise_specific": False,
+        "source_policy": {
+            "requires_source_record": True,
+            "requires_license_review": True,
+            "requires_authority_rating": True,
+        },
     },
     "requires_blocks": ["knowledge", "vector_search"],
     "recommended_with_blocks": ["legal_v2", "formula_executor_v2"],
@@ -54,7 +66,8 @@ def test_get_rag_activation_for_legal(client: TestClient):
     assert data["attachable"] is True
     assert data["attached"] is False
     assert data["rag_pack"]["id"] == "legal_core_rag"
-    assert data["rag_pack"]["ingestion_status"] == "not_ingested"
+    assert data["rag_pack"]["ingestion_status"]["state"] == "not_ingested"
+    assert data["rag_pack"]["source_policy"]["requires_source_record"] is True
     assert "knowledge" in data["requires_blocks"]
     assert "vector_search" in data["requires_blocks"]
     assert "legal_v2" in data["recommended_with_blocks"]

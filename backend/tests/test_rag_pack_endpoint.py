@@ -9,6 +9,37 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
+_SOURCE_POLICY = {
+    "allowed_source_classes": [
+        "public_domain",
+        "open_license",
+        "official_statute_or_regulation",
+        "official_guidance",
+        "platform_curated_template",
+    ],
+    "precluded_source_classes": [
+        "private_enterprise_data",
+        "confidential_client_data",
+        "copyrighted_commercial_content_without_license",
+        "user_uploaded_project_records",
+        "unknown_license",
+    ],
+    "requires_source_record": True,
+    "requires_license_review": True,
+    "requires_authority_rating": True,
+}
+
+
+_STRUCTURED_INGESTION_STATUS = {
+    "state": "not_ingested",
+    "documents_total": 0,
+    "documents_indexed": 0,
+    "chunks_total": 0,
+    "last_ingested_at": None,
+    "last_error": None,
+}
+
+
 def _make_rag_pack(domain: str) -> dict:
     """Return a minimal valid RAG pack for endpoint tests."""
     return {
@@ -26,7 +57,8 @@ def _make_rag_pack(domain: str) -> dict:
         "expected_queries": [],
         "expected_outputs": [],
         "fetch_mode": "metadata_only",
-        "ingestion_status": "not_ingested",
+        "source_policy": _SOURCE_POLICY,
+        "ingestion_status": _STRUCTURED_INGESTION_STATUS,
         "notes": [],
     }
 
@@ -61,6 +93,11 @@ def test_get_rag_packs_endpoint(client: TestClient, tmp_path: Path):
         assert "requires_blocks" in p
         assert "recommended_with_blocks" in p
         assert "knowledge" in p["requires_blocks"]
+        assert "source_policy" in p
+        assert p["source_policy"]["requires_source_record"] is True
+        assert "ingestion_status" in p
+        assert p["ingestion_status"]["state"] == "not_ingested"
+        assert p["ingestion_status"]["documents_total"] == 0
 
 
 def test_get_rag_packs_endpoint_shelf_missing(client: TestClient):

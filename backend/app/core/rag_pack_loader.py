@@ -57,13 +57,47 @@ def load_rag_packs(engine_root: Optional[Path] = None) -> Dict[str, Any]:
         raise RagPackLoaderError(f"cannot read RAG pack shelf {path}: {exc}")
 
 
+def _normalize_ingestion_status(value: Any) -> Dict[str, Any]:
+    """Return a structured ingestion_status dict.
+
+    Supports the legacy string value `"not_ingested"` for backward compatibility
+    while preferring the new structured object shape.
+    """
+    if isinstance(value, dict):
+        return {
+            "state": value.get("state", "not_ingested"),
+            "documents_total": value.get("documents_total", 0),
+            "documents_indexed": value.get("documents_indexed", 0),
+            "chunks_total": value.get("chunks_total", 0),
+            "last_ingested_at": value.get("last_ingested_at"),
+            "last_error": value.get("last_error"),
+        }
+    if value == "not_ingested":
+        return {
+            "state": "not_ingested",
+            "documents_total": 0,
+            "documents_indexed": 0,
+            "chunks_total": 0,
+            "last_ingested_at": None,
+            "last_error": None,
+        }
+    return {
+        "state": "not_ingested",
+        "documents_total": 0,
+        "documents_indexed": 0,
+        "chunks_total": 0,
+        "last_ingested_at": None,
+        "last_error": None,
+    }
+
+
 def list_rag_packs(engine_root: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Return a lightweight summary for each domain RAG pack.
 
     Each item contains: id, domain, name, description, collection_id,
     visibility, data_class, enterprise_specific, requires_blocks,
     recommended_with_blocks, source_types, expected_queries,
-    expected_outputs, fetch_mode, ingestion_status, and notes.
+    expected_outputs, fetch_mode, source_policy, ingestion_status, and notes.
     """
     data = load_rag_packs(engine_root)
     packs = data.get("packs", [])
@@ -83,7 +117,8 @@ def list_rag_packs(engine_root: Optional[Path] = None) -> List[Dict[str, Any]]:
             "expected_queries": p.get("expected_queries", []),
             "expected_outputs": p.get("expected_outputs", []),
             "fetch_mode": p.get("fetch_mode"),
-            "ingestion_status": p.get("ingestion_status"),
+            "source_policy": p.get("source_policy", {}),
+            "ingestion_status": _normalize_ingestion_status(p.get("ingestion_status")),
             "notes": p.get("notes", []),
         }
         for p in packs

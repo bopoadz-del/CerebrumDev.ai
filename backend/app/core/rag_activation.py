@@ -41,6 +41,7 @@ def build_rag_activation_status(domain_id: str) -> Dict[str, Any]:
             "notes": ["No prebuilt RAG pack metadata found for this domain."],
         }
 
+    source_policy = pack.get("source_policy") or {}
     return {
         "domain": domain_id,
         "status": "available_metadata_only",
@@ -52,6 +53,11 @@ def build_rag_activation_status(domain_id: str) -> Dict[str, Any]:
             "ingestion_status": pack.get("ingestion_status"),
             "fetch_mode": pack.get("fetch_mode"),
             "enterprise_specific": pack.get("enterprise_specific", False),
+            "source_policy": {
+                "requires_source_record": source_policy.get("requires_source_record", False),
+                "requires_license_review": source_policy.get("requires_license_review", False),
+                "requires_authority_rating": source_policy.get("requires_authority_rating", False),
+            },
         },
         "requires_blocks": list(pack.get("requires_blocks", [])),
         "recommended_with_blocks": list(pack.get("recommended_with_blocks", [])),
