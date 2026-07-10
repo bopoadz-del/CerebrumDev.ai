@@ -16,7 +16,11 @@ import shutil
 from pathlib import Path
 from typing import Any, List, Optional
 
-from app.models.rag_ingestion import RagIngestionJob, RagSourceRecord
+from app.models.rag_ingestion import (
+    RagAcquisitionReport,
+    RagIngestionJob,
+    RagSourceRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +45,10 @@ def _sources_path(domain: str) -> Path:
 
 def _jobs_path(domain: str) -> Path:
     return _rag_ingestion_dir(domain) / "jobs.json"
+
+
+def _acquisitions_path(domain: str) -> Path:
+    return _rag_ingestion_dir(domain) / "acquisitions.json"
 
 
 def _atomic_write(path: Path, data: dict) -> None:
@@ -153,3 +161,43 @@ def list_jobs(
     if collection_id:
         jobs = [j for j in jobs if j.collection_id == collection_id]
     return jobs
+
+
+def save_acquisition_report(report: RagAcquisitionReport) -> RagAcquisitionReport:
+    """Persist an acquisition report, replacing any existing report with the same id."""
+    path = _acquisitions_path(report.domain)
+    data = _load_json(path)
+    reports = data.get("acquisitions", [])
+    reports = [r for r in reports if r.get("acquisition_id") != report.acquisition_id]
+    reports.append(report.model_dump(mode="json"))
+    data["acquisitions"] = reports
+    _atomic_write(path, data)
+    return report
+
+
+def get_acquisition_report(
+    domain: str, acquisition_id: str
+) -> Optional[RagAcquisitionReport]:
+    """Fetch a single acquisition report by domain and acquisition id."""
+    path = _acquisitions_path(domain)
+    data = _load_json(path)
+    for item in data.get("acquisitions", []):
+        if item.get("acquisition_id") == acquisition_id:
+            return RagAcquisitionReport(**item)
+    return None
+
+
+def list_acquisition_reports(
+    domain: str,
+    job_id: Optional[str] = None,
+    source_id: Optional[str] = None,
+) -> List[RagAcquisitionReport]:
+    """List acquisition reports for a domain, optionally filtered by job/source."""
+    path = _acquisitions_path(domain)
+    data = _load_json(path)
+    reports = _model_map(RagAcquisitionReport, data.get("acquisitions", []))
+    if job_id:
+        reports = [r for r in reports if r.job_id == job_id]
+    if source_id:
+        reports = [r for r in reports if r.source_id == source_id]
+    return reports

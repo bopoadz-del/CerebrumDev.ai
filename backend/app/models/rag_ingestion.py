@@ -78,7 +78,7 @@ class RagSourceRecord(BaseModel):
     license_uri: Optional[str] = None
     license_review_status: Optional[str] = None
     authority_rating: Optional[str] = None
-    content_hash: str
+    content_hash: Optional[str] = None
     external_document_id: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -101,3 +101,62 @@ class RagIngestionJob(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     last_error: Optional[str] = None
+
+
+class AcquisitionStatus(str, Enum):
+    """Lifecycle status for an acquisition attempt."""
+
+    PENDING = "pending"
+    FETCHING = "fetching"
+    FETCHED = "fetched"
+    DUPLICATE = "duplicate"
+    PARSED = "parsed"
+    FAILED = "failed"
+
+
+class ParseStatus(str, Enum):
+    """Parsing outcome recorded in an acquisition report."""
+
+    NOT_REQUESTED = "not_requested"
+    NOT_STARTED = "not_started"
+    PARSED = "parsed"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class RagAcquisitionReport(BaseModel):
+    """Audit report for a safe source acquisition and parsing preview.
+
+    No raw source bytes or full extracted text are stored here — only bounded
+    metadata, a preview, warnings, and structured errors.
+    """
+
+    acquisition_id: str = Field(default_factory=lambda: str(uuid4()))
+    job_id: str
+    source_id: str
+    rag_pack_id: str
+    collection_id: str
+    domain: str
+    source_uri: str
+    final_source_uri: Optional[str] = None
+    status: AcquisitionStatus = AcquisitionStatus.PENDING
+    http_status: Optional[int] = None
+    redirect_count: int = 0
+    content_type: Optional[str] = None
+    content_length_bytes: Optional[int] = None
+    computed_content_hash: Optional[str] = None
+    duplicate_status: DuplicateStatus = DuplicateStatus.NOT_CHECKED
+    duplicate_match_source_id: Optional[str] = None
+    parser_id: Optional[str] = None
+    parser_version: Optional[str] = None
+    parse_status: ParseStatus = ParseStatus.NOT_REQUESTED
+    page_count: Optional[int] = None
+    extracted_characters: int = 0
+    text_preview: str = ""
+    warnings: List[str] = Field(default_factory=list)
+    errors: List[ValidationError] = Field(default_factory=list)
+    raw_artifact_persisted: bool = False
+    started_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
