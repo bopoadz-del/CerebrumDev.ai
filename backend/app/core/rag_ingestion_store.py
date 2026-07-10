@@ -18,6 +18,8 @@ from typing import Any, List, Optional
 
 from app.models.rag_ingestion import (
     RagAcquisitionReport,
+    RagCanonicalChunk,
+    RagCanonicalDocument,
     RagIngestionJob,
     RagSourceRecord,
 )
@@ -201,3 +203,163 @@ def list_acquisition_reports(
     if source_id:
         reports = [r for r in reports if r.source_id == source_id]
     return reports
+
+
+def _canonical_documents_dir(domain: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "canonical_documents"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _canonical_text_dir(domain: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "canonical_text"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _canonical_chunks_dir(domain: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "canonical_chunks"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _document_meta_path(domain: str, document_id: str) -> Path:
+    return _canonical_documents_dir(domain) / f"{document_id}.json"
+
+
+def _document_text_path(domain: str, document_id: str) -> Path:
+    return _canonical_text_dir(domain) / f"{document_id}.txt"
+
+
+def _document_chunks_path(domain: str, document_id: str) -> Path:
+    return _canonical_chunks_dir(domain) / f"{document_id}.jsonl"
+
+
+def save_canonical_document(
+    document: RagCanonicalDocument, canonical_text: str, chunks: List[RagCanonicalChunk]
+) -> RagCanonicalDocument:
+    """Persist a canonical document, its text, and its chunks atomically."""
+    domain = document.domain
+    document_id = document.document_id
+
+    meta_path = _document_meta_path(domain, document_id)
+    text_path = _document_text_path(domain, document_id)
+    chunks_path = _document_chunks_path(domain, document_id)
+
+    _atomic_write(meta_path, document.model_dump(mode="json"))
+    _atomic_write_text(text_path, canonical_text)
+    _atomic_write_jsonl(chunks_path, [c.model_dump(mode="json") for c in chunks])
+    return document
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomically write text to *path*."""
+    tmp_path = path.with_suffix(".txt.tmp")
+    try:
+        tmp_path.write_text(text, encoding="utf-8")
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _atomic_write_jsonl(path: Path, records: List[dict]) -> None:
+    """Atomically write JSONL records to *path*."""
+    tmp_path = path.with_suffix(".jsonl.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            for record in records:
+                f.write(json.dumps(record, default=str) + "\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def get_canonical_document(domain: str, document_id: str) -> Optional[RagCanonicalDocument]:
+    """Fetch a canonical document's metadata."""
+    path = _document_meta_path(domain, document_id)
+    if not path.exists():
+        return None
+    try:
+        return RagCanonicalDocument(**json.loads(path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        logger.warning("Failed to load canonical document %s: %s", document_id, exc)
+        return None
+
+
+def get_canonical_text(domain: str, document_id: str) -> Optional[str]:
+    """Fetch the canonical text for a document."""
+    path = _document_text_path(domain, document_id)
+    if not path.exists():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to load canonical text %s: %s", document_id, exc)
+        return None
+
+
+def get_canonical_chunk(domain: str, document_id: str, chunk_id: str) -> Optional[RagCanonicalChunk]:
+    """Fetch a single chunk by domain, document id, and chunk id."""
+    path = _document_chunks_path(domain, document_id)
+    if not path.exists():
+        return None
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            data = json.loads(line)
+            if data.get("chunk_id") == chunk_id:
+                return RagCanonicalChunk(**data)
+    except Exception as exc:
+        logger.warning("Failed to load chunk %s: %s", chunk_id, exc)
+    return None
+
+
+def list_canonical_chunks(domain: str, document_id: str) -> List[RagCanonicalChunk]:
+    """List all chunks for a canonical document in ordinal order."""
+    path = _document_chunks_path(domain, document_id)
+    if not path.exists():
+        return []
+    chunks = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            chunks.append(RagCanonicalChunk(**json.loads(line)))
+    except Exception as exc:
+        logger.warning("Failed to load chunks for %s: %s", document_id, exc)
+    return sorted(chunks, key=lambda c: c.ordinal)
+
+
+def list_canonical_documents(
+    domain: str,
+    rag_pack_id: Optional[str] = None,
+    collection_id: Optional[str] = None,
+    job_id: Optional[str] = None,
+    source_id: Optional[str] = None,
+    canonicalization_status: Optional[str] = None,
+    chunking_status: Optional[str] = None,
+) -> List[RagCanonicalDocument]:
+    """List canonical documents for a domain, with optional filters."""
+    doc_dir = _canonical_documents_dir(domain)
+    documents = []
+    for path in doc_dir.glob("*.json"):
+        try:
+            doc = RagCanonicalDocument(**json.loads(path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            logger.warning("Skipping corrupt canonical document %s: %s", path, exc)
+            continue
+        if rag_pack_id and doc.rag_pack_id != rag_pack_id:
+            continue
+        if collection_id and doc.collection_id != collection_id:
+            continue
+        if job_id and doc.job_id != job_id:
+            continue
+        if source_id and doc.source_id != source_id:
+            continue
+        if canonicalization_status and doc.canonicalization_status.value != canonicalization_status:
+            continue
+        if chunking_status and doc.chunking_status.value != chunking_status:
+            continue
+        documents.append(doc)
+    return documents
