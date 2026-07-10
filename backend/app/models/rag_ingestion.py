@@ -187,6 +187,75 @@ class IndexStatus(str, Enum):
     NOT_INDEXED = "not_indexed"
 
 
+class EmbeddingRunStatus(str, Enum):
+    """Lifecycle status for an embedding dry-run."""
+
+    PENDING = "pending"
+    VALIDATING = "validating"
+    EMBEDDING = "embedding"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class RagEmbeddingRun(BaseModel):
+    """Audit record for an embedding dry-run over a canonical document."""
+
+    run_id: str
+    document_id: str
+    job_id: str
+    source_id: str
+    acquisition_id: str
+    rag_pack_id: str
+    collection_id: str
+    domain: str
+    provider_id: str
+    provider_version: str
+    algorithm: str
+    dimensions: int
+    distance_metric: str
+    normalization: str
+    dry_run: bool = True
+    status: EmbeddingRunStatus = EmbeddingRunStatus.PENDING
+    document_chunk_count: int = 0
+    eligible_chunk_count: int = 0
+    embedded_chunk_count: int = 0
+    failed_chunk_count: int = 0
+    batch_count: int = 0
+    vector_artifact_hash: Optional[str] = None
+    production_approved: bool = False
+    index_status: IndexStatus = IndexStatus.NOT_INDEXED
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    warnings: List[str] = Field(default_factory=list)
+    errors: List[ValidationError] = Field(default_factory=list)
+    last_error: Optional[str] = None
+
+
+class RagChunkEmbedding(BaseModel):
+    """A single deterministic embedding for a canonical chunk."""
+
+    embedding_id: str
+    run_id: str
+    document_id: str
+    chunk_id: str
+    collection_id: str
+    domain: str
+    chunk_ordinal: int
+    chunk_text_hash: str
+    provider_id: str
+    provider_version: str
+    dimensions: int
+    distance_metric: str
+    normalization: str
+    vector_hash: str
+    vector: List[float]
+    index_status: IndexStatus = IndexStatus.NOT_INDEXED
+    untrusted_content: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class RagCanonicalDocument(BaseModel):
     """A persisted, normalized canonical text document from a governed source."""
 
