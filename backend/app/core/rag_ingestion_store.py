@@ -363,3 +363,17 @@ def list_canonical_documents(
             continue
         documents.append(doc)
     return documents
+
+
+def _embeddings_dir(domain: str, document_id: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "embeddings" / document_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _embedding_run_path(domain: str, document_id: str, run_id: str) -> Path:
+    return _embeddings_dir(domain, document_id) / f"{run_id}.json"
+
+
+def _embedding_vectors_path(domain: str, document_id: str, run_id: str) -> Path:
+    return _embeddings_dir(domain, document_id) / f"{run_id}.vectors.jsonl"
