@@ -22,7 +22,21 @@ LEGAL_RAG_PACK = {
     "expected_queries": ["what is the governing law?"],
     "expected_outputs": ["cited answer"],
     "fetch_mode": "metadata_only",
-    "ingestion_status": "not_ingested",
+    "source_policy": {
+        "allowed_source_classes": ["official_statute_or_regulation"],
+        "precluded_source_classes": ["private_enterprise_data", "unknown_license"],
+        "requires_source_record": True,
+        "requires_license_review": True,
+        "requires_authority_rating": True,
+    },
+    "ingestion_status": {
+        "state": "not_ingested",
+        "documents_total": 0,
+        "documents_indexed": 0,
+        "chunks_total": 0,
+        "last_ingested_at": None,
+        "last_error": None,
+    },
     "notes": [],
 }
 
@@ -38,9 +52,13 @@ def test_build_rag_activation_status_for_legal():
     assert status["rag_pack"] is not None
     assert status["rag_pack"]["id"] == "legal_core_rag"
     assert status["rag_pack"]["collection_id"] == "prebuilt_legal_core"
-    assert status["rag_pack"]["ingestion_status"] == "not_ingested"
+    assert status["rag_pack"]["ingestion_status"]["state"] == "not_ingested"
+    assert status["rag_pack"]["ingestion_status"]["documents_total"] == 0
     assert status["rag_pack"]["fetch_mode"] == "metadata_only"
     assert status["rag_pack"]["enterprise_specific"] is False
+    assert status["rag_pack"]["source_policy"]["requires_source_record"] is True
+    assert status["rag_pack"]["source_policy"]["requires_license_review"] is True
+    assert status["rag_pack"]["source_policy"]["requires_authority_rating"] is True
     assert "knowledge" in status["requires_blocks"]
     assert "vector_search" in status["requires_blocks"]
     assert "legal_v2" in status["recommended_with_blocks"]
