@@ -7,7 +7,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.auth import require_api_key, verify_production_auth
-from .routers import sessions, config, domains, upload, chat, deploy, train
+from .routers import sessions, config, domains, upload, chat, deploy, train, factory_drive
 
 verify_production_auth()
 
@@ -28,6 +28,8 @@ app.include_router(upload.router, prefix="/v1/sessions", tags=["upload"], depend
 app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"], dependencies=[Depends(require_api_key)])
 app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], dependencies=[Depends(require_api_key)])
 app.include_router(train.router, prefix="/v1/sessions", tags=["training"], dependencies=[Depends(require_api_key)])
+app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
+app.include_router(factory_drive.callback_router)
 
 @app.get("/health")
 async def health():
