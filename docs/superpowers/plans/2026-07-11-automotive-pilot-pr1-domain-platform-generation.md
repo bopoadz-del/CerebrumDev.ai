@@ -1,10 +1,10 @@
-# Implementation Plan: Automotive Safety Intelligence Pilot — PR 1
+# Implementation Plan: Automotive Safety Intelligence Pilot — PR 1 (Revised)
 
 > **Plan file:** `docs/superpowers/plans/2026-07-11-automotive-pilot-pr1-domain-platform-generation.md`  
 > **Parent design spec:** `docs/superpowers/specs/2026-07-11-automotive-safety-intelligence-pilot-design.md`  
 > **Branch:** `feat/rag-vector-index-dry-run`  
 > **PR title:** `feat(platform): domain-neutral Fork template, automotive kit and Google Drive connector`  
-> **Target repo:** `bopoadz-del/CerebrumDev.ai`  
+> **Target repo:** `bopoadz-del/CerebrumDev.ai` (generator); changes also land in `bopoadz-del/Cerebrum-Blocks` (kit) and `bopoadz-del/The_Fork` (template baseline, read-only pin)  
 > **Estimated effort:** large
 
 ---
@@ -15,13 +15,11 @@ PR 1 creates the **reusable generation machinery** for the Automotive Safety Int
 
 - A domain-neutral platform template derived from The_Fork pinned at commit `008d5e7a53654d401ce60372212f5245a8067c76`.
 - A versioned automotive platform manifest consumed by the generator.
-- Cerebrum-Blocks `automotive_v2` kit hardening (prompts, schemas, source manifest, evaluation definitions).
-- A reusable multi-user Google Drive connector core with two integrations:
-  - CerebrumDev.ai factory integration.
-  - Generated-platform integration.
-- A reproducible generator that emits a deployable automotive platform package.
+- Cerebrum-Blocks `automotive_v2` kit hardening (prompts, schemas, source manifest, evaluation definitions) in the existing Blocks layout.
+- A multi-user Google Drive capability that reuses The_Fork's proven Drive OAuth/tokens and exposes a CerebrumDev.ai factory wrapper.
+- A reproducible generator that emits a deployable automotive platform package containing the Fork-derived runtime.
 
-No live construction data, secrets or frontend UI conversion happens in this PR.
+No live construction data, secrets or frontend UI conversion happens in this PR. PR 2 and PR 3 target the **generated platform package**, not the CerebrumDev.ai factory backend.
 
 ---
 
@@ -30,10 +28,11 @@ No live construction data, secrets or frontend UI conversion happens in this PR.
 **In scope**
 
 - Inspect and pin The_Fork baseline.
-- Create domain-neutral platform template generator in CerebrumDev.ai.
+- Create/extend domain-neutral platform generator in CerebrumDev.ai.
 - Define automotive platform manifest schema and validation.
-- Harden Cerebrum-Blocks automotive kit.
-- Add reusable Google Drive connector core, models, migrations, OAuth routes, folder binding, sync jobs, audit events.
+- Harden Cerebrum-Blocks automotive kit in existing `block_store/kits/automotive/` and `app/blocks/automotive_v2.py` locations.
+- Reuse The_Fork Drive implementation (`app/routers/drive.py`, `app/core/drive_auth.py`, `app/core/file_crypto.py`) in the generated platform.
+- Add CerebrumDev.ai factory Google Drive workspace-binding routes (thin wrapper around the same connector core).
 - Add generated-platform Drive module wiring and manifest feature flag.
 - Add ownership/isolation tests for Drive connections.
 - Add generation reproducibility test.
@@ -43,7 +42,7 @@ No live construction data, secrets or frontend UI conversion happens in this PR.
 - NHTSA harvesting and embedding/indexing (PR 2).
 - Frontend conversion and E2E browser tests (PR 3).
 - Live deployment (PR 3).
-- Changes to The_Fork live construction platform, Fork2, chain generation, formula_executor_v2 internals, chat/LLM provider configuration.
+- Changes to The_Fork `main` production branch (it is only pinned and read as a baseline).
 
 ---
 
@@ -51,23 +50,31 @@ No live construction data, secrets or frontend UI conversion happens in this PR.
 
 ```text
 The_Fork/                      (pinned at 008d5e7a53654d401ce60372212f5245a8067c76)
-  backend/app/main.py
-  backend/app/routers/
-  backend/app/models/
-  backend/app/core/
+  app/main.py
+  app/routers/
+  app/core/models.py
+  app/core/rag/
+  app/core/drive_auth.py
+  app/routers/drive.py
+  app/core/file_crypto.py
   frontend/src/
-  docker-compose.yml
+  alembic/
   Dockerfile
   .env.example
-  migrations/
 
 Cerebrum-Blocks/
-  automotive_v2/
-  formula_executor_v2/
+  block_store/kits/automotive/manifest.json
+  app/blocks/automotive_v2.py
+  app/containers/automotive.py
   block_registry/
 
 CerebrumDev.ai/
-  backend/app/
+  backend/app/core/platform_packager.py
+  backend/app/main.py
+  backend/app/routers/
+  backend/app/models/
+  backend/app/config.py
+  backend/requirements.txt
   backend/tests/
   docs/superpowers/specs/2026-07-11-automotive-safety-intelligence-pilot-design.md
 ```
@@ -88,18 +95,19 @@ Capture:
 
 ```text
 source commit: 008d5e7a53654d401ce60372212f5245a8067c76
-active embedding model: BAAI/bge-small-en-v1.5
-active embedding dimensions: 384
-active vector namespace: chunks_v2
+The_Fork layout: app/ (not backend/app/), alembic/ (not migrations/)
+active embedding model: BAAI/bge-small-en-v1.5 in production data (when configured)
+active embedding dimensions: 384 (when BGE configured; schema default is 256)
+active vector namespace: v2 (table name chunks_v2, not namespace literal "chunks_v2")
 database schema summary
-hybrid retrieval implementation location
-authentication implementation
+hybrid retrieval implementation location: app/core/rag/retriever.py
+authentication implementation: API key + optional JWT users
 project ownership model
 admin permissions model
 audit model
 frontend routes
 SSE chat contract
-source citation contract
+source citation contract (to be added in PR 2)
 deployment configuration
 test and CI commands
 ```
@@ -188,7 +196,7 @@ docs/superpowers/fixtures/automotive_platform_manifest.json
 
 ### 1. Generator module
 
-Create:
+Create or extend:
 
 ```text
 backend/app/platform_generator/__init__.py
@@ -198,6 +206,8 @@ backend/app/platform_generator/renderers.py
 backend/scripts/generate_automotive_platform.py
 ```
 
+**Important:** `backend/app/core/platform_packager.py` already vendors Cerebrum-Blocks engines. The new generator is **for Fork-derived platform packages** and may coexist with `platform_packager.py` or extend it. Document the relationship clearly.
+
 ### 2. Template rules
 
 The generator copies The_Fork baseline and applies transformations:
@@ -205,9 +215,10 @@ The generator copies The_Fork baseline and applies transformations:
 - Replace construction branding strings using manifest `branding`.
 - Replace construction reference identifiers with automotive identifiers.
 - Remove construction-only quick actions and labels.
-- Keep authentication, project ownership, admin gating, audit, SSE chat, citations, document upload.
+- Keep authentication, project ownership, admin gating, audit, SSE chat, citations (stub), document upload.
 - Keep Postgres, pgvector, BM25, hybrid retrieval, health checks, metrics.
 - Keep deployment files but rename service names to automotive pilot.
+- Preserve The_Fork layout (`app/`, `alembic/`, `frontend/src/`, `Dockerfile`, etc.).
 
 ### 3. Parameterized strings
 
@@ -247,48 +258,67 @@ Add a hash of inputs to generated output:
 generated/automotive-safety-intelligence/.generation_inputs_hash
 ```
 
+### 5. Generated package sanitization
+
+Before emitting the package, strip:
+
+```text
+.env files
+runtime data/
+construction project records
+tokens or encrypted files
+uploaded documents
+```
+
 ---
 
 ## Part D — Cerebrum-Blocks automotive kit hardening
 
 ### 1. Files to add/update in Cerebrum-Blocks
 
+Use the existing layout:
+
 ```text
-automotive_v2/prompts/assistant_v1.txt
-automotive_v2/schemas/recall.json
-automotive_v2/schemas/complaint.json
-automotive_v2/schemas/investigation.json
-automotive_v2/schemas/safety_rating.json
-automotive_v2/schemas/vehicle_identity.json
-automotive_v2/source_manifest.json
-automotive_v2/evaluation/golden_questions.jsonl
-automotive_v2/README.md
-automotive_v2/manifest.json
+block_store/kits/automotive/manifest.json   (update version and add RAG pack refs)
+app/blocks/automotive_v2.py                 (add normalization/schemas if needed)
+app/containers/automotive.py                (add container metadata)
+block_store/kits/automotive/prompts/assistant_v1.txt
+block_store/kits/automotive/schemas/recall.json
+block_store/kits/automotive/schemas/complaint.json
+block_store/kits/automotive/schemas/investigation.json
+block_store/kits/automotive/schemas/safety_rating.json
+block_store/kits/automotive/schemas/vehicle_identity.json
+block_store/kits/automotive/source_manifest.json
+block_store/kits/automotive/evaluation/golden_questions.jsonl
 ```
 
-### 2. Block manifest
+Do **not** create a top-level `automotive_v2/` directory.
 
-Update `automotive_v2/manifest.json`:
+### 2. Kit manifest update
+
+Update `block_store/kits/automotive/manifest.json` to include:
 
 ```json
 {
-  "block_id": "automotive_v2",
-  "block_version": "2.0.0",
+  "id": "automotive",
+  "version": "2.0.0",
   "domain": "automotive",
-  "capabilities": ["rag", "retrieval", "chat", "formula_executor"],
-  "depends_on": ["formula_executor_v2"],
-  "prompts": ["prompts/assistant_v1.txt"],
+  "rag_pack": "automotive_core_rag_v1",
+  "source_manifest": "source_manifest.json",
   "schemas": ["schemas/"],
-  "rag_pack": "automotive_core_rag_v1"
+  "prompts": ["prompts/"],
+  "evaluation": ["evaluation/golden_questions.jsonl"]
 }
 ```
 
+Follow existing kit manifest keys (`id`, `name`, `version`, `container`, `blocks`, `artifacts`, `core_modules`).
+
 ### 3. Source manifest
 
-Place the authoritative source manifest in Cerebrum-Blocks:
+Place the authoritative source manifest in:
 
 ```text
-automotive_v2/source_manifest.json
+block_store/kits/automotive/source_manifest.json
 ```
 
 It defines the NHTSA source families, authority, jurisdiction, and refresh policy. The CerebrumDev.ai harvester consumes this manifest.
@@ -310,130 +340,76 @@ Only schemas, manifests, prompts, evaluation definitions, and small fixtures are
 
 ---
 
-## Part E — Reusable Google Drive connector core
+## Part E — Multi-user Google Drive connector
 
-### 1. Data models
+### 1. Reuse The_Fork Drive implementation in generated platform
 
-Create:
-
-```text
-backend/app/models/google_drive.py
-```
-
-Entities:
-
-```python
-class Organisation(BaseModel): ...
-class Tenant(BaseModel): ...
-class User(BaseModel): ...
-class Membership(BaseModel): ...
-class DriveConnection(BaseModel):
-    connection_id: str
-    owner_type: Literal["organisation", "tenant", "user"]
-    owner_id: str
-    user_id: str
-    provider: Literal["google_drive"]
-    encrypted_refresh_token: str
-    scope: str
-    created_at: datetime
-    updated_at: datetime
-
-class DriveFolderBinding(BaseModel):
-    binding_id: str
-    connection_id: str
-    bound_object_type: Literal["factory_workspace", "project"]
-    bound_object_id: str
-    folder_id: str
-    folder_name: str
-    created_at: datetime
-
-class DriveSyncJob(BaseModel): ...
-class DriveFileRecord(BaseModel): ...
-class IndexedDocument(BaseModel): ...
-class AuditEvent(BaseModel): ...
-```
-
-### 2. Connector service
-
-Create:
+The generated platform package copies The_Fork's existing Drive implementation:
 
 ```text
-backend/app/core/google_drive_connector.py
+app/routers/drive.py          (existing per-user OAuth routes)
+app/core/drive_auth.py        (OAuth flow + encrypted token storage)
+app/core/file_crypto.py       (Fernet encryption keyed by DATA_ENCRYPTION_KEY)
 ```
 
-Responsibilities:
+These already support:
 
-- OAuth flow initiation with state validation and PKCE.
-- Token exchange and encrypted refresh-token storage.
-- Folder listing and folder picker data.
-- File listing within bound folder.
-- File download for supported types.
-- Sync job scheduling and state tracking.
-- Disconnect and revocation.
-- Audit logging.
+- Per-user OAuth.
+- Encrypted refresh tokens with `DATA_ENCRYPTION_KEY`.
+- Project-scoped imports.
+- Disconnect.
 
-### 3. Encryption
+Do **not** introduce a new `DRIVE_TOKEN_ENCRYPTION_KEY`.
 
-Use a configured encryption key:
+### 2. CerebrumDev.ai factory Drive wrapper
 
-```text
-DRIVE_TOKEN_ENCRYPTION_KEY
-```
+For the factory, add a thin wrapper that lets a CerebrumDev.ai session bind a Google Drive folder to a workspace config. The actual OAuth/token handling reuses the same connector core (copied/ported into CerebrumDev.ai or imported as a shared package).
 
-Never log tokens or return them in API responses.
-
-### 4. Factory integration
-
-Add routes:
+Add:
 
 ```text
-GET  /factory/google-drive/auth
-GET  /factory/google-drive/callback
-POST /factory/google-drive/disconnect
-GET  /factory/google-drive/folders
-POST /factory/google-drive/bind
-```
-
-Ownership scope:
-
-```text
-organisation_id
-user_id
-factory_workspace_id
-drive_connection_id
-folder_binding_id
-```
-
-### 5. Generated-platform integration
-
-Add module that is included in generated packages:
-
-```text
-backend/app/platform_generator/templates/google_drive_module/
+backend/app/core/google_drive_connector.py   (shared core, subset of The_Fork logic)
+backend/app/routers/factory_drive.py
 ```
 
 Routes:
 
 ```text
-GET  /projects/{project_id}/google-drive/auth
-GET  /projects/{project_id}/google-drive/callback
-POST /projects/{project_id}/google-drive/disconnect
-GET  /projects/{project_id}/google-drive/folders
-POST /projects/{project_id}/google-drive/bind
-GET  /projects/{project_id}/google-drive/sync-status
+GET  /v1/sessions/{session_id}/drive/auth
+GET  /v1/sessions/{session_id}/drive/callback
+POST /v1/sessions/{session_id}/drive/disconnect
+GET  /v1/sessions/{session_id}/drive/folders
+POST /v1/sessions/{session_id}/drive/bind
 ```
 
 Ownership scope:
 
 ```text
-tenant_id
-user_id
-project_id
+session_id
+user_id (from session state)
 drive_connection_id
 folder_binding_id
 ```
 
-### 6. Feature flag
+### 3. Generated-platform Drive module
+
+The generated package already includes `app/routers/drive.py`. PR 1 adds:
+
+- Folder binding/sync capability (currently The_Fork imports individual files).
+- Manifest feature flag.
+- Extended project-scoped routes:
+
+```text
+GET  /v1/projects/{project_id}/drive/connect
+GET  /v1/projects/{project_id}/drive/callback
+POST /v1/projects/{project_id}/drive/bind-folder
+GET  /v1/projects/{project_id}/drive/folders
+GET  /v1/projects/{project_id}/drive/sync-status
+POST /v1/projects/{project_id}/drive/sync
+POST /v1/projects/{project_id}/drive/disconnect
+```
+
+### 4. Feature flag
 
 Manifest:
 
@@ -455,7 +431,7 @@ Manifest:
 
 ## Part F — Database migrations
 
-Add migrations for new tables:
+Migrations are needed only for the **generated platform** (The_Fork already has `alembic/`). PR 1 may add a new Alembic revision to the generated package template for:
 
 ```text
 drive_connection
@@ -466,7 +442,9 @@ indexed_document (for Drive-imported docs)
 audit_event
 ```
 
-Include both CerebrumDev.ai factory schema and generated-platform schema. The generator must emit the same migrations for the automotive pilot.
+The_Fork already has `users`, `projects`, `documents`, `chunks`, etc. Add the Drive-specific tables as a new migration revision in the generated package template.
+
+CerebrumDev.ai factory continues to use its existing session/file-based persistence; no Alembic/SQLAlchemy stack is added to the factory.
 
 ---
 
@@ -477,10 +455,8 @@ Add:
 ```text
 backend/tests/test_platform_manifest.py
 backend/tests/test_platform_generator.py
-backend/tests/test_google_drive_connector.py
-backend/tests/test_google_drive_factory_routes.py
-backend/tests/test_google_drive_generated_routes.py
-backend/tests/test_google_drive_isolation.py
+backend/tests/test_factory_drive_isolation.py
+backend/tests/test_generated_drive_wiring.py
 ```
 
 Prove:
@@ -490,9 +466,8 @@ Prove:
 - Generator produces deterministic output from same inputs.
 - Generated package does not contain construction secrets or live data.
 - Generated package contains automotive manifest and Drive module.
-- Drive OAuth state validation rejects mismatched state.
+- Factory Drive OAuth state validation rejects mismatched state.
 - Tokens are encrypted and never exposed in API responses.
-- Cross-organisation/cross-tenant access is blocked.
 - Disconnect removes binding and indexed documents.
 - One user’s disconnect does not affect another user.
 
@@ -505,19 +480,15 @@ cd backend
 
 python -m py_compile \
   app/models/platform_manifest.py \
-  app/models/google_drive.py \
-  app/platform_generator/generator.py \
   app/core/google_drive_connector.py \
-  app/routers/factory_google_drive.py \
-  app/routers/project_google_drive.py
+  app/platform_generator/generator.py \
+  app/routers/factory_drive.py
 
 python -m pytest \
   tests/test_platform_manifest.py \
   tests/test_platform_generator.py \
-  tests/test_google_drive_connector.py \
-  tests/test_google_drive_factory_routes.py \
-  tests/test_google_drive_generated_routes.py \
-  tests/test_google_drive_isolation.py \
+  tests/test_factory_drive_isolation.py \
+  tests/test_generated_drive_wiring.py \
   -q --tb=short
 
 python -m pytest tests -q
@@ -531,11 +502,11 @@ Create commits in this order:
 
 1. `feat(platform): pin and inspect The_Fork baseline`
 2. `feat(platform): add automotive platform manifest schema and validation`
-3. `feat(platform): add domain-neutral platform generator`
-4. `feat(automotive): harden Cerebrum-Blocks automotive_v2 kit`
-5. `feat(drive): add reusable Google Drive connector core and models`
-6. `feat(drive): add CerebrumDev.ai factory Google Drive routes`
-7. `feat(drive): add generated-platform Google Drive module and feature flag`
+3. `feat(platform): add domain-neutral Fork-derived platform generator`
+4. `feat(automotive): harden Cerebrum-Blocks automotive kit`
+5. `feat(drive): add reusable Google Drive connector core and factory wrapper`
+6. `feat(drive): add generated-platform folder-binding Drive module`
+7. `feat(drive): add generated-platform migrations and manifest feature flag`
 8. `test(platform): add manifest, generator, and Drive isolation tests`
 
 ---
@@ -545,9 +516,10 @@ Create commits in this order:
 | Risk | Mitigation |
 |------|------------|
 | Hidden construction coupling in template | Generate and diff against baseline; inspect for remaining construction identifiers. |
-| Token encryption key mishandling | Fail startup if key missing; use standard cryptography; never log tokens. |
+| Token encryption key mishandling | Reuse The_Fork `DATA_ENCRYPTION_KEY` and `file_crypto.py`; never log tokens. |
 | OAuth redirect URI mismatch | Separate apps/configs for factory vs generated platforms; validate redirect URI. |
 | Cerebrum-Blocks repo bloat | Strict `.gitignore`; reject large data files in PR review. |
+| platform_packager.py conflict | Document relationship; keep Fork-derived generator separate from engine packager. |
 
 ---
 
@@ -555,10 +527,9 @@ Create commits in this order:
 
 - [ ] The_Fork baseline is pinned and inspected.
 - [ ] Automotive platform manifest schema exists and validates.
-- [ ] Domain-neutral generator produces reproducible automotive platform package.
-- [ ] Cerebrum-Blocks automotive kit contains schemas, prompts, source manifest, evaluation definitions.
-- [ ] Google Drive connector core supports factory and generated-platform integrations.
-- [ ] Migrations cover all Drive entities.
-- [ ] Feature flag controls Drive availability.
+- [ ] Domain-neutral generator produces reproducible Fork-derived automotive platform package.
+- [ ] Cerebrum-Blocks automotive kit contains schemas, prompts, source manifest, evaluation definitions in existing layout.
+- [ ] Google Drive connector reuses The_Fork implementation; factory wrapper added.
+- [ ] Generated-platform Drive module, migrations, and feature flag present.
 - [ ] New tests pass and full backend suite passes.
 - [ ] CI passes.

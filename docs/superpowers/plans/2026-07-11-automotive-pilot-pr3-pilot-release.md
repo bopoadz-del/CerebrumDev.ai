@@ -1,10 +1,10 @@
-# Implementation Plan: Automotive Safety Intelligence Pilot — PR 3
+# Implementation Plan: Automotive Safety Intelligence Pilot — PR 3 (Revised)
 
 > **Plan file:** `docs/superpowers/plans/2026-07-11-automotive-pilot-pr3-pilot-release.md`  
 > **Parent design spec:** `docs/superpowers/specs/2026-07-11-automotive-safety-intelligence-pilot-design.md`  
 > **Branch:** `feat/rag-vector-index-dry-run`  
 > **PR title:** `feat(pilot): automotive frontend, admin, deployment and E2E acceptance`  
-> **Target repo:** `bopoadz-del/CerebrumDev.ai` (generates the pilot deployment)  
+> **Target repo:** `bopoadz-del/CerebrumDev.ai` (generator + deployment scripts); runtime changes land in generated Fork-derived package  
 > **Estimated effort:** large
 
 ---
@@ -16,12 +16,14 @@ PR 3 delivers a complete, deployed **Automotive Safety Intelligence Pilot** that
 - Automotive-branded frontend derived from The_Fork.
 - Login, foundation workspace, streaming chat with citations.
 - Project workspace, private document upload, and client overlay retrieval.
-- Multi-user Google Drive connector for private project documents.
+- Multi-user Google Drive folder binding/sync for private project documents.
 - Admin foundation-pack controls.
 - Security and tenant-isolation tests.
 - Live deployed instance with health checks and audit visibility.
 
 No construction-specific branding or retrieval assumptions remain active. The public Automotive Core RAG and client-private overlays are visibly separated.
+
+**Important:** The runtime implementation lives in the generated Fork-derived platform package (`generated/automotive-safety-intelligence/frontend/`, `app/`, etc.). PR 3 adds the generator transformations, generated-package runtime code, deployment scripts, and E2E tests.
 
 ---
 
@@ -29,10 +31,10 @@ No construction-specific branding or retrieval assumptions remain active. The pu
 
 **In scope**
 
-- Frontend branding conversion (strings, navigation, quick actions, empty states, source labels).
-- Admin Automotive Core pack status/controls page.
-- Project-scoped private document upload and indexing.
-- Google Drive folder binding and sync for private projects.
+- Frontend branding conversion in generated platform (strings, navigation, quick actions, empty states, source labels).
+- Admin Automotive Core pack status/controls page in generated platform.
+- Project-scoped private document upload and indexing in generated platform.
+- Google Drive folder binding and sync for private projects in generated platform.
 - Layer-aware retrieval blending public foundation + private project evidence.
 - Citation panel with `Automotive Core` / `Private Project` labels.
 - End-to-end browser tests for critical journeys.
@@ -44,26 +46,33 @@ No construction-specific branding or retrieval assumptions remain active. The pu
 
 - New foundation corpus harvesting (PR 2).
 - New embedding/indexing backend (PR 2).
-- Changes to Cerebrum-Blocks, The_Fork live platform, chain generation, formula_executor_v2 internals.
-- Billing, marketplace, mobile app, voice interface, fine-tuning, LoRA.
+- Changes to The_Fork `main` production branch.
 
 ---
 
 ## Files to inspect before writing
 
 ```text
-frontend/                     (from PR 1 generated platform)
-frontend/src/App.tsx
-frontend/src/components/Chat/
-frontend/src/components/Citations/
-frontend/src/components/Admin/
-frontend/src/components/Projects/
-frontend/src/components/GoogleDrive/
-backend/app/routers/
-backend/app/core/rag_retrieval.py
-backend/app/core/google_drive_connector.py   (from PR 1)
-backend/app/models/google_drive.py           (from PR 1)
-automotive_platform_manifest.json            (from PR 1)
+The_Fork/frontend/src/
+  App.tsx
+  pages/
+  components/Chat/
+  components/LeftPanel.tsx
+  components/Admin/
+  components/Projects/
+  components/Drive/
+
+The_Fork/app/
+  routers/projects.py
+  routers/drive.py
+  routers/admin.py
+  core/models.py
+
+CerebrumDev.ai/backend/
+  app/platform_generator/
+  scripts/generate_automotive_platform.py
+  scripts/deploy_automotive_pilot.py
+  .github/workflows/ci.yml
 ```
 
 ---
@@ -72,7 +81,7 @@ automotive_platform_manifest.json            (from PR 1)
 
 ### 1. Manifest-driven branding
 
-The generated platform manifest (from PR 1) contains:
+The generated platform manifest contains:
 
 ```json
 {
@@ -84,7 +93,7 @@ The generated platform manifest (from PR 1) contains:
 }
 ```
 
-Frontend must read these values at build time or from a `/config` endpoint and replace all user-visible construction strings.
+The generator replaces construction strings in the copied frontend files.
 
 ### 2. Required string replacements
 
@@ -92,7 +101,6 @@ Frontend must read these values at build time or from a `/config` endpoint and r
 |--------------------|------------------|
 | The Fork | Automotive Safety Intelligence |
 | Construction Workspace | Vehicle Safety Workspace |
-| Project | Project |
 | RFI / NCR / VO / BOQ | Recall / Complaint / Investigation / Safety Rating |
 | Drawing reference | Campaign / ODI / Investigation number |
 | Training material | Automotive Core Knowledge |
@@ -109,7 +117,7 @@ My Projects
 Admin
 ```
 
-Quick actions on home/workspace:
+Quick actions:
 
 ```text
 Check recalls by vehicle
@@ -121,12 +129,7 @@ Summarize an investigation
 
 ### 4. Empty states and help text
 
-Replace construction examples with automotive examples:
-
-```text
-"Ask about a recall, complaint pattern, or vehicle safety rating."
-"Upload a service report, dealer bulletin, or fleet incident summary."
-```
+Replace construction examples with automotive examples.
 
 ---
 
@@ -134,29 +137,13 @@ Replace construction examples with automotive examples:
 
 ### 1. Admin page
 
-Create:
+Create in generated platform:
 
 ```text
-frontend/src/components/Admin/AutomotiveCorePanel.tsx
+generated/automotive-safety-intelligence/frontend/src/pages/AdminAutomotiveCorePage.tsx
 ```
 
-Display:
-
-```text
-Pack version
-Status
-Harvest timestamp
-Source families
-Source counts
-Document/record count
-Chunk count
-Embedding identity
-Index namespace
-Evaluation result
-Last refresh
-Last error
-Activation status
-```
+Display pack version, status, harvest timestamp, source families, counts, embedding identity, namespace, evaluation result, activation status.
 
 Buttons:
 
@@ -172,7 +159,7 @@ Destructive rebuild requires typed confirmation modal.
 
 ### 2. Admin route guard
 
-Reuse existing admin gating from The_Fork template. Admin-only routes must return 403 for non-admin users.
+Reuse The_Fork's existing admin gating (`/v1/admin/*`).
 
 ---
 
@@ -197,20 +184,20 @@ Browser journey:
 Create Project → Upload Document → Indexing Progress → Ask Question
 ```
 
-API endpoints (generated platform):
+API endpoints already present in The_Fork:
 
 ```text
-POST   /projects/{project_id}/documents
-GET    /projects/{project_id}/documents
-GET    /projects/{project_id}/documents/{document_id}/status
-DELETE /projects/{project_id}/documents/{document_id}
+POST   /v1/projects/{project_id}/documents
+GET    /v1/projects/{project_id}/documents
+GET    /v1/projects/{project_id}/documents/{document_id}/status
+DELETE /v1/projects/{project_id}/documents/{document_id}
 ```
 
-Indexing must use the same BGE-small-en-v1.5 384-dim pipeline as the foundation pack, but into the project-scoped collection.
+Indexing uses the same BGE-small-en-v1.5 384-dim pipeline as the foundation pack, but into the project-scoped collection.
 
 ### 3. Deletion
 
-Deleting a private document must remove its chunks and embeddings from the private index. Foundation corpus must remain untouched.
+Deleting a private document removes its chunks and embeddings from the private index. Foundation corpus remains untouched.
 
 ---
 
@@ -218,7 +205,7 @@ Deleting a private document must remove its chunks and embeddings from the priva
 
 ### 1. Connector status
 
-Add to project settings:
+Add to project settings in generated platform frontend:
 
 ```text
 Connect Google Drive → folder picker → bind folder → sync
@@ -228,28 +215,21 @@ Connect Google Drive → folder picker → bind folder → sync
 
 Use Google Picker API or Drive file selector.
 
-- Authenticate per user.
-- Select one folder.
-- Store `drive_connection_id` and `folder_binding_id`.
-- Trigger sync job.
-
 ### 3. Sync and indexing
 
-Reusable connector from PR 1 handles:
+Extend The_Fork's `app/routers/drive.py` to support folder binding and periodic sync:
 
-- List files in bound folder.
-- Download supported types (PDF, DOCX, TXT, CSV).
-- Create acquisitions under the project.
-- Canonicalize, chunk, embed, index into `client_private` layer.
+```text
+POST /v1/projects/{project_id}/drive/bind-folder
+POST /v1/projects/{project_id}/drive/sync
+GET  /v1/projects/{project_id}/drive/sync-status
+```
+
+Files index into `client_private` layer only.
 
 ### 4. Disconnect
 
-User can disconnect Drive. This must:
-
-- Revoke OAuth token.
-- Remove binding.
-- Delete indexed documents associated with that binding.
-- Leave other users’ bindings untouched.
+Revoke OAuth, remove binding, delete indexed documents for that binding only.
 
 ---
 
@@ -269,25 +249,27 @@ retrieval_request = RetrievalRequest(
 
 ### 2. Citation rendering
 
-Each citation must show:
+Each citation shows:
 
 ```text
 [Automotive Core] Recall 20V123 — NHTSA
 [Private Project] Dealer Service Report — My Project
 ```
 
-Citations panel groups by knowledge layer.
-
 ### 3. Ranking behavior
 
-- For project-specific questions: client-private evidence first, then automotive core supplement.
-- For general automotive questions: automotive core evidence first; client-private only if explicitly relevant.
+- Project-specific questions: client-private first, automotive core supplement.
+- General automotive questions: automotive core first; client-private only if explicitly relevant.
 
 ---
 
 ## Part F — End-to-end browser tests
 
-Use Playwright or the existing browser test harness.
+Add E2E harness if not present. Add Playwright tests in generated platform:
+
+```text
+generated/automotive-safety-intelligence/frontend/e2e/automotive_journeys.spec.ts
+```
 
 Required journeys:
 
@@ -315,11 +297,10 @@ Required journeys:
 
 ## Part G — Security tests
 
-Add:
+Add in generated platform:
 
 ```text
-backend/tests/test_automotive_security.py
-frontend/e2e/security.spec.ts
+generated/automotive-safety-intelligence/tests/test_automotive_security.py
 ```
 
 Prove:
@@ -329,14 +310,14 @@ Prove:
 - Project ownership enforcement.
 - Non-leaking 404 behavior.
 - Upload size/type controls.
-- SSRF controls on source acquisition.
+- SSRF controls.
 - Safe filename handling.
 - No filesystem-path exposure.
 - No raw exception leakage.
 - CORS restrictions.
-- Secret scanning (pre-commit or CI).
+- Secret scanning.
 - Dependency scanning.
-- SQL injection checks on query params.
+- SQL injection checks.
 - Stored-content escaping.
 - Cross-user project isolation.
 - Google Drive token encryption and non-exposure.
@@ -378,29 +359,28 @@ own vector namespace
 own foundation corpus
 ```
 
-### 3. Environment template
-
-Add to generated package:
+Add deployment script in CerebrumDev.ai:
 
 ```text
-.env.example
+backend/scripts/deploy_automotive_pilot.py
 ```
 
-Required keys:
+### 3. Environment template
+
+Add to generated package `.env.example`:
 
 ```text
 DATABASE_URL
 SECRET_KEY
-JWT_ALGORITHM
-JWT_EXPIRATION_MINUTES
+BOOTSTRAP_USER_EMAIL
+BOOTSTRAP_USER_PASSWORD
 RAG_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 RAG_EMBEDDING_DIMENSIONS=384
-RAG_VECTOR_NAMESPACE=chunks_v2
-PGVECTOR_DIMENSION=384
+RAG_VECTOR_NAMESPACE=v2
 GOOGLE_CLIENT_ID
 GOOGLE_CLIENT_SECRET
 GOOGLE_REDIRECT_URI
-ADMIN_EMAIL
+DATA_ENCRYPTION_KEY
 ```
 
 ### 4. Health checks
@@ -412,21 +392,19 @@ Ensure `/health`, `/ready`, and `/metrics` endpoints exist and pass.
 ## Part I — Verification commands
 
 ```bash
-# Backend full suite
-cd backend
+# Generated platform backend
+cd generated/automotive-safety-intelligence
 python -m pytest tests -q
 
-# Frontend lint and build
+# Generated platform frontend
 cd frontend
 npm run lint
 npm run build
-
-# E2E browser tests (requires running app)
 npm run test:e2e
 
-# Security scan example
-npx secretlint "**/*"
-npm audit --audit-level=moderate
+# CerebrumDev.ai factory
+cd ../../backend
+python -m pytest tests -q
 ```
 
 ---
@@ -439,85 +417,19 @@ After merge, produce:
 docs/superpowers/reports/2026-07-11-automotive-pilot-release-report.md
 ```
 
-Sections:
-
-```text
-KNOWN
-- repositories
-- source branches
-- pinned Fork commit
-- pinned Cerebrum-Blocks commit
-- generated platform repository or artifact
-- files created and changed
-- active embedding identity
-- active vector namespace
-- harvested source families
-- exact corpus counts
-- exact chunk counts
-- deployment URL
-- exact commands run
-- exact test results
-- browser results
-- evaluation results
-- CI results
-- PR numbers
-- merge commits
-
-IMPLEMENTED
-- Fork-derived domain-neutral platform template
-- automotive platform manifest
-- automotive core RAG pack
-- official data harvest
-- normalized automotive record models
-- semantic embeddings
-- pgvector/BM25 indexing
-- layer-aware hybrid retrieval
-- automotive grounded assistant
-- citations
-- frontend conversion
-- admin pack controls
-- private project overlay
-- Google Drive integration
-- generation packaging
-- deployment
-- evaluation suite
-- security and E2E tests
-
-NOT CHANGED
-- live construction corpus
-- live construction client records
-- The_Fork production secrets
-- unrelated Cerebrum-Blocks domain kits
-- other 16 domain RAG packs
-- coding-agent system
-- fine-tuning
-- billing
-
-RISKS
-- corpus freshness and refresh requirements
-- official-data field inconsistencies
-- complaint narratives are reports, not confirmed defect findings
-- source volume and indexing cost
-- domain-template extraction may reveal hidden construction coupling
-- embedding-model migration compatibility
-- deployment resource requirements
-- private/public retrieval ranking calibration
-```
-
 ---
 
 ## Part K — Commit plan
 
-Create commits in this order:
-
-1. `feat(pilot): convert frontend branding to automotive`
-2. `feat(pilot): add admin automotive core pack controls`
-3. `feat(pilot): add project-private document upload and indexing`
+1. `feat(pilot): add frontend branding generator transformations`
+2. `feat(pilot): add admin automotive core pack controls to generated platform`
+3. `feat(pilot): add project-private document overlay to generated platform`
 4. `feat(pilot): add Google Drive folder binding and sync UI`
 5. `feat(pilot): wire layer-aware retrieval and citations in chat`
-6. `test(pilot): add E2E browser journeys`
-7. `test(pilot): add security and isolation tests`
-8. `chore(pilot): add deployment template and release report`
+6. `feat(pilot): add deployment script and environment template`
+7. `test(pilot): add E2E browser journeys`
+8. `test(pilot): add security and isolation tests`
+9. `chore(pilot): add final release report`
 
 ---
 
