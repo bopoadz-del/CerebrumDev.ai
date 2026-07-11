@@ -189,3 +189,47 @@ def test_text_filter_replaces_branding(manifest: dict, tmp_path: Path) -> None:
     assert "Construction Workspace" not in transformed
     assert parsed.branding.product_name in transformed
     assert parsed.branding.workspace_name in transformed
+
+
+def test_generator_sanitizes_runtime_artifacts(manifest: dict, tmp_path: Path) -> None:
+    """Runtime data, VCS metadata, logs, archives and line-delimited dumps are skipped."""
+    fork_path = _make_fake_fork(tmp_path, "dummy")
+    # Add artifacts that must NOT survive generation.
+    (fork_path / ".env").write_text("SECRET=do-not-copy\n", encoding="utf-8")
+    (fork_path / ".env.local").write_text("LOCAL_SECRET=x\n", encoding="utf-8")
+    (fork_path / "data").mkdir()
+    (fork_path / "data" / "secret.txt").write_text("secret", encoding="utf-8")
+    (fork_path / "logs").mkdir()
+    (fork_path / "logs" / "app.log").write_text("log", encoding="utf-8")
+    (fork_path / "uploads").mkdir()
+    (fork_path / "uploads" / "file.pdf").write_bytes(b"pdf")
+    (fork_path / "feature_matrix_results.jsonl").write_text("{}", encoding="utf-8")
+    (fork_path / "golden_set_results.jsonl").write_text("{}", encoding="utf-8")
+    (fork_path / "rag_backfill_batch_1.json").write_text("{}", encoding="utf-8")
+    (fork_path / "migrate_drive_archive.log").write_text("log", encoding="utf-8")
+    (fork_path / "review_pack").mkdir()
+    (fork_path / "review_pack" / "review.md").write_text("review", encoding="utf-8")
+
+    output = tmp_path / "generated-clean"
+    generator = PlatformGenerator.from_dict(
+        manifest,
+        fork_path=fork_path,
+        blocks_path=tmp_path / "dummy-blocks",
+    )
+    generator._verify_fork_baseline = lambda: FORK_BASELINE_COMMIT
+    generator.generate(output)
+
+    assert not (output / ".env").exists()
+    assert not (output / ".env.local").exists()
+    assert not (output / "data").exists()
+    assert not (output / "logs").exists()
+    assert not (output / "uploads").exists()
+    assert not (output / "feature_matrix_results.jsonl").exists()
+    assert not (output / "golden_set_results.jsonl").exists()
+    assert not (output / "rag_backfill_batch_1.json").exists()
+    assert not (output / "migrate_drive_archive.log").exists()
+    assert not (output / "review_pack").exists()
+
+    # Normal package files must still be present.
+    assert (output / "app" / "main.py").exists()
+    assert (output / "platform_manifest.json").exists()
