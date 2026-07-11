@@ -20,15 +20,19 @@ from ..core.rag_ingestion_store import (
     get_chunk_embeddings,
     get_embedding_run,
     get_job,
+    get_vector_index_records,
+    get_vector_index_run,
     list_acquisition_reports,
     list_canonical_chunks,
     list_canonical_documents,
     list_embedding_runs,
     list_jobs,
+    list_vector_index_runs,
     save_canonical_document,
     save_job,
     save_source_record,
 )
+from ..core.rag_vector_indexing import VectorIndexError, run_vector_index_dry_run
 from ..core.rag_ingestion_validation import create_ingestion_job
 from ..core.rag_pack_loader import (
     RagPackLoaderError,
@@ -136,6 +140,48 @@ class ChunkEmbeddingListItem(BaseModel):
     normalization: str
     vector_hash: str
     index_status: str
+    vector: Optional[List[float]] = None
+
+
+class VectorIndexDryRunRequest(BaseModel):
+    dry_run: bool = True
+    adapter_id: str = "local_flat_json_v1"
+
+
+class VectorIndexRunResponse(BaseModel):
+    index_run_id: str
+    index_id: str
+    document_id: str
+    embedding_run_id: str
+    adapter_id: str
+    adapter_version: str
+    status: str
+    dimensions: int
+    embedding_record_count: int
+    indexed_record_count: int
+    failed_record_count: int
+    production_approved: bool
+    retrieval_enabled: bool
+    activation_status: str
+    index_artifact_hash: Optional[str]
+    manifest_hash: Optional[str]
+    warnings: List[str]
+    errors: List[dict]
+
+
+class VectorIndexRecordResponse(BaseModel):
+    record_id: str
+    embedding_id: str
+    chunk_id: str
+    chunk_ordinal: int
+    chunk_text_hash: str
+    vector_hash: str
+    dimensions: int
+    distance_metric: str
+    provider_id: str
+    provider_version: str
+    adapter_id: str
+    adapter_version: str
     vector: Optional[List[float]] = None
 
 
@@ -583,3 +629,126 @@ def list_chunk_embeddings_endpoint(
         )
         for e in embeddings
     ]
+
+
+@router.post(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/embedding-runs/{embedding_run_id}/vector-index-dry-run"
+)
+def create_vector_index_dry_run(
+    domain_id: str,
+    document_id: str,
+    embedding_run_id: str,
+    request: VectorIndexDryRunRequest,
+):
+    if not request.dry_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "DRY_RUN_REQUIRED",
+                "message": "Actual vector indexing is not enabled. Use dry_run=true.",
+            },
+        )
+    try:
+        run, _ = run_vector_index_dry_run(
+            domain=domain_id,
+            document_id=document_id,
+            embedding_run_id=embedding_run_id,
+            adapter_id=request.adapter_id,
+            dry_run=True,
+        )
+    except VectorIndexError as exc:
+        status_code = status.HTTP_409_CONFLICT if exc.code == "DRY_RUN_REQUIRED" else status.HTTP_422_UNPROCESSABLE_ENTITY
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": exc.message, "field": exc.field},
+        ) from exc
+    return _vector_index_run_response(run)
+
+
+def _vector_index_run_response(run) -> dict:
+    return {
+        "index_run_id": run.index_run_id,
+        "index_id": run.index_id,
+        "document_id": run.document_id,
+        "embedding_run_id": run.embedding_run_id,
+        "adapter_id": run.adapter_id,
+        "adapter_version": run.adapter_version,
+        "status": run.status.value,
+        "dimensions": run.dimensions,
+        "embedding_record_count": run.embedding_record_count,
+        "indexed_record_count": run.indexed_record_count,
+        "failed_record_count": run.failed_record_count,
+        "production_approved": run.production_approved,
+        "retrieval_enabled": run.retrieval_enabled,
+        "activation_status": run.activation_status.value,
+        "index_artifact_hash": run.index_artifact_hash,
+        "manifest_hash": run.manifest_hash,
+        "warnings": run.warnings,
+        "errors": [e.model_dump(mode="json") for e in run.errors],
+    }
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/vector-index-runs"
+)
+def list_vector_index_runs_endpoint(domain_id: str, document_id: str):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    runs = list_vector_index_runs(domain_id, document_id)
+    return {"domain": domain_id, "document_id": document_id, "index_runs": [_vector_index_run_response(r) for r in runs]}
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/vector-index-runs/{index_run_id}"
+)
+def get_vector_index_run_endpoint(domain_id: str, document_id: str, index_run_id: str):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    run = get_vector_index_run(domain_id, document_id, index_run_id)
+    if run is None or run.domain != domain_id or run.document_id != document_id:
+        raise HTTPException(status_code=404, detail="Index run not found")
+    return _vector_index_run_response(run)
+
+
+@router.get(
+    "/{domain_id}/rag-ingestion/documents/{document_id}/vector-index-runs/{index_run_id}/records"
+)
+def list_vector_index_records_endpoint(
+    domain_id: str,
+    document_id: str,
+    index_run_id: str,
+    include_vectors: bool = False,
+):
+    document = get_canonical_document(domain_id, document_id)
+    if document is None or document.domain != domain_id:
+        raise HTTPException(status_code=404, detail="Document not found")
+    run = get_vector_index_run(domain_id, document_id, index_run_id)
+    if run is None or run.domain != domain_id or run.document_id != document_id:
+        raise HTTPException(status_code=404, detail="Index run not found")
+    records = get_vector_index_records(domain_id, document_id, run.index_id, include_vectors=include_vectors)
+    return {
+        "domain": domain_id,
+        "document_id": document_id,
+        "index_run_id": index_run_id,
+        "index_id": run.index_id,
+        "records": [
+            {
+                "record_id": r.record_id,
+                "embedding_id": r.embedding_id,
+                "chunk_id": r.chunk_id,
+                "chunk_ordinal": r.chunk_ordinal,
+                "chunk_text_hash": r.chunk_text_hash,
+                "vector_hash": r.vector_hash,
+                "dimensions": r.dimensions,
+                "distance_metric": r.distance_metric,
+                "provider_id": r.provider_id,
+                "provider_version": r.provider_version,
+                "adapter_id": r.adapter_id,
+                "adapter_version": r.adapter_version,
+                "vector": r.vector if include_vectors else None,
+            }
+            for r in records
+        ],
+    }

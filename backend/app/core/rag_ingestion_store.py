@@ -4,7 +4,8 @@ Follows the same atomic write/replace pattern used by
 ``backend/app/core/session_persistence.py`` so that restarts do not lose
 queued or validated ingestion jobs.
 
-No documents, chunks, embeddings, or vector-store operations happen here.
+No documents, chunks, embeddings, or vector-store operations happen here
+beyond persistence helpers for their metadata artifacts.
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from app.models.rag_ingestion import (
     RagEmbeddingRun,
     RagIngestionJob,
     RagSourceRecord,
+    RagVectorIndexRecord,
+    RagVectorIndexRun,
 )
 
 logger = logging.getLogger(__name__)
@@ -493,3 +496,76 @@ def get_chunk_embedding(
     except Exception as exc:
         logger.warning("Failed to load chunk embedding %s: %s", embedding_id, exc)
     return None
+
+
+def _vector_indexes_dir(domain: str, document_id: str, index_id: str) -> Path:
+    path = Path(_storage_path()) / "rag_ingestion" / domain / "vector_indexes" / document_id / index_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _vector_index_run_path(domain: str, document_id: str, index_run_id: str) -> Path:
+    # Run metadata is stored per document for easy listing.
+    run_dir = Path(_storage_path()) / "rag_ingestion" / domain / "vector_indexes" / document_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir / f"{index_run_id}.run.json"
+
+
+def save_vector_index_run(run: RagVectorIndexRun) -> RagVectorIndexRun:
+    """Persist a vector index run metadata file."""
+    path = _vector_index_run_path(run.domain, run.document_id, run.index_run_id)
+    run.updated_at = datetime.utcnow()
+    _atomic_write(path, run.model_dump(mode="json"))
+    return run
+
+
+def get_vector_index_run(
+    domain: str, document_id: str, index_run_id: str
+) -> Optional[RagVectorIndexRun]:
+    """Fetch a single vector index run."""
+    path = _vector_index_run_path(domain, document_id, index_run_id)
+    if not path.exists():
+        return None
+    try:
+        return RagVectorIndexRun(**json.loads(path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        logger.warning("Failed to load vector index run %s: %s", index_run_id, exc)
+        return None
+
+
+def list_vector_index_runs(domain: str, document_id: str) -> List[RagVectorIndexRun]:
+    """List vector index runs for a document."""
+    run_dir = Path(_storage_path()) / "rag_ingestion" / domain / "vector_indexes" / document_id
+    runs = []
+    if not run_dir.exists():
+        return runs
+    for path in run_dir.glob("*.run.json"):
+        try:
+            runs.append(RagVectorIndexRun(**json.loads(path.read_text(encoding="utf-8"))))
+        except Exception as exc:
+            logger.warning("Skipping corrupt vector index run %s: %s", path, exc)
+    return runs
+
+
+def get_vector_index_records(
+    domain: str,
+    document_id: str,
+    index_id: str,
+    include_vectors: bool = False,
+) -> List[RagVectorIndexRecord]:
+    """Read vector index records from the adapter's JSONL file."""
+    path = _vector_indexes_dir(domain, document_id, index_id) / "records.jsonl"
+    if not path.exists():
+        return []
+    records = []
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            data = json.loads(line)
+            if not include_vectors:
+                data["vector"] = []
+            records.append(RagVectorIndexRecord(**data))
+    except Exception as exc:
+        logger.warning("Failed to load vector index records for %s: %s", index_id, exc)
+    return sorted(records, key=lambda r: r.chunk_ordinal)

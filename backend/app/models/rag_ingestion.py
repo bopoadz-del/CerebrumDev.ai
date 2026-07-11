@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -197,6 +197,23 @@ class EmbeddingRunStatus(str, Enum):
     FAILED = "failed"
 
 
+class VectorIndexRunStatus(str, Enum):
+    """Lifecycle status for a vector-index dry-run."""
+
+    PENDING = "pending"
+    VALIDATING = "validating"
+    INDEXING = "indexing"
+    VERIFYING = "verifying"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ActivationStatus(str, Enum):
+    """Activation state for a vector index."""
+
+    INACTIVE = "inactive"
+
+
 class RagEmbeddingRun(BaseModel):
     """Audit record for an embedding dry-run over a canonical document."""
 
@@ -317,5 +334,71 @@ class RagCanonicalChunk(BaseModel):
     maximum_characters: int
     overlap_characters: int
     index_status: IndexStatus = IndexStatus.NOT_INDEXED
+    untrusted_content: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RagVectorIndexRun(BaseModel):
+    """Audit record for a vector-index dry-run over an embedding run."""
+
+    index_run_id: str
+    index_id: str
+    document_id: str
+    embedding_run_id: str
+    job_id: str
+    source_id: str
+    acquisition_id: str
+    rag_pack_id: str
+    collection_id: str
+    domain: str
+    adapter_id: str
+    adapter_version: str
+    storage_type: str
+    distance_metric: str
+    dimensions: int
+    dry_run: bool = True
+    status: VectorIndexRunStatus = VectorIndexRunStatus.PENDING
+    embedding_record_count: int = 0
+    eligible_record_count: int = 0
+    indexed_record_count: int = 0
+    failed_record_count: int = 0
+    duplicate_record_count: int = 0
+    production_approved: bool = False
+    retrieval_enabled: bool = False
+    activation_status: ActivationStatus = ActivationStatus.INACTIVE
+    index_artifact_hash: Optional[str] = None
+    manifest_hash: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    warnings: List[str] = Field(default_factory=list)
+    errors: List[ValidationError] = Field(default_factory=list)
+    last_error: Optional[str] = None
+
+
+class RagVectorIndexRecord(BaseModel):
+    """A deterministic vector-store record produced from a chunk embedding."""
+
+    record_id: str
+    index_run_id: str
+    index_id: str
+    embedding_id: str
+    embedding_run_id: str
+    document_id: str
+    chunk_id: str
+    collection_id: str
+    domain: str
+    chunk_ordinal: int
+    chunk_text_hash: str
+    vector_hash: str
+    vector: List[float]
+    dimensions: int
+    distance_metric: str
+    provider_id: str
+    provider_version: str
+    adapter_id: str
+    adapter_version: str
+    metadata: Dict[str, str] = Field(default_factory=dict)
     untrusted_content: bool = True
     created_at: datetime = Field(default_factory=datetime.utcnow)
