@@ -564,7 +564,7 @@ def get_vector_index_records(
                 continue
             data = json.loads(line)
             if not include_vectors:
-                data = {k: v for k, v in data.items() if k != "vector"}
+                data["vector"] = []
             records.append(RagVectorIndexRecord(**data))
     except Exception as exc:
         logger.warning("Failed to load vector index records for %s: %s", index_id, exc)
