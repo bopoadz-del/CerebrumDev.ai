@@ -93,7 +93,14 @@ The legacy `chunks` table and 256-dim potion path remain available in The_Fork b
    - Vendors the pinned Cerebrum-Blocks engine.
    - Copies automotive kit artifacts.
    - Emits docker-compose + Render blueprint.
-5. Reproducible generation test.
+5. Reusable multi-user Google Drive connector core:
+   - `DriveConnection`, `DriveFolderBinding`, `DriveSyncJob`, `DriveFileRecord`, `IndexedDocument`, `AuditEvent` data models.
+   - CerebrumDev.ai factory OAuth flow, folder picker and folder binding.
+   - Generated-platform Drive module, OAuth routes and migrations.
+   - Manifest feature flag (`features.google_drive`).
+   - Separate OAuth app configuration for factory vs. generated deployments.
+   - Encrypted refresh-token storage and ownership isolation tests.
+6. Reproducible generation test.
 
 **Gate:** `python -m pytest backend/tests/test_platform_packager.py backend/tests/test_automotive_domain_smoke.py -q` passes; generated package builds with `docker-compose build`.
 
@@ -117,8 +124,12 @@ The legacy `chunks` table and 256-dim potion path remain available in The_Fork b
 6. Hybrid retrieval (semantic + lexical, RRF fusion) with automotive identifier boosts.
 7. Layer-aware retrieval:
    - `automotive_core_v1`: platform-owned, read-only public foundation.
-   - `client_private`: project-scoped private documents.
-8. Activation and citation contract:
+   - `client_private`: project-scoped private documents, including Google Drive-imported files.
+8. Google Drive client-private routing:
+   - Drive-imported documents index only into `client_private`.
+   - Citation metadata labels Drive evidence as `knowledge_layer: client_private` and `source: google_drive`.
+   - Public `automotive_core_v1` remains unchanged by Drive imports.
+9. Activation and citation contract:
    - Every result carries `knowledge_layer`, `collection_id`, source authority, score.
    - Citations distinguish confirmed evidence from inference.
 9. 50-question automotive golden evaluation (exact recall, ODI/investigation lookups, make/model/year, complaint patterns, safety ratings, cross-source, no-answer).
@@ -151,7 +162,15 @@ foundation/client layer mislabelling: 0
    - build/resume, verify, evaluate, activate, rollback with confirmation guard.
 3. Client-private document overlay:
    - project-scoped upload, indexing, deletion, non-contamination of `automotive_core_v1`.
-4. Generated deployment:
+   - Google Drive connect, folder bind, sync and private-indexing browser flow.
+4. Google Drive isolation verification:
+   - User A connects Drive, binds folder, asks question, receives private Drive citation + Automotive Core context.
+   - User B cannot see User A's Drive evidence.
+   - Separate users can connect separate Drive accounts.
+   - Disconnecting one account does not affect another.
+   - File changes and deletions update only the correct private project index.
+   - `automotive_core_v1` remains unchanged.
+5. Generated deployment:
    - isolated database, storage, secrets, vector namespace.
    - Render blueprint and docker-compose stack.
 5. Browser acceptance tests and security tests.
@@ -232,6 +251,125 @@ Client-specific questions prefer relevant client evidence. The public foundation
 ```
 
 The actual NHTSA records, chunks and embeddings are **not** committed to Git. They are produced as versioned build artifacts / object storage and loaded into the generated pilot's isolated Postgres/pgvector database.
+
+### 5.4 Multi-user Google Drive integration
+
+A reusable, domain-neutral Google Drive connector core serves two distinct integrations with strict isolation between them.
+
+#### A. CerebrumDev.ai factory integration
+
+Multi-user factory users can:
+
+- Sign in to CerebrumDev.ai.
+- Connect their own Google Drive account using OAuth.
+- Select a folder through a Google folder picker.
+- Bind the selected folder to a factory workspace.
+- Import requirements, branding, configuration, approved source material or explicitly authorised customer documents.
+- View sync and indexing progress.
+- Resync, disconnect and delete imported/indexed data.
+
+Ownership scope:
+
+```text
+organisation_id
+user_id
+factory_workspace_id
+drive_connection_id
+folder_binding_id
+```
+
+No user or organisation may see another organisation's Drive account, token, folder list, files or indexed content.
+
+#### B. Generated client-platform integration
+
+Every generated platform inherits multi-user Google Drive capability. Users can:
+
+- Sign in to the generated platform.
+- Connect their own Google Drive account.
+- Select a folder.
+- Bind it to a private project or workspace.
+- Automatically sync and index supported documents.
+- Ask questions using those documents.
+- See citations labelled as private Google Drive evidence.
+- Resync, disconnect and remove indexed content.
+
+Ownership scope:
+
+```text
+tenant_id
+user_id
+project_id
+drive_connection_id
+folder_binding_id
+```
+
+Drive documents must index only into the client-private project RAG layer. They must never enter `automotive_core_v1` or any shared prebuilt domain RAG.
+
+#### Isolation between products
+
+CerebrumDev.ai and each generated deployment must use separate:
+
+```text
+Google OAuth applications
+client IDs and secrets
+redirect URIs
+encryption keys
+databases
+token stores
+audit records
+sync jobs
+private indexes
+```
+
+A Drive connection made in CerebrumDev.ai must not automatically exist in the generated automotive platform.
+
+#### Multi-user connector entities
+
+Minimum entities:
+
+```text
+Organisation or Tenant
+User
+Membership
+DriveConnection
+DriveFolderBinding
+DriveSyncJob
+DriveFileRecord
+IndexedDocument
+AuditEvent
+```
+
+Support personal bindings and role-controlled organisation-shared bindings.
+
+#### Security requirements
+
+- Read-only least-privilege Drive scope by default.
+- Per-user OAuth.
+- OAuth state validation and PKCE where supported.
+- Encrypted refresh tokens at rest.
+- No tokens in logs, API responses or generated packages.
+- Folder-level binding; do not silently crawl the entire Drive.
+- Cross-user and cross-tenant access prevention.
+- Deleted or changed Drive files reflected in the private index.
+- Disconnect and revocation workflow.
+- Explicit indexed-data deletion policy.
+- Audit trail for connection, binding, sync, failure, disconnect and deletion.
+
+#### Generated-platform manifest feature flag
+
+```json
+{
+  "features": {
+    "google_drive": {
+      "enabled": true,
+      "multi_user": true,
+      "personal_connections": true,
+      "organisation_shared_bindings": true,
+      "default_scope": "read_only"
+    }
+  }
+}
+```
 
 ---
 
