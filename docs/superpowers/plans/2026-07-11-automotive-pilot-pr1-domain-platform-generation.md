@@ -206,7 +206,13 @@ backend/app/platform_generator/renderers.py
 backend/scripts/generate_automotive_platform.py
 ```
 
-**Important:** `backend/app/core/platform_packager.py` already vendors Cerebrum-Blocks engines. The new generator is **for Fork-derived platform packages** and may coexist with `platform_packager.py` or extend it. Document the relationship clearly.
+**Relationship to existing packager:** `backend/app/core/platform_packager.py` vendors Cerebrum-Blocks engines and produces engine-only deployment packages. The new `backend/app/platform_generator/` is a separate **Fork-derived platform generator** that:
+- Consumes The_Fork as the runtime baseline.
+- Applies manifest-driven branding and domain customization.
+- May call `platform_packager.py` to embed the Cerebrum-Blocks engine/automotive blocks into the generated platform.
+- Emits a deployable application package (Dockerfile, alembic, frontend), not just an engine bundle.
+
+Keep responsibilities separate: `platform_packager.py` remains the engine bundler; `platform_generator` becomes the product-template generator.
 
 ### 2. Template rules
 
@@ -296,22 +302,47 @@ Do **not** create a top-level `automotive_v2/` directory.
 
 ### 2. Kit manifest update
 
-Update `block_store/kits/automotive/manifest.json` to include:
+Update `block_store/kits/automotive/manifest.json` preserving all existing required keys (`name`, `description`, `status`, `author`, `tags`, `source`, `container`, `blocks`, `data`, `core_modules`, `artifacts`, `price_cents`, `install_requires`). Add new fields under a `rag` section:
 
 ```json
 {
   "id": "automotive",
+  "name": "Automotive & Mobility Suite",
   "version": "2.0.0",
-  "domain": "automotive",
-  "rag_pack": "automotive_core_rag_v1",
-  "source_manifest": "source_manifest.json",
-  "schemas": ["schemas/"],
-  "prompts": ["prompts/"],
-  "evaluation": ["evaluation/golden_questions.jsonl"]
+  "description": "...",
+  "status": "available",
+  "author": "bopoadz-del",
+  "tags": ["domain", "container", "automotive"],
+  "source": {
+    "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
+    "ref": "main",
+    "publish_script": "scripts/publish_kit.py"
+  },
+  "container": {
+    "class": "app.containers.automotive.AutomotiveContainer",
+    "default_chat_prompt": null
+  },
+  "blocks": ["pdf", "ocr", "chat", "image", "automotive_v2", "formula_executor_v2"],
+  "prompts": [],
+  "data": [],
+  "core_modules": ["...existing modules..."],
+  "artifacts": ["...existing artifacts plus prompts/schemas/source_manifest/evaluation..."],
+  "rag": {
+    "pack": "automotive_core_rag_v1",
+    "source_manifest": "source_manifest.json",
+    "schemas": ["schemas/"],
+    "prompts": ["prompts/"],
+    "evaluation": ["evaluation/golden_questions.jsonl"]
+  },
+  "price_cents": 0,
+  "install_requires": {
+    "min_platform_version": "2.0.0",
+    "python": ">=3.10"
+  }
 }
 ```
 
-Follow existing kit manifest keys (`id`, `name`, `version`, `container`, `blocks`, `artifacts`, `core_modules`).
+Add new files (`prompts/`, `schemas/`, `source_manifest.json`, `evaluation/`) to the `artifacts` list so the kit loader copies them into generated packages.
 
 ### 3. Source manifest
 
