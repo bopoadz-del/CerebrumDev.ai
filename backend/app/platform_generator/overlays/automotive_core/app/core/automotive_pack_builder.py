@@ -13,12 +13,12 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from app.core.automotive_normalizers import normalize_recall_rows
-from app.models.automotive_records import AutomotiveChunk, AutomotiveRecall, PackManifest
+from app.models.automotive_records import AutomotiveChunk, AutomotiveInvestigation, AutomotiveRecall, PackManifest
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,85 @@ def chunk_recall_records(
                 metadata={
                     "report_received_date": record.report_received_date,
                     "affected_units": record.affected_units,
+                    "raw_record_hash": record.raw_record_hash,
+                    "normalization_version": record.normalization_version,
+                },
+            )
+        )
+    return chunks
+
+
+def _compile_investigation_text(record: AutomotiveInvestigation) -> str:
+    parts: List[str] = []
+    if record.investigation_number:
+        parts.append(f"Investigation: {record.investigation_number}")
+    if record.status:
+        parts.append(f"Status: {record.status}")
+    if record.investigation_type:
+        parts.append(f"Type: {record.investigation_type}")
+    if record.model_year:
+        parts.append(f"Year: {record.model_year}")
+    if record.make:
+        parts.append(f"Make: {record.make}")
+    if record.model:
+        parts.append(f"Model: {record.model}")
+    if record.manufacturer:
+        parts.append(f"Manufacturer: {record.manufacturer}")
+    if record.component:
+        parts.append(f"Component: {record.component}")
+    if record.opening_date:
+        parts.append(f"Opened: {record.opening_date}")
+    if record.closing_date:
+        parts.append(f"Closed: {record.closing_date}")
+    if record.associated_campaign_number:
+        parts.append(f"Associated recall campaign: {record.associated_campaign_number}")
+    if record.subject:
+        parts.append(f"Subject: {record.subject}")
+    if record.summary:
+        parts.append(f"Summary: {record.summary}")
+    return "\n".join(parts)
+
+
+def chunk_investigation_records(
+    records: List[AutomotiveInvestigation],
+) -> List[AutomotiveChunk]:
+    """Convert canonical investigation records into deterministic retrieval chunks."""
+    chunks: List[AutomotiveChunk] = []
+    for record in records:
+        text = _compile_investigation_text(record).strip()
+        if not text:
+            logger.warning("Skipping evidence-free investigation record %s", record.record_id)
+            continue
+        chunk_index = 0
+        chunk_id = _chunk_id(record.record_id, chunk_index)
+        chunks.append(
+            AutomotiveChunk(
+                chunk_id=chunk_id,
+                record_id=record.record_id,
+                source_id=record.source_id,
+                source_family=record.source_family,
+                campaign_number=record.associated_campaign_number or "",
+                make=record.make,
+                model=record.model,
+                model_year=record.model_year,
+                component=record.component,
+                knowledge_layer=FOUNDATION_COLLECTION,
+                foundation_pack_id=FOUNDATION_PACK_ID,
+                source_authority=record.authority_rating,
+                jurisdiction=record.jurisdiction,
+                chunk_index=chunk_index,
+                chunking_version=CHUNKING_VERSION,
+                text=text,
+                text_hash=_text_hash(text),
+                record_reference=record.investigation_number,
+                source_url=record.source_url,
+                metadata={
+                    "investigation_number": record.investigation_number,
+                    "status": record.status,
+                    "investigation_type": record.investigation_type,
+                    "opening_date": record.opening_date,
+                    "closing_date": record.closing_date,
+                    "associated_campaign_number": record.associated_campaign_number,
                     "raw_record_hash": record.raw_record_hash,
                     "normalization_version": record.normalization_version,
                 },
@@ -236,8 +315,10 @@ def _bulk_index_chunks(
         # One NHTSA campaign can cover multiple year/make/model rows, so the
         # doc_id must be unique per canonical record (record_id) rather than
         # per campaign number. chunk_index stays 0 because each record becomes
-        # exactly one chunk in this slice.
-        doc_id = f"recall:{chunk.record_id}"
+        # exactly one chunk in this slice. The source_family prefix makes the
+        # doc_id a reliable family discriminator at retrieval time without
+        # adding a new database column.
+        doc_id = f"{chunk.source_family}:{chunk.record_id}"
         doc_ids.add(doc_id)
         text = chunk.text
         if "\x00" in text:
@@ -383,8 +464,6 @@ def build_automotive_core_pack(
     Returns:
         PackManifest describing the built pack.
     """
-    from app.core.rag.embeddings import get_embedder
-
     output_dir = Path(output_dir)
     chunks_dir = output_dir / "chunks"
     chunks_dir.mkdir(parents=True, exist_ok=True)
@@ -404,6 +483,8 @@ def build_automotive_core_pack(
     indexed_count = 0
 
     if not dry_run:
+        from app.core.rag.embeddings import get_embedder
+
         _require_production_embedder()
         embedder = get_embedder()
         embedding_identity = embedder.identity
@@ -424,6 +505,107 @@ def build_automotive_core_pack(
         chunk_count=len(chunks),
         embedding_identity=embedding_identity,
         source_families=["recall"],
+        status="indexed" if indexed_count > 0 else "validated",
+    )
+
+    manifest_path = output_dir / "pack_manifest.json"
+    tmp_manifest = manifest_path.with_suffix(".json.tmp")
+    tmp_manifest.write_text(
+        manifest.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    os.replace(tmp_manifest, manifest_path)
+
+    return manifest
+
+
+def _load_canonical_records_by_family(path: Path) -> Tuple[str, List[Any]]:
+    """Load a canonical JSONL and return (source_family, records)."""
+    if not path.exists():
+        raise FileNotFoundError(f"Canonical records not found: {path}")
+    records: List[Any] = []
+    source_family = "unknown"
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            data = json.loads(line)
+            source_family = data.get("source_family", source_family)
+            if source_family == "recall":
+                records.append(AutomotiveRecall.model_validate(data))
+            elif source_family == "investigation":
+                records.append(AutomotiveInvestigation.model_validate(data))
+            else:
+                raise ValueError(f"Unsupported source_family in {path}: {source_family}")
+    return source_family, records
+
+
+def build_automotive_core_pack_from_families(
+    canonical_records_paths: List[Path],
+    output_dir: Path,
+    project_id: str = "automotive_core_v1",
+    dry_run: bool = False,
+) -> PackManifest:
+    """Build the automotive foundation pack from multiple canonical record files."""
+    output_dir = Path(output_dir)
+    chunks_dir = output_dir / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
+    all_chunks: List[AutomotiveChunk] = []
+    source_families: List[str] = []
+    total_records = 0
+    harvest_timestamp = ""
+
+    for records_path in canonical_records_paths:
+        family, records = _load_canonical_records_by_family(records_path)
+        source_families.append(family)
+        total_records += len(records)
+        if records and not harvest_timestamp:
+            harvest_timestamp = records[0].harvest_timestamp
+
+        if family == "recall":
+            family_chunks = chunk_recall_records(records)
+            chunks_path = chunks_dir / "recalls.jsonl"
+        elif family == "investigation":
+            family_chunks = chunk_investigation_records(records)
+            chunks_path = chunks_dir / "investigations.jsonl"
+        else:
+            raise ValueError(f"Unsupported family: {family}")
+
+        tmp_chunks = chunks_path.with_suffix(".jsonl.tmp")
+        with tmp_chunks.open("w", encoding="utf-8") as f:
+            for chunk in family_chunks:
+                f.write(chunk.model_dump_json() + "\n")
+        os.replace(tmp_chunks, chunks_path)
+        all_chunks.extend(family_chunks)
+
+    embedding_identity: Dict[str, Any] = {"model": "fake", "dim": 384, "normalized": True}
+    indexed_count = 0
+
+    if not dry_run:
+        from app.core.rag.embeddings import get_embedder
+
+        _require_production_embedder()
+        embedder = get_embedder()
+        embedding_identity = embedder.identity
+        indexed_count = _index_chunks(
+            project_id,
+            _embed_chunks(all_chunks),
+            dim=embedder.dim,
+            model_name=embedder.identity.get("model", os.getenv("RAG_EMBEDDING_MODEL", "fake")),
+        )
+
+    manifest = PackManifest(
+        pack_id=FOUNDATION_PACK_ID,
+        pack_version="automotive_core_rag_v1.0.0",
+        foundation_collection=FOUNDATION_COLLECTION,
+        harvest_timestamp=harvest_timestamp or _utc_now(),
+        build_timestamp=_utc_now(),
+        record_count=total_records,
+        chunk_count=len(all_chunks),
+        embedding_identity=embedding_identity,
+        source_families=source_families,
         status="indexed" if indexed_count > 0 else "validated",
     )
 

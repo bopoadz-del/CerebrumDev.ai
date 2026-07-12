@@ -13,10 +13,12 @@ from app.core.automotive_pack_builder import (
     FOUNDATION_COLLECTION,
     FOUNDATION_PACK_ID,
     build_automotive_core_pack,
+    build_automotive_core_pack_from_families,
+    chunk_investigation_records,
     chunk_recall_records,
     load_canonical_records,
 )
-from app.models.automotive_records import AutomotiveRecall
+from app.models.automotive_records import AutomotiveInvestigation, AutomotiveRecall
 
 
 def _sample_records() -> list[AutomotiveRecall]:
@@ -49,6 +51,28 @@ def _sample_records() -> list[AutomotiveRecall]:
         },
     ]
     return normalize_recall_rows("nhtsa_recalls", rows)
+
+
+def test_chunk_investigation_records_are_deterministic() -> None:
+    records = [
+        AutomotiveInvestigation(
+            record_id="r1",
+            source_id="nhtsa_investigations",
+            source_family="investigation",
+            investigation_number="PE16-007",
+            make="Tesla",
+            model="Model S",
+            model_year="2015",
+            component="AIR BAGS",
+            summary="Investigation into unintended air bag deployment.",
+            harvest_timestamp="2026-07-12T00:00:00Z",
+            raw_record_hash="h1",
+        ),
+    ]
+    chunks = chunk_investigation_records(records)
+    assert len(chunks) == 1
+    assert chunks[0].record_reference == "PE16-007"
+    assert chunks[0].metadata["investigation_number"] == "PE16-007"
 
 
 def test_chunk_recall_records_are_deterministic() -> None:
@@ -163,3 +187,101 @@ def test_rebuild_is_idempotent(tmp_path: Path, monkeypatch) -> None:
     )
     assert first.chunk_count == second.chunk_count
     assert first.record_count == second.record_count
+
+
+def test_build_pack_from_families_dry_run_writes_both_chunk_files(tmp_path: Path) -> None:
+    recalls = _sample_records()
+    recalls_path = tmp_path / "recalls.jsonl"
+    with recalls_path.open("w", encoding="utf-8") as f:
+        for r in recalls:
+            f.write(r.model_dump_json() + "\n")
+
+    investigations = [
+        AutomotiveInvestigation(
+            record_id="i1",
+            source_id="nhtsa_investigations",
+            source_family="investigation",
+            investigation_number="PE16-007",
+            make="Tesla",
+            model="Model S",
+            model_year="2015",
+            component="AIR BAGS",
+            summary="Investigation into unintended air bag deployment.",
+            harvest_timestamp="2026-07-12T00:00:00Z",
+            raw_record_hash="h1",
+        ),
+    ]
+    investigations_path = tmp_path / "investigations.jsonl"
+    with investigations_path.open("w", encoding="utf-8") as f:
+        for r in investigations:
+            f.write(r.model_dump_json() + "\n")
+
+    manifest = build_automotive_core_pack_from_families(
+        canonical_records_paths=[recalls_path, investigations_path],
+        output_dir=tmp_path / "pack",
+        project_id="automotive_core_v1",
+        dry_run=True,
+    )
+
+    assert manifest.record_count == 3
+    assert manifest.chunk_count == 3
+    assert manifest.status == "validated"
+    assert set(manifest.source_families) == {"recall", "investigation"}
+
+    recalls_chunks_path = tmp_path / "pack" / "chunks" / "recalls.jsonl"
+    investigations_chunks_path = tmp_path / "pack" / "chunks" / "investigations.jsonl"
+    assert recalls_chunks_path.exists()
+    assert investigations_chunks_path.exists()
+    assert len(recalls_chunks_path.read_text(encoding="utf-8").strip().splitlines()) == 2
+    assert len(investigations_chunks_path.read_text(encoding="utf-8").strip().splitlines()) == 1
+
+
+def test_cli_rejects_missing_records(tmp_path: Path) -> None:
+    from scripts.build_automotive_core_pack import main
+
+    missing = tmp_path / "missing.jsonl"
+    result = main([
+        "--records", str(missing),
+        "--output", str(tmp_path / "pack"),
+    ])
+    assert result == 1
+
+
+def test_cli_accepts_multiple_records(tmp_path: Path) -> None:
+    from scripts.build_automotive_core_pack import main
+
+    recalls = _sample_records()
+    recalls_path = tmp_path / "recalls.jsonl"
+    with recalls_path.open("w", encoding="utf-8") as f:
+        for r in recalls:
+            f.write(r.model_dump_json() + "\n")
+
+    investigations = [
+        AutomotiveInvestigation(
+            record_id="i1",
+            source_id="nhtsa_investigations",
+            source_family="investigation",
+            investigation_number="PE16-007",
+            make="Tesla",
+            model="Model S",
+            model_year="2015",
+            component="AIR BAGS",
+            summary="Investigation into unintended air bag deployment.",
+            harvest_timestamp="2026-07-12T00:00:00Z",
+            raw_record_hash="h1",
+        ),
+    ]
+    investigations_path = tmp_path / "investigations.jsonl"
+    with investigations_path.open("w", encoding="utf-8") as f:
+        for r in investigations:
+            f.write(r.model_dump_json() + "\n")
+
+    result = main([
+        "--records", str(recalls_path),
+        "--records", str(investigations_path),
+        "--output", str(tmp_path / "pack"),
+        "--dry-run",
+    ])
+    assert result == 0
+    manifest_path = tmp_path / "pack" / "pack_manifest.json"
+    assert manifest_path.exists()
