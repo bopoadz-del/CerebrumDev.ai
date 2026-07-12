@@ -120,27 +120,55 @@ Rejected alternatives:
 
 ### 3.2 Cross-cutting execution contract
 
-Any investigation-related action exposed to users (e.g. `summarize_investigation`, `lookup_investigation`, `compare_vehicle_safety`) must be registered through the generic Cerebrum-Blocks domain-kit interface:
+Any investigation-related action exposed to users (e.g. `summarize_investigation`, `lookup_investigation`, `compare_vehicle_safety`) must be registered through the generic Cerebrum-Blocks domain-kit interface. The runtime must use one domain-neutral path for every installed kit:
 
 ```python
-available_actions = container.get_actions()
-if selected_action not in available_actions:
+container = resolve_allowed_domain_container(selected_domain)
+actions = container.get_actions()
+if selected_action not in actions:
     raise UnsupportedActionError(selected_action)
 
-result = container.execute({
+RESERVED_CONTEXT_KEYS = {
+    "action",
+    "project_id",
+    "user_id",
+    "tenant_id",
+    "organisation_id",
+    "permissions",
+    "allowed_blocks",
+}
+
+safe_input = {
+    key: value
+    for key, value in action_args.items()
+    if key not in RESERVED_CONTEXT_KEYS
+}
+
+trusted_params = {
     "action": selected_action,
-    "inputs": validated_inputs,
-    "context": execution_context,
-})
+    "project_id": runtime_project_id,
+    "user_id": runtime_user_id,
+    "tenant_id": runtime_tenant_id,
+}
+
+result = await container.execute(safe_input, trusted_params)
 ```
 
-The core orchestrator must not contain `if action == "summarize_investigation": ...` branches. This is a **mandatory Cerebrum-Blocks execution contract** for every domain kit. Retrieval and summarization capabilities required by those actions live in the kit; the orchestrator only validates, dispatches, and synthesizes.
+Rules:
+
+- The action is placed in `params["action"]`, not only inside `input_data`. `UniversalContainer.process()` reads from `params["action"]`, so passing it only in the payload defaults to `"status"`.
+- The core orchestrator must not contain `if action == "summarize_investigation": ...` branches or construction-only generic branches.
+- Reserved context keys are stripped from model-generated arguments and injected from authenticated runtime state.
+- Action names should be namespaced (`automotive.lookup_investigation`, `construction.estimate_costs`) to avoid collisions with generic blocks.
+- Result success is confirmed from the structured execution envelope; missing status is not treated as automatic success.
+- The LLM must not claim an action ran unless a real successful execution result exists.
 
 For this slice, the immediate impact is:
 
 - The retrieval functions in `app/core/automotive_retrieval.py` remain kit-internal utilities.
-- Any new user-facing automotive action that consumes investigation evidence is registered in `block_store/kits/automotive/block_registry/` and executed through the generic kit path.
+- Automotive container actions are added to `AutomotiveContainer.get_actions()` and invoked through `container.route(action, input_data, params)` with `params["action"]` set correctly.
 - No central CerebrumDev.ai executor is edited for investigation-specific behavior.
+- The broader runtime-orchestrator dispatch fix is a prerequisite for chat synthesis but is not part of this data-source slice.
 
 ---
 
@@ -366,7 +394,7 @@ chunk_count: total across both families
 status: "indexed" when indexed, "validated" when dry-run
 ```
 
-### 6.4 Idempotency and replacement
+### 6.4 Idempotency, replacement and family identity
 
 Re-running the same pack must:
 
@@ -375,7 +403,13 @@ Re-running the same pack must:
 - Not wipe unrelated project rows.
 - Update changed content in place via `chunk_id`-keyed upsert.
 
-This reuses the existing `_bulk_index_chunks` upsert logic.
+`_bulk_index_chunks` must encode `source_family` in the stored `doc_id`:
+
+```python
+doc_id = f"{chunk.source_family}:{chunk.record_id}"
+```
+
+The current `chunks_v2` migration does not expose `source_family` as a top-level column, so the `doc_id` prefix is the reliable discriminator at retrieval time. Recall rows keep `recall:{record_id}`; investigation rows use `investigation:{record_id}`.
 
 ---
 
