@@ -2,6 +2,11 @@ name: PR2 Automotive Release Gate
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/automotive-pilot-pr2
+    paths:
+      - '.github/workflows/pr2-automotive-release-gate.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
