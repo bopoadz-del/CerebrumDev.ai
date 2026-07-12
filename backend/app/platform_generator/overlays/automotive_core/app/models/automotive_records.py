@@ -37,6 +37,34 @@ class AutomotiveRecall(BaseModel):
     normalization_version: str = "automotive_core_v1"
 
 
+class AutomotiveInvestigation(BaseModel):
+    """Canonical NHTSA ODI defect investigation record."""
+
+    record_id: str = Field(..., description="Deterministic record identity")
+    source_id: str = Field(..., description="Official source identifier")
+    source_family: Literal["investigation"] = "investigation"
+    investigation_number: str = Field(..., description="NHTSA action number, e.g. PE16-007")
+    status: Optional[str] = None
+    investigation_type: Optional[str] = None
+    make: Optional[str] = None
+    model: Optional[str] = None
+    model_year: Optional[str] = None
+    model_year_range: Optional[str] = None
+    component: Optional[str] = None
+    manufacturer: Optional[str] = None
+    subject: Optional[str] = None
+    summary: Optional[str] = None
+    opening_date: Optional[str] = None
+    closing_date: Optional[str] = None
+    associated_campaign_number: Optional[str] = None
+    source_url: Optional[str] = None
+    jurisdiction: str = "US"
+    authority_rating: str = "primary"
+    harvest_timestamp: str
+    raw_record_hash: str
+    normalization_version: str = "automotive_core_v1"
+
+
 class AutomotiveChunk(BaseModel):
     """One deterministic retrieval chunk produced from a canonical record."""
 

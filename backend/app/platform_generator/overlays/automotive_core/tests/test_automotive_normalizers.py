@@ -73,3 +73,18 @@ def test_missing_values_remain_null() -> None:
     assert record.summary is None
     assert record.consequence is None
     assert record.remedy is None
+
+
+def test_automotive_investigation_model_exists() -> None:
+    from app.models.automotive_records import AutomotiveInvestigation
+
+    record = AutomotiveInvestigation(
+        record_id="abc123",
+        source_id="nhtsa_investigations",
+        source_family="investigation",
+        investigation_number="PE16-007",
+        harvest_timestamp="2026-07-12T00:00:00Z",
+        raw_record_hash="def456",
+    )
+    assert record.investigation_number == "PE16-007"
+    assert record.source_family == "investigation"
