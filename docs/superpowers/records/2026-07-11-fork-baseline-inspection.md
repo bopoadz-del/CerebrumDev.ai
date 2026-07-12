@@ -1,8 +1,9 @@
 # The_Fork Baseline Inspection
 
-> **Source commit:** `008d5e7a53654d401ce60372212f5245a8067c76`  
+> **Source commit:** `1cb621c7aed05ad67c8356f4f7b863aa655af1a3`  
 > **Pinned for:** Automotive Safety Intelligence Pilot platform generation  
-> **Inspected:** 2026-07-11
+> **Inspected:** 2026-07-11  
+> **Previous pins:** `008d5e7a53654d401ce60372212f5245a8067c76`, `31c1f9daf8b70ee115125c50e3e32fe34a381e70`
 
 ---
 
@@ -174,6 +175,10 @@ The_Fork/
 
 ---
 
+## Changes since previous pin (`008d5e7`)
+
+- `app/main.py` now requires `DATABASE_URL` in production (`ENV=production`); without it the app hard-fails at startup instead of silently falling back to an empty SQLite database.
+
 ## Automotive pilot implications
 
 - The generator must copy from `app/` (not `backend/app/`).
@@ -182,3 +187,4 @@ The_Fork/
 - Drive token encryption must reuse `DATA_ENCRYPTION_KEY`.
 - New folder-binding/sync routes should extend the existing `drive.py` engine.
 - Admin foundation-pack controls fit the existing `/v1/admin/*` pattern.
+- Generated automotive deployments must set a real `DATABASE_URL` in production; the SQLite fallback is no longer permitted.

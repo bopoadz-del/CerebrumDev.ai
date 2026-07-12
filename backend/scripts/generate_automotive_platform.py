@@ -56,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to Cerebrum-Blocks repository (defaults to ../Cerebrum-Blocks or CEREBRUM_BLOCKS_PATH env)",
     )
     parser.add_argument(
+        "--no-verify-fork-pin",
+        action="store_true",
+        help="Allow generation from a Fork checkout whose HEAD differs from the pinned baseline (records actual HEAD)",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
         help="Delete output directory if it already exists",
@@ -77,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest_data,
         fork_path=args.fork_path,
         blocks_path=args.blocks_path,
+        verify_fork_pin=not args.no_verify_fork_pin,
     )
     inputs_hash = generator.generate(args.output)
 

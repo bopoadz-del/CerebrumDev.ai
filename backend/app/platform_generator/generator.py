@@ -51,9 +51,11 @@ class PlatformGenerator:
         manifest: AutomotivePlatformManifest,
         fork_path: Path | str | None = None,
         blocks_path: Path | str | None = None,
+        verify_fork_pin: bool = True,
     ):
         validate_manifest(manifest)
         self.manifest = manifest
+        self.verify_fork_pin = verify_fork_pin
         self.fork_path = Path(
             fork_path or os.getenv(DEFAULT_FORK_PATH_ENV, "../The_Fork")
         ).resolve()
@@ -64,7 +66,9 @@ class PlatformGenerator:
     def _verify_fork_baseline(self) -> str:
         """Confirm the fork path points to the pinned commit.
 
-        Returns the resolved commit SHA. Raises RuntimeError on mismatch.
+        Returns the resolved commit SHA. Raises RuntimeError on mismatch when
+        ``verify_fork_pin`` is True; otherwise logs a warning and returns the
+        actual HEAD so smoke tests can follow a moving baseline.
         """
         if not self.fork_path.exists():
             raise RuntimeError(f"The_Fork path does not exist: {self.fork_path}")
@@ -90,9 +94,16 @@ class PlatformGenerator:
             )
         head = result.stdout.strip()
         if head != FORK_BASELINE_COMMIT:
-            raise RuntimeError(
-                f"The_Fork HEAD {head} does not match pinned baseline "
-                f"{FORK_BASELINE_COMMIT}. Update the pin or path."
+            if self.verify_fork_pin:
+                raise RuntimeError(
+                    f"The_Fork HEAD {head} does not match pinned baseline "
+                    f"{FORK_BASELINE_COMMIT}. Update the pin or path."
+                )
+            logger.warning(
+                "The_Fork HEAD %s does not match pinned baseline %s; "
+                "proceeding because verify_fork_pin=False",
+                head,
+                FORK_BASELINE_COMMIT,
             )
         return head
 
@@ -177,7 +188,13 @@ class PlatformGenerator:
         data: dict[str, Any],
         fork_path: Path | str | None = None,
         blocks_path: Path | str | None = None,
+        verify_fork_pin: bool = True,
     ) -> "PlatformGenerator":
         """Convenience constructor from a raw manifest dict."""
         manifest = parse_manifest(data)
-        return cls(manifest, fork_path=fork_path, blocks_path=blocks_path)
+        return cls(
+            manifest,
+            fork_path=fork_path,
+            blocks_path=blocks_path,
+            verify_fork_pin=verify_fork_pin,
+        )
