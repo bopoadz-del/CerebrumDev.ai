@@ -180,26 +180,190 @@ def _embed_chunks(
             yield chunk, embedding
 
 
+def _bulk_index_batch_size() -> int:
+    """Read ``RAG_BULK_INDEX_BATCH_SIZE`` live; default keeps PostgreSQL
+    statements well under Render remote connection limits.
+    """
+    raw = os.getenv("RAG_BULK_INDEX_BATCH_SIZE", "25")
+    try:
+        value = int(raw)
+        return max(1, min(value, 1000))
+    except ValueError:
+        return 25
+
+
+def _bulk_index_chunks(
+    project_id: str,
+    chunk_embedding_pairs,
+    dim: int,
+    model_name: str,
+) -> int:
+    """Bulk-write chunk/embedding rows in bounded batches.
+
+    Replaces the per-document ``VectorStore.upsert_chunks`` path because
+    foundation-pack ingestion can be thousands of recall records; one
+    transaction per document over a remote PostgreSQL connection is
+    unusably slow (observed ~10 s/upsert on Render Oregon). Batched bulk
+    inserts commit in seconds while keeping each statement small enough
+    for remote Postgres connection limits.
+
+    Upsert semantics: rows are inserted, and on primary-key conflict the
+    existing row is updated. This makes re-running the pack idempotent
+    without wiping unrelated data.
+
+    Note: the full AutomotiveChunk provenance (source_url, report date,
+    affected units, raw record hash) lives in the published chunks JSONL.
+    The dynamic ``chunks_v2`` table carries a ``metadata`` JSONB column,
+    but the generated ORM class does not populate it yet; this is tracked
+    as follow-up work and does not affect retrieval or citation identity.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy import insert, select
+    from sqlalchemy.dialects import postgresql, sqlite
+
+    from app.core.models import Document, Project
+    from app.core.rag.vector_store import get_store
+
+    store = get_store(dim=dim)
+    table = store._rag_chunk_cls.__table__
+    now = datetime.now(timezone.utc).isoformat()
+    bulk_batch_size = _bulk_index_batch_size()
+
+    rows = []
+    doc_ids: set[str] = set()
+    for chunk, embedding in chunk_embedding_pairs:
+        # One NHTSA campaign can cover multiple year/make/model rows, so the
+        # doc_id must be unique per canonical record (record_id) rather than
+        # per campaign number. chunk_index stays 0 because each record becomes
+        # exactly one chunk in this slice.
+        doc_id = f"recall:{chunk.record_id}"
+        doc_ids.add(doc_id)
+        text = chunk.text
+        if "\x00" in text:
+            text = text.replace("\x00", "")
+        rows.append(
+            {
+                "chunk_id": chunk.chunk_id,
+                "project_id": project_id,
+                "doc_id": doc_id,
+                "chunk_index": chunk.chunk_index,
+                "text": text,
+                "embedding": embedding,
+                "created_at": now,
+                "embedding_model": model_name,
+                "embedding_dim": dim,
+                "embedding_normalized": True,
+            }
+        )
+
+    if not rows:
+        return 0
+
+    indexed = 0
+    with store._lock:
+        with store._session_factory()() as session:
+            dialect = session.bind.dialect.name
+
+            # PostgreSQL enforces the chunks FK constraints on projects/documents.
+            # SQLite test/dev databases use bare ids without FK enforcement, so
+            # skip parent row creation there to avoid requiring the full schema.
+            if dialect == "postgresql":
+                # Ensure the foundation project exists.
+                if session.get(Project, project_id) is None:
+                    session.add(
+                        Project(
+                            id=project_id,
+                            name=project_id,
+                            client=None,
+                            status="active",
+                            aconex_connected=False,
+                            user_id="system",
+                            created_at=now,
+                        )
+                    )
+                    session.flush()
+
+                # Ensure every referenced document exists in bounded batches.
+                missing_doc_ids = list(doc_ids)
+                for i in range(0, len(missing_doc_ids), bulk_batch_size):
+                    batch_ids = missing_doc_ids[i : i + bulk_batch_size]
+                    existing_docs = {
+                        row[0]
+                        for row in session.execute(
+                            select(Document.id).where(Document.id.in_(batch_ids))
+                        ).all()
+                    }
+                    new_docs = set(batch_ids) - existing_docs
+                    if new_docs:
+                        doc_rows = [
+                            {
+                                "id": doc_id,
+                                "project_id": project_id,
+                                "original_name": doc_id,
+                                "stored_as": None,
+                                "file_path": None,
+                                "doc_type": "document",
+                                "doc_role": "other",
+                                "size": 0,
+                                "uploaded_at": now,
+                                "content_sha256": None,
+                            }
+                            for doc_id in new_docs
+                        ]
+                        stmt = postgresql.insert(Document.__table__).values(doc_rows)
+                        stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
+                        session.execute(stmt)
+                        session.flush()
+
+            # Bulk upsert chunks in bounded batches.
+            for i in range(0, len(rows), bulk_batch_size):
+                batch = rows[i : i + bulk_batch_size]
+                if dialect == "postgresql":
+                    stmt = postgresql.insert(table).values(batch)
+                    update_dict = {
+                        c.name: stmt.excluded[c.name]
+                        for c in stmt.excluded
+                        if c.name != "chunk_id"
+                    }
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["chunk_id"], set_=update_dict
+                    )
+                elif dialect == "sqlite":
+                    stmt = sqlite.insert(table).values(batch)
+                    update_dict = {
+                        c.name: stmt.excluded[c.name]
+                        for c in stmt.excluded
+                        if c.name != "chunk_id"
+                    }
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["chunk_id"], set_=update_dict
+                    )
+                else:
+                    for row in batch:
+                        session.execute(insert(table).values(**row))
+                        indexed += 1
+                    session.commit()
+                    continue
+
+                result = session.execute(stmt)
+                session.commit()
+                # SQLAlchemy/PostgreSQL sometimes reports -1 for upsert rowcount;
+                # fall back to the batch size so the manifest reflects work done.
+                rc = result.rowcount
+                indexed += int(rc if rc is not None and rc >= 0 else len(batch))
+
+    return indexed
+
+
 def _index_chunks(
     project_id: str,
     chunk_embedding_pairs,
     dim: int,
+    model_name: str,
 ) -> int:
-    """Write chunks and embeddings to the vector store one document at a time."""
-    from app.core.rag.vector_store import get_store
-
-    store = get_store(dim=dim)
-    indexed = 0
-    for chunk, embedding in chunk_embedding_pairs:
-        doc_id = f"recall:{chunk.campaign_number}"
-        count = store.upsert_chunks(
-            project_id=project_id,
-            doc_id=doc_id,
-            chunks=[chunk.text],
-            embeddings=embedding.reshape(1, -1),
-        )
-        indexed += count
-    return indexed
+    """Write chunks and embeddings to the vector store using bulk upsert."""
+    return _bulk_index_chunks(project_id, chunk_embedding_pairs, dim, model_name)
 
 
 def build_automotive_core_pack(
@@ -247,6 +411,7 @@ def build_automotive_core_pack(
             project_id,
             _embed_chunks(chunks),
             dim=embedder.dim,
+            model_name=embedder.identity.get("model", os.getenv("RAG_EMBEDDING_MODEL", "fake")),
         )
 
     manifest = PackManifest(

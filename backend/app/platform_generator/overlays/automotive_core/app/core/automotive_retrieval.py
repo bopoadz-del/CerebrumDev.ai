@@ -110,15 +110,20 @@ def retrieve_foundation_evidence(
 
     results: List[AutomotiveEvidence] = []
     for score, chunk in scored[:top_k]:
+        # doc_id is now recall:<record_id> because one campaign can span
+        # multiple year/make/model records. Extract the campaign number from
+        # the chunk text, which always begins with "Campaign: <CAMPNO>".
+        campaign = _extract_campaign_number(chunk.text)
+        record_reference = campaign or chunk.doc_id.split(":")[-1]
         results.append(
             AutomotiveEvidence(
                 knowledge_layer=FOUNDATION_PROJECT_ID,
                 foundation_pack_id="automotive_core_rag_v1",
                 source_family="recall",
-                source_title=f"NHTSA Recall {chunk.doc_id.split(':')[-1]}",
+                source_title=f"NHTSA Recall {record_reference}",
                 source_authority="primary",
                 source_url=None,
-                record_reference=chunk.doc_id.split(":")[-1],
+                record_reference=record_reference,
                 retrieval_score=round(float(score), 6),
                 chunk_text=chunk.text,
                 metadata={
