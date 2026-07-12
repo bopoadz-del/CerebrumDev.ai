@@ -12,13 +12,14 @@ from app.core.automotive_normalizers import normalize_recall_rows
 from app.core.automotive_pack_builder import (
     FOUNDATION_COLLECTION,
     FOUNDATION_PACK_ID,
+    _bulk_index_chunks,
     build_automotive_core_pack,
     build_automotive_core_pack_from_families,
     chunk_investigation_records,
     chunk_recall_records,
     load_canonical_records,
 )
-from app.models.automotive_records import AutomotiveInvestigation, AutomotiveRecall
+from app.models.automotive_records import AutomotiveChunk, AutomotiveInvestigation, AutomotiveRecall
 
 
 def _sample_records() -> list[AutomotiveRecall]:
@@ -71,8 +72,120 @@ def test_chunk_investigation_records_are_deterministic() -> None:
     ]
     chunks = chunk_investigation_records(records)
     assert len(chunks) == 1
+    # AutomotiveChunk has no top-level investigation_number field; the
+    # investigation number is surfaced via record_reference and metadata so
+    # downstream retrieval/citation can identify the source record.
     assert chunks[0].record_reference == "PE16-007"
     assert chunks[0].metadata["investigation_number"] == "PE16-007"
+
+
+def test_bulk_index_chunks_encodes_source_family_in_doc_id() -> None:
+    """_bulk_index_chunks prefixes doc_id with source_family for retrieval.
+
+    The RAG modules (app.core.rag.vector_store / app.core.models) are not part
+    of this overlay, so we mock the store boundary and assert on the rows that
+    would be written to the chunks table.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from sqlalchemy import Column, Integer, MetaData, String, Table
+
+    recall_chunk = AutomotiveChunk(
+        chunk_id="r1-0",
+        record_id="r1",
+        source_id="nhtsa_recalls",
+        source_family="recall",
+        campaign_number="15V176000",
+        make="Honda",
+        model="Accord",
+        model_year="2014",
+        component="AIR BAGS",
+        chunk_index=0,
+        text="Recall text",
+        text_hash="hash1",
+        record_reference="15V176000",
+    )
+    investigation_chunk = AutomotiveChunk(
+        chunk_id="i1-0",
+        record_id="i1",
+        source_id="nhtsa_investigations",
+        source_family="investigation",
+        campaign_number="",
+        make="Tesla",
+        model="Model S",
+        model_year="2015",
+        component="AIR BAGS",
+        chunk_index=0,
+        text="Investigation text",
+        text_hash="hash2",
+        record_reference="PE16-007",
+        metadata={"investigation_number": "PE16-007"},
+    )
+
+    # Provide a minimal table that can compile the INSERT statements generated
+    # by _bulk_index_chunks.
+    metadata = MetaData()
+    mock_table = Table(
+        "chunks",
+        metadata,
+        Column("chunk_id", String),
+        Column("project_id", String),
+        Column("doc_id", String),
+        Column("chunk_index", Integer),
+        Column("text", String),
+        Column("embedding", String),
+        Column("created_at", String),
+        Column("embedding_model", String),
+        Column("embedding_dim", Integer),
+        Column("embedding_normalized", Integer),
+    )
+
+    mock_session = MagicMock()
+    mock_session.bind.dialect.name = "other"  # forces per-row generic INSERT path
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+
+    mock_session_factory = MagicMock(return_value=mock_session)
+    mock_store = MagicMock()
+    mock_store._rag_chunk_cls.__table__ = mock_table
+    mock_store._session_factory = MagicMock(return_value=mock_session_factory)
+    mock_store._lock = MagicMock()
+    mock_store._lock.__enter__ = MagicMock(return_value=mock_store)
+    mock_store._lock.__exit__ = MagicMock(return_value=False)
+
+    fake_models = MagicMock()
+    fake_models.Document = MagicMock()
+    fake_models.Project = MagicMock()
+
+    fake_vector_store = MagicMock()
+    fake_vector_store.get_store = MagicMock(return_value=mock_store)
+
+    with patch.dict(
+        "sys.modules",
+        {
+            "app.core.models": fake_models,
+            "app.core.rag.vector_store": fake_vector_store,
+        },
+    ):
+        indexed = _bulk_index_chunks(
+            "automotive_core_v1",
+            [
+                (recall_chunk, [0.1] * 256),
+                (investigation_chunk, [0.2] * 256),
+            ],
+            dim=256,
+            model_name="fake",
+        )
+
+    assert indexed == 2
+    fake_vector_store.get_store.assert_called_once_with(dim=256)
+
+    doc_ids = []
+    for call in mock_session.execute.call_args_list:
+        stmt = call.args[0]
+        doc_ids.append(stmt.compile().params["doc_id"])
+
+    assert doc_ids == ["recall:r1", "investigation:i1"]
 
 
 def test_chunk_recall_records_are_deterministic() -> None:
