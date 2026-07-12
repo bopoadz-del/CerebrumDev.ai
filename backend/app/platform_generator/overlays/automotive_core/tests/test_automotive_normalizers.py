@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.core.automotive_normalizers import (
     normalize_investigation_row,
+    normalize_investigation_rows,
     normalize_recall_row,
     normalize_recall_rows,
 )
@@ -122,3 +123,49 @@ def test_normalize_investigation_row_maps_official_columns() -> None:
     assert record.summary == "Investigation into unintended air bag deployment events."
     assert record.status == "Closed"
     assert record.investigation_type == "PE"
+
+
+
+def test_investigation_status_open_when_no_cdate() -> None:
+    row = {"NHTSA_ACTION_NUMBER": "DP20-001", "CDATE": ""}
+    record = normalize_investigation_row("nhtsa_investigations", 1, row)
+    assert record.status == "Open"
+
+
+def test_investigation_status_closed_when_cdate_present() -> None:
+    row = {"NHTSA_ACTION_NUMBER": "PE16-007", "CDATE": "20161231"}
+    record = normalize_investigation_row("nhtsa_investigations", 1, row)
+    assert record.status == "Closed"
+
+
+def test_investigation_missing_values_remain_null() -> None:
+    row = {"NHTSA_ACTION_NUMBER": "PE16-007"}
+    record = normalize_investigation_row("nhtsa_investigations", 1, row)
+    assert record.make is None
+    assert record.model is None
+    assert record.model_year is None
+    assert record.component is None
+    assert record.summary is None
+
+
+def test_investigation_deterministic_id_and_hash() -> None:
+    rows = [
+        {"NHTSA_ACTION_NUMBER": "PE16-007", "MAKE": "Tesla", "YEAR": "2015"},
+        {"NHTSA_ACTION_NUMBER": "DP20-001", "MAKE": "Ford", "YEAR": "2018"},
+    ]
+    first = normalize_investigation_rows("nhtsa_investigations", rows)
+    second = normalize_investigation_rows("nhtsa_investigations", rows)
+    assert [r.record_id for r in first] == [r.record_id for r in second]
+    assert [r.raw_record_hash for r in first] == [r.raw_record_hash for r in second]
+
+
+def test_investigation_control_characters_removed() -> None:
+    row = {
+        "NHTSA_ACTION_NUMBER": "PE16-007",
+        "MAKE": "Tesla\x00\x01",
+        "SUMMARY": "Summary with\nnewlines\rand\ttabs.",
+    }
+    record = normalize_investigation_row("nhtsa_investigations", 1, row)
+    assert "\x00" not in record.make
+    assert "\n" not in record.summary
+    assert "\r" not in record.summary
