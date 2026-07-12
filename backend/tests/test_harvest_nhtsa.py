@@ -204,3 +204,47 @@ def test_harvest_artifacts_are_outside_git(fixture_path: Path, tmp_path: Path) -
     # The harvester writes under output_dir/raw and output_dir/canonical.
     result = harvest_recalls(output_dir=tmp_path / "git-check", fixture_path=fixture_path)
     assert ".git" not in str(result["canonical_path"])
+
+
+def test_investigation_dry_run_performs_no_writes(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "nhtsa_investigations_sample.txt"
+    result = harvest_investigations(
+        output_dir=tmp_path,
+        fixture_path=fixture,
+        dry_run=True,
+    )
+    assert result["record_count"] == 4
+    assert not (tmp_path / "canonical").exists()
+
+
+def test_investigation_content_hash_is_recorded(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "nhtsa_investigations_sample.txt"
+    result = harvest_investigations(
+        output_dir=tmp_path,
+        fixture_path=fixture,
+    )
+    assert result["harvest_manifest"]["content_hash"]
+    assert len(result["harvest_manifest"]["content_hash"]) == 64
+
+
+def test_investigation_unsafe_zip_path_rejected(tmp_path: Path) -> None:
+    from scripts.harvest_nhtsa import UnsafeArchivePathError, _validate_zip_member
+    with pytest.raises(UnsafeArchivePathError):
+        _validate_zip_member("../../../etc/passwd")
+
+
+def test_investigation_valid_cache_reused(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "nhtsa_investigations_sample.txt"
+    first = harvest_investigations(output_dir=tmp_path, fixture_path=fixture)
+    second = harvest_investigations(output_dir=tmp_path, fixture_path=fixture)
+    assert first["record_count"] == second["record_count"]
+
+
+def test_investigation_corrupt_cache_rejected(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "nhtsa_investigations_sample.txt"
+    harvest_investigations(output_dir=tmp_path, fixture_path=fixture)
+    archive = tmp_path / "raw" / "nhtsa_investigations" / "FLAT_INV.zip"
+    if archive.exists():
+        archive.write_bytes(b"corrupt")
+        result = harvest_investigations(output_dir=tmp_path, fixture_path=fixture)
+        assert result["record_count"] == 4
