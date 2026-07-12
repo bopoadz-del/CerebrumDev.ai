@@ -13,6 +13,7 @@ from scripts.harvest_nhtsa import (
     UnsafeArchivePathError,
     _download_stream,
     extract_recall_csv,
+    harvest_investigations,
     harvest_recalls,
     normalize_recall_row,
 )
@@ -186,6 +187,17 @@ def test_download_stream_writes_file(tmp_path: Path) -> None:
     _download_stream(url, dest, timeout=30.0, max_retries=1)
     assert dest.exists()
     assert dest.stat().st_size > 0
+
+
+def test_investigation_fixture_harvest_succeeds(tmp_path: Path) -> None:
+    fixture = Path(__file__).parent / "fixtures" / "nhtsa_investigations_sample.txt"
+    result = harvest_investigations(
+        output_dir=tmp_path,
+        fixture_path=fixture,
+    )
+    assert result["record_count"] > 0
+    assert result["harvest_manifest"]["source_family"] == "investigation"
+    assert (tmp_path / "canonical" / "investigations.jsonl").exists()
 
 
 def test_harvest_artifacts_are_outside_git(fixture_path: Path, tmp_path: Path) -> None:

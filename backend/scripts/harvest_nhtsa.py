@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.util
 import io
 import json
 import logging
@@ -20,6 +21,7 @@ import os
 import shutil
 import sys
 import tempfile
+import types
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +75,27 @@ NHTSA_RECALL_FIELDNAMES = [
 ]
 
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
+
+DEFAULT_INVESTIGATION_URL = "https://static.nhtsa.gov/odi/ffdd/inv/FLAT_INV.zip"
+DEFAULT_INVESTIGATION_DICT_URL = "https://static.nhtsa.gov/odi/ffdd/inv/INV.txt"
+
+EXPECTED_INVESTIGATION_ARCHIVE_MEMBERS = {"FLAT_INV.txt"}
+
+# Official NHTSA ODI investigation flat-file layout.
+# The bulk file is tab-delimited and has NO header row.
+NHTSA_INVESTIGATION_FIELDNAMES = [
+    "NHTSA_ACTION_NUMBER",
+    "MAKE",
+    "MODEL",
+    "YEAR",
+    "COMPNAME",
+    "MFR_NAME",
+    "ODATE",
+    "CDATE",
+    "CAMPNO",
+    "SUBJECT",
+    "SUMMARY",
+]
 
 
 class HarvestError(Exception):
@@ -223,6 +246,87 @@ def _field_getter(row: Dict[str, str]):
     return get
 
 
+_normalize_investigation_row: Optional[Any] = None
+
+
+def _import_overlay_investigation_normalizer() -> Any:
+    """Load ``normalize_investigation_row`` from the automotive_core overlay.
+
+    The harvester runs from ``backend/`` where ``app`` is the backend package,
+    so the overlay's ``app`` package is temporarily aliased while the module is
+    loaded, then the original ``app`` tree is restored.
+    """
+    overlay_dir = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "platform_generator"
+        / "overlays"
+        / "automotive_core"
+    )
+    if not overlay_dir.exists():
+        raise ImportError(f"automotive_core overlay not found at {overlay_dir}")
+
+    normalizer_path = overlay_dir / "app" / "core" / "automotive_normalizers.py"
+    models_path = overlay_dir / "app" / "models" / "automotive_records.py"
+
+    touched = [
+        "app",
+        "app.models",
+        "app.models.automotive_records",
+        "app.core",
+        "app.core.automotive_normalizers",
+    ]
+    saved: Dict[str, Any] = {}
+    for key in touched:
+        saved[key] = sys.modules.pop(key, None)
+
+    try:
+        models_spec = importlib.util.spec_from_file_location(
+            "app.models.automotive_records", models_path
+        )
+        models_mod = importlib.util.module_from_spec(models_spec)
+        sys.modules["app.models.automotive_records"] = models_mod
+
+        app_mod = types.ModuleType("app")
+        app_models_mod = types.ModuleType("app.models")
+        sys.modules["app"] = app_mod
+        sys.modules["app.models"] = app_models_mod
+        app_mod.models = app_models_mod
+        app_models_mod.automotive_records = models_mod
+        models_spec.loader.exec_module(models_mod)
+
+        norm_spec = importlib.util.spec_from_file_location(
+            "app.core.automotive_normalizers", normalizer_path
+        )
+        norm_mod = importlib.util.module_from_spec(norm_spec)
+        app_core_mod = types.ModuleType("app.core")
+        sys.modules["app.core"] = app_core_mod
+        sys.modules["app.core.automotive_normalizers"] = norm_mod
+        app_mod.core = app_core_mod
+        app_core_mod.automotive_normalizers = norm_mod
+        norm_spec.loader.exec_module(norm_mod)
+
+        return norm_mod.normalize_investigation_row
+    finally:
+        for key in touched:
+            if saved.get(key) is not None:
+                sys.modules[key] = saved[key]
+            elif key in sys.modules:
+                del sys.modules[key]
+
+
+def _get_normalize_investigation_row() -> Any:
+    """Return the cached overlay investigation normalizer, loading it once."""
+    global _normalize_investigation_row
+    if _normalize_investigation_row is None:
+        try:
+            from app.core.automotive_normalizers import normalize_investigation_row
+        except ImportError:
+            normalize_investigation_row = _import_overlay_investigation_normalizer()
+        _normalize_investigation_row = normalize_investigation_row
+    return _normalize_investigation_row
+
+
 def _download_stream(
     url: str,
     dest: Path,
@@ -361,6 +465,63 @@ def _rows_from_csv(csv_path: Path) -> List[Dict[str, str]]:
     return rows
 
 
+def extract_investigation_csv(zip_path: Path) -> Path:
+    """Extract the investigation flat file from the archive."""
+    extract_dir = zip_path.parent / "extracted"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        candidates = [
+            info for info in zf.infolist()
+            if not info.is_dir() and Path(info.filename).name in EXPECTED_INVESTIGATION_ARCHIVE_MEMBERS
+        ]
+        if not candidates:
+            names = [info.filename for info in zf.infolist() if not info.is_dir()]
+            raise HarvestError("ARCHIVE_UNEXPECTED_CONTENT", f"No expected investigation file in archive: {names}")
+
+        chosen = sorted(candidates, key=lambda i: i.file_size, reverse=True)[0]
+        safe_name = _validate_zip_member(chosen.filename)
+        dest = extract_dir / Path(safe_name).name
+        with zf.open(chosen) as src, dest.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+        return dest
+
+
+def _investigation_rows_from_csv(csv_path: Path) -> List[Dict[str, str]]:
+    rows = []
+    with csv_path.open("r", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(
+            f,
+            fieldnames=NHTSA_INVESTIGATION_FIELDNAMES,
+            delimiter="\t",
+        )
+        for row in reader:
+            rows.append({k: v for k, v in row.items() if k is not None})
+    return rows
+
+
+def _load_investigation_fixture(fixture_path: Path) -> List[Dict[str, str]]:
+    suffix = fixture_path.suffix.lower()
+    if suffix == ".jsonl":
+        rows = []
+        with fixture_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+        return rows
+    if suffix in {".csv", ".txt"}:
+        rows = []
+        with fixture_path.open("r", encoding="utf-8", errors="replace") as f:
+            reader = csv.DictReader(f, fieldnames=NHTSA_INVESTIGATION_FIELDNAMES, delimiter="\t")
+            for idx, row in enumerate(reader):
+                if idx == 0 and row.get("NHTSA_ACTION_NUMBER") == "NHTSA_ACTION_NUMBER":
+                    continue
+                rows.append({k: v for k, v in row.items() if k is not None})
+        return rows
+    raise HarvestError("UNSUPPORTED_FIXTURE", f"Fixture must be .jsonl, .csv or .txt: {fixture_path}")
+
+
 def harvest_recalls(
     output_dir: Path,
     source_url: Optional[str] = None,
@@ -468,9 +629,114 @@ def harvest_recalls(
     }
 
 
+def harvest_investigations(
+    output_dir: Path,
+    source_url: Optional[str] = None,
+    since_year: Optional[int] = None,
+    max_records: Optional[int] = None,
+    dry_run: bool = False,
+    fixture_path: Optional[Path] = None,
+    force_download: bool = False,
+) -> Dict[str, Any]:
+    """Harvest NHTSA ODI investigations and write raw artifacts + harvest manifest."""
+    source_id = "nhtsa_investigations"
+    url = source_url or DEFAULT_INVESTIGATION_URL
+    output_dir = Path(output_dir)
+    raw_dir = output_dir / "raw" / source_id
+    canonical_dir = output_dir / "canonical"
+    if not dry_run:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+    archive_path = raw_dir / Path(urlparse(url).path).name
+    extracted_csv: Optional[Path] = None
+    content_hash = ""
+
+    if fixture_path:
+        logger.info("Using fixture %s for %s", fixture_path, source_id)
+        rows = _load_investigation_fixture(fixture_path)
+        content_hash = hashlib.sha256(
+            json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        fixture_copy = raw_dir / f"fixture{fixture_path.suffix}"
+        if not dry_run:
+            shutil.copy2(fixture_path, fixture_copy)
+    else:
+        if not dry_run:
+            if archive_path.exists() and not force_download:
+                content_hash = _sha256_file(archive_path)
+                logger.info("Reusing existing archive %s (sha256=%s)", archive_path, content_hash)
+            else:
+                _download_stream(url, archive_path)
+                content_hash = _sha256_file(archive_path)
+                logger.info("Downloaded archive %s (sha256=%s)", archive_path, content_hash)
+            extracted_csv = extract_investigation_csv(archive_path)
+            rows = _investigation_rows_from_csv(extracted_csv)
+        else:
+            rows = []
+
+    if since_year is not None:
+        filtered = []
+        for row in rows:
+            year_str = _field_getter(row)("YEAR", "year", "YEARTXT") or ""
+            year_val = _parse_int(year_str)
+            if year_val is not None and year_val >= since_year:
+                filtered.append(row)
+        rows = filtered
+
+    if max_records is not None and len(rows) > max_records:
+        logger.info("Capping harvest at %d records (raw rows available: %d)", max_records, len(rows))
+        rows = rows[:max_records]
+
+    normalize_investigation_row = _get_normalize_investigation_row()
+    canonical_records: List[Dict[str, Any]] = []
+    for sequence, row in enumerate(rows, start=1):
+        canonical = normalize_investigation_row(source_id, sequence, row)
+        canonical_records.append(canonical.model_dump())
+
+    harvest_manifest = {
+        "source_id": source_id,
+        "source_family": "investigation",
+        "source_url": url,
+        "retrieval_method": "download_csv_zip",
+        "harvest_timestamp": _utc_now(),
+        "content_hash": content_hash,
+        "record_count": len(canonical_records),
+        "raw_archive_path": str(archive_path.relative_to(output_dir)) if not fixture_path else None,
+        "extracted_csv_path": str(extracted_csv.relative_to(output_dir)) if extracted_csv else None,
+        "fixture_path": str(fixture_path.name) if fixture_path else None,
+        "since_year": since_year,
+    }
+
+    canonical_path = canonical_dir / "investigations.jsonl"
+    manifest_path = raw_dir / "harvest_manifest.json"
+
+    if not dry_run:
+        tmp_canonical = canonical_path.with_suffix(".jsonl.tmp")
+        with tmp_canonical.open("w", encoding="utf-8") as f:
+            for record in canonical_records:
+                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        os.replace(tmp_canonical, canonical_path)
+
+        tmp_manifest = manifest_path.with_suffix(".json.tmp")
+        tmp_manifest.write_text(
+            json.dumps(harvest_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.replace(tmp_manifest, manifest_path)
+    else:
+        logger.info("Dry run: would write %d canonical records to %s", len(canonical_records), canonical_path)
+
+    return {
+        "harvest_manifest": harvest_manifest,
+        "canonical_path": canonical_path if not dry_run else None,
+        "record_count": len(canonical_records),
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Harvest NHTSA automotive public data")
-    parser.add_argument("--family", default="recalls", help="Source family to harvest (recalls only in this slice)")
+    parser.add_argument("--family", default="recalls", help="Source family to harvest (recalls|investigation)")
     parser.add_argument("--output-dir", required=True, type=Path, help="Directory for harvested artifacts")
     parser.add_argument("--since-year", type=int, default=None, help="Filter records to this model year or later")
     parser.add_argument("--max-records", type=int, default=None, help="Cap the number of records processed")
@@ -481,12 +747,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-    if args.family != "recalls":
-        logger.error("This vertical slice only supports --family recalls")
+    if args.family == "recalls":
+        harvest_func = harvest_recalls
+    elif args.family == "investigation":
+        harvest_func = harvest_investigations
+    else:
+        logger.error("Unsupported --family: %s (supported: recalls, investigation)", args.family)
         return 1
 
     try:
-        result = harvest_recalls(
+        result = harvest_func(
             output_dir=args.output_dir,
             since_year=args.since_year,
             max_records=args.max_records,

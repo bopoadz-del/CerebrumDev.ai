@@ -1,0 +1,4 @@
+NHTSA_ACTION_NUMBER	MAKE	MODEL	YEAR	COMPNAME	MFR_NAME	ODATE	CDATE	CAMPNO	SUBJECT	SUMMARY
+PE16-007	Tesla	Model S	2015	AIR BAGS	Tesla Motors	20160101	20161231	16V176000	Air bag deployment investigation	Investigation into unintended air bag deployment events.
+PE21-003	Toyota	Camry	2018	FUEL SYSTEM, GASOLINE:DELIVERY:FUEL PUMP	Toyota Motor Engineering & Manufacturing	20210201	20210315	21V127000	Fuel pump failure investigation	Investigation into low-pressure fuel pump failures causing engine stall.
+DP22-001	Ford	F-150	2021	ENGINE	Ford Motor Company	20220901	99999999	22V953000	Engine failure investigation	Investigation into premature engine failures due to a valve issue.
