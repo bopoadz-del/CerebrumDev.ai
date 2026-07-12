@@ -1,0 +1,75 @@
+"""Tests for automotive canonical record normalizers."""
+
+from __future__ import annotations
+
+from app.core.automotive_normalizers import normalize_recall_row, normalize_recall_rows
+from app.models.automotive_records import AutomotiveRecall
+
+
+def test_normalize_recall_row_maps_official_columns() -> None:
+    row = {
+        "RECORD_ID": "1",
+        "CAMPNO": "15V176000",
+        "MAKETXT": "Honda",
+        "MODELTXT": "Accord",
+        "YEARTXT": "2014",
+        "MFGNAME": "Honda (American Honda Motor Co.)",
+        "COMPNAME": "AIR BAGS:PASSENGER SIDE FRONTAL",
+        "RCDATE": "20150331",
+        "POTAFF": "1900000",
+        "DESC_DEFECT": "The passenger air bag may be susceptible to moisture intrusion.",
+        "CONEQUENCE_DEFECT": "The air bag may not deploy as intended.",
+        "CORRECTIVE_ACTION": "Dealers will replace the passenger side frontal air bag.",
+    }
+    record = normalize_recall_row("nhtsa_recalls", 1, row)
+    assert record.campaign_number == "15V176000"
+    assert record.make == "Honda"
+    assert record.model == "Accord"
+    assert record.model_year == "2014"
+    assert record.report_received_date == "2015-03-31"
+    assert record.affected_units == 1900000
+
+
+def test_normalize_recall_row_handles_unknown_year() -> None:
+    row = {
+        "CAMPNO": "99V999000",
+        "MAKETXT": "Unknown",
+        "YEARTXT": "9999",
+        "RCDATE": "99999999",
+    }
+    record = normalize_recall_row("nhtsa_recalls", 1, row)
+    assert record.model_year is None
+    assert record.report_received_date is None
+
+
+def test_normalize_recall_row_strips_control_characters() -> None:
+    row = {
+        "CAMPNO": "15V176000",
+        "MAKETXT": "Honda\x00\x01",
+        "DESC_DEFECT": "Summary with\nnewlines\rand\ttabs.",
+    }
+    record = normalize_recall_row("nhtsa_recalls", 1, row)
+    assert "\x00" not in record.make
+    assert "\n" not in record.summary
+    assert "\r" not in record.summary
+
+
+def test_normalize_recall_rows_are_deterministic() -> None:
+    rows = [
+        {"CAMPNO": "15V176000", "MAKETXT": "Honda", "YEARTXT": "2014"},
+        {"CAMPNO": "21V127000", "MAKETXT": "Toyota", "YEARTXT": "2018"},
+    ]
+    first = normalize_recall_rows("nhtsa_recalls", rows)
+    second = normalize_recall_rows("nhtsa_recalls", rows)
+    assert [r.record_id for r in first] == [r.record_id for r in second]
+    assert [r.raw_record_hash for r in first] == [r.raw_record_hash for r in second]
+
+
+def test_missing_values_remain_null() -> None:
+    row = {"CAMPNO": "15V176000"}
+    record = normalize_recall_row("nhtsa_recalls", 1, row)
+    assert record.manufacturer is None
+    assert record.component is None
+    assert record.summary is None
+    assert record.consequence is None
+    assert record.remedy is None
