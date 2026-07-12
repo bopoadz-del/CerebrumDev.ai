@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_FORK_PATH_ENV = "FORK_BASELINE_PATH"
 DEFAULT_BLOCKS_PATH_ENV = "CEREBRUM_BLOCKS_PATH"
 
+# Path to the automotive intelligence overlay (relative to this file's package).
+_AUTOMOTIVE_OVERLAY_DIR = (
+    Path(__file__).parent / "overlays" / "automotive_core"
+).resolve()
+
 
 @dataclass(frozen=True)
 class GenerationInputsHash:
@@ -115,6 +120,20 @@ class PlatformGenerator:
                 f"The_Fork baseline is missing expected entries: {sorted(missing)}"
             )
 
+    def _apply_automotive_overlay(self, output: Path) -> None:
+        """Copy automotive-specific runtime files into the generated package."""
+        if not _AUTOMOTIVE_OVERLAY_DIR.exists():
+            logger.warning("Automotive overlay not found at %s", _AUTOMOTIVE_OVERLAY_DIR)
+            return
+        text_filter = make_text_filter(self.manifest)
+        copy_and_transform(
+            _AUTOMOTIVE_OVERLAY_DIR,
+            output,
+            text_filter,
+            sanitize=True,
+            src_root=_AUTOMOTIVE_OVERLAY_DIR,
+        )
+
     def _blocks_commit(self) -> str:
         """Return the current Cerebrum-Blocks commit, or 'unknown'."""
         git_dir = self.blocks_path / ".git"
@@ -166,6 +185,7 @@ class PlatformGenerator:
 
         text_filter = make_text_filter(self.manifest, extra_replacements)
         copy_and_transform(self.fork_path, output, text_filter, sanitize=True)
+        self._apply_automotive_overlay(output)
         render_manifest_json(output, self.manifest)
         write_inputs_hash(output, fork_commit, blocks_commit, self.manifest)
 
