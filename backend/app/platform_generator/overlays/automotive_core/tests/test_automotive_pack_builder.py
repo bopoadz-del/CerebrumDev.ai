@@ -398,3 +398,63 @@ def test_cli_accepts_multiple_records(tmp_path: Path) -> None:
     assert result == 0
     manifest_path = tmp_path / "pack" / "pack_manifest.json"
     assert manifest_path.exists()
+
+
+def test_investigation_number_appears_in_every_chunk() -> None:
+    from app.models.automotive_records import AutomotiveInvestigation
+    records = [
+        AutomotiveInvestigation(
+            record_id="r1",
+            source_id="nhtsa_investigations",
+            source_family="investigation",
+            investigation_number="PE16-007",
+            make="Tesla",
+            model="Model S",
+            model_year="2015",
+            summary="Investigation into unintended air bag deployment.",
+            harvest_timestamp="2026-07-12T00:00:00Z",
+            raw_record_hash="h1",
+        ),
+    ]
+    chunks = chunk_investigation_records(records)
+    assert all("PE16-007" in c.text for c in chunks)
+
+
+def test_multi_family_build_writes_both_chunk_files(tmp_path: Path) -> None:
+    recalls = _sample_records()
+    recall_path = tmp_path / "recalls.jsonl"
+    with recall_path.open("w", encoding="utf-8") as f:
+        for r in recalls:
+            f.write(r.model_dump_json() + "\n")
+
+    from app.models.automotive_records import AutomotiveInvestigation
+    investigations = [
+        AutomotiveInvestigation(
+            record_id="r1",
+            source_id="nhtsa_investigations",
+            source_family="investigation",
+            investigation_number="PE16-007",
+            make="Tesla",
+            model="Model S",
+            model_year="2015",
+            summary="Investigation into unintended air bag deployment.",
+            harvest_timestamp="2026-07-12T00:00:00Z",
+            raw_record_hash="h1",
+        ),
+    ]
+    inv_path = tmp_path / "investigations.jsonl"
+    with inv_path.open("w", encoding="utf-8") as f:
+        for r in investigations:
+            f.write(r.model_dump_json() + "\n")
+
+    manifest = build_automotive_core_pack_from_families(
+        canonical_records_paths=[recall_path, inv_path],
+        output_dir=tmp_path / "pack",
+        project_id="automotive_core_v1",
+        dry_run=True,
+    )
+
+    assert "recall" in manifest.source_families
+    assert "investigation" in manifest.source_families
+    assert (tmp_path / "pack" / "chunks" / "recalls.jsonl").exists()
+    assert (tmp_path / "pack" / "chunks" / "investigations.jsonl").exists()
