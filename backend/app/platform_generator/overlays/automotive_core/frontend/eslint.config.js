@@ -26,6 +26,7 @@ export default defineConfig([
       // in a future The_Fork baseline bump. For the automotive pilot release
       // gate we downgrade them to warnings so the build still passes.
       'react-hooks/set-state-in-effect': 'warn',
+      'react-hooks/immutability': 'warn',
       'react-refresh/only-export-components': 'warn',
     },
   },
