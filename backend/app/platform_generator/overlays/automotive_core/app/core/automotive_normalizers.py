@@ -12,7 +12,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.models.automotive_records import AutomotiveRecall
+from app.models.automotive_records import AutomotiveInvestigation, AutomotiveRecall
 
 
 UNKNOWN_YEAR_TOKENS = {"9999", "99999", "0000", "", "N/A", "NA"}
@@ -133,3 +133,82 @@ def normalize_recall_rows(
 ) -> List[AutomotiveRecall]:
     """Normalize a list of raw recall rows."""
     return [normalize_recall_row(source_id, i + 1, row) for i, row in enumerate(rows)]
+
+
+def _investigation_type(action_number: str) -> Optional[str]:
+    """Extract alphabetic prefix from NHTSA action number."""
+    if not action_number:
+        return None
+    prefix = ""
+    for ch in action_number:
+        if ch.isalpha():
+            prefix += ch
+        else:
+            break
+    return prefix.upper() or None
+
+
+def _investigation_status(cdate: Optional[str]) -> Optional[str]:
+    """Infer open/closed status from closing date."""
+    if not cdate or cdate.strip() in {"", "99999999"}:
+        return "Open"
+    return "Closed"
+
+
+def normalize_investigation_row(
+    source_id: str,
+    record_sequence: int,
+    row: Dict[str, str],
+) -> AutomotiveInvestigation:
+    """Convert one raw NHTSA ODI investigation row into a canonical record."""
+    get = _field_getter(row)
+
+    investigation_number = _clean_text(get("NHTSA_ACTION_NUMBER", "nhtsa_action_number", "action_number"), max_chars=32) or ""
+    make = _clean_text(get("MAKE", "make", "MAKETXT"), max_chars=128)
+    model = _clean_text(get("MODEL", "model", "MODELTXT"), max_chars=512)
+    year = _clean_text(get("YEAR", "year", "YEARTXT"), max_chars=16)
+    if year in UNKNOWN_YEAR_TOKENS:
+        year = None
+    component = _clean_text(get("COMPNAME", "compname", "COMPONENT"), max_chars=512)
+    manufacturer = _clean_text(get("MFR_NAME", "mfr_name", "MFGNAME", "manufacturer"), max_chars=256)
+    opening_date = _parse_date(get("ODATE", "odate", "OPENING_DATE"))
+    closing_date = _parse_date(get("CDATE", "cdate", "CLOSING_DATE"))
+    associated_campaign = _clean_text(get("CAMPNO", "campno", "RECALL_NUMBER"), max_chars=32)
+    subject = _clean_text(get("SUBJECT", "subject", "TOPIC"), max_chars=200)
+    summary = _clean_text(get("SUMMARY", "summary", "DETAIL"), max_chars=6000)
+
+    record_id = _record_id(source_id, record_sequence, investigation_number)
+    raw_hash = _raw_record_hash(source_id, row)
+
+    return AutomotiveInvestigation(
+        record_id=record_id,
+        source_id=source_id,
+        source_family="investigation",
+        investigation_number=investigation_number,
+        status=_investigation_status(closing_date),
+        investigation_type=_investigation_type(investigation_number),
+        make=make,
+        model=model,
+        model_year=year,
+        component=component,
+        manufacturer=manufacturer,
+        subject=subject,
+        summary=summary,
+        opening_date=opening_date,
+        closing_date=closing_date,
+        associated_campaign_number=associated_campaign or None,
+        source_url=f"https://www.nhtsa.gov/nhtsa-datasets-and-apis" if investigation_number else None,
+        jurisdiction="US",
+        authority_rating="primary",
+        harvest_timestamp=_utc_now(),
+        raw_record_hash=raw_hash,
+        normalization_version="automotive_core_v1",
+    )
+
+
+def normalize_investigation_rows(
+    source_id: str,
+    rows: List[Dict[str, str]],
+) -> List[AutomotiveInvestigation]:
+    """Normalize a list of raw ODI investigation rows."""
+    return [normalize_investigation_row(source_id, i + 1, row) for i, row in enumerate(rows)]

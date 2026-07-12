@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from app.core.automotive_normalizers import normalize_recall_row, normalize_recall_rows
+from app.core.automotive_normalizers import (
+    normalize_investigation_row,
+    normalize_recall_row,
+    normalize_recall_rows,
+)
 from app.models.automotive_records import AutomotiveRecall
 
 
@@ -88,3 +92,33 @@ def test_automotive_investigation_model_exists() -> None:
     )
     assert record.investigation_number == "PE16-007"
     assert record.source_family == "investigation"
+
+
+def test_normalize_investigation_row_maps_official_columns() -> None:
+    row = {
+        "NHTSA_ACTION_NUMBER": "PE16-007",
+        "MAKE": "Tesla",
+        "MODEL": "Model S",
+        "YEAR": "2015",
+        "COMPNAME": "AIR BAGS",
+        "MFR_NAME": "Tesla Motors",
+        "ODATE": "20160101",
+        "CDATE": "20161231",
+        "CAMPNO": "16V176000",
+        "SUBJECT": "Air bag deployment investigation",
+        "SUMMARY": "Investigation into unintended air bag deployment events.",
+    }
+    record = normalize_investigation_row("nhtsa_investigations", 1, row)
+    assert record.investigation_number == "PE16-007"
+    assert record.make == "Tesla"
+    assert record.model == "Model S"
+    assert record.model_year == "2015"
+    assert record.component == "AIR BAGS"
+    assert record.manufacturer == "Tesla Motors"
+    assert record.opening_date == "2016-01-01"
+    assert record.closing_date == "2016-12-31"
+    assert record.associated_campaign_number == "16V176000"
+    assert record.subject == "Air bag deployment investigation"
+    assert record.summary == "Investigation into unintended air bag deployment events."
+    assert record.status == "Closed"
+    assert record.investigation_type == "PE"
