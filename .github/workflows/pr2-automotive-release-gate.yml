@@ -56,7 +56,7 @@ jobs:
           repository: bopoadz-del/Cerebrum-Blocks
           ref: feat/automotive-pilot-pr2
           path: Cerebrum-Blocks
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       - name: Checkout The_Fork (pinned baseline)
         uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
           repository: bopoadz-del/The_Fork
           ref: 008d5e7a53654d401ce60372212f5245a8067c76
           path: The_Fork
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.CROSS_REPO_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
