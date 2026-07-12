@@ -38,6 +38,40 @@ EXPECTED_ARCHIVE_MEMBERS = {
     "FLAT_RCL.txt",  # some historical archives use the un-suffixed name
 }
 
+# Official NHTSA recall flat-file layout (May 2025 data dictionary).
+# The bulk file is tab-delimited and has NO header row.
+NHTSA_RECALL_FIELDNAMES = [
+    "RECORD_ID",
+    "CAMPNO",
+    "MAKETXT",
+    "MODELTXT",
+    "YEARTXT",
+    "MFGCAMPNO",
+    "COMPNAME",
+    "MFGNAME",
+    "BGMAN",
+    "ENDMAN",
+    "RCLTYPECD",
+    "POTAFF",
+    "ODATE",
+    "INFLUENCED_BY",
+    "MFGTXT",
+    "RCDATE",
+    "DATEA",
+    "RPNO",
+    "FMVSS",
+    "DESC_DEFECT",
+    "CONEQUENCE_DEFECT",
+    "CORRECTIVE_ACTION",
+    "NOTES",
+    "RCL_CMPT_ID",
+    "MFR_COMP_NAME",
+    "MFR_COMP_DESC",
+    "MFR_COMP_PTNO",
+    "DO_NOT_DRIVE",
+    "PARK_OUTSIDE",
+]
+
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
 
@@ -171,8 +205,12 @@ def normalize_recall_row(
 
 
 def _field_getter(row: Dict[str, str]):
-    """Return a case-insensitive getter for the row dict."""
-    lower = {k.lower(): k for k in row}
+    """Return a case-insensitive getter for the row dict.
+
+    Filters out ``None`` keys that ``csv.DictReader`` creates when a row has
+    more trailing fields than the header (common in tab-delimited NHTSA data).
+    """
+    lower = {k.lower(): k for k in row if k is not None}
 
     def get(*keys: str) -> Optional[str]:
         for key in keys:
@@ -270,7 +308,7 @@ def extract_recall_csv(zip_path: Path) -> Path:
 def _count_rows(csv_path: Path) -> int:
     count = 0
     with csv_path.open("r", encoding="utf-8", errors="replace") as f:
-        reader = csv.DictReader(f, delimiter="\t")
+        reader = csv.DictReader(f, fieldnames=NHTSA_RECALL_FIELDNAMES, delimiter="\t")
         for _ in reader:
             count += 1
     return count
@@ -290,9 +328,9 @@ def _load_fixture(fixture_path: Path) -> List[Dict[str, str]]:
     if suffix in {".csv", ".txt"}:
         rows = []
         with fixture_path.open("r", encoding="utf-8", errors="replace") as f:
-            reader = csv.DictReader(f, delimiter="\t")
+            reader = csv.DictReader(f, fieldnames=NHTSA_RECALL_FIELDNAMES, delimiter="\t")
             for row in reader:
-                rows.append(dict(row))
+                rows.append({k: v for k, v in row.items() if k is not None})
         return rows
     raise HarvestError("UNSUPPORTED_FIXTURE", f"Fixture must be .jsonl, .csv or .txt: {fixture_path}")
 
@@ -300,9 +338,15 @@ def _load_fixture(fixture_path: Path) -> List[Dict[str, str]]:
 def _rows_from_csv(csv_path: Path) -> List[Dict[str, str]]:
     rows = []
     with csv_path.open("r", encoding="utf-8", errors="replace") as f:
-        reader = csv.DictReader(f, delimiter="\t")
+        reader = csv.DictReader(
+            f,
+            fieldnames=NHTSA_RECALL_FIELDNAMES,
+            delimiter="\t",
+        )
         for row in reader:
-            rows.append(dict(row))
+            # Drop trailing ``None`` keys produced when a row has more fields
+            # than the expected layout (tab-delimited sources often end with tabs).
+            rows.append({k: v for k, v in row.items() if k is not None})
     return rows
 
 
@@ -310,6 +354,7 @@ def harvest_recalls(
     output_dir: Path,
     source_url: Optional[str] = None,
     since_year: Optional[int] = None,
+    max_records: Optional[int] = None,
     dry_run: bool = False,
     fixture_path: Optional[Path] = None,
     force_download: bool = False,
@@ -363,6 +408,10 @@ def harvest_recalls(
                 filtered.append(row)
         rows = filtered
 
+    if max_records is not None and len(rows) > max_records:
+        logger.info("Capping harvest at %d records (raw rows available: %d)", max_records, len(rows))
+        rows = rows[:max_records]
+
     canonical_records: List[Dict[str, Any]] = []
     for sequence, row in enumerate(rows, start=1):
         canonical = normalize_recall_row(source_id, sequence, row)
@@ -413,6 +462,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--family", default="recalls", help="Source family to harvest (recalls only in this slice)")
     parser.add_argument("--output-dir", required=True, type=Path, help="Directory for harvested artifacts")
     parser.add_argument("--since-year", type=int, default=None, help="Filter records to this model year or later")
+    parser.add_argument("--max-records", type=int, default=None, help="Cap the number of records processed")
     parser.add_argument("--dry-run", action="store_true", help="Validate and count without writing artifacts")
     parser.add_argument("--fixture", type=Path, default=None, help="Replay from an authored fixture instead of network")
     parser.add_argument("--force-download", action="store_true", help="Re-download even if a cached archive exists")
@@ -428,6 +478,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         result = harvest_recalls(
             output_dir=args.output_dir,
             since_year=args.since_year,
+            max_records=args.max_records,
             dry_run=args.dry_run,
             fixture_path=args.fixture,
             force_download=args.force_download,

@@ -141,34 +141,56 @@ def _verify_embedding_identity(identity: Dict[str, Any]) -> None:
         )
 
 
-def _embed_chunks(chunks: List[AutomotiveChunk]) -> np.ndarray:
-    """Embed chunk texts using the configured semantic model."""
+def _embedding_batch_size() -> int:
+    """Read ``RAG_EMBEDDING_BATCH_SIZE`` live; default tuned for CPU safety."""
+    raw = os.getenv("RAG_EMBEDDING_BATCH_SIZE", "64")
+    try:
+        value = int(raw)
+        return max(1, min(value, 512))
+    except ValueError:
+        return 64
+
+
+def _embed_chunks(
+    chunks: List[AutomotiveChunk],
+    batch_size: Optional[int] = None,
+):
+    """Yield ``(chunk, embedding)`` pairs in batches.
+
+    Batching keeps peak memory bounded and lets a large corpus stream through
+    the embedder without holding every vector in RAM at once.
+    """
     from app.core.rag.embeddings import get_embedder
 
     embedder = get_embedder()
     _verify_embedding_identity(embedder.identity)
-    texts = [c.text for c in chunks]
-    embeddings = embedder.encode(texts)
-    if embeddings.shape != (len(chunks), embedder.dim):
-        raise RuntimeError(
-            f"Embedding shape mismatch: expected ({len(chunks)}, {embedder.dim}), got {embedder.shape}"
-        )
-    if not np.all(np.isfinite(embeddings)):
-        raise RuntimeError("Embedding produced non-finite values.")
-    return embeddings
+    batch_size = batch_size or _embedding_batch_size()
+
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        texts = [c.text for c in batch]
+        embeddings = embedder.encode(texts)
+        if embeddings.shape != (len(batch), embedder.dim):
+            raise RuntimeError(
+                f"Embedding shape mismatch: expected ({len(batch)}, {embedder.dim}), got {embeddings.shape}"
+            )
+        if not np.all(np.isfinite(embeddings)):
+            raise RuntimeError("Embedding produced non-finite values.")
+        for chunk, embedding in zip(batch, embeddings):
+            yield chunk, embedding
 
 
 def _index_chunks(
     project_id: str,
-    chunks: List[AutomotiveChunk],
-    embeddings: np.ndarray,
+    chunk_embedding_pairs,
+    dim: int,
 ) -> int:
-    """Write chunks and embeddings to the vector store."""
+    """Write chunks and embeddings to the vector store one document at a time."""
     from app.core.rag.vector_store import get_store
 
-    store = get_store(dim=embeddings.shape[1])
+    store = get_store(dim=dim)
     indexed = 0
-    for chunk, embedding in zip(chunks, embeddings):
+    for chunk, embedding in chunk_embedding_pairs:
         doc_id = f"recall:{chunk.campaign_number}"
         count = store.upsert_chunks(
             project_id=project_id,
@@ -219,9 +241,13 @@ def build_automotive_core_pack(
 
     if not dry_run:
         _require_production_embedder()
-        embeddings = _embed_chunks(chunks)
-        indexed_count = _index_chunks(project_id, chunks, embeddings)
-        embedding_identity = get_embedder().identity
+        embedder = get_embedder()
+        embedding_identity = embedder.identity
+        indexed_count = _index_chunks(
+            project_id,
+            _embed_chunks(chunks),
+            dim=embedder.dim,
+        )
 
     manifest = PackManifest(
         pack_id=FOUNDATION_PACK_ID,
