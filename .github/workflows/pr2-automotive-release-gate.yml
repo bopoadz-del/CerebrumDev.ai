@@ -120,10 +120,16 @@ jobs:
         run: |
           alembic upgrade head
 
-      - name: Harvest and index automotive core pack
+      - name: Harvest NHTSA recalls
+        working-directory: CerebrumDev.ai/backend
+        run: |
+          python -m scripts.harvest_nhtsa --family recalls \
+            --output-dir ../generated/automotive-safety-intelligence/storage/automotive_core_rag_v1/live \
+            --max-records 1000
+
+      - name: Build and index automotive core pack
         working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
         run: |
-          python -m scripts.harvest_nhtsa --family recalls --output-dir storage/automotive_core_rag_v1/live --max-records 1000
           python -m scripts.build_automotive_core_pack \
             --records storage/automotive_core_rag_v1/live/canonical/recalls.jsonl \
             --output storage/automotive_core_rag_v1/live
