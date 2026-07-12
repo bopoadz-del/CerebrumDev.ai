@@ -5,3 +5,9 @@ test_storage/
 storage/
 chroma_data/
 .env
+
+# Automotive foundation pack build artifacts (must never be committed)
+storage/automotive_core_rag_v1/
+*.nhtsa.zip
+model_cache/
+automotive_core_rag_v1/
