@@ -314,6 +314,15 @@ def _count_rows(csv_path: Path) -> int:
     return count
 
 
+def _is_header_row(row: Dict[str, str]) -> bool:
+    """Detect a header row in tab-delimited fixtures that include column names.
+
+    The official bulk file has no header, but authored test fixtures often do.
+    A row whose RECORD_ID/CAMPNO values are the literal column names is a header.
+    """
+    return row.get("RECORD_ID") == "RECORD_ID" and row.get("CAMPNO") == "CAMPNO"
+
+
 def _load_fixture(fixture_path: Path) -> List[Dict[str, str]]:
     """Load an authored fixture CSV/JSONL representing the real NHTSA schema."""
     suffix = fixture_path.suffix.lower()
@@ -329,7 +338,9 @@ def _load_fixture(fixture_path: Path) -> List[Dict[str, str]]:
         rows = []
         with fixture_path.open("r", encoding="utf-8", errors="replace") as f:
             reader = csv.DictReader(f, fieldnames=NHTSA_RECALL_FIELDNAMES, delimiter="\t")
-            for row in reader:
+            for idx, row in enumerate(reader):
+                if idx == 0 and _is_header_row(row):
+                    continue
                 rows.append({k: v for k, v in row.items() if k is not None})
         return rows
     raise HarvestError("UNSUPPORTED_FIXTURE", f"Fixture must be .jsonl, .csv or .txt: {fixture_path}")

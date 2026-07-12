@@ -64,7 +64,7 @@ def test_automotive_kit_prompt_exists(blocks_path: Path) -> None:
 def test_automotive_kit_evaluation_questions_exist(blocks_path: Path) -> None:
     if not blocks_path.exists():
         pytest.skip(f"Cerebrum-Blocks automotive kit not found at {blocks_path}")
-    questions = blocks_path / "evaluation" / "golden_questions.jsonl"
+    questions = blocks_path / "evaluation" / "development_seed.jsonl"
     assert questions.exists()
     lines = questions.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1
@@ -73,3 +73,4 @@ def test_automotive_kit_evaluation_questions_exist(blocks_path: Path) -> None:
         assert "question_id" in item
         assert "category" in item
         assert "question" in item
+        assert item.get("development_seed") is True
