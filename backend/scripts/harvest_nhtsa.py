@@ -252,9 +252,11 @@ _normalize_investigation_row: Optional[Any] = None
 def _import_overlay_investigation_normalizer() -> Any:
     """Load ``normalize_investigation_row`` from the automotive_core overlay.
 
-    The harvester runs from ``backend/`` where ``app`` is the backend package,
-    so the overlay's ``app`` package is temporarily aliased while the module is
-    loaded, then the original ``app`` tree is restored.
+    The harvester runs from ``backend/`` where ``app`` is the backend package.
+    The overlay also uses the ``app`` namespace package, so importing it directly
+    would collide with the backend ``app`` tree. We temporarily swap the relevant
+    ``sys.modules`` entries, load the overlay modules, then restore the original
+    backend ``app`` tree so the rest of the codebase remains unaffected.
     """
     overlay_dir = (
         Path(__file__).resolve().parent.parent
@@ -284,6 +286,10 @@ def _import_overlay_investigation_normalizer() -> Any:
         models_spec = importlib.util.spec_from_file_location(
             "app.models.automotive_records", models_path
         )
+        if models_spec is None:
+            raise ImportError(
+                f"Could not create module spec for overlay models at {models_path}"
+            )
         models_mod = importlib.util.module_from_spec(models_spec)
         sys.modules["app.models.automotive_records"] = models_mod
 
@@ -298,6 +304,10 @@ def _import_overlay_investigation_normalizer() -> Any:
         norm_spec = importlib.util.spec_from_file_location(
             "app.core.automotive_normalizers", normalizer_path
         )
+        if norm_spec is None:
+            raise ImportError(
+                f"Could not create module spec for overlay normalizer at {normalizer_path}"
+            )
         norm_mod = importlib.util.module_from_spec(norm_spec)
         app_core_mod = types.ModuleType("app.core")
         sys.modules["app.core"] = app_core_mod
