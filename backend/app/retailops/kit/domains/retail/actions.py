@@ -175,8 +175,12 @@ async def generate_operations_brief(
 # ---------------------------------------------------------------------------
 
 def _collect_rows(arguments: Dict[str, Any]) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = list(arguments.get("rows") or [])
-    # Records may carry structured rows extracted at ingestion time.
+    # Explicit rows win; otherwise fall back to structured rows carried on
+    # records (avoids double-counting when both are supplied by enrichment).
+    explicit = list(arguments.get("rows") or [])
+    if explicit:
+        return explicit
+    rows: List[Dict[str, Any]] = []
     for rec in arguments.get("records") or []:
         payload = rec.get("rows") or rec.get("structured")
         if isinstance(payload, list):

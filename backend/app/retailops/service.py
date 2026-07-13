@@ -28,7 +28,7 @@ from app.retailops.retrieval import hybrid_search
 # Generic mapping from a declared input property to a project record source.
 # Adding an action that declares any of these inputs reuses this config; no
 # action-specific code path is required.
-_RULE_ROLES = {"rules", "promotion_rules", "policy"}
+_RULE_ROLES = {"rules", "promotion_rules"}
 _EVIDENCE_ROLES = {"evidence", "promotion_evidence", "campaign_evidence"}
 
 
