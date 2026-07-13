@@ -15,4 +15,4 @@ RETAILOPS_VERSION = "1.0.0"
 
 # Exact Cerebrum-Blocks commit the vendored kit (app/retailops/kit) was built
 # from. Update together with app/retailops/kit when re-vendoring.
-BLOCKS_COMMIT = "f1b0f4af700b80d9909434a209d03cb247773cb6"
+BLOCKS_COMMIT = "4a5ad84246f885764ba05d1ab1398dc0d2b56be3"
