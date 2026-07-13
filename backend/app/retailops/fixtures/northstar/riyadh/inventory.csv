@@ -1,0 +1,8 @@
+SKU,Product,On Hand,Reorder Point,Safety Stock,Avg Daily Sales,Last Count,Current Count,Unit Cost,Store,Date
+BEV-2201,Sparkling Water 500ml,4,20,10,6,22,4,1.10,Riyadh Olaya,2024-03-02
+DAIRY-1001,Full Cream Milk 1L,18,40,20,30,120,18,0.90,Riyadh Olaya,2024-03-02
+SNK-3310,Roasted Almonds 200g,900,50,25,3,880,900,3.40,Riyadh Olaya,2024-03-02
+HOME-7788,Scented Candle,60,15,10,0,60,60,5.00,Riyadh Olaya,2024-03-02
+TOY-5501,Building Blocks Set,-3,10,5,2,25,40,7.25,Riyadh Olaya,2024-03-02
+BEV-2210,Orange Juice 1L,55,30,15,10,58,55,1.75,Riyadh Olaya,2024-03-02
+DAIRY-1009,Greek Yoghurt 500g,12,35,18,20,90,12,1.20,Riyadh Olaya,2024-03-02
