@@ -1,5 +1,8 @@
 """Create CerebrumDev.ai services on Render via the Render API.
 
+Prefer the Blueprint in render.yaml. This script is a fallback that must stay
+aligned with that Blueprint (disk, API keys, Ollama model, SPA env).
+
 Set RENDER_API_KEY and RENDER_OWNER_ID env vars before running.
 """
 import json
@@ -22,14 +25,19 @@ if not RENDER_API_KEY:
 
 BACKEND_VARS = [
     {"key": "ENV", "value": "production"},
-    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},  # live Cerebrum-Blocks service
+    {"key": "CEREBRUM_DEV_API_KEY", "generateValue": True},
+    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},
+    # Must be provisioned manually to match Cerebrum-Blocks — do not generate.
     {"key": "CEREBRUM_API_KEY", "value": os.getenv("CEREBRUM_API_KEY", "")},
+    {"key": "FRONTEND_URL", "value": "https://cerebrumdev-frontend.onrender.com"},
+    {"key": "CORS_ALLOW_ORIGINS", "value": "https://cerebrumdev-frontend.onrender.com"},
+    {"key": "LLM_PROVIDER", "value": "ollama"},
+    {"key": "OLLAMA_URL", "value": os.getenv("OLLAMA_URL", "https://ollama.com")},
+    {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "kimi-k2.7-code:cloud")},
+    {"key": "OLLAMA_API_KEY", "value": os.getenv("OLLAMA_API_KEY", "")},
     {"key": "QWEN_API_KEY", "value": os.getenv("QWEN_API_KEY", "")},
     {"key": "QWEN_BASE_URL", "value": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")},
     {"key": "QWEN_MODEL", "value": os.getenv("QWEN_MODEL", "qwen-plus")},
-    {"key": "OLLAMA_URL", "value": os.getenv("OLLAMA_URL", "")},
-    {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud")},
-    {"key": "OLLAMA_API_KEY", "value": os.getenv("OLLAMA_API_KEY", "")},
     {"key": "CHROMA_PERSIST_DIR", "value": os.getenv("CHROMA_PERSIST_DIR", "/app/storage/chroma")},
     {"key": "STORAGE_PATH", "value": "/app/storage"},
     {"key": "PYTHONIOENCODING", "value": "utf-8"},
@@ -70,6 +78,11 @@ backend_payload = {
         "envSpecificDetails": {"dockerfilePath": "./Dockerfile"},
         "healthCheckPath": "/health",
         "numInstances": 1,
+        "disk": {
+            "name": "cerebrumdev-storage",
+            "mountPath": "/app/storage",
+            "sizeGB": 1,
+        },
     },
     "envVars": BACKEND_VARS,
 }
@@ -84,9 +97,12 @@ frontend_payload = {
     "serviceDetails": {
         "buildCommand": "cd frontend && npm install && npm run build",
         "publishPath": "frontend/dist",
+        "routes": [{"type": "rewrite", "source": "/*", "destination": "/index.html"}],
     },
     "envVars": [
         {"key": "VITE_API_URL", "value": "https://cerebrumdev-backend.onrender.com"},
+        # Set manually to match backend CEREBRUM_DEV_API_KEY after first deploy.
+        {"key": "VITE_API_KEY", "value": os.getenv("VITE_API_KEY", "")},
     ],
 }
 
@@ -97,3 +113,6 @@ print(json.dumps(backend, indent=2))
 print("\nCreating frontend service...")
 frontend = create_service(frontend_payload)
 print(json.dumps(frontend, indent=2))
+print(
+    "\nNext: copy backend CEREBRUM_DEV_API_KEY into frontend VITE_API_KEY and redeploy frontend."
+)

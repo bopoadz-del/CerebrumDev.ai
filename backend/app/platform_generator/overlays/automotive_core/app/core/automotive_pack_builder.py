@@ -18,7 +18,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from app.core.automotive_normalizers import normalize_recall_rows
-from app.models.automotive_records import AutomotiveChunk, AutomotiveInvestigation, AutomotiveRecall, PackManifest
+from app.models.automotive_records import (
+    AutomotiveChunk,
+    AutomotiveComplaint,
+    AutomotiveInvestigation,
+    AutomotiveRecall,
+    AutomotiveSafetyRating,
+    PackManifest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +197,154 @@ def chunk_investigation_records(
                     "opening_date": record.opening_date,
                     "closing_date": record.closing_date,
                     "associated_campaign_number": record.associated_campaign_number,
+                    "raw_record_hash": record.raw_record_hash,
+                    "normalization_version": record.normalization_version,
+                },
+            )
+        )
+    return chunks
+
+
+def _compile_complaint_text(record: AutomotiveComplaint) -> str:
+    parts: List[str] = []
+    if record.complaint_id:
+        parts.append(f"Complaint: {record.complaint_id}")
+    if record.model_year:
+        parts.append(f"Year: {record.model_year}")
+    if record.make:
+        parts.append(f"Make: {record.make}")
+    if record.model:
+        parts.append(f"Model: {record.model}")
+    if record.manufacturer:
+        parts.append(f"Manufacturer: {record.manufacturer}")
+    if record.component:
+        parts.append(f"Component: {record.component}")
+    if record.date_complaint:
+        parts.append(f"Complaint date: {record.date_complaint}")
+    if record.crash is not None:
+        parts.append(f"Crash: {'yes' if record.crash else 'no'}")
+    if record.fire is not None:
+        parts.append(f"Fire: {'yes' if record.fire else 'no'}")
+    if record.injured is not None:
+        parts.append(f"Injured: {record.injured}")
+    if record.deaths is not None:
+        parts.append(f"Deaths: {record.deaths}")
+    if record.associated_campaign_number:
+        parts.append(f"Associated recall campaign: {record.associated_campaign_number}")
+    if record.summary:
+        parts.append(f"Summary: {record.summary}")
+    return "\n".join(parts)
+
+
+def chunk_complaint_records(records: List[AutomotiveComplaint]) -> List[AutomotiveChunk]:
+    """Convert canonical complaint records into deterministic retrieval chunks."""
+    chunks: List[AutomotiveChunk] = []
+    for record in records:
+        text = _compile_complaint_text(record).strip()
+        if not text:
+            logger.warning("Skipping evidence-free complaint record %s", record.record_id)
+            continue
+        chunk_index = 0
+        chunk_id = _chunk_id(record.record_id, chunk_index)
+        chunks.append(
+            AutomotiveChunk(
+                chunk_id=chunk_id,
+                record_id=record.record_id,
+                source_id=record.source_id,
+                source_family=record.source_family,
+                campaign_number=record.associated_campaign_number or "",
+                make=record.make,
+                model=record.model,
+                model_year=record.model_year,
+                component=record.component,
+                knowledge_layer=FOUNDATION_COLLECTION,
+                foundation_pack_id=FOUNDATION_PACK_ID,
+                source_authority=record.authority_rating,
+                jurisdiction=record.jurisdiction,
+                chunk_index=chunk_index,
+                chunking_version=CHUNKING_VERSION,
+                text=text,
+                text_hash=_text_hash(text),
+                record_reference=record.complaint_id,
+                source_url=record.source_url,
+                metadata={
+                    "complaint_id": record.complaint_id,
+                    "date_complaint": record.date_complaint,
+                    "crash": record.crash,
+                    "fire": record.fire,
+                    "injured": record.injured,
+                    "deaths": record.deaths,
+                    "associated_campaign_number": record.associated_campaign_number,
+                    "raw_record_hash": record.raw_record_hash,
+                    "normalization_version": record.normalization_version,
+                },
+            )
+        )
+    return chunks
+
+
+def _compile_safety_rating_text(record: AutomotiveSafetyRating) -> str:
+    parts: List[str] = []
+    if record.vehicle_id:
+        parts.append(f"VehicleId: {record.vehicle_id}")
+    if record.model_year:
+        parts.append(f"Year: {record.model_year}")
+    if record.make:
+        parts.append(f"Make: {record.make}")
+    if record.model:
+        parts.append(f"Model: {record.model}")
+    if record.vehicle_description:
+        parts.append(f"Description: {record.vehicle_description}")
+    if record.overall_rating:
+        parts.append(f"Overall rating: {record.overall_rating}")
+    if record.front_crash_rating:
+        parts.append(f"Front crash rating: {record.front_crash_rating}")
+    if record.side_crash_rating:
+        parts.append(f"Side crash rating: {record.side_crash_rating}")
+    if record.rollover_rating:
+        parts.append(f"Rollover rating: {record.rollover_rating}")
+    return "\n".join(parts)
+
+
+def chunk_safety_rating_records(
+    records: List[AutomotiveSafetyRating],
+) -> List[AutomotiveChunk]:
+    """Convert canonical safety-rating records into deterministic retrieval chunks."""
+    chunks: List[AutomotiveChunk] = []
+    for record in records:
+        text = _compile_safety_rating_text(record).strip()
+        if not text:
+            logger.warning("Skipping evidence-free safety rating record %s", record.record_id)
+            continue
+        chunk_index = 0
+        chunk_id = _chunk_id(record.record_id, chunk_index)
+        chunks.append(
+            AutomotiveChunk(
+                chunk_id=chunk_id,
+                record_id=record.record_id,
+                source_id=record.source_id,
+                source_family=record.source_family,
+                campaign_number="",
+                make=record.make,
+                model=record.model,
+                model_year=record.model_year,
+                component=None,
+                knowledge_layer=FOUNDATION_COLLECTION,
+                foundation_pack_id=FOUNDATION_PACK_ID,
+                source_authority=record.authority_rating,
+                jurisdiction=record.jurisdiction,
+                chunk_index=chunk_index,
+                chunking_version=CHUNKING_VERSION,
+                text=text,
+                text_hash=_text_hash(text),
+                record_reference=record.vehicle_id,
+                source_url=record.source_url,
+                metadata={
+                    "vehicle_id": record.vehicle_id,
+                    "overall_rating": record.overall_rating,
+                    "front_crash_rating": record.front_crash_rating,
+                    "side_crash_rating": record.side_crash_rating,
+                    "rollover_rating": record.rollover_rating,
                     "raw_record_hash": record.raw_record_hash,
                     "normalization_version": record.normalization_version,
                 },
@@ -536,6 +691,10 @@ def _load_canonical_records_by_family(path: Path) -> Tuple[str, List[Any]]:
                 records.append(AutomotiveRecall.model_validate(data))
             elif source_family == "investigation":
                 records.append(AutomotiveInvestigation.model_validate(data))
+            elif source_family == "complaint":
+                records.append(AutomotiveComplaint.model_validate(data))
+            elif source_family == "safety_rating":
+                records.append(AutomotiveSafetyRating.model_validate(data))
             else:
                 raise ValueError(f"Unsupported source_family in {path}: {source_family}")
     return source_family, records
@@ -570,6 +729,12 @@ def build_automotive_core_pack_from_families(
         elif family == "investigation":
             family_chunks = chunk_investigation_records(records)
             chunks_path = chunks_dir / "investigations.jsonl"
+        elif family == "complaint":
+            family_chunks = chunk_complaint_records(records)
+            chunks_path = chunks_dir / "complaints.jsonl"
+        elif family == "safety_rating":
+            family_chunks = chunk_safety_rating_records(records)
+            chunks_path = chunks_dir / "safety_ratings.jsonl"
         else:
             raise ValueError(f"Unsupported family: {family}")
 

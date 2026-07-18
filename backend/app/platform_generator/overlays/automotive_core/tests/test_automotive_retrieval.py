@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.automotive_normalizers import normalize_recall_rows
-from app.core.automotive_pack_builder import build_automotive_core_pack
+from app.core.automotive_normalizers import normalize_investigation_rows, normalize_recall_rows
+from app.core.automotive_pack_builder import build_automotive_core_pack, build_automotive_core_pack_from_families
 from app.core.automotive_retrieval import (
     FOUNDATION_PROJECT_ID,
     retrieve_by_campaign_number,
+    retrieve_by_investigation_number,
     retrieve_foundation_evidence,
 )
 
@@ -110,3 +111,52 @@ def test_citation_envelope_is_complete(tmp_path, monkeypatch) -> None:
         assert r.record_reference
         assert r.chunk_text
         assert "metadata" in r.__dict__ or hasattr(r, "metadata")
+
+
+def _index_sample_investigations(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("RAG_EMBEDDING_MODEL", "fake")
+    monkeypatch.setenv("RAG_EMBEDDING_DIMENSIONS", "256")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+
+    from app.core.rag.embeddings import reset_embedder_cache
+    from app.core.rag.vector_store import reset_store_cache
+
+    reset_embedder_cache()
+    reset_store_cache()
+
+    rows = [
+        {
+            "NHTSA_ACTION_NUMBER": "PE16-007",
+            "MAKE": "Ford",
+            "MODEL": "Fusion",
+            "YEAR": "2016",
+            "MFR_NAME": "Ford Motor Company",
+            "COMPNAME": "POWER TRAIN",
+            "ODATE": "20160115",
+            "CDATE": "",
+            "CAMPNO": "",
+            "SUBJECT": "Unexpected vehicle acceleration",
+            "SUMMARY": "ODI opened a preliminary evaluation to investigate reports of unexpected vehicle acceleration.",
+        },
+    ]
+    records = normalize_investigation_rows("nhtsa_investigations", rows)
+    canonical_path = tmp_path / "investigations.jsonl"
+    with canonical_path.open("w", encoding="utf-8") as f:
+        for r in records:
+            f.write(r.model_dump_json() + "\n")
+
+    build_automotive_core_pack_from_families(
+        canonical_records_paths=[canonical_path],
+        output_dir=tmp_path / "pack",
+        project_id=FOUNDATION_PROJECT_ID,
+        dry_run=False,
+    )
+
+
+def test_exact_investigation_lookup_returns_top_result(tmp_path, monkeypatch) -> None:
+    _index_sample_investigations(tmp_path, monkeypatch)
+    results = retrieve_by_investigation_number("PE16-007")
+    assert len(results) >= 1
+    assert results[0].record_reference == "PE16-007"
+    assert results[0].knowledge_layer == FOUNDATION_PROJECT_ID
+    assert results[0].source_family == "investigation"

@@ -1,0 +1,50 @@
+{"question_id": "q_01", "category": "exact_campaign", "query": "What is recall campaign 15V176000?", "expected_references": ["15V176000"], "require_citation": true, "answerable": true}
+{"question_id": "q_02", "category": "exact_investigation", "query": "Summarize investigation PE16-007", "expected_references": ["PE16-007"], "require_citation": true, "answerable": true}
+{"question_id": "q_03", "category": "vehicle", "query": "2014 Honda Accord air bag", "expected_references": ["15V176000"], "require_citation": true, "answerable": true}
+{"question_id": "q_04", "category": "complaint_pattern", "query": "Complaint patterns for fuel pump failures", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_05", "category": "safety_rating", "query": "Safety rating for 2018 Toyota Camry", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_06", "category": "cross_source", "query": "Compare recalls and investigations for air bags", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_07", "category": "no_answer", "query": "Flying car recall ZZZ1999999", "expected_references": [], "require_citation": false, "answerable": false}
+{"question_id": "q_08", "category": "exact_campaign", "query": "What is recall campaign 21V127000?", "expected_references": ["21V127000"], "require_citation": true, "answerable": true}
+{"question_id": "q_09", "category": "exact_investigation", "query": "Summarize investigation EA15-001", "expected_references": ["EA15-001"], "require_citation": true, "answerable": true}
+{"question_id": "q_10", "category": "vehicle", "query": "2018 Toyota Camry fuel pump", "expected_references": ["21V127000"], "require_citation": true, "answerable": true}
+{"question_id": "q_11", "category": "complaint_pattern", "query": "Complaint patterns for unexpected acceleration", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_12", "category": "safety_rating", "query": "Safety rating for 2014 Honda Accord", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_13", "category": "cross_source", "query": "Compare recalls and investigations for braking", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_14", "category": "no_answer", "query": "Flying car recall ZZZ2999999", "expected_references": [], "require_citation": false, "answerable": false}
+{"question_id": "q_15", "category": "exact_campaign", "query": "What is recall campaign 16V064000?", "expected_references": ["16V064000"], "require_citation": true, "answerable": true}
+{"question_id": "q_16", "category": "exact_investigation", "query": "Summarize investigation RQ14-003", "expected_references": ["RQ14-003"], "require_citation": true, "answerable": true}
+{"question_id": "q_17", "category": "vehicle", "query": "2016 Ford Fusion acceleration", "expected_references": ["PE16-007"], "require_citation": true, "answerable": true}
+{"question_id": "q_18", "category": "complaint_pattern", "query": "Complaint patterns for stalling", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_19", "category": "safety_rating", "query": "Safety rating for 2016 Ford Fusion", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_20", "category": "cross_source", "query": "Compare recalls and investigations for power train", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_21", "category": "no_answer", "query": "Flying car recall ZZZ3999999", "expected_references": [], "require_citation": false, "answerable": false}
+{"question_id": "q_22", "category": "exact_campaign", "query": "What is recall campaign 20V123000?", "expected_references": ["20V123000"], "require_citation": true, "answerable": true}
+{"question_id": "q_23", "category": "exact_investigation", "query": "Summarize investigation DP13-002", "expected_references": ["DP13-002"], "require_citation": true, "answerable": true}
+{"question_id": "q_24", "category": "vehicle", "query": "2015 Takata airbag Honda", "expected_references": ["15V176000"], "require_citation": true, "answerable": true}
+{"question_id": "q_25", "category": "complaint_pattern", "query": "Complaint patterns for fire risk", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_26", "category": "safety_rating", "query": "Safety rating sample vehicle 4", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_27", "category": "cross_source", "query": "Compare recalls and investigations for steering", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_28", "category": "no_answer", "query": "Flying car recall ZZZ4999999", "expected_references": [], "require_citation": false, "answerable": false}
+{"question_id": "q_29", "category": "exact_campaign", "query": "What is recall campaign 19V321000?", "expected_references": ["19V321000"], "require_citation": true, "answerable": true}
+{"question_id": "q_30", "category": "exact_investigation", "query": "Summarize investigation PE18-012", "expected_references": ["PE18-012"], "require_citation": true, "answerable": true}
+{"question_id": "q_31", "category": "vehicle", "query": "2018 Camry stall", "expected_references": ["21V127000"], "require_citation": true, "answerable": true}
+{"question_id": "q_32", "category": "complaint_pattern", "query": "Complaint patterns for air bag light", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_33", "category": "safety_rating", "query": "Safety rating sample vehicle 5", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_34", "category": "cross_source", "query": "Compare recalls and investigations for fuel system", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_35", "category": "exact_campaign", "query": "What is recall campaign 18V456000?", "expected_references": ["18V456000"], "require_citation": true, "answerable": true}
+{"question_id": "q_36", "category": "exact_investigation", "query": "Summarize investigation EA17-004", "expected_references": ["EA17-004"], "require_citation": true, "answerable": true}
+{"question_id": "q_37", "category": "vehicle", "query": "2014 Accord passenger airbag", "expected_references": ["15V176000"], "require_citation": true, "answerable": true}
+{"question_id": "q_38", "category": "complaint_pattern", "query": "Complaint patterns for engine fire", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_39", "category": "exact_campaign", "query": "What is recall campaign 17V789000?", "expected_references": ["17V789000"], "require_citation": true, "answerable": true}
+{"question_id": "q_40", "category": "exact_investigation", "query": "Summarize investigation PE19-008", "expected_references": ["PE19-008"], "require_citation": true, "answerable": true}
+{"question_id": "q_41", "category": "vehicle", "query": "Toyota Camry 2018 recall", "expected_references": ["21V127000"], "require_citation": true, "answerable": true}
+{"question_id": "q_42", "category": "complaint_pattern", "query": "Complaint patterns for seat belt", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_43", "category": "exact_campaign", "query": "What is recall campaign 22V001000?", "expected_references": ["22V001000"], "require_citation": true, "answerable": true}
+{"question_id": "q_44", "category": "exact_investigation", "query": "Summarize investigation RQ20-001", "expected_references": ["RQ20-001"], "require_citation": true, "answerable": true}
+{"question_id": "q_45", "category": "vehicle", "query": "Honda Accord 2014 recall", "expected_references": ["15V176000"], "require_citation": true, "answerable": true}
+{"question_id": "q_46", "category": "complaint_pattern", "query": "Complaint patterns for transmission", "expected_references": [], "require_citation": true, "answerable": true}
+{"question_id": "q_47", "category": "exact_campaign", "query": "What is recall campaign 14V555000?", "expected_references": ["14V555000"], "require_citation": true, "answerable": true}
+{"question_id": "q_48", "category": "exact_investigation", "query": "Summarize investigation PE21-003", "expected_references": ["PE21-003"], "require_citation": true, "answerable": true}
+{"question_id": "q_49", "category": "exact_campaign", "query": "What is recall campaign 13V999000?", "expected_references": ["13V999000"], "require_citation": true, "answerable": true}
+{"question_id": "q_50", "category": "exact_investigation", "query": "Summarize investigation EA22-006", "expected_references": ["EA22-006"], "require_citation": true, "answerable": true}

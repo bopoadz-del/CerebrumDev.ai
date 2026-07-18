@@ -65,6 +65,56 @@ class AutomotiveInvestigation(BaseModel):
     normalization_version: str = "automotive_core_v1"
 
 
+class AutomotiveComplaint(BaseModel):
+    """Canonical NHTSA consumer complaint record."""
+
+    record_id: str = Field(..., description="Deterministic record identity")
+    source_id: str = Field(..., description="Official source identifier")
+    source_family: Literal["complaint"] = "complaint"
+    complaint_id: str = Field(..., description="NHTSA complaint / ODI number")
+    make: Optional[str] = None
+    model: Optional[str] = None
+    model_year: Optional[str] = None
+    component: Optional[str] = None
+    manufacturer: Optional[str] = None
+    summary: Optional[str] = None
+    crash: Optional[bool] = None
+    fire: Optional[bool] = None
+    injured: Optional[int] = None
+    deaths: Optional[int] = None
+    date_complaint: Optional[str] = None
+    associated_campaign_number: Optional[str] = None
+    source_url: Optional[str] = None
+    jurisdiction: str = "US"
+    authority_rating: str = "primary"
+    harvest_timestamp: str
+    raw_record_hash: str
+    normalization_version: str = "automotive_core_v1"
+
+
+class AutomotiveSafetyRating(BaseModel):
+    """Canonical NHTSA vehicle safety rating record."""
+
+    record_id: str = Field(..., description="Deterministic record identity")
+    source_id: str = Field(..., description="Official source identifier")
+    source_family: Literal["safety_rating"] = "safety_rating"
+    vehicle_id: str = Field(..., description="NHTSA vehicle identifier")
+    make: Optional[str] = None
+    model: Optional[str] = None
+    model_year: Optional[str] = None
+    overall_rating: Optional[str] = None
+    front_crash_rating: Optional[str] = None
+    side_crash_rating: Optional[str] = None
+    rollover_rating: Optional[str] = None
+    vehicle_description: Optional[str] = None
+    source_url: Optional[str] = None
+    jurisdiction: str = "US"
+    authority_rating: str = "primary"
+    harvest_timestamp: str
+    raw_record_hash: str
+    normalization_version: str = "automotive_core_v1"
+
+
 class AutomotiveChunk(BaseModel):
     """One deterministic retrieval chunk produced from a canonical record."""
 
@@ -72,7 +122,7 @@ class AutomotiveChunk(BaseModel):
     record_id: str
     source_id: str
     source_family: str
-    campaign_number: str
+    campaign_number: str = ""
     make: Optional[str] = None
     model: Optional[str] = None
     model_year: Optional[str] = None

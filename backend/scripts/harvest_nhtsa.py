@@ -744,9 +744,238 @@ def harvest_investigations(
     }
 
 
+def _import_overlay_normalizer(name: str) -> Any:
+    """Load a named normalizer from the automotive_core overlay without shadowing backend app."""
+    overlay_dir = (
+        Path(__file__).resolve().parent.parent
+        / "app"
+        / "platform_generator"
+        / "overlays"
+        / "automotive_core"
+    )
+    if not overlay_dir.exists():
+        raise ImportError(f"automotive_core overlay not found at {overlay_dir}")
+
+    normalizer_path = overlay_dir / "app" / "core" / "automotive_normalizers.py"
+    models_path = overlay_dir / "app" / "models" / "automotive_records.py"
+
+    touched = [
+        "app",
+        "app.models",
+        "app.models.automotive_records",
+        "app.core",
+        "app.core.automotive_normalizers",
+    ]
+    saved: Dict[str, Any] = {}
+    for key in touched:
+        saved[key] = sys.modules.pop(key, None)
+
+    try:
+        models_spec = importlib.util.spec_from_file_location(
+            "app.models.automotive_records", models_path
+        )
+        if models_spec is None or models_spec.loader is None:
+            raise ImportError(f"Could not create module spec for overlay models at {models_path}")
+        models_mod = importlib.util.module_from_spec(models_spec)
+        sys.modules["app.models.automotive_records"] = models_mod
+
+        app_mod = types.ModuleType("app")
+        app_models_mod = types.ModuleType("app.models")
+        sys.modules["app"] = app_mod
+        sys.modules["app.models"] = app_models_mod
+        app_mod.models = app_models_mod
+        app_models_mod.automotive_records = models_mod
+        models_spec.loader.exec_module(models_mod)
+
+        norm_spec = importlib.util.spec_from_file_location(
+            "app.core.automotive_normalizers", normalizer_path
+        )
+        if norm_spec is None or norm_spec.loader is None:
+            raise ImportError(
+                f"Could not create module spec for overlay normalizer at {normalizer_path}"
+            )
+        norm_mod = importlib.util.module_from_spec(norm_spec)
+        app_core_mod = types.ModuleType("app.core")
+        sys.modules["app.core"] = app_core_mod
+        sys.modules["app.core.automotive_normalizers"] = norm_mod
+        app_mod.core = app_core_mod
+        app_core_mod.automotive_normalizers = norm_mod
+        norm_spec.loader.exec_module(norm_mod)
+
+        return getattr(norm_mod, name)
+    finally:
+        for key in touched:
+            if saved.get(key) is not None:
+                sys.modules[key] = saved[key]
+            elif key in sys.modules:
+                del sys.modules[key]
+
+
+def harvest_complaints(
+    output_dir: Path,
+    source_url: Optional[str] = None,
+    since_year: Optional[int] = None,
+    max_records: Optional[int] = None,
+    dry_run: bool = False,
+    fixture_path: Optional[Path] = None,
+    force_download: bool = False,
+) -> Dict[str, Any]:
+    """Harvest NHTSA consumer complaints (fixture-first for pilot readiness)."""
+    source_id = "nhtsa_complaints"
+    url = source_url or "https://static.nhtsa.gov/odi/ffdd/cmpl/FLAT_CMPL.zip"
+    output_dir = Path(output_dir)
+    raw_dir = output_dir / "raw" / source_id
+    canonical_dir = output_dir / "canonical"
+    if not dry_run:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+    if not fixture_path:
+        raise HarvestError(
+            "FIXTURE_REQUIRED",
+            "Complaint harvest currently requires --fixture for deterministic pilot builds",
+        )
+
+    rows: List[Dict[str, str]] = []
+    with fixture_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+    if not dry_run:
+        shutil.copy2(fixture_path, raw_dir / f"fixture{fixture_path.suffix}")
+
+    if since_year is not None:
+        filtered = []
+        for row in rows:
+            year_val = _parse_int(_field_getter(row)("YEARTXT", "yeartxt", "YEAR") or "")
+            if year_val is not None and year_val >= since_year:
+                filtered.append(row)
+        rows = filtered
+    if max_records is not None:
+        rows = rows[:max_records]
+
+    normalize = _import_overlay_normalizer("normalize_complaint_row")
+    canonical_records = [
+        normalize(source_id, sequence, row).model_dump()
+        for sequence, row in enumerate(rows, start=1)
+    ]
+    content_hash = hashlib.sha256(
+        json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    harvest_manifest = {
+        "source_id": source_id,
+        "source_family": "complaint",
+        "source_url": url,
+        "retrieval_method": "fixture",
+        "harvest_timestamp": _utc_now(),
+        "content_hash": content_hash,
+        "record_count": len(canonical_records),
+        "fixture_path": str(fixture_path.name),
+        "since_year": since_year,
+        "force_download": force_download,
+    }
+    canonical_path = canonical_dir / "complaints.jsonl"
+    manifest_path = raw_dir / "harvest_manifest.json"
+    if not dry_run:
+        with canonical_path.open("w", encoding="utf-8") as f:
+            for record in canonical_records:
+                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        manifest_path.write_text(
+            json.dumps(harvest_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return {
+        "harvest_manifest": harvest_manifest,
+        "canonical_path": canonical_path if not dry_run else None,
+        "record_count": len(canonical_records),
+    }
+
+
+def harvest_safety_ratings(
+    output_dir: Path,
+    source_url: Optional[str] = None,
+    since_year: Optional[int] = None,
+    max_records: Optional[int] = None,
+    dry_run: bool = False,
+    fixture_path: Optional[Path] = None,
+    force_download: bool = False,
+) -> Dict[str, Any]:
+    """Harvest NHTSA safety ratings (fixture-first for pilot readiness)."""
+    source_id = "nhtsa_safety_ratings"
+    url = source_url or "https://api.nhtsa.gov/SafetyRatings"
+    output_dir = Path(output_dir)
+    raw_dir = output_dir / "raw" / source_id
+    canonical_dir = output_dir / "canonical"
+    if not dry_run:
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        canonical_dir.mkdir(parents=True, exist_ok=True)
+
+    if not fixture_path:
+        raise HarvestError(
+            "FIXTURE_REQUIRED",
+            "Safety-rating harvest currently requires --fixture for deterministic pilot builds",
+        )
+
+    rows: List[Dict[str, str]] = []
+    with fixture_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        rows = list(reader)
+    if not dry_run:
+        shutil.copy2(fixture_path, raw_dir / f"fixture{fixture_path.suffix}")
+
+    if since_year is not None:
+        filtered = []
+        for row in rows:
+            year_val = _parse_int(_field_getter(row)("ModelYear", "modelyear", "YEAR") or "")
+            if year_val is not None and year_val >= since_year:
+                filtered.append(row)
+        rows = filtered
+    if max_records is not None:
+        rows = rows[:max_records]
+
+    normalize = _import_overlay_normalizer("normalize_safety_rating_row")
+    canonical_records = [
+        normalize(source_id, sequence, row).model_dump()
+        for sequence, row in enumerate(rows, start=1)
+    ]
+    content_hash = hashlib.sha256(
+        json.dumps(rows, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    harvest_manifest = {
+        "source_id": source_id,
+        "source_family": "safety_rating",
+        "source_url": url,
+        "retrieval_method": "fixture",
+        "harvest_timestamp": _utc_now(),
+        "content_hash": content_hash,
+        "record_count": len(canonical_records),
+        "fixture_path": str(fixture_path.name),
+        "since_year": since_year,
+        "force_download": force_download,
+    }
+    canonical_path = canonical_dir / "safety_ratings.jsonl"
+    manifest_path = raw_dir / "harvest_manifest.json"
+    if not dry_run:
+        with canonical_path.open("w", encoding="utf-8") as f:
+            for record in canonical_records:
+                f.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
+        manifest_path.write_text(
+            json.dumps(harvest_manifest, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+    return {
+        "harvest_manifest": harvest_manifest,
+        "canonical_path": canonical_path if not dry_run else None,
+        "record_count": len(canonical_records),
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Harvest NHTSA automotive public data")
-    parser.add_argument("--family", default="recalls", help="Source family to harvest (recalls|investigation)")
+    parser.add_argument(
+        "--family",
+        default="recalls",
+        help="Source family to harvest (recalls|investigation|complaint|safety_rating)",
+    )
     parser.add_argument("--output-dir", required=True, type=Path, help="Directory for harvested artifacts")
     parser.add_argument("--since-year", type=int, default=None, help="Filter records to this model year or later")
     parser.add_argument("--max-records", type=int, default=None, help="Cap the number of records processed")
@@ -761,8 +990,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         harvest_func = harvest_recalls
     elif args.family == "investigation":
         harvest_func = harvest_investigations
+    elif args.family in {"complaint", "complaints"}:
+        harvest_func = harvest_complaints
+    elif args.family in {"safety_rating", "safety_ratings", "rating"}:
+        harvest_func = harvest_safety_ratings
     else:
-        logger.error("Unsupported --family: %s (supported: recalls, investigation)", args.family)
+        logger.error(
+            "Unsupported --family: %s (supported: recalls, investigation, complaint, safety_rating)",
+            args.family,
+        )
         return 1
 
     try:

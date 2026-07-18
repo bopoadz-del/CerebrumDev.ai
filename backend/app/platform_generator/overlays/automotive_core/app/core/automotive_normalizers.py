@@ -12,7 +12,12 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from app.models.automotive_records import AutomotiveInvestigation, AutomotiveRecall
+from app.models.automotive_records import (
+    AutomotiveComplaint,
+    AutomotiveInvestigation,
+    AutomotiveRecall,
+    AutomotiveSafetyRating,
+)
 
 
 UNKNOWN_YEAR_TOKENS = {"9999", "99999", "0000", "", "N/A", "NA"}
@@ -212,3 +217,130 @@ def normalize_investigation_rows(
 ) -> List[AutomotiveInvestigation]:
     """Normalize a list of raw ODI investigation rows."""
     return [normalize_investigation_row(source_id, i + 1, row) for i, row in enumerate(rows)]
+
+
+def _parse_bool_flag(value: Optional[str]) -> Optional[bool]:
+    cleaned = (value or "").strip().upper()
+    if cleaned in {"Y", "YES", "TRUE", "1"}:
+        return True
+    if cleaned in {"N", "NO", "FALSE", "0"}:
+        return False
+    return None
+
+
+def normalize_complaint_row(
+    source_id: str,
+    record_sequence: int,
+    row: Dict[str, str],
+) -> AutomotiveComplaint:
+    """Convert one raw NHTSA consumer complaint row into a canonical record."""
+    get = _field_getter(row)
+
+    complaint_id = (
+        _clean_text(get("ODINO", "odino", "CMPLID", "cmplid", "COMPLAINT_ID"), max_chars=32) or ""
+    )
+    make = _clean_text(get("MAKETXT", "maketxt", "MAKE"), max_chars=128)
+    model = _clean_text(get("MODELTXT", "modeltxt", "MODEL"), max_chars=512)
+    year = _clean_text(get("YEARTXT", "yeartxt", "YEAR"), max_chars=16)
+    if year in UNKNOWN_YEAR_TOKENS:
+        year = None
+    component = _clean_text(get("COMPNAME", "compname", "COMPONENT"), max_chars=512)
+    manufacturer = _clean_text(get("MFR_NAME", "mfr_name", "MFGNAME"), max_chars=256)
+    summary = _clean_text(get("CDESCR", "cdescr", "DESC", "SUMMARY"), max_chars=6000)
+    associated_campaign = _clean_text(get("CMPL_RECALL", "cmpl_recall", "CAMPNO"), max_chars=32)
+    date_complaint = _parse_date(get("DATEA", "datea", "DATE_COMPLAINT"))
+
+    record_id = _record_id(source_id, record_sequence, complaint_id)
+    raw_hash = _raw_record_hash(source_id, row)
+
+    return AutomotiveComplaint(
+        record_id=record_id,
+        source_id=source_id,
+        source_family="complaint",
+        complaint_id=complaint_id,
+        make=make,
+        model=model,
+        model_year=year,
+        component=component,
+        manufacturer=manufacturer,
+        summary=summary,
+        crash=_parse_bool_flag(get("CRASH", "crash")),
+        fire=_parse_bool_flag(get("FIRE", "fire")),
+        injured=_parse_int(get("INJURED", "injured")),
+        deaths=_parse_int(get("DEATHS", "deaths")),
+        date_complaint=date_complaint,
+        associated_campaign_number=associated_campaign or None,
+        source_url=(
+            f"https://www.nhtsa.gov/vehicle/{complaint_id}" if complaint_id else None
+        ),
+        jurisdiction="US",
+        authority_rating="primary",
+        harvest_timestamp=_utc_now(),
+        raw_record_hash=raw_hash,
+        normalization_version="automotive_core_v1",
+    )
+
+
+def normalize_complaint_rows(
+    source_id: str,
+    rows: List[Dict[str, str]],
+) -> List[AutomotiveComplaint]:
+    """Normalize a list of raw consumer complaint rows."""
+    return [normalize_complaint_row(source_id, i + 1, row) for i, row in enumerate(rows)]
+
+
+def normalize_safety_rating_row(
+    source_id: str,
+    record_sequence: int,
+    row: Dict[str, str],
+) -> AutomotiveSafetyRating:
+    """Convert one raw NHTSA safety-rating row into a canonical record."""
+    get = _field_getter(row)
+
+    vehicle_id = _clean_text(get("VehicleId", "vehicleid", "VEHICLE_ID", "ID"), max_chars=32) or ""
+    make = _clean_text(get("Make", "make", "MAKETXT"), max_chars=128)
+    model = _clean_text(get("Model", "model", "MODELTXT"), max_chars=512)
+    year = _clean_text(get("ModelYear", "modelyear", "YEAR", "YEARTXT"), max_chars=16)
+    if year in UNKNOWN_YEAR_TOKENS:
+        year = None
+    overall = _clean_text(get("OverallRating", "overallrating"), max_chars=8)
+    front = _clean_text(get("OverallFrontCrashRating", "overallfrontcrashrating"), max_chars=8)
+    side = _clean_text(get("OverallSideCrashRating", "overallsidecrashrating"), max_chars=8)
+    rollover = _clean_text(get("RolloverRating", "rolloverrating"), max_chars=8)
+    description = _clean_text(get("VehicleDescription", "vehicledescription"), max_chars=512)
+
+    record_id = _record_id(source_id, record_sequence, vehicle_id)
+    raw_hash = _raw_record_hash(source_id, row)
+
+    return AutomotiveSafetyRating(
+        record_id=record_id,
+        source_id=source_id,
+        source_family="safety_rating",
+        vehicle_id=vehicle_id,
+        make=make,
+        model=model,
+        model_year=year,
+        overall_rating=overall,
+        front_crash_rating=front,
+        side_crash_rating=side,
+        rollover_rating=rollover,
+        vehicle_description=description,
+        source_url=(
+            f"https://www.nhtsa.gov/vehicle/{year}/{make}/{model}".replace(" ", "%20")
+            if year and make and model
+            else None
+        ),
+        jurisdiction="US",
+        authority_rating="primary",
+        harvest_timestamp=_utc_now(),
+        raw_record_hash=raw_hash,
+        normalization_version="automotive_core_v1",
+    )
+
+
+def normalize_safety_rating_rows(
+    source_id: str,
+    rows: List[Dict[str, str]],
+) -> List[AutomotiveSafetyRating]:
+    """Normalize a list of raw safety-rating rows."""
+    return [normalize_safety_rating_row(source_id, i + 1, row) for i, row in enumerate(rows)]

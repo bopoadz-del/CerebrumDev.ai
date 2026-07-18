@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from app.core.automotive_normalizers import (
+    normalize_complaint_row,
     normalize_investigation_row,
     normalize_investigation_rows,
     normalize_recall_row,
     normalize_recall_rows,
+    normalize_safety_rating_row,
 )
 from app.models.automotive_records import AutomotiveRecall
 
@@ -169,3 +171,43 @@ def test_investigation_control_characters_removed() -> None:
     assert "\x00" not in record.make
     assert "\n" not in record.summary
     assert "\r" not in record.summary
+
+
+def test_normalize_complaint_row_maps_official_columns() -> None:
+    row = {
+        "ODINO": "100001",
+        "MAKETXT": "Honda",
+        "MODELTXT": "Accord",
+        "YEARTXT": "2014",
+        "COMPNAME": "AIR BAGS",
+        "CDESCR": "Air bag warning light.",
+        "CRASH": "N",
+        "FIRE": "N",
+        "INJURED": "0",
+        "DEATHS": "0",
+        "DATEA": "20150401",
+        "CMPL_RECALL": "15V176000",
+    }
+    record = normalize_complaint_row("nhtsa_complaints", 1, row)
+    assert record.complaint_id == "100001"
+    assert record.source_family == "complaint"
+    assert record.associated_campaign_number == "15V176000"
+    assert record.crash is False
+
+
+def test_normalize_safety_rating_row_maps_official_columns() -> None:
+    row = {
+        "VehicleId": "12345",
+        "Make": "Honda",
+        "Model": "Accord",
+        "ModelYear": "2014",
+        "OverallRating": "5",
+        "OverallFrontCrashRating": "5",
+        "OverallSideCrashRating": "5",
+        "RolloverRating": "4",
+        "VehicleDescription": "2014 Honda Accord 4 DR FWD",
+    }
+    record = normalize_safety_rating_row("nhtsa_safety_ratings", 1, row)
+    assert record.vehicle_id == "12345"
+    assert record.source_family == "safety_rating"
+    assert record.overall_rating == "5"

@@ -165,7 +165,8 @@ GROUNDED_ADAPTER_TIMEOUT=60
 # Auto-deploy (Render + GitHub)
 RENDER_API_KEY=
 RENDER_OWNER_ID=
-DEPLOY_REPO=https://github.com/bopoadz-del/CerebrumDev.ai
+# Dedicated deploy target repo — must NOT be CerebrumDev.ai itself.
+DEPLOY_REPO_URL=https://github.com/bopoadz-del/your-deploy-target
 GITHUB_TOKEN=
 GITHUB_USERNAME=bopoadz-del
 ```
@@ -243,7 +244,7 @@ A new instance (deployed from a session) is created as a separate web service wi
 ### Auto-Deploy Prerequisites
 - `RENDER_API_KEY`, `RENDER_OWNER_ID` set in the parent backend
 - `GITHUB_TOKEN` set for branch creation
-- `DEPLOY_REPO` must exist and be accessible
+- `DEPLOY_REPO_URL` must exist and be accessible (never point at CerebrumDev.ai itself)
 
 Without a GitHub token, the deployer falls back to returning a downloadable zip.
 
