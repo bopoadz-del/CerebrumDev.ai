@@ -38,6 +38,16 @@ The platform consists of two repos:
 
 ---
 
+
+
+## Factory provenance
+
+CerebrumDev.ai is the **product factory**. The live RetailOps kernel lives in
+[`TEKsystems_GlobalRetailMNC`](https://github.com/bopoadz-del/TEKsystems_GlobalRetailMNC).
+Evidence that RetailOps was Factory-driven is retained under
+[`docs/provenance/teksystems-retailops/`](docs/provenance/teksystems-retailops/).
+There is no runnable `backend/app/retailops/` package in this repository.
+
 ## ✨ Features
 
 ### Phase 1 – Configure
