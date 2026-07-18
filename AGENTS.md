@@ -37,3 +37,13 @@ Every block used to generate a product must be registered in **both**:
 1. Cerebrum-Blocks (`block_registry/` + kit shelf)
 2. CerebrumDev.ai Factory shelf/registry (`backend/app/factory/block_registry/` or
    equivalent shelf consumer)
+
+
+## Product factory (Milestone 1+)
+
+- Kernel: `backend/app/cerebrum_product_kernel/`
+- Factory: `backend/app/factory/` (`blueprint`, `planner`, `dual_registry`, `generator`)
+- Blueprints: `blueprints/`
+- Factory block shelf (dual-register mirror): `backend/app/factory/shelves/factory_blocks.json`
+- Generate: `cd backend && PYTHONPATH=. python3 -m app.factory.cli generate --blueprint ../blueprints/steward/steward.v1.yaml --out ../factory_outputs/Cerebrum-Steward --blocks-root $CEREBRUM_BLOCKS_ROOT`
+- Factory tests: `python3 -m pytest tests/factory --asyncio-mode=auto`

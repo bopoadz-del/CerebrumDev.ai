@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0.0",
+  "shelf_id": "factory_blocks",
+  "name": "CerebrumDev.ai Factory Block Shelf",
+  "description": "Factory-side mirror of dual-registered blocks. Planner fails closed if a block is missing here or in Cerebrum-Blocks.",
+  "blocks": [
+    {
+      "id": "audit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": ""
+    },
+    {
+      "id": "capture",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Receive images from any client, OCR extract, AI structure, vector store"
+    },
+    {
+      "id": "estate_maintenance",
+      "version": "1.0.0",
+      "kit": "private_estate_operations",
+      "description": "Maintenance work orders and schedules"
+    },
+    {
+      "id": "estate_registry",
+      "version": "1.0.0",
+      "kit": "private_estate_operations",
+      "description": "Property and asset registry for private estates"
+    },
+    {
+      "id": "event_bus",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Event bus for synchronous and asynchronous block communication"
+    },
+    {
+      "id": "evidence_verifier",
+      "version": "1.0.0",
+      "kit": "private_estate_operations",
+      "description": "Evidence capture and verification for estate ops"
+    },
+    {
+      "id": "file_hasher",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "SHA256/MD5 hashing and metadata extraction for files"
+    },
+    {
+      "id": "memory",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "High-speed TTL/LRU cache \u2014 session storage and Redis alternative for edge deployments"
+    },
+    {
+      "id": "portfolio_rollup",
+      "version": "1.0.0",
+      "kit": "private_estate_operations",
+      "description": "Multi-property portfolio rollup intelligence"
+    },
+    {
+      "id": "readiness_engine",
+      "version": "1.0.0",
+      "kit": "private_estate_operations",
+      "description": "Property readiness scoring and gates"
+    },
+    {
+      "id": "workflow",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Chain blocks into pipelines with variable interpolation and scheduling"
+    }
+  ]
+}

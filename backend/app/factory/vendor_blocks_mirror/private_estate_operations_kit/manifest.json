@@ -1,0 +1,38 @@
+{
+  "id": "private_estate_operations",
+  "name": "Private Estate Operations",
+  "version": "1.0.0",
+  "description": "Estate registry, maintenance, evidence, readiness, and portfolio rollup for The Steward.",
+  "status": "available",
+  "author": "bopoadz-del",
+  "tags": [
+    "domain",
+    "estate",
+    "steward"
+  ],
+  "source": {
+    "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
+    "ref": "main",
+    "publish_script": "scripts/publish_kit.py"
+  },
+  "container": {
+    "class": "app.containers.private_estate_operations.PrivateEstateOperationsContainer",
+    "default_chat_prompt": null
+  },
+  "blocks": [
+    "estate_registry",
+    "estate_maintenance",
+    "evidence_verifier",
+    "readiness_engine",
+    "portfolio_rollup"
+  ],
+  "prompts": [],
+  "data": [],
+  "core_modules": [],
+  "artifacts": [],
+  "price_cents": 0,
+  "install_requires": {
+    "min_platform_version": "2.0.0",
+    "python": ">=3.10"
+  }
+}

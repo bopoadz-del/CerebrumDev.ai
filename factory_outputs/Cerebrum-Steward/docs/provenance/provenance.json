@@ -1,0 +1,90 @@
+{
+  "blocks_commit": "c5a5ba187190242249bf6fe8d915b03bae44cf08",
+  "blueprint_id": "cerebrum-steward:product_blueprint.v1",
+  "factory": "CerebrumDev.ai",
+  "factory_commit": "d440e88a8b0a7d75b6262cdeb58c0623eab012d5",
+  "generated_at": "2026-07-18T23:16:01.508876+00:00",
+  "inputs_hash": "197a2138555a9f0a5612330e0d7883a3df69abf786e1a083d88d8c73a6843b6d",
+  "kernel_version": "1.0.0",
+  "plan": {
+    "capabilities": [
+      {
+        "block_ids": [
+          "estate_registry"
+        ],
+        "capability_id": "estate_registry",
+        "notes": "dual-registered",
+        "strategy": "REUSE"
+      },
+      {
+        "block_ids": [
+          "estate_maintenance"
+        ],
+        "capability_id": "estate_maintenance",
+        "notes": "dual-registered",
+        "strategy": "REUSE"
+      },
+      {
+        "block_ids": [
+          "evidence_verifier"
+        ],
+        "capability_id": "evidence_verifier",
+        "notes": "dual-registered",
+        "strategy": "REUSE"
+      },
+      {
+        "block_ids": [
+          "readiness_engine"
+        ],
+        "capability_id": "readiness_engine",
+        "notes": "dual-registered",
+        "strategy": "REUSE"
+      },
+      {
+        "block_ids": [
+          "portfolio_rollup"
+        ],
+        "capability_id": "portfolio_rollup",
+        "notes": "dual-registered",
+        "strategy": "REUSE"
+      },
+      {
+        "block_ids": [
+          "estate_registry",
+          "estate_maintenance",
+          "readiness_engine"
+        ],
+        "capability_id": "composed_ops_loop",
+        "notes": "dual-registered",
+        "strategy": "COMPOSE"
+      },
+      {
+        "block_ids": [
+          "capture",
+          "evidence_verifier"
+        ],
+        "capability_id": "evidence_capture",
+        "notes": "dual-registered",
+        "strategy": "COMPOSE"
+      },
+      {
+        "block_ids": [],
+        "capability_id": "human_authority_gate",
+        "notes": "kernel/template generation (no block ids)",
+        "strategy": "GENERATE"
+      }
+    ],
+    "dual_registered_blocks": [
+      "capture",
+      "estate_maintenance",
+      "estate_registry",
+      "evidence_verifier",
+      "portfolio_rollup",
+      "readiness_engine"
+    ],
+    "product_id": "cerebrum-steward",
+    "unsupported": []
+  },
+  "product_id": "cerebrum-steward",
+  "schema": "factory_provenance.v1"
+}

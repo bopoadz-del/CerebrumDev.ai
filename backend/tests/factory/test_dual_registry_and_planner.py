@@ -1,0 +1,72 @@
+from pathlib import Path
+
+import pytest
+
+from app.factory.blueprint import load_blueprint
+from app.factory.dual_registry import DualRegistryError, assert_dual_registered
+from app.factory.planner import CapabilityPlanner
+
+
+ROOT = Path(__file__).resolve().parents[3]
+BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+
+
+def test_estate_blocks_dual_registered():
+    ids = [
+        "estate_registry",
+        "estate_maintenance",
+        "evidence_verifier",
+        "readiness_engine",
+        "portfolio_rollup",
+    ]
+    assert assert_dual_registered(ids, BLOCKS) == sorted(ids)
+
+
+def test_unknown_block_fails_closed():
+    with pytest.raises(DualRegistryError):
+        assert_dual_registered(["not_a_real_block_xyz"], BLOCKS)
+
+
+def test_planner_steward():
+    bp = load_blueprint(ROOT / "blueprints/steward/steward.v1.yaml")
+    plan = CapabilityPlanner(BLOCKS).plan(bp)
+    assert plan.product_id == "cerebrum-steward"
+    assert not plan.unsupported
+    strategies = {c.capability_id: c.strategy for c in plan.capabilities}
+    assert strategies["estate_registry"] == "REUSE"
+    assert strategies["composed_ops_loop"] == "COMPOSE"
+    assert strategies["human_authority_gate"] == "GENERATE"
+
+
+def test_planner_rejects_undual_block(tmp_path):
+    p = tmp_path / "bp.yaml"
+    p.write_text(
+        """
+schema_version: product_blueprint.v1
+product_id: bad-product
+product_name: Bad
+vertical: estate
+summary: bad
+capabilities:
+  - id: ghost
+    description: uses missing block
+    block_ids: [totally_missing_block]
+"""
+    )
+    bp = load_blueprint(p)
+    with pytest.raises(DualRegistryError):
+        CapabilityPlanner(BLOCKS).plan(bp)
+
+
+def test_vendor_mirror_covers_estate_blocks_without_blocks_checkout(tmp_path):
+    empty = tmp_path / "empty_blocks"
+    empty.mkdir()
+    (empty / "block_registry").mkdir()
+    ids = [
+        "estate_registry",
+        "estate_maintenance",
+        "evidence_verifier",
+        "readiness_engine",
+        "portfolio_rollup",
+    ]
+    assert assert_dual_registered(ids, empty) == sorted(ids)
