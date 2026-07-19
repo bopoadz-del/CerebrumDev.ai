@@ -1,27 +1,86 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "601d37f8d7753cb18020a32d6002e579e552253bdcb7f809154ebb790161805d",
+    "block.json": "b1f2a4ec2ad7f04b2faba8f74606225fc81976e54ded253d91115c8a40093b38",
+    "block.py": "3de9137bc51c1e7fbd8471ce4aeea93d928239dfd9e691a99adb7355ea230af6"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/audit:latest",
+    "type": "docker"
+  },
   "id": "audit",
-  "name": "Audit",
-  "version": "1.0.0",
-  "description": "Immutable audit trail for platform events",
-  "author": "Cerebrum Factory",
-  "layer": 2,
-  "tags": [
-    "platform",
-    "audit"
-  ],
   "inputs": [
     {
+      "description": "JSON payload for the selected action",
       "name": "input",
-      "type": "json",
       "required": false,
-      "description": "Capability input payload"
+      "type": "json"
+    },
+    {
+      "default": "log",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "log",
+        "query",
+        "export",
+        "verify_chain",
+        "get_stats",
+        "tamper_check"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "sha256",
+      "description": "Configuration parameter: hash_algorithm",
+      "name": "hash_algorithm",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: chain_verification",
+      "name": "chain_verification",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": 2555,
+      "description": "Configuration parameter: retention_days",
+      "name": "retention_days",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: immutable",
+      "name": "immutable",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": [
+        "auth",
+        "data_access",
+        "system",
+        "admin"
+      ],
+      "description": "Configuration parameter: categories",
+      "name": "categories",
+      "required": false,
+      "type": "array"
     }
   ],
+  "layer": 1,
+  "name": "Audit",
   "outputs": [
     {
-      "name": "result",
-      "type": "json",
-      "description": "Capability result"
+      "description": "Audit Events",
+      "name": "events",
+      "type": "json"
     }
   ],
   "permissions": {
@@ -31,9 +90,61 @@
     "network": false
   },
   "publisher_id": "cerebrum_platform",
-  "requires": [],
-  "execution": {
-    "type": "python",
-    "entrypoint": "block.py"
-  }
+  "requires": [
+    "database",
+    "auth"
+  ],
+  "signature": "7sCAZEM4IqXoUfu/BF0EOsf59RDZOPUBQW7GHKsLOjvIXu6Hjk06XtPBilcCjI0HTDKZypQuxwV+8uvcSDlbDA==",
+  "tags": [
+    "security",
+    "compliance",
+    "audit",
+    "enterprise"
+  ],
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "log",
+        "query",
+        "export",
+        "verify_chain",
+        "get_stats",
+        "tamper_check"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Hash Algorithm",
+      "name": "hash_algorithm",
+      "widget": "text"
+    },
+    {
+      "label": "Chain Verification",
+      "name": "chain_verification",
+      "widget": "toggle"
+    },
+    {
+      "label": "Retention Days",
+      "name": "retention_days",
+      "widget": "number"
+    },
+    {
+      "label": "Immutable",
+      "name": "immutable",
+      "widget": "toggle"
+    },
+    {
+      "label": "Categories",
+      "name": "categories",
+      "widget": "json"
+    }
+  ],
+  "version": "1.0.0"
 }

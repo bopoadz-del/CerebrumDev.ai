@@ -1,27 +1,154 @@
 {
-  "id": "capture",
-  "name": "Capture",
-  "version": "1.0.0",
+  "author": "Cerebrum Team",
   "description": "Receive images from any client, OCR extract, AI structure, vector store",
-  "author": "Cerebrum Factory",
-  "layer": 2,
-  "tags": [
-    "platform",
-    "capture"
-  ],
+  "digests": {
+    "Dockerfile": "601d37f8d7753cb18020a32d6002e579e552253bdcb7f809154ebb790161805d",
+    "block.json": "afce729bcaf510bea5165ad9732a7d4fe338f0732bf7ac894f91a41317e578ce",
+    "block.py": "647da4ca9657accd66d0b351d577e3f846b6d06f513ab1d998d7e4d8c8e05e90"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/capture:latest",
+    "type": "docker"
+  },
+  "id": "capture",
   "inputs": [
     {
+      "description": "Upload or push an image to capture and structure...",
       "name": "input",
-      "type": "json",
       "required": false,
-      "description": "Capability input payload"
+      "type": "file"
+    },
+    {
+      "default": "ara+eng",
+      "description": "Configuration parameter: ocr_languages",
+      "name": "ocr_languages",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "tesseract",
+      "description": "Configuration parameter: ocr_engine",
+      "name": "ocr_engine",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "deepseek",
+      "description": "Configuration parameter: llm_provider",
+      "name": "llm_provider",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "http://localhost:11434",
+      "description": "Configuration parameter: ollama_base_url",
+      "name": "ollama_base_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "llama3.2:3b",
+      "description": "Configuration parameter: ollama_model",
+      "name": "ollama_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: deepseek_api_key",
+      "name": "deepseek_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: openrouter_api_key",
+      "name": "openrouter_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "deepseek-chat",
+      "description": "Configuration parameter: deepseek_model",
+      "name": "deepseek_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "anthropic/claude-3.5-sonnet",
+      "description": "Configuration parameter: openrouter_model",
+      "name": "openrouter_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: anthropic_api_key",
+      "name": "anthropic_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "claude-3-5-sonnet-20241022",
+      "description": "Configuration parameter: anthropic_model",
+      "name": "anthropic_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "http://localhost:8001",
+      "description": "Configuration parameter: vector_db_url",
+      "name": "vector_db_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: store_captures",
+      "name": "store_captures",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": "cerebrum_captures",
+      "description": "Configuration parameter: capture_collection",
+      "name": "capture_collection",
+      "required": false,
+      "type": "string"
     }
   ],
+  "layer": 3,
+  "name": "Capture",
   "outputs": [
     {
-      "name": "result",
-      "type": "json",
-      "description": "Capability result"
+      "description": "Capture ID",
+      "name": "capture_id",
+      "type": "text"
+    },
+    {
+      "description": "OCR Raw Text",
+      "name": "raw_text",
+      "type": "text"
+    },
+    {
+      "description": "Entities",
+      "name": "entities",
+      "type": "json"
+    },
+    {
+      "description": "Tags",
+      "name": "tags",
+      "type": "array"
+    },
+    {
+      "description": "Summary",
+      "name": "summary",
+      "type": "text"
+    },
+    {
+      "description": "Clean Text",
+      "name": "clean_text",
+      "type": "text"
     }
   ],
   "permissions": {
@@ -31,9 +158,94 @@
     "network": false
   },
   "publisher_id": "cerebrum_platform",
-  "requires": [],
-  "execution": {
-    "type": "python",
-    "entrypoint": "block.py"
-  }
+  "requires": [
+    "vector_search"
+  ],
+  "signature": "Q8S2TXmTmQt3QhzfOm5iCJi6Ik/SNc3amXeQAr5jK2dvxLNgNiJz0VgzHySEVzC2Veysh6QY/cimNLFqCTVjBw==",
+  "tags": [
+    "capture",
+    "ocr",
+    "vision",
+    "ai",
+    "multimodal",
+    "knowledge"
+  ],
+  "ui_schema": [
+    {
+      "label": "Upload or push an image to capture and structure...",
+      "name": "input",
+      "widget": "file"
+    },
+    {
+      "label": "Ocr Languages",
+      "name": "ocr_languages",
+      "widget": "text"
+    },
+    {
+      "label": "Ocr Engine",
+      "name": "ocr_engine",
+      "widget": "text"
+    },
+    {
+      "label": "Llm Provider",
+      "name": "llm_provider",
+      "widget": "text"
+    },
+    {
+      "label": "Ollama Base Url",
+      "name": "ollama_base_url",
+      "widget": "text"
+    },
+    {
+      "label": "Ollama Model",
+      "name": "ollama_model",
+      "widget": "text"
+    },
+    {
+      "label": "Deepseek Api Key",
+      "name": "deepseek_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Openrouter Api Key",
+      "name": "openrouter_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Deepseek Model",
+      "name": "deepseek_model",
+      "widget": "text"
+    },
+    {
+      "label": "Openrouter Model",
+      "name": "openrouter_model",
+      "widget": "text"
+    },
+    {
+      "label": "Anthropic Api Key",
+      "name": "anthropic_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Anthropic Model",
+      "name": "anthropic_model",
+      "widget": "text"
+    },
+    {
+      "label": "Vector Db Url",
+      "name": "vector_db_url",
+      "widget": "text"
+    },
+    {
+      "label": "Store Captures",
+      "name": "store_captures",
+      "widget": "toggle"
+    },
+    {
+      "label": "Capture Collection",
+      "name": "capture_collection",
+      "widget": "text"
+    }
+  ],
+  "version": "1.0.0"
 }

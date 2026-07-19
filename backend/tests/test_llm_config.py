@@ -105,6 +105,15 @@ def test_factory_llm_mock():
     assert cfg["mock"] is True
 
 
+def test_kimi_mock_does_not_activate_live_kit_provider():
+    """Kit chat must stay offline when only mock flags are set (no API key)."""
+    os.environ["KIMI_MOCK"] = "1"
+    cfg = get_llm_config()
+    assert cfg["provider"] == ""
+    assert cfg["mock"] is True
+    assert active_provider() == ""
+
+
 def test_auto_detect_qwen():
     os.environ["QWEN_API_KEY"] = "sk-qwen"
     cfg = get_llm_config()
