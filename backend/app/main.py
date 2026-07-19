@@ -19,6 +19,7 @@ from .routers import (
     product_factory,
     session_product,
 )
+from .resident_engineer.router import router as resident_engineer_router
 
 verify_production_auth()
 
@@ -63,6 +64,28 @@ app.include_router(
     tags=["session-product"],
     dependencies=[Depends(require_api_key)],
 )
+app.include_router(
+    resident_engineer_router,
+    dependencies=[Depends(require_api_key)],
+)
+
+
+def _probe_redis() -> dict:
+    """Optional Redis/Key Value probe — unset REDIS_URL is fine."""
+    url = os.getenv("REDIS_URL", "").strip()
+    if not url:
+        return {"configured": False}
+    try:
+        import redis  # type: ignore
+
+        client = redis.from_url(url, socket_connect_timeout=1)
+        client.ping()
+        return {"configured": True, "ok": True}
+    except ImportError:
+        return {"configured": True, "ok": False, "error": "redis package not installed"}
+    except Exception as exc:  # noqa: BLE001
+        return {"configured": True, "ok": False, "error": str(exc)}
+
 
 def _probe_storage() -> dict:
     storage = os.getenv("STORAGE_PATH", "./storage")
@@ -94,9 +117,12 @@ def _probe_blocks() -> dict:
 @app.get("/health")
 async def health():
     storage = _probe_storage()
+    redis = _probe_redis()
     return {
         "status": "ok" if storage.get("ok") else "degraded",
         "storage": storage,
+        "redis": redis,
+        "resident_engineer_enabled": os.getenv("RESIDENT_ENGINEER_ENABLED", "false"),
     }
 
 

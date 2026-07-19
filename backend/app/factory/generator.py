@@ -16,6 +16,7 @@ from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.planner import CapabilityPlanner, ProductPlan
 from app.factory.resident_engineer import write_resident_engineer, write_store_docs
 from app.product_dna.emit import emit_product_dna
+from app.resident_engineer.ship.inject import inject_resident_runtime
 
 
 class ProductGenerator:
@@ -86,6 +87,8 @@ class ProductGenerator:
             workflows=workflows,
             change_events=change_events,
         )
+        # Resident Mode runtime package (flag-gated at runtime; always shipped)
+        re_runtime = inject_resident_runtime(out)
 
         plan_dict = self.plan.to_dict()
         inputs_hash = hash_tree(out)
@@ -108,6 +111,7 @@ class ProductGenerator:
             "provenance": prov,
             "resident_engineer": re_meta,
             "product_dna": dna_meta,
+            "resident_runtime": re_runtime,
         }
 
     def _write_readme(self, out: Path) -> None:

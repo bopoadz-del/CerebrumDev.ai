@@ -15,6 +15,11 @@ import yaml
 from app.factory.blueprint import ProductBlueprint
 from app.factory.planner import ProductPlan
 
+try:
+    from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
+except Exception:  # pragma: no cover - early import safety
+    ALLOWLISTED_HEAL_ACTIONS = ()
+
 DNA_SCHEMA_VERSION = "1.0.0"
 
 # Canonical 15-file bundle (plus checksum_manifest.json written after).
@@ -152,7 +157,7 @@ def build_dna_documents(
             "pii_in_learning": False,
             "boundaries": [],
             "tool_permissions": [],
-            "allowlisted_heal_actions": [],
+            "allowlisted_heal_actions": list(ALLOWLISTED_HEAL_ACTIONS),
         },
         "deployment_topology.json": {
             "schema_version": DNA_SCHEMA_VERSION,

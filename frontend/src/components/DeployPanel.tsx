@@ -102,12 +102,48 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
     return clearPolling;
   }, []);
 
+  const liveFrontend =
+    import.meta.env.VITE_LIVE_FRONTEND_URL || 'https://cerebrumdev-frontend.onrender.com';
+  const liveBackend =
+    import.meta.env.VITE_LIVE_BACKEND_URL || 'https://cerebrumdev-backend.onrender.com';
+
   return (
-    <div className="bg-white rounded-lg shadow p-6 space-y-4">
+    <div className="bg-white rounded-lg shadow p-6 space-y-4" data-testid="deploy-panel">
       <h2 className="text-xl font-semibold">Phase 5: Ship / Deploy</h2>
       <p className="text-gray-600">
-        Package this session as a deployable Cerebrum-Blocks instance.
+        Package this session as a deployable Cerebrum-Blocks instance. Approve the
+        chain above first — this panel is the right-side Ship surface.
       </p>
+
+      <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm space-y-1">
+        <div className="font-medium text-slate-800">Live Factory UI</div>
+        <div>
+          Frontend:{' '}
+          <a
+            href={liveFrontend}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 underline break-all"
+          >
+            {liveFrontend}
+          </a>
+        </div>
+        <div>
+          Backend health:{' '}
+          <a
+            href={`${liveBackend}/health`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-blue-600 underline break-all"
+          >
+            {liveBackend}/health
+          </a>
+        </div>
+        <p className="text-slate-500 text-xs">
+          Google Drive is optional. Redis is optional (set REDIS_URL when you want
+          multi-worker session fan-out). Platform package download works without either.
+        </p>
+      </div>
 
       <div className="flex items-center space-x-4">
         <label className="font-medium">Target:</label>
