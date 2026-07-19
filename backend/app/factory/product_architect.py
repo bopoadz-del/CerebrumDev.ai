@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from app.factory.blueprint import ProductBlueprint, load_blueprint
+from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
 from app.factory.paths import factory_repo_root
@@ -88,8 +88,9 @@ def draft_blueprint_from_brief(
         "product_name": product_id.replace("-", " ").title(),
         "vertical": vertical,
         "summary": brief.strip()[:500] or f"Factory-drafted {vertical} product",
+        "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
         "capabilities": caps,
-        "ui_modules": ["command_center"],
+        "ui_modules": ["command_center", "operational_chat", "resident_engineer"],
         "connectors": [],
         "edge_profile": "standard",
         "human_authority": True,

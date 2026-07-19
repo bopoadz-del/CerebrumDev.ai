@@ -1,0 +1,7 @@
+{
+  "agent_id": "cerebrum-steward.resident_engineer",
+  "kind": "resident_engineer",
+  "maturity": "APPRENTICE",
+  "product_id": "cerebrum-steward",
+  "vertical": "estate"
+}

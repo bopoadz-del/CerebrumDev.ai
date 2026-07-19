@@ -4,7 +4,7 @@ import os
 import pytest
 from unittest.mock import patch
 
-from app.core.llm_config import get_llm_config, active_provider
+from app.core.llm_config import get_factory_llm_config, get_llm_config, active_provider
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +17,11 @@ def _clear_env():
         "CEREBRUM_LLM_API_KEY",
         "CEREBRUM_LLM_BASE_URL",
         "CEREBRUM_LLM_MODEL",
+        "KIMI_API_KEY",
+        "KIMI_BASE_URL",
+        "KIMI_MODEL",
+        "KIMI_MOCK",
+        "CEREBRUM_LLM_MOCK",
         "OLLAMA_URL",
         "OLLAMA_MODEL",
         "OLLAMA_API_KEY",
@@ -65,14 +70,39 @@ def test_explicit_qwen():
     assert cfg["model"] == "qwen-max"
 
 
-def test_explicit_moonshot():
+def test_explicit_moonshot_aliases_to_kimi():
     os.environ["LLM_PROVIDER"] = "moonshot"
     os.environ["CEREBRUM_LLM_API_KEY"] = "sk-moon"
     os.environ["CEREBRUM_LLM_MODEL"] = "moonshot-v1-32k"
     cfg = get_llm_config()
-    assert cfg["provider"] == "moonshot"
+    assert cfg["provider"] == "kimi"
     assert cfg["api_key"] == "sk-moon"
     assert cfg["model"] == "moonshot-v1-32k"
+
+
+def test_explicit_kimi():
+    os.environ["LLM_PROVIDER"] = "kimi"
+    os.environ["KIMI_API_KEY"] = "sk-kimi"
+    os.environ["KIMI_MODEL"] = "kimi-k2"
+    cfg = get_llm_config()
+    assert cfg["provider"] == "kimi"
+    assert cfg["api_key"] == "sk-kimi"
+    assert cfg["model"] == "kimi-k2"
+
+
+def test_factory_llm_kimi_only_rejects_ollama():
+    os.environ["LLM_PROVIDER"] = "ollama"
+    os.environ["OLLAMA_URL"] = "http://localhost:11434"
+    cfg = get_factory_llm_config()
+    assert cfg["provider"] == ""
+    assert "Kimi-only" in cfg.get("error", "")
+
+
+def test_factory_llm_mock():
+    os.environ["KIMI_MOCK"] = "1"
+    cfg = get_factory_llm_config()
+    assert cfg["provider"] == "kimi"
+    assert cfg["mock"] is True
 
 
 def test_auto_detect_qwen():

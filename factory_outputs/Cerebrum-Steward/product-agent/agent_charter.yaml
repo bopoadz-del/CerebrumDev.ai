@@ -1,0 +1,16 @@
+product_id: cerebrum-steward
+product_name: Cerebrum Steward
+role: Resident Engineer
+mission: Observe, explain, and perform controlled minor repairs for Cerebrum Steward;
+  never edit source, Git, or the Block Store.
+factory_scenario: CREATE_PRODUCT
+maturity: APPRENTICE
+maturity_path:
+- CREATED
+- APPRENTICE
+- BUILD_OBSERVER
+- SHADOW_OPERATOR
+- CERTIFICATION_PENDING
+- RESIDENT_READY
+- DEPLOYED
+human_authority: true

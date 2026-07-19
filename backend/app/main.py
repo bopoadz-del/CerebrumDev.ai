@@ -105,10 +105,12 @@ async def ready():
     storage = _probe_storage()
     blocks = _probe_blocks()
     llm_configured = bool(
-        os.getenv("OLLAMA_API_KEY")
-        or os.getenv("QWEN_API_KEY")
+        os.getenv("KIMI_API_KEY")
         or os.getenv("CEREBRUM_LLM_API_KEY")
+        or os.getenv("OLLAMA_API_KEY")
+        or os.getenv("QWEN_API_KEY")
         or os.getenv("LLM_PROVIDER")
+        or os.getenv("KIMI_MOCK")
     )
     checks = {
         "storage": bool(storage.get("ok")),
