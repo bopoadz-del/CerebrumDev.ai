@@ -63,7 +63,19 @@ function AppContent() {
     }
   }, [match, params, location, sessionId, setLocation]);
 
+  // Bumped after chat config mutations so ConfigCanvas reloads localConfig
+  // and a later "Save Configuration" cannot overwrite chat-applied values.
+  const [configEpoch, setConfigEpoch] = useState(0);
+
   const handleCommand = async (command: string, args: any) => {
+    const configMutators = new Set([
+      'set_domain',
+      'set_model',
+      'set_lora_rank',
+      'set_learning_rate',
+      'set_vector_db',
+      'set_hnsw_preset',
+    ]);
     try {
       if (command === 'set_domain' && args?.domain && sessionId) {
         const cur = await api.get(`/sessions/${sessionId}`);
@@ -72,6 +84,7 @@ function AppContent() {
           domain: args.domain,
         };
         await api.post(`/sessions/${sessionId}/config`, config);
+        setConfigEpoch((n) => n + 1);
         addToast({
           type: 'success',
           title: 'Domain updated',
@@ -87,12 +100,17 @@ function AppContent() {
           ai_config: { ...(prev.ai_config || {}), base_model: args.model },
         };
         await api.post(`/sessions/${sessionId}/config`, config);
+        setConfigEpoch((n) => n + 1);
         addToast({
           type: 'success',
           title: 'Model updated',
           message: `Base model set to ${args.model} and saved.`,
         });
         return;
+      }
+      if (configMutators.has(command) && sessionId) {
+        // Backend already applied these via the chat SSE path; refresh canvas only.
+        setConfigEpoch((n) => n + 1);
       }
       addToast({ type: 'info', message: `Command: ${command}` });
     } catch (err: any) {
@@ -161,7 +179,7 @@ function AppContent() {
           {workspaceMode === 'product' ? (
             <DesignProductPanel sessionId={sessionId} />
           ) : (
-            <ConfigCanvas sessionId={sessionId} />
+            <ConfigCanvas sessionId={sessionId} configEpoch={configEpoch} />
           )}
         </Route>
         <Route path="/">
