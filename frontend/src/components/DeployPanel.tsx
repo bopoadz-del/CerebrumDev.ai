@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import api from '../api/client';
+import api, { API_BASE_URL, API_KEY } from '../api/client';
 
 interface DeployPanelProps {
   sessionId: string;
@@ -70,8 +70,32 @@ const DeployPanel: React.FC<DeployPanelProps> = ({ sessionId }) => {
     }, 4000);
   };
 
-  const downloadPackage = (variant: 'cloud' | 'edge' | 'platform' = 'platform') => {
-    window.open(`/v1/sessions/${sessionId}/deploy/package?variant=${variant}`, '_blank');
+  const downloadPackage = async (variant: 'cloud' | 'edge' | 'platform' = 'platform') => {
+    // Must hit the API host with auth — relative /v1 on the static frontend origin 404s/401s.
+    try {
+      addLog(`Downloading ${variant} package…`);
+      const res = await fetch(
+        `${API_BASE_URL}/sessions/${sessionId}/deploy/package?variant=${variant}`,
+        { headers: API_KEY ? { 'X-API-Key': API_KEY } : {} }
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cerebrum-${variant}-${sessionId}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      addLog('Package download started.');
+    } catch (err: any) {
+      setError(err.message || 'Download failed');
+      addLog(`Download error: ${err.message || err}`);
+    }
   };
 
   useEffect(() => {

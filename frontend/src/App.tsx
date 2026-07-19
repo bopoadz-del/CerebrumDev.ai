@@ -63,24 +63,44 @@ function AppContent() {
     }
   }, [match, params, location, sessionId, setLocation]);
 
-  const handleCommand = (command: string, args: any) => {
-    switch (command) {
-      case 'set_domain':
+  const handleCommand = async (command: string, args: any) => {
+    try {
+      if (command === 'set_domain' && args?.domain && sessionId) {
+        const cur = await api.get(`/sessions/${sessionId}`);
+        const config = {
+          ...(cur.data.config || {}),
+          domain: args.domain,
+        };
+        await api.post(`/sessions/${sessionId}/config`, config);
         addToast({
-          type: 'info',
-          title: 'Command received',
-          message: `Domain set to ${args.domain}. Save the configuration to apply.`,
+          type: 'success',
+          title: 'Domain updated',
+          message: `Domain set to ${args.domain} and saved.`,
         });
-        break;
-      case 'set_model':
+        return;
+      }
+      if (command === 'set_model' && args?.model && sessionId) {
+        const cur = await api.get(`/sessions/${sessionId}`);
+        const prev = cur.data.config || {};
+        const config = {
+          ...prev,
+          ai_config: { ...(prev.ai_config || {}), base_model: args.model },
+        };
+        await api.post(`/sessions/${sessionId}/config`, config);
         addToast({
-          type: 'info',
-          title: 'Command received',
-          message: `Base model set to ${args.model}. Save the configuration to apply.`,
+          type: 'success',
+          title: 'Model updated',
+          message: `Base model set to ${args.model} and saved.`,
         });
-        break;
-      default:
-        addToast({ type: 'info', message: `Command: ${command}` });
+        return;
+      }
+      addToast({ type: 'info', message: `Command: ${command}` });
+    } catch (err: any) {
+      addToast({
+        type: 'error',
+        title: 'Command failed',
+        message: err.response?.data?.detail || err.message || 'Could not apply command',
+      });
     }
   };
 

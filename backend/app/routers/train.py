@@ -24,7 +24,8 @@ async def save_training_data(session_id: str, payload: Dict[str, Any]):
     if not state:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    pairs = payload.get("training_data", [])
+    # Accept training_data (canonical) or pairs (alias used by some clients)
+    pairs = payload.get("training_data", payload.get("pairs", []))
     if not isinstance(pairs, list):
         raise HTTPException(status_code=400, detail="training_data must be a list")
 
