@@ -127,10 +127,65 @@ export const ConfigCanvas: React.FC<ConfigCanvasProps> = ({ sessionId }) => {
         <TrainingPanel sessionId={sessionId} onComplete={setTrainingComplete} />
       )}
 
-      {state.chain_approved && state.training_job.status === 'completed' && (
-        <DeployPanel sessionId={sessionId} />
-      )}
+      {/* Deploy is available after chain approval; training is optional (Skip Fine-Tuning). */}
+      {state.chain_approved && <DeployPanel sessionId={sessionId} />}
+
+      <DriveStatusPanel sessionId={sessionId} />
     </div>
+  );
+};
+
+/** Honest connector status — Google Drive is API-ready but needs GOOGLE_CLIENT_* env. */
+const DriveStatusPanel: React.FC<{ sessionId: string }> = ({ sessionId }) => {
+  const [info, setInfo] = useState<{
+    configured?: boolean;
+    connected?: boolean;
+    detail?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    api
+      .get(`/sessions/${sessionId}/drive/status`)
+      .then((res) => setInfo(res.data))
+      .catch((err) =>
+        setInfo({
+          configured: false,
+          connected: false,
+          detail: err.response?.data?.detail || err.message,
+        })
+      );
+  }, [sessionId]);
+
+  const configured = Boolean(info?.configured);
+  const connected = Boolean(info?.connected);
+
+  return (
+    <Card
+      title="Connectors — Google Drive"
+      description="Factory Drive sync is available when OAuth credentials are configured on the backend."
+    >
+      <ul className="text-sm text-gray-700 space-y-1">
+        <li>
+          Configured:{' '}
+          <strong className={configured ? 'text-green-700' : 'text-amber-700'}>
+            {info ? (configured ? 'yes' : 'no') : '…'}
+          </strong>
+        </li>
+        <li>
+          Connected:{' '}
+          <strong className={connected ? 'text-green-700' : 'text-gray-600'}>
+            {info ? (connected ? 'yes' : 'no') : '…'}
+          </strong>
+        </li>
+        {!configured && (
+          <li className="text-amber-800">
+            Honest stub: set <code>GOOGLE_CLIENT_ID</code> / <code>GOOGLE_CLIENT_SECRET</code> on
+            the backend to enable Drive connect. Until then, kit packaging does not require Drive.
+          </li>
+        )}
+        {info?.detail && <li className="text-gray-500">{info.detail}</li>}
+      </ul>
+    </Card>
   );
 };
 
