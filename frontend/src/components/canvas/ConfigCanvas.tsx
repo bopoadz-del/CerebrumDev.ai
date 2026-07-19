@@ -13,6 +13,8 @@ import DeployPanel from '../DeployPanel';
 
 interface ConfigCanvasProps {
   sessionId: string;
+  /** Incremented by App after chat-driven config mutations so localConfig reloads. */
+  configEpoch?: number;
 }
 
 const StepIcon: React.FC<{ icon: React.ReactNode; active: boolean; done: boolean }> = ({
@@ -33,9 +35,17 @@ const StepIcon: React.FC<{ icon: React.ReactNode; active: boolean; done: boolean
   </div>
 );
 
-export const ConfigCanvas: React.FC<ConfigCanvasProps> = ({ sessionId }) => {
-  const { state, loading, error, updateConfig, setUploadComplete, approveChain, setTrainingComplete } =
-    useSession(sessionId);
+export const ConfigCanvas: React.FC<ConfigCanvasProps> = ({ sessionId, configEpoch = 0 }) => {
+  const {
+    state,
+    loading,
+    error,
+    updateConfig,
+    refreshState,
+    setUploadComplete,
+    approveChain,
+    setTrainingComplete,
+  } = useSession(sessionId);
   const { addToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [localConfig, setLocalConfig] = useState(state.config);
@@ -43,6 +53,12 @@ export const ConfigCanvas: React.FC<ConfigCanvasProps> = ({ sessionId }) => {
   useEffect(() => {
     setLocalConfig(state.config);
   }, [state.config]);
+
+  useEffect(() => {
+    if (configEpoch > 0) {
+      void refreshState();
+    }
+  }, [configEpoch, refreshState]);
 
   useEffect(() => {
     if (error) {

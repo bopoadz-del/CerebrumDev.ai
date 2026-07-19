@@ -2,9 +2,9 @@
   "author": "Cerebrum Team",
   "description": "Receive images from any client, OCR extract, AI structure, vector store",
   "digests": {
-    "Dockerfile": "601d37f8d7753cb18020a32d6002e579e552253bdcb7f809154ebb790161805d",
-    "block.json": "afce729bcaf510bea5165ad9732a7d4fe338f0732bf7ac894f91a41317e578ce",
-    "block.py": "647da4ca9657accd66d0b351d577e3f846b6d06f513ab1d998d7e4d8c8e05e90"
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "c9c02cee1f2fa7e677f7a48081bd207dc48682a41da8f2212e11850dcd1193a1",
+    "block.py": "d92c96a63046ec7dd62667eeb4291dcce52c17ca9c2af71d9514acef71a093f1"
   },
   "execution": {
     "image": "ghcr.io/cerebrum-blocks/capture:latest",
