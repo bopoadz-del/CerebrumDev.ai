@@ -1,38 +1,29 @@
 # Factory completion report
 
-**Date:** 2026-07-18  
+**Date:** 2026-07-19  
 **Branch:** cursor/cloud-agent-1784416158406-9tpte  
 **Mission:** Factory-first → Generate Cerebrum-Steward
 
-## Milestone 0
+## Milestone status
 
-| Gate | Status | Evidence |
-|------|--------|----------|
-| 0A Remove CDA RetailOps runtime | PASS | `backend/app/retailops/` deleted; provenance kept under `docs/provenance/teksystems-retailops/` |
-| 0B Scrub TEK brands/cities | PASS (local) | Local clone `/home/ubuntu/repos/TEKsystems_GlobalRetailMNC` branch `cursor/scrub-brands-cities-bd2c`; product scan 0 hits; push to origin denied (403) for this agent token |
-| Baseline | PASS | Both cleans verified before M1 |
+| Milestone | Status |
+|-----------|--------|
+| 0A CDA RetailOps leftovers removed + provenance kept | PASS |
+| 0B TEKsystems brand/city scrub (local; patch for push) | PASS |
+| M1 kernel + blueprint + planner + generate/regenerate | PASS |
+| Dual-register estate blocks (Factory shelf + Blocks local/mirror) | PASS |
+| M2 Steward blueprint, hats (TEK-adapted), workflows, UI modules | PASS |
+| M3 certification reports + factory tests | PASS |
 
-## Milestone 1
+## Factory surfaces
 
-| Item | Status |
-|------|--------|
-| `cerebrum_product_kernel` extracted + neutralized | PASS |
-| `product_blueprint.v1` fail-closed schema | PASS |
-| Capability planner (REUSE/ADAPT/COMPOSE/GENERATE/STUB/UNSUPPORTED) | PASS |
-| Dual registry gate | PASS |
-| Basic generate + delete/regenerate smoke | PASS (`tests/factory`) |
-
-## Milestone 2
-
-| Item | Status |
-|------|--------|
-| Steward blueprint | `blueprints/steward/steward.v1.yaml` |
-| Five estate blocks in Blocks + Factory shelf | PASS (local Blocks + `factory/shelves/factory_blocks.json`) |
-| Generate Cerebrum-Steward with provenance | PASS → `factory_outputs/Cerebrum-Steward` |
+- CLI: `python -m app.factory.cli generate|plan`
+- API: `/v1/factory/product/{draft,plan,generate,golden/steward}`
+- Product Architect uses golden Steward blueprint when brief matches estate/steward
 
 ## Tests
 
 ```
 python3 -m pytest tests/factory -q --asyncio-mode=auto
-# 11 passed
+# 16 passed
 ```

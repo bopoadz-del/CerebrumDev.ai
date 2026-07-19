@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, write_provenance
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
+from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.planner import CapabilityPlanner, ProductPlan
 
 
@@ -42,6 +44,8 @@ class ProductGenerator:
         self._write_pyproject(out)
         self._write_app(out)
         self._write_actions(out)
+        self._write_hats(out)
+        self._write_workflows(out)
         self._write_ui_stub(out)
         self._write_connectors(out)
         self._copy_referenced_blocks(out)
@@ -148,6 +152,22 @@ def capabilities():
     from pathlib import Path
     plan = json.loads((Path(__file__).resolve().parents[1] / "factory_plan.json").read_text())
     return plan
+
+
+@app.get("/v1/agents")
+def agents():
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent / "agents" / "manifests"
+    return [json.loads(p.read_text()) for p in sorted(root.glob("*.json"))]
+
+
+@app.get("/v1/workflows")
+def workflows():
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parent / "workflows" / "workflows.json"
+    return json.loads(path.read_text())
 ''',
             encoding="utf-8",
         )
@@ -199,16 +219,67 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             encoding="utf-8",
         )
 
+    def _write_hats(self, out: Path) -> None:
+        manifests = build_hat_manifests(self.blueprint, self.plan)
+        hats_dir = out / "app" / "agents" / "manifests"
+        hats_dir.mkdir(parents=True, exist_ok=True)
+        index = []
+        for m in manifests:
+            fname = m["agent_id"].replace(".", "_") + ".json"
+            (hats_dir / fname).write_text(
+                json.dumps(m, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            index.append({"agent_id": m["agent_id"], "kind": m["kind"], "file": fname})
+        (out / "app" / "agents" / "__init__.py").write_text(
+            "HAT_INDEX = " + json.dumps(index, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_workflows(self, out: Path) -> None:
+        workflows = build_workflows(self.blueprint, self.plan)
+        wf_dir = out / "app" / "workflows"
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        (wf_dir / "workflows.json").write_text(
+            json.dumps(workflows, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (wf_dir / "__init__.py").write_text(
+            "WORKFLOWS = " + json.dumps(workflows, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
     def _write_ui_stub(self, out: Path) -> None:
         ui = out / "frontend" / "src"
-        ui.mkdir(parents=True, exist_ok=True)
+        modules_dir = ui / "modules"
+        modules_dir.mkdir(parents=True, exist_ok=True)
         modules = self.blueprint.ui_modules or ["command_center"]
+        for mod in modules:
+            safe = re.sub(r"[^a-zA-Z0-9_]", "_", mod)
+            (modules_dir / f"{safe}.tsx").write_text(
+                f"/* Generated UI module: {mod} */\n"
+                f"export default function {safe.title().replace('_', '')}Module()"
+                f"{{return <section data-module=\"{mod}\"><h2>{mod}</h2></section>}}\n",
+                encoding="utf-8",
+            )
+        imports = "\n".join(
+            f"import {re.sub(r'[^a-zA-Z0-9_]', '_', m).title().replace('_', '')}Module "
+            f"from './modules/{re.sub(r'[^a-zA-Z0-9_]', '_', m)}';"
+            for m in modules
+        )
+        renders = "\n".join(
+            f"      <{re.sub(r'[^a-zA-Z0-9_]', '_', m).title().replace('_', '')}Module />"
+            for m in modules
+        )
         (ui / "App.tsx").write_text(
-            "/* Generated UI shell — modules: "
-            + ", ".join(modules)
-            + " */\nexport default function App(){return <main><h1>"
-            + self.blueprint.product_name
-            + "</h1></main>}\n",
+            f"/* Generated UI — modules: {', '.join(modules)} */\n"
+            f"{imports}\n"
+            f"export default function App(){{\n"
+            f"  return (\n"
+            f"    <main>\n"
+            f"      <h1>{self.blueprint.product_name}</h1>\n"
+            f"{renders}\n"
+            f"    </main>\n"
+            f"  )\n"
+            f"}}\n",
             encoding="utf-8",
         )
         (out / "frontend" / "package.json").write_text(

@@ -7,7 +7,7 @@ load_dotenv()
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.auth import require_api_key, verify_production_auth
-from .routers import sessions, config, domains, upload, chat, deploy, train, factory_drive
+from .routers import sessions, config, domains, upload, chat, deploy, train, factory_drive, product_factory
 
 verify_production_auth()
 
@@ -40,6 +40,12 @@ app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], depend
 app.include_router(train.router, prefix="/v1/sessions", tags=["training"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.callback_router)
+app.include_router(
+    product_factory.router,
+    prefix="/v1/factory/product",
+    tags=["product-factory"],
+    dependencies=[Depends(require_api_key)],
+)
 
 def _probe_storage() -> dict:
     storage = os.getenv("STORAGE_PATH", "./storage")

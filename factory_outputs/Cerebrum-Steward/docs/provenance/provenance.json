@@ -1,10 +1,10 @@
 {
-  "blocks_commit": "c5a5ba187190242249bf6fe8d915b03bae44cf08",
+  "blocks_commit": "9450ab2577bf66edb9f633c60fa3d52907716247",
   "blueprint_id": "cerebrum-steward:product_blueprint.v1",
   "factory": "CerebrumDev.ai",
-  "factory_commit": "d440e88a8b0a7d75b6262cdeb58c0623eab012d5",
-  "generated_at": "2026-07-18T23:16:01.508876+00:00",
-  "inputs_hash": "197a2138555a9f0a5612330e0d7883a3df69abf786e1a083d88d8c73a6843b6d",
+  "factory_commit": "192de1106099ae85c8017dd22e201f757269c092",
+  "generated_at": "2026-07-19T00:51:39.943244+00:00",
+  "inputs_hash": "36e573f68744efac392eacf38a128ce8474c9fb3295191903915eb61733bd391",
   "kernel_version": "1.0.0",
   "plan": {
     "capabilities": [

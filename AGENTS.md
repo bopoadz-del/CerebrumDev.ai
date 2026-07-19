@@ -47,3 +47,10 @@ Every block used to generate a product must be registered in **both**:
 - Factory block shelf (dual-register mirror): `backend/app/factory/shelves/factory_blocks.json`
 - Generate: `cd backend && PYTHONPATH=. python3 -m app.factory.cli generate --blueprint ../blueprints/steward/steward.v1.yaml --out ../factory_outputs/Cerebrum-Steward --blocks-root $CEREBRUM_BLOCKS_ROOT`
 - Factory tests: `python3 -m pytest tests/factory --asyncio-mode=auto`
+
+
+### Product architect API
+
+- `POST /v1/factory/product/draft` — brief → `product_blueprint.v1` (Steward brief uses golden YAML)
+- `POST /v1/factory/product/plan` — plan capabilities (fail-closed dual registry)
+- `POST /v1/factory/product/generate` — regenerate product into `factory_outputs/`

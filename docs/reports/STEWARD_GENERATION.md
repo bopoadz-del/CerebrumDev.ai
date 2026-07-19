@@ -1,24 +1,20 @@
 # Steward generation report
 
-**Blueprint:** `blueprints/steward/steward.v1.yaml`  
-**Output:** `factory_outputs/Cerebrum-Steward` (also copied to `/home/ubuntu/repos/Cerebrum-Steward`)  
-**Generator:** `python -m app.factory.cli generate`
+**Blueprint:** `blueprints/steward/steward.v1.yaml` (predefined golden)  
+**Output:** `factory_outputs/Cerebrum-Steward`  
+**Generator:** Factory CLI + Product Architect pipeline
 
-## Dual-registered blocks consumed
+## Emitted artefacts
 
-- estate_registry
-- estate_maintenance
-- evidence_verifier
-- readiness_engine
-- portfolio_rollup
-- capture
-- (composed with registry/maintenance/readiness)
+- Kernel contract vendored under `app/cerebrum_product_kernel/`
+- Actions per planned capability
+- Hats adapted from TEKsystems patterns (`estate.base` + `estate.hat.*`)
+- Workflows: ops loop, evidence chain, portfolio rollup
+- UI modules under `frontend/src/modules/`
+- Honest connector stubs (`not_implemented`)
+- Dual-registered blocks under `vendor/blocks/`
+- Provenance: `docs/provenance/provenance.json`
 
-## Provenance
+## Note
 
-See `factory_outputs/Cerebrum-Steward/docs/provenance/provenance.json`.
-
-## Remote note
-
-Creating `bopoadz-del/Cerebrum-Steward` via GitHub API returned 403 for the agent integration token.
-The generated artefact is committed inside CerebrumDev.ai under `factory_outputs/Cerebrum-Steward` as Factory output proof.
+Steward is a **Factory product output**. Architecture today is predefined via golden blueprint; the Product Architect API is the path for the in-Factory agent to draft/plan/regenerate the same artefact.
