@@ -3,14 +3,18 @@ import { Route, Switch, useLocation, useRoute, Redirect } from 'wouter';
 import { AppShell } from './components/layout/AppShell';
 import { ChatSidebar } from './components/chat/ChatSidebar';
 import { ConfigCanvas } from './components/canvas/ConfigCanvas';
+import DesignProductPanel from './components/DesignProductPanel';
 import { ToastProvider, useToast } from './hooks/useToast';
 import api from './api/client';
+
+type WorkspaceMode = 'kit' | 'product';
 
 function AppContent() {
   const [location, setLocation] = useLocation();
   const [match, params] = useRoute('/s/:sessionId');
   const { addToast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('kit');
 
   const [sessionId, setSessionId] = useState<string | null>(() => {
     if (match && params?.sessionId) return params.sessionId;
@@ -88,15 +92,52 @@ function AppContent() {
     );
   }
 
+  const switchMode = async (mode: WorkspaceMode) => {
+    setWorkspaceMode(mode);
+    try {
+      await api.post(`/sessions/${sessionId}/product/mode`, { mode });
+    } catch {
+      /* mode is also local UI state */
+    }
+  };
+
   return (
     <AppShell
       sidebar={<ChatSidebar sessionId={sessionId} onCommand={handleCommand} />}
       sidebarOpen={sidebarOpen}
       onToggleSidebar={() => setSidebarOpen((v) => !v)}
     >
+      <div className="mb-4 flex gap-2">
+        <button
+          type="button"
+          onClick={() => switchMode('kit')}
+          className={`px-3 py-1.5 text-sm rounded-md border ${
+            workspaceMode === 'kit'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300'
+          }`}
+        >
+          Kit configurator
+        </button>
+        <button
+          type="button"
+          onClick={() => switchMode('product')}
+          className={`px-3 py-1.5 text-sm rounded-md border ${
+            workspaceMode === 'product'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300'
+          }`}
+        >
+          Design product
+        </button>
+      </div>
       <Switch>
         <Route path="/s/:sessionId">
-          <ConfigCanvas sessionId={sessionId} />
+          {workspaceMode === 'product' ? (
+            <DesignProductPanel sessionId={sessionId} />
+          ) : (
+            <ConfigCanvas sessionId={sessionId} />
+          )}
         </Route>
         <Route path="/">
           <Redirect to={`/s/${sessionId}`} />

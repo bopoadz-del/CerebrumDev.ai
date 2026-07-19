@@ -84,4 +84,23 @@ export const previewChain = (sessionId: string) =>
 export const approveChain = (sessionId: string) =>
   api.post(`/sessions/${sessionId}/chain/approve`, { approve: true });
 
+/** Design Product mode (Factory agent architecture path) */
+export const draftProductBlueprint = (
+  sessionId: string,
+  brief: string,
+  vertical_hint?: string
+) => api.post(`/sessions/${sessionId}/product/draft`, { brief, vertical_hint });
+
+export const planProductBlueprint = (sessionId: string) =>
+  api.post(`/sessions/${sessionId}/product/plan`);
+
+export const approveProductBlueprint = (sessionId: string, approve = true) =>
+  api.post(`/sessions/${sessionId}/product/approve`, { approve });
+
+export const generateProductFromSession = (sessionId: string) =>
+  api.post(`/sessions/${sessionId}/product/generate`, {});
+
+export const getProductDesign = (sessionId: string) =>
+  api.get(`/sessions/${sessionId}/product`);
+
 export default api;

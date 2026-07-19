@@ -49,12 +49,26 @@ class TrainingJob(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class ProductDesignState(BaseModel):
+    """In-session product architecture (Factory Design Product mode)."""
+
+    mode: Literal["kit", "product"] = "kit"
+    brief: str = ""
+    blueprint: Optional[Dict[str, Any]] = None
+    plan: Optional[Dict[str, Any]] = None
+    blueprint_approved: bool = False
+    generation: Optional[Dict[str, Any]] = None
+    last_error: Optional[str] = None
+
+
 class SessionState(BaseModel):
     session_id: str
     user_id: str
     phase: int = 1
     phase_status: str = "in_progress"
     config: SessionConfig = Field(default_factory=SessionConfig)
+    product_design: ProductDesignState = Field(default_factory=ProductDesignState)
+
     upload: UploadResult = Field(default_factory=UploadResult)
     # Indexed data stored with the session for later packaging
     corpus: Optional[str] = None
