@@ -96,8 +96,13 @@ function AppContent() {
     setWorkspaceMode(mode);
     try {
       await api.post(`/sessions/${sessionId}/product/mode`, { mode });
-    } catch {
-      /* mode is also local UI state */
+    } catch (err: any) {
+      // Local UI mode still switches; surface sync failures so auth/path bugs are visible.
+      addToast({
+        type: 'error',
+        title: 'Mode sync',
+        message: err.response?.data?.detail || err.message || 'Failed to sync mode',
+      });
     }
   };
 
