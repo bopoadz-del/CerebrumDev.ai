@@ -1,6 +1,0 @@
-{
-  "edge_profile": "edge_on_prem",
-  "human_authority": true,
-  "isolation": "property",
-  "pii_in_learning": false
-}
