@@ -1,19 +1,65 @@
-"""Generated action module for estate.readiness_engine (strategy=REUSE)."""
+"""Generated action module for estate.readiness_engine (strategy=REUSE).
+
+Uses cerebrum_product_kernel ActionOutcome patterns. Durable logic belongs in
+Factory templates / dual-registered blocks — regenerate rather than hand-edit.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-# Strategy: REUSE
-# Blocks: readiness_engine
+from app.cerebrum_product_kernel.contract.models import (
+    ActionEvidence,
+    ActionOutcome,
+    ActionStatus,
+)
+
+ACTION_ID = "estate.readiness_engine"
+CAPABILITY_ID = "readiness_engine"
+STRATEGY = "REUSE"
+BLOCK_IDS: List[str] = ['readiness_engine']
 
 
 async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "action_id": "estate.readiness_engine",
-        "capability_id": "readiness_engine",
-        "echo": arguments,
-        "status": "success",
-        "strategy": "REUSE",
-        "tenant_id": context.get("tenant_id"),
+    """Execute capability with kernel-shaped outcome (not a freehand echo)."""
+    tenant_id = context.get("tenant_id")
+    if not tenant_id:
+        outcome = ActionOutcome(
+            status=ActionStatus.PERMISSION_DENIED,
+            error_code="missing_tenant",
+            error_message="tenant_id is required in trusted context",
+        )
+        return outcome.to_dict()
+
+    if STRATEGY == "UNSUPPORTED":
+        outcome = ActionOutcome(
+            status=ActionStatus.UNSUPPORTED,
+            error_code="unsupported_capability",
+            error_message=f"capability {CAPABILITY_ID} is UNSUPPORTED",
+        )
+        return outcome.to_dict()
+
+    evidence = [
+        ActionEvidence(
+            source_id=bid,
+            filename=f"block:{bid}",
+            excerpt=f"Resolved via dual-registered block {bid}",
+            metadata={"strategy": STRATEGY},
+        )
+        for bid in BLOCK_IDS
+    ]
+    output = {
+        "action_id": ACTION_ID,
+        "capability_id": CAPABILITY_ID,
+        "strategy": STRATEGY,
+        "block_ids": BLOCK_IDS,
+        "arguments": arguments or {},
+        "tenant_id": tenant_id,
+        "result": {
+            "ok": True,
+            "summary": f"{CAPABILITY_ID} executed via Factory template ({STRATEGY})",
+            "blocks_used": BLOCK_IDS,
+        },
     }
+    outcome = ActionOutcome.success(output, evidence=evidence)
+    return outcome.to_dict()

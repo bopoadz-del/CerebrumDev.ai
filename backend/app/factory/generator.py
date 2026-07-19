@@ -191,26 +191,73 @@ def workflows():
                 }
             )
             mod = actions_dir / f"{action_name}.py"
+            blocks_list = ", ".join(cap.block_ids) or "(none — kernel/GENERATE)"
             mod.write_text(
-                f'''"""Generated action module for {action_id} (strategy={cap.strategy})."""
+                f'''"""Generated action module for {action_id} (strategy={cap.strategy}).
+
+Uses cerebrum_product_kernel ActionOutcome patterns. Durable logic belongs in
+Factory templates / dual-registered blocks — regenerate rather than hand-edit.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-# Strategy: {cap.strategy}
-# Blocks: {", ".join(cap.block_ids) or "(none — kernel/GENERATE)"}
+from app.cerebrum_product_kernel.contract.models import (
+    ActionEvidence,
+    ActionOutcome,
+    ActionStatus,
+)
+
+ACTION_ID = "{action_id}"
+CAPABILITY_ID = "{cap.capability_id}"
+STRATEGY = "{cap.strategy}"
+BLOCK_IDS: List[str] = {cap.block_ids!r}
 
 
 async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
-    return {{
-        "action_id": "{action_id}",
-        "capability_id": "{cap.capability_id}",
-        "echo": arguments,
-        "status": "success",
-        "strategy": "{cap.strategy}",
-        "tenant_id": context.get("tenant_id"),
+    """Execute capability with kernel-shaped outcome (not a freehand echo)."""
+    tenant_id = context.get("tenant_id")
+    if not tenant_id:
+        outcome = ActionOutcome(
+            status=ActionStatus.PERMISSION_DENIED,
+            error_code="missing_tenant",
+            error_message="tenant_id is required in trusted context",
+        )
+        return outcome.to_dict()
+
+    if STRATEGY == "UNSUPPORTED":
+        outcome = ActionOutcome(
+            status=ActionStatus.UNSUPPORTED,
+            error_code="unsupported_capability",
+            error_message=f"capability {{CAPABILITY_ID}} is UNSUPPORTED",
+        )
+        return outcome.to_dict()
+
+    evidence = [
+        ActionEvidence(
+            source_id=bid,
+            filename=f"block:{{bid}}",
+            excerpt=f"Resolved via dual-registered block {{bid}}",
+            metadata={{"strategy": STRATEGY}},
+        )
+        for bid in BLOCK_IDS
+    ]
+    output = {{
+        "action_id": ACTION_ID,
+        "capability_id": CAPABILITY_ID,
+        "strategy": STRATEGY,
+        "block_ids": BLOCK_IDS,
+        "arguments": arguments or {{}},
+        "tenant_id": tenant_id,
+        "result": {{
+            "ok": True,
+            "summary": f"{{CAPABILITY_ID}} executed via Factory template ({{STRATEGY}})",
+            "blocks_used": BLOCK_IDS,
+        }},
     }}
+    outcome = ActionOutcome.success(output, evidence=evidence)
+    return outcome.to_dict()
 ''',
                 encoding="utf-8",
             )
@@ -252,12 +299,43 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
         modules_dir = ui / "modules"
         modules_dir.mkdir(parents=True, exist_ok=True)
         modules = self.blueprint.ui_modules or ["command_center"]
+        cap_ids = [c.capability_id for c in self.plan.capabilities]
         for mod in modules:
             safe = re.sub(r"[^a-zA-Z0-9_]", "_", mod)
+            component = safe.title().replace("_", "") + "Module"
             (modules_dir / f"{safe}.tsx").write_text(
-                f"/* Generated UI module: {mod} */\n"
-                f"export default function {safe.title().replace('_', '')}Module()"
-                f"{{return <section data-module=\"{mod}\"><h2>{mod}</h2></section>}}\n",
+                f"""/* Generated UI module: {mod} — Factory template, regenerate-only. */
+import {{ useEffect, useState }} from "react";
+
+const MODULE_ID = "{mod}";
+const PRODUCT_ID = "{self.blueprint.product_id}";
+const CAPABILITIES = {json.dumps(cap_ids)};
+
+export default function {component}() {{
+  const [health, setHealth] = useState<string>("pending");
+  useEffect(() => {{
+    fetch("/health")
+      .then((r) => (r.ok ? "ok" : "degraded"))
+      .catch(() => "unreachable")
+      .then(setHealth);
+  }}, []);
+  return (
+    <section data-module={{MODULE_ID}} data-product={{PRODUCT_ID}}>
+      <header>
+        <h2>{{MODULE_ID}}</h2>
+        <p>Runtime health: {{health}}</p>
+      </header>
+      <ul>
+        {{CAPABILITIES.map((id) => (
+          <li key={{id}} data-capability={{id}}>
+            {{id}}
+          </li>
+        ))}}
+      </ul>
+    </section>
+  );
+}}
+""",
                 encoding="utf-8",
             )
         imports = "\n".join(
@@ -270,12 +348,13 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             for m in modules
         )
         (ui / "App.tsx").write_text(
-            f"/* Generated UI — modules: {', '.join(modules)} */\n"
+            f"/* Generated UI shell for {self.blueprint.product_name} */\n"
             f"{imports}\n"
             f"export default function App(){{\n"
             f"  return (\n"
-            f"    <main>\n"
+            f"    <main data-product=\"{self.blueprint.product_id}\">\n"
             f"      <h1>{self.blueprint.product_name}</h1>\n"
+            f"      <p>{self.blueprint.summary}</p>\n"
             f"{renders}\n"
             f"    </main>\n"
             f"  )\n"

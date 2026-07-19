@@ -7,7 +7,18 @@ load_dotenv()
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.auth import require_api_key, verify_production_auth
-from .routers import sessions, config, domains, upload, chat, deploy, train, factory_drive, product_factory
+from .routers import (
+    sessions,
+    config,
+    domains,
+    upload,
+    chat,
+    deploy,
+    train,
+    factory_drive,
+    product_factory,
+    session_product,
+)
 
 verify_production_auth()
 
@@ -44,6 +55,12 @@ app.include_router(
     product_factory.router,
     prefix="/v1/factory/product",
     tags=["product-factory"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    session_product.router,
+    prefix="/v1/sessions",
+    tags=["session-product"],
     dependencies=[Depends(require_api_key)],
 )
 
