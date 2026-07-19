@@ -17,3 +17,6 @@ deployments/
 .worktrees/
 .superpowers/sdd/
 generated/
+
+# Factory generate/regenerate outputs (local only; golden Steward tagged steward-golden-v1).
+factory_outputs/
