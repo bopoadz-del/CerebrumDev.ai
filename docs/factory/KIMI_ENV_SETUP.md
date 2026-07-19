@@ -2,24 +2,30 @@
 
 Do **not** confuse these two:
 
-| Credential | Who uses it | Purpose |
-|------------|-------------|---------|
-| **Kimi Code CLI** (`KIMI_CODE_API_KEY`) | Kimi Code (engineer / Block Store Manager) | Coding, Store ops, shipper agent in the CLI — **not** the Factory web chat LLM |
-| **In-app chat LLM** (`OLLAMA_*` today, or later a dedicated architect key) | CerebrumDev UI / kit chat | Streaming chat + chain suggestions in the browser |
+| Credential | Who uses it | Where it goes |
+|------------|-------------|----------------|
+| **Kimi Code CLI** | Factory Engineer / Store Manager (CLI) | `~/.kimi-code/config.toml` under `[providers.kimi]` — **required** for CLI auth |
+| **In-app chat LLM** | CerebrumDev UI / kit chat | `LLM_PROVIDER` + `OLLAMA_*` (default) or optional `CEREBRUM_LLM_*` / `KIMI_API_KEY` for Factory architect |
 
-## Kimi Code (CLI) — what you paste for the coder
+Kimi Code CLI does **not** read shell `export KIMI_API_KEY=...` or `backend/.env` for authentication.
+See [Kimi Code config files](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files).
+
+## Kimi Code (CLI)
 
 ```bash
-# backend/.env (gitignored)
-KIMI_CODE_API_KEY='sk-...'
-KIMI_CODE_BASE_URL='https://api.moonshot.ai/v1'   # international Moonshot/Kimi Code
+./scripts/setup_kimi_code_env.sh 'sk-your-kimi-code-key'
+# writes ~/.kimi-code/config.toml:
+#   [providers.kimi]
+#   type = "kimi"
+#   api_key = "sk-..."
+#   base_url = "https://api.moonshot.ai/v1"
 ```
 
-This does **not** change `LLM_PROVIDER` and does **not** switch kit chat off Ollama.
+Override home with `KIMI_CODE_HOME` if needed. The helper also notes the key in
+`backend/.env` as `KIMI_CODE_*` for humans — that does **not** authenticate the CLI
+and does **not** change `LLM_PROVIDER` or strip in-app Kimi/Moonshot vars.
 
 ## In-app chat LLM (unchanged default)
-
-Production kit chat stays on Ollama cloud unless you explicitly choose otherwise:
 
 ```bash
 LLM_PROVIDER=ollama
@@ -32,13 +38,6 @@ OLLAMA_API_KEY=...
 
 | Actor | Job |
 |-------|-----|
-| **Kimi API** (architect chat — separate product path) | Blueprint talk in Factory UI when wired |
+| **Kimi API** (architect chat) | Blueprint talk in Factory UI when wired |
 | **Kimi Code** | Factory Engineer + Block Store Manager via CLI |
 | **CerebrumDev.ai** | Governance, dual registry, certify, regenerate |
-
-## Helper
-
-```bash
-# Stores KIMI_CODE_* only — does not set LLM_PROVIDER=kimi
-./scripts/setup_kimi_code_env.sh 'sk-your-kimi-code-key'
-```
