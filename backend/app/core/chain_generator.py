@@ -173,7 +173,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the configured LLM. Returns parsed JSON."""
     cfg = get_llm_config()
     provider = cfg["provider"]
-    if provider in ("qwen", "moonshot"):
+    if provider in ("qwen", "moonshot", "kimi"):
         return await _call_openai_compatible(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
     if provider == "ollama":
         return await _call_ollama(cfg["base_url"], cfg["model"], messages, cfg["api_key"])

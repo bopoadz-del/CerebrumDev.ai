@@ -1,0 +1,10 @@
+factory_scenario: CREATE_PRODUCT
+operating_scenarios:
+- id: health_diagnosis
+  description: Diagnose platform health from approved signals
+- id: minor_repair
+  description: Execute predefined minor repair contracts only
+- id: refuse_unsupported
+  description: Refuse source/Git/Store edits and unsupported ops
+- id: draft_expansion_plan
+  description: Draft structured expansion/repair requests to Factory

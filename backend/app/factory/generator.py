@@ -14,6 +14,7 @@ from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, 
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.planner import CapabilityPlanner, ProductPlan
+from app.factory.resident_engineer import write_resident_engineer, write_store_docs
 
 
 class ProductGenerator:
@@ -40,6 +41,16 @@ class ProductGenerator:
             shutil.rmtree(out)
         out.mkdir(parents=True, exist_ok=True)
 
+        # Resident Engineer first — never bolted on after platform modules
+        re_meta = write_resident_engineer(
+            out,
+            self.blueprint,
+            self.plan,
+            blocks_commit=self.blocks_commit,
+            factory_commit=self.factory_commit,
+        )
+        write_store_docs(out)
+
         self._write_readme(out)
         self._write_pyproject(out)
         self._write_app(out)
@@ -51,6 +62,7 @@ class ProductGenerator:
         self._copy_referenced_blocks(out)
         self._write_blueprint_copy(out)
         self._write_edge_profile(out)
+        self._write_certification_scaffold(out)
 
         plan_dict = self.plan.to_dict()
         inputs_hash = hash_tree(out)
@@ -65,13 +77,13 @@ class ProductGenerator:
         write_provenance(out / "docs" / "provenance" / "provenance.json", prov)
         write_provenance(out / "factory_plan.json", plan_dict)
 
-        # Re-hash excluding volatile provenance timestamp by rewriting with stable inputs_hash only
         return {
             "output_dir": str(out),
             "inputs_hash": inputs_hash,
             "product_id": self.blueprint.product_id,
             "plan": plan_dict,
             "provenance": prov,
+            "resident_engineer": re_meta,
         }
 
     def _write_readme(self, out: Path) -> None:
@@ -417,6 +429,19 @@ export default function {component}() {{
         }
         (out / "docs" / "edge_profile.json").write_text(
             json.dumps(profile, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+    def _write_certification_scaffold(self, out: Path) -> None:
+        cert = out / "docs" / "certification"
+        cert.mkdir(parents=True, exist_ok=True)
+        report = {
+            "PRODUCT_CERTIFIED": "pending",
+            "RESIDENT_AGENT_CERTIFIED": "pending",
+            "incomplete_until_both": True,
+            "factory_scenario": self.blueprint.factory_scenario.value,
+        }
+        (cert / "dual_certification.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
 
 

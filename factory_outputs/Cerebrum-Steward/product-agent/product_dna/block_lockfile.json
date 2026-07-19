@@ -1,0 +1,30 @@
+{
+  "blocks_commit": "unknown",
+  "factory_commit": "e01cd169dd7b734a4795d3fe22b924a5a6294e0c",
+  "pins": [
+    {
+      "block_id": "capture",
+      "source": "dual_registry"
+    },
+    {
+      "block_id": "estate_maintenance",
+      "source": "dual_registry"
+    },
+    {
+      "block_id": "estate_registry",
+      "source": "dual_registry"
+    },
+    {
+      "block_id": "evidence_verifier",
+      "source": "dual_registry"
+    },
+    {
+      "block_id": "portfolio_rollup",
+      "source": "dual_registry"
+    },
+    {
+      "block_id": "readiness_engine",
+      "source": "dual_registry"
+    }
+  ]
+}

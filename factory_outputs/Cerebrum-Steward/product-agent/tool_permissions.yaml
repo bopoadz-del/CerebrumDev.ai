@@ -1,0 +1,10 @@
+allowed_tools:
+- health
+- logs_read
+- repair_catalog_execute
+- factory_request
+denied_tools:
+- shell
+- git_write
+- store_publish
+- filesystem_write_source

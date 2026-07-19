@@ -1,0 +1,61 @@
+{
+  "autonomous_ops": [
+    "STORE_CREATE_BLOCK",
+    "STORE_CREATE_VARIANT",
+    "STORE_DEPRECATE",
+    "STORE_INSTALL",
+    "STORE_PUBLISH_MINOR",
+    "STORE_PUBLISH_PATCH",
+    "STORE_READ",
+    "STORE_ROLLBACK",
+    "STORE_RUN_COMPATIBILITY",
+    "STORE_UPDATE_BLOCK",
+    "STORE_UPDATE_DOMAIN_KIT",
+    "STORE_UPDATE_REGISTRY",
+    "STORE_VERSION_BLOCK"
+  ],
+  "health_cycle": [
+    "Scan generated products",
+    "Identify product-level block changes",
+    "Compare them with Store versions",
+    "Detect duplicated capabilities",
+    "Detect weak or obsolete blocks",
+    "Run benchmarks",
+    "Recommend consolidation",
+    "Publish safe upgrades",
+    "Flag major changes for approval",
+    "Regenerate affected reference products",
+    "Record results"
+  ],
+  "improvement_classes": [
+    "PRODUCT_CONFIGURATION",
+    "PRODUCT_OVERLAY",
+    "DOMAIN_VARIANT",
+    "UNIVERSAL_BLOCK_IMPROVEMENT",
+    "NEW_REUSABLE_BLOCK"
+  ],
+  "promotion_decisions": [
+    "KEEP_PRODUCT_ONLY",
+    "PUBLISH_DOMAIN_VARIANT",
+    "PROMOTE_AS_NEW_BLOCK",
+    "UPGRADE_EXISTING_BLOCK",
+    "REJECT_CANDIDATE"
+  ],
+  "role": "Kimi Code \u2014 Factory Engineer + Block Store Manager",
+  "rule": "Kimi Code does not simply pull from the Block Store. He builds products, learns from products, manages the Block Store, and feeds every proven improvement back into the factory ecosystem.",
+  "upgrade_checklist": [
+    "generic_reusable_value",
+    "contract_validation",
+    "security_validation",
+    "store_test_suite_passing",
+    "source_product_tests_passing",
+    "independent_fixture_passing",
+    "no_customer_specific_data_or_logic",
+    "version_and_migration_documented",
+    "rollback_available"
+  ],
+  "user_approval_ops": [
+    "STORE_DELETE_BLOCK",
+    "STORE_PUBLISH_MAJOR"
+  ]
+}

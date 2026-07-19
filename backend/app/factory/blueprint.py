@@ -24,6 +24,15 @@ class CapabilityStrategyHint(str, Enum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class FactoryScenario(str, Enum):
+    """Exactly one Factory scenario per blueprint (Store Manager Loop)."""
+
+    CREATE_PRODUCT = "CREATE_PRODUCT"
+    MODIFY_PRODUCT = "MODIFY_PRODUCT"
+    REPAIR_PRODUCT = "REPAIR_PRODUCT"
+    ADAPT_EXISTING_PRODUCT = "ADAPT_EXISTING_PRODUCT"
+
+
 class CapabilitySpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,6 +56,7 @@ class ProductBlueprint(BaseModel):
     connectors: List[str] = Field(default_factory=list)
     edge_profile: str = "standard"
     human_authority: bool = True
+    factory_scenario: FactoryScenario = FactoryScenario.CREATE_PRODUCT
 
     @field_validator("schema_version")
     @classmethod

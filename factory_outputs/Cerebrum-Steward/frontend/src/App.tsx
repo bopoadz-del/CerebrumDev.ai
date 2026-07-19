@@ -5,6 +5,8 @@ import MaintenanceModule from './modules/maintenance';
 import ReadinessModule from './modules/readiness';
 import PortfolioModule from './modules/portfolio';
 import EvidenceModule from './modules/evidence';
+import OperationalChatModule from './modules/operational_chat';
+import ResidentEngineerModule from './modules/resident_engineer';
 export default function App(){
   return (
     <main data-product="cerebrum-steward">
@@ -16,6 +18,8 @@ export default function App(){
       <ReadinessModule />
       <PortfolioModule />
       <EvidenceModule />
+      <OperationalChatModule />
+      <ResidentEngineerModule />
     </main>
   )
 }
