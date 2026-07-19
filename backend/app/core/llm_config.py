@@ -58,9 +58,13 @@ def _kimi_config() -> Dict[str, Any]:
 
 
 def _detect_provider() -> str:
-    """Auto-detect provider from configured credentials."""
-    # Prefer Kimi when its key/mock is present (Factory milestone)
-    if _kimi_key() or _truthy("KIMI_MOCK") or _truthy("CEREBRUM_LLM_MOCK"):
+    """Auto-detect provider from configured credentials.
+
+    ``KIMI_MOCK`` / ``CEREBRUM_LLM_MOCK`` are scoped to
+    ``get_factory_llm_config()`` only — they must not make kit chat think a
+    live Kimi provider is configured (that would hit the network).
+    """
+    if _kimi_key():
         return "kimi"
     if os.getenv("QWEN_API_KEY"):
         return "qwen"
@@ -77,7 +81,18 @@ def get_llm_config() -> Dict[str, Any]:
         provider = "kimi"
 
     if provider == "kimi":
-        return _kimi_config()
+        cfg = _kimi_config()
+        # Explicit LLM_PROVIDER=kimi with only mock flag and no key → inactive
+        # for kit chat (stay offline). Factory path uses get_factory_llm_config.
+        if cfg["mock"] and not cfg["api_key"]:
+            return {
+                "provider": "",
+                "api_key": "",
+                "base_url": "",
+                "model": "",
+                "mock": True,
+            }
+        return cfg
 
     if provider == "qwen":
         return {
@@ -99,7 +114,14 @@ def get_llm_config() -> Dict[str, Any]:
             "mock": False,
         }
 
-    return {"provider": "", "api_key": "", "base_url": "", "model": "", "mock": False}
+    return {
+        "provider": "",
+        "api_key": "",
+        "base_url": "",
+        "model": "",
+        # Preserve mock intent for callers even when no live provider is selected
+        "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
+    }
 
 
 def get_factory_llm_config() -> Dict[str, Any]:

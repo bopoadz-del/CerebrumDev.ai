@@ -172,6 +172,8 @@ async def _call_ollama(
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the configured LLM. Returns parsed JSON."""
     cfg = get_llm_config()
+    if cfg.get("mock"):
+        raise RuntimeError("LLM mock mode — no network call")
     provider = cfg["provider"]
     if provider in ("qwen", "moonshot", "kimi"):
         return await _call_openai_compatible(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
@@ -225,11 +227,15 @@ async def generate_chain_suggestion(
     messages.extend(chat_history)
     messages.append({"role": "user", "content": user_message})
 
+    cfg = get_llm_config()
     try:
-        result = await _call_llm(messages)
+        if cfg.get("mock") or not cfg.get("provider"):
+            result = _mock_response(user_message, domain, available_blocks)
+        else:
+            result = await _call_llm(messages)
     except Exception as exc:
-        if not active_provider():
-            logger.warning("No LLM provider configured, using mock generator: %s", exc)
+        if not active_provider() or cfg.get("mock"):
+            logger.warning("No live LLM provider, using mock generator: %s", exc)
             result = _mock_response(user_message, domain, available_blocks)
         else:
             logger.exception("LLM call failed")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from app.factory.blueprint import load_blueprint
@@ -18,6 +19,13 @@ from app.factory.store_manager import (
     health_cycle_steps,
     store_manager_manifest,
 )
+
+
+def _resolve_blocks_root(cli_value: str | None) -> Path | None:
+    if cli_value:
+        return Path(cli_value).resolve()
+    env = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
+    return Path(env).resolve() if env else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         return _store_cmd(args)
 
     bp = load_blueprint(args.blueprint)
-    blocks_root = Path(args.blocks_root).resolve() if args.blocks_root else None
+    blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
 
     try:
         if args.cmd == "plan":

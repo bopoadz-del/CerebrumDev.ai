@@ -1,3 +1,6 @@
-FROM python:3.11-slim
+FROM cerebrum-block-base:latest
+
 WORKDIR /app
-COPY block.py block.json .
+COPY block.json block.py ./
+# run.py is provided by cerebrum-block-base:latest
+ENTRYPOINT ["python", "/app/run.py"]
