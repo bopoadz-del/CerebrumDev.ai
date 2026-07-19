@@ -1,33 +1,44 @@
-# Kimi / Moonshot environment (Factory Product Architect)
+# Kimi credentials — which key is which
 
-This milestone’s Product Architect path is **Kimi-only** (`get_factory_llm_config()`).
-Kit-chain chat may still use legacy providers when explicitly configured.
+Do **not** confuse these two:
 
-## Required
+| Credential | Who uses it | Purpose |
+|------------|-------------|---------|
+| **Kimi Code CLI** (`KIMI_CODE_API_KEY`) | Kimi Code (engineer / Block Store Manager) | Coding, Store ops, shipper agent in the CLI — **not** the Factory web chat LLM |
+| **In-app chat LLM** (`OLLAMA_*` today, or later a dedicated architect key) | CerebrumDev UI / kit chat | Streaming chat + chain suggestions in the browser |
+
+## Kimi Code (CLI) — what you paste for the coder
 
 ```bash
-export KIMI_API_KEY='sk-...'          # or CEREBRUM_LLM_API_KEY
-export KIMI_BASE_URL='https://api.moonshot.cn/v1'   # optional
-export KIMI_MODEL='moonshot-v1-8k'                  # optional
-export LLM_PROVIDER=kimi                            # optional but recommended
+# backend/.env (gitignored)
+KIMI_CODE_API_KEY='sk-...'
+KIMI_CODE_BASE_URL='https://api.moonshot.ai/v1'   # international Moonshot/Kimi Code
 ```
 
-## Tests / offline
+This does **not** change `LLM_PROVIDER` and does **not** switch kit chat off Ollama.
+
+## In-app chat LLM (unchanged default)
+
+Production kit chat stays on Ollama cloud unless you explicitly choose otherwise:
 
 ```bash
-export KIMI_MOCK=1
-```
-
-## Helper
-
-```bash
-./scripts/setup_kimi_env.sh 'sk-your-key'
+LLM_PROVIDER=ollama
+OLLAMA_URL=https://ollama.com
+OLLAMA_MODEL=kimi-k2.7-code:cloud
+OLLAMA_API_KEY=...
 ```
 
 ## Role reminder
 
 | Actor | Job |
 |-------|-----|
-| **Kimi API** | Product Architect in CerebrumDev UI — blueprint only |
-| **Kimi Code** | Factory Engineer **and Block Store Manager** |
+| **Kimi API** (architect chat — separate product path) | Blueprint talk in Factory UI when wired |
+| **Kimi Code** | Factory Engineer + Block Store Manager via CLI |
 | **CerebrumDev.ai** | Governance, dual registry, certify, regenerate |
+
+## Helper
+
+```bash
+# Stores KIMI_CODE_* only — does not set LLM_PROVIDER=kimi
+./scripts/setup_kimi_code_env.sh 'sk-your-kimi-code-key'
+```
