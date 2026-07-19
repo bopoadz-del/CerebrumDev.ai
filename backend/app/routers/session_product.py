@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from app.core.session_store import get_session, update_session
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
+from app.factory.paths import factory_repo_root
 from app.factory.product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,
@@ -57,7 +58,7 @@ def _require_session(session_id: str):
 
 
 def _session_output(session_id: str, product_id: str) -> Path:
-    root = Path(__file__).resolve().parents[3]
+    root = factory_repo_root()
     return root / "factory_outputs" / "sessions" / session_id / product_id
 
 
@@ -186,7 +187,7 @@ def generate_approved_product(
         # Also mirror Steward golden to canonical factory_outputs path
         result = generate_product(bp, out, blocks_root=blocks_root)
         if bp.product_id == "cerebrum-steward":
-            canonical = Path(__file__).resolve().parents[3] / "factory_outputs" / "Cerebrum-Steward"
+            canonical = factory_repo_root() / "factory_outputs" / "Cerebrum-Steward"
             generate_product(bp, canonical, blocks_root=blocks_root)
             result["canonical_output"] = str(canonical)
         state.product_design.generation = {
