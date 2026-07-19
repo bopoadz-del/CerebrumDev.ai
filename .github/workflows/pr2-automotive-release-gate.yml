@@ -1,0 +1,165 @@
+name: PR2 Automotive Release Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/automotive-pilot-pr2
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-gate:
+    name: PR2 Automotive Clean Regeneration Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cerebrum_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cerebrum_dev
+      RAG_VECTOR_NAMESPACE: v2
+      RAG_EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
+      RAG_EMBEDDING_DIMENSIONS: "384"
+      RAG_EMBEDDING_BATCH_SIZE: "64"
+      RAG_BULK_INDEX_BATCH_SIZE: "50"
+
+    steps:
+      - name: Checkout CerebrumDev.ai
+        uses: actions/checkout@v4
+        with:
+          ref: feat/automotive-pilot-pr2
+          path: CerebrumDev.ai
+
+      - name: Checkout Cerebrum-Blocks
+        uses: actions/checkout@v4
+        with:
+          repository: bopoadz-del/Cerebrum-Blocks
+          ref: feat/automotive-pilot-pr2
+          path: Cerebrum-Blocks
+          token: ${{ secrets.CROSS_REPO_PAT }}
+
+      - name: Checkout The_Fork (pinned baseline)
+        uses: actions/checkout@v4
+        with:
+          repository: bopoadz-del/The_Fork
+          ref: 008d5e7a53654d401ce60372212f5245a8067c76
+          path: The_Fork
+          token: ${{ secrets.CROSS_REPO_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install CerebrumDev.ai backend deps
+        working-directory: CerebrumDev.ai/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install sentence-transformers
+
+      - name: CerebrumDev.ai backend tests
+        working-directory: CerebrumDev.ai/backend
+        run: |
+          python -m pytest tests/test_harvest_nhtsa.py tests/test_automotive_domain_smoke.py tests/test_automotive_kit_manifest.py -q --tb=short
+          python -m pytest tests/test_rag_*.py -q --tb=short
+          python -m pytest tests -q --tb=short
+
+      - name: Generate automotive platform from pinned baseline
+        working-directory: CerebrumDev.ai/backend
+        run: |
+          python -m scripts.generate_automotive_platform \
+            --manifest ../docs/superpowers/fixtures/automotive_platform_manifest.json \
+            --output ../generated/automotive-safety-intelligence \
+            --fork-path ../../The_Fork \
+            --blocks-path ../../Cerebrum-Blocks \
+            --force
+
+      - name: Record generation provenance
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          echo "=== Generation Inputs ==="
+          cat .generation_inputs_hash
+          echo "=== Fork Baseline ==="
+          git rev-parse HEAD
+
+      - name: Install generated platform deps
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install sentence-transformers
+
+      - name: Apply database migrations
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          alembic upgrade head
+
+      - name: Harvest NHTSA recalls
+        working-directory: CerebrumDev.ai/backend
+        run: |
+          python -m scripts.harvest_nhtsa --family recalls \
+            --output-dir ../generated/automotive-safety-intelligence/storage/automotive_core_rag_v1/live \
+            --max-records 1000
+
+      - name: Build and index automotive core pack
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          python -m scripts.build_automotive_core_pack \
+            --records storage/automotive_core_rag_v1/live/canonical/recalls.jsonl \
+            --output storage/automotive_core_rag_v1/live
+
+      - name: Verify pack manifest
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          echo "=== Pack Manifest ==="
+          cat storage/automotive_core_rag_v1/live/pack_manifest.json
+
+      - name: Live database verification
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          python -m scripts.verify_automotive_core_pack
+
+      - name: Idempotent re-ingestion check
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          python -m scripts.build_automotive_core_pack \
+            --records storage/automotive_core_rag_v1/live/canonical/recalls.jsonl \
+            --output storage/automotive_core_rag_v1/live
+          python -m scripts.verify_automotive_core_pack
+
+      - name: Generated platform automotive tests
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence
+        run: |
+          python -m pytest tests/test_automotive_pack_builder.py tests/test_automotive_retrieval.py tests/test_automotive_normalizers.py -q --tb=short
+          find . -name '*.py' -type f | xargs python -m py_compile
+
+      - name: Frontend install + build + lint
+        working-directory: CerebrumDev.ai/generated/automotive-safety-intelligence/frontend
+        run: |
+          npm ci
+          npm run build
+          npm run lint

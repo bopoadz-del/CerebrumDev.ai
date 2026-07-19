@@ -1,0 +1,46 @@
+{
+  "activation": {
+    "default_enabled": true,
+    "mode": "hybrid",
+    "put_off_by": [
+      "disable:estate.hat.maintenance"
+    ],
+    "triggers": [
+      {
+        "type": "intent",
+        "value": "maintenance"
+      },
+      {
+        "type": "capability",
+        "value": "estate_maintenance"
+      }
+    ]
+  },
+  "agent_id": "estate.hat.maintenance",
+  "allowed_actions": [
+    "estate.estate_maintenance"
+  ],
+  "block_ids": [
+    "estate_maintenance"
+  ],
+  "discipline": "maintenance",
+  "display_name": "Cerebrum Steward Maintenance Hat",
+  "extends": "estate.base",
+  "handoffs": [],
+  "human_authority": true,
+  "kind": "hat",
+  "manifest_version": "1.0.0",
+  "memory": {
+    "pii_policy": "never_store_pii",
+    "save": [],
+    "scope": "tenant_project"
+  },
+  "strategy": "REUSE",
+  "summary": "Specialized hat for capability 'estate_maintenance' (strategy=REUSE). Adapted from TEKsystems retail hat pattern; estate/product-neutral.",
+  "tags": [
+    "hat",
+    "factory-generated",
+    "estate",
+    "maintenance"
+  ]
+}

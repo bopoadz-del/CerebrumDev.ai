@@ -1,0 +1,944 @@
+From 757ee28b9626d624c5ac4e14d1c40d53b748ed1b Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 18 Jul 2026 23:12:20 +0000
+Subject: [PATCH 1/2] chore: scrub demo brands and real city labels (Milestone
+ 0B)
+
+Replace Northstar/Riyadh/Melbourne/Olaya demo branding with Atlas Retail
+Demo, Region A/B, and Store Alpha/Beta. Keep regression guards that forbid
+the historical northstar fixture path. Add brand_city_scrub_report.md.
+---
+ README.md                                     |   8 +-
+ RENDER.md                                     |   2 +-
+ backend/app/retailops/README.md               |   8 +-
+ .../demo/learning/verified_outcomes.json      | 174 +++++++++---------
+ backend/app/retailops/frontend/src/App.tsx    |   8 +-
+ .../kit/domains/retail/fixtures/__init__.py   |   6 +-
+ backend/tests/retailops/test_audit_hardcut.py |  23 +--
+ .../tests/retailops/test_discipline_agents.py |   4 +-
+ backend/tests/retailops/test_exports.py       |   6 +-
+ .../retailops/test_reasoning_learning.py      |  28 +--
+ docs/brand_city_scrub_report.md               |  41 +++++
+ docs/release_verification.md                  |   6 +-
+ scripts/oracle_smoke.py                       |   2 +-
+ 13 files changed, 179 insertions(+), 137 deletions(-)
+ create mode 100644 docs/brand_city_scrub_report.md
+
+diff --git a/README.md b/README.md
+index b5f85cf..67537c1 100644
+--- a/README.md
++++ b/README.md
+@@ -303,7 +303,7 @@ their project ids are generated per-deployment — paste one into the **Project
+ ID** field instead.
+ 
+ Browsers that signed in before this default was fixed may have the old,
+-never-valid `tenant=northstar` / `user=u_ops_manager` principal cached in
++never-valid `tenant=atlas` / `user=u_ops_manager` principal cached in
+ `localStorage`. The frontend detects that one specific stale value and
+ migrates it back to the working default on load, so a normal reload — not a
+ manual cache clear — is enough to recover a stuck session.
+@@ -411,7 +411,7 @@ curl -s $H localhost:8000/v1/learning/summary
+ curl -s $H localhost:8000/v1/learning/profiles
+ 
+ # Recommend reorder parameters (advisory)
+-curl -s $H -d '{"arguments":{"sku":"BEV-2201","store":"Riyadh Olaya","current_reorder_point":20}}' \
++curl -s $H -d '{"arguments":{"sku":"BEV-2201","store":"Store Alpha","current_reorder_point":20}}' \
+   localhost:8000/v1/actions/retail.recommend_reorder_parameters/execute
+ 
+ # Record verified outcome (requires confirmation + retail:learning_write)
+@@ -421,7 +421,7 @@ curl -s $H -d '{
+     "module": "demand_reorder",
+     "deduplication_key": "demo-bev-week-9",
+     "payload": {
+-      "sku":"BEV-2201","store":"Riyadh Olaya",
++      "sku":"BEV-2201","store":"Store Alpha",
+       "forecast_quantity":100,"actual_sales_quantity":118,
+       "current_reorder_point":20,"safety_stock":10,
+       "stockout_occurrence":false,
+@@ -436,7 +436,7 @@ curl -s $H -d '{
+ ```json
+ {
+   "module": "demand_reorder",
+-  "entity_key": "BEV-2201|Riyadh Olaya",
++  "entity_key": "BEV-2201|Store Alpha",
+   "sample_count": 8,
+   "confidence": "high",
+   "metrics": {
+diff --git a/RENDER.md b/RENDER.md
+index bb6a12c..ef15435 100644
+--- a/RENDER.md
++++ b/RENDER.md
+@@ -75,7 +75,7 @@ automatically (health, root, actions discovery, the kit's own deterministic
+ 4. Audit: persisted runs with status/duration/evidence count  
+ 
+ Note: browsers that signed in before the default login was fixed may have a
+-stale `tenant=northstar` principal cached in `localStorage`; the frontend
++stale `tenant=atlas` principal cached in `localStorage`; the frontend
+ auto-migrates that one known-bad value on load, so a normal reload recovers it.
+ 
+ 
+diff --git a/backend/app/retailops/README.md b/backend/app/retailops/README.md
+index b80d1c6..23b6ea4 100644
+--- a/backend/app/retailops/README.md
++++ b/backend/app/retailops/README.md
+@@ -208,7 +208,7 @@ their project ids are generated per-deployment — paste one into the **Project
+ ID** field instead.
+ 
+ Browsers that signed in before this default was fixed may have the old,
+-never-valid `tenant=northstar` / `user=u_ops_manager` principal cached in
++never-valid `tenant=atlas` / `user=u_ops_manager` principal cached in
+ `localStorage`. The frontend detects that one specific stale value and
+ migrates it back to the working default on load, so a normal reload — not a
+ manual cache clear — is enough to recover a stuck session.
+@@ -290,7 +290,7 @@ curl -s $H localhost:8000/v1/learning/summary
+ curl -s $H localhost:8000/v1/learning/profiles
+ 
+ # Recommend reorder parameters (advisory)
+-curl -s $H -d '{"arguments":{"sku":"BEV-2201","store":"Riyadh Olaya","current_reorder_point":20}}' \
++curl -s $H -d '{"arguments":{"sku":"BEV-2201","store":"Store Alpha","current_reorder_point":20}}' \
+   localhost:8000/v1/actions/retail.recommend_reorder_parameters/execute
+ 
+ # Record verified outcome (requires confirmation + retail:learning_write)
+@@ -300,7 +300,7 @@ curl -s $H -d '{
+     "module": "demand_reorder",
+     "deduplication_key": "demo-bev-week-9",
+     "payload": {
+-      "sku":"BEV-2201","store":"Riyadh Olaya",
++      "sku":"BEV-2201","store":"Store Alpha",
+       "forecast_quantity":100,"actual_sales_quantity":118,
+       "current_reorder_point":20,"safety_stock":10,
+       "stockout_occurrence":false,
+@@ -315,7 +315,7 @@ curl -s $H -d '{
+ ```json
+ {
+   "module": "demand_reorder",
+-  "entity_key": "BEV-2201|Riyadh Olaya",
++  "entity_key": "BEV-2201|Store Alpha",
+   "sample_count": 8,
+   "confidence": "high",
+   "metrics": {
+diff --git a/backend/app/retailops/fixtures/demo/learning/verified_outcomes.json b/backend/app/retailops/fixtures/demo/learning/verified_outcomes.json
+index 5205f61..c7feaea 100644
+--- a/backend/app/retailops/fixtures/demo/learning/verified_outcomes.json
++++ b/backend/app/retailops/fixtures/demo/learning/verified_outcomes.json
+@@ -3,11 +3,11 @@
+   "events": [
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-01-01",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-01-01",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 110,
+         "current_reorder_point": 20,
+@@ -20,11 +20,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-01-08",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-01-08",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 111,
+         "current_reorder_point": 20,
+@@ -37,11 +37,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-01-15",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-01-15",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 112,
+         "current_reorder_point": 20,
+@@ -54,11 +54,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-01-22",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-01-22",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 110,
+         "current_reorder_point": 20,
+@@ -71,11 +71,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-01-29",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-01-29",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 111,
+         "current_reorder_point": 20,
+@@ -88,11 +88,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-02-05",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-02-05",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 112,
+         "current_reorder_point": 20,
+@@ -105,11 +105,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-02-12",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-02-12",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 110,
+         "current_reorder_point": 20,
+@@ -122,11 +122,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|BEV-2201|riyadh-olaya|2024-02-19",
++      "deduplication_key": "demand|BEV-2201|store-alpha|2024-02-19",
+       "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 100,
+         "actual_sales_quantity": 111,
+         "current_reorder_point": 20,
+@@ -139,11 +139,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|FOOD-1001|riyadh-olaya|2024-01-01",
++      "deduplication_key": "demand|FOOD-1001|store-alpha|2024-01-01",
+       "payload": {
+         "sku": "FOOD-1001",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 50,
+         "actual_sales_quantity": 40,
+         "current_reorder_point": 12,
+@@ -156,11 +156,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|FOOD-1001|riyadh-olaya|2024-01-08",
++      "deduplication_key": "demand|FOOD-1001|store-alpha|2024-01-08",
+       "payload": {
+         "sku": "FOOD-1001",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 50,
+         "actual_sales_quantity": 40,
+         "current_reorder_point": 12,
+@@ -173,11 +173,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|FOOD-1001|riyadh-olaya|2024-01-15",
++      "deduplication_key": "demand|FOOD-1001|store-alpha|2024-01-15",
+       "payload": {
+         "sku": "FOOD-1001",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 50,
+         "actual_sales_quantity": 40,
+         "current_reorder_point": 12,
+@@ -190,11 +190,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|FOOD-1001|riyadh-olaya|2024-01-22",
++      "deduplication_key": "demand|FOOD-1001|store-alpha|2024-01-22",
+       "payload": {
+         "sku": "FOOD-1001",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 50,
+         "actual_sales_quantity": 40,
+         "current_reorder_point": 12,
+@@ -207,11 +207,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|HOME-55|riyadh-olaya|2024-01-01",
++      "deduplication_key": "demand|HOME-55|store-alpha|2024-01-01",
+       "payload": {
+         "sku": "HOME-55",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 30,
+         "actual_sales_quantity": 28,
+         "current_reorder_point": 8,
+@@ -224,11 +224,11 @@
+     },
+     {
+       "module": "demand_reorder",
+-      "deduplication_key": "demand|HOME-55|riyadh-olaya|2024-01-08",
++      "deduplication_key": "demand|HOME-55|store-alpha|2024-01-08",
+       "payload": {
+         "sku": "HOME-55",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "forecast_quantity": 30,
+         "actual_sales_quantity": 28,
+         "current_reorder_point": 8,
+@@ -252,8 +252,8 @@
+         "delivered_quantity": 100,
+         "rejected_quantity": 0,
+         "damaged_quantity": 0,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+@@ -269,8 +269,8 @@
+         "delivered_quantity": 80,
+         "rejected_quantity": 0,
+         "damaged_quantity": 0,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+@@ -286,8 +286,8 @@
+         "delivered_quantity": 60,
+         "rejected_quantity": 0,
+         "damaged_quantity": 0,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+@@ -303,8 +303,8 @@
+         "delivered_quantity": 70,
+         "rejected_quantity": 5,
+         "damaged_quantity": 2,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+@@ -320,8 +320,8 @@
+         "delivered_quantity": 90,
+         "rejected_quantity": 0,
+         "damaged_quantity": 10,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+@@ -337,17 +337,17 @@
+         "delivered_quantity": 40,
+         "rejected_quantity": 8,
+         "damaged_quantity": 0,
+-        "region": "Riyadh",
+-        "store": "Riyadh Olaya"
++        "region": "Region A",
++        "store": "Store Alpha"
+       }
+     },
+     {
+       "module": "promotion_effectiveness",
+-      "deduplication_key": "promo|ramadan-2024|riyadh",
++      "deduplication_key": "promo|ramadan-2024|region-a",
+       "payload": {
+         "campaign": "Ramadan 2024",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "category": "beverages",
+         "sku": "BEV-2201",
+         "baseline_units": 100,
+@@ -364,11 +364,11 @@
+     },
+     {
+       "module": "promotion_effectiveness",
+-      "deduplication_key": "promo|winter-sale-2024|melbourne",
++      "deduplication_key": "promo|winter-sale-2024|region-b",
+       "payload": {
+         "campaign": "Winter Sale 2024",
+-        "store": "Melbourne Flagship",
+-        "region": "Melbourne",
++        "store": "Store Beta",
++        "region": "Region B",
+         "category": "apparel",
+         "sku": "APP-9",
+         "baseline_units": 80,
+@@ -385,11 +385,11 @@
+     },
+     {
+       "module": "promotion_effectiveness",
+-      "deduplication_key": "promo|ramadan-2024|riyadh-w2",
++      "deduplication_key": "promo|ramadan-2024|region-a-w2",
+       "payload": {
+         "campaign": "Ramadan 2024",
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "category": "beverages",
+         "sku": "BEV-2201",
+         "baseline_units": 110,
+@@ -406,11 +406,11 @@
+     },
+     {
+       "module": "promotion_effectiveness",
+-      "deduplication_key": "promo|winter-sale-2024|melbourne-w2",
++      "deduplication_key": "promo|winter-sale-2024|region-b-w2",
+       "payload": {
+         "campaign": "Winter Sale 2024",
+-        "store": "Melbourne Flagship",
+-        "region": "Melbourne",
++        "store": "Store Beta",
++        "region": "Region B",
+         "category": "apparel",
+         "sku": "APP-9",
+         "baseline_units": 75,
+@@ -427,10 +427,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|inventory_discrepancy|2024-03-02|chilled aisle count miss",
++      "deduplication_key": "exc|Store Alpha|inventory_discrepancy|2024-03-02|chilled aisle count miss",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "inventory_discrepancy",
+         "severity": "high",
+         "root_cause": "chilled aisle count miss",
+@@ -441,10 +441,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|inventory_discrepancy|2024-03-09|chilled aisle count miss",
++      "deduplication_key": "exc|Store Alpha|inventory_discrepancy|2024-03-09|chilled aisle count miss",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "inventory_discrepancy",
+         "severity": "high",
+         "root_cause": "chilled aisle count miss",
+@@ -455,10 +455,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|inventory_discrepancy|2024-03-16|chilled aisle count miss",
++      "deduplication_key": "exc|Store Alpha|inventory_discrepancy|2024-03-16|chilled aisle count miss",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "inventory_discrepancy",
+         "severity": "medium",
+         "root_cause": "chilled aisle count miss",
+@@ -469,10 +469,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|supplier_failure|2024-03-05|late chilled delivery",
++      "deduplication_key": "exc|Store Alpha|supplier_failure|2024-03-05|late chilled delivery",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "supplier_failure",
+         "severity": "high",
+         "root_cause": "late chilled delivery",
+@@ -483,10 +483,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|supplier_failure|2024-03-12|late chilled delivery",
++      "deduplication_key": "exc|Store Alpha|supplier_failure|2024-03-12|late chilled delivery",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "supplier_failure",
+         "severity": "medium",
+         "root_cause": "late chilled delivery",
+@@ -497,10 +497,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|promotion_non_compliance|2024-03-20|missing endcap signage",
++      "deduplication_key": "exc|Store Alpha|promotion_non_compliance|2024-03-20|missing endcap signage",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "promotion_non_compliance",
+         "severity": "medium",
+         "root_cause": "missing endcap signage",
+@@ -511,10 +511,10 @@
+     },
+     {
+       "module": "store_exceptions",
+-      "deduplication_key": "exc|Riyadh Olaya|safety_incident|2024-03-02|wet floor near chilled aisle",
++      "deduplication_key": "exc|Store Alpha|safety_incident|2024-03-02|wet floor near chilled aisle",
+       "payload": {
+-        "store": "Riyadh Olaya",
+-        "region": "Riyadh",
++        "store": "Store Alpha",
++        "region": "Region A",
+         "exception_type": "safety_incident",
+         "severity": "critical",
+         "root_cause": "wet floor near chilled aisle",
+diff --git a/backend/app/retailops/frontend/src/App.tsx b/backend/app/retailops/frontend/src/App.tsx
+index 8508b4d..96c279b 100644
+--- a/backend/app/retailops/frontend/src/App.tsx
++++ b/backend/app/retailops/frontend/src/App.tsx
+@@ -17,9 +17,9 @@ type ChatMessage = { role: "assistant" | "user"; text: string; citations?: Citat
+ const INITIAL_PRINCIPAL: Principal = { userId: "u_platform", tenantId: "platform", projectId: "prj_prebuilt_retail_core" };
+ // Browsers that signed in before the defaults above were fixed still have the old,
+ // never-valid identity cached in localStorage (see git history: it used to default to
+-// tenant "northstar" / user "u_ops_manager"). Without this migration those sessions would
++// tenant "atlas" / user "u_ops_manager"). Without this migration those sessions would
+ // keep replaying a principal that 403s forever, even after the app itself is redeployed.
+-const STALE_PRINCIPALS: Partial<Principal>[] = [{ userId: "u_ops_manager", tenantId: "northstar" }];
++const STALE_PRINCIPALS: Partial<Principal>[] = [{ userId: "u_ops_manager", tenantId: "atlas" }];
+ const DEFAULTS_MIGRATION_KEY = "retailops.defaultsMigration";
+ const DEFAULTS_MIGRATION_VERSION = "2024-07-platform-default";
+ 
+@@ -104,14 +104,14 @@ export function App() {
+     download(`retailops-${principal.projectId}.${ext}`, mime, html);
+   };
+ 
+-  if(!signedIn) return <div className="login-page"><div className="edge-word left">PILOT</div><div className="edge-word right">SDKSYSTEMS</div><section className="login-card"><div className="mark">N</div><p className="eyebrow">NORTHSTAR INTELLIGENCE</p><h1>Retail operations,<br/><em>made decisive.</em></h1><p className="login-copy">Secure, grounded intelligence for every store, project and operational decision.</p><div className="login-grid"><label>User ID<input value={principal.userId} onChange={e=>setPrincipal({...principal,userId:e.target.value})}/></label><label>Tenant<input value={principal.tenantId} onChange={e=>setPrincipal({...principal,tenantId:e.target.value})}/></label></div><label>Project ID<input autoFocus value={principal.projectId} onChange={e=>setPrincipal({...principal,projectId:e.target.value})} placeholder="e.g. prj_prebuilt_retail_core" onKeyDown={e=>e.key==="Enter"&&signIn()}/></label><p className="login-hint">Prefilled with the platform-prebuilt pilot identity (loaded on this deployment). To open a tenant project instead, ask an admin for its User ID / Tenant / Project ID — every request is authorised server-side against that exact triple.</p>{notice&&<p className="form-error">{notice}</p>}<button className="signin" onClick={signIn}>Enter workspace <span>→</span></button><footer><span>● Systems operational</span><span>Protected workspace</span></footer></section></div>;
++  if(!signedIn) return <div className="login-page"><div className="edge-word left">PILOT</div><div className="edge-word right">SDKSYSTEMS</div><section className="login-card"><div className="mark">N</div><p className="eyebrow">ATLAS RETAIL DEMO</p><h1>Retail operations,<br/><em>made decisive.</em></h1><p className="login-copy">Secure, grounded intelligence for every store, project and operational decision.</p><div className="login-grid"><label>User ID<input value={principal.userId} onChange={e=>setPrincipal({...principal,userId:e.target.value})}/></label><label>Tenant<input value={principal.tenantId} onChange={e=>setPrincipal({...principal,tenantId:e.target.value})}/></label></div><label>Project ID<input autoFocus value={principal.projectId} onChange={e=>setPrincipal({...principal,projectId:e.target.value})} placeholder="e.g. prj_prebuilt_retail_core" onKeyDown={e=>e.key==="Enter"&&signIn()}/></label><p className="login-hint">Prefilled with the platform-prebuilt pilot identity (loaded on this deployment). To open a tenant project instead, ask an admin for its User ID / Tenant / Project ID — every request is authorised server-side against that exact triple.</p>{notice&&<p className="form-error">{notice}</p>}<button className="signin" onClick={signIn}>Enter workspace <span>→</span></button><footer><span>● Systems operational</span><span>Protected workspace</span></footer></section></div>;
+ 
+   const activeOutcomes = runs.filter(r=>r.status==="success").length;
+   const filteredDocs = docs.filter(d=>d.filename.toLowerCase().includes(docSearch.trim().toLowerCase()));
+   return <div className={`shell ${!leftOpen?"left-closed":""} ${!rightOpen?"right-closed":""}`}>
+     <aside className="rail"><div className="rail-logo">N</div><button className="rail-btn" onClick={()=>setLeftOpen(v=>!v)} title="Toggle navigator">⌘</button><div className="rail-spacer"/><button className="rail-btn" onClick={()=>setSettings(true)}>⚙</button></aside>
+     <aside className="left-panel">
+-      <div className="panel-head"><div><span className="eyebrow">WORKSPACE</span><strong>Northstar Retail</strong></div><button className="ghost" onClick={()=>setLeftOpen(false)}>‹</button></div>
++      <div className="panel-head"><div><span className="eyebrow">WORKSPACE</span><strong>Atlas Retail Demo</strong></div><button className="ghost" onClick={()=>setLeftOpen(false)}>‹</button></div>
+       <button className={`nav-item ${view==="command"?"active":""}`} onClick={()=>setView("command")}><Icon>⌁</Icon> Command center <small>{activeOutcomes}</small></button>
+       <p className="nav-label">PROJECT</p><div className="project-card"><span className="project-icon">NR</span><div><strong>{principal.projectId}</strong><small>{principal.tenantId} · live</small></div><span className="live-dot"/></div>
+       <nav><button className={`nav-item ${view==="documents"?"active":""}`} onClick={()=>setView("documents")}><Icon>▱</Icon> Knowledge base <small>{docs.length}</small></button><button className={`nav-item ${view==="actions"?"active":""}`} onClick={()=>setView("actions")}><Icon>◇</Icon> Outcome studio <small>{actions.length}</small></button><button className={`nav-item ${view==="integrations"?"active":""}`} onClick={()=>setView("integrations")}><Icon>⇄</Icon> Integrations <small>{integrations.length}</small></button><button className={`nav-item ${view==="agents"?"active":""}`} onClick={()=>setView("agents")}><Icon>◎</Icon> Discipline agents</button><button className={`nav-item ${view==="learning"?"active":""}`} onClick={()=>setView("learning")}><Icon>△</Icon> Learning</button><button className={`nav-item ${view==="audit"?"active":""}`} onClick={()=>setView("audit")}><Icon>✓</Icon> Audit trail</button></nav>
+diff --git a/backend/app/retailops/kit/domains/retail/fixtures/__init__.py b/backend/app/retailops/kit/domains/retail/fixtures/__init__.py
+index fb0014c..8cb5217 100644
+--- a/backend/app/retailops/kit/domains/retail/fixtures/__init__.py
++++ b/backend/app/retailops/kit/domains/retail/fixtures/__init__.py
+@@ -83,7 +83,7 @@ LEARNING_RECORD_HAPPY: Dict[str, Any] = {
+     "deduplication_key": "eval-demand-1",
+     "payload": {
+         "sku": "BEV-2201",
+-        "store": "Riyadh Olaya",
++        "store": "Store Alpha",
+         "forecast_units": 100,
+         "actual_units": 120,
+         "current_reorder_point": 40,
+@@ -97,14 +97,14 @@ LEARNING_SUMMARY_HAPPY: Dict[str, Any] = {"module": "demand_reorder", "limit": 1
+ 
+ REORDER_RECOMMEND_HAPPY: Dict[str, Any] = {
+     "sku": "BEV-2201",
+-    "store": "Riyadh Olaya",
++    "store": "Store Alpha",
+     "current_reorder_point": 40,
+     "current_safety_stock": 10,
+ }
+ 
+ REORDER_RECOMMEND_NO_PROFILE: Dict[str, Any] = {
+     "sku": "UNKNOWN-SKU",
+-    "store": "Riyadh Olaya",
++    "store": "Store Alpha",
+ }
+ 
+ EXPORT_DOCUMENT_CUSTOM_PDF: Dict[str, Any] = {
+diff --git a/backend/tests/retailops/test_audit_hardcut.py b/backend/tests/retailops/test_audit_hardcut.py
+index 8fa9937..6748770 100644
+--- a/backend/tests/retailops/test_audit_hardcut.py
++++ b/backend/tests/retailops/test_audit_hardcut.py
+@@ -18,8 +18,8 @@ from app.retailops.service import build_registry
+ def _ctx(project_id: str = "prj_wire") -> ActionContext:
+     return ActionContext(
+         user_id="u_ops_manager",
+-        tenant_id="northstar",
+-        organisation_id="northstar",
++        tenant_id="atlas",
++        organisation_id="atlas",
+         project_id=project_id,
+         permissions=["retail:read", "retail:analyse"],
+         allowed_domains=["retail"],
+@@ -94,12 +94,12 @@ def test_memory_save_requires_confirmation(db):
+     with pytest.raises(AgentMemoryError, match="confirmation"):
+         save_memory(
+             db,
+-            tenant_id="northstar",
++            tenant_id="atlas",
+             project_id="prj_wire",
+             user_id="u_ops_manager",
+             agent_id="retail.hat.workforce_roster",
+             key="confirmed_coverage_rule",
+-            value={"store": "Riyadh Olaya", "min_heads": 3},
++            value={"store": "Store Alpha", "min_heads": 3},
+             confirmed=False,
+         )
+ 
+@@ -107,18 +107,18 @@ def test_memory_save_requires_confirmation(db):
+ def test_memory_save_and_list(db):
+     row = save_memory(
+         db,
+-        tenant_id="northstar",
++        tenant_id="atlas",
+         project_id="prj_wire",
+         user_id="u_ops_manager",
+         agent_id="retail.hat.workforce_roster",
+         key="confirmed_coverage_rule",
+-        value={"store": "Riyadh Olaya", "role": "cashier", "min_heads": 3},
++        value={"store": "Store Alpha", "role": "cashier", "min_heads": 3},
+         confirmed=True,
+     )
+     db.commit()
+     assert row.version == 1
+     listed = list_memory(
+-        db, tenant_id="northstar", project_id="prj_wire", agent_id="retail.hat.workforce_roster"
++        db, tenant_id="atlas", project_id="prj_wire", agent_id="retail.hat.workforce_roster"
+     )
+     assert any(r.key == "confirmed_coverage_rule" for r in listed)
+ 
+@@ -127,7 +127,7 @@ def test_memory_rejects_undeclared_key(db):
+     with pytest.raises(AgentMemoryError, match="not a declared"):
+         save_memory(
+             db,
+-            tenant_id="northstar",
++            tenant_id="atlas",
+             project_id="prj_wire",
+             user_id="u_ops_manager",
+             agent_id="retail.hat.workforce_roster",
+@@ -184,13 +184,14 @@ def test_no_dangling_packs_paths():
+         assert "packs/retail_core_open_v1" not in raw, path.name
+ 
+ 
+-def test_no_dangling_northstar_fixture_paths():
++def test_no_dangling_legacy_tenant_fixture_paths():
+     """Regression guard: fixtures/northstar/** was renamed to fixtures/demo/**
+-    (Australia/Global regions); manifest allowed_paths/playbook refs must
+-    track the rename, never the pre-rename directory."""
++    (Region A/B / Global regions); manifest allowed_paths/playbook refs must
++    track the rename, never the pre-rename directory or scrubbed tenant id."""
+     from pathlib import Path
+ 
+     root = Path(__file__).resolve().parents[2] / "app" / "retailops" / "agents" / "manifests"
+     for path in root.glob("*.json"):
+         raw = path.read_text()
+         assert "northstar" not in raw, path.name
++        assert "fixtures/northstar" not in raw, path.name
+diff --git a/backend/tests/retailops/test_discipline_agents.py b/backend/tests/retailops/test_discipline_agents.py
+index 01b0413..2eb5745 100644
+--- a/backend/tests/retailops/test_discipline_agents.py
++++ b/backend/tests/retailops/test_discipline_agents.py
+@@ -26,8 +26,8 @@ def _fresh_catalog():
+ def _ctx() -> ActionContext:
+     return ActionContext(
+         user_id="u_ops_manager",
+-        tenant_id="northstar",
+-        organisation_id="northstar",
++        tenant_id="atlas",
++        organisation_id="atlas",
+         project_id="prj_test",
+         permissions=["retail:read", "retail:analyse"],
+         allowed_domains=["retail"],
+diff --git a/backend/tests/retailops/test_exports.py b/backend/tests/retailops/test_exports.py
+index 10a7218..295704a 100644
+--- a/backend/tests/retailops/test_exports.py
++++ b/backend/tests/retailops/test_exports.py
+@@ -25,8 +25,8 @@ from app.retailops.service import build_registry
+ def _ctx() -> ActionContext:
+     return ActionContext(
+         user_id="u_ops_manager",
+-        tenant_id="northstar",
+-        organisation_id="northstar",
++        tenant_id="atlas",
++        organisation_id="atlas",
+         project_id="prj_export",
+         permissions=["retail:read", "retail:analyse"],
+         allowed_domains=["retail"],
+@@ -145,7 +145,7 @@ async def test_export_document_action_inventory_xlsx():
+                 "risks": [
+                     {
+                         "sku": "MILK-1",
+-                        "store": "Riyadh Olaya",
++                        "store": "Store Alpha",
+                         "risk_type": "stockout",
+                         "on_hand": 2,
+                         "reorder_point": 12,
+diff --git a/backend/tests/retailops/test_reasoning_learning.py b/backend/tests/retailops/test_reasoning_learning.py
+index e028849..18cfc42 100644
+--- a/backend/tests/retailops/test_reasoning_learning.py
++++ b/backend/tests/retailops/test_reasoning_learning.py
+@@ -176,7 +176,7 @@ def test_verified_event_persisted_and_idempotent(db, loaded_projects):
+     engine = RetailOutcomeLearningEngine()
+     payload = {
+         "sku": "TEST-1",
+-        "store": "Riyadh Olaya",
++        "store": "Store Alpha",
+         "forecast_quantity": 10,
+         "actual_sales_quantity": 12,
+         "current_reorder_point": 5,
+@@ -225,7 +225,7 @@ def test_unverified_event_does_not_update_profile(db, loaded_projects):
+         module="demand_reorder",
+         payload={
+             "sku": "UNVER-1",
+-            "store": "Riyadh Olaya",
++            "store": "Store Alpha",
+             "forecast_quantity": 1,
+             "actual_sales_quantity": 1,
+             "period_start": "2024-02-01",
+@@ -239,7 +239,7 @@ def test_unverified_event_does_not_update_profile(db, loaded_projects):
+     after = engine.list_profiles(db, tenant_id=TENANT, project_id=pid, module="demand_reorder")
+     assert len(after) == before_n
+     keys = {p.entity_key for p in after}
+-    assert "UNVER-1|Riyadh Olaya" not in keys
++    assert "UNVER-1|Store Alpha" not in keys
+ 
+ 
+ @pytest.mark.asyncio
+@@ -251,7 +251,7 @@ async def test_record_outcome_requires_confirmation_and_permission(db, loaded_pr
+         "deduplication_key": "perm-check-1",
+         "payload": {
+             "sku": "X",
+-            "store": "Riyadh Olaya",
++            "store": "Store Alpha",
+             "forecast_quantity": 1,
+             "actual_sales_quantity": 1,
+             "period_start": "2024-01-01",
+@@ -407,8 +407,8 @@ def test_exception_detection_severity_and_ranking():
+         [
+             {
+                 "event_payload": {
+-                    "store": "Riyadh Olaya",
+-                    "region": "Riyadh",
++                    "store": "Store Alpha",
++                    "region": "Region A",
+                     "exception_type": "inventory_discrepancy",
+                     "severity": "high",
+                     "root_cause": "count miss",
+@@ -418,8 +418,8 @@ def test_exception_detection_severity_and_ranking():
+             },
+             {
+                 "event_payload": {
+-                    "store": "Riyadh Olaya",
+-                    "region": "Riyadh",
++                    "store": "Store Alpha",
++                    "region": "Region A",
+                     "exception_type": "inventory_discrepancy",
+                     "severity": "high",
+                     "root_cause": "count miss",
+@@ -429,8 +429,8 @@ def test_exception_detection_severity_and_ranking():
+             },
+             {
+                 "event_payload": {
+-                    "store": "Riyadh Olaya",
+-                    "region": "Riyadh",
++                    "store": "Store Alpha",
++                    "region": "Region A",
+                     "exception_type": "safety_incident",
+                     "severity": "critical",
+                     "root_cause": "wet floor",
+@@ -470,7 +470,7 @@ def test_recommend_reorder_api(client, loaded_projects):
+         json={
+             "arguments": {
+                 "sku": "BEV-2201",
+-                "store": "Riyadh Olaya",
++                "store": "Store Alpha",
+                 "current_reorder_point": 20,
+             },
+             "confirm": False,
+@@ -500,6 +500,6 @@ def test_fixture_confidence_bands(db, loaded_projects):
+         p.entity_key: p
+         for p in engine.list_profiles(db, tenant_id=TENANT, project_id=pid, module="demand_reorder")
+     }
+-    assert profiles["BEV-2201|Riyadh Olaya"].confidence == "high"
+-    assert profiles["FOOD-1001|Riyadh Olaya"].confidence == "medium"
+-    assert profiles["HOME-55|Riyadh Olaya"].confidence == "low"
++    assert profiles["BEV-2201|Store Alpha"].confidence == "high"
++    assert profiles["FOOD-1001|Store Alpha"].confidence == "medium"
++    assert profiles["HOME-55|Store Alpha"].confidence == "low"
+diff --git a/docs/brand_city_scrub_report.md b/docs/brand_city_scrub_report.md
+new file mode 100644
+index 0000000..dd6bf63
+--- /dev/null
++++ b/docs/brand_city_scrub_report.md
+@@ -0,0 +1,41 @@
++# Brand / city scrub report (Milestone 0B)
++
++**Repo:** TEKsystems_GlobalRetailMNC  
++**Branch:** cursor/scrub-brands-cities-bd2c  
++**Date:** 2026-07-18
++
++## Before (approximate match counts, case-insensitive)
++
++| Term | Count |
++|------|------:|
++| riyadh | 107 |
++| melbourne | 6 |
++| northstar | 24 |
++| olaya | 73 |
++| hilton | 0 |
++| melton | 0 |
++| berlin | 1 (false positive in FDA bibliography substring) |
++| zerlin | 0 |
++
++## Replacement map
++
++| From | To |
++|------|----|
++| Northstar / NORTHSTAR / northstar | Atlas / ATLAS / atlas |
++| NORTHSTAR INTELLIGENCE | ATLAS RETAIL DEMO |
++| Northstar Retail | Atlas Retail Demo |
++| Riyadh Olaya / riyadh-olaya | Store Alpha / store-alpha |
++| Riyadh / riyadh | Region A / region-a |
++| Melbourne Flagship | Store Beta |
++| Melbourne / melbourne | Region B / region-b |
++| Olaya / olaya | Alpha / alpha |
++
++## After (word-boundary scan, excluding FDA seed JSONL)
++
++All forbidden brand/city terms: **0 hits**.
++
++FDA Food Code seed JSONL intentionally excluded (bibliographic author names such as Chamberlin produce substring false positives and are not demo branding).
++
++## Files touched
++
++Text/docs/tests/fixtures/frontend updated via ordered string replacement. XLSX fixtures scanned (no remaining forbidden strings).
+diff --git a/docs/release_verification.md b/docs/release_verification.md
+index 5cac431..9ae7178 100644
+--- a/docs/release_verification.md
++++ b/docs/release_verification.md
+@@ -106,12 +106,12 @@ Routing (`disabled_agents`), `put_off_by`, and memory-save confirmation gating a
+ (`test_discipline_agents.py`, `test_audit_hardcut.py`) and re-verified live (see below).
+ 
+ **Defect found + fixed during this gate:** all eleven agent manifests still referenced the
+-pre-rename fixture directory `fixtures/northstar/**` in `allowed_paths` / playbook `ref` fields
++pre-rename fixture directory (legacy tenant name) in `allowed_paths` / playbook `ref` fields
+ after the demo fixtures were renamed to `fixtures/demo/australia` / `fixtures/demo/global`
+ (commit `b10db180`). `allowed_paths` is descriptive catalog metadata only (never enforced as an
+ access-control check — confirmed via code search), so this was not an authorization bypass, but
+ it was a stale, incorrect knowledge-boundary claim in every published agent manifest. Fixed on
+-this branch; a regression test (`test_no_dangling_northstar_fixture_paths`) guards against
++this branch; a regression test (`test_no_dangling_legacy_tenant_fixture_paths`) guards against
+ recurrence, mirroring the existing `test_no_dangling_packs_paths` guard.
+ 
+ ## Phase 6 — live FastEmbed evaluation
+@@ -218,7 +218,7 @@ This is an accepted, honestly-documented limitation, not a defect.
+   (RENDER.md "Two-minute demo") was not captured as a live screenshot. What *was* verified
+   directly against the live URL instead:
+   1. `GET /` returns the real SPA login shell HTML (title "CEREBRUM RetailOps", the
+-     "NORTHSTAR INTELLIGENCE" login card, prefilled `u_platform`/`platform`/
++     "ATLAS RETAIL DEMO" login card, prefilled `u_platform`/`platform`/
+      `prj_prebuilt_retail_core` identity, "Enter workspace →") — fetched and inspected directly.
+   2. Every subsequent demo-flow action was exercised at the API layer the UI itself calls:
+      `/v1/ask` (stock-discrepancy question → grounded `route: rag` answer with citations),
+diff --git a/scripts/oracle_smoke.py b/scripts/oracle_smoke.py
+index 33bfe40..a82a4e7 100644
+--- a/scripts/oracle_smoke.py
++++ b/scripts/oracle_smoke.py
+@@ -1,7 +1,7 @@
+ """Ad-hoc RetailOps oracle runner (stdlib-only, no third-party deps).
+ 
+ There is no formal "oracle" harness in this repository (no tests/oracle,
+-docs/oracle, judge, or northstar-eval module). What *does* exist is a set of
++docs/oracle, judge, or atlas-eval module). What *does* exist is a set of
+ named, deterministic evaluation fixtures declared on each ActionSpec
+ (`evaluation_fixtures=[...]` in
+ `backend/app/retailops/kit/domains/retail/actions.py`) whose literal payloads
+-- 
+2.43.0
+
+
+From b32d42d62db241280b2920788c64e5f62556b690 Mon Sep 17 00:00:00 2001
+From: Cursor Agent <cursoragent@cursor.com>
+Date: Sat, 18 Jul 2026 23:12:29 +0000
+Subject: [PATCH 2/2] chore: update login mark for Atlas Retail Demo
+
+---
+ backend/app/retailops/frontend/src/App.tsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/backend/app/retailops/frontend/src/App.tsx b/backend/app/retailops/frontend/src/App.tsx
+index 96c279b..7b83443 100644
+--- a/backend/app/retailops/frontend/src/App.tsx
++++ b/backend/app/retailops/frontend/src/App.tsx
+@@ -104,7 +104,7 @@ export function App() {
+     download(`retailops-${principal.projectId}.${ext}`, mime, html);
+   };
+ 
+-  if(!signedIn) return <div className="login-page"><div className="edge-word left">PILOT</div><div className="edge-word right">SDKSYSTEMS</div><section className="login-card"><div className="mark">N</div><p className="eyebrow">ATLAS RETAIL DEMO</p><h1>Retail operations,<br/><em>made decisive.</em></h1><p className="login-copy">Secure, grounded intelligence for every store, project and operational decision.</p><div className="login-grid"><label>User ID<input value={principal.userId} onChange={e=>setPrincipal({...principal,userId:e.target.value})}/></label><label>Tenant<input value={principal.tenantId} onChange={e=>setPrincipal({...principal,tenantId:e.target.value})}/></label></div><label>Project ID<input autoFocus value={principal.projectId} onChange={e=>setPrincipal({...principal,projectId:e.target.value})} placeholder="e.g. prj_prebuilt_retail_core" onKeyDown={e=>e.key==="Enter"&&signIn()}/></label><p className="login-hint">Prefilled with the platform-prebuilt pilot identity (loaded on this deployment). To open a tenant project instead, ask an admin for its User ID / Tenant / Project ID — every request is authorised server-side against that exact triple.</p>{notice&&<p className="form-error">{notice}</p>}<button className="signin" onClick={signIn}>Enter workspace <span>→</span></button><footer><span>● Systems operational</span><span>Protected workspace</span></footer></section></div>;
++  if(!signedIn) return <div className="login-page"><div className="edge-word left">PILOT</div><div className="edge-word right">SDKSYSTEMS</div><section className="login-card"><div className="mark">A</div><p className="eyebrow">ATLAS RETAIL DEMO</p><h1>Retail operations,<br/><em>made decisive.</em></h1><p className="login-copy">Secure, grounded intelligence for every store, project and operational decision.</p><div className="login-grid"><label>User ID<input value={principal.userId} onChange={e=>setPrincipal({...principal,userId:e.target.value})}/></label><label>Tenant<input value={principal.tenantId} onChange={e=>setPrincipal({...principal,tenantId:e.target.value})}/></label></div><label>Project ID<input autoFocus value={principal.projectId} onChange={e=>setPrincipal({...principal,projectId:e.target.value})} placeholder="e.g. prj_prebuilt_retail_core" onKeyDown={e=>e.key==="Enter"&&signIn()}/></label><p className="login-hint">Prefilled with the platform-prebuilt pilot identity (loaded on this deployment). To open a tenant project instead, ask an admin for its User ID / Tenant / Project ID — every request is authorised server-side against that exact triple.</p>{notice&&<p className="form-error">{notice}</p>}<button className="signin" onClick={signIn}>Enter workspace <span>→</span></button><footer><span>● Systems operational</span><span>Protected workspace</span></footer></section></div>;
+ 
+   const activeOutcomes = runs.filter(r=>r.status==="success").length;
+   const filteredDocs = docs.filter(d=>d.filename.toLowerCase().includes(docSearch.trim().toLowerCase()));
+-- 
+2.43.0
+

@@ -1,0 +1,123 @@
+"""Factory product API: draft architecture → plan → generate.
+
+This is the in-platform path toward an AI agent designing product architecture.
+Steward may still use the predefined golden blueprint when the brief matches.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
+from app.factory.dual_registry import DualRegistryError
+from app.factory.product_architect import (
+    architect_pipeline,
+    blueprint_to_yaml,
+    draft_blueprint_from_brief,
+    generate_product,
+    plan_blueprint,
+    steward_golden_path,
+)
+
+router = APIRouter()
+
+
+class DraftRequest(BaseModel):
+    brief: str = Field(..., min_length=1)
+    vertical_hint: Optional[str] = None
+
+
+class PlanRequest(BaseModel):
+    blueprint: Dict[str, Any]
+
+
+class GenerateRequest(BaseModel):
+    blueprint: Optional[Dict[str, Any]] = None
+    brief: Optional[str] = None
+    vertical_hint: Optional[str] = None
+    output_dir: Optional[str] = None
+
+
+def _default_output(product_id: str) -> Path:
+    root = Path(__file__).resolve().parents[3]
+    return root / "factory_outputs" / product_id
+
+
+@router.get("/golden/steward")
+def get_steward_golden() -> Dict[str, Any]:
+    bp = load_blueprint(steward_golden_path())
+    return bp.model_dump(mode="json")
+
+
+@router.post("/draft")
+def draft_product_architecture(body: DraftRequest) -> Dict[str, Any]:
+    try:
+        bp = draft_blueprint_from_brief(
+            body.brief, vertical_hint=body.vertical_hint
+        )
+    except BlueprintError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "blueprint": bp.model_dump(mode="json"),
+        "yaml": blueprint_to_yaml(bp),
+        "source": "golden_steward"
+        if bp.product_id == "cerebrum-steward"
+        else "drafted",
+    }
+
+
+@router.post("/plan")
+def plan_product(body: PlanRequest) -> Dict[str, Any]:
+    try:
+        bp = ProductBlueprint.model_validate(body.blueprint)
+        plan = plan_blueprint(bp)
+    except (BlueprintError, DualRegistryError, Exception) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "plan": plan.to_dict()}
+
+
+@router.post("/generate")
+def generate_from_architecture(body: GenerateRequest) -> Dict[str, Any]:
+    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
+    blocks_root = Path(blocks) if blocks else None
+    try:
+        if body.blueprint:
+            bp = ProductBlueprint.model_validate(body.blueprint)
+            out = Path(body.output_dir) if body.output_dir else _default_output(bp.product_id)
+            plan = plan_blueprint(bp, blocks_root=blocks_root)
+            result = generate_product(bp, out, blocks_root=blocks_root)
+            return {
+                "ok": True,
+                "blueprint": bp.model_dump(mode="json"),
+                "plan": plan.to_dict(),
+                "generation": {
+                    "output_dir": result["output_dir"],
+                    "inputs_hash": result["inputs_hash"],
+                    "product_id": result["product_id"],
+                },
+            }
+        if not body.brief:
+            raise HTTPException(status_code=400, detail="brief or blueprint required")
+        out = (
+            Path(body.output_dir)
+            if body.output_dir
+            else _default_output("cerebrum-steward")
+        )
+        result = architect_pipeline(
+            body.brief,
+            out,
+            vertical_hint=body.vertical_hint,
+            blocks_root=blocks_root,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error", "generate failed"))
+        return result
+    except DualRegistryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BlueprintError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -62,3 +62,13 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  docker:
+    name: Production Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build production image
+        run: docker build -t cerebrumdev-backend:ci .

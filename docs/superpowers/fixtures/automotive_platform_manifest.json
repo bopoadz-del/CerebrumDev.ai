@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0.0",
+  "platform_id": "automotive-safety-intelligence",
+  "platform_name": "Automotive Safety Intelligence",
+  "domain": "automotive",
+  "domain_kit": "automotive",
+  "domain_block": "automotive_v2",
+  "formula_block": "formula_executor_v2",
+  "foundation_rag_pack": "automotive_core_rag_v1",
+  "foundation_collection": "automotive_core_v1",
+  "client_overlay_enabled": true,
+  "client_collection_strategy": "project_scoped",
+  "reference_identifiers": [
+    "nhtsa_campaign_number",
+    "odi_number",
+    "investigation_number",
+    "make",
+    "model",
+    "model_year",
+    "component",
+    "manufacturer"
+  ],
+  "branding": {
+    "product_name": "Automotive Safety Intelligence",
+    "workspace_name": "Vehicle Safety Workspace",
+    "foundation_name": "Automotive Core Knowledge"
+  },
+  "features": {
+    "google_drive": {
+      "enabled": true,
+      "multi_user": true,
+      "personal_connections": true,
+      "organisation_shared_bindings": true,
+      "default_scope": "read_only"
+    }
+  }
+}

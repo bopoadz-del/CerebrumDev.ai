@@ -1,0 +1,79 @@
+{
+  "capabilities": [
+    {
+      "block_ids": [
+        "estate_registry"
+      ],
+      "capability_id": "estate_registry",
+      "notes": "dual-registered",
+      "strategy": "REUSE"
+    },
+    {
+      "block_ids": [
+        "estate_maintenance"
+      ],
+      "capability_id": "estate_maintenance",
+      "notes": "dual-registered",
+      "strategy": "REUSE"
+    },
+    {
+      "block_ids": [
+        "evidence_verifier"
+      ],
+      "capability_id": "evidence_verifier",
+      "notes": "dual-registered",
+      "strategy": "REUSE"
+    },
+    {
+      "block_ids": [
+        "readiness_engine"
+      ],
+      "capability_id": "readiness_engine",
+      "notes": "dual-registered",
+      "strategy": "REUSE"
+    },
+    {
+      "block_ids": [
+        "portfolio_rollup"
+      ],
+      "capability_id": "portfolio_rollup",
+      "notes": "dual-registered",
+      "strategy": "REUSE"
+    },
+    {
+      "block_ids": [
+        "estate_registry",
+        "estate_maintenance",
+        "readiness_engine"
+      ],
+      "capability_id": "composed_ops_loop",
+      "notes": "dual-registered",
+      "strategy": "COMPOSE"
+    },
+    {
+      "block_ids": [
+        "capture",
+        "evidence_verifier"
+      ],
+      "capability_id": "evidence_capture",
+      "notes": "dual-registered",
+      "strategy": "COMPOSE"
+    },
+    {
+      "block_ids": [],
+      "capability_id": "human_authority_gate",
+      "notes": "kernel/template generation (no block ids)",
+      "strategy": "GENERATE"
+    }
+  ],
+  "dual_registered_blocks": [
+    "capture",
+    "estate_maintenance",
+    "estate_registry",
+    "evidence_verifier",
+    "portfolio_rollup",
+    "readiness_engine"
+  ],
+  "product_id": "cerebrum-steward",
+  "unsupported": []
+}

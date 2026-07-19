@@ -1,0 +1,46 @@
+{
+  "activation": {
+    "default_enabled": true,
+    "mode": "hybrid",
+    "put_off_by": [
+      "disable:estate.hat.registry"
+    ],
+    "triggers": [
+      {
+        "type": "intent",
+        "value": "registry"
+      },
+      {
+        "type": "capability",
+        "value": "estate_registry"
+      }
+    ]
+  },
+  "agent_id": "estate.hat.registry",
+  "allowed_actions": [
+    "estate.estate_registry"
+  ],
+  "block_ids": [
+    "estate_registry"
+  ],
+  "discipline": "registry",
+  "display_name": "Cerebrum Steward Registry Hat",
+  "extends": "estate.base",
+  "handoffs": [],
+  "human_authority": true,
+  "kind": "hat",
+  "manifest_version": "1.0.0",
+  "memory": {
+    "pii_policy": "never_store_pii",
+    "save": [],
+    "scope": "tenant_project"
+  },
+  "strategy": "REUSE",
+  "summary": "Specialized hat for capability 'estate_registry' (strategy=REUSE). Adapted from TEKsystems retail hat pattern; estate/product-neutral.",
+  "tags": [
+    "hat",
+    "factory-generated",
+    "estate",
+    "registry"
+  ]
+}

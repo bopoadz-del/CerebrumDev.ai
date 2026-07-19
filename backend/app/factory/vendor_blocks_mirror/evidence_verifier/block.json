@@ -1,0 +1,40 @@
+{
+  "id": "evidence_verifier",
+  "name": "Evidence Verifier",
+  "version": "1.0.0",
+  "description": "Evidence capture and verification for estate ops",
+  "author": "Cerebrum Factory",
+  "layer": 3,
+  "tags": [
+    "estate",
+    "private_estate_operations",
+    "steward"
+  ],
+  "inputs": [
+    {
+      "name": "input",
+      "type": "json",
+      "required": false,
+      "description": "Capability input payload"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "result",
+      "type": "json",
+      "description": "Capability result"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "execution": {
+    "type": "python",
+    "entrypoint": "block.py"
+  }
+}

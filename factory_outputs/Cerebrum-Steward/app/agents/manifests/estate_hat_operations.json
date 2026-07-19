@@ -1,0 +1,57 @@
+{
+  "activation": {
+    "default_enabled": true,
+    "mode": "hybrid",
+    "put_off_by": [
+      "disable:estate.hat.operations"
+    ],
+    "triggers": [
+      {
+        "type": "intent",
+        "value": "operations"
+      },
+      {
+        "type": "capability",
+        "value": "composed_ops_loop"
+      }
+    ]
+  },
+  "agent_id": "estate.hat.operations",
+  "allowed_actions": [
+    "estate.composed_ops_loop"
+  ],
+  "block_ids": [
+    "estate_registry",
+    "estate_maintenance",
+    "readiness_engine"
+  ],
+  "discipline": "operations",
+  "display_name": "Cerebrum Steward Operations Hat",
+  "extends": "estate.base",
+  "handoffs": [
+    {
+      "to_agent_id": "estate.hat.registry",
+      "when": "needs_registry_detail"
+    },
+    {
+      "to_agent_id": "estate.hat.readiness",
+      "when": "needs_readiness_gate"
+    }
+  ],
+  "human_authority": true,
+  "kind": "hat",
+  "manifest_version": "1.0.0",
+  "memory": {
+    "pii_policy": "never_store_pii",
+    "save": [],
+    "scope": "tenant_project"
+  },
+  "strategy": "COMPOSE",
+  "summary": "Specialized hat for capability 'composed_ops_loop' (strategy=COMPOSE). Adapted from TEKsystems retail hat pattern; estate/product-neutral.",
+  "tags": [
+    "hat",
+    "factory-generated",
+    "estate",
+    "operations"
+  ]
+}

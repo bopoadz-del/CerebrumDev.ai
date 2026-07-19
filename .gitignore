@@ -16,3 +16,4 @@ storage
 deployments/
 .worktrees/
 .superpowers/sdd/
+generated/
