@@ -236,15 +236,19 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
         )
 
     def _copy_referenced_blocks(self, out: Path) -> None:
-        if not self.blocks_root:
-            return
-        registry = Path(self.blocks_root) / "block_registry"
         dest = out / "vendor" / "blocks"
         dest.mkdir(parents=True, exist_ok=True)
+        mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
+        registry = Path(self.blocks_root) / "block_registry" if self.blocks_root else None
         for bid in self.plan.dual_registered_blocks:
-            src = registry / bid
-            if src.exists():
+            src = registry / bid if registry else None
+            if src and src.exists():
                 shutil.copytree(src, dest / bid, dirs_exist_ok=True)
+                continue
+            # Fall back to the vendor mirror when the external registry is unavailable
+            mirror_src = mirror / bid
+            if mirror_src.exists():
+                shutil.copytree(mirror_src, dest / bid, dirs_exist_ok=True)
 
     def _write_blueprint_copy(self, out: Path) -> None:
         docs = out / "docs" / "blueprint"
