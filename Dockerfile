@@ -13,6 +13,8 @@ COPY backend/requirements.txt backend/requirements-marker.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app /app/app
+# Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
+COPY blueprints /app/blueprints
 
 ENV PORT=8000
 CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

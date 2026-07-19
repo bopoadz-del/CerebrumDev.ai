@@ -21,11 +21,12 @@ import yaml
 from app.factory.blueprint import ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
+from app.factory.paths import factory_repo_root
 from app.factory.planner import CapabilityPlanner, ProductPlan
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return factory_repo_root()
 
 
 def steward_golden_path() -> Path:

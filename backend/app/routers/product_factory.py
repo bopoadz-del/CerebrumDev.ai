@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError
+from app.factory.paths import factory_repo_root
 from app.factory.product_architect import (
     architect_pipeline,
     blueprint_to_yaml,
@@ -44,8 +45,7 @@ class GenerateRequest(BaseModel):
 
 
 def _default_output(product_id: str) -> Path:
-    root = Path(__file__).resolve().parents[3]
-    return root / "factory_outputs" / product_id
+    return factory_repo_root() / "factory_outputs" / product_id
 
 
 @router.get("/golden/steward")
