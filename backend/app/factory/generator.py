@@ -15,6 +15,7 @@ from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.planner import CapabilityPlanner, ProductPlan
 from app.factory.resident_engineer import write_resident_engineer, write_store_docs
+from app.product_dna.emit import emit_product_dna
 
 
 class ProductGenerator:
@@ -54,15 +55,37 @@ class ProductGenerator:
         self._write_readme(out)
         self._write_pyproject(out)
         self._write_app(out)
-        self._write_actions(out)
-        self._write_hats(out)
-        self._write_workflows(out)
+        actions = self._write_actions(out)
+        agents = self._write_hats(out)
+        workflows = self._write_workflows(out)
         self._write_ui_stub(out)
         self._write_connectors(out)
         self._copy_referenced_blocks(out)
         self._write_blueprint_copy(out)
         self._write_edge_profile(out)
         self._write_certification_scaffold(out)
+
+        # Product DNA after catalogs exist — sole Resident Mode understanding surface.
+        change_events = []
+        build_event = (
+            out / "product-agent" / "build_events" / "0001_resident_engineer_created.json"
+        )
+        if build_event.is_file():
+            try:
+                change_events.append(json.loads(build_event.read_text(encoding="utf-8")))
+            except json.JSONDecodeError:
+                change_events = []
+        dna_meta = emit_product_dna(
+            out,
+            self.blueprint,
+            self.plan,
+            factory_commit=self.factory_commit,
+            blocks_commit=self.blocks_commit,
+            actions=actions,
+            agents=agents,
+            workflows=workflows,
+            change_events=change_events,
+        )
 
         plan_dict = self.plan.to_dict()
         inputs_hash = hash_tree(out)
@@ -84,6 +107,7 @@ class ProductGenerator:
             "plan": plan_dict,
             "provenance": prov,
             "resident_engineer": re_meta,
+            "product_dna": dna_meta,
         }
 
     def _write_readme(self, out: Path) -> None:
@@ -184,7 +208,7 @@ def workflows():
             encoding="utf-8",
         )
 
-    def _write_actions(self, out: Path) -> None:
+    def _write_actions(self, out: Path) -> list:
         actions_dir = out / "app" / "actions"
         actions_dir.mkdir(parents=True, exist_ok=True)
         specs = []
@@ -277,8 +301,9 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             "ACTION_CATALOG = " + json.dumps(specs, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        return specs
 
-    def _write_hats(self, out: Path) -> None:
+    def _write_hats(self, out: Path) -> list:
         manifests = build_hat_manifests(self.blueprint, self.plan)
         hats_dir = out / "app" / "agents" / "manifests"
         hats_dir.mkdir(parents=True, exist_ok=True)
@@ -293,8 +318,9 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             "HAT_INDEX = " + json.dumps(index, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        return manifests
 
-    def _write_workflows(self, out: Path) -> None:
+    def _write_workflows(self, out: Path) -> list:
         workflows = build_workflows(self.blueprint, self.plan)
         wf_dir = out / "app" / "workflows"
         wf_dir.mkdir(parents=True, exist_ok=True)
@@ -305,6 +331,7 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             "WORKFLOWS = " + json.dumps(workflows, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        return workflows
 
     def _write_ui_stub(self, out: Path) -> None:
         ui = out / "frontend" / "src"
