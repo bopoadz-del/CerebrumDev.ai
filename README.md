@@ -4,6 +4,17 @@
 
 ---
 
+> ### Part of the CEREBRUM ecosystem — industrialized AI delivery
+>
+> **The Store — [Cerebrum-Blocks](https://github.com/bopoadz-del/Cerebrum-Blocks):** 94+ certified AI blocks, 17 industry kits, one universal API. Build a capability once; every sector inherits it.  
+> **The Factory — [CerebrumDev.ai](https://github.com/bopoadz-del/CerebrumDev.ai):** the client-facing interface that assembles blocks into governed, deployable vertical platforms — evaluation gates in CI, release certification, honest closure reporting.  
+> **The Products — [The Fork](https://github.com/bopoadz-del/The_Fork)** (construction AI — enterprise client pilot) **· [RetailOps](https://github.com/bopoadz-del/TEKsystems_GlobalRetailMNC)** (retail operations — assembled, CI-gated and deployed in under three days).  
+> **The Edge:** sovereign deployment proven — zero-egress on-premise profile, executed air-gap acceptance test, signed sovereignty report.
+>
+> **You are here: THE FACTORY** — the client-facing interface where domain experts select a kit, load their documents, design the workflow, and ship a governed platform.
+
+---
+
 ## Why This Platform Exists
 
 Enterprises want AI that understands **their** business: medical compliance, retail inventory, construction safety, hospitality operations. But building a custom AI agent today means:
@@ -17,7 +28,7 @@ That process takes **6 to 12 months** — and costs millions.
 
 **CerebrumDev.ai collapses that timeline to days.** It is a visual configurator that lets domain experts (not just engineers):
 
-1. **Select** a pre-built domain kit (18 available: Medical, Retail, Construction, etc.)
+1. **Select** a pre-built domain kit (17 available: Medical, Retail, Construction, etc.)
 2. **Upload** their proprietary documents (PDFs, spreadsheets, manuals)
 3. **Chat** with AI to design a custom processing chain (using 50+ reusable blocks)
 4. **Fine-tune** the model on their data via **Tinker** (LoRA, at near-zero cost)
@@ -34,7 +45,7 @@ The platform consists of two repos:
 | Repo | Role |
 | :--- | :--- |
 | **[CerebrumDev.ai](https://github.com/bopoadz-del/CerebrumDev.ai)** | Configurator – frontend (React) + backend (FastAPI) |
-| **[Cerebrum-Blocks](https://github.com/bopoadz-del/Cerebrum-Blocks)** | Block engine + store – generic blocks + 18 domain kits |
+| **[Cerebrum-Blocks](https://github.com/bopoadz-del/Cerebrum-Blocks)** | Block engine + store – generic blocks + 17 domain kits |
 
 ---
 
@@ -51,7 +62,7 @@ There is no runnable `backend/app/retailops/` package in this repository.
 ## ✨ Features
 
 ### Phase 1 – Configure
-- Select a domain from 18 available kits (Medical, Retail, Construction, etc.)
+- Select a domain from 17 available kits (Medical, Retail, Construction, etc.)
 - AI-powered session management
 
 ### Phase 2 – Upload & Index
@@ -60,7 +71,7 @@ There is no runnable `backend/app/retailops/` package in this repository.
 - All uploaded documents are indexed and available for retrieval
 
 ### Phase 3 – AI Chat & Chain Generation
-- Chat with the AI (powered by Ollama Cloud, model: `gpt-oss:120b-cloud`)
+- Chat with the AI (powered by Ollama Cloud, model: `kimi-k2.7-code:cloud`)
 - The AI proposes a block chain based on your documents and domain
 - Approve, modify, and inject custom rules
 - The approved chain is saved for deployment
@@ -145,7 +156,7 @@ CEREBRUM_DEV_API_KEY=
 
 # LLM provider: Ollama (Qwen fallback is also supported)
 OLLAMA_URL=http://localhost:11434
-OLLAMA_MODEL=gpt-oss:120b-cloud
+OLLAMA_MODEL=kimi-k2.7-code:cloud
 QWEN_API_KEY=
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen-plus
