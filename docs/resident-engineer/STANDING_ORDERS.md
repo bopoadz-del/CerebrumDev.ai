@@ -40,8 +40,8 @@ Read `docs/` and `backend/app/` first. Reuse existing patterns: packager, deploy
 
 Do **not** start Milestone 1 until:
 
-- [ ] `chore/factory-hygiene` (or equivalent) is merged to `master`
-- [ ] `factory_outputs/` is **gone** from `origin/master`
+- [x] `chore/factory-hygiene` (or equivalent) is merged to `master` (#64)
+- [x] `factory_outputs/` is **gone** from `origin/master`
 
 Check: `git ls-tree -r --name-only origin/master | grep '^factory_outputs/'` must return empty.
 
@@ -50,7 +50,7 @@ Check: `git ls-tree -r --name-only origin/master | grep '^factory_outputs/'` mus
 ## Milestone 1 — Product DNA bundle
 
 **Branch:** `feat/product-dna`  
-**Status:** blocked on factory-hygiene gate
+**Status:** in progress / PR open — see `MILESTONE_1_PRODUCT_DNA.md`
 
 Extend the CerebrumDev packager so every generated product ships a `/product-dna/` bundle:
 
