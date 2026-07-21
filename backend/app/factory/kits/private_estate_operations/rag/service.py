@@ -78,6 +78,9 @@ class DualRagService:
             "persistent": self.config.use_postgres(),
             "require_production_embeddings": self.config.require_production_embeddings,
             "require_persistent_rag": self.config.require_persistent_rag,
+            "semantic_score_floor": self.config.semantic_score_floor
+            if self.config.embed_backend == "fastembed"
+            else None,
             "database_configured": bool(self.config.database_url),
         }
 
@@ -213,6 +216,7 @@ class DualRagService:
 
         embedder = get_embedder(self.config)
         query_vector = embedder.embed(q)
+        min_score = self.config.effective_min_score(min_score)
         hits: List[RagHit] = []
         for lyr in layers:
             index_id = LAYER_INDEX[lyr]

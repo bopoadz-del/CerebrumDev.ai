@@ -42,6 +42,11 @@ class DualRagConfig:
     persistence: str = field(
         default_factory=lambda: os.getenv("STEWARD_RAG_PERSISTENCE", "auto").strip().lower()
     )
+    # Absolute cosine floor for FastEmbed (semantic models score unrelated
+    # queries ~0.5–0.58; real fixture hits land ≥~0.70). Hash stays at caller min.
+    semantic_score_floor: float = field(
+        default_factory=lambda: float(os.getenv("STEWARD_RAG_SEMANTIC_FLOOR", "0.62"))
+    )
 
     def normalized_psycopg_url(self) -> str:
         url = self.database_url
@@ -69,6 +74,12 @@ class DualRagConfig:
         if self.embed_backend == "fastembed":
             return FASTEMBED_FINGERPRINT
         return HASH_FINGERPRINT
+
+    def effective_min_score(self, requested: float) -> float:
+        """Raise the relevance floor for semantic backends so unknowns fail closed."""
+        if self.embed_backend == "fastembed":
+            return max(float(requested), float(self.semantic_score_floor))
+        return float(requested)
 
     def validate_or_raise(self) -> None:
         if self.require_persistent_rag and not self.use_postgres():
