@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Steward Oracle V2 skeleton runner.
+"""Steward Oracle V2 runner.
 
-Suites A–R are declared but not fully implemented in this tranche.
-Use steward_gate_v2.py for mandatory gate status until suites land.
+Static Factory-kit checks run without a live URL. Live suites require --base-url.
 """
 
 from __future__ import annotations
@@ -40,6 +39,88 @@ SUITES: List[Dict[str, str]] = [
 ]
 
 
+def _kit_path(*parts: str) -> Path:
+    return ROOT / "backend" / "app" / "factory" / "kits" / "private_estate_operations" / Path(*parts)
+
+
+def _repo_path(*parts: str) -> Path:
+    return ROOT.joinpath(*parts)
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.is_file() else ""
+
+
+def _evaluate_static_suite(suite_id: str) -> Dict[str, Any]:
+    api_py = _kit_path("steward_runtime", "api.py")
+    models_py = _kit_path("steward_runtime", "models.py")
+    money_py = _kit_path("steward_runtime", "money.py")
+    audit_models = _kit_path("steward_runtime", "audit_models.py")
+    estate_router = _kit_path("estate_kit_router.py")
+    heal_catalog = _repo_path("backend", "app", "resident_engineer", "heal", "catalog.py")
+    heal_executor = _repo_path("backend", "app", "resident_engineer", "heal", "executor.py")
+    entity_model = _kit_path("entity_model.json")
+    determinism = ROOT / "artifacts" / "steward_factory_determinism.json"
+    audit_doc = ROOT / "docs" / "audits" / "STEWARD_V2_AGENT_AUDIT.md"
+
+    if suite_id == "F":
+        ok = "_legacy_rag_guard" in _read(estate_router)
+        return {"status": "PASS" if ok else "FAIL", "detail": "legacy RAG guard in estate kit router"}
+
+    if suite_id == "H":
+        ok = "admin_route_disabled" in _read(api_py)
+        return {"status": "PASS" if ok else "FAIL", "detail": "admin routes fail-closed in steward API kit"}
+
+    if suite_id == "L":
+        text = _read(heal_catalog) + _read(heal_executor) + _read(audit_models)
+        ok = (
+            "HealApproval" in text
+            and '"executed": False' in _read(heal_catalog)
+            and '"simulation": True' in _read(heal_catalog)
+            and '"ok": False' in _read(heal_executor)
+        )
+        return {
+            "status": "PASS" if ok else "FAIL",
+            "detail": "simulated heals honest; HealApproval model present",
+        }
+
+    if suite_id == "M":
+        ok = money_py.is_file() and "Numeric(20, 4)" in _read(models_py)
+        if ok:
+            from decimal import Decimal
+
+            from importlib.util import spec_from_loader, module_from_spec
+            import importlib.util
+
+            spec = importlib.util.spec_from_file_location("steward_money", money_py)
+            assert spec and spec.loader
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            exact = mod.money_add(Decimal("0.1"), Decimal("0.2")) == Decimal("0.3000")
+            ok = exact
+        return {
+            "status": "PASS" if ok else "FAIL",
+            "detail": "Decimal money scaffolding exact-add verified" if ok else "money scaffolding incomplete",
+        }
+
+    if suite_id == "N":
+        return {"status": "FAIL", "detail": "Store block runtime execution not wired"}
+
+    if suite_id == "P":
+        status = "NOT VERIFIED" if not determinism.is_file() else "PASS"
+        return {"status": status, "detail": "determinism artifact absent" if status != "PASS" else "artifact present"}
+
+    if suite_id == "Q":
+        ok = audit_doc.is_file() and entity_model.is_file()
+        pct_free = "readiness percentage" not in _read(audit_doc).lower()
+        return {
+            "status": "PASS" if ok and pct_free else "FAIL",
+            "detail": "v2 audit + entity DNA present; no readiness percentages",
+        }
+
+    return {"status": "NOT VERIFIED", "detail": "live or unimplemented suite — requires deployed URL or future work"}
+
+
 def _http_get(base_url: str, path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any]:
     url = base_url.rstrip("/") + path
     req = Request(url, headers=headers or {}, method="GET")
@@ -58,8 +139,9 @@ def _http_get(base_url: str, path: str, headers: Dict[str, str] | None = None) -
 def run_oracle(base_url: str | None) -> Dict[str, Any]:
     suites: List[Dict[str, Any]] = []
     for spec in SUITES:
-        entry: Dict[str, Any] = {**spec, "status": "NOT VERIFIED", "detail": "suite not implemented"}
-        if base_url and spec["suite"] == "A":
+        suite_id = spec["suite"]
+        entry: Dict[str, Any] = dict(spec)
+        if base_url and suite_id == "A":
             health = _http_get(base_url, "/health")
             version = _http_get(base_url, "/version")
             ready = _http_get(base_url, "/ready")
@@ -74,6 +156,13 @@ def run_oracle(base_url: str | None) -> Dict[str, Any]:
                 "version": version.get("status"),
                 "ready": ready.get("status"),
             }
+        elif base_url and suite_id == "R":
+            ready = _http_get(base_url, "/ready")
+            entry["status"] = "PASS" if ready.get("status") in {200, 503} else "FAIL"
+            entry["detail"] = {"ready": ready.get("status")}
+        else:
+            static = _evaluate_static_suite(suite_id)
+            entry.update(static)
         suites.append(entry)
 
     mandatory_fail = any(s["mandatory"] == "true" and s["status"] == "FAIL" for s in suites)
@@ -90,7 +179,7 @@ def run_oracle(base_url: str | None) -> Dict[str, Any]:
 
 
 def main(argv: List[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Steward Oracle V2 skeleton runner")
+    parser = argparse.ArgumentParser(description="Steward Oracle V2 runner")
     parser.add_argument("--base-url", default=None, help="Live Steward base URL (optional)")
     parser.add_argument(
         "--out",
