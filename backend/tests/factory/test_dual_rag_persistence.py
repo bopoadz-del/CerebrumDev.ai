@@ -95,7 +95,16 @@ def test_postgres_mode_selected_when_url_set(config_mod, monkeypatch):
     assert cfg.use_postgres() is True
     assert cfg.embedding_provider_id().startswith("fastembed:")
     assert cfg.normalized_psycopg_url().startswith("postgresql://")
+    assert cfg.effective_min_score(0.05) >= 0.62
+    assert cfg.effective_min_score(0.8) == 0.8
     cfg.validate_or_raise()
+
+
+def test_hash_backend_keeps_caller_min_score(config_mod, monkeypatch):
+    monkeypatch.setenv("STEWARD_EMBED_BACKEND", "hash")
+    cfg = config_mod.DualRagConfig()
+    assert cfg.effective_min_score(0.05) == 0.05
+    assert cfg.effective_min_score(0.2) == 0.2
 
 
 def test_jsonl_store_roundtrip(tmp_path, monkeypatch):
