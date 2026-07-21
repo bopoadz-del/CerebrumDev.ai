@@ -79,11 +79,11 @@ def test_steward_generate_emits_product_dna_bundle(tmp_path):
     assert len(agents["agents"]) >= 1
     assert len(workflows["workflows"]) >= 1
 
-    # Entity model populated for estate vertical; other surfaces remain honest empties
+    # Honest empties for unknown Factory surfaces
     entities = json.loads((dna / "entity_model.json").read_text(encoding="utf-8"))
     tests = json.loads((dna / "test_catalog.json").read_text(encoding="utf-8"))
     topo = json.loads((dna / "deployment_topology.json").read_text(encoding="utf-8"))
-    assert len(entities["entities"]) >= 5
+    assert entities["entities"] == []
     assert tests["tests"] == []
     assert topo["services"] == []
 

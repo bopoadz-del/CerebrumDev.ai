@@ -24,7 +24,6 @@ from app.steward.embeddings import get_embedder, reset_embedder
 from app.steward.errors import safe_http_exception
 from app.steward.migrations_runner import run_migrations
 from app.steward.models import Document, FacilityAsset, FleetVehicle, HospitalityIntent, SourceRecord
-from app.steward.money import serialize_money
 from app.steward.packs import REJECTED_SOURCES
 from app.steward.retrieval import combined_layer_search, hybrid_search
 
@@ -263,8 +262,6 @@ def facilities_query(
                 "status": r.status,
                 "manufacturer": r.manufacturer,
                 "model": r.model,
-                "cost": serialize_money(r.cost),
-                "labour_hours": serialize_money(r.labour_hours),
                 "evaluation_only": r.evaluation_only,
             }
             for r in rows
