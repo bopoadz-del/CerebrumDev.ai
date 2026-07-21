@@ -9,7 +9,7 @@ __pycache__
 *.key
 *.log
 .DS_Store
-storage
+storage/
 .venv
 
 # Generated deployment packages contain per-session secrets and build artifacts.

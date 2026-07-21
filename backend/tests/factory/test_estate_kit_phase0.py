@@ -14,7 +14,9 @@ from app.factory.planner import CapabilityPlanner
 from app.product_dna.emit import verify_checksum_manifest
 
 ROOT = Path(__file__).resolve().parents[3]
-BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+# Prefer a live Blocks checkout when present; CI relies on vendor_blocks_mirror.
+_BLOCKS_CANDIDATE = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+BLOCKS = _BLOCKS_CANDIDATE if _BLOCKS_CANDIDATE.exists() else None
 
 ESTATE_PLATFORM_BLOCKS = [
     "database",

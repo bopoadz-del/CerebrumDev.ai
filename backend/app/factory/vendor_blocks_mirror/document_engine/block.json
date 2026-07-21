@@ -1,0 +1,10 @@
+{
+  "id": "document_engine",
+  "name": "document_engine",
+  "version": "1.0.0",
+  "description": "Factory vendor mirror of Cerebrum-Blocks block 'document_engine' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
+  "source": "factory-vendor-mirror",
+  "upstream": "cerebrum-blocks/block_registry/document_engine",
+  "layer": 1,
+  "tags": ["platform", "factory-mirror", "steward-kit"]
+}
