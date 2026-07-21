@@ -1,33 +1,91 @@
 {
   "id": "private_estate_operations",
   "name": "Private Estate Operations",
-  "version": "1.0.0",
-  "description": "Estate registry, maintenance, evidence, readiness, and portfolio rollup for The Steward.",
+  "version": "1.1.0",
+  "description": "Full Steward estate kit: registry, House Manual SOP, vendor/budget, preventive maintenance, staff scheduling, principal dashboard, onboarding, dual RAG. IoT connectors are honest placeholders.",
   "status": "available",
   "author": "bopoadz-del",
-  "tags": [
-    "domain",
-    "estate",
-    "steward"
-  ],
+  "tags": ["domain", "estate", "steward", "certification"],
   "source": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
     "ref": "main",
-    "publish_script": "scripts/publish_kit.py"
+    "publish_script": "scripts/publish_kit.py",
+    "note": "Factory clones/consumes Blocks; never writes to Cerebrum-Blocks from this repo."
   },
+  "blueprint": "blueprints/steward/steward.v1.yaml",
   "container": {
     "class": "app.containers.private_estate_operations.PrivateEstateOperationsContainer",
     "default_chat_prompt": null
   },
-  "blocks": [
+  "blocks": {
+    "estate_core": [
+      "estate_registry",
+      "estate_maintenance",
+      "evidence_verifier",
+      "readiness_engine",
+      "portfolio_rollup"
+    ],
+    "platform_compose": [
+      "database",
+      "storage",
+      "validation",
+      "document_engine",
+      "knowledge",
+      "vector_search",
+      "formula_executor",
+      "audit",
+      "notification",
+      "workflow",
+      "event_bus",
+      "queue",
+      "team",
+      "dashboard",
+      "analytics",
+      "spec_analyzer",
+      "recommendation_template",
+      "capture"
+    ]
+  },
+  "capabilities": [
     "estate_registry",
     "estate_maintenance",
-    "evidence_verifier",
-    "readiness_engine",
-    "portfolio_rollup"
+    "house_manual_sop",
+    "vendor_budget",
+    "preventive_maintenance",
+    "staff_scheduling",
+    "principal_dashboard",
+    "property_onboarding",
+    "dual_rag_sop",
+    "dual_rag_estate_docs",
+    "composed_ops_loop",
+    "evidence_capture",
+    "human_authority_gate"
   ],
+  "dual_rag": {
+    "layer_1": {
+      "id": "sop_standards",
+      "description": "House Manual / SOP / global standards corpus",
+      "index": "steward_sop_v1"
+    },
+    "layer_2": {
+      "id": "estate_documents",
+      "description": "Per-estate documents, separately indexed",
+      "index": "steward_estate_docs_v1"
+    }
+  },
+  "connectors": {
+    "implemented": [],
+    "placeholders": [
+      "cmms_stub",
+      "iot_stub",
+      "document_vault_stub",
+      "smart_home_placeholder"
+    ],
+    "honesty": "Smart-home/IoT integrations are PLACEHOLDER connectors only — honestly labeled not_implemented."
+  },
+  "demo_fixtures": "fixtures/demo_estate.json",
   "prompts": [],
-  "data": [],
+  "data": ["fixtures/demo_estate.json"],
   "core_modules": [],
   "artifacts": [],
   "price_cents": 0,

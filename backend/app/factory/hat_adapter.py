@@ -22,6 +22,14 @@ _CAPABILITY_DISCIPLINE: Dict[str, str] = {
     "composed_ops_loop": "operations",
     "evidence_capture": "evidence",
     "human_authority_gate": "authority",
+    "house_manual_sop": "house_manual",
+    "vendor_budget": "vendors",
+    "preventive_maintenance": "maintenance",
+    "staff_scheduling": "staff",
+    "principal_dashboard": "principal",
+    "property_onboarding": "onboarding",
+    "dual_rag_sop": "rag_sop",
+    "dual_rag_estate_docs": "rag_estate",
     "audit_trail": "audit",
     "health_surface": "platform",
 }
@@ -186,6 +194,44 @@ def build_workflows(blueprint: ProductBlueprint, plan: ProductPlan) -> List[Dict
                 "name": "Portfolio rollup",
                 "description": "Roll up readiness and maintenance across properties.",
                 "steps": [{"capability_id": "portfolio_rollup", "role": "aggregate"}],
+            }
+        )
+    if "preventive_maintenance" in cap_ids:
+        workflows.append(
+            {
+                "workflow_id": f"{vertical}.preventive_maintenance",
+                "name": "Preventive maintenance",
+                "description": "Asset register → calendar → work orders → escalation.",
+                "steps": [
+                    {"capability_id": "estate_registry", "role": "assets"},
+                    {"capability_id": "preventive_maintenance", "role": "schedule"},
+                    {"capability_id": "principal_dashboard", "role": "escalate_if_overdue"},
+                ],
+            }
+        )
+    if "property_onboarding" in cap_ids:
+        workflows.append(
+            {
+                "workflow_id": f"{vertical}.property_onboarding",
+                "name": "New property onboarding",
+                "description": "Template-driven framework application to a new asset.",
+                "steps": [
+                    {"capability_id": "property_onboarding", "role": "apply_template"},
+                    {"capability_id": "readiness_engine", "role": "gate"},
+                    {"capability_id": "human_authority_gate", "role": "confirm"},
+                ],
+            }
+        )
+    if {"dual_rag_sop", "dual_rag_estate_docs"} <= cap_ids:
+        workflows.append(
+            {
+                "workflow_id": f"{vertical}.dual_rag_query",
+                "name": "Dual RAG query",
+                "description": "Query Layer 1 SOP corpus and Layer 2 estate documents separately with citations.",
+                "steps": [
+                    {"capability_id": "dual_rag_sop", "role": "layer_1"},
+                    {"capability_id": "dual_rag_estate_docs", "role": "layer_2"},
+                ],
             }
         )
 

@@ -46,7 +46,7 @@ def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path):
     plan = r.json()["plan"]
     assert plan["product_id"] == "cerebrum-steward"
     strategies = {c["capability_id"]: c["strategy"] for c in plan["capabilities"]}
-    assert strategies["estate_registry"] == "REUSE"
+    assert strategies["estate_registry"] == "COMPOSE"
     assert "UNSUPPORTED" not in strategies.values()
 
     r = client.post(

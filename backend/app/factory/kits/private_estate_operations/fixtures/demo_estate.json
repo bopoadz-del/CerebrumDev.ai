@@ -1,0 +1,138 @@
+{
+  "schema_version": "1.0.0",
+  "fixture_id": "steward_demo_estate_v1",
+  "description": "Demo fixtures for Cerebrum Steward certification — 1 villa + 1 apartment, vendors, staff, maintenance calendar.",
+  "generated_by": "CerebrumDev.ai Factory (private_estate_operations kit)",
+  "properties": [
+    {
+      "property_id": "prop-villa-tuscany",
+      "name": "Villa Aurora",
+      "type": "villa",
+      "country": "IT",
+      "region": "Tuscany",
+      "timezone": "Europe/Rome",
+      "status": "active",
+      "assets": [
+        {"asset_id": "asset-hvac-1", "kind": "hvac", "label": "Main HVAC"},
+        {"asset_id": "asset-pool-1", "kind": "pool", "label": "Infinity pool"},
+        {"asset_id": "asset-gen-1", "kind": "generator", "label": "Backup generator"}
+      ]
+    },
+    {
+      "property_id": "prop-apt-london",
+      "name": "Mayfair Residence",
+      "type": "apartment",
+      "country": "GB",
+      "region": "London",
+      "timezone": "Europe/London",
+      "status": "active",
+      "assets": [
+        {"asset_id": "asset-boiler-1", "kind": "boiler", "label": "Combi boiler"},
+        {"asset_id": "asset-lift-1", "kind": "elevator", "label": "Private lift"}
+      ]
+    }
+  ],
+  "vendors": [
+    {
+      "vendor_id": "vendor-garden-it",
+      "name": "Toscana Gardens SRL",
+      "country": "IT",
+      "category": "grounds",
+      "contract_rate_eur": 2400,
+      "renegotiation_flag": false
+    },
+    {
+      "vendor_id": "vendor-hvac-gb",
+      "name": "Mayfair Climate Ltd",
+      "country": "GB",
+      "category": "hvac",
+      "contract_rate_gbp": 1800,
+      "renegotiation_flag": true,
+      "renegotiation_reason": "rate 12% above portfolio median"
+    }
+  ],
+  "staff": [
+    {
+      "staff_id": "staff-01",
+      "name": "Elena Rossi",
+      "role": "house_manager",
+      "property_ids": ["prop-villa-tuscany"],
+      "shift": "day"
+    },
+    {
+      "staff_id": "staff-02",
+      "name": "James Whitaker",
+      "role": "concierge",
+      "property_ids": ["prop-apt-london"],
+      "shift": "rotating"
+    },
+    {
+      "staff_id": "staff-03",
+      "name": "Marco Bianchi",
+      "role": "grounds",
+      "property_ids": ["prop-villa-tuscany"],
+      "shift": "morning"
+    }
+  ],
+  "maintenance_calendar": [
+    {
+      "work_order_id": "wo-1001",
+      "property_id": "prop-villa-tuscany",
+      "asset_id": "asset-hvac-1",
+      "title": "Quarterly HVAC service",
+      "due": "2026-08-01",
+      "status": "scheduled",
+      "escalation": "vendor-garden-it"
+    },
+    {
+      "work_order_id": "wo-1002",
+      "property_id": "prop-apt-london",
+      "asset_id": "asset-boiler-1",
+      "title": "Annual boiler inspection",
+      "due": "2026-09-15",
+      "status": "scheduled",
+      "escalation": "vendor-hvac-gb"
+    },
+    {
+      "work_order_id": "wo-1003",
+      "property_id": "prop-villa-tuscany",
+      "asset_id": "asset-pool-1",
+      "title": "Pool filter replacement",
+      "due": "2026-07-25",
+      "status": "overdue",
+      "escalation": "principal_dashboard"
+    }
+  ],
+  "sop_corpus": [
+    {
+      "doc_id": "sop-global-guest-arrival",
+      "layer": 1,
+      "title": "Global Guest Arrival Standard",
+      "version": "2.1.0",
+      "text": "Guest arrival checklist: security brief, HVAC pre-cool, linen audit, welcome amenities. Escalate anomalies to house manager before principal notification."
+    },
+    {
+      "doc_id": "sop-global-vendor-spend",
+      "layer": 1,
+      "title": "Vendor Spend Governance",
+      "version": "1.4.0",
+      "text": "Any vendor rate >10% above portfolio median raises renegotiation_flag. Principal is notified only after house manager review."
+    }
+  ],
+  "estate_documents": [
+    {
+      "doc_id": "estate-villa-manual",
+      "layer": 2,
+      "property_id": "prop-villa-tuscany",
+      "title": "Villa Aurora House Manual",
+      "text": "Pool chemicals stored in east shed. Generator weekly test every Monday 09:00 local. Gate code rotation monthly."
+    },
+    {
+      "doc_id": "estate-apt-lease-notes",
+      "layer": 2,
+      "property_id": "prop-apt-london",
+      "title": "Mayfair Residence Building Notes",
+      "text": "Quiet hours 23:00–07:00. Lift service via building management. Boiler isolation valve behind kitchen plinth."
+    }
+  ]
+}
