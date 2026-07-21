@@ -1,0 +1,255 @@
+{
+  "audit_id": "steward_v2_agent_audit",
+  "audit_date_utc": "2026-07-21",
+  "branch": "feat/steward-pilot-certification-v2",
+  "pins": {
+    "steward": "d84509bd680946eec6d9bf88238f009b3c89f973",
+    "factory": "3825effef2ba94a3d7c1e1c4eeb4bff7f4bc5c28",
+    "blocks": "464ec784825c47ec8c81efe4c88f3b96f06c27ad"
+  },
+  "verdicts": {
+    "guarded_estate_pilot": "NO-GO",
+    "resident_engineer_maturity": "APPRENTICE",
+    "production": "NO-GO"
+  },
+  "live_probe_utc": "2026-07-21T14:12:00Z",
+  "live_url": "https://cerebrum-steward.onrender.com",
+  "live_evidence": {
+    "health": { "status": 200, "verified": true },
+    "ready": { "status": 404, "verified": true },
+    "version": { "status": 404, "verified": true },
+    "v1_rag_dual": {
+      "status": 200,
+      "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
+      "persistence_adapter": "postgres_jsonb_v1",
+      "verified": true
+    },
+    "steward_rag_status": {
+      "status": 200,
+      "embed_backend": "fastembed",
+      "fingerprint": "fastembed:BAAI/bge-small-en-v1.5:384",
+      "verified": true
+    }
+  },
+  "oracle_v1_documented": {
+    "suite_id": "steward_live_oracle_v1",
+    "ran_at_utc": "2026-07-21T13:22:32Z",
+    "endpoint_family": "/v1/rag/query",
+    "pass_count": 10,
+    "total": 10,
+    "verdict": "PASS",
+    "artifact": "docs/factory/certification-runs/steward-live-oracle-20260721-pilot.json",
+    "v2_scope_note": "Oracle v1 does not satisfy v2 gates; not re-run in this audit"
+  },
+  "oracle_v2": {
+    "exists": false,
+    "verdict": "FAIL"
+  },
+  "mandatory_gates": [
+    { "gate": "G1_factory_determinism", "status": "NOT VERIFIED", "owner": "Factory" },
+    { "gate": "G2_authentication", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G3_authorization", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G4_isolation", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G5_database", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G6_rag", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G7_store", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G8_agents", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G9_workflows", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G10_resident_engineer", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G11_financial", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G12_deployment", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G13_oracle", "status": "FAIL", "owner": "Factory" },
+    { "gate": "G14_documentation", "status": "FAIL", "owner": "Factory" }
+  ],
+  "domains": [
+    {
+      "id": 1,
+      "name": "recent_commit_and_provenance",
+      "status": "NOT VERIFIED",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/docs/provenance/provenance.json",
+        "Cerebrum-Steward/product-dna/checksum_manifest.json"
+      ],
+      "correction": "Expose /version; prove functional delta per commit; complete disposition JSON"
+    },
+    {
+      "id": 2,
+      "name": "factory_determinism",
+      "status": "NOT VERIFIED",
+      "upstream_owner": "Factory",
+      "file_refs": ["backend/app/factory/cli.py"],
+      "correction": "Double-generate; emit artifacts/steward_factory_determinism.json"
+    },
+    {
+      "id": 3,
+      "name": "store_contract",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/product-dna/block_lockfile.json",
+        "Cerebrum-Steward/app/actions/vendor_budget.py"
+      ],
+      "correction": "Execute block contracts or fail-closed UNSUPPORTED"
+    },
+    {
+      "id": 4,
+      "name": "authentication",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": ["Cerebrum-Steward/app/main.py"],
+      "correction": "PilotPrincipal, PilotAccessToken, bearer middleware"
+    },
+    {
+      "id": 5,
+      "name": "tenant_estate_isolation",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": ["Cerebrum-Steward/app/steward/api.py:36-43"],
+      "correction": "Remove tenant_a/estate_a defaults; authorize_estate before data access"
+    },
+    {
+      "id": 6,
+      "name": "resident_engineer_security",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/resident_engineer/router.py",
+        "Cerebrum-Steward/app/resident_engineer/heal/catalog.py",
+        "Cerebrum-Steward/product-agent/agent_identity.json"
+      ],
+      "correction": "Auth, HealApproval, no path leak, simulated heal honesty"
+    },
+    {
+      "id": 7,
+      "name": "agent_hat_runtime",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/agents/manifests/",
+        "Cerebrum-Steward/product-dna/test_catalog.json"
+      ],
+      "correction": "Runtime certification harness per hat"
+    },
+    {
+      "id": 8,
+      "name": "workflow_human_authority",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/actions/human_authority_gate.py",
+        "Cerebrum-Steward/app/workflows/workflows.json"
+      ],
+      "correction": "Enforceable approval records on gated actions"
+    },
+    {
+      "id": 9,
+      "name": "dual_rag_architecture",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/estate_kit/rag/service.py",
+        "Cerebrum-Steward/app/steward/api.py",
+        "Cerebrum-Steward/app/main.py"
+      ],
+      "correction": "Canonicalize app.steward; disable demo dual stack in production"
+    },
+    {
+      "id": 10,
+      "name": "retrieval_relevance",
+      "status": "NOT VERIFIED",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "docs/factory/certification-runs/steward-live-oracle-20260721-pilot.json",
+        "Cerebrum-Steward/app/steward/retrieval.py"
+      ],
+      "correction": "Calibrate insufficiency on canonical path; steward_retrieval_calibration.json"
+    },
+    {
+      "id": 11,
+      "name": "ingestion_source_governance",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/steward/api.py:155-194",
+        "Cerebrum-Steward/app/steward/packs/__init__.py"
+      ],
+      "correction": "Authenticated Layer 1 curator path; no anonymous ingest"
+    },
+    {
+      "id": 12,
+      "name": "database_migrations",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/steward/migrations/versions/0001_steward_rag.py",
+        "Cerebrum-Steward/app/steward/api.py:309-319"
+      ],
+      "correction": "DDL-only Alembic; remove public migrate/reset_embedder"
+    },
+    {
+      "id": 13,
+      "name": "estate_domain_model",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": ["Cerebrum-Steward/product-dna/entity_model.json"],
+      "correction": "Populate Product DNA entities and relationships"
+    },
+    {
+      "id": 14,
+      "name": "financial_integrity",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": ["Cerebrum-Steward/app/steward/models.py"],
+      "correction": "NUMERIC/Decimal for money fields"
+    },
+    {
+      "id": 15,
+      "name": "audit_evidence",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": ["Cerebrum-Steward/app/cerebrum_product_kernel/audit.py"],
+      "correction": "PostgreSQL AuditEvent ledger; safe errors"
+    },
+    {
+      "id": 16,
+      "name": "deployment_readiness",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "Cerebrum-Steward/app/main.py",
+        "Cerebrum-Steward/render.yaml"
+      ],
+      "correction": "Implement /ready and /version; fail-closed startup"
+    },
+    {
+      "id": 17,
+      "name": "oracle_test_coverage",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json",
+        "Cerebrum-Steward/product-dna/test_catalog.json"
+      ],
+      "correction": "Oracle V2 suites; populate test_catalog"
+    },
+    {
+      "id": 18,
+      "name": "ci_cost_documentation",
+      "status": "FAIL",
+      "upstream_owner": "Factory",
+      "file_refs": [
+        ".github/workflows/ci.yml",
+        "docs/reports/PILOT_READINESS_AUDIT.md"
+      ],
+      "correction": "steward_gate_v2.py; honest docs without readiness percentages"
+    }
+  ],
+  "summary_counts": {
+    "PASS": 0,
+    "FAIL": 14,
+    "NOT VERIFIED": 4
+  },
+  "proceed_to_implementation": true,
+  "implementation_note": "Audit-only phase complete. Upstream Factory work required before guarded pilot GO."
+}
