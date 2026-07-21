@@ -2,27 +2,36 @@
 
 Today Steward may be predefined (golden YAML). The architect can:
 - load a checked-in blueprint (deterministic / mock / golden path)
-- or draft from a brief using the LLM when configured
+- draft from a brief using the LLM when ARCHITECT_LLM_DRAFTING_ENABLED is on
+- fall back to deterministic keyword drafting (always available, no keys)
 
 Architecture is always a validated ProductBlueprint; generation stays fail-closed
-via the capability planner + dual registry.
+via the capability planner + dual registry. LLM drafting is fail-SAFE: any LLM
+error, malformed payload, or all-foreign block ids falls back to the keyword
+drafter — a draft is always produced, and block ids are always filtered
+against the dual registry (never invent blocks).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
+import httpx
 import yaml
 
+from app.core.llm_config import get_llm_config
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
 from app.factory.paths import factory_repo_root
 from app.factory.planner import CapabilityPlanner, ProductPlan
+
+logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> Path:
@@ -33,18 +42,243 @@ def steward_golden_path() -> Path:
     return _repo_root() / "blueprints" / "steward" / "steward.v1.yaml"
 
 
+# --- LLM drafting (gated, fail-safe) -----------------------------------------
+
+LLM_DRAFTING_ENV = "ARCHITECT_LLM_DRAFTING_ENABLED"
+
+
+def llm_drafting_enabled() -> bool:
+    """Env gate for LLM-powered brief drafting. Default OFF (house pattern)."""
+    return os.getenv(LLM_DRAFTING_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+_LLM_DRAFT_SYSTEM = """You are the Cerebrum product architect. Given a user \
+brief for a software platform, draft a product blueprint as JSON.
+
+Return ONLY a JSON object with this shape:
+{
+  "product_name": "<human-readable product name>",
+  "vertical": "<one or two word vertical slug, e.g. fleet_management>",
+  "summary": "<one paragraph: what the product does and who it serves>",
+  "capabilities": [
+    {
+      "id": "<snake_case capability id>",
+      "description": "<what this capability does>",
+      "block_ids": ["<ids from the AVAILABLE BLOCKS list only>"],
+      "strategy_hint": "REUSE"
+    }
+  ]
+}
+
+Rules:
+- 3 to 8 capabilities, ordered by importance.
+- block_ids may ONLY contain ids from the AVAILABLE BLOCKS list. Never invent ids.
+- If no available block fits a capability, use "block_ids": [] and
+  "strategy_hint": "GENERATE".
+- vertical must be lowercase snake_case.
+"""
+
+
+def _extract_json(text: str) -> Dict[str, Any]:
+    """Strip Markdown fences and parse the first JSON object in *text*."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+    if text.endswith("```"):
+        text = text.rsplit("\n", 1)[0] if "\n" in text else ""
+    text = text.strip()
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in model output")
+    depth = 0
+    end = start
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if depth != 0:
+        raise ValueError("Unbalanced JSON object in model output")
+    return json.loads(text[start:end])
+
+
+def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Synchronous JSON call against the configured LLM provider.
+
+    Mirrors core.chain_generator's async callers but stays sync so the
+    architect's call sites (routers, chat flow, pipeline) are untouched.
+    Raises on any failure — the caller falls back to keyword drafting.
+    """
+    cfg = get_llm_config()
+    if cfg.get("mock"):
+        raise RuntimeError("LLM mock mode — no network call")
+    provider = cfg.get("provider")
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
+
+    if provider in ("qwen", "moonshot", "kimi"):
+        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
+        payload = {
+            "model": cfg["model"],
+            "messages": messages,
+            "temperature": 0.3,
+            "response_format": {"type": "json_object"},
+        }
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            return json.loads(content)
+
+    if provider == "ollama":
+        url = f"{cfg['base_url'].rstrip('/')}/api/chat"
+        payload = {
+            "model": cfg["model"],
+            "messages": messages,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.3},
+        }
+        with httpx.Client(timeout=300.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            content = resp.json().get("message", {}).get("content", "")
+            if not content:
+                raise RuntimeError("Ollama returned empty content")
+            return _extract_json(content)
+
+    raise RuntimeError("No LLM provider configured")
+
+
+def _slug(text: str, default: str = "product") -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (text or "").lower())[:48].strip("-")
+    return slug or default
+
+
+def _blueprint_from_llm_payload(
+    data: Dict[str, Any],
+    brief: str,
+    vertical_hint: Optional[str],
+    dual_ids: List[str],
+) -> ProductBlueprint:
+    """Validate + sanitize an LLM draft payload into a ProductBlueprint.
+
+    Fail-closed on structure: malformed payloads raise (caller falls back).
+    Fail-safe on content: block ids are filtered against the dual registry.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("LLM draft is not a JSON object")
+
+    dual = set(dual_ids)
+    raw_caps = data.get("capabilities")
+    if not isinstance(raw_caps, list) or not raw_caps:
+        raise ValueError("LLM draft has no capabilities")
+
+    caps = []
+    for item in raw_caps[:8]:
+        if not isinstance(item, dict):
+            continue
+        cap_id = _slug(str(item.get("id", "")), default="")
+        if not cap_id:
+            continue
+        block_ids = [
+            b for b in item.get("block_ids", []) if isinstance(b, str) and b in dual
+        ]
+        caps.append(
+            {
+                "id": cap_id.replace("-", "_"),
+                "description": str(item.get("description", ""))[:300]
+                or f"Capability {cap_id}",
+                "block_ids": block_ids,
+                "strategy_hint": "REUSE" if block_ids else "GENERATE",
+            }
+        )
+    if not caps:
+        raise ValueError("LLM draft produced no usable capabilities")
+
+    vertical = _slug(str(data.get("vertical") or vertical_hint or "product"))
+    product_name = str(data.get("product_name", "")).strip()[:120] or vertical.replace(
+        "-", " "
+    ).title()
+
+    raw = {
+        "schema_version": "product_blueprint.v1",
+        "product_id": _slug(vertical),
+        "product_name": product_name,
+        "vertical": vertical,
+        "summary": str(data.get("summary", "")).strip()[:500]
+        or brief.strip()[:500]
+        or f"Factory-drafted {vertical} product",
+        "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
+        "capabilities": caps,
+        "ui_modules": ["command_center", "operational_chat", "resident_engineer"],
+        "connectors": [],
+        "edge_profile": "standard",
+        "human_authority": True,
+    }
+    return ProductBlueprint.model_validate(raw)
+
+
+def _draft_with_llm(
+    brief: str,
+    *,
+    vertical_hint: Optional[str] = None,
+) -> ProductBlueprint:
+    """Draft a blueprint via the configured LLM. Raises on any failure."""
+    dual = sorted(dual_registered_ids())
+    block_list = "\n".join(f"- {b}" for b in dual) or "- (none registered)"
+    messages = [
+        {
+            "role": "system",
+            "content": _LLM_DRAFT_SYSTEM + f"\nAVAILABLE BLOCKS:\n{block_list}\n",
+        },
+        {"role": "user", "content": brief},
+    ]
+    data = _llm_json_call(messages)
+    return _blueprint_from_llm_payload(data, brief, vertical_hint, dual)
+
+
+# --- Public drafting API ------------------------------------------------------
+
+
 def draft_blueprint_from_brief(
     brief: str,
     *,
     vertical_hint: Optional[str] = None,
     use_golden_steward: bool = True,
+    use_llm: Optional[bool] = None,
 ) -> ProductBlueprint:
     """Draft a ProductBlueprint from a user brief.
 
-    For the Steward vertical (or when ``use_golden_steward`` and the brief
-    mentions steward/estate), return the checked-in golden blueprint so the
-    agent path stays regenerate-deterministic. Otherwise build a minimal
-    blueprint using only dual-registered blocks discovered from the brief.
+    Order of preference:
+    1. Golden steward blueprint for estate briefs (deterministic path).
+    2. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
+       ``use_llm=True``) — fail-safe: any error falls through to (3).
+    3. Deterministic keyword drafting (always works, no keys needed).
     """
     text = (brief or "").lower()
     wants_steward = any(
@@ -52,6 +286,16 @@ def draft_blueprint_from_brief(
     )
     if use_golden_steward and (wants_steward or vertical_hint == "estate"):
         return load_blueprint(steward_golden_path())
+
+    if use_llm is None:
+        use_llm = llm_drafting_enabled()
+    if use_llm:
+        try:
+            return _draft_with_llm(brief, vertical_hint=vertical_hint)
+        except Exception as exc:
+            logger.warning(
+                "LLM drafting failed, falling back to keyword drafting: %s", exc
+            )
 
     dual = sorted(dual_registered_ids())
     # Pick blocks mentioned in the brief; fall back to audit if none
