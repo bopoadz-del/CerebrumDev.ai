@@ -10,17 +10,19 @@ Last updated: 2026-07-19. Agent must re-read this file at the start of every Res
 
 ## Standing rules (non-negotiable)
 
-1. **One milestone = one branch = one PR.** Stop after each PR for human review before starting the next.
+1. **One milestone = one branch = one PR.**
 2. **Never force-push.**
-3. **Never touch Render / dashboard** for this project (no env mutations, no deploys, no MCP Render writes).
-4. **Feature-flag everything.** Default: `RESIDENT_ENGINEER_ENABLED=false`.
+3. **Never touch Render / dashboard** for this project (no env mutations, no deploys, no MCP Render writes) unless the owner explicitly asks for a live UI deploy check.
+4. **Feature-flag everything.** Default: `RESIDENT_ENGINEER_ENABLED=false` (and sibling RE flags off).
 5. **Paste pytest output as PR evidence.**
 6. **Stop and ask when ambiguous.** If a milestone's scope balloons, propose a split — do not improvise scope.
 7. **No secrets in code.** No GitHub credentials shipped into generated products. No unrestricted shell anywhere.
-8. **Watch every PR until it is merged** (babysit CI + review comments; do not start the next milestone while the current PR is open).
+8. **Babysit every PR until it is merged.** Watch CI + triage review/Bugbot comments; fix merge conflicts and in-scope CI failures.
+9. **Auto-merge when green (owner rule, 2026-07-21):** once checks are all green, the PR is mergeable/CLEAN, and unresolved blocking comments are triaged, **merge without waiting for further human review**. Then start the next milestone.
 
 Branch naming for agent-created branches still follows Cloud Agent policy (`cursor/…-bd2c`) unless the human explicitly names a milestone branch (`feat/product-dna`, etc.). Prefer the human-named milestone branches when opening the four deliverable PRs.
 
+Last updated: 2026-07-21.
 ---
 
 ## Architecture source of truth
