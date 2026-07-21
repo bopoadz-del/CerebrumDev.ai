@@ -93,6 +93,10 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
 
     assert (out / "docs" / "rag" / "dual_rag.json").is_file()
     assert (out / "app" / "estate_kit" / "router.py").is_file()
+    assert (out / "app" / "estate_kit" / "rag" / "service.py").is_file()
+    assert (out / "app" / "estate_kit" / "rag" / "store.py").is_file()
+    dual_cfg = json.loads((out / "docs" / "rag" / "dual_rag.json").read_text())
+    assert dual_cfg.get("embedding_provider") == "local_feature_hash_v1"
     assert (out / "frontend" / "src" / "routes" / "deepLinks.ts").is_file()
     assert (out / "product-dna" / "checksum_manifest.json").is_file()
     assert verify_checksum_manifest(out / "product-dna") == []
@@ -127,8 +131,35 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
         body = rag.json()
         assert body["hit_count"] >= 1
         assert body["hits"][0]["citation"]["source_id"]
-        layer2 = c.get("/v1/rag/query", params={{"q": "pool", "layer": 2}})
+        assert body["hits"][0]["score"] > 0
+        assert body["embedding_provider"] == "local_feature_hash_v1"
+        top_doc = body["hits"][0]["doc_id"]
+        assert top_doc == "sop-global-guest-arrival"
+        layer2 = c.get("/v1/rag/query", params={{"q": "pool chemicals", "layer": 2}})
         assert layer2.status_code == 200, layer2.text
+        l2 = layer2.json()
+        assert l2["hit_count"] >= 1
+        assert all(hit["layer"] == 2 for hit in l2["hits"])
+        assert l2["hits"][0]["doc_id"] == "estate-villa-manual"
+        status = c.get("/v1/rag/dual")
+        assert status.status_code == 200, status.text
+        indices = status.json()["indices"]
+        assert indices[0]["document_count"] >= 2
+        assert indices[1]["document_count"] >= 2
+        ingest = c.post(
+            "/v1/rag/ingest",
+            json={{
+                "layer": 1,
+                "doc_id": "sop-test-ingest",
+                "title": "Test SOP",
+                "text": "Emergency generator failover drill every quarter.",
+            }},
+        )
+        assert ingest.status_code == 200, ingest.text
+        assert ingest.json()["chunk_count"] >= 1
+        failover = c.get("/v1/rag/query", params={{"q": "generator failover drill", "layer": 1}})
+        assert failover.status_code == 200, failover.text
+        assert any(hit["doc_id"] == "sop-test-ingest" for hit in failover.json()["hits"])
         print("estate_kit_probe_ok")
         """
     )
