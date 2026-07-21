@@ -33,7 +33,7 @@ def test_planner_steward():
     assert plan.product_id == "cerebrum-steward"
     assert not plan.unsupported
     strategies = {c.capability_id: c.strategy for c in plan.capabilities}
-    assert strategies["estate_registry"] == "REUSE"
+    assert strategies["estate_registry"] == "COMPOSE"
     assert strategies["composed_ops_loop"] == "COMPOSE"
     assert strategies["human_authority_gate"] == "GENERATE"
 

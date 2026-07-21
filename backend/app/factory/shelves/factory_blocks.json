@@ -5,6 +5,12 @@
   "description": "Factory-side mirror of dual-registered blocks. Planner fails closed if a block is missing here or in Cerebrum-Blocks.",
   "blocks": [
     {
+      "id": "analytics",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Portfolio and operational analytics surfaces"
+    },
+    {
       "id": "audit",
       "version": "1.0.0",
       "kit": "platform",
@@ -15,6 +21,24 @@
       "version": "1.0.0",
       "kit": "platform",
       "description": "Receive images from any client, OCR extract, AI structure, vector store"
+    },
+    {
+      "id": "dashboard",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Principal / operator dashboard surfaces"
+    },
+    {
+      "id": "database",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Durable structured storage for registry and ops records"
+    },
+    {
+      "id": "document_engine",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Document ingestion and House Manual / SOP processing"
     },
     {
       "id": "estate_maintenance",
@@ -47,10 +71,28 @@
       "description": "SHA256/MD5 hashing and metadata extraction for files"
     },
     {
+      "id": "formula_executor",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Budget formulas, rates, and spend calculations"
+    },
+    {
+      "id": "knowledge",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Knowledge corpus indexing for dual RAG layers"
+    },
+    {
       "id": "memory",
       "version": "1.0.0",
       "kit": "platform",
-      "description": "High-speed TTL/LRU cache \u2014 session storage and Redis alternative for edge deployments"
+      "description": "High-speed TTL/LRU cache — session storage and Redis alternative for edge deployments"
+    },
+    {
+      "id": "notification",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Escalation and staff/vendor notification delivery"
     },
     {
       "id": "portfolio_rollup",
@@ -59,10 +101,52 @@
       "description": "Multi-property portfolio rollup intelligence"
     },
     {
+      "id": "queue",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Work-order and maintenance job queue"
+    },
+    {
       "id": "readiness_engine",
       "version": "1.0.0",
       "kit": "private_estate_operations",
       "description": "Property readiness scoring and gates"
+    },
+    {
+      "id": "recommendation_template",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Template-driven onboarding recommendations"
+    },
+    {
+      "id": "spec_analyzer",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Analyze property specs for framework application"
+    },
+    {
+      "id": "storage",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Object/blob storage for estate documents and evidence"
+    },
+    {
+      "id": "team",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Household staff teams, shifts, and assignments"
+    },
+    {
+      "id": "validation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Schema and business-rule validation for registry records"
+    },
+    {
+      "id": "vector_search",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Vector retrieval for dual RAG Layer 1 and Layer 2"
     },
     {
       "id": "workflow",

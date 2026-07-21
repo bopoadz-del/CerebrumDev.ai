@@ -69,6 +69,8 @@ class ProductGenerator:
         self._write_blueprint_copy(out)
         self._write_edge_profile(out)
         self._write_certification_scaffold(out)
+        if self.blueprint.vertical == "estate":
+            self._write_estate_kit_surfaces(out)
 
         # Product DNA after catalogs exist — sole Resident Mode understanding surface.
         change_events = []
@@ -214,7 +216,213 @@ def workflows():
     from pathlib import Path
     path = Path(__file__).resolve().parent / "workflows" / "workflows.json"
     return json.loads(path.read_text())
+
+
+# Estate kit surfaces (demo fixtures + dual RAG) are mounted when present.
+try:
+    from app.estate_kit import router as estate_kit_router
+
+    app.include_router(estate_kit_router)
+except ImportError:
+    pass
 ''',
+            encoding="utf-8",
+        )
+
+    def _write_estate_kit_surfaces(self, out: Path) -> None:
+        """Emit demo fixtures + dual RAG API for estate vertical products."""
+        import textwrap
+
+        kit_fixtures = (
+            Path(__file__).resolve().parent
+            / "kits"
+            / "private_estate_operations"
+            / "fixtures"
+            / "demo_estate.json"
+        )
+        data_dir = out / "data" / "demo"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        if kit_fixtures.is_file():
+            shutil.copy2(kit_fixtures, data_dir / "estate_fixtures.json")
+        else:
+            (data_dir / "estate_fixtures.json").write_text(
+                json.dumps({"properties": [], "honesty": "fixtures missing at generate"}, indent=2)
+                + "\n",
+                encoding="utf-8",
+            )
+
+        dual_rag = {
+            "schema_version": "1.0.0",
+            "layers": {
+                "1": {
+                    "id": "sop_standards",
+                    "name": "SOP / House Manual / global standards",
+                    "index": "steward_sop_v1",
+                    "source_field": "sop_corpus",
+                    "blocks": ["document_engine", "knowledge", "vector_search"],
+                },
+                "2": {
+                    "id": "estate_documents",
+                    "name": "Estate documents (separately indexed)",
+                    "index": "steward_estate_docs_v1",
+                    "source_field": "estate_documents",
+                    "blocks": ["document_engine", "knowledge", "vector_search"],
+                },
+            },
+            "honesty": (
+                "Indices are fixture-backed for certification demos; production "
+                "embeddings require knowledge/vector_search block runtime."
+            ),
+        }
+        rag_docs = out / "docs" / "rag"
+        rag_docs.mkdir(parents=True, exist_ok=True)
+        (rag_docs / "dual_rag.json").write_text(
+            json.dumps(dual_rag, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+        estate_mod = out / "app" / "estate_kit"
+        estate_mod.mkdir(parents=True, exist_ok=True)
+        (estate_mod / "__init__.py").write_text(
+            '"""Factory-generated estate kit surfaces (demo + dual RAG)."""\n'
+            "from app.estate_kit.router import router\n\n"
+            '__all__ = ["router"]\n',
+            encoding="utf-8",
+        )
+        (estate_mod / "router.py").write_text(
+            textwrap.dedent(
+                '''\
+                """Estate demo fixtures + dual RAG query (Factory-generated)."""
+
+                from __future__ import annotations
+
+                import json
+                from pathlib import Path
+                from typing import Any, Dict, List, Optional
+
+                from fastapi import APIRouter, HTTPException, Query
+
+                router = APIRouter(tags=["estate-kit"])
+
+                def _fixtures() -> Dict[str, Any]:
+                    path = Path(__file__).resolve().parents[2] / "data" / "demo" / "estate_fixtures.json"
+                    if not path.is_file():
+                        raise HTTPException(status_code=404, detail="demo fixtures missing")
+                    return json.loads(path.read_text(encoding="utf-8"))
+
+                def _dual_rag_meta() -> Dict[str, Any]:
+                    path = Path(__file__).resolve().parents[2] / "docs" / "rag" / "dual_rag.json"
+                    if path.is_file():
+                        return json.loads(path.read_text(encoding="utf-8"))
+                    return {}
+
+                @router.get("/v1/estate/demo")
+                def estate_demo() -> Dict[str, Any]:
+                    data = _fixtures()
+                    return {
+                        "ok": True,
+                        "fixture_id": data.get("fixture_id"),
+                        "properties": data.get("properties") or [],
+                        "vendors": data.get("vendors") or [],
+                        "staff": data.get("staff") or [],
+                        "maintenance_calendar": data.get("maintenance_calendar") or [],
+                    }
+
+                @router.get("/v1/estate/properties")
+                def list_properties() -> Dict[str, Any]:
+                    props = _fixtures().get("properties") or []
+                    return {"count": len(props), "properties": props}
+
+                @router.get("/v1/estate/vendors")
+                def list_vendors() -> Dict[str, Any]:
+                    vendors = _fixtures().get("vendors") or []
+                    return {"count": len(vendors), "vendors": vendors}
+
+                @router.get("/v1/estate/staff")
+                def list_staff() -> Dict[str, Any]:
+                    staff = _fixtures().get("staff") or []
+                    return {"count": len(staff), "staff": staff}
+
+                @router.get("/v1/estate/maintenance")
+                def maintenance_calendar() -> Dict[str, Any]:
+                    cal = _fixtures().get("maintenance_calendar") or []
+                    return {"count": len(cal), "work_orders": cal}
+
+                @router.get("/v1/rag/dual")
+                def dual_rag_status() -> Dict[str, Any]:
+                    return {"ok": True, "config": _dual_rag_meta()}
+
+                @router.get("/v1/rag/query")
+                def dual_rag_query(
+                    q: str = Query(..., min_length=1),
+                    layer: Optional[int] = Query(None, ge=1, le=2),
+                ) -> Dict[str, Any]:
+                    """Fixture-backed dual RAG with cited sources (certification demo)."""
+                    data = _fixtures()
+                    needle = q.lower()
+                    layers = []
+                    if layer in (None, 1):
+                        layers.append(1)
+                    if layer in (None, 2):
+                        layers.append(2)
+                    hits: List[Dict[str, Any]] = []
+                    for lyr in layers:
+                        docs = data.get("sop_corpus" if lyr == 1 else "estate_documents") or []
+                        for doc in docs:
+                            text = str(doc.get("text") or "")
+                            title = str(doc.get("title") or "")
+                            if needle in text.lower() or needle in title.lower() or any(
+                                tok in text.lower() for tok in needle.split() if len(tok) > 3
+                            ):
+                                hits.append(
+                                    {
+                                        "layer": lyr,
+                                        "doc_id": doc.get("doc_id"),
+                                        "title": title,
+                                        "excerpt": text[:240],
+                                        "citation": {
+                                            "source_id": doc.get("doc_id"),
+                                            "layer": lyr,
+                                            "property_id": doc.get("property_id"),
+                                        },
+                                    }
+                                )
+                    return {
+                        "ok": True,
+                        "query": q,
+                        "layers_searched": layers,
+                        "hit_count": len(hits),
+                        "hits": hits,
+                        "config": _dual_rag_meta(),
+                    }
+                '''
+            ),
+            encoding="utf-8",
+        )
+
+        # SPA deep-link stubs for estate modules (cold-start friendly)
+        spa = out / "frontend" / "src" / "routes"
+        spa.mkdir(parents=True, exist_ok=True)
+        (spa / "deepLinks.ts").write_text(
+            "// Factory-generated deep links for Steward SPA\n"
+            "export const DEEP_LINKS = {\n"
+            "  home: '/',\n"
+            "  registry: '/registry',\n"
+            "  houseManual: '/house-manual',\n"
+            "  maintenance: '/maintenance',\n"
+            "  vendors: '/vendors',\n"
+            "  staff: '/staff',\n"
+            "  principal: '/principal',\n"
+            "  onboarding: '/onboarding',\n"
+            "  rag: '/rag',\n"
+            "  resident: '/resident',\n"
+            "} as const;\n"
+            "\n"
+            "/** Cold-start retry hint for Render free-tier spin-up. */\n"
+            "export const COLD_START = {\n"
+            "  retries: 3,\n"
+            "  backoffMs: [1000, 3000, 8000],\n"
+            "  message: 'Service waking up — retrying…',\n"
+            "};\n",
             encoding="utf-8",
         )
 
