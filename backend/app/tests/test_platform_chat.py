@@ -63,7 +63,7 @@ def test_approval_negative(message):
 # --- Flow: draft -> pending -> approve -> generate ---------------------------
 
 def _fresh_state() -> SessionState:
-    return SessionState(session_id="test-session-chat-platform")
+    return SessionState(session_id="test-session-chat-platform", user_id="test-user")
 
 
 def test_draft_from_chat_parks_blueprint_on_session():
@@ -109,5 +109,4 @@ def test_draft_resets_previous_design():
     # second draft replaces the first, approval flag reset
     assert state.product_design.blueprint_approved is False
     assert state.product_design.generation is None
-    assert "clinic" in str(state.product_design.blueprint).lower() or True  # brief replaced
     assert state.product_design.brief == "create a platform for clinics"
