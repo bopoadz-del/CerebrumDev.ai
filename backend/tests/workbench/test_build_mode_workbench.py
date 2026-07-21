@@ -1,0 +1,179 @@
+"""Build Mode workbench (M4) tests — steward golden round-trip + boundary guards."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from app.change_requests.builders import build_expansion_request, sign_and_register
+from app.change_requests.intake import intake_change_request
+from app.change_requests.queue import ChangeRequestQueue
+from app.factory.blueprint import load_blueprint
+from app.factory.generator import ProductGenerator
+from app.product_dna.emit import verify_checksum_manifest
+from app.workbench.candidate import verify_candidate_checksum
+from app.workbench.envelope import build_task_envelope, load_verified_dna, path_allowed
+from app.workbench.promote import PromotionRejected, promote_via_packager
+from app.workbench.sandbox import SandboxViolation, WorkbenchSandbox
+from app.workbench.session import WorkbenchRejected, promote_request, run_workbench_session
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.fixture(autouse=True)
+def _flags(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    monkeypatch.setenv("CHANGE_REQUEST_INTAKE_ENABLED", "true")
+    monkeypatch.setenv("BUILD_MODE_ENABLED", "true")
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "false")
+    monkeypatch.setenv("WORKBENCH_SESSION_TIMEOUT_SECONDS", "120")
+
+
+def _steward_product(tmp_path: Path) -> Path:
+    bp = load_blueprint(ROOT / "blueprints/steward/steward.v1.yaml")
+    out = tmp_path / "Cerebrum-Steward"
+    ProductGenerator(bp, blocks_root=None).generate(out)
+    return out
+
+
+def _approved_expansion(product_id: str, product_root: Path) -> dict:
+    doc = build_expansion_request(
+        product_id=product_id,
+        dna_version="1.0.0",
+        requester_type="human",
+        requester_id="owner",
+        capability="ops_audit_trail",
+        block_id="audit",
+        rationale="M4 steward golden: add audit block",
+        evidence={"scaffold": str(product_root)},
+    )
+    signed = sign_and_register(doc)
+    bundle = load_verified_dna(product_root)
+    item = intake_change_request(signed, dna_bundle=bundle, product_root=product_root)
+    assert item["state"] == "awaiting_approval"
+    decided = ChangeRequestQueue().record_decision(
+        item["request_id"], approved=True, actor="owner", note="M4 round-trip"
+    )
+    assert decided["state"] == "approved"
+    assert decided["decision"]["executes"] is False
+    return decided
+
+
+def test_build_mode_flag_off(monkeypatch, tmp_path):
+    monkeypatch.setenv("BUILD_MODE_ENABLED", "false")
+    with pytest.raises(WorkbenchRejected) as exc:
+        run_workbench_session("missing")
+    assert exc.value.status_code == 503
+
+
+def test_sandbox_escape_refused_and_logged(tmp_path):
+    sandbox = WorkbenchSandbox("escape-test")
+    with pytest.raises(SandboxViolation):
+        sandbox.resolve_in_workspace("../outside_secret", write=True)
+    assert any(e.get("event") == "boundary_refused" for e in sandbox.transcript)
+
+
+def test_store_write_impossible(tmp_path):
+    sandbox = WorkbenchSandbox("store-test")
+    env = sandbox.scrubbed_env()
+    assert "RENDER_API_KEY" not in env
+    assert "GITHUB_TOKEN" not in env
+    assert "STORE_WRITE_TOKEN" not in env
+    assert env.get("WORKBENCH_STORE_WRITE") == "impossible"
+    with pytest.raises(SandboxViolation):
+        sandbox.attempt_store_write()
+
+
+def test_path_allowed_envelope_rules(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "candidate").mkdir()
+    assert path_allowed(ws, ws / "candidate" / "x.json", write=True)
+    assert not path_allowed(ws, ws / "product-dna" / "x.json", write=True)
+    assert path_allowed(ws, ws / "product-dna" / "x.json", write=False)
+    assert not path_allowed(ws, tmp_path / "other" / "x", write=True)
+
+
+def test_tampered_candidate_fails_at_packager(tmp_path):
+    product = _steward_product(tmp_path)
+    item = _approved_expansion("cerebrum-steward", product)
+    result = run_workbench_session(item["request_id"], product_root=product, run_gates=True)
+    assert result["state"] == "gate_passed"
+    candidate = dict(result["candidate"])
+    candidate["summary"] = "tampered summary"
+    assert verify_candidate_checksum(candidate) is False
+    with pytest.raises(PromotionRejected):
+        promote_via_packager(
+            item=result,
+            candidate=candidate,
+            product_root=product,
+            actor="owner",
+        )
+
+
+def test_steward_expansion_round_trip_to_staging(tmp_path):
+    """Signed EXPANSION → approved → workbench → gates → packager staging."""
+    product = _steward_product(tmp_path)
+    assert (product / "product-dna" / "checksum_manifest.json").is_file()
+
+    item = _approved_expansion("cerebrum-steward", product)
+    result = run_workbench_session(item["request_id"], product_root=product, run_gates=True)
+    assert result["state"] == "gate_passed"
+    assert result["candidate"]["applied"] is False
+    assert result["candidate"]["checksum"]
+    assert result["gate_report"]["passed"] is True
+    assert any(a["kind"] == "candidate_ready" for a in result.get("audit_trail") or [])
+
+    staged = promote_request(item["request_id"], actor="owner")
+    assert staged["state"] == "staged"
+    promotion = staged["promotion"]
+    assert promotion["trust_tier"] == "staging/community"
+    assert promotion["certified"] is False
+    assert promotion["deployed"] is False
+    assert promotion["store_published"] is False
+    assert promotion["deploy_credentials"] is False
+
+    out = Path(promotion["output_dir"])
+    assert out.is_dir()
+    dna = out / "product-dna"
+    assert verify_checksum_manifest(dna) == []
+    manifest = json.loads((dna / "generation_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["product_dna_version"] == promotion["product_dna_version"]
+    assert manifest["product_dna_version"] != "1.0.0"
+    lock = json.loads((dna / "block_lockfile.json").read_text(encoding="utf-8"))
+    pin_ids = {p["block_id"] for p in lock.get("pins") or []}
+    assert "audit" in pin_ids
+
+    # Full audit trail readable end-to-end
+    kinds = [a["kind"] for a in staged.get("audit_trail") or []]
+    assert "workbench_started" in kinds
+    assert "candidate_ready" in kinds
+    assert "gate_passed" in kinds
+    assert "staged" in kinds
+
+    receipt = out / "STAGING_PROMOTION.json"
+    assert receipt.is_file()
+
+
+def test_envelope_checksum_stable(tmp_path):
+    product = _steward_product(tmp_path)
+    dna = load_verified_dna(product)
+    req = {
+        "request_id": "r1",
+        "kind": "EXPANSION",
+        "product_id": "cerebrum-steward",
+        "dna_version": "1.0.0",
+        "expansion": {"capability": "x", "block_id": "audit"},
+    }
+    env = build_task_envelope(
+        request=req,
+        dry_run={"acceptance_gates_to_rerun": ["dna_checksum_verify"], "would_change": []},
+        dna_bundle=dna,
+        workspace_root=tmp_path / "ws",
+        product_root=product,
+    )
+    assert env["envelope_checksum"]
+    assert "production_deploy" in env["mutable"]["forbidden"]

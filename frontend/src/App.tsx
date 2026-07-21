@@ -4,10 +4,11 @@ import { AppShell } from './components/layout/AppShell';
 import { ChatSidebar } from './components/chat/ChatSidebar';
 import { ConfigCanvas } from './components/canvas/ConfigCanvas';
 import DesignProductPanel from './components/DesignProductPanel';
+import WorkbenchPanel from './components/WorkbenchPanel';
 import { ToastProvider, useToast } from './hooks/useToast';
 import api from './api/client';
 
-type WorkspaceMode = 'kit' | 'product';
+type WorkspaceMode = 'kit' | 'product' | 'workbench';
 
 function AppContent() {
   const [location, setLocation] = useLocation();
@@ -132,6 +133,7 @@ function AppContent() {
 
   const switchMode = async (mode: WorkspaceMode) => {
     setWorkspaceMode(mode);
+    if (mode === 'workbench') return;
     try {
       await api.post(`/sessions/${sessionId}/product/mode`, { mode });
     } catch (err: any) {
@@ -173,10 +175,23 @@ function AppContent() {
         >
           Design product
         </button>
+        <button
+          type="button"
+          onClick={() => switchMode('workbench')}
+          className={`px-3 py-1.5 text-sm rounded-md border ${
+            workspaceMode === 'workbench'
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-gray-700 border-gray-300'
+          }`}
+        >
+          Build mode
+        </button>
       </div>
       <Switch>
         <Route path="/s/:sessionId">
-          {workspaceMode === 'product' ? (
+          {workspaceMode === 'workbench' ? (
+            <WorkbenchPanel />
+          ) : workspaceMode === 'product' ? (
             <DesignProductPanel sessionId={sessionId} />
           ) : (
             <ConfigCanvas sessionId={sessionId} configEpoch={configEpoch} />

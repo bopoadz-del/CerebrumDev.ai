@@ -109,7 +109,7 @@ Tests: allowlist enforcement (forbidden action rejected), audit immutability, in
 ## Milestone 3 — Change-request contract + CerebrumDev intake
 
 **Branch:** `feat/change-request-loop`  
-**Status:** in progress / PR open — see `M3-change-request-loop.md`
+**Status:** merged — see `M3-change-request-loop.md`
 
 - Versioned JSON Schema for `REPAIR` / `EXPANSION` / `UPGRADE` under `backend/app/change_requests/schemas/`
 - Ed25519 signed requests (canonical JSON); unsigned/malformed rejected + logged
@@ -124,22 +124,23 @@ Tests: schema reject cases, signature verification, queue persistence, idempoten
 ## Milestone 4 — Build Mode workbench
 
 **Branch:** `feat/build-mode-workbench`  
-**Status:** not started (depends on M3 merge)
+**Status:** in progress / PR — see `M4-build-mode-workbench.md`
 
 Sandboxed Kimi Code lane inside CerebrumDev:
 
-- `backend/app/workbench/`: consumes `change_requests` queue, runs the coding agent (`kimi-k2.7-code:cloud` via Ollama Cloud; env-configured, key never committed) in an isolated container/worktree: session-scoped filesystem, network allowlist (`ollama.com` + GitHub API only), no deploy credentials, no Store publish rights
-- Agent output lands in staging only; enters Block Store at `community` trust tier; promotion to `reviewed` requires existing CI gates + human approval. Agent can never certify its own output
+- `backend/app/workbench/`: consumes approved `change_requests` queue items, runs coding agent (`kimi-k2.7-code:cloud` via Ollama Cloud when `KIMI_WORKBENCH_ENABLED=true`; default honest Factory regenerator stub) in an isolated workspace: session-scoped filesystem, network allowlist (`ollama.com` + GitHub API only), no deploy credentials, no Store publish rights
+- Agent output is a **candidate** only; packager promotion lands at `staging/community` trust tier; certified/production still requires existing chain-approve
 - Product regeneration goes through the existing deterministic packager — the workbench never bypasses it
-- Full audit: prompt, diff, gate results, approver
+- Full audit: envelope, transcript, diff, gate results, promotion receipt on the queue item
+- Flags: `BUILD_MODE_ENABLED=false`, `KIMI_WORKBENCH_ENABLED=false`
 
-Tests: sandbox escape attempts fail, staging isolation, trust-tier entry correct, audit completeness.
+Tests: sandbox escape attempts fail, Store write impossible, tampered candidate checksum failure, Steward EXPANSION round-trip to staging, audit completeness.
 
 ---
 
 ## Deliverable
 
-4 PRs, each with pytest evidence + a `docs/resident-engineer/` page explaining what shipped and what remains. Stop after each PR for review.
+4 PRs, each with pytest evidence + a `docs/resident-engineer/` page explaining what shipped and what remains. Auto-merge when CI is green (owner rule 2026-07-21).
 
 ---
 

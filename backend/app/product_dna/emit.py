@@ -71,6 +71,8 @@ def build_dna_documents(
     agents: Optional[Sequence[Mapping[str, Any]]] = None,
     workflows: Optional[Sequence[Mapping[str, Any]]] = None,
     change_events: Optional[Sequence[Mapping[str, Any]]] = None,
+    product_dna_version: str = "1.0.0",
+    pin_versions: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Build in-memory DNA documents from Factory data only."""
     bp = blueprint.model_dump(mode="json")
@@ -79,6 +81,7 @@ def build_dna_documents(
     agent_list = list(agents or [])
     workflow_list = list(workflows or [])
     changes = list(change_events or [])
+    versions = dict(pin_versions or {})
 
     return {
         "product_blueprint.yaml": {
@@ -88,6 +91,7 @@ def build_dna_documents(
         "generation_manifest.json": {
             "schema_version": DNA_SCHEMA_VERSION,
             "product_id": blueprint.product_id,
+            "product_dna_version": product_dna_version,
             "factory_scenario": blueprint.factory_scenario.value
             if hasattr(blueprint.factory_scenario, "value")
             else str(blueprint.factory_scenario),
@@ -114,7 +118,11 @@ def build_dna_documents(
             "blocks_commit": blocks_commit,
             "factory_commit": factory_commit,
             "pins": [
-                {"block_id": bid, "source": "dual_registry"}
+                {
+                    "block_id": bid,
+                    "source": "dual_registry",
+                    **({"version": versions[bid]} if bid in versions else {}),
+                }
                 for bid in sorted(plan.dual_registered_blocks)
             ],
         },
@@ -195,6 +203,8 @@ def emit_product_dna(
     agents: Optional[Sequence[Mapping[str, Any]]] = None,
     workflows: Optional[Sequence[Mapping[str, Any]]] = None,
     change_events: Optional[Sequence[Mapping[str, Any]]] = None,
+    product_dna_version: str = "1.0.0",
+    pin_versions: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """Write ``product-dna/`` under ``output_dir`` with checksum manifest.
 
@@ -214,6 +224,8 @@ def emit_product_dna(
         agents=agents,
         workflows=workflows,
         change_events=change_events,
+        product_dna_version=product_dna_version,
+        pin_versions=pin_versions,
     )
 
     for filename in DNA_BUNDLE_FILES:
