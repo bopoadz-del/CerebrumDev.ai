@@ -21,6 +21,7 @@ from .routers import (
 )
 from .resident_engineer.router import router as resident_engineer_router
 from .change_requests.router import router as change_requests_router
+from .workbench.router import router as workbench_router
 
 verify_production_auth()
 
@@ -71,6 +72,10 @@ app.include_router(
 )
 app.include_router(
     change_requests_router,
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    workbench_router,
     dependencies=[Depends(require_api_key)],
 )
 
@@ -128,6 +133,8 @@ async def health():
         "storage": storage,
         "redis": redis,
         "resident_engineer_enabled": os.getenv("RESIDENT_ENGINEER_ENABLED", "false"),
+        "build_mode_enabled": os.getenv("BUILD_MODE_ENABLED", "false"),
+        "kimi_workbench_enabled": os.getenv("KIMI_WORKBENCH_ENABLED", "false"),
     }
 
 

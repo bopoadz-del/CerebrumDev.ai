@@ -29,6 +29,8 @@ class ProductGenerator:
         factory_shelf: Optional[Path] = None,
         factory_commit: str = "unknown",
         blocks_commit: str = "unknown",
+        product_dna_version: str = "1.0.0",
+        pin_versions: Optional[Dict[str, str]] = None,
     ):
         self.blueprint = blueprint
         self.planner = CapabilityPlanner(blocks_root, factory_shelf)
@@ -36,6 +38,8 @@ class ProductGenerator:
         self.factory_commit = factory_commit
         self.blocks_commit = blocks_commit
         self.blocks_root = blocks_root
+        self.product_dna_version = product_dna_version
+        self.pin_versions = dict(pin_versions or {})
 
     def generate(self, output_dir: Path | str, *, clean: bool = True) -> Dict[str, Any]:
         out = Path(output_dir).resolve()
@@ -86,6 +90,8 @@ class ProductGenerator:
             agents=agents,
             workflows=workflows,
             change_events=change_events,
+            product_dna_version=self.product_dna_version,
+            pin_versions=self.pin_versions,
         )
         # Resident Mode runtime package (flag-gated at runtime; always shipped)
         re_runtime = inject_resident_runtime(out)

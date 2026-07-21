@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-def create_workspace_record(request_id: str, product_id: str) -> Dict[str, Any]:
+def create_workspace_record(
+    request_id: str,
+    product_id: str,
+    *,
+    product_root: str | None = None,
+) -> Dict[str, Any]:
     root = Path(os.getenv("STORAGE_PATH", "./storage")) / "change_requests" / "workspaces"
     root.mkdir(parents=True, exist_ok=True)
     path = root / request_id
@@ -20,6 +25,7 @@ def create_workspace_record(request_id: str, product_id: str) -> Dict[str, Any]:
         "request_id": request_id,
         "product_id": product_id,
         "path": str(path),
+        "product_root": product_root,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "worktree_created": False,
         "agent_started": False,

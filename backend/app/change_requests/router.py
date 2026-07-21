@@ -27,9 +27,14 @@ async def change_request_status() -> Dict[str, Any]:
             "awaiting_approval",
             "approved",
             "rejected",
+            "workbench_running",
+            "candidate_ready",
+            "gate_passed",
+            "gate_failed",
+            "staged",
         ],
         "execution": False,
-        "honesty": "M3 paperwork only — approval does not run agents",
+        "honesty": "M3 paperwork only — approval does not run agents; M4 workbench executes under BUILD_MODE_ENABLED",
     }
 
 

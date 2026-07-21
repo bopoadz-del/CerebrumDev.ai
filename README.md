@@ -214,6 +214,8 @@ If Marker is not installed or `MARKER_ENABLED=false`, the upload pipeline falls 
 | `RESIDENT_ENGINEER_ENABLED` | `false` | Resident Mode observe/heal/diagnose APIs (M2) |
 | `CHANGE_REQUEST_INTAKE_ENABLED` | `false` | Factory change-request intake + dry-run queue (M3) |
 | `RESIDENT_EMIT_CHANGE_REQUESTS` | `false` | Resident L2 escalations → signed REPAIR requests (M3) |
+| `BUILD_MODE_ENABLED` | `false` | Build Mode workbench session / gates / staging promotion (M4) |
+| `KIMI_WORKBENCH_ENABLED` | `false` | Kimi Code CLI in workbench; when false uses Factory regenerator stub (M4) |
 | `REDIS_URL` | unset | Optional Redis/Key Value (health probe + queue index) |
 
 See `docs/resident-engineer/` for Resident Engineer milestones.

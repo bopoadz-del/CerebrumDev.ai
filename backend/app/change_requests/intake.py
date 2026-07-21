@@ -74,7 +74,11 @@ def intake_change_request(
     report = evaluate_dry_run(document, dna_bundle=dna_bundle)
     q.update_state(item["request_id"], "dry_run_evaluated", dry_run_report=report)
 
-    workspace = create_workspace_record(str(document["request_id"]), str(document["product_id"]))
+    workspace = create_workspace_record(
+        str(document["request_id"]),
+        str(document["product_id"]),
+        product_root=str(product_root) if product_root else None,
+    )
     item = q.update_state(
         item["request_id"],
         "awaiting_approval",

@@ -1,7 +1,9 @@
 """Persistent change-request queue — Redis if REDIS_URL set, else disk JSON.
 
-States: received → validated → dry_run_evaluated → awaiting_approval → approved|rejected
-Nothing past awaiting_approval executes; approval is a recorded decision only.
+M3 states: received → validated → dry_run_evaluated → awaiting_approval → approved|rejected
+M4 states (after approved): workbench_running → candidate_ready → gate_passed|gate_failed → staged
+
+Approval alone still executes nothing; M4 workbench owns candidate build / gates / packager staging.
 """
 
 from __future__ import annotations
@@ -23,6 +25,20 @@ QUEUE_STATES = (
     "awaiting_approval",
     "approved",
     "rejected",
+    # M4 Build Mode workbench
+    "workbench_running",
+    "candidate_ready",
+    "gate_passed",
+    "gate_failed",
+    "staged",
+)
+
+M4_QUEUE_STATES = (
+    "workbench_running",
+    "candidate_ready",
+    "gate_passed",
+    "gate_failed",
+    "staged",
 )
 
 _LOCK = threading.Lock()
@@ -125,6 +141,11 @@ class ChangeRequestQueue:
         dry_run_report: Optional[Dict[str, Any]] = None,
         workspace: Optional[Dict[str, Any]] = None,
         decision: Optional[Dict[str, Any]] = None,
+        workbench_session: Optional[Dict[str, Any]] = None,
+        candidate: Optional[Dict[str, Any]] = None,
+        gate_report: Optional[Dict[str, Any]] = None,
+        promotion: Optional[Dict[str, Any]] = None,
+        audit_append: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if state not in QUEUE_STATES:
             raise ValueError(f"invalid queue state: {state}")
@@ -143,6 +164,22 @@ class ChangeRequestQueue:
                 item["workspace"] = workspace
             if decision is not None:
                 item["decision"] = decision
+            if workbench_session is not None:
+                item["workbench_session"] = workbench_session
+            if candidate is not None:
+                item["candidate"] = candidate
+            if gate_report is not None:
+                item["gate_report"] = gate_report
+            if promotion is not None:
+                item["promotion"] = promotion
+            if audit_append is not None:
+                trail = item.setdefault("audit_trail", [])
+                if not isinstance(trail, list):
+                    trail = []
+                    item["audit_trail"] = trail
+                entry = dict(audit_append)
+                entry.setdefault("at", item["updated_at"])
+                trail.append(entry)
             self._atomic_write(self._item_path(request_id), item)
             self._redis_index(item)
             return item
