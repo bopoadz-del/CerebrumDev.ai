@@ -298,6 +298,18 @@ except ImportError:
                 "embedding_provider": "local_feature_hash_v1",
                 "vector_adapter": "local_flat_json_v1",
                 "routes": ["/v1/rag/query", "/v1/rag/ingest", "/v1/rag/dual"],
+                "notes": "Zero-deps CI/local fallback when STEWARD_DATABASE_URL is unset.",
+            },
+            "pilot_path": {
+                "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
+                "vector_adapter": "postgres_jsonb_v1",
+                "routes": ["/v1/rag/query", "/v1/rag/ingest", "/v1/rag/dual", "/v1/rag/bootstrap"],
+                "env": [
+                    "STEWARD_DATABASE_URL",
+                    "STEWARD_EMBED_BACKEND=fastembed",
+                    "STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1",
+                    "STEWARD_REQUIRE_PERSISTENT_RAG=1",
+                ],
             },
             "production_path": {
                 "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
@@ -316,14 +328,15 @@ except ImportError:
                     "steward_fleet_open_v1",
                 ],
             },
-            "embedding_provider": "local_feature_hash_v1",
-            "vector_adapter": "local_flat_json_v1",
+            "embedding_provider": "env:STEWARD_EMBED_BACKEND",
+            "vector_adapter": "env:STEWARD_RAG_PERSISTENCE",
             "honesty": (
-                "Demo JSONL dual RAG remains on /v1/rag/* for zero-deps cold start. "
-                "Production path is app/steward (Postgres 16 + pgvector, hybrid RRF, "
-                "governed packs). Set STEWARD_DATABASE_URL and STEWARD_EMBED_BACKEND="
-                "fastembed; STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1 fails closed "
-                "(no silent hash fallback)."
+                "/v1/rag/* serves the live dual RAG path. With STEWARD_DATABASE_URL set, "
+                "chunks/embeddings persist in Postgres (postgres_jsonb_v1). With "
+                "STEWARD_EMBED_BACKEND=fastembed, live embedding_provider is "
+                "fastembed:BAAI/bge-small-en-v1.5. STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1 "
+                "and STEWARD_REQUIRE_PERSISTENT_RAG=1 fail closed (no silent hash/JSONL). "
+                "Full hybrid RRF + governed packs remain on /v1/steward/rag/*."
             ),
         }
         rag_docs = out / "docs" / "rag"
@@ -401,18 +414,29 @@ except ImportError:
 
     def _write_runtime_packaging(self, out: Path) -> None:
         """Emit Dockerfile + Procfile so generated products are Render-deployable."""
-        (out / "Dockerfile").write_text(
-            "FROM python:3.12-slim\n"
-            "WORKDIR /app\n"
-            "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
-            "COPY requirements.txt .\n"
-            "RUN pip install --no-cache-dir -r requirements.txt\n"
-            "COPY . .\n"
-            "ENV PYTHONPATH=/app\n"
-            "EXPOSE 8000\n"
-            'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n',
-            encoding="utf-8",
+        docker_lines = [
+            "FROM python:3.12-slim",
+            "WORKDIR /app",
+            "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1",
+            "COPY requirements.txt .",
+            "RUN pip install --no-cache-dir -r requirements.txt",
+        ]
+        if self.blueprint.vertical == "estate":
+            # Warm FastEmbed ONNX weights at build time so first request is not a download.
+            docker_lines.append(
+                "RUN python -c \"from fastembed import TextEmbedding; "
+                "TextEmbedding(model_name='BAAI/bge-small-en-v1.5')\" "
+                "|| echo 'fastembed warm skipped'"
+            )
+        docker_lines.extend(
+            [
+                "COPY . .",
+                "ENV PYTHONPATH=/app",
+                "EXPOSE 8000",
+                'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]',
+            ]
         )
+        (out / "Dockerfile").write_text("\n".join(docker_lines) + "\n", encoding="utf-8")
         (out / "Procfile").write_text(
             "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n",
             encoding="utf-8",
@@ -422,19 +446,29 @@ except ImportError:
   - type: web
     name: {self.blueprint.product_id}
     runtime: docker
-    plan: free
+    plan: starter
     healthCheckPath: /health
     envVars:
       - key: RESIDENT_ENGINEER_ENABLED
-        value: "true"
+        value: "false"
       - key: PYTHONPATH
         value: /app
       - key: STEWARD_EMBED_BACKEND
-        value: hash
+        value: fastembed
       - key: STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS
-        value: "0"
-      # For production RAG: provision Postgres 16 + pgvector, set STEWARD_DATABASE_URL,
-      # STEWARD_EMBED_BACKEND=fastembed, STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1.
+        value: "1"
+      - key: STEWARD_REQUIRE_PERSISTENT_RAG
+        value: "1"
+      - key: STEWARD_RAG_PERSISTENCE
+        value: postgres
+      - key: STEWARD_DATABASE_URL
+        fromDatabase:
+          name: {self.blueprint.product_id}-db
+          property: connectionString
+databases:
+  - name: {self.blueprint.product_id}-db
+    plan: basic-256mb
+    postgresMajorVersion: "16"
 """,
             encoding="utf-8",
         )

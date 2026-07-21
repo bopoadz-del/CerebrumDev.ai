@@ -154,7 +154,12 @@ def main() -> int:
     dual_status, dual_body = _http_get(f"{args.base_url.rstrip('/')}/v1/rag/dual")
     embedding = None
     if dual_status == 200 and isinstance(dual_body, dict):
-        embedding = (dual_body.get("config") or {}).get("embedding_provider")
+        embedding = dual_body.get("embedding_provider") or (
+            (dual_body.get("runtime") or {}).get("embedding_provider")
+        ) or ((dual_body.get("config") or {}).get("embedding_provider"))
+        persistence = (dual_body.get("runtime") or {}).get("persistence_adapter")
+        if persistence:
+            print(f"persistence_adapter={persistence}", file=sys.stderr)
     try:
         req = urllib.request.Request(
             f"{args.base_url.rstrip('/')}/v1/rag/bootstrap",

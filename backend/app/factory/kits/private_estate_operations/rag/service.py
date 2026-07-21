@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.estate_kit.rag.chunking import DEFAULT_CHUNKING_VERSION, chunk_hash, chunk_text
-from app.estate_kit.rag.embeddings import LOCAL_FEATURE_HASH_V1, cosine_similarity, embed_text
-from app.estate_kit.rag.store import IndexStats, RagIndexStore
+from app.estate_kit.rag.config import DualRagConfig, get_dual_rag_config
+from app.estate_kit.rag.embeddings import cosine_similarity, get_embedder, reset_embedder
+from app.estate_kit.rag.store import IndexStats, build_rag_store
 
 LAYER_INDEX: Dict[int, str] = {
     1: "steward_sop_v1",
@@ -49,11 +50,36 @@ class RagHit:
 
 
 class DualRagService:
-    def __init__(self, product_root: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        product_root: Optional[Path] = None,
+        config: Optional[DualRagConfig] = None,
+    ) -> None:
         self.product_root = product_root or Path(__file__).resolve().parents[3]
-        self.store = RagIndexStore(self.product_root / "data" / "rag")
+        self.config = config or get_dual_rag_config()
+        self.store = build_rag_store(product_root=self.product_root, config=self.config)
         self._bootstrap_lock = threading.Lock()
         self._bootstrapped = False
+
+    @property
+    def embedding_provider(self) -> str:
+        return get_embedder(self.config).provider_id
+
+    @property
+    def persistence_adapter(self) -> str:
+        return getattr(self.store, "adapter_id", "unknown")
+
+    def runtime_status(self) -> Dict[str, Any]:
+        return {
+            "embedding_provider": self.embedding_provider,
+            "embedding_fingerprint": self.config.fingerprint(),
+            "embed_backend": self.config.embed_backend,
+            "persistence_adapter": self.persistence_adapter,
+            "persistent": self.config.use_postgres(),
+            "require_production_embeddings": self.config.require_production_embeddings,
+            "require_persistent_rag": self.config.require_persistent_rag,
+            "database_configured": bool(self.config.database_url),
+        }
 
     def ensure_bootstrapped(self) -> None:
         if self._bootstrapped:
@@ -61,6 +87,9 @@ class DualRagService:
         with self._bootstrap_lock:
             if self._bootstrapped:
                 return
+            # Fail closed early when production flags are set.
+            self.config.validate_or_raise()
+            get_embedder(self.config)
             if self._indices_empty():
                 self.bootstrap_from_fixtures()
             self._bootstrapped = True
@@ -93,7 +122,12 @@ class DualRagService:
                     version=doc.get("version"),
                 )
                 ingested.append(doc_id)
-        return {"ok": True, "ingested_doc_ids": ingested}
+        return {
+            "ok": True,
+            "ingested_doc_ids": ingested,
+            "embedding_provider": self.embedding_provider,
+            "persistence_adapter": self.persistence_adapter,
+        }
 
     def ingest_document(
         self,
@@ -112,10 +146,11 @@ class DualRagService:
         if not text.strip():
             raise ValueError("text is required")
 
+        embedder = get_embedder(self.config)
         index_id = LAYER_INDEX[layer]
         text_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         chunks = chunk_text(text)
-        vectors = [embed_text(chunk.text) for chunk in chunks]
+        vectors = [embedder.embed(chunk.text) for chunk in chunks]
         records: List[Dict[str, Any]] = []
         for chunk, vector in zip(chunks, vectors):
             chunk_id = chunk_hash(
@@ -140,7 +175,7 @@ class DualRagService:
                     "character_end": chunk.character_end,
                     "text": chunk.text,
                     "text_hash": text_hash,
-                    "embedding_provider": LOCAL_FEATURE_HASH_V1,
+                    "embedding_provider": embedder.provider_id,
                     "vector": vector,
                 }
             )
@@ -151,6 +186,8 @@ class DualRagService:
             "index_id": index_id,
             "doc_id": doc_id,
             "chunk_count": len(records),
+            "embedding_provider": embedder.provider_id,
+            "persistence_adapter": self.persistence_adapter,
         }
 
     def query(
@@ -174,7 +211,8 @@ class DualRagService:
         else:
             raise ValueError(f"Unsupported layer: {layer}")
 
-        query_vector = embed_text(q)
+        embedder = get_embedder(self.config)
+        query_vector = embedder.embed(q)
         hits: List[RagHit] = []
         for lyr in layers:
             index_id = LAYER_INDEX[lyr]
@@ -226,7 +264,8 @@ class DualRagService:
             "hit_count": len(top_hits),
             "hits": [hit.to_dict() for hit in top_hits],
             "insufficiency": len(top_hits) == 0,
-            "embedding_provider": LOCAL_FEATURE_HASH_V1,
+            "embedding_provider": embedder.provider_id,
+            "persistence_adapter": self.persistence_adapter,
         }
 
     def index_stats(self) -> List[IndexStats]:
@@ -245,3 +284,9 @@ def get_rag_service() -> DualRagService:
     if _SERVICE is None:
         _SERVICE = DualRagService()
     return _SERVICE
+
+
+def reset_rag_service() -> None:
+    global _SERVICE
+    _SERVICE = None
+    reset_embedder()

@@ -103,7 +103,9 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
     assert (out / "app" / "estate_kit" / "rag" / "service.py").is_file()
     assert (out / "app" / "estate_kit" / "rag" / "store.py").is_file()
     dual_cfg = json.loads((out / "docs" / "rag" / "dual_rag.json").read_text())
-    assert dual_cfg.get("embedding_provider") == "local_feature_hash_v1"
+    assert "pilot_path" in dual_cfg
+    assert dual_cfg["pilot_path"]["embedding_provider"].startswith("fastembed:")
+    assert "STEWARD_DATABASE_URL" in dual_cfg["honesty"]
     assert (out / "frontend" / "src" / "routes" / "deepLinks.ts").is_file()
     assert (out / "product-dna" / "checksum_manifest.json").is_file()
     assert verify_checksum_manifest(out / "product-dna") == []
@@ -189,7 +191,7 @@ def test_kit_manifest_version():
             / "backend/app/factory/vendor_blocks_mirror/private_estate_operations_kit/manifest.json"
         ).read_text()
     )
-    assert manifest["version"] == "1.2.0"
+    assert manifest["version"] == "1.3.0"
     assert "dual_rag" in manifest
     assert "house_manual_sop" in manifest["capabilities"]
     assert (ROOT / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json").is_file()

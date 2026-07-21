@@ -1,4 +1,4 @@
-"""JSONL vector index persistence for estate dual RAG layers."""
+"""JSONL vector index persistence for estate dual RAG layers (ephemeral disk fallback)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Protocol, Union
+
+from app.estate_kit.rag.config import DualRagConfig, get_dual_rag_config
 
 
 @dataclass
@@ -17,7 +19,35 @@ class IndexStats:
     document_count: int
 
 
+class RagIndexStoreProtocol(Protocol):
+    def read_manifest(self, index_id: str) -> Optional[Dict[str, Any]]: ...
+
+    def read_records(self, index_id: str) -> List[Dict[str, Any]]: ...
+
+    def write_index(
+        self,
+        index_id: str,
+        *,
+        layer: int,
+        manifest_extra: Optional[Dict[str, Any]] = None,
+        records: List[Dict[str, Any]],
+    ) -> None: ...
+
+    def upsert_document(
+        self,
+        index_id: str,
+        *,
+        layer: int,
+        doc_id: str,
+        new_records: List[Dict[str, Any]],
+    ) -> None: ...
+
+    def stats(self, index_id: str, *, layer: int) -> IndexStats: ...
+
+
 class RagIndexStore:
+    adapter_id = "local_flat_json_v1"
+
     def __init__(self, base_path: Path) -> None:
         self.base_path = base_path
         self.base_path.mkdir(parents=True, exist_ok=True)
@@ -59,15 +89,21 @@ class RagIndexStore:
         index_dir = self.index_dir(index_id)
         index_dir.mkdir(parents=True, exist_ok=True)
         doc_ids = sorted({str(r.get("doc_id") or "") for r in records if r.get("doc_id")})
+        embedding_provider = "local_feature_hash_v1"
+        if records:
+            embedding_provider = str(
+                records[0].get("embedding_provider") or embedding_provider
+            )
         manifest: Dict[str, Any] = {
             "index_id": index_id,
             "layer": layer,
-            "adapter_id": "local_flat_json_v1",
-            "embedding_provider": "local_feature_hash_v1",
+            "adapter_id": self.adapter_id,
+            "embedding_provider": embedding_provider,
             "dimensions": 384,
             "distance_metric": "cosine",
             "record_count": len(records),
             "document_count": len(doc_ids),
+            "durable": False,
         }
         if manifest_extra:
             manifest.update(manifest_extra)
@@ -116,3 +152,18 @@ class RagIndexStore:
                 document_count=int(manifest.get("document_count") or 0),
             )
         return IndexStats(index_id=index_id, layer=layer, record_count=0, document_count=0)
+
+
+def build_rag_store(
+    *,
+    product_root: Path,
+    config: Optional[DualRagConfig] = None,
+) -> Union[RagIndexStore, Any]:
+    """Return Postgres store when configured; otherwise JSONL under data/rag/."""
+    config = config or get_dual_rag_config()
+    config.validate_or_raise()
+    if config.use_postgres():
+        from app.estate_kit.rag.postgres_store import PostgresRagIndexStore
+
+        return PostgresRagIndexStore(config.normalized_psycopg_url())
+    return RagIndexStore(product_root / "data" / "rag")

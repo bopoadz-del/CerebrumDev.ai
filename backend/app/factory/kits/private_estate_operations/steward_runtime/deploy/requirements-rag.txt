@@ -6,5 +6,7 @@ pgvector>=0.2.5
 pypdf>=4.0.0
 python-docx>=1.1.0
 openpyxl>=3.1.0
-# Optional production embeddings (install when STEWARD_EMBED_BACKEND=fastembed):
-# fastembed>=0.3.0
+# Production / pilot embeddings (ONNX bge-small). Fail-closed when
+# STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1 and this package cannot load.
+fastembed>=0.3.0
+numpy>=1.26.0
