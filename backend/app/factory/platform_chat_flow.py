@@ -37,6 +37,13 @@ _PLATFORM_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Kit-configurator vocabulary: messages about chains/blocks/kits/domains stay
+# in the legacy chat flow even if they also mention a platform noun.
+_KIT_CONFIG_RE = re.compile(
+    r"\b(chain|block|blocks|kit|kits|domain|lora|learning\s*rate|vector\s*db|hnsw)\b",
+    re.IGNORECASE,
+)
+
 _APPROVAL_RE = re.compile(
     r"^\s*(approve|approved|go\s*ahead|looks\s*good|generate\s*it|"
     r"build\s*it|yes\b.*\b(build|generate|approve))",
@@ -46,7 +53,10 @@ _APPROVAL_RE = re.compile(
 
 def is_platform_intent(message: str) -> bool:
     """True when the message asks the factory to create a platform/product."""
-    return bool(_PLATFORM_INTENT_RE.search(message or ""))
+    text = message or ""
+    if _KIT_CONFIG_RE.search(text):
+        return False
+    return bool(_PLATFORM_INTENT_RE.search(text))
 
 
 def is_approval(message: str) -> bool:
@@ -90,8 +100,8 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
     pd.last_error = None
     pd.mode = "product"
 
-    capabilities = [c.name for c in bp.capabilities]
-    blocks = sorted({b for c in bp.capabilities for b in c.blocks})
+    capabilities = [c.id for c in bp.capabilities]
+    blocks = sorted({b for c in bp.capabilities for b in c.block_ids})
     source = "golden_steward" if bp.product_id == "cerebrum-steward" else "drafted"
     summary = (
         f"Blueprint drafted: {bp.product_name} ({bp.vertical}). "
