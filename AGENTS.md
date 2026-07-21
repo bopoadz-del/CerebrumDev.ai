@@ -2,6 +2,12 @@
 
 ## Cursor Cloud specific instructions
 
+### Committed cloud environment (versioned)
+
+- Cloud agents use [`.cursor/environment.json`](.cursor/environment.json) (Dockerfile build + idempotent `install` + multitasking `terminals` for backend/frontend).
+- Base image: [`.cursor/Dockerfile`](.cursor/Dockerfile) (Ubuntu 24.04, Python 3 + Node 20 + build tools). Do not `COPY` the project into that image.
+- To reuse across other repos: copy `docs/cursor-cloud/reusable-base/` into that repo's `.cursor/` and edit only `install` / `terminals`. See [`docs/cursor-cloud/REUSE.md`](docs/cursor-cloud/REUSE.md).
+
 ### Local dev environment (non-obvious)
 
 - Backend deps live in a venv at `backend/venv` (Python 3.12 on the VM works; CI/Docker pin 3.11). Run the API in dev with `cd backend && ENV=dev ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000`. Health/readiness: `GET /health`, `GET /ready`.
