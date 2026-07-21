@@ -167,6 +167,7 @@ from app.resident_engineer.flags import resident_engineer_enabled
 from app.resident_engineer.observe import observe
 from app.resident_engineer.diagnosis import build_failure_report
 from app.resident_engineer.modes import draft_change_request
+from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
 from app.resident_engineer.heal.executor import HealRejected, execute_heal
 from app.resident_engineer.heal.validate import HealValidationError
 
@@ -174,12 +175,29 @@ router = APIRouter(prefix="/v1/resident", tags=["resident-engineer"])
 
 
 def _root() -> Path:
-    return Path.cwd()
+    # app/resident_engineer/router.py → product root (parent of app/)
+    return Path(__file__).resolve().parents[2]
 
 
 def _require_enabled() -> None:
     if not resident_engineer_enabled():
         raise HTTPException(status_code=503, detail="RESIDENT_ENGINEER_ENABLED is false")
+
+
+@router.get("/status")
+async def resident_status() -> Dict[str, Any]:
+    """Always available — reports flag + allowlist (no heal execution)."""
+    return {
+        "enabled": resident_engineer_enabled(),
+        "mode": "resident",
+        "allowlisted_heal_actions": list(ALLOWLISTED_HEAL_ACTIONS),
+        "product_root": str(_root()),
+        "levels": {
+            "L1": "observe",
+            "L2": "allowlisted_heal",
+            "L3_L5": "draft_change_request_only",
+        },
+    }
 
 
 @router.get("/observe")
