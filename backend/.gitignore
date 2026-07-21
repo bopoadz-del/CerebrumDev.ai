@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 test_storage/
+!app/factory/vendor_blocks_mirror/storage/
+!app/factory/vendor_blocks_mirror/storage/**
 storage/
 chroma_data/
 .env
