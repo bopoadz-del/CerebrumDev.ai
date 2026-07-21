@@ -20,6 +20,7 @@ from .routers import (
     session_product,
 )
 from .resident_engineer.router import router as resident_engineer_router
+from .change_requests.router import router as change_requests_router
 
 verify_production_auth()
 
@@ -66,6 +67,10 @@ app.include_router(
 )
 app.include_router(
     resident_engineer_router,
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    change_requests_router,
     dependencies=[Depends(require_api_key)],
 )
 
