@@ -2,7 +2,7 @@
   "suite_id": "steward_live_oracle_v1",
   "issue": 73,
   "base_url_default": "https://cerebrum-steward.onrender.com",
-  "embedding_claim": "Must match live /v1/rag/dual embedding_provider (expected local_feature_hash_v1 until Postgres/FastEmbed production path is deployed).",
+  "embedding_claim": "Must match live /v1/rag/dual embedding_provider. Pilot path expects fastembed:BAAI/bge-small-en-v1.5 with Postgres persistence; hash/JSONL is CI-only fallback.",
   "acceptance_notes": [
     "Cross-layer isolation: L1 cases must not cite L2 docs; L2 cases must not cite L1 docs.",
     "Two unknown questions must return honest insufficiency (hit_count=0, insufficiency=true).",

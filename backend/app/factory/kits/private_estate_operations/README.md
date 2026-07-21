@@ -15,6 +15,16 @@ blocks from Cerebrum-Blocks (clone/read only — never write to Blocks from here
 - **Layer 1** (`sop_standards`): House Manual / SOP / global standards
 - **Layer 2** (`estate_documents`): per-estate documents, separately indexed
 
+### Live path (`/v1/rag/*`)
+
+| Mode | Env | Persistence | Embeddings |
+|------|-----|-------------|------------|
+| CI / local default | unset | JSONL under `data/rag/` | `local_feature_hash_v1` |
+| **Pilot** | `STEWARD_DATABASE_URL` + `STEWARD_EMBED_BACKEND=fastembed` | Postgres `postgres_jsonb_v1` | `fastembed:BAAI/bge-small-en-v1.5` |
+
+Fail-closed flags: `STEWARD_REQUIRE_PERSISTENT_RAG=1`, `STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1`
+(no silent hash/JSONL fallback). Full hybrid RRF + governed packs remain on `/v1/steward/rag/*`.
+
 ## Connectors
 
 `cmms_stub`, `iot_stub`, `document_vault_stub`, `smart_home_placeholder` are

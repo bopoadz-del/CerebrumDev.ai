@@ -77,7 +77,11 @@ def maintenance_calendar() -> Dict[str, Any]:
 @router.get("/v1/rag/dual")
 def dual_rag_status() -> Dict[str, Any]:
     service = get_rag_service()
-    service.ensure_bootstrapped()
+    try:
+        service.ensure_bootstrapped()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    runtime = service.runtime_status()
     indices = [
         {
             "index_id": stat.index_id,
@@ -87,7 +91,23 @@ def dual_rag_status() -> Dict[str, Any]:
         }
         for stat in service.index_stats()
     ]
-    return {"ok": True, "config": _dual_rag_meta(), "indices": indices}
+    meta = _dual_rag_meta()
+    # Live honesty: surface the actually-serving provider, not just the template claim.
+    meta = {
+        **meta,
+        "embedding_provider": runtime["embedding_provider"],
+        "vector_adapter": runtime["persistence_adapter"],
+        "active_path": "persistent_postgres"
+        if runtime["persistent"]
+        else "ephemeral_jsonl",
+    }
+    return {
+        "ok": True,
+        "config": meta,
+        "runtime": runtime,
+        "embedding_provider": runtime["embedding_provider"],
+        "indices": indices,
+    }
 
 
 @router.post("/v1/rag/ingest")
@@ -102,6 +122,8 @@ def dual_rag_ingest(body: RagIngestRequest) -> Dict[str, Any]:
             property_id=body.property_id,
             version=body.version,
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result
@@ -110,7 +132,12 @@ def dual_rag_ingest(body: RagIngestRequest) -> Dict[str, Any]:
 @router.post("/v1/rag/bootstrap")
 def dual_rag_bootstrap() -> Dict[str, Any]:
     """Re-ingest demo fixtures into empty or refreshed indices."""
-    return get_rag_service().bootstrap_from_fixtures()
+    service = get_rag_service()
+    try:
+        service.config.validate_or_raise()
+        return service.bootstrap_from_fixtures()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/v1/rag/query")
@@ -126,7 +153,15 @@ def dual_rag_query(
         result = service.query(
             q, layer=layer, top_k=top_k, min_score=min_score, property_id=property_id
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    result["config"] = _dual_rag_meta()
+    meta = _dual_rag_meta()
+    meta = {
+        **meta,
+        "embedding_provider": result.get("embedding_provider"),
+        "vector_adapter": result.get("persistence_adapter"),
+    }
+    result["config"] = meta
     return result
