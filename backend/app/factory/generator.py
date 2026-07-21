@@ -71,6 +71,7 @@ class ProductGenerator:
         self._write_certification_scaffold(out)
         if self.blueprint.vertical == "estate":
             self._write_estate_kit_surfaces(out)
+        self._write_runtime_packaging(out)
 
         # Product DNA after catalogs exist — sole Resident Mode understanding surface.
         change_events = []
@@ -423,6 +424,40 @@ except ImportError:
             "  backoffMs: [1000, 3000, 8000],\n"
             "  message: 'Service waking up — retrying…',\n"
             "};\n",
+            encoding="utf-8",
+        )
+
+    def _write_runtime_packaging(self, out: Path) -> None:
+        """Emit Dockerfile + Procfile so generated products are Render-deployable."""
+        (out / "Dockerfile").write_text(
+            "FROM python:3.12-slim\n"
+            "WORKDIR /app\n"
+            "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
+            "COPY requirements.txt .\n"
+            "RUN pip install --no-cache-dir -r requirements.txt\n"
+            "COPY . .\n"
+            "ENV PYTHONPATH=/app\n"
+            "EXPOSE 8000\n"
+            'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n',
+            encoding="utf-8",
+        )
+        (out / "Procfile").write_text(
+            "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n",
+            encoding="utf-8",
+        )
+        (out / "render.yaml").write_text(
+            f"""services:
+  - type: web
+    name: {self.blueprint.product_id}
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: RESIDENT_ENGINEER_ENABLED
+        value: "true"
+      - key: PYTHONPATH
+        value: /app
+""",
             encoding="utf-8",
         )
 

@@ -34,6 +34,10 @@ def test_generate_injects_runtime_and_dna_loader(tmp_path):
     out = tmp_path / "steward"
     result = ProductGenerator(bp, blocks_root=None).generate(out)
     assert (out / "app" / "resident_engineer" / "router.py").is_file()
+    router_src = (out / "app" / "resident_engineer" / "router.py").read_text(encoding="utf-8")
+    assert '@router.get("/status")' in router_src
+    assert (out / "Dockerfile").is_file()
+    assert (out / "Procfile").is_file()
     assert (out / "app" / "resident_engineer" / "heal" / "catalog.py").is_file()
     assert (out / "product-dna" / "checksum_manifest.json").is_file()
     assert "resident.retry_ingestion" in result["resident_runtime"]["allowlisted_heals"]
