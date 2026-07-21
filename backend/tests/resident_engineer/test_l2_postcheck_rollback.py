@@ -23,7 +23,6 @@ async def test_postcheck_failure_rolls_back():
         await execute_heal(
             "resident.rebuild_index",
             confirmed=True,
-            approval_id="test-approval",
             force_post_check_fail=True,
         )
     after = get_heal_state()

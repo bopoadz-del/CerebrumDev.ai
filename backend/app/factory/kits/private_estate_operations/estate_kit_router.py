@@ -10,20 +10,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.estate_kit.rag.service import get_rag_service
-from app.steward.config import get_config
-from app.steward.errors import safe_http_exception
 
 router = APIRouter(tags=["estate-kit"])
-
-
-def _legacy_rag_guard() -> None:
-    cfg = get_config()
-    if not cfg.legacy_rag_enabled:
-        raise safe_http_exception(
-            404,
-            code="legacy_rag_disabled",
-            message="Legacy /v1/rag/* routes are disabled; use /v1/steward/rag/*",
-        )
 
 
 def _fixtures() -> Dict[str, Any]:
@@ -88,16 +76,11 @@ def maintenance_calendar() -> Dict[str, Any]:
 
 @router.get("/v1/rag/dual")
 def dual_rag_status() -> Dict[str, Any]:
-    _legacy_rag_guard()
     service = get_rag_service()
     try:
         service.ensure_bootstrapped()
-    except RuntimeError:
-        raise safe_http_exception(
-            503,
-            code="rag_unavailable",
-            message="RAG service is unavailable",
-        ) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     runtime = service.runtime_status()
     indices = [
         {
@@ -129,7 +112,6 @@ def dual_rag_status() -> Dict[str, Any]:
 
 @router.post("/v1/rag/ingest")
 def dual_rag_ingest(body: RagIngestRequest) -> Dict[str, Any]:
-    _legacy_rag_guard()
     service = get_rag_service()
     try:
         result = service.ingest_document(
@@ -140,35 +122,22 @@ def dual_rag_ingest(body: RagIngestRequest) -> Dict[str, Any]:
             property_id=body.property_id,
             version=body.version,
         )
-    except RuntimeError:
-        raise safe_http_exception(
-            503,
-            code="rag_unavailable",
-            message="RAG service is unavailable",
-        ) from None
-    except ValueError:
-        raise safe_http_exception(
-            400,
-            code="rag_request_invalid",
-            message="RAG request is invalid",
-        ) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return result
 
 
 @router.post("/v1/rag/bootstrap")
 def dual_rag_bootstrap() -> Dict[str, Any]:
     """Re-ingest demo fixtures into empty or refreshed indices."""
-    _legacy_rag_guard()
     service = get_rag_service()
     try:
         service.config.validate_or_raise()
         return service.bootstrap_from_fixtures()
-    except RuntimeError:
-        raise safe_http_exception(
-            503,
-            code="rag_unavailable",
-            message="RAG service is unavailable",
-        ) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/v1/rag/query")
@@ -179,24 +148,15 @@ def dual_rag_query(
     min_score: float = Query(0.05, ge=0.0, le=1.0),
     property_id: Optional[str] = Query(None, min_length=1),
 ) -> Dict[str, Any]:
-    _legacy_rag_guard()
     service = get_rag_service()
     try:
         result = service.query(
             q, layer=layer, top_k=top_k, min_score=min_score, property_id=property_id
         )
-    except RuntimeError:
-        raise safe_http_exception(
-            503,
-            code="rag_unavailable",
-            message="RAG service is unavailable",
-        ) from None
-    except ValueError:
-        raise safe_http_exception(
-            400,
-            code="rag_request_invalid",
-            message="RAG request is invalid",
-        ) from None
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     meta = _dual_rag_meta()
     meta = {
         **meta,

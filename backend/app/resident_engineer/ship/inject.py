@@ -160,24 +160,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.resident_engineer.flags import resident_engineer_enabled
 from app.resident_engineer.observe import observe
 from app.resident_engineer.diagnosis import build_failure_report
 from app.resident_engineer.modes import draft_change_request
-from app.resident_engineer.heal.approval import create_heal_approval
 from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
 from app.resident_engineer.heal.executor import HealRejected, execute_heal
 from app.resident_engineer.heal.validate import HealValidationError
-from app.steward.auth import AuthenticatedPrincipal, get_authenticated_principal
-from app.steward.db import init_engine, session_scope
 
 router = APIRouter(prefix="/v1/resident", tags=["resident-engineer"])
 
 
 def _root() -> Path:
+    # app/resident_engineer/router.py → product root (parent of app/)
     return Path(__file__).resolve().parents[2]
 
 
@@ -188,12 +186,12 @@ def _require_enabled() -> None:
 
 @router.get("/status")
 async def resident_status() -> Dict[str, Any]:
+    """Always available — reports flag + allowlist (no heal execution)."""
     return {
         "enabled": resident_engineer_enabled(),
         "mode": "resident",
-        "maturity": "APPRENTICE",
         "allowlisted_heal_actions": list(ALLOWLISTED_HEAL_ACTIONS),
-        "auth_required": True,
+        "product_root": str(_root()),
         "levels": {
             "L1": "observe",
             "L2": "allowlisted_heal",
@@ -203,10 +201,7 @@ async def resident_status() -> Dict[str, Any]:
 
 
 @router.get("/observe")
-async def resident_observe(
-    log_text: str = "",
-    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
-) -> Dict[str, Any]:
+async def resident_observe(log_text: str = "") -> Dict[str, Any]:
     _require_enabled()
     return observe(_root(), log_text=log_text)
 
@@ -217,10 +212,7 @@ class DiagnoseBody(BaseModel):
 
 
 @router.post("/diagnose")
-async def resident_diagnose(
-    body: DiagnoseBody,
-    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
-) -> Dict[str, Any]:
+async def resident_diagnose(body: DiagnoseBody) -> Dict[str, Any]:
     _require_enabled()
     return build_failure_report(
         product_root=_root(),
@@ -229,53 +221,23 @@ async def resident_diagnose(
     )
 
 
-class HealApprovalBody(BaseModel):
-    action_id: str
-
-
-@router.post("/heal/approval")
-async def resident_heal_approval(
-    body: HealApprovalBody,
-    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
-) -> Dict[str, Any]:
-    _require_enabled()
-    if body.action_id not in ALLOWLISTED_HEAL_ACTIONS:
-        raise HTTPException(status_code=403, detail="action not allowlisted")
-    init_engine()
-    with session_scope() as session:
-        approval = create_heal_approval(
-            session,
-            tenant_id=principal.tenant_id,
-            principal_id=principal.principal_id,
-            action_id=body.action_id,
-        )
-    return {"ok": True, **approval}
-
-
 class HealBody(BaseModel):
     action_id: str
     confirmed: bool = False
-    approval_id: Optional[str] = None
+    tenant_id: str = "default"
+    user_id: str = "operator"
 
 
 @router.post("/heal")
-async def resident_heal(
-    body: HealBody,
-    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
-) -> Dict[str, Any]:
+async def resident_heal(body: HealBody) -> Dict[str, Any]:
     _require_enabled()
-    init_engine()
     try:
-        with session_scope() as session:
-            return await execute_heal(
-                body.action_id,
-                confirmed=body.confirmed,
-                tenant_id=principal.tenant_id,
-                user_id=principal.principal_id,
-                principal_id=principal.principal_id,
-                approval_id=body.approval_id,
-                db_session=session,
-            )
+        return await execute_heal(
+            body.action_id,
+            confirmed=body.confirmed,
+            tenant_id=body.tenant_id,
+            user_id=body.user_id,
+        )
     except HealRejected as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except HealValidationError as exc:

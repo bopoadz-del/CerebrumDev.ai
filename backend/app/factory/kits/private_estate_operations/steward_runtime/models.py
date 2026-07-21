@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
@@ -11,9 +10,9 @@ from sqlalchemy import (
     Boolean,
     Computed,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
-    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -186,8 +185,8 @@ class FacilityAsset(Base):
     maintenance_interval_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     work_order_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), default="active")
-    cost: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
-    labour_hours: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
+    cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    labour_hours: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     inspection_result: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     evaluation_only: Mapped[bool] = mapped_column(Boolean, default=True)
     meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
