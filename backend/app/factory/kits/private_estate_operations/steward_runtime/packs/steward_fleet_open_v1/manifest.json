@@ -1,0 +1,17 @@
+{
+  "release_id": "2026.07.21",
+  "rag_pack_id": "steward_fleet_open_v1",
+  "collection_id": "steward_fleet",
+  "source_id": "cerebrum.platform.steward_fleet_mini",
+  "source_name": "Steward fleet mini fixture (evaluation-only)",
+  "publisher": "CerebrumDev.ai Factory",
+  "source_class": "evaluation_fixture",
+  "authority_level": "evaluation_only",
+  "authority_kind": "evaluation_only",
+  "licence": "CC0-1.0",
+  "original_url": "https://www.kaggle.com/datasets/datasetengineer/logistics-vehicle-maintenance-history-dataset",
+  "resolved_download_url": null,
+  "knowledge_layer": 2,
+  "profile_default": "mini",
+  "notes": "Full Kaggle loader requires credentials and degrades honestly when unavailable. Evaluation rows are never described as the estate's actual vehicles."
+}

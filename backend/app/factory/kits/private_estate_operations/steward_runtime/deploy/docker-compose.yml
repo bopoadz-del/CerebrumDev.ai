@@ -1,0 +1,27 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: steward
+      POSTGRES_PASSWORD: steward
+      POSTGRES_DB: steward
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U steward -d steward"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: ..
+    ports:
+      - "8000:8000"
+    environment:
+      STEWARD_DATABASE_URL: postgresql+psycopg://steward:steward@db:5432/steward
+      STEWARD_EMBED_BACKEND: hash
+      STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS: "0"
+      PYTHONPATH: /app
+    depends_on:
+      db:
+        condition: service_healthy

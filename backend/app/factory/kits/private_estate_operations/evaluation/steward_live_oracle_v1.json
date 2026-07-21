@@ -1,0 +1,157 @@
+{
+  "suite_id": "steward_live_oracle_v1",
+  "issue": 73,
+  "base_url_default": "https://cerebrum-steward.onrender.com",
+  "embedding_claim": "Must match live /v1/rag/dual embedding_provider (expected local_feature_hash_v1 until Postgres/FastEmbed production path is deployed).",
+  "acceptance_notes": [
+    "Cross-layer isolation: L1 cases must not cite L2 docs; L2 cases must not cite L1 docs.",
+    "Two unknown questions must return honest insufficiency (hit_count=0, insufficiency=true).",
+    "One property_id scoping case must exclude the other estate's documents.",
+    "Vehicle/facility cases use evaluation-labeled Layer-2 summaries on the live demo path (not claimed as estate truth)."
+  ],
+  "cases": [
+    {
+      "id": 1,
+      "name": "principal_guest_arrival",
+      "query": "Prepare the arrival checklist for the principal guests",
+      "endpoint": "/v1/rag/query",
+      "params": {"q": "Prepare the arrival checklist for the principal guests", "layer": "1"},
+      "expected_layer": 1,
+      "expect_top_doc_id": "sop-global-guest-arrival",
+      "require_citation": true,
+      "forbid_layers": [2],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 2,
+      "name": "turndown_service",
+      "query": "How should turndown service be performed?",
+      "endpoint": "/v1/rag/query",
+      "params": {"q": "How should turndown service be performed?", "layer": "1"},
+      "expected_layer": 1,
+      "expect_top_doc_id": "sop-global-turndown",
+      "require_citation": true,
+      "forbid_layers": [2],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 3,
+      "name": "privacy_discretion",
+      "query": "privacy discretion restricted information handling",
+      "endpoint": "/v1/rag/query",
+      "params": {"q": "privacy discretion restricted information handling", "layer": "1"},
+      "expected_layer": 1,
+      "expect_top_doc_id": "sop-global-privacy",
+      "require_citation": true,
+      "forbid_layers": [2],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 4,
+      "name": "housekeeping_defect_escalation",
+      "query": "housekeeping defect escalation maintenance handoff",
+      "endpoint": "/v1/rag/query",
+      "params": {"q": "housekeeping defect escalation maintenance handoff", "layer": "1"},
+      "expected_layer": 1,
+      "expect_top_doc_id": "sop-global-defect-escalation",
+      "require_citation": true,
+      "forbid_layers": [2],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 5,
+      "name": "vehicle_service_due",
+      "query": "When is vehicle VH-ESTATE-A-02 due for service?",
+      "endpoint": "/v1/rag/query",
+      "params": {
+        "q": "When is vehicle VH-ESTATE-A-02 due for service?",
+        "layer": "2",
+        "property_id": "prop-villa-tuscany"
+      },
+      "expected_layer": 2,
+      "expect_top_doc_id": "estate-villa-fleet-eval",
+      "require_citation": true,
+      "forbid_layers": [1],
+      "excerpt_must_contain": ["EVALUATION ONLY", "2026-07-25"],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 6,
+      "name": "facility_work_order",
+      "query": "pool filter replacement work order",
+      "endpoint": "/v1/rag/query",
+      "params": {
+        "q": "pool filter replacement work order",
+        "layer": "2",
+        "property_id": "prop-villa-tuscany"
+      },
+      "expected_layer": 2,
+      "expect_top_doc_id": "estate-villa-facility-eval",
+      "require_citation": true,
+      "forbid_layers": [1],
+      "excerpt_must_contain": ["EVALUATION ONLY", "wo-1003"],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 7,
+      "name": "estate_property_isolation",
+      "query": "pool chemicals east shed",
+      "endpoint": "/v1/rag/query",
+      "params": {
+        "q": "pool chemicals east shed",
+        "layer": "2",
+        "property_id": "prop-villa-tuscany"
+      },
+      "expected_layer": 2,
+      "expect_top_doc_id": "estate-villa-manual",
+      "require_citation": true,
+      "forbid_layers": [1],
+      "forbid_doc_ids": ["estate-apt-lease-notes"],
+      "forbid_property_ids": ["prop-apt-london"],
+      "expect_insufficiency": false
+    },
+    {
+      "id": 8,
+      "name": "unknown_insufficiency_teleporter",
+      "query": "What is the warranty procedure for the estate quantum teleporter array zxq?",
+      "endpoint": "/v1/rag/query",
+      "params": {
+        "q": "What is the warranty procedure for the estate quantum teleporter array zxq?",
+        "layer": "1",
+        "min_score": "0.2"
+      },
+      "expected_layer": 1,
+      "expect_insufficiency": true,
+      "require_citation": false
+    },
+    {
+      "id": 9,
+      "name": "unknown_insufficiency_and_no_synthetic_policy",
+      "query": "Describe the SOP for calibrating the fictional underwater laser chandelier ZX9",
+      "endpoint": "/v1/rag/query",
+      "params": {
+        "q": "Describe the SOP for calibrating the fictional underwater laser chandelier ZX9",
+        "layer": "1",
+        "min_score": "0.2"
+      },
+      "expected_layer": 1,
+      "expect_insufficiency": true,
+      "forbid_doc_id_substrings": ["intent", "bitext", "hospitality-internal"],
+      "require_citation": false,
+      "notes": "Second honest-insufficiency unknown. Also asserts no synthetic/intent doc ids appear as policy citations."
+    },
+    {
+      "id": 10,
+      "name": "citation_lineage",
+      "query": "guest arrival checklist security brief",
+      "endpoint": "/v1/rag/query",
+      "params": {"q": "guest arrival checklist security brief", "layer": "1"},
+      "expected_layer": 1,
+      "expect_top_doc_id": "sop-global-guest-arrival",
+      "require_citation": true,
+      "require_citation_fields": ["source_id", "layer", "record_id", "chunk_ordinal"],
+      "forbid_layers": [2],
+      "expect_insufficiency": false
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "release_id": "2026.07.21",
+  "rag_pack_id": "steward_service_core_open_v1",
+  "collection_id": "steward_service_core",
+  "source_id": "cerebrum.platform.steward_service_core",
+  "source_name": "Steward Service Core (platform curated SOP templates)",
+  "publisher": "CerebrumDev.ai Factory",
+  "source_class": "platform_curated",
+  "authority_level": "advisory",
+  "authority_kind": "advisory",
+  "licence": "CC0-1.0",
+  "original_url": null,
+  "resolved_download_url": null,
+  "knowledge_layer": 1,
+  "profile_default": "mini",
+  "research_urls": [
+    "https://www.canarytechnologies.com/post/hotel-checklists",
+    "https://www.mews.com/en/blog/hotel-checklist",
+    "https://www.cloudbeds.com/articles/hotel-task-management/"
+  ],
+  "notes": "Original controlled procedures. Public hotel articles used only as attributed research inputs — not copied."
+}

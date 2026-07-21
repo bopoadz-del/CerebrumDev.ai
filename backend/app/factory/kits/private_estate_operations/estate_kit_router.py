@@ -118,10 +118,14 @@ def dual_rag_query(
     q: str = Query(..., min_length=1),
     layer: Optional[int] = Query(None, ge=1, le=2),
     top_k: int = Query(5, ge=1, le=20),
+    min_score: float = Query(0.05, ge=0.0, le=1.0),
+    property_id: Optional[str] = Query(None, min_length=1),
 ) -> Dict[str, Any]:
     service = get_rag_service()
     try:
-        result = service.query(q, layer=layer, top_k=top_k)
+        result = service.query(
+            q, layer=layer, top_k=top_k, min_score=min_score, property_id=property_id
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     result["config"] = _dual_rag_meta()
