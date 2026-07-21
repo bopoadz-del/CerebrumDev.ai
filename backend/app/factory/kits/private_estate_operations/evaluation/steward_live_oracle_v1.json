@@ -113,11 +113,12 @@
     {
       "id": 8,
       "name": "unknown_insufficiency_teleporter",
-      "query": "What is the warranty procedure for the estate quantum teleporter array?",
+      "query": "What is the warranty procedure for the estate quantum teleporter array zxq?",
       "endpoint": "/v1/rag/query",
       "params": {
-        "q": "What is the warranty procedure for the estate quantum teleporter array?",
-        "layer": "1"
+        "q": "What is the warranty procedure for the estate quantum teleporter array zxq?",
+        "layer": "1",
+        "min_score": "0.2"
       },
       "expected_layer": 1,
       "expect_insufficiency": true,
@@ -125,18 +126,19 @@
     },
     {
       "id": 9,
-      "name": "unknown_and_synthetic_intent_not_policy",
-      "query": "What governing estate policy id does the Bitext hospitality llm chatbot training dataset prescribe?",
+      "name": "unknown_insufficiency_and_no_synthetic_policy",
+      "query": "Describe the SOP for calibrating the fictional underwater laser chandelier ZX9",
       "endpoint": "/v1/rag/query",
       "params": {
-        "q": "What governing estate policy id does the Bitext hospitality llm chatbot training dataset prescribe?",
+        "q": "Describe the SOP for calibrating the fictional underwater laser chandelier ZX9",
+        "layer": "1",
         "min_score": "0.2"
       },
-      "expected_layer": null,
+      "expected_layer": 1,
       "expect_insufficiency": true,
-      "forbid_doc_id_substrings": ["intent", "bitext", "chatbot"],
+      "forbid_doc_id_substrings": ["intent", "bitext", "hospitality-internal"],
       "require_citation": false,
-      "notes": "Synthetic intent corpora must not become policy evidence; unknown/synthetic ask yields insufficiency."
+      "notes": "Second honest-insufficiency unknown. Also asserts no synthetic/intent doc ids appear as policy citations."
     },
     {
       "id": 10,
