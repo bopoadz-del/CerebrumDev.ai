@@ -1,0 +1,31 @@
+{
+  "product_id": "cerebrum-steward",
+  "generated_at": "2026-07-21T08:07:12.356388+00:00",
+  "factory_commit": "bfa74b18e052496c7022f1f568b24c2825d2b880",
+  "inputs_hash_note": "see factory_plan.json / provenance",
+  "file_count": 227,
+  "key_artifacts": [
+    "product-dna/checksum_manifest.json",
+    "data/demo/estate_fixtures.json",
+    "docs/rag/dual_rag.json",
+    "app/estate_kit/router.py",
+    "app/resident_engineer/router.py",
+    "Dockerfile",
+    "Procfile",
+    "render.yaml"
+  ],
+  "github_repo_create": {
+    "attempted": true,
+    "result": "403 Resource not accessible by integration",
+    "required_action": "Owner creates bopoadz-del/Cerebrum-Steward (private) then run scripts/push_steward_sibling.sh"
+  },
+  "local_verify": {
+    "health": true,
+    "resident_status": true,
+    "resident_observe": true,
+    "dna_checksum": true,
+    "demo_fixtures": true,
+    "dual_rag_citations": true,
+    "dockerfile": true
+  }
+}
