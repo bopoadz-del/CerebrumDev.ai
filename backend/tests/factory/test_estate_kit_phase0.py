@@ -175,12 +175,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
     proc = subprocess.run(
         [sys.executable, "-c", probe],
         cwd=str(out),
-        env={
-            **dict(**{k: v for k, v in __import__("os").environ.items()}),
-            "PYTHONPATH": str(out),
-            # Legacy dual-RAG routes stay off in pilot profile; enable for this smoke probe.
-            "STEWARD_LEGACY_RAG_ENABLED": "1",
-        },
+        env={**dict(**{k: v for k, v in __import__("os").environ.items()}), "PYTHONPATH": str(out)},
         capture_output=True,
         text=True,
         check=False,
