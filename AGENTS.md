@@ -2,6 +2,18 @@
 
 ## Cursor Cloud specific instructions
 
+### PR babysit / auto-merge (owner rule)
+
+For Resident Engineer and related Factory milestone PRs on this repo:
+
+1. Babysit CI and triage review comments until the PR is merge-ready.
+2. When **all required checks are green**, the PR is **MERGEABLE/CLEAN**, and
+   blocking comments are addressed (or validly declined), **merge immediately** —
+   do **not** wait for an extra human review round.
+3. Never force-push. Never weaken CI workflows just to pass.
+
+See also `docs/resident-engineer/STANDING_ORDERS.md`.
+
 ### CerebrumDev.ai is the Factory
 
 This repository is the **product-generation factory**. It is not a RetailOps or

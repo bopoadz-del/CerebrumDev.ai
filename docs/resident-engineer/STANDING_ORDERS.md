@@ -10,17 +10,19 @@ Last updated: 2026-07-19. Agent must re-read this file at the start of every Res
 
 ## Standing rules (non-negotiable)
 
-1. **One milestone = one branch = one PR.** Stop after each PR for human review before starting the next.
+1. **One milestone = one branch = one PR.**
 2. **Never force-push.**
-3. **Never touch Render / dashboard** for this project (no env mutations, no deploys, no MCP Render writes).
-4. **Feature-flag everything.** Default: `RESIDENT_ENGINEER_ENABLED=false`.
+3. **Never touch Render / dashboard** for this project (no env mutations, no deploys, no MCP Render writes) unless the owner explicitly asks for a live UI deploy check.
+4. **Feature-flag everything.** Default: `RESIDENT_ENGINEER_ENABLED=false` (and sibling RE flags off).
 5. **Paste pytest output as PR evidence.**
 6. **Stop and ask when ambiguous.** If a milestone's scope balloons, propose a split — do not improvise scope.
 7. **No secrets in code.** No GitHub credentials shipped into generated products. No unrestricted shell anywhere.
-8. **Watch every PR until it is merged** (babysit CI + review comments; do not start the next milestone while the current PR is open).
+8. **Babysit every PR until it is merged.** Watch CI + triage review/Bugbot comments; fix merge conflicts and in-scope CI failures.
+9. **Auto-merge when green (owner rule, 2026-07-21):** once checks are all green, the PR is mergeable/CLEAN, and unresolved blocking comments are triaged, **merge without waiting for further human review**. Then start the next milestone.
 
 Branch naming for agent-created branches still follows Cloud Agent policy (`cursor/…-bd2c`) unless the human explicitly names a milestone branch (`feat/product-dna`, etc.). Prefer the human-named milestone branches when opening the four deliverable PRs.
 
+Last updated: 2026-07-21.
 ---
 
 ## Architecture source of truth
@@ -86,7 +88,7 @@ Requirements:
 ## Milestone 2 — Resident Engineer core (Resident Mode only)
 
 **Branch:** `feat/resident-engineer-core`  
-**Status:** in progress / PR open — see `MILESTONE_2_RESIDENT_CORE.md`
+**Status:** merged (#66) — see `MILESTONE_2_RESIDENT_CORE.md`
 
 New module `backend/app/resident_engineer/` + a shipped counterpart package the generator injects into generated products.
 
@@ -107,14 +109,15 @@ Tests: allowlist enforcement (forbidden action rejected), audit immutability, in
 ## Milestone 3 — Change-request contract + CerebrumDev intake
 
 **Branch:** `feat/change-request-loop`  
-**Status:** not started (depends on M2 merge)
+**Status:** in progress / PR open — see `M3-change-request-loop.md`
 
-- Versioned JSON Schema for `RepairRequest` / `ExpansionRequest` / `UpgradeAssessment` under `backend/app/change_requests/schemas/`
-- Generated product side: `POST /v1/resident/change-request` emits signed, schema-validated requests (HMAC with per-product key set at generation time — **NOT** a GitHub/Render credential)
-- CerebrumDev side: intake endpoint validates schema + signature, writes to `change_requests/` queue, opens an isolated git worktree workspace record — but does **NOT** run any agent yet (dry-run intake only)
-- Self-upgrade loop (read-only): compare `block_lockfile` vs Store versions, compatibility report with `recommend: ignore | later | now`. Advisory only.
+- Versioned JSON Schema for `REPAIR` / `EXPANSION` / `UPGRADE` under `backend/app/change_requests/schemas/`
+- Ed25519 signed requests (canonical JSON); unsigned/malformed rejected + logged
+- Factory intake → queue → dry-run report → `awaiting_approval` (approval is a recorded decision only)
+- Advisory Store upgrade compare (`recommend: ignore | later | now`)
+- Resident L2 escalations may emit signed REPAIR when `RESIDENT_EMIT_CHANGE_REQUESTS=true`
 
-Tests: schema reject cases, signature verification, queue persistence, idempotent re-delivery.
+Tests: schema reject cases, signature verification, queue persistence, idempotent re-delivery, Steward round-trip.
 
 ---
 

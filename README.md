@@ -169,6 +169,13 @@ GROUNDED_ADAPTER_ENABLED=false
 GROUNDED_ADAPTER_REWRITE_PASS=false
 GROUNDED_ADAPTER_TIMEOUT=60
 
+# Resident Engineer / change-request loop (default OFF — see docs/resident-engineer/)
+RESIDENT_ENGINEER_ENABLED=false
+CHANGE_REQUEST_INTAKE_ENABLED=false
+RESIDENT_EMIT_CHANGE_REQUESTS=false
+# REDIS_URL=                    # optional multi-worker / queue index
+# PRODUCT_CHANGE_REQUEST_SIGNING_KEY=  # optional Ed25519 private key (base64)
+
 # Note: fine-tuned models are served via Tinker Cloud (internet required).
 # Base Ollama inference works offline, but a deployed LoRA needs TINKER_API_KEY.
 
@@ -197,6 +204,19 @@ MARKER_ENABLED=true
 ```
 
 If Marker is not installed or `MARKER_ENABLED=false`, the upload pipeline falls back to the Cerebrum-Blocks PDF block and then to `pypdf`.
+
+### Feature flags (default OFF)
+
+| Flag | Default | What it gates |
+|------|---------|----------------|
+| `MARKER_ENABLED` | `false` | Local Marker PDF parsing |
+| `GROUNDED_ADAPTER_ENABLED` | `false` | Tinker grounded adapter |
+| `RESIDENT_ENGINEER_ENABLED` | `false` | Resident Mode observe/heal/diagnose APIs (M2) |
+| `CHANGE_REQUEST_INTAKE_ENABLED` | `false` | Factory change-request intake + dry-run queue (M3) |
+| `RESIDENT_EMIT_CHANGE_REQUESTS` | `false` | Resident L2 escalations → signed REPAIR requests (M3) |
+| `REDIS_URL` | unset | Optional Redis/Key Value (health probe + queue index) |
+
+See `docs/resident-engineer/` for Resident Engineer milestones.
 
 ### Optional heavier embedding / parsing extras
 

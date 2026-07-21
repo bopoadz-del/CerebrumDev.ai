@@ -103,10 +103,17 @@ def test_package_platform_session_neutral(session: SessionState, fake_medical_ki
         assert "cerebrum-platform-medical-" in render
 
 
-def test_package_uses_fallback_kit_resolution(session: SessionState, tmp_path: Path):
-    """Missing domain kit raises MissingKitError."""
+def test_package_uses_fallback_kit_resolution(
+    session: SessionState, tmp_path: Path, monkeypatch
+):
+    """Missing domain kit raises MissingKitError (engine must already resolve)."""
     os.environ["STORAGE_PATH"] = str(tmp_path / "storage2")
     session.config.domain = "nonexistent_xyz"
+    # Avoid network fetch of private Cerebrum-Blocks — this test is about kit lookup.
+    monkeypatch.setattr(
+        "app.core.platform_packager.resolve_engine_source",
+        lambda: (tmp_path / "fake-engine", {"commit": "test", "source": "stub"}),
+    )
     with pytest.raises(MissingKitError):
         package_platform_session(session)
 

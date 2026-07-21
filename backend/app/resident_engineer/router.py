@@ -79,22 +79,6 @@ class HealBody(BaseModel):
     user_id: str = "operator"
 
 
-@router.post("/heal")
-async def resident_heal(body: HealBody) -> Dict[str, Any]:
-    _require_enabled()
-    try:
-        return await execute_heal(
-            body.action_id,
-            confirmed=body.confirmed,
-            tenant_id=body.tenant_id,
-            user_id=body.user_id,
-        )
-    except HealRejected as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except HealValidationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
 class DraftBody(BaseModel):
     level: str = "L3"
     kind: str = "ExpansionRequest"
@@ -114,3 +98,69 @@ async def resident_draft(body: DraftBody) -> Dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class EscalateBody(BaseModel):
+    product_id: str
+    dna_version: str = "1.0.0"
+    symptom: str
+    target: str = "runtime"
+    failed_action_id: Optional[str] = None
+    submit_to_intake: bool = True
+
+
+@router.post("/change-request")
+async def resident_emit_change_request(body: EscalateBody) -> Dict[str, Any]:
+    """Emit a signed REPAIR change-request (flag-gated; M3 paperwork).
+
+    Used when L2 heals dead-end and Resident escalates to Factory intake.
+    """
+    _require_enabled()
+    from app.change_requests.emit import EmitRejected, emit_repair_from_escalation
+
+    try:
+        return emit_repair_from_escalation(
+            product_id=body.product_id,
+            dna_version=body.dna_version,
+            symptom=body.symptom,
+            target=body.target,
+            failed_action_id=body.failed_action_id,
+            submit_to_intake=body.submit_to_intake,
+        )
+    except EmitRejected as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.post("/heal")
+async def resident_heal(body: HealBody) -> Dict[str, Any]:
+    _require_enabled()
+    try:
+        return await execute_heal(
+            body.action_id,
+            confirmed=body.confirmed,
+            tenant_id=body.tenant_id,
+            user_id=body.user_id,
+        )
+    except HealRejected as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except HealValidationError as exc:
+        # Optional L2→REPAIR escalation (off unless RESIDENT_EMIT_CHANGE_REQUESTS)
+        escalation = None
+        try:
+            from app.change_requests.emit import EmitRejected, emit_repair_from_escalation
+            from app.change_requests.flags import resident_emit_change_requests_enabled
+
+            if resident_emit_change_requests_enabled():
+                escalation = emit_repair_from_escalation(
+                    product_id=body.tenant_id or "unknown-product",
+                    dna_version="1.0.0",
+                    symptom=str(exc),
+                    failed_action_id=body.action_id,
+                    submit_to_intake=True,
+                )
+        except Exception:  # noqa: BLE001 — escalation must not mask heal error
+            escalation = None
+        detail: Dict[str, Any] = {"error": str(exc)}
+        if escalation:
+            detail["escalation"] = escalation
+        raise HTTPException(status_code=409, detail=detail) from exc
