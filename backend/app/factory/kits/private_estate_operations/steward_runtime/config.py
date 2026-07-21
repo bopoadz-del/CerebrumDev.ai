@@ -46,6 +46,21 @@ class StewardRagConfig:
     )
     rrf_k: int = field(default_factory=lambda: int(os.getenv("STEWARD_RRF_K", "60")))
     top_k: int = field(default_factory=lambda: int(os.getenv("STEWARD_TOP_K", "6")))
+    # Pilot auth — default fail-closed (no anonymous tenant/estate defaults).
+    allow_demo_auth_bypass: bool = field(
+        default_factory=lambda: os.getenv("STEWARD_ALLOW_DEMO_AUTH_BYPASS", "0")
+        in {"1", "true", "yes", "on"}
+    )
+    # Legacy estate-kit /v1/rag/* — disabled in staging/production profiles.
+    legacy_rag_enabled: bool = field(
+        default_factory=lambda: os.getenv("STEWARD_LEGACY_RAG_ENABLED", "0")
+        in {"1", "true", "yes", "on"}
+    )
+    # Public admin migrate/reset routes — disabled by default.
+    admin_routes_enabled: bool = field(
+        default_factory=lambda: os.getenv("STEWARD_ADMIN_ROUTES_ENABLED", "0")
+        in {"1", "true", "yes", "on"}
+    )
 
     def normalized_sqlalchemy_url(self) -> str:
         url = self.database_url

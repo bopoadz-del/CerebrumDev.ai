@@ -193,22 +193,100 @@ See `docs/provenance/provenance.json` and `factory_plan.json`.
                 encoding="utf-8",
             )
 
-        (app / "main.py").write_text(
-            f'''"""Generated FastAPI entrypoint for {self.blueprint.product_id}."""
+        if self.blueprint.vertical == "estate":
+            main_py = self._estate_main_py()
+        else:
+            main_py = self._basic_main_py()
+        (app / "main.py").write_text(main_py, encoding="utf-8")
+
+    def _basic_main_py(self) -> str:
+        bp = self.blueprint
+        return f'''"""Generated FastAPI entrypoint for {bp.product_id}."""
 
 from fastapi import FastAPI
 
-app = FastAPI(title="{self.blueprint.product_name}", version="1.0.0")
+app = FastAPI(title="{bp.product_name}", version="1.0.0")
 
 
 @app.get("/health")
 def health():
     return {{
         "ok": True,
-        "product_id": "{self.blueprint.product_id}",
-        "vertical": "{self.blueprint.vertical}",
-        "human_authority": {str(self.blueprint.human_authority)},
+        "product_id": "{bp.product_id}",
+        "vertical": "{bp.vertical}",
+        "human_authority": {str(bp.human_authority)},
     }}
+
+
+@app.get("/v1/capabilities")
+def capabilities():
+    import json
+    from pathlib import Path
+    plan = json.loads((Path(__file__).resolve().parents[1] / "factory_plan.json").read_text())
+    return plan
+
+
+@app.get("/v1/agents")
+def agents():
+    import json
+    from pathlib import Path
+    root = Path(__file__).resolve().parent / "agents" / "manifests"
+    return [json.loads(p.read_text()) for p in sorted(root.glob("*.json"))]
+
+
+@app.get("/v1/workflows")
+def workflows():
+    import json
+    from pathlib import Path
+    path = Path(__file__).resolve().parent / "workflows" / "workflows.json"
+    return json.loads(path.read_text())
+'''
+
+    def _estate_main_py(self) -> str:
+        bp = self.blueprint
+        return f'''"""Generated FastAPI entrypoint for {bp.product_id}."""
+
+from __future__ import annotations
+
+import os
+
+from fastapi import FastAPI, Response
+
+from app.steward.errors import attach_request_id_middleware
+from app.steward.probes import health_payload, readiness_checks, version_payload
+
+app = FastAPI(title="{bp.product_name}", version="1.0.0")
+
+app.middleware("http")(attach_request_id_middleware)
+
+PRODUCT_ID = "{bp.product_id}"
+VERTICAL = "{bp.vertical}"
+HUMAN_AUTHORITY = {str(bp.human_authority)}
+
+
+@app.get("/health")
+def health():
+    return health_payload(
+        product_id=PRODUCT_ID,
+        vertical=VERTICAL,
+        human_authority=HUMAN_AUTHORITY,
+    )
+
+
+@app.get("/ready")
+def ready():
+    payload = readiness_checks()
+    status = 200 if payload.get("ready") else 503
+    return Response(
+        content=__import__("json").dumps(payload),
+        media_type="application/json",
+        status_code=status,
+    )
+
+
+@app.get("/version")
+def version():
+    return version_payload(product_id=PRODUCT_ID)
 
 
 @app.get("/v1/capabilities")
@@ -235,24 +313,35 @@ def workflows():
     return json.loads(path.read_text())
 
 
-# Estate kit surfaces (demo fixtures + dual RAG) are mounted when present.
+# Estate kit demo fixtures (legacy /v1/rag/* gated inside router when disabled).
 try:
     from app.estate_kit import router as estate_kit_router
 
     app.include_router(estate_kit_router)
-except ImportError:
-    pass
+except ImportError as exc:
+    raise RuntimeError(
+        "Estate kit surfaces are mandatory for estate vertical products"
+    ) from exc
 
-# Production Steward RAG (Postgres/pgvector + packs) when generated.
+# Production Steward RAG (Postgres/pgvector + packs) — canonical pilot path.
 try:
     from app.steward.api import router as steward_rag_router
 
     app.include_router(steward_rag_router)
-except ImportError:
-    pass
-''',
-            encoding="utf-8",
-        )
+except ImportError as exc:
+    raise RuntimeError(
+        "Steward production RAG runtime is mandatory for estate vertical products"
+    ) from exc
+
+# Optional pilot fixture seed for local/CI when explicitly enabled.
+if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes", "on"}}:
+    from app.steward.auth import seed_pilot_fixture
+    from app.steward.db import init_engine, session_scope
+
+    init_engine()
+    with session_scope() as session:
+        seed_pilot_fixture(session)
+'''
 
     def _write_estate_kit_surfaces(self, out: Path) -> None:
         """Emit demo fixtures + dual RAG API for estate vertical products."""
@@ -459,6 +548,12 @@ except ImportError:
         value: "1"
       - key: STEWARD_REQUIRE_PERSISTENT_RAG
         value: "1"
+      - key: STEWARD_LEGACY_RAG_ENABLED
+        value: "false"
+      - key: STEWARD_ALLOW_DEMO_AUTH_BYPASS
+        value: "false"
+      - key: STEWARD_ADMIN_ROUTES_ENABLED
+        value: "false"
       - key: STEWARD_RAG_PERSISTENCE
         value: postgres
       - key: STEWARD_DATABASE_URL
