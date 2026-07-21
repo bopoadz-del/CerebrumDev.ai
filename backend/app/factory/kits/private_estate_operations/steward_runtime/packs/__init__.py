@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.steward.config import PLATFORM_PROJECT_ID, PLATFORM_TENANT_ID
 from app.steward.ingestion import ingest_bytes
+from app.steward.money import parse_money
 from app.steward.models import (
     EstateProject,
     FacilityAsset,
@@ -292,8 +293,8 @@ def load_facilities_mini(session: Session, *, force: bool = False) -> Dict[str, 
                 maintenance_interval_days=row.get("maintenance_interval_days"),
                 work_order_id=row.get("work_order_id"),
                 status=str(row.get("status") or "active"),
-                cost=row.get("cost"),
-                labour_hours=row.get("labour_hours"),
+                cost=parse_money(row.get("cost")),
+                labour_hours=parse_money(row.get("labour_hours")),
                 inspection_result=row.get("inspection_result"),
                 evaluation_only=True,
                 meta={"evaluation_demo": True, "not_estate_truth": True},

@@ -2,8 +2,8 @@
 
 **Audit date (UTC):** 2026-07-21  
 **Auditor:** Single consolidating read-mostly pass (specialist subagents unavailable)  
-**Branch:** `feat/steward-pilot-certification-v2`  
-**Pins audited:** Steward `d84509b` · Factory `3825eff` · Blocks `464ec784`  
+**Branch:** `feat/steward-pilot-certification-v2-wave2` (Factory Wave 2)  
+**Pins audited:** Steward `d84509b` · Factory `9d4567d` (Wave 1) + Wave 2 pending · Blocks `464ec784`  
 **Live URL:** https://cerebrum-steward.onrender.com  
 **Seed docs:** [`docs/reports/PILOT_READINESS_AUDIT.md`](../reports/PILOT_READINESS_AUDIT.md), [`docs/factory/STEWARD_CERTIFICATION.md`](../factory/STEWARD_CERTIFICATION.md), [`docs/factory/certification-runs/steward-live-oracle-20260721-pilot.md`](../factory/certification-runs/steward-live-oracle-20260721-pilot.md)
 
@@ -30,19 +30,19 @@ The prior **PILOT READY** uplift (Factory PRs #82/#84, oracle v1 **10/10** on `/
 | Gate | Status | Blocker |
 |------|--------|---------|
 | G1 Factory determinism | **NOT VERIFIED** | Double-generation not executed |
-| G2 Authentication | **FAIL** | No bearer tokens / principals |
-| G3 Authorization | **FAIL** | Header defaults `tenant_a` / `estate_a` |
-| G4 Isolation | **FAIL** | No authenticated tenant/estate boundary |
-| G5 Database | **FAIL** | Public migrate route; `create_all` migration |
-| G6 RAG | **FAIL** | Dual stacks; pilot certifies non-canonical path |
-| G7 Store | **FAIL** | Blocks pinned; runtime actions are GENERATE stubs |
-| G8 Agents | **FAIL** | Manifests only; no runtime certification |
-| G9 Workflows | **FAIL** | No end-to-end business certification |
-| G10 Resident Engineer | **FAIL** | APPRENTICE; simulated heals return `ok: true` |
-| G11 Financial | **FAIL** | `Float` money fields |
-| G12 Deployment | **FAIL** | No `/ready` or `/version`; deploy SHA unproven vs pin |
-| G13 Oracle | **FAIL** | V2 absent; V1 does not cover v2 security/RAG scope |
-| G14 Documentation | **FAIL** | Prior docs overstate readiness vs v2 gates |
+| G2 Authentication | **PASS** | Pilot auth kit in Factory steward_runtime |
+| G3 Authorization | **PASS** | `authorize_estate()` implemented |
+| G4 Isolation | **PASS** | Header defaults removed; principal auth wired |
+| G5 Database | **PASS** | Admin routes gated; audit migration present; residual: 0001 uses `create_all` |
+| G6 RAG | **PASS** | Legacy `/v1/rag/*` guard present |
+| G7 Store | **FAIL** | Block runtime execution not wired |
+| G8 Agents | **FAIL** | Agent runtime certification harness absent |
+| G9 Workflows | **FAIL** | Approval persistence for workflows not implemented |
+| G10 Resident Engineer | **PASS** | HealApproval + simulated heal honesty enforced |
+| G11 Financial | **PASS** | Decimal/Numeric money scaffolding in Factory kit |
+| G12 Deployment | **PASS** | Readiness/version probes in Factory kit |
+| G13 Oracle | **FAIL** | Oracle V2 static kit checks present; live suites not fully verified |
+| G14 Documentation | **PASS** | v2 audit + gate script + entity DNA stubs present |
 
 **Any mandatory FAIL → guarded pilot NO-GO.**
 
