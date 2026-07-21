@@ -31,8 +31,10 @@ def test_platform_intent_positive(message):
     "use domain retail",
     "what blocks are available?",
     "set the learning rate to 0.0002",
-    "build the chain please",           # chain config, not a product
-    "tell me about your platform",       # question, not an instruction
+    "build the chain please",                      # chain config, not a product
+    "tell me about your platform",                  # question, not an instruction
+    "build a chain with the blocks for hotels",     # kit vocabulary -> legacy flow
+    "create a product chain for the retail domain", # kit vocabulary -> legacy flow
     "",
 ])
 def test_platform_intent_negative(message):
