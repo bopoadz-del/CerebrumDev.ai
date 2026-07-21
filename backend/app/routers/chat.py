@@ -16,6 +16,7 @@ from ..core.chain_generator import (
 )
 from ..core.rule_injector import inject_rules
 from ..core.block_taxonomy import list_optional_blocks
+from ..factory import platform_chat_flow
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -139,6 +140,42 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         update_session(session_id, state)
         for word in confirm.split(" "):
             yield _sse_event("delta", word + " ")
+        yield _sse_event("done", "")
+        return
+
+    # --- Platform-creation flow: chat bridges to the product state machine ---
+    try:
+        if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
+            result = platform_chat_flow.approve_and_generate(state)
+            state.chat_history.append({"role": "assistant", "content": result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            yield _sse_event("generation", json.dumps(result))
+            for word in result["summary"].split(" "):
+                yield _sse_event("delta", word + " ")
+            yield _sse_event("done", "")
+            return
+
+        if platform_chat_flow.is_platform_intent(user_message):
+            result = platform_chat_flow.draft_from_chat(state, user_message)
+            state.chat_history.append({"role": "assistant", "content": result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            yield _sse_event("blueprint", json.dumps(result))
+            for word in result["summary"].split(" "):
+                yield _sse_event("delta", word + " ")
+            yield _sse_event("done", "")
+            return
+    except Exception as exc:  # honest failure, stay in chat
+        logger.exception("Platform flow failed")
+        message = (
+            "Platform flow hit a blocker: "
+            f"{exc}. Nothing was generated; refine the brief or check the factory logs."
+        )
+        state.chat_history.append({"role": "assistant", "content": message})
+        state.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+        yield _sse_event("error", message)
         yield _sse_event("done", "")
         return
 
