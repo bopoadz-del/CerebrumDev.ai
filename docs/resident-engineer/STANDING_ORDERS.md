@@ -86,7 +86,7 @@ Requirements:
 ## Milestone 2 — Resident Engineer core (Resident Mode only)
 
 **Branch:** `feat/resident-engineer-core`  
-**Status:** not started (depends on M1 merge)
+**Status:** in progress / PR open — see `MILESTONE_2_RESIDENT_CORE.md`
 
 New module `backend/app/resident_engineer/` + a shipped counterpart package the generator injects into generated products.
 
