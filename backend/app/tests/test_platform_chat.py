@@ -2,7 +2,8 @@
 
 The bridge routes free-text chat messages onto the existing product_design
 state machine (same functions as routers/session_product.py). These tests
-cover intent detection and the draft -> approve -> generate flow.
+cover the routing contract, intent detection, and the draft -> approve ->
+generate flow.
 """
 
 from __future__ import annotations
@@ -60,6 +61,52 @@ def test_approval_positive(message):
 ])
 def test_approval_negative(message):
     assert not platform_chat_flow.is_approval(message)
+
+
+# --- Routing contract: explicit commands + env gate --------------------------
+
+@pytest.mark.parametrize("message", [
+    "/platform build me a hotel operations product",
+    "/PLATFORM fleet management",
+    "new platform for clinics",
+    "New platform: warehouse ops",
+    "platform: private estates",
+])
+def test_explicit_command_always_enters_platform_flow(message, monkeypatch):
+    # Explicit commands work even with the env gate off.
+    monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    assert platform_chat_flow.should_handle_platform_message(message)
+
+
+def test_nlp_intent_gated_off_by_default(monkeypatch):
+    monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    assert not platform_chat_flow.platform_chat_enabled()
+    assert not platform_chat_flow.should_handle_platform_message(
+        "build me a platform for boutique hotels"
+    )
+
+
+def test_nlp_intent_when_gate_enabled(monkeypatch):
+    monkeypatch.setenv("PLATFORM_CHAT_FLOW_ENABLED", "true")
+    assert platform_chat_flow.platform_chat_enabled()
+    assert platform_chat_flow.should_handle_platform_message(
+        "build me a platform for boutique hotels"
+    )
+    # kit-config vocabulary still stays in the legacy flow even when gated on
+    assert not platform_chat_flow.should_handle_platform_message(
+        "build a chain with the blocks for hotels"
+    )
+
+
+def test_legacy_smoke_message_never_intercepted_by_default(monkeypatch):
+    """Regression lock: the 17 domain smoke contract messages
+    ('I want to build a {domain} analysis platform.') are legacy chain-config
+    prompts and must stay in the legacy flow unless the gate is explicitly on.
+    """
+    monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    assert not platform_chat_flow.should_handle_platform_message(
+        "I want to build a retail analysis platform."
+    )
 
 
 # --- Flow: draft -> pending -> approve -> generate ---------------------------

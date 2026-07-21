@@ -144,6 +144,9 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         return
 
     # --- Platform-creation flow: chat bridges to the product state machine ---
+    # Routing contract lives in platform_chat_flow.should_handle_platform_message:
+    # explicit commands always enter; free-text intent only when the env gate
+    # is on; approvals only when a blueprint is actually pending.
     try:
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
             result = platform_chat_flow.approve_and_generate(state)
@@ -156,7 +159,7 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             yield _sse_event("done", "")
             return
 
-        if platform_chat_flow.is_platform_intent(user_message):
+        if platform_chat_flow.should_handle_platform_message(user_message):
             result = platform_chat_flow.draft_from_chat(state, user_message)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()

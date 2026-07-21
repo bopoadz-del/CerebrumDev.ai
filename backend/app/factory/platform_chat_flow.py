@@ -6,10 +6,17 @@ draft_blueprint_from_brief / plan_blueprint / generate_product functions,
 the same ProductDesignState on the session. The chat is simply a second
 front door onto the same house.
 
-Flow:
-  1. User message matches platform intent  -> draft_from_chat()
-  2. User approves ("approve", "go ahead") -> approve_and_generate()
-  3. Anything else -> falls through to the normal kit-configurator chat.
+Routing contract (this is law, the domain smoke tests enforce it):
+  1. Explicit commands ALWAYS enter the platform flow:
+     "/platform <brief>", "new platform <brief>", "platform: <brief>".
+  2. Free-text NLP intent ("build me a platform for hotels") enters the
+     platform flow ONLY when PLATFORM_CHAT_FLOW_ENABLED is on. Default is
+     OFF so the legacy kit-configurator chat keeps its contract — messages
+     like "I want to build a retail analysis platform." are chain-config
+     prompts in the legacy flow and must not be hijacked.
+  3. Approval ("approve", "go ahead") is only intercepted when a blueprint
+     is actually pending on the session.
+  4. Anything else falls through to the normal kit-configurator chat.
 """
 
 from __future__ import annotations
@@ -44,6 +51,12 @@ _KIT_CONFIG_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Explicit commands: deterministic entry into the platform flow, always on.
+_EXPLICIT_CMD_RE = re.compile(
+    r"^\s*(?:/platform\b|new\s+platform\b|platform\s*:)",
+    re.IGNORECASE,
+)
+
 _APPROVAL_RE = re.compile(
     r"^\s*(approve|approved|go\s*ahead|looks\s*good|generate\s*it|"
     r"build\s*it|yes\b.*\b(build|generate|approve))",
@@ -57,6 +70,36 @@ def is_platform_intent(message: str) -> bool:
     if _KIT_CONFIG_RE.search(text):
         return False
     return bool(_PLATFORM_INTENT_RE.search(text))
+
+
+def is_explicit_platform_command(message: str) -> bool:
+    """True for explicit commands (/platform, 'new platform', 'platform:')."""
+    return bool(_EXPLICIT_CMD_RE.search(message or ""))
+
+
+def platform_chat_enabled() -> bool:
+    """Env gate for free-text NLP interception. Default OFF (house pattern)."""
+    return os.getenv("PLATFORM_CHAT_FLOW_ENABLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def should_handle_platform_message(message: str) -> bool:
+    """Router contract: should this chat message enter the platform flow?
+
+    Explicit commands always qualify. Free-text intent qualifies only when
+    PLATFORM_CHAT_FLOW_ENABLED is on. Everything else stays in the legacy
+    kit-configurator chat.
+    """
+    text = message or ""
+    if is_explicit_platform_command(text):
+        return True
+    if not platform_chat_enabled():
+        return False
+    return is_platform_intent(text)
 
 
 def is_approval(message: str) -> bool:
