@@ -2,6 +2,14 @@
 
 ## Cursor Cloud specific instructions
 
+### Local dev environment (non-obvious)
+
+- Backend deps live in a venv at `backend/venv` (Python 3.12 on the VM works; CI/Docker pin 3.11). Run the API in dev with `cd backend && ENV=dev ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000`. Health/readiness: `GET /health`, `GET /ready`.
+- Use port **8000** for the backend in dev (not 8001). Vite proxies `/v1` to `http://localhost:8000` (`frontend/vite.config.ts`); the `8001` in README/`docker-compose.yml` is only the Docker port mapping.
+- Frontend: `cd frontend && npm run dev -- --host` (Vite on 5173). The app auto-creates a session on load. Lint/build/test commands are in `frontend/package.json` and `.github/workflows/ci.yml`.
+- The Cerebrum-Blocks domain store is an **optional external service** (`CEREBRUM_API_URL`). Without it, `/v1/domains/*` returns 503 and the UI shows a "Domain store unreachable" toast — this is expected in dev. The Factory "Design product" flow (`/v1/factory/product/*`, `/v1/sessions/{id}/product/draft`) works fully offline from golden blueprints in `blueprints/`.
+- Backend tests: `cd backend && ENV=test ./venv/bin/python -m pytest` (see `pytest.ini`). Factory subset: `./venv/bin/python -m pytest tests/factory`.
+
 ### PR babysit / auto-merge (owner rule)
 
 For Resident Engineer and related Factory milestone PRs on this repo:
