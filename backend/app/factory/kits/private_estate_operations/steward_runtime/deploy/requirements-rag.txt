@@ -1,0 +1,10 @@
+# Extra deps for Steward production RAG (merged into product requirements.txt by Factory).
+sqlalchemy>=2.0.30
+alembic>=1.13.0
+psycopg[binary]>=3.1.18
+pgvector>=0.2.5
+pypdf>=4.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+# Optional production embeddings (install when STEWARD_EMBED_BACKEND=fastembed):
+# fastembed>=0.3.0

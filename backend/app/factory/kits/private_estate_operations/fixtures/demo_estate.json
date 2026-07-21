@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "fixture_id": "steward_demo_estate_v1",
-  "description": "Demo fixtures for Cerebrum Steward certification — 1 villa + 1 apartment, vendors, staff, maintenance calendar.",
+  "description": "Demo fixtures for Cerebrum Steward certification — 1 villa + 1 apartment, vendors, staff, maintenance calendar, dual RAG corpora for live oracle.",
   "generated_by": "CerebrumDev.ai Factory (private_estate_operations kit)",
   "properties": [
     {
@@ -117,6 +117,27 @@
       "title": "Vendor Spend Governance",
       "version": "1.4.0",
       "text": "Any vendor rate >10% above portfolio median raises renegotiation_flag. Principal is notified only after house manager review."
+    },
+    {
+      "doc_id": "sop-global-turndown",
+      "layer": 1,
+      "title": "Global Turndown Service Standard",
+      "version": "1.0.0",
+      "text": "Turndown service: confirm request for the night, soft lighting, climate adjust, linen refresh, water and amenities placement per preference card. Close drapes as specified. Log completion for morning handover."
+    },
+    {
+      "doc_id": "sop-global-privacy",
+      "layer": 1,
+      "title": "Privacy Discretion and Restricted Information",
+      "version": "1.0.0",
+      "text": "Privacy and discretion: need-to-know only. Do not discuss principal movements with vendors or guests. Restricted rooms require dual control when estate policy says so. Never cite hospitality chatbot or synthetic intent datasets as approved service policy."
+    },
+    {
+      "doc_id": "sop-global-defect-escalation",
+      "layer": 1,
+      "title": "Housekeeping Defect Escalation",
+      "version": "1.0.0",
+      "text": "Housekeeping defect escalation: capture asset id, severity, and photos without people or PII. Open maintenance handoff same day when readiness is blocked. House manager reviews before principal notification unless imminent safety risk."
     }
   ],
   "estate_documents": [
@@ -133,6 +154,22 @@
       "property_id": "prop-apt-london",
       "title": "Mayfair Residence Building Notes",
       "text": "Quiet hours 23:00–07:00. Lift service via building management. Boiler isolation valve behind kitchen plinth."
+    },
+    {
+      "doc_id": "estate-villa-fleet-eval",
+      "layer": 2,
+      "property_id": "prop-villa-tuscany",
+      "authority_kind": "evaluation_only",
+      "title": "Villa Aurora Fleet Evaluation Summary (not estate truth)",
+      "text": "EVALUATION ONLY — not the estate's actual vehicles. Demo vehicle VH-ESTATE-A-02 Mercedes S-Class next service due 2026-07-25 at 60000 km threshold; defect severity medium; availability_status service_due."
+    },
+    {
+      "doc_id": "estate-villa-facility-eval",
+      "layer": 2,
+      "property_id": "prop-villa-tuscany",
+      "authority_kind": "evaluation_only",
+      "title": "Villa Aurora Facilities Evaluation Summary (not estate truth)",
+      "text": "EVALUATION ONLY — not estate truth. Demo work order wo-1003 Pool filter replacement for asset-pool-1 Infinity pool is overdue due 2026-07-25; escalate via principal_dashboard."
     }
   ]
 }

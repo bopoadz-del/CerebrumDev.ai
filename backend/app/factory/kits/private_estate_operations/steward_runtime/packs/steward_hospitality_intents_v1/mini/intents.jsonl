@@ -1,0 +1,6 @@
+{"intent": "booking_inquiry", "utterance": "Can you help me reserve a table for dinner?", "language": "en"}
+{"intent": "room_service", "utterance": "I would like turndown service at ten", "language": "en"}
+{"intent": "housekeeping", "utterance": "Please send fresh towels to the suite", "language": "en"}
+{"intent": "maintenance", "utterance": "The boiler is making a loud noise", "language": "en"}
+{"intent": "arrival", "utterance": "What is the guest arrival checklist?", "language": "en"}
+{"intent": "privacy", "utterance": "Keep my itinerary confidential from vendors", "language": "en"}

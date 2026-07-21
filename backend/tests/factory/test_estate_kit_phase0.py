@@ -90,6 +90,13 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
     assert fixtures["vendors"]
     assert fixtures["staff"]
     assert fixtures["maintenance_calendar"]
+    assert len(fixtures["sop_corpus"]) >= 5
+    assert len(fixtures["estate_documents"]) >= 4
+    assert (out / "app" / "steward" / "api.py").is_file()
+    assert (
+        ROOT
+        / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json"
+    ).is_file()
 
     assert (out / "docs" / "rag" / "dual_rag.json").is_file()
     assert (out / "app" / "estate_kit" / "router.py").is_file()
@@ -182,6 +189,7 @@ def test_kit_manifest_version():
             / "backend/app/factory/vendor_blocks_mirror/private_estate_operations_kit/manifest.json"
         ).read_text()
     )
-    assert manifest["version"] == "1.1.0"
+    assert manifest["version"] == "1.2.0"
     assert "dual_rag" in manifest
     assert "house_manual_sop" in manifest["capabilities"]
+    assert (ROOT / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json").is_file()

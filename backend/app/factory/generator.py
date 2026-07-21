@@ -142,10 +142,26 @@ See `docs/provenance/provenance.json` and `factory_plan.json`.
         (out / "README.md").write_text(text, encoding="utf-8")
 
     def _write_pyproject(self, out: Path) -> None:
-        (out / "requirements.txt").write_text(
-            "fastapi>=0.115.0\npydantic>=2.0\nuvicorn>=0.30\npyyaml>=6.0\n",
-            encoding="utf-8",
+        reqs = [
+            "fastapi>=0.115.0",
+            "pydantic>=2.0",
+            "uvicorn>=0.30",
+            "pyyaml>=6.0",
+        ]
+        rag_reqs = (
+            Path(__file__).resolve().parent
+            / "kits"
+            / "private_estate_operations"
+            / "steward_runtime"
+            / "deploy"
+            / "requirements-rag.txt"
         )
+        if self.blueprint.vertical == "estate" and rag_reqs.is_file():
+            for line in rag_reqs.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    reqs.append(stripped)
+        (out / "requirements.txt").write_text("\n".join(reqs) + "\n", encoding="utf-8")
 
     def _write_app(self, out: Path) -> None:
         app = out / "app"
@@ -226,6 +242,14 @@ try:
     app.include_router(estate_kit_router)
 except ImportError:
     pass
+
+# Production Steward RAG (Postgres/pgvector + packs) when generated.
+try:
+    from app.steward.api import router as steward_rag_router
+
+    app.include_router(steward_rag_router)
+except ImportError:
+    pass
 ''',
             encoding="utf-8",
         )
@@ -251,29 +275,55 @@ except ImportError:
             )
 
         dual_rag = {
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "layers": {
                 "1": {
                     "id": "sop_standards",
                     "name": "SOP / House Manual / global standards",
                     "index": "steward_sop_v1",
+                    "project": "prebuilt_steward_core",
+                    "tenant": "platform",
                     "source_field": "sop_corpus",
-                    "blocks": ["document_engine", "knowledge", "vector_search"],
+                    "blocks": ["document_engine", "knowledge", "vector_search", "database"],
                 },
                 "2": {
                     "id": "estate_documents",
                     "name": "Estate documents (separately indexed)",
                     "index": "steward_estate_docs_v1",
                     "source_field": "estate_documents",
-                    "blocks": ["document_engine", "knowledge", "vector_search"],
+                    "blocks": ["document_engine", "knowledge", "vector_search", "database"],
                 },
+            },
+            "demo_path": {
+                "embedding_provider": "local_feature_hash_v1",
+                "vector_adapter": "local_flat_json_v1",
+                "routes": ["/v1/rag/query", "/v1/rag/ingest", "/v1/rag/dual"],
+            },
+            "production_path": {
+                "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
+                "vector_adapter": "postgres_pgvector_v1",
+                "routes": [
+                    "/v1/steward/rag/query",
+                    "/v1/steward/rag/ingest",
+                    "/v1/steward/packs",
+                    "/v1/steward/facilities",
+                    "/v1/steward/fleet",
+                ],
+                "packs": [
+                    "steward_service_core_open_v1",
+                    "steward_hospitality_intents_v1",
+                    "steward_facilities_open_v1",
+                    "steward_fleet_open_v1",
+                ],
             },
             "embedding_provider": "local_feature_hash_v1",
             "vector_adapter": "local_flat_json_v1",
             "honesty": (
-                "Generated runtime uses local feature-hash embeddings (384-d cosine) "
-                "with JSONL indices under data/rag/. Demo fixtures bootstrap on first "
-                "query; swap to Blocks knowledge/vector_search runtime for production."
+                "Demo JSONL dual RAG remains on /v1/rag/* for zero-deps cold start. "
+                "Production path is app/steward (Postgres 16 + pgvector, hybrid RRF, "
+                "governed packs). Set STEWARD_DATABASE_URL and STEWARD_EMBED_BACKEND="
+                "fastembed; STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1 fails closed "
+                "(no silent hash fallback)."
             ),
         }
         rag_docs = out / "docs" / "rag"
@@ -304,6 +354,23 @@ except ImportError:
                 rag_dst,
                 ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
             )
+
+        # Production Steward RAG runtime (Postgres/pgvector + governed packs)
+        steward_src = kit_root / "steward_runtime"
+        steward_dst = out / "app" / "steward"
+        if steward_dst.exists():
+            shutil.rmtree(steward_dst)
+        if steward_src.is_dir():
+            shutil.copytree(
+                steward_src,
+                steward_dst,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+            compose_src = steward_src / "deploy" / "docker-compose.yml"
+            if compose_src.is_file():
+                deploy_dir = out / "deploy"
+                deploy_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(compose_src, deploy_dir / "docker-compose.steward-rag.yml")
 
         # SPA deep-link stubs for estate modules (cold-start friendly)
         spa = out / "frontend" / "src" / "routes"
@@ -362,6 +429,12 @@ except ImportError:
         value: "true"
       - key: PYTHONPATH
         value: /app
+      - key: STEWARD_EMBED_BACKEND
+        value: hash
+      - key: STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS
+        value: "0"
+      # For production RAG: provision Postgres 16 + pgvector, set STEWARD_DATABASE_URL,
+      # STEWARD_EMBED_BACKEND=fastembed, STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1.
 """,
             encoding="utf-8",
         )

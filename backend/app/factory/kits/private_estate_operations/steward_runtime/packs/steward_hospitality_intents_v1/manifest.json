@@ -1,0 +1,17 @@
+{
+  "release_id": "2026.07.21",
+  "rag_pack_id": "steward_hospitality_intents_v1",
+  "collection_id": "steward_hospitality_intents",
+  "source_id": "bitext/Bitext-hospitality-llm-chatbot-training-dataset",
+  "source_name": "Hospitality intents (routing/evaluation — not policy)",
+  "publisher": "Bitext (mini fixture synthesised for CI)",
+  "source_class": "synthetic_training",
+  "authority_level": "synthetic",
+  "authority_kind": "synthetic",
+  "licence": "CDLA-Sharing-1.0",
+  "original_url": "https://huggingface.co/datasets/bitext/Bitext-hospitality-llm-chatbot-training-dataset",
+  "resolved_download_url": "https://huggingface.co/datasets/bitext/Bitext-hospitality-llm-chatbot-training-dataset",
+  "knowledge_layer": 1,
+  "profile_default": "mini",
+  "notes": "Intent examples must never be cited as approved service policy. Candidate WellaBanda/hospitality_intents_en parked pending licence validation."
+}

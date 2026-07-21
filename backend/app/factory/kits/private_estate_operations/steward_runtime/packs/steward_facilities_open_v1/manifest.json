@@ -1,0 +1,17 @@
+{
+  "release_id": "2026.07.21",
+  "rag_pack_id": "steward_facilities_open_v1",
+  "collection_id": "steward_facilities",
+  "source_id": "cerebrum.platform.steward_facilities_mini",
+  "source_name": "Steward facilities mini fixture (evaluation-only)",
+  "publisher": "CerebrumDev.ai Factory",
+  "source_class": "evaluation_fixture",
+  "authority_level": "evaluation_only",
+  "authority_kind": "evaluation_only",
+  "licence": "CC0-1.0",
+  "original_url": null,
+  "resolved_download_url": null,
+  "knowledge_layer": 2,
+  "profile_default": "mini",
+  "notes": "Raw facility rows live in SQL only. Full open dataset acquisition fails closed when licence unclear."
+}

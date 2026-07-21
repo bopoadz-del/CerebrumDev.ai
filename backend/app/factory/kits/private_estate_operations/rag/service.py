@@ -159,7 +159,8 @@ class DualRagService:
         *,
         layer: Optional[int] = None,
         top_k: int = 5,
-        min_score: float = 0.0,
+        min_score: float = 0.05,
+        property_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         self.ensure_bootstrapped()
         if not q.strip():
@@ -178,6 +179,13 @@ class DualRagService:
         for lyr in layers:
             index_id = LAYER_INDEX[lyr]
             for record in self.store.read_records(index_id):
+                rec_property = record.get("property_id")
+                if property_id:
+                    # Layer 1 globals (null property) stay visible; Layer 2 must match.
+                    if lyr == 2 and str(rec_property or "") != str(property_id):
+                        continue
+                    if lyr == 1 and rec_property and str(rec_property) != str(property_id):
+                        continue
                 vector = record.get("vector") or []
                 if not vector:
                     continue
@@ -187,7 +195,7 @@ class DualRagService:
                 doc_id = str(record.get("doc_id") or "")
                 title = str(record.get("title") or "")
                 text = str(record.get("text") or "")
-                property_id = record.get("property_id")
+                property_val = record.get("property_id")
                 hits.append(
                     RagHit(
                         layer=lyr,
@@ -196,11 +204,11 @@ class DualRagService:
                         excerpt=text[:240],
                         score=score,
                         chunk_ordinal=int(record.get("chunk_ordinal") or 0),
-                        property_id=str(property_id) if property_id else None,
+                        property_id=str(property_val) if property_val else None,
                         citation={
                             "source_id": doc_id,
                             "layer": lyr,
-                            "property_id": property_id,
+                            "property_id": property_val,
                             "chunk_ordinal": int(record.get("chunk_ordinal") or 0),
                             "record_id": record.get("record_id"),
                         },
@@ -208,13 +216,16 @@ class DualRagService:
                 )
 
         hits.sort(key=lambda hit: hit.score, reverse=True)
-        top_hits = hits[: max(1, top_k)]
+        top_hits = hits[: max(1, top_k)] if hits else []
         return {
             "ok": True,
             "query": q,
             "layers_searched": layers,
+            "property_id_filter": property_id,
+            "min_score": min_score,
             "hit_count": len(top_hits),
             "hits": [hit.to_dict() for hit in top_hits],
+            "insufficiency": len(top_hits) == 0,
             "embedding_provider": LOCAL_FEATURE_HASH_V1,
         }
 
