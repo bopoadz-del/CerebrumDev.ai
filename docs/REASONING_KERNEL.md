@@ -130,7 +130,7 @@ decision:
   message: Mixed currencies cannot be aggregated without governed FX.
 authority:
   type: product_policy
-  approval_required: false
+approval_required: false
 ```
 
 The same engine can support:
