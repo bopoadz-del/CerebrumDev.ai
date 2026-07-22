@@ -10,6 +10,8 @@ import RegisterPage from './components/auth/RegisterPage';
 import VerifyEmailPage from './components/auth/VerifyEmailPage';
 import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
 import ResetPasswordPage from './components/auth/ResetPasswordPage';
+import BillingPage from './components/billing/BillingPage';
+import TrialBanner from './components/billing/TrialBanner';
 import { ToastProvider, useToast } from './hooks/useToast';
 import api, { API_KEY } from './api/client';
 import { clearAuth, getAccountEmail, getLoginToken } from './api/auth';
@@ -159,6 +161,7 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
       sidebarOpen={sidebarOpen}
       onToggleSidebar={() => setSidebarOpen((v) => !v)}
     >
+      <TrialBanner />
       <div className="mb-4 flex items-center gap-2">
         <button
           type="button"
@@ -196,6 +199,14 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         <span className="ml-auto text-sm text-gray-500">
           {accountEmail || 'shared key mode'}
         </span>
+        {accountEmail && (
+          <a
+            href="/billing"
+            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+          >
+            Billing
+          </a>
+        )}
         {accountEmail && (
           <button
             type="button"
@@ -249,6 +260,11 @@ function AppContent() {
   }
   if (!authed) {
     return <Redirect to="/login" />;
+  }
+  // Billing is a signed-in page and must render without a workspace session —
+  // an expired trial blocks session creation (402), so this route comes first.
+  if (location.startsWith('/billing')) {
+    return <BillingPage />;
   }
   return (
     <Workspace
