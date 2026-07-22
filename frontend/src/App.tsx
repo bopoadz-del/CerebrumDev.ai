@@ -5,17 +5,22 @@ import { ChatSidebar } from './components/chat/ChatSidebar';
 import { ConfigCanvas } from './components/canvas/ConfigCanvas';
 import DesignProductPanel from './components/DesignProductPanel';
 import WorkbenchPanel from './components/WorkbenchPanel';
+import LoginPage from './components/auth/LoginPage';
+import RegisterPage from './components/auth/RegisterPage';
+import VerifyEmailPage from './components/auth/VerifyEmailPage';
 import { ToastProvider, useToast } from './hooks/useToast';
-import api from './api/client';
+import api, { API_KEY } from './api/client';
+import { clearAuth, getAccountEmail, getLoginToken } from './api/auth';
 
 type WorkspaceMode = 'kit' | 'product' | 'workbench';
 
-function AppContent() {
+function Workspace({ onLogout }: { onLogout: () => void }) {
   const [location, setLocation] = useLocation();
   const [match, params] = useRoute('/s/:sessionId');
   const { addToast } = useToast();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('kit');
+  const accountEmail = getAccountEmail();
 
   const [sessionId, setSessionId] = useState<string | null>(() => {
     if (match && params?.sessionId) return params.sessionId;
@@ -152,7 +157,7 @@ function AppContent() {
       sidebarOpen={sidebarOpen}
       onToggleSidebar={() => setSidebarOpen((v) => !v)}
     >
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex items-center gap-2">
         <button
           type="button"
           onClick={() => switchMode('kit')}
@@ -186,6 +191,18 @@ function AppContent() {
         >
           Build mode
         </button>
+        <span className="ml-auto text-sm text-gray-500">
+          {accountEmail || 'shared key mode'}
+        </span>
+        {accountEmail && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+          >
+            Sign out
+          </button>
+        )}
       </div>
       <Switch>
         <Route path="/s/:sessionId">
@@ -202,6 +219,36 @@ function AppContent() {
         </Route>
       </Switch>
     </AppShell>
+  );
+}
+
+function AppContent() {
+  const [location] = useLocation();
+  // Shared-key deployments (VITE_API_KEY set) keep the old no-login flow.
+  // User deployments: a login token is required.
+  const [authed, setAuthed] = useState<boolean>(
+    () => Boolean(getLoginToken()) || Boolean(API_KEY)
+  );
+
+  if (location === '/login') {
+    return <LoginPage onAuthed={() => setAuthed(true)} />;
+  }
+  if (location === '/register') {
+    return <RegisterPage onRegistered={() => setAuthed(true)} />;
+  }
+  if (location.startsWith('/verify-email')) {
+    return <VerifyEmailPage />;
+  }
+  if (!authed) {
+    return <Redirect to="/login" />;
+  }
+  return (
+    <Workspace
+      onLogout={() => {
+        clearAuth();
+        setAuthed(false);
+      }}
+    />
   );
 }
 
