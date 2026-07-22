@@ -3,6 +3,11 @@
 When KIMI_WORKBENCH_ENABLED=false (default), a labeled deterministic regenerator
 applies the approved change inside the sandbox envelope and produces a candidate.
 It never calls an LLM and never touches production.
+
+The coder's brief is the Cerebrum Product Delivery Standard: when a change
+request carries a ``platform`` block and a ``domain_pack``, the brief is the
+full rendered standard (candidate/kimi_prompt.md). Otherwise the legacy
+CR-scoped brief is used (candidate/kimi_prompt.json), honestly labeled.
 """
 
 from __future__ import annotations
@@ -10,10 +15,11 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
+from app.factory import delivery_standard
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.resident_engineer.injection_guard import sanitize_untrusted
 from app.workbench.flags import kimi_workbench_enabled
@@ -97,6 +103,32 @@ def apply_upgrade_to_pins(
     out = dict(pin_versions)
     out[component] = to_version
     return out
+
+
+def _standard_brief(envelope: Dict[str, Any]) -> Optional[str]:
+    """Render the Cerebrum Product Delivery Standard when the CR carries a
+    platform block + domain pack; None means use the legacy CR-scoped brief.
+
+    A CR that carries only one of the two, or a pack the renderer rejects,
+    is an error — the coder never gets a partial or silently-downgraded brief.
+    """
+    request = envelope.get("request") or {}
+    platform, domain_pack = request.get("platform"), request.get("domain_pack")
+    if platform is None and domain_pack is None:
+        return None
+    if not isinstance(platform, dict) or not isinstance(domain_pack, dict):
+        raise AgentError(
+            "CR must carry both 'platform' and 'domain_pack' objects, or neither"
+        )
+    try:
+        brief = delivery_standard.render(platform, domain_pack)
+    except ValueError as exc:
+        raise AgentError(f"delivery-standard brief incomplete: {exc}") from exc
+    return brief + (
+        f"\n\n---\nEnvelope: kind={envelope.get('kind')} "
+        f"checksum={envelope.get('envelope_checksum')} — candidate changes stay "
+        "inside mutable_paths; no deploy; no Store writes.\n"
+    )
 
 
 def run_factory_regenerator_stub(
@@ -217,17 +249,25 @@ def run_kimi_cli_agent(
     )
     cli = os.getenv("KIMI_CODE_CLI", "kimi").strip() or "kimi"
     model = os.getenv("OLLAMA_MODEL", "kimi-k2.7-code:cloud")
-    # Write task prompt inside envelope
-    prompt = {
-        "instruction": (
-            "Produce a candidate change set ONLY inside mutable_paths. "
-            "Do not deploy. Do not write to the Store. Stay inside the envelope."
-        ),
-        "envelope_checksum": envelope.get("envelope_checksum"),
-        "kind": envelope.get("kind"),
-        "request": envelope.get("request"),
-    }
-    sandbox.write_text("candidate/kimi_prompt.json", json.dumps(prompt, indent=2) + "\n")
+    # The coder's brief: the full delivery standard when the CR carries a
+    # domain pack (kimi_prompt.md); otherwise the legacy CR-scoped brief
+    # (kimi_prompt.json), honestly labeled.
+    brief_mode = "cr_scoped"
+    standard = _standard_brief(envelope)
+    if standard is not None:
+        brief_mode = "delivery_standard"
+        sandbox.write_text("candidate/kimi_prompt.md", standard)
+    else:
+        prompt = {
+            "instruction": (
+                "Produce a candidate change set ONLY inside mutable_paths. "
+                "Do not deploy. Do not write to the Store. Stay inside the envelope."
+            ),
+            "envelope_checksum": envelope.get("envelope_checksum"),
+            "kind": envelope.get("kind"),
+            "request": envelope.get("request"),
+        }
+        sandbox.write_text("candidate/kimi_prompt.json", json.dumps(prompt, indent=2) + "\n")
     try:
         # Host allowlist check for ollama.com before any network
         sandbox.assert_host_allowed("ollama.com")
@@ -244,12 +284,14 @@ def run_kimi_cli_agent(
                 ),
                 "kimi_fallback": True,
                 "kimi_error": "cli_unavailable",
+                "brief_mode": brief_mode,
             }
         # Honest: full interactive Kimi coding session is env-specific; record intent
         # and still produce candidate via regenerator so the pipeline is testable.
         sandbox.log(
             "kimi_cli_present",
             model=model,
+            brief_mode=brief_mode,
             note="CLI detected; candidate still produced via regenerator for deterministic gates",
         )
         out = run_factory_regenerator_stub(
@@ -257,6 +299,7 @@ def run_kimi_cli_agent(
         )
         out["backend"] = "kimi_cli+factory_regenerator"
         out["kimi_model"] = model
+        out["brief_mode"] = brief_mode
         out["honesty"] = (
             "Kimi CLI present; candidate materialization uses Factory regenerator "
             "so packager path stays deterministic"
@@ -269,6 +312,7 @@ def run_kimi_cli_agent(
         )
         out["kimi_fallback"] = True
         out["kimi_error"] = "cli_not_found"
+        out["brief_mode"] = brief_mode
         return out
 
 
