@@ -38,6 +38,16 @@ api.interceptors.response.use(
         window.location.assign('/login');
       }
     }
+    // Trial over / subscription lapsed → route to the billing page (which is
+    // also the only place a 402 handler must not redirect-loop).
+    if (
+      error?.response?.status === 402 &&
+      error?.response?.data?.detail === 'trial_expired' &&
+      getLoginToken() &&
+      !window.location.pathname.startsWith('/billing')
+    ) {
+      window.location.assign('/billing');
+    }
     return Promise.reject(error);
   }
 );
