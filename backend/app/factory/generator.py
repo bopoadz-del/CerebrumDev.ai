@@ -770,7 +770,7 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             source_id=bid,
             filename=f"block:{{bid}}",
             excerpt=f"Resolved via dual-registered block {{bid}}",
-            metadata={{{"strategy": STRATEGY}}},
+            metadata={{"strategy": STRATEGY}},
         )
         for bid in BLOCK_IDS
     ]
