@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0.0",
+  "audited_at_utc": "2026-07-21",
+  "steward_repo": "bopoadz-del/Cerebrum-Steward",
+  "factory_first_rule": "All durable corrections via Factory/Blocks, then deterministic regeneration",
+  "commits": [
+    {
+      "sha": "cf299d9",
+      "title": "chore: Factory regenerate with dual RAG ingest+query",
+      "disposition": "UPGRADE",
+      "rationale": "Foundational dual RAG + product kernel + agent/workflow scaffold. Keep generation path but upgrade: canonicalize RAG (merge into app.steward), add auth before ingest/query, replace header identity.",
+      "functional_evidence": {
+        "verified": true,
+        "notes": "Introduced app/estate_kit/rag/*, /v1/rag/* routes, demo fixtures, resident packaging, vendor blocks snapshot"
+      },
+      "material_changes": {
+        "dual_rag_ingest_query": { "action": "UPGRADE", "detail": "Move to canonical steward runtime; add auth" },
+        "property_filtering": { "action": "UPGRADE", "detail": "Replace property_id param trust with estate authorization" },
+        "factory_provenance": { "action": "KEEP", "detail": "Initial provenance manifest" },
+        "checksum_manifests": { "action": "KEEP", "detail": "Required for determinism checks" },
+        "structured_packs": { "action": "KEEP", "detail": "Evaluation fixtures; label evaluation_only" }
+      },
+      "upstream_owner": "Factory"
+    },
+    {
+      "sha": "d30e7e5",
+      "title": "chore: Factory regenerate — live oracle fixtures + RAG query hardening",
+      "disposition": "KEEP",
+      "rationale": "Oracle fixture corpus, property isolation cases, insufficiency cases, and steward production RAG templates are required baseline. Extend for Oracle V2 — do not remove.",
+      "functional_evidence": {
+        "verified": true,
+        "notes": "Added app/steward/* pgvector runtime, evaluation oracle alignment, query hardening for live certification"
+      },
+      "material_changes": {
+        "live_oracle_fixtures": { "action": "KEEP", "detail": "Seed for v1 and future v2 calibration suites" },
+        "property_filtering": { "action": "UPGRADE", "detail": "Oracle proves fixture isolation; production needs auth-bound estate scope" },
+        "honest_insufficiency": { "action": "KEEP", "detail": "Two unknown cases in steward_live_oracle_v1" },
+        "pgvector_usage": { "action": "KEEP", "detail": "steward hybrid path; not live-certified path today" },
+        "jsonb_fallback_path": { "action": "KEEP", "detail": "estate_kit postgres_jsonb_v1 remains live pilot path until canonical cutover" }
+      },
+      "upstream_owner": "Factory"
+    },
+    {
+      "sha": "a5749e8",
+      "title": "chore: Factory regenerate — persistent dual RAG + FastEmbed pilot path",
+      "disposition": "UPGRADE",
+      "rationale": "Postgres persistence + FastEmbed production flags are necessary but live path still uses estate-kit JSONB stack parallel to steward pgvector. Upgrade to single canonical persistence model.",
+      "functional_evidence": {
+        "verified": true,
+        "notes": "Documented live FastEmbed + postgres_jsonb_v1; render.yaml Postgres wiring; fail-closed STEWARD_REQUIRE_* flags"
+      },
+      "material_changes": {
+        "postgres_persistence": { "action": "UPGRADE", "detail": "Consolidate on steward pgvector store with same auth/isolation" },
+        "fastembed_model_loading": { "action": "KEEP", "detail": "Production embedding backend; fingerprint contract" },
+        "jsonb_fallback_path": { "action": "REPLACE", "detail": "Retire as production path after canonical steward cutover" },
+        "source_licensing_metadata": { "action": "KEEP", "detail": "Pack manifests and rejected_sources" }
+      },
+      "upstream_owner": "Factory"
+    },
+    {
+      "sha": "64618d7",
+      "title": "chore: Factory regenerate — FastEmbed semantic score floor",
+      "disposition": "UPGRADE",
+      "rationale": "0.62 semantic floor enables honest insufficiency on estate-kit FastEmbed path (oracle v1 PASS). Do not copy blindly to steward hybrid path — calibrate for RRF fusion.",
+      "functional_evidence": {
+        "verified": true,
+        "notes": "Oracle v1 cases 8-9 PASS at 2026-07-21T13:22:32Z on /v1/rag/query with min_score=0.2 param"
+      },
+      "material_changes": {
+        "semantic_score_floor": { "action": "UPGRADE", "detail": "Recalibrate on canonical path; store steward_retrieval_calibration.json" },
+        "honest_insufficiency": { "action": "KEEP", "detail": "Proven on demo path only" }
+      },
+      "upstream_owner": "Factory"
+    },
+    {
+      "sha": "d84509b",
+      "title": "chore: Factory regenerate from CerebrumDev.ai master",
+      "disposition": "KEEP",
+      "rationale": "Provenance-only regeneration syncing Factory 3825eff and Blocks 464ec784 pins. No runtime logic change — valid for pin alignment, not functional uplift.",
+      "functional_evidence": {
+        "verified": true,
+        "notes": "9 files changed: provenance.json, checksum_manifest, generation_manifest, block_lockfile only"
+      },
+      "material_changes": {
+        "factory_provenance": { "action": "KEEP", "detail": "Records factory_commit 3825eff, blocks_commit 464ec784" },
+        "checksum_manifests": { "action": "KEEP", "detail": "Checksum drift expected on regen timestamp" }
+      },
+      "upstream_owner": "Factory"
+    }
+  ],
+  "disposition_summary": {
+    "KEEP": 8,
+    "UPGRADE": 11,
+    "REPLACE": 1,
+    "REMOVE": 0
+  },
+  "remove_candidates_none_reason": "All five commits contribute Factory-generated assets needed for v2 hardening; none should be reverted wholesale"
+}

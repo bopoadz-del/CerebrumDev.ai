@@ -20,6 +20,9 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # RESIDUAL GAP (G5): initial schema still uses create_all for bootstrap speed.
+    # Wave 2+ migrations (0002+) use explicit table DDL. Full DDL-only 0001 rewrite
+    # is deferred — see docs/audits/STEWARD_V2_AGENT_AUDIT.md domain 12.
     Base.metadata.create_all(bind=bind)
     op.execute(
         "CREATE INDEX IF NOT EXISTS ix_steward_chunk_embedding "

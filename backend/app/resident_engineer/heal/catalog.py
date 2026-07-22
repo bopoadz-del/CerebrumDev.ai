@@ -49,13 +49,23 @@ async def _retry_ingestion(context: Dict[str, Any], arguments: Dict[str, Any]) -
     return {
         "action": "resident.retry_ingestion",
         "attempts": _HEAL_STATE["ingestion_attempts"],
-        "ok": True,
+        "executed": False,
+        "simulation": True,
+        "ok": False,
+        "detail": "In-memory simulation only — no real ingestion retry performed",
     }
 
 
 async def _restart_worker(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
     _HEAL_STATE["worker_status"] = "restarted"
-    return {"action": "resident.restart_worker", "worker_status": "restarted", "ok": True}
+    return {
+        "action": "resident.restart_worker",
+        "worker_status": "restarted",
+        "executed": False,
+        "simulation": True,
+        "ok": False,
+        "detail": "In-memory simulation only — no real worker restart performed",
+    }
 
 
 async def _rebuild_index(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -63,7 +73,10 @@ async def _rebuild_index(context: Dict[str, Any], arguments: Dict[str, Any]) -> 
     return {
         "action": "resident.rebuild_index",
         "index_version": _HEAL_STATE["index_version"],
-        "ok": True,
+        "executed": False,
+        "simulation": True,
+        "ok": False,
+        "detail": "In-memory simulation only — no real index rebuild performed",
     }
 
 
@@ -77,7 +90,10 @@ async def _restore_config_default(
         "action": "resident.restore_config_default",
         "config": dict(_HEAL_STATE["config"]),
         "previous": current,
-        "ok": True,
+        "executed": False,
+        "simulation": True,
+        "ok": False,
+        "detail": "In-memory simulation only — no real config restore performed",
     }
 
 
@@ -102,9 +118,11 @@ def _spec(action_id: str, name: str, description: str, handler: HealHandler) -> 
             "type": "object",
             "properties": {
                 "action": {"type": "string"},
+                "executed": {"type": "boolean"},
+                "simulation": {"type": "boolean"},
                 "ok": {"type": "boolean"},
             },
-            "required": ["action", "ok"],
+            "required": ["action", "executed", "simulation", "ok"],
         },
         required_context=["tenant_id", "user_id"],
         permissions=["resident:heal"],

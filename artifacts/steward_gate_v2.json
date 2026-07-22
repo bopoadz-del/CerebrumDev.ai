@@ -1,0 +1,92 @@
+{
+  "gates": [
+    {
+      "detail": "double-generation artifact absent",
+      "gate": "G1_factory_determinism",
+      "owner": "Factory",
+      "status": "NOT VERIFIED"
+    },
+    {
+      "detail": "pilot auth kit present",
+      "gate": "G2_authentication",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "authorize_estate implemented",
+      "gate": "G3_authorization",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "header defaults removed; principal auth wired",
+      "gate": "G4_isolation",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "admin routes gated; audit migration present; residual: 0001 uses create_all",
+      "gate": "G5_database",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "legacy /v1/rag/* guard present",
+      "gate": "G6_rag",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "block runtime execution not wired — GENERATE stubs only",
+      "gate": "G7_store",
+      "owner": "Factory",
+      "status": "FAIL"
+    },
+    {
+      "detail": "agent runtime certification harness absent",
+      "gate": "G8_agents",
+      "owner": "Factory",
+      "status": "FAIL"
+    },
+    {
+      "detail": "approval persistence for workflows not implemented",
+      "gate": "G9_workflows",
+      "owner": "Factory",
+      "status": "FAIL"
+    },
+    {
+      "detail": "HealApproval + simulated heal honesty enforced",
+      "gate": "G10_resident_engineer",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "Decimal/Numeric money scaffolding in Factory kit",
+      "gate": "G11_financial",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "readiness/version probes in Factory kit",
+      "gate": "G12_deployment",
+      "owner": "Factory",
+      "status": "PASS"
+    },
+    {
+      "detail": "oracle v2 static kit checks present; live suites not fully verified",
+      "gate": "G13_oracle",
+      "owner": "Factory",
+      "status": "FAIL"
+    },
+    {
+      "detail": "v2 audit + gate script + entity DNA stubs present",
+      "gate": "G14_documentation",
+      "owner": "Factory",
+      "status": "PASS"
+    }
+  ],
+  "pilot_verdict": "NO-GO",
+  "ran_at_utc": "2026-07-21T14:28:51.965925+00:00",
+  "repo_root": "C:\\Users\\shimm\\CerebrumDev.ai",
+  "schema_version": "steward_gate_v2"
+}

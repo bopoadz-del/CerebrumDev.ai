@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0.0",
+  "entities": [
+    {
+      "id": "tenant",
+      "name": "Tenant",
+      "table": "tenants",
+      "scope": "platform",
+      "lifecycle_states": ["active", "suspended"],
+      "tenant_bound": false,
+      "estate_bound": false
+    },
+    {
+      "id": "estate_project",
+      "name": "EstateProject",
+      "table": "estate_projects",
+      "scope": "tenant",
+      "lifecycle_states": ["active", "archived"],
+      "tenant_bound": true,
+      "estate_bound": false,
+      "knowledge_layers": [1, 2]
+    },
+    {
+      "id": "facility_asset",
+      "name": "FacilityAsset",
+      "table": "facility_assets",
+      "scope": "estate",
+      "lifecycle_states": ["active", "scheduled", "open", "closed"],
+      "tenant_bound": true,
+      "estate_bound": true,
+      "money_fields": ["cost", "labour_hours"]
+    },
+    {
+      "id": "fleet_vehicle",
+      "name": "FleetVehicle",
+      "table": "fleet_vehicles",
+      "scope": "estate",
+      "lifecycle_states": ["available", "in_service", "defect", "retired"],
+      "tenant_bound": true,
+      "estate_bound": true
+    },
+    {
+      "id": "work_order",
+      "name": "WorkOrder",
+      "table": null,
+      "scope": "estate",
+      "lifecycle_states": ["draft", "scheduled", "open", "completed", "cancelled"],
+      "tenant_bound": true,
+      "estate_bound": true,
+      "note": "Referenced via facility_assets.work_order_id — dedicated table deferred"
+    },
+    {
+      "id": "budget_line",
+      "name": "BudgetLine",
+      "table": null,
+      "scope": "estate",
+      "lifecycle_states": ["draft", "approved", "committed", "closed"],
+      "tenant_bound": true,
+      "estate_bound": true,
+      "note": "Vendor budget action stub — persistence deferred to Store wiring"
+    },
+    {
+      "id": "staff_assignment",
+      "name": "StaffAssignment",
+      "table": null,
+      "scope": "estate",
+      "lifecycle_states": ["scheduled", "active", "completed"],
+      "tenant_bound": true,
+      "estate_bound": true,
+      "note": "Staff schedule workflow stub — persistence deferred"
+    },
+    {
+      "id": "audit_event",
+      "name": "AuditEvent",
+      "table": "audit_events",
+      "scope": "tenant",
+      "lifecycle_states": ["recorded"],
+      "tenant_bound": true,
+      "estate_bound": false,
+      "append_only": true
+    },
+    {
+      "id": "heal_approval",
+      "name": "HealApproval",
+      "table": "heal_approvals",
+      "scope": "tenant",
+      "lifecycle_states": ["pending", "approved", "consumed", "expired"],
+      "tenant_bound": true,
+      "estate_bound": false
+    }
+  ],
+  "relationships": [
+    {
+      "from": "tenant",
+      "to": "estate_project",
+      "cardinality": "1:N",
+      "via": "estate_projects.tenant_id"
+    },
+    {
+      "from": "estate_project",
+      "to": "facility_asset",
+      "cardinality": "1:N",
+      "via": "facility_assets.estate_id"
+    },
+    {
+      "from": "estate_project",
+      "to": "fleet_vehicle",
+      "cardinality": "1:N",
+      "via": "fleet_vehicles.estate_id"
+    },
+    {
+      "from": "facility_asset",
+      "to": "work_order",
+      "cardinality": "N:1",
+      "via": "facility_assets.work_order_id",
+      "note": "logical reference only"
+    },
+    {
+      "from": "tenant",
+      "to": "audit_event",
+      "cardinality": "1:N",
+      "via": "audit_events.tenant_id"
+    },
+    {
+      "from": "tenant",
+      "to": "heal_approval",
+      "cardinality": "1:N",
+      "via": "heal_approvals.tenant_id"
+    }
+  ]
+}

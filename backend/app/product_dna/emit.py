@@ -61,6 +61,22 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _load_estate_entity_model() -> Dict[str, Any]:
+    """Load Factory-owned entity DNA stubs for estate vertical products."""
+    kit_path = (
+        Path(__file__).resolve().parents[1]
+        / "factory"
+        / "kits"
+        / "private_estate_operations"
+        / "entity_model.json"
+    )
+    if not kit_path.is_file():
+        return {"schema_version": DNA_SCHEMA_VERSION, "entities": [], "relationships": []}
+    data = json.loads(kit_path.read_text(encoding="utf-8"))
+    data.setdefault("schema_version", DNA_SCHEMA_VERSION)
+    return data
+
+
 def build_dna_documents(
     blueprint: ProductBlueprint,
     plan: ProductPlan,
@@ -82,6 +98,11 @@ def build_dna_documents(
     workflow_list = list(workflows or [])
     changes = list(change_events or [])
     versions = dict(pin_versions or {})
+    entity_model = (
+        _load_estate_entity_model()
+        if blueprint.vertical == "estate"
+        else {"schema_version": DNA_SCHEMA_VERSION, "entities": [], "relationships": []}
+    )
 
     return {
         "product_blueprint.yaml": {
@@ -142,11 +163,7 @@ def build_dna_documents(
             ],
             "layers": [],
         },
-        "entity_model.json": {
-            "schema_version": DNA_SCHEMA_VERSION,
-            "entities": [],
-            "relationships": [],
-        },
+        "entity_model.json": entity_model,
         "action_catalog.json": {
             "schema_version": DNA_SCHEMA_VERSION,
             "actions": action_list,
@@ -182,7 +199,9 @@ def build_dna_documents(
             "limitations": [
                 "Resident Engineer starts APPRENTICE — dual certification pending",
                 "Minor repairs require predefined catalog contracts",
-                "Product DNA entity_model/deployment_topology/test_catalog are empty until Factory owns that data",
+                "Product DNA deployment_topology/test_catalog are empty until Factory owns that data",
+                "Entity model stubs populated for estate vertical; work_order/budget/staff tables deferred",
+                "Migration 0001 still uses create_all — residual G5 gap documented in 0001 revision",
             ],
         },
         "change_history.json": {
