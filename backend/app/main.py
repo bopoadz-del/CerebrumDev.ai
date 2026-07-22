@@ -21,6 +21,7 @@ from .routers import (
     factory_drive,
     product_factory,
     session_product,
+    delivery_standard,
 )
 from .resident_engineer.router import router as resident_engineer_router
 from .change_requests.router import router as change_requests_router
@@ -68,6 +69,13 @@ app.include_router(
     product_factory.router,
     prefix="/v1/factory/product",
     tags=["product-factory"],
+    dependencies=[Depends(require_entitled)],
+)
+# The coder's canonical brief: immutable standard + per-product domain pack.
+app.include_router(
+    delivery_standard.router,
+    prefix="/v1/factory/delivery-standard",
+    tags=["delivery-standard"],
     dependencies=[Depends(require_entitled)],
 )
 app.include_router(
