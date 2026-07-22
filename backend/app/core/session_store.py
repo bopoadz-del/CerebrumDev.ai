@@ -43,6 +43,12 @@ def create_session(session_id: str, user_id: str) -> SessionState:
     state = SessionState(session_id=session_id, user_id=user_id)
     _session_store[session_id] = state
     save_session_state(state)
+    try:
+        from .accounts_store import record_session_owner
+
+        record_session_owner(session_id, user_id)
+    except Exception as exc:  # noqa: BLE001 — ownership index must never break sessions
+        logger.warning("Could not record session owner for %s: %s", session_id, exc)
     return state
 
 

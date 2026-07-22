@@ -1,20 +1,59 @@
 import uuid
-from fastapi import APIRouter, HTTPException
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from ..core import accounts_store
+from ..core.auth import Principal, require_api_key
+from ..core.session_store import _session_store, create_session, get_session
 from ..models.session import SessionState
-from ..core.session_store import create_session, get_session
 
 router = APIRouter()
 
+
 @router.post("/", response_model=SessionState)
-async def create_new_session():
-    # In a real app, user_id comes from auth
-    user_id = "anonymous"
+async def create_new_session(principal: Principal = Depends(require_api_key)):
+    owner = principal.account_id or "dev-local"
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
-    return create_session(session_id=session_id, user_id=user_id)
+    return create_session(session_id=session_id, user_id=owner)
+
+
+@router.get("/")
+async def list_sessions(principal: Principal = Depends(require_api_key)) -> List[Dict[str, Any]]:
+    """List sessions owned by the caller (admin/dev see all recorded sessions)."""
+    if principal.kind == "user":
+        ids = accounts_store.sessions_for_owner(principal.account_id or "")
+    else:
+        ids = set(_session_store.keys())
+        try:
+            ids.update(accounts_store.all_session_ids())
+        except Exception:  # noqa: BLE001 — ownership index is advisory for admin listing
+            pass
+        ids = sorted(ids)
+    out: List[Dict[str, Any]] = []
+    for sid in ids:
+        state = get_session(sid)
+        if state is None:
+            continue
+        out.append(
+            {
+                "session_id": state.session_id,
+                "user_id": state.user_id,
+                "phase": getattr(state, "phase", None),
+                "phase_status": getattr(state, "phase_status", None),
+            }
+        )
+    return out
+
 
 @router.get("/{session_id}", response_model=SessionState)
-async def get_session_state(session_id: str):
+async def get_session_state(
+    session_id: str, principal: Principal = Depends(require_api_key)
+):
     state = get_session(session_id)
     if not state:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if principal.kind == "user" and state.user_id != principal.account_id:
+        # Do not leak existence across accounts.
         raise HTTPException(status_code=404, detail="Session not found")
     return state

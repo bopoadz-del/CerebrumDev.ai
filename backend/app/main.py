@@ -8,6 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.auth import require_api_key, verify_production_auth
 from .routers import (
+    accounts,
     sessions,
     config,
     domains,
@@ -45,6 +46,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Public account endpoints (register/login/verify carry no credential; me/keys
+# enforce their own account principal).
+app.include_router(accounts.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_api_key)])
 app.include_router(config.router, prefix="/v1/sessions", tags=["config"], dependencies=[Depends(require_api_key)])
 app.include_router(domains.router, prefix="/v1/domains", tags=["domains"], dependencies=[Depends(require_api_key)])
