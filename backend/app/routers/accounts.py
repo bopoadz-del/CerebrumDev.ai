@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..core import accounts_store, mailer
 from ..core.auth import Principal, require_api_key
+from ..core.rate_limit import check_rate_limit
 
 router = APIRouter()
 
@@ -43,6 +44,16 @@ class ResetBody(BaseModel):
     new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
 
 
+def _rate_limit(request: Request, bucket: str) -> None:
+    ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(bucket, ip):
+        raise HTTPException(
+            status_code=429,
+            detail="rate_limited",
+            headers={"Retry-After": "600"},
+        )
+
+
 def _require_user(principal: Principal) -> Principal:
     if principal.kind != "user" or not principal.account_id:
         raise HTTPException(
@@ -53,7 +64,8 @@ def _require_user(principal: Principal) -> Principal:
 
 
 @router.post("/register", status_code=201)
-async def register(body: RegisterBody):
+async def register(body: RegisterBody, request: Request):
+    _rate_limit(request, "register")
     email = body.email.strip().lower()
     if not _EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="Invalid email address")
@@ -86,7 +98,8 @@ async def register(body: RegisterBody):
 
 
 @router.post("/login")
-async def login(body: LoginBody):
+async def login(body: LoginBody, request: Request):
+    _rate_limit(request, "login")
     account = accounts_store.authenticate(body.email, body.password)
     if account is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -109,7 +122,8 @@ async def me(principal: Principal = Depends(require_api_key)):
 
 
 @router.post("/verify-email")
-async def verify_email(body: VerifyBody):
+async def verify_email(body: VerifyBody, request: Request):
+    _rate_limit(request, "verify-email")
     account_id = accounts_store.confirm_verify_token(body.token.strip())
     if account_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired verification token")
@@ -117,9 +131,10 @@ async def verify_email(body: VerifyBody):
 
 
 @router.post("/forgot-password")
-async def forgot_password(body: ForgotBody):
+async def forgot_password(body: ForgotBody, request: Request):
     """Issue a reset token. Response never reveals whether the email exists —
     except in dev mode (no SMTP), where the token is surfaced for the owner."""
+    _rate_limit(request, "forgot-password")
     email = body.email.strip().lower()
     token = accounts_store.issue_reset_token(email)
     sent = mailer.send_password_reset_email(email, token) if token else False
@@ -134,7 +149,8 @@ async def forgot_password(body: ForgotBody):
 
 
 @router.post("/reset-password")
-async def reset_password(body: ResetBody):
+async def reset_password(body: ResetBody, request: Request):
+    _rate_limit(request, "reset-password")
     account_id = accounts_store.confirm_reset_token(body.token.strip(), body.new_password)
     if account_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")

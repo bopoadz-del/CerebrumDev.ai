@@ -10,6 +10,12 @@ python-docx>=1.1.0
 beautifulsoup4>=4.12.0
 chromadb>=0.5.0
 
+# User accounts storage (P0): SQLAlchemy Core drives both the default sqlite
+# file and Postgres (ACCOUNTS_DATABASE_URL). psycopg is only exercised when a
+# Postgres URL is configured.
+sqlalchemy>=2.0.30
+psycopg[binary]>=3.1
+
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is
 # BAAI/bge-small-en-v1.5: ~67 MB ONNX weights, 384 dimensions.
