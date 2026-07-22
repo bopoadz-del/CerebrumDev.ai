@@ -34,6 +34,15 @@ class KeyBody(BaseModel):
     label: str = ""
 
 
+class ForgotBody(BaseModel):
+    email: str
+
+
+class ResetBody(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
+
+
 def _require_user(principal: Principal) -> Principal:
     if principal.kind != "user" or not principal.account_id:
         raise HTTPException(
@@ -105,6 +114,35 @@ async def verify_email(body: VerifyBody):
     if account_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired verification token")
     return {"ok": True, "account_id": account_id, "email_verified": True}
+
+
+@router.post("/forgot-password")
+async def forgot_password(body: ForgotBody):
+    """Issue a reset token. Response never reveals whether the email exists —
+    except in dev mode (no SMTP), where the token is surfaced for the owner."""
+    email = body.email.strip().lower()
+    token = accounts_store.issue_reset_token(email)
+    sent = mailer.send_password_reset_email(email, token) if token else False
+    resp: dict = {
+        "ok": True,
+        "message": "If the email is registered, a reset link follows.",
+    }
+    if token and not sent:
+        resp["note"] = "SMTP not configured — reset via POST /v1/auth/reset-password with this token"
+        resp["dev_reset_token"] = token
+    return resp
+
+
+@router.post("/reset-password")
+async def reset_password(body: ResetBody):
+    account_id = accounts_store.confirm_reset_token(body.token.strip(), body.new_password)
+    if account_id is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "message": "Password updated — sign in again (all previous sessions were closed).",
+    }
 
 
 @router.post("/keys", status_code=201)

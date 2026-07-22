@@ -16,6 +16,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(session_persistence, "STORAGE_PATH", storage_path)
     monkeypatch.setattr("app.core.auth._API_KEY", "")
     monkeypatch.delenv("SMTP_HOST", raising=False)
+    monkeypatch.delenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", raising=False)
+    monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
 
     from app.routers import accounts, sessions
 
@@ -161,3 +163,71 @@ def test_master_key_admin_access(client, monkeypatch):
 def test_me_requires_account_credential(client):
     res = client.get("/v1/auth/me")
     assert res.status_code == 403
+
+
+def test_password_reset_flow(client):
+    body = _register(client)
+    old_token = body["login_token"]
+
+    res = client.post("/v1/auth/forgot-password", json={"email": "dev@example.com"})
+    assert res.status_code == 200
+    token = res.json()["dev_reset_token"]
+    assert token.startswith("cdr_")
+
+    res = client.post(
+        "/v1/auth/reset-password",
+        json={"token": token, "new_password": "new-pass-456"},
+    )
+    assert res.status_code == 200
+
+    # Old password fails; new password works.
+    assert (
+        client.post(
+            "/v1/auth/login",
+            json={"email": "dev@example.com", "password": "pilot-pass-123"},
+        ).status_code
+        == 401
+    )
+    ok = client.post(
+        "/v1/auth/login", json={"email": "dev@example.com", "password": "new-pass-456"}
+    )
+    assert ok.status_code == 200
+
+    # The reset signed out every previous session (old login token is dead).
+    res = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
+    assert res.status_code == 403
+
+    # Token is single-use.
+    res = client.post(
+        "/v1/auth/reset-password",
+        json={"token": token, "new_password": "another-pass-789"},
+    )
+    assert res.status_code == 400
+
+
+def test_forgot_password_unknown_email_no_token(client):
+    res = client.post("/v1/auth/forgot-password", json={"email": "ghost@example.com"})
+    assert res.status_code == 200
+    assert "dev_reset_token" not in res.json()
+
+
+def test_verified_email_enforcement(client, monkeypatch):
+    body = _register(client)  # starts unverified
+    monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")
+
+    # Unverified user is blocked from credential-gated routes.
+    res = client.post(
+        "/v1/sessions/", headers={"Authorization": f"Bearer {body['login_token']}"}
+    )
+    assert res.status_code == 403
+    assert res.json()["detail"] == "email_not_verified"
+
+    # Verification endpoint stays public so the flow can complete.
+    token = body["verification"]["dev_verification_token"]
+    assert client.post("/v1/auth/verify-email", json={"token": token}).status_code == 200
+
+    # Verified → access restored.
+    res = client.post(
+        "/v1/sessions/", headers={"Authorization": f"Bearer {body['login_token']}"}
+    )
+    assert res.status_code == 200
