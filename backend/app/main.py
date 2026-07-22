@@ -7,8 +7,10 @@ load_dotenv()
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .core.auth import require_api_key, verify_production_auth
+from .core.billing import require_entitled
 from .routers import (
     accounts,
+    billing,
     sessions,
     config,
     domains,
@@ -49,6 +51,8 @@ app.add_middleware(
 # Public account endpoints (register/login/verify carry no credential; me/keys
 # enforce their own account principal).
 app.include_router(accounts.router, prefix="/v1/auth", tags=["auth"])
+# Billing status self-enforces an account credential; checkout/webhook join here.
+app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
 app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_api_key)])
 app.include_router(config.router, prefix="/v1/sessions", tags=["config"], dependencies=[Depends(require_api_key)])
 app.include_router(domains.router, prefix="/v1/domains", tags=["domains"], dependencies=[Depends(require_api_key)])
@@ -58,11 +62,13 @@ app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], depend
 app.include_router(train.router, prefix="/v1/sessions", tags=["training"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.callback_router)
+# Factory runs are paid actions: require_entitled blocks expired trials with
+# 402 when BILLING_ENFORCEMENT is on (it chains require_api_key).
 app.include_router(
     product_factory.router,
     prefix="/v1/factory/product",
     tags=["product-factory"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_entitled)],
 )
 app.include_router(
     session_product.router,

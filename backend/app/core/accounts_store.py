@@ -9,6 +9,10 @@ Two backends, one interface:
 All credentials are stored as SHA-256 hashes; passwords use PBKDF2-HMAC-SHA256.
 Token types: login (``cdt_``, 7d) · API key (``cdk_``) · email verification
 (``cdv_``, 24h, single use) · password reset (``cdr_``, 1h, single use).
+
+Billing (P3): every new account starts a ``TRIAL_DAYS``-day free trial
+(``subscription_status='trialing'`` + ``trial_ends_at``). ``set_subscription``
+is the seam the Stripe webhook uses to flip accounts to ``active``.
 """
 
 from __future__ import annotations
@@ -44,6 +48,9 @@ _t_accounts = sa.Table(
     sa.Column("verify_expires_at", sa.String(64), nullable=True),
     sa.Column("reset_token_hash", sa.String(128), nullable=True),
     sa.Column("reset_expires_at", sa.String(64), nullable=True),
+    sa.Column("trial_ends_at", sa.String(64), nullable=True),
+    sa.Column("subscription_status", sa.String(32), nullable=True),
+    sa.Column("stripe_customer_id", sa.String(128), nullable=True),
     sa.Column("created_at", sa.String(64), nullable=False),
 )
 _t_api_keys = sa.Table(
@@ -91,6 +98,17 @@ def _parse(raw: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def trial_days() -> int:
+    """Length of the free trial for new accounts (env ``TRIAL_DAYS``, default 3)."""
+    raw = os.getenv("TRIAL_DAYS", "").strip()
+    if not raw:
+        return 3
+    try:
+        return int(raw)
+    except ValueError:
+        return 3
+
+
 def _db_path() -> str:
     override = os.getenv("ACCOUNTS_DB_PATH", "").strip()
     if override:
@@ -131,6 +149,9 @@ def _engine() -> sa.engine.Engine:
                 _META.create_all(conn, checkfirst=True)
                 _ensure_column(conn, "accounts", "reset_token_hash", "reset_token_hash TEXT")
                 _ensure_column(conn, "accounts", "reset_expires_at", "reset_expires_at TEXT")
+                _ensure_column(conn, "accounts", "trial_ends_at", "trial_ends_at TEXT")
+                _ensure_column(conn, "accounts", "subscription_status", "subscription_status TEXT")
+                _ensure_column(conn, "accounts", "stripe_customer_id", "stripe_customer_id TEXT")
             _ENGINES[url] = eng
         return eng
 
@@ -170,7 +191,11 @@ def _row_to_account(row: Any) -> Dict[str, Any]:
 
 
 def create_account(email: str, password: str) -> Dict[str, Any]:
-    """Create an account; raises ValueError('email_registered') on duplicate."""
+    """Create an account; raises ValueError('email_registered') on duplicate.
+
+    New accounts start a free trial: ``subscription_status='trialing'`` with
+    ``trial_ends_at`` set ``trial_days()`` days in the future.
+    """
     email_norm = email.strip().lower()
     account_id = f"acct_{uuid.uuid4().hex[:16]}"
     salt = secrets.token_hex(16)
@@ -182,6 +207,9 @@ def create_account(email: str, password: str) -> Dict[str, Any]:
                     email=email_norm,
                     password_hash=_hash_password(password, salt),
                     email_verified=False,
+                    trial_ends_at=_iso(_utcnow() + timedelta(days=trial_days())),
+                    subscription_status="trialing",
+                    stripe_customer_id=None,
                     created_at=_iso(_utcnow()),
                 )
             )
@@ -210,6 +238,43 @@ def get_account(account_id: str) -> Optional[Dict[str, Any]]:
             sa.select(_t_accounts).where(_t_accounts.c.id == account_id)
         ).first()
     return _row_to_account(row) if row else None
+
+
+def subscription_fields(account_id: str) -> Optional[Dict[str, Any]]:
+    """Raw billing fields for an account (None if the account does not exist)."""
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts).where(_t_accounts.c.id == account_id)
+        ).first()
+    if row is None:
+        return None
+    m = row._mapping
+    return {
+        "account_id": m["id"],
+        "subscription_status": m["subscription_status"],
+        "trial_ends_at": m["trial_ends_at"],
+        "stripe_customer_id": m["stripe_customer_id"],
+    }
+
+
+def set_subscription(
+    account_id: str,
+    status: str,
+    stripe_customer_id: Optional[str] = None,
+) -> bool:
+    """Set subscription state — the Stripe webhook seam (also used by ops/tests).
+
+    Status values: ``trialing`` · ``active`` · ``past_due`` · ``canceled``.
+    Returns True when the account exists.
+    """
+    values: Dict[str, Any] = {"subscription_status": status.strip().lower()}
+    if stripe_customer_id is not None:
+        values["stripe_customer_id"] = stripe_customer_id.strip()
+    with _LOCK, _engine().begin() as conn:
+        result = conn.execute(
+            sa.update(_t_accounts).where(_t_accounts.c.id == account_id).values(**values)
+        )
+        return result.rowcount > 0
 
 
 def issue_login_token(account_id: str) -> str:

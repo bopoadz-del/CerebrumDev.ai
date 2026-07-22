@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..core import accounts_store
 from ..core.auth import Principal, require_api_key
+from ..core.billing import require_entitled
 from ..core.session_store import _session_store, create_session, get_session
 from ..models.session import SessionState
 
@@ -12,7 +13,9 @@ router = APIRouter()
 
 
 @router.post("/", response_model=SessionState)
-async def create_new_session(principal: Principal = Depends(require_api_key)):
+async def create_new_session(principal: Principal = Depends(require_entitled)):
+    # Creating a session is a paid action: require_entitled blocks expired
+    # trials / canceled subscriptions with 402 when BILLING_ENFORCEMENT is on.
     owner = principal.account_id or "dev-local"
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
     return create_session(session_id=session_id, user_id=owner)
