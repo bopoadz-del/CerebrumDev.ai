@@ -18,6 +18,13 @@ def client(monkeypatch, tmp_path):
     monkeypatch.delenv("SMTP_HOST", raising=False)
     monkeypatch.delenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", raising=False)
     monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
+    monkeypatch.delenv("ACCOUNTS_DATABASE_URL", raising=False)
+    monkeypatch.delenv("AUTH_RATE_LIMIT_MAX", raising=False)
+    monkeypatch.delenv("AUTH_RATE_LIMIT_WINDOW_S", raising=False)
+
+    from app.core.rate_limit import reset_rate_limits
+
+    reset_rate_limits()
 
     from app.routers import accounts, sessions
 
@@ -231,3 +238,40 @@ def test_verified_email_enforcement(client, monkeypatch):
         "/v1/sessions/", headers={"Authorization": f"Bearer {body['login_token']}"}
     )
     assert res.status_code == 200
+
+
+def test_auth_rate_limit_register(client, monkeypatch):
+    monkeypatch.setenv("AUTH_RATE_LIMIT_MAX", "3")
+    for i in range(3):
+        res = client.post(
+            "/v1/auth/register",
+            json={"email": f"user{i}@example.com", "password": "pilot-pass-123"},
+        )
+        assert res.status_code == 201, res.text
+    res = client.post(
+        "/v1/auth/register",
+        json={"email": "user3@example.com", "password": "pilot-pass-123"},
+    )
+    assert res.status_code == 429
+    assert res.json()["detail"] == "rate_limited"
+
+
+def test_database_url_defaults_to_sqlite(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    monkeypatch.delenv("ACCOUNTS_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
+    from app.core import accounts_store
+
+    url = accounts_store._database_url()
+    assert url.startswith("sqlite:///")
+    assert url.endswith("accounts.db")
+
+
+def test_database_url_normalizes_postgres(monkeypatch):
+    monkeypatch.setenv("ACCOUNTS_DATABASE_URL", "postgres://u:p@host:5432/db")
+    from app.core import accounts_store
+
+    assert accounts_store._database_url() == "postgresql+psycopg://u:p@host:5432/db"
+
+    monkeypatch.setenv("ACCOUNTS_DATABASE_URL", "postgresql://u:p@host:5432/db")
+    assert accounts_store._database_url() == "postgresql+psycopg://u:p@host:5432/db"
