@@ -6,8 +6,9 @@ Resolution order for every request:
 3. Per-account login token (``cdt_…``) via Bearer.
 4. No master key configured (local dev) → open dev principal, as before.
 
-A startup check in ``main.py`` refuses to boot in production without the
-master key. Account credentials never replace it — they add user identity.
+Set ``ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1`` to block unverified accounts from
+all credential-gated routes (403 ``email_not_verified``). Verification and
+password-reset endpoints stay public so users can always complete the flow.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ class Principal:
     kind: str
     account_id: Optional[str] = None
     email: Optional[str] = None
+    email_verified: Optional[bool] = None
 
 
 def verify_production_auth() -> None:
@@ -51,6 +53,15 @@ def _provided_token(authorization: Optional[str], x_api_key: Optional[str]) -> s
     return ""
 
 
+def _verification_required() -> bool:
+    return os.getenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _resolve_user_principal(token: str) -> Optional[Principal]:
     from . import accounts_store
 
@@ -59,7 +70,18 @@ def _resolve_user_principal(token: str) -> Optional[Principal]:
         account = accounts_store.account_for_login_token(token)
     if account is None:
         return None
-    return Principal(kind="user", account_id=account["account_id"], email=account["email"])
+    return Principal(
+        kind="user",
+        account_id=account["account_id"],
+        email=account["email"],
+        email_verified=account["email_verified"],
+    )
+
+
+def _enforce_verification(principal: Principal) -> Principal:
+    if _verification_required() and principal.email_verified is False:
+        raise HTTPException(status_code=403, detail="email_not_verified")
+    return principal
 
 
 def require_api_key(
@@ -79,7 +101,7 @@ def require_api_key(
             return Principal(kind="admin")
         principal = _resolve_user_principal(provided) if provided else None
         if principal is not None:
-            return principal
+            return _enforce_verification(principal)
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
     # Local-dev open mode (no master key configured): honor account credentials
@@ -87,5 +109,5 @@ def require_api_key(
     if provided:
         principal = _resolve_user_principal(provided)
         if principal is not None:
-            return principal
+            return _enforce_verification(principal)
     return Principal(kind="dev")

@@ -8,6 +8,8 @@ import WorkbenchPanel from './components/WorkbenchPanel';
 import LoginPage from './components/auth/LoginPage';
 import RegisterPage from './components/auth/RegisterPage';
 import VerifyEmailPage from './components/auth/VerifyEmailPage';
+import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
+import ResetPasswordPage from './components/auth/ResetPasswordPage';
 import { ToastProvider, useToast } from './hooks/useToast';
 import api, { API_KEY } from './api/client';
 import { clearAuth, getAccountEmail, getLoginToken } from './api/auth';
@@ -238,6 +240,12 @@ function AppContent() {
   }
   if (location.startsWith('/verify-email')) {
     return <VerifyEmailPage />;
+  }
+  if (location === '/forgot-password') {
+    return <ForgotPasswordPage />;
+  }
+  if (location.startsWith('/reset-password')) {
+    return <ResetPasswordPage />;
   }
   if (!authed) {
     return <Redirect to="/login" />;

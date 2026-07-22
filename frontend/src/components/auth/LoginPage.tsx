@@ -20,7 +20,11 @@ export default function LoginPage({ onAuthed }: { onAuthed: () => void }) {
       onAuthed();
       navigate('/');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Login failed');
+      if (err.response?.status === 403 && err.response?.data?.detail === 'email_not_verified') {
+        setError('Please verify your email first — check your inbox for the verification link.');
+      } else {
+        setError(err.response?.data?.detail || 'Login failed');
+      }
     } finally {
       setBusy(false);
     }
@@ -44,7 +48,12 @@ export default function LoginPage({ onAuthed }: { onAuthed: () => void }) {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Password</label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-700">Password</label>
+              <a href="/forgot-password" className="text-xs text-blue-600 hover:underline">
+                Forgot password?
+              </a>
+            </div>
             <input
               type="password"
               required
