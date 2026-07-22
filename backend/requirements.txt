@@ -16,6 +16,10 @@ chromadb>=0.5.0
 sqlalchemy>=2.0.30
 psycopg[binary]>=3.1
 
+# Billing (P3): Stripe subscription checkout + webhooks. Account state changes
+# only through accounts_store.set_subscription; this SDK is the transport.
+stripe>=8.0.0
+
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is
 # BAAI/bge-small-en-v1.5: ~67 MB ONNX weights, 384 dimensions.
