@@ -5,16 +5,25 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.resident_engineer.diagnosis import build_failure_report
 from app.resident_engineer.flags import resident_engineer_enabled
+from app.resident_engineer.heal.approval import create_heal_approval
 from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
 from app.resident_engineer.heal.executor import HealRejected, execute_heal
 from app.resident_engineer.heal.validate import HealValidationError
 from app.resident_engineer.modes import draft_change_request
 from app.resident_engineer.observe import observe
+
+try:
+    from app.steward.auth import AuthenticatedPrincipal, get_authenticated_principal
+    from app.steward.db import init_engine, session_scope
+
+    _STEWARD_AUTH = True
+except ImportError:  # pragma: no cover - non-estate products
+    _STEWARD_AUTH = False
 
 router = APIRouter(prefix="/v1/resident", tags=["resident-engineer"])
 
@@ -27,13 +36,28 @@ def _require_enabled() -> None:
         )
 
 
+if _STEWARD_AUTH:
+
+    async def _resolve_principal(
+        principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+    ) -> AuthenticatedPrincipal:
+        return principal
+
+else:
+
+    async def _resolve_principal() -> None:
+        return None
+
+
 @router.get("/status")
 async def resident_status() -> Dict[str, Any]:
     """Always available — reports flag + allowlist (no heal execution)."""
     return {
         "enabled": resident_engineer_enabled(),
         "mode": "resident",
+        "maturity": "APPRENTICE",
         "allowlisted_heal_actions": list(ALLOWLISTED_HEAL_ACTIONS),
+        "auth_required": _STEWARD_AUTH,
         "levels": {
             "L1": "observe",
             "L2": "allowlisted_heal",
@@ -44,27 +68,33 @@ async def resident_status() -> Dict[str, Any]:
 
 @router.get("/observe")
 async def resident_observe(
-    product_root: Optional[str] = None,
     log_text: str = "",
+    principal: Optional[Any] = Depends(_resolve_principal),
 ) -> Dict[str, Any]:
     _require_enabled()
-    root = Path(product_root) if product_root else None
+    if _STEWARD_AUTH and principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    root = Path(__file__).resolve().parents[2]
     try:
         return observe(root, log_text=log_text)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="observe failed") from exc
 
 
 class DiagnoseBody(BaseModel):
     symptom: str = ""
-    product_root: Optional[str] = None
     related_action_ids: list[str] = Field(default_factory=list)
 
 
 @router.post("/diagnose")
-async def resident_diagnose(body: DiagnoseBody) -> Dict[str, Any]:
+async def resident_diagnose(
+    body: DiagnoseBody,
+    principal: Optional[Any] = Depends(_resolve_principal),
+) -> Dict[str, Any]:
     _require_enabled()
-    root = Path(body.product_root) if body.product_root else None
+    if _STEWARD_AUTH and principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    root = Path(__file__).resolve().parents[2]
     return build_failure_report(
         product_root=root,
         symptom=body.symptom,
@@ -72,11 +102,35 @@ async def resident_diagnose(body: DiagnoseBody) -> Dict[str, Any]:
     )
 
 
+class HealApprovalBody(BaseModel):
+    action_id: str
+
+
+@router.post("/heal/approval")
+async def resident_heal_approval(
+    body: HealApprovalBody,
+    principal: Optional[Any] = Depends(_resolve_principal),
+) -> Dict[str, Any]:
+    _require_enabled()
+    if not _STEWARD_AUTH or principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
+    if body.action_id not in ALLOWLISTED_HEAL_ACTIONS:
+        raise HTTPException(status_code=403, detail="action not allowlisted")
+    init_engine()
+    with session_scope() as session:
+        approval = create_heal_approval(
+            session,
+            tenant_id=principal.tenant_id,
+            principal_id=principal.principal_id,
+            action_id=body.action_id,
+        )
+    return {"ok": True, **approval}
+
+
 class HealBody(BaseModel):
     action_id: str
     confirmed: bool = False
-    tenant_id: str = "default"
-    user_id: str = "operator"
+    approval_id: Optional[str] = None
 
 
 class DraftBody(BaseModel):
@@ -132,27 +186,48 @@ async def resident_emit_change_request(body: EscalateBody) -> Dict[str, Any]:
 
 
 @router.post("/heal")
-async def resident_heal(body: HealBody) -> Dict[str, Any]:
+async def resident_heal(
+    body: HealBody,
+    principal: Optional[Any] = Depends(_resolve_principal),
+) -> Dict[str, Any]:
     _require_enabled()
+    tenant_id = principal.tenant_id if _STEWARD_AUTH and principal else "default"
+    user_id = principal.principal_id if _STEWARD_AUTH and principal else "operator"
+    principal_id = principal.principal_id if _STEWARD_AUTH and principal else user_id
+    if _STEWARD_AUTH and principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
     try:
+        if _STEWARD_AUTH:
+            init_engine()
+            with session_scope() as session:
+                return await execute_heal(
+                    body.action_id,
+                    confirmed=body.confirmed,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    principal_id=principal_id,
+                    approval_id=body.approval_id,
+                    db_session=session,
+                )
         return await execute_heal(
             body.action_id,
             confirmed=body.confirmed,
-            tenant_id=body.tenant_id,
-            user_id=body.user_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            principal_id=principal_id,
+            approval_id=body.approval_id,
         )
     except HealRejected as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except HealValidationError as exc:
-        # Optional L2→REPAIR escalation (off unless RESIDENT_EMIT_CHANGE_REQUESTS)
         escalation = None
         try:
-            from app.change_requests.emit import EmitRejected, emit_repair_from_escalation
+            from app.change_requests.emit import emit_repair_from_escalation
             from app.change_requests.flags import resident_emit_change_requests_enabled
 
             if resident_emit_change_requests_enabled():
                 escalation = emit_repair_from_escalation(
-                    product_id=body.tenant_id or "unknown-product",
+                    product_id=tenant_id or "unknown-product",
                     dna_version="1.0.0",
                     symptom=str(exc),
                     failed_action_id=body.action_id,
