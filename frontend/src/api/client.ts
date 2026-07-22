@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { clearAuth, getLoginToken } from './auth';
 
 export const API_KEY = import.meta.env.VITE_API_KEY || '';
 
@@ -15,6 +16,31 @@ const api = axios.create({
     ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
   },
 });
+
+// A logged-in user's token wins over the shared key — identity per request.
+api.interceptors.request.use((config) => {
+  const token = getLoginToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    delete config.headers['X-API-Key'];
+  }
+  return config;
+});
+
+// Expired/revoked user token → drop it and return to the login page. Shared-key
+// 401s (no user token) are surfaced to the caller as before.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401 && getLoginToken()) {
+      clearAuth();
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const uploadFiles = (sessionId: string, files: File[]) => {
   const formData = new FormData();
@@ -46,7 +72,10 @@ export const postChatMessage = async (
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (API_KEY) {
+  const token = getLoginToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  } else if (API_KEY) {
     headers['X-API-Key'] = API_KEY;
   }
 
