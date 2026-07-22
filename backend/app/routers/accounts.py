@@ -7,7 +7,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from ..core import accounts_store, mailer
+from ..core import accounts_store, billing, mailer
 from ..core.auth import Principal, require_api_key
 from ..core.rate_limit import check_rate_limit
 
@@ -94,6 +94,7 @@ async def register(body: RegisterBody, request: Request):
         "email_verified": False,
         "login_token": login_token,
         "verification": verification,
+        "billing": billing.billing_status(account["account_id"]),
     }
 
 
