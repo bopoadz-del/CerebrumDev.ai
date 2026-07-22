@@ -1,5 +1,4 @@
 """Load the product DNA bundle — checksums FIRST, before anything else runs."""
-
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +15,7 @@ MANIFEST = "checksum_manifest.json"
 @dataclass(frozen=True)
 class DnaBundle:
     path: str
-    files: Dict[str, str]  # name -> text content (only verified files)
+    files: Dict[str, str]  # name -> text content (only checksum-verified files)
     manifest: Dict[str, Any]
 
 
@@ -26,20 +25,16 @@ def _sha256(path: Path) -> str:
 
 def load(product_root: str) -> DnaBundle:
     root = Path(product_root) / "product-dna"
-    manifest_path = root / MANIFEST
-    if not manifest_path.is_file():
-        stop.halt(
-            "dna_missing", {"path": str(root)}, "Regenerate the product DNA via the Factory."
-        )
+    if not (root / MANIFEST).is_file():
+        stop.halt("dna_missing", {"path": str(root)}, "Regenerate the product DNA via the Factory.")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
         expected = dict(manifest.get("files") or {})
     except (OSError, json.JSONDecodeError, AttributeError) as exc:
         stop.halt("dna_unparsable", {"error": str(exc)}, "Regenerate the product DNA.")
     if manifest.get("algorithm") != "sha256" or not expected:
         stop.halt("dna_unparsable", {"manifest": "bad shape"}, "Regenerate the product DNA.")
-    errors = []
-    files: Dict[str, str] = {}
+    errors, files = [], {}
     for name, digest in sorted(expected.items()):
         f = root / name
         if not f.is_file():
@@ -49,9 +44,5 @@ def load(product_root: str) -> DnaBundle:
         else:
             files[name] = f.read_text(encoding="utf-8", errors="replace")
     if errors:
-        stop.halt(
-            "dna_checksum_failed",
-            {"errors": errors},
-            "Do not hand-edit product-dna — regenerate it via the Factory.",
-        )
+        stop.halt("dna_checksum_failed", {"errors": errors}, "Do not hand-edit product-dna — regenerate it via the Factory.")
     return DnaBundle(path=str(root), files=files, manifest=manifest)

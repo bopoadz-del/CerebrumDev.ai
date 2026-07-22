@@ -1,5 +1,4 @@
 """Load CODINGPROTOCOLS.md — law is data; missing/unparsable law = halt."""
-
 from __future__ import annotations
 
 import os
@@ -28,22 +27,9 @@ def _section(text: str, article: str) -> str:
 def load(path: str | None = None) -> Law:
     p = Path(path or os.getenv("PROTOCOLS_PATH", "docs/CODINGPROTOCOLS.md"))
     if not p.is_file():
-        stop.halt(
-            "protocols_missing",
-            {"path": str(p)},
-            "Restore CODINGPROTOCOLS.md at PROTOCOLS_PATH.",
-        )
+        stop.halt("protocols_missing", {"path": str(p)}, "Restore CODINGPROTOCOLS.md at PROTOCOLS_PATH.")
     text = p.read_text(encoding="utf-8")
     m = _VERSION_RE.search(text)
     if not m:
-        stop.halt(
-            "protocols_unparsable",
-            {"path": str(p)},
-            "Stamp the law with a **Version X.Y** marker.",
-        )
-    return Law(
-        version=m.group(1),
-        text=text,
-        stop_conditions=_section(text, "Article 4"),
-        anti_patterns=_section(text, "Article 5"),
-    )
+        stop.halt("protocols_unparsable", {"path": str(p)}, "Stamp the law with a **Version X.Y** marker.")
+    return Law(version=m.group(1), text=text, stop_conditions=_section(text, "Article 4"), anti_patterns=_section(text, "Article 5"))
