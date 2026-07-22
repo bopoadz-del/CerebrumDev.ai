@@ -1,5 +1,5 @@
 # THIN RUNTIME — The Crane Cabin for the Factory's Coding Agent
-**Status: specification (v0.1)** · Pairs with `docs/CODINGPROTOCOLS.md` (the law)
+**Status: implemented (v0.1)** — `runtime/` package, acceptance criteria tested in `backend/tests/runtime/` · Pairs with `docs/CODINGPROTOCOLS.md` (the law)
 
 The thin runtime is the ~400-line program that carries an LLM through the
 protocol loop. It is the crane **cabin**, never the engine: the model is a
