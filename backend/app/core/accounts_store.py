@@ -51,6 +51,7 @@ _t_accounts = sa.Table(
     sa.Column("trial_ends_at", sa.String(64), nullable=True),
     sa.Column("subscription_status", sa.String(32), nullable=True),
     sa.Column("stripe_customer_id", sa.String(128), nullable=True),
+    sa.Column("stripe_subscription_id", sa.String(128), nullable=True),
     sa.Column("created_at", sa.String(64), nullable=False),
 )
 _t_api_keys = sa.Table(
@@ -152,6 +153,7 @@ def _engine() -> sa.engine.Engine:
                 _ensure_column(conn, "accounts", "trial_ends_at", "trial_ends_at TEXT")
                 _ensure_column(conn, "accounts", "subscription_status", "subscription_status TEXT")
                 _ensure_column(conn, "accounts", "stripe_customer_id", "stripe_customer_id TEXT")
+                _ensure_column(conn, "accounts", "stripe_subscription_id", "stripe_subscription_id TEXT")
             _ENGINES[url] = eng
         return eng
 
@@ -210,6 +212,7 @@ def create_account(email: str, password: str) -> Dict[str, Any]:
                     trial_ends_at=_iso(_utcnow() + timedelta(days=trial_days())),
                     subscription_status="trialing",
                     stripe_customer_id=None,
+                    stripe_subscription_id=None,
                     created_at=_iso(_utcnow()),
                 )
             )
@@ -254,6 +257,29 @@ def subscription_fields(account_id: str) -> Optional[Dict[str, Any]]:
         "subscription_status": m["subscription_status"],
         "trial_ends_at": m["trial_ends_at"],
         "stripe_customer_id": m["stripe_customer_id"],
+        "stripe_subscription_id": m["stripe_subscription_id"],
+    }
+
+
+def account_for_stripe_customer(customer_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve an account from a Stripe customer id (webhook path)."""
+    if not customer_id:
+        return None
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts).where(
+                _t_accounts.c.stripe_customer_id == customer_id.strip()
+            )
+        ).first()
+    if row is None:
+        return None
+    m = row._mapping
+    return {
+        "account_id": m["id"],
+        "email": m["email"],
+        "subscription_status": m["subscription_status"],
+        "stripe_customer_id": m["stripe_customer_id"],
+        "stripe_subscription_id": m["stripe_subscription_id"],
     }
 
 
@@ -261,6 +287,7 @@ def set_subscription(
     account_id: str,
     status: str,
     stripe_customer_id: Optional[str] = None,
+    stripe_subscription_id: Optional[str] = None,
 ) -> bool:
     """Set subscription state — the Stripe webhook seam (also used by ops/tests).
 
@@ -270,6 +297,8 @@ def set_subscription(
     values: Dict[str, Any] = {"subscription_status": status.strip().lower()}
     if stripe_customer_id is not None:
         values["stripe_customer_id"] = stripe_customer_id.strip()
+    if stripe_subscription_id is not None:
+        values["stripe_subscription_id"] = stripe_subscription_id.strip()
     with _LOCK, _engine().begin() as conn:
         result = conn.execute(
             sa.update(_t_accounts).where(_t_accounts.c.id == account_id).values(**values)
