@@ -1,300 +1,474 @@
-import { useEffect, useState } from 'react';
-import { Route, Switch, useLocation, useRoute, Redirect } from 'wouter';
-import { AppShell } from './components/layout/AppShell';
-import { ChatSidebar } from './components/chat/ChatSidebar';
-import { ConfigCanvas } from './components/canvas/ConfigCanvas';
-import DesignProductPanel from './components/DesignProductPanel';
-import WorkbenchPanel from './components/WorkbenchPanel';
-import LoginPage from './components/auth/LoginPage';
-import RegisterPage from './components/auth/RegisterPage';
-import VerifyEmailPage from './components/auth/VerifyEmailPage';
-import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
-import ResetPasswordPage from './components/auth/ResetPasswordPage';
-import BillingPage from './components/billing/BillingPage';
-import PlansPage from './components/billing/PlansPage';
-import TrialBanner from './components/billing/TrialBanner';
-import { ToastProvider, useToast } from './hooks/useToast';
-import api, { API_KEY } from './api/client';
-import { clearAuth, getAccountEmail, getLoginToken } from './api/auth';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  ApiError,
+  auth,
+  billing,
+  chatEventText,
+  chatStream,
+  clearSession,
+  downloadProductPackage,
+  getEmail,
+  getToken,
+  product,
+  sessions,
+  setSession,
+  type BillingStatus,
+  type ChatEvent,
+  type ProductDesign,
+} from './api/factory'
 
-type WorkspaceMode = 'kit' | 'product' | 'workbench';
+type View = 'floor' | 'platforms' | 'subscription' | 'account'
 
-function Workspace({ onLogout }: { onLogout: () => void }) {
-  const [location, setLocation] = useLocation();
-  const [match, params] = useRoute('/s/:sessionId');
-  const { addToast } = useToast();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('kit');
-  const accountEmail = getAccountEmail();
+interface ChatMsg {
+  role: 'user' | 'factory' | 'system'
+  text: string
+  card?: 'blueprint' | 'generation' | 'error' | 'info'
+}
 
-  const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (match && params?.sessionId) return params.sessionId;
-    return localStorage.getItem('cerebrumdev:last-session-id');
-  });
+export default function App() {
+  const [authed, setAuthed] = useState<boolean>(!!getToken())
+  const [view, setView] = useState<View>('floor')
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [bootError, setBootError] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function initSession() {
-      if (sessionId) return;
+    if (!authed) return
+    let cancelled = false
+    ;(async () => {
       try {
-        const res = await api.post('/sessions/');
-        if (!cancelled) {
-          setSessionId(res.data.session_id);
+        await auth.me()
+        const list = await sessions.list()
+        const arr = Array.isArray(list) ? list : list.sessions ?? []
+        let sid = arr[0]?.session_id
+        if (!sid) {
+          const created = await sessions.create()
+          sid = created.session_id
         }
-      } catch (err: any) {
+        if (!cancelled) setSessionId(sid ?? null)
+      } catch (e) {
         if (!cancelled) {
-          addToast({
-            type: 'error',
-            title: 'Session error',
-            message: err.response?.data?.detail || err.message || 'Failed to create session',
-          });
+          if (e instanceof ApiError && e.status === 401) {
+            clearSession()
+            setAuthed(false)
+          } else {
+            setBootError(e instanceof Error ? e.message : 'backend unreachable')
+          }
         }
       }
-    }
-
-    initSession();
-
+    })()
     return () => {
-      cancelled = true;
-    };
-  }, [sessionId, addToast]);
-
-  useEffect(() => {
-    if (sessionId) {
-      localStorage.setItem('cerebrumdev:last-session-id', sessionId);
+      cancelled = true
     }
-  }, [sessionId]);
+  }, [authed])
 
-  useEffect(() => {
-    if (match && params?.sessionId && params.sessionId !== sessionId) {
-      setSessionId(params.sessionId);
-    } else if (sessionId && !match && location !== `/s/${sessionId}`) {
-      setLocation(`/s/${sessionId}`, { replace: true });
-    }
-  }, [match, params, location, sessionId, setLocation]);
-
-  // Bumped after chat config mutations so ConfigCanvas reloads localConfig
-  // and a later "Save Configuration" cannot overwrite chat-applied values.
-  const [configEpoch, setConfigEpoch] = useState(0);
-
-  const handleCommand = async (command: string, args: any) => {
-    const configMutators = new Set([
-      'set_domain',
-      'set_model',
-      'set_lora_rank',
-      'set_learning_rate',
-      'set_vector_db',
-      'set_hnsw_preset',
-    ]);
-    try {
-      if (command === 'set_domain' && args?.domain && sessionId) {
-        const cur = await api.get(`/sessions/${sessionId}`);
-        const config = {
-          ...(cur.data.config || {}),
-          domain: args.domain,
-        };
-        await api.post(`/sessions/${sessionId}/config`, config);
-        setConfigEpoch((n) => n + 1);
-        addToast({
-          type: 'success',
-          title: 'Domain updated',
-          message: `Domain set to ${args.domain} and saved.`,
-        });
-        return;
-      }
-      if (command === 'set_model' && args?.model && sessionId) {
-        const cur = await api.get(`/sessions/${sessionId}`);
-        const prev = cur.data.config || {};
-        const config = {
-          ...prev,
-          ai_config: { ...(prev.ai_config || {}), base_model: args.model },
-        };
-        await api.post(`/sessions/${sessionId}/config`, config);
-        setConfigEpoch((n) => n + 1);
-        addToast({
-          type: 'success',
-          title: 'Model updated',
-          message: `Base model set to ${args.model} and saved.`,
-        });
-        return;
-      }
-      if (configMutators.has(command) && sessionId) {
-        // Backend already applied these via the chat SSE path; refresh canvas only.
-        setConfigEpoch((n) => n + 1);
-      }
-      addToast({ type: 'info', message: `Command: ${command}` });
-    } catch (err: any) {
-      addToast({
-        type: 'error',
-        title: 'Command failed',
-        message: err.response?.data?.detail || err.message || 'Could not apply command',
-      });
-    }
-  };
-
-  if (!sessionId) {
+  if (!authed) return <AuthGate onAuthed={() => setAuthed(true)} />
+  if (bootError)
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      <div className="center-screen">
+        <div className="panel narrow">
+          <h2>Factory unreachable</h2>
+          <p className="dim">{bootError}</p>
+          <button onClick={() => setBootError(null)}>Retry</button>
+        </div>
       </div>
-    );
-  }
+    )
+  if (!sessionId)
+    return (
+      <div className="center-screen">
+        <div className="loader">Opening your factory floor…</div>
+      </div>
+    )
 
-  const switchMode = async (mode: WorkspaceMode) => {
-    setWorkspaceMode(mode);
-    if (mode === 'workbench') return;
+  return (
+    <div className="shell">
+      <aside className="rail">
+        <div className="brand">
+          <div className="brand-mark">C</div>
+          <div>
+            <div className="brand-name">CerebrumDev.ai</div>
+            <div className="brand-sub">the factory</div>
+          </div>
+        </div>
+        <nav>
+          <NavBtn label="Factory Floor" active={view === 'floor'} onClick={() => setView('floor')} />
+          <NavBtn label="Your Platforms" active={view === 'platforms'} onClick={() => setView('platforms')} />
+          <NavBtn label="Subscription" active={view === 'subscription'} onClick={() => setView('subscription')} />
+          <NavBtn label="Account" active={view === 'account'} onClick={() => setView('account')} />
+        </nav>
+        <div className="rail-foot">
+          <span className="dot" /> session {sessionId.slice(0, 12)}…
+        </div>
+      </aside>
+      <main>
+        {view === 'floor' && <Floor sessionId={sessionId} goPlatforms={() => setView('platforms')} />}
+        {view === 'platforms' && <Platforms sessionId={sessionId} />}
+        {view === 'subscription' && <Subscription />}
+        {view === 'account' && <Account onLogout={() => { clearSession(); setAuthed(false) }} />}
+      </main>
+    </div>
+  )
+}
+
+function NavBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button className={`nav-btn ${active ? 'active' : ''}`} onClick={onClick}>
+      {label}
+    </button>
+  )
+}
+
+/* ---------------------------------- Auth ---------------------------------- */
+
+function AuthGate({ onAuthed }: { onAuthed: () => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
     try {
-      await api.post(`/sessions/${sessionId}/product/mode`, { mode });
-    } catch (err: any) {
-      // Local UI mode still switches; surface sync failures so auth/path bugs are visible.
-      addToast({
-        type: 'error',
-        title: 'Mode sync',
-        message: err.response?.data?.detail || err.message || 'Failed to sync mode',
-      });
+      const res = mode === 'login' ? await auth.login(email, password) : await auth.register(email, password)
+      setSession(res.login_token, email)
+      onAuthed()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'authentication failed')
+    } finally {
+      setBusy(false)
     }
-  };
+  }
 
   return (
-    <AppShell
-      sidebar={<ChatSidebar sessionId={sessionId} onCommand={handleCommand} />}
-      sidebarOpen={sidebarOpen}
-      onToggleSidebar={() => setSidebarOpen((v) => !v)}
-    >
-      <TrialBanner />
-      <div className="mb-4 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => switchMode('kit')}
-          className={`px-3 py-1.5 text-sm rounded-md border ${
-            workspaceMode === 'kit'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white text-gray-700 border-gray-300'
-          }`}
-        >
-          Kit configurator
+    <div className="center-screen">
+      <form className="panel narrow auth-panel" onSubmit={submit}>
+        <div className="brand center">
+          <div className="brand-mark">C</div>
+        </div>
+        <h1>CerebrumDev.ai</h1>
+        <p className="dim center-text">One account. Tell the factory. Receive your platform.</p>
+        <input
+          type="email"
+          required
+          placeholder="you@company.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          type="password"
+          required
+          minLength={8}
+          placeholder="password (8+ characters)"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        {error && <div className="error-box">{error}</div>}
+        <button type="submit" disabled={busy}>
+          {busy ? 'Working…' : mode === 'login' ? 'Enter the factory' : 'Create your account'}
         </button>
         <button
           type="button"
-          onClick={() => switchMode('product')}
-          className={`px-3 py-1.5 text-sm rounded-md border ${
-            workspaceMode === 'product'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white text-gray-700 border-gray-300'
-          }`}
+          className="link"
+          onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
         >
-          Design product
+          {mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}
         </button>
-        <button
-          type="button"
-          onClick={() => switchMode('workbench')}
-          className={`px-3 py-1.5 text-sm rounded-md border ${
-            workspaceMode === 'workbench'
-              ? 'bg-blue-600 text-white border-blue-600'
-              : 'bg-white text-gray-700 border-gray-300'
-          }`}
-        >
-          Build mode
-        </button>
-        <span className="ml-auto text-sm text-gray-500">
-          {accountEmail || 'shared key mode'}
-        </span>
-        {accountEmail && (
-          <a
-            href="/plans"
-            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-          >
-            Plans
-          </a>
-        )}
-        {accountEmail && (
-          <a
-            href="/billing"
-            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-          >
-            Billing
-          </a>
-        )}
-        {accountEmail && (
-          <button
-            type="button"
-            onClick={onLogout}
-            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-          >
-            Sign out
-          </button>
-        )}
+      </form>
+    </div>
+  )
+}
+
+/* ---------------------------------- Floor ---------------------------------- */
+
+function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
+  const [msgs, setMsgs] = useState<ChatMsg[]>([
+    {
+      role: 'factory',
+      text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and on your word the factory builds it.',
+    },
+  ])
+  const [input, setInput] = useState('')
+  const [busy, setBusy] = useState(false)
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [msgs])
+
+  const send = useCallback(
+    async (text: string) => {
+      const message = text.trim()
+      if (!message || busy) return
+      setInput('')
+      setBusy(true)
+      setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
+      try {
+        await chatStream(sessionId, message, (ev: ChatEvent) => {
+          const token = chatEventText(ev)
+          if (token !== null) {
+            setMsgs((m) => {
+              const copy = [...m]
+              const last = copy[copy.length - 1]
+              copy[copy.length - 1] = { ...last, text: last.text + token }
+              return copy
+            })
+            return
+          }
+          if (ev.event === 'blueprint') {
+            const d = ev.data as { summary?: string } | string
+            const summary = typeof d === 'string' ? d : d?.summary ?? 'Blueprint drafted.'
+            setMsgs((m) => [
+              ...m.slice(0, -1),
+              { role: 'factory', text: summary, card: 'blueprint' },
+            ])
+          } else if (ev.event === 'generation') {
+            const d = ev.data as { summary?: string } | string
+            const summary = typeof d === 'string' ? d : d?.summary ?? 'Platform generated.'
+            setMsgs((m) => [
+              ...m.slice(0, -1),
+              { role: 'factory', text: summary, card: 'generation' },
+            ])
+          } else if (ev.event === 'error') {
+            setMsgs((m) => [
+              ...m.slice(0, -1),
+              { role: 'factory', text: String(ev.data ?? 'Something went wrong.'), card: 'error' },
+            ])
+          } else if (ev.event === 'chain' || ev.event === 'rules') {
+            setMsgs((m) => [
+              ...m.slice(0, -1),
+              {
+                role: 'factory',
+                text: 'That sounds like kit configuration. The floor builds whole platforms — describe the platform you want instead.',
+                card: 'info',
+              },
+            ])
+          }
+        })
+      } catch (e) {
+        setMsgs((m) => [
+          ...m.slice(0, -1),
+          { role: 'factory', text: e instanceof Error ? e.message : 'chat failed', card: 'error' },
+        ])
+      } finally {
+        setBusy(false)
+      }
+    },
+    [busy, sessionId],
+  )
+
+  return (
+    <div className="floor">
+      <header className="page-head">
+        <h2>Factory Floor</h2>
+        <p className="dim">Tell the factory what to build. The architect drafts, you approve, the generator ships.</p>
+      </header>
+      <div className="chat-scroll">
+        {msgs.map((m, i) => (
+          <div key={i} className={`bubble-row ${m.role}`}>
+            <div className={`bubble ${m.role} ${m.card ?? ''}`}>
+              {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
+              {m.card === 'blueprint' && (
+                <div className="card-actions">
+                  <button disabled={busy} onClick={() => send('approve')}>
+                    Approve &amp; build
+                  </button>
+                </div>
+              )}
+              {m.card === 'generation' && (
+                <div className="card-actions">
+                  <button onClick={goPlatforms}>Open Your Platforms</button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        <div ref={bottomRef} />
       </div>
-      <Switch>
-        <Route path="/s/:sessionId">
-          {workspaceMode === 'workbench' ? (
-            <WorkbenchPanel />
-          ) : workspaceMode === 'product' ? (
-            <DesignProductPanel sessionId={sessionId} />
-          ) : (
-            <ConfigCanvas sessionId={sessionId} configEpoch={configEpoch} />
+      <form
+        className="composer"
+        onSubmit={(e) => {
+          e.preventDefault()
+          send(input)
+        }}
+      >
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder='Try: "Build me a secure multi-user platform for my team…"'
+          disabled={busy}
+        />
+        <button type="submit" disabled={busy || !input.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  )
+}
+
+/* -------------------------------- Platforms -------------------------------- */
+
+function Platforms({ sessionId }: { sessionId: string }) {
+  const [design, setDesign] = useState<ProductDesign | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  const refresh = useCallback(() => {
+    product
+      .get(sessionId)
+      .then(setDesign)
+      .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
+  }, [sessionId])
+
+  useEffect(refresh, [refresh])
+
+  async function download() {
+    setDownloading(true)
+    setError(null)
+    try {
+      await downloadProductPackage(sessionId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const bp = design?.blueprint as { product_name?: string; vertical?: string; capabilities?: unknown[] } | null | undefined
+  const gen = design?.generation
+
+  return (
+    <div className="page">
+      <header className="page-head">
+        <h2>Your Platforms</h2>
+        <p className="dim">What the factory built for you. Download the export and launch it anywhere.</p>
+      </header>
+      {error && <div className="error-box">{error}</div>}
+      {!gen ? (
+        <div className="panel empty-state">
+          <h3>No platform built yet</h3>
+          <p className="dim">Go to the Factory Floor and describe what you need. Your build lands here.</p>
+          {design?.blueprint && !design.blueprint_approved && (
+            <p className="dim">A blueprint is drafted on the floor — approve it to build.</p>
           )}
-        </Route>
-        <Route path="/">
-          <Redirect to={`/s/${sessionId}`} />
-        </Route>
-      </Switch>
-    </AppShell>
-  );
+          {bp && (
+            <p className="dim">
+              Draft: <strong>{bp.product_name}</strong> ({bp.vertical})
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className="panel">
+          <h3>{gen.product_id}</h3>
+          <dl className="kv">
+            <dt>Blueprint</dt>
+            <dd>{bp?.product_name ?? '—'}</dd>
+            <dt>Inputs hash</dt>
+            <dd className="mono">{gen.inputs_hash ?? '—'}</dd>
+            <dt>Output</dt>
+            <dd className="mono">{gen.output_dir ?? '—'}</dd>
+          </dl>
+          <button onClick={download} disabled={downloading}>
+            {downloading ? 'Packing…' : 'Download platform export (.zip)'}
+          </button>
+          <button className="ghost" onClick={refresh}>
+            Refresh
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
-function AppContent() {
-  const [location] = useLocation();
-  // Shared-key deployments (VITE_API_KEY set) keep the old no-login flow.
-  // User deployments: a login token is required.
-  const [authed, setAuthed] = useState<boolean>(
-    () => Boolean(getLoginToken()) || Boolean(API_KEY)
-  );
+/* ------------------------------- Subscription ------------------------------- */
 
-  if (location === '/login') {
-    return <LoginPage onAuthed={() => setAuthed(true)} />;
+function Subscription() {
+  const [status, setStatus] = useState<BillingStatus | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    billing
+      .status()
+      .then(setStatus)
+      .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
+  }, [])
+
+  async function upgrade() {
+    setNote(null)
+    setError(null)
+    try {
+      const res = await billing.checkout()
+      const url = res.url ?? res.checkout_url
+      if (url) {
+        window.open(url, '_blank')
+      } else {
+        setNote('Billing is being connected — checkout opens here when the factory flips it on.')
+      }
+    } catch (e) {
+      setNote(
+        `Billing is being connected — the only piece still pending at the factory. (${e instanceof Error ? e.message : 'checkout unavailable'})`,
+      )
+    }
   }
-  if (location === '/register') {
-    return <RegisterPage onRegistered={() => setAuthed(true)} />;
-  }
-  if (location.startsWith('/verify-email')) {
-    return <VerifyEmailPage />;
-  }
-  if (location === '/forgot-password') {
-    return <ForgotPasswordPage />;
-  }
-  if (location.startsWith('/reset-password')) {
-    return <ResetPasswordPage />;
-  }
-  if (!authed) {
-    return <Redirect to="/login" />;
-  }
-  // Billing is a signed-in page and must render without a workspace session —
-  // an expired trial blocks session creation (402), so this route comes first.
-  if (location.startsWith('/billing')) {
-    return <BillingPage />;
-  }
-  // Plans (tier picker) is signed-in too and likewise must not need a session.
-  if (location.startsWith('/plans')) {
-    return <PlansPage />;
-  }
+
   return (
-    <Workspace
-      onLogout={() => {
-        clearAuth();
-        setAuthed(false);
-      }}
-    />
-  );
+    <div className="page">
+      <header className="page-head">
+        <h2>Subscription</h2>
+        <p className="dim">Your plan decides how deep the factory builds for you.</p>
+      </header>
+      {error && <div className="error-box">{error}</div>}
+      <div className="panel">
+        {status ? (
+          <dl className="kv">
+            {Object.entries(status).map(([k, v]) => (
+              <div className="kv-row" key={k}>
+                <dt>{k.replace(/_/g, ' ')}</dt>
+                <dd>{v === null || v === undefined ? '—' : String(v)}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="dim">Loading…</p>
+        )}
+        <button onClick={upgrade}>Upgrade</button>
+        {note && <p className="dim note">{note}</p>}
+      </div>
+    </div>
+  )
 }
 
-function App() {
+/* --------------------------------- Account --------------------------------- */
+
+function Account({ onLogout }: { onLogout: () => void }) {
+  const [me, setMe] = useState<Record<string, unknown> | null>(null)
+
+  useEffect(() => {
+    auth.me().then((m) => setMe(m as Record<string, unknown>)).catch(() => setMe(null))
+  }, [])
+
   return (
-    <ToastProvider>
-      <AppContent />
-    </ToastProvider>
-  );
+    <div className="page">
+      <header className="page-head">
+        <h2>Account</h2>
+      </header>
+      <div className="panel">
+        <dl className="kv">
+          <dt>Email</dt>
+          <dd>{me?.email ? String(me.email) : getEmail() ?? '—'}</dd>
+          {!!me?.account_id && (
+            <>
+              <dt>Account</dt>
+              <dd className="mono">{String(me.account_id)}</dd>
+            </>
+          )}
+        </dl>
+        <button className="danger" onClick={onLogout}>
+          Sign out
+        </button>
+      </div>
+    </div>
+  )
 }
-
-export default App;
