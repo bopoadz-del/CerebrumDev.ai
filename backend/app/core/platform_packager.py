@@ -595,7 +595,9 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "CEREBRUM_MASTER_KEY": deploy_api_key,
         "CB_DEV_KEY": deploy_api_key,
         "CEREBRUM_API_KEY_PLATFORM": deploy_api_key,
-        "CORS_ORIGINS": "*",
+        # Hardened default: only the deployed service origin + local dev.
+        # Buyers override CORS_ORIGINS for custom domains.
+        "CORS_ORIGINS": f"https://{service_name}.onrender.com,http://localhost:5173",
         "CHROMA_PERSIST_DIR": "/app/chroma",
         "SECRET_KEY": deploy_api_key,
         "DATA_ENCRYPTION_KEY": deploy_api_key,
