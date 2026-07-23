@@ -11,6 +11,7 @@ import VerifyEmailPage from './components/auth/VerifyEmailPage';
 import ForgotPasswordPage from './components/auth/ForgotPasswordPage';
 import ResetPasswordPage from './components/auth/ResetPasswordPage';
 import BillingPage from './components/billing/BillingPage';
+import PlansPage from './components/billing/PlansPage';
 import TrialBanner from './components/billing/TrialBanner';
 import { ToastProvider, useToast } from './hooks/useToast';
 import api, { API_KEY } from './api/client';
@@ -201,6 +202,14 @@ function Workspace({ onLogout }: { onLogout: () => void }) {
         </span>
         {accountEmail && (
           <a
+            href="/plans"
+            className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+          >
+            Plans
+          </a>
+        )}
+        {accountEmail && (
+          <a
             href="/billing"
             className="px-3 py-1.5 text-sm rounded-md border bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
           >
@@ -265,6 +274,10 @@ function AppContent() {
   // an expired trial blocks session creation (402), so this route comes first.
   if (location.startsWith('/billing')) {
     return <BillingPage />;
+  }
+  // Plans (tier picker) is signed-in too and likewise must not need a session.
+  if (location.startsWith('/plans')) {
+    return <PlansPage />;
   }
   return (
     <Workspace
