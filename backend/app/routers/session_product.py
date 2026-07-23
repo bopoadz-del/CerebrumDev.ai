@@ -16,10 +16,11 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.core.auth import Principal, require_api_key
 from app.core.session_store import get_session, update_session
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
@@ -53,9 +54,12 @@ class ModeBody(BaseModel):
     mode: Literal["kit", "product"]
 
 
-def _require_session(session_id: str):
+def _require_session(session_id: str, principal: Principal):
     state = get_session(session_id)
     if state is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    if principal.kind == "user" and state.user_id != principal.account_id:
+        # Do not leak existence across accounts (mirrors routers/sessions.py).
         raise HTTPException(status_code=404, detail="session not found")
     return state
 
@@ -66,8 +70,10 @@ def _session_output(session_id: str, product_id: str) -> Path:
 
 
 @router.get("/{session_id}/product")
-def get_product_design(session_id: str) -> Dict[str, Any]:
-    state = _require_session(session_id)
+def get_product_design(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    state = _require_session(session_id, principal)
     pd = state.product_design
     yaml_text = None
     if pd.blueprint:
@@ -89,9 +95,11 @@ def get_product_design(session_id: str) -> Dict[str, Any]:
 
 
 @router.get("/{session_id}/product/package")
-def download_product_package(session_id: str) -> FileResponse:
+def download_product_package(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> FileResponse:
     """Export the generated platform as a zip — the factory's deliverable."""
-    state = _require_session(session_id)
+    state = _require_session(session_id, principal)
     gen = state.product_design.generation
     if not gen or not gen.get("output_dir"):
         raise HTTPException(
@@ -115,16 +123,20 @@ def download_product_package(session_id: str) -> FileResponse:
 
 
 @router.post("/{session_id}/product/mode")
-def set_product_mode(session_id: str, body: ModeBody) -> Dict[str, Any]:
-    state = _require_session(session_id)
+def set_product_mode(
+    session_id: str, body: ModeBody, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    state = _require_session(session_id, principal)
     state.product_design.mode = body.mode
     update_session(session_id, state)
     return {"ok": True, "mode": body.mode}
 
 
 @router.post("/{session_id}/product/draft")
-def draft_product(session_id: str, body: DraftBody) -> Dict[str, Any]:
-    state = _require_session(session_id)
+def draft_product(
+    session_id: str, body: DraftBody, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    state = _require_session(session_id, principal)
     try:
         bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
         state.product_design.brief = body.brief
@@ -150,8 +162,10 @@ def draft_product(session_id: str, body: DraftBody) -> Dict[str, Any]:
 
 
 @router.post("/{session_id}/product/plan")
-def plan_product(session_id: str) -> Dict[str, Any]:
-    state = _require_session(session_id)
+def plan_product(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    state = _require_session(session_id, principal)
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="draft a blueprint first")
     blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
@@ -174,8 +188,10 @@ def plan_product(session_id: str) -> Dict[str, Any]:
 
 
 @router.post("/{session_id}/product/approve")
-def approve_blueprint(session_id: str, body: ApproveBody) -> Dict[str, Any]:
-    state = _require_session(session_id)
+def approve_blueprint(
+    session_id: str, body: ApproveBody, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    state = _require_session(session_id, principal)
     if body.blueprint is not None:
         try:
             bp = ProductBlueprint.model_validate(body.blueprint)
@@ -194,9 +210,11 @@ def approve_blueprint(session_id: str, body: ApproveBody) -> Dict[str, Any]:
 
 @router.post("/{session_id}/product/generate")
 def generate_approved_product(
-    session_id: str, body: Optional[GenerateBody] = None
+    session_id: str,
+    body: Optional[GenerateBody] = None,
+    principal: Principal = Depends(require_api_key),
 ) -> Dict[str, Any]:
-    state = _require_session(session_id)
+    state = _require_session(session_id, principal)
     body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")

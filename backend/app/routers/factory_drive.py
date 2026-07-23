@@ -21,6 +21,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Qu
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from app.core.auth import Principal, require_api_key
 from app.core.google_drive_connector import (
     AuditEvent,
     DriveConnection,
@@ -60,10 +61,19 @@ def _prune_states() -> None:
         del _pending_states[state]
 
 
-def _require_session(session_id: str) -> dict[str, Any]:
-    """Dependency that loads the session or raises a non-leaking 404."""
+def _require_session(
+    session_id: str,
+    principal: Principal = Depends(require_api_key),
+) -> dict[str, Any]:
+    """Dependency that loads the session or raises a non-leaking 404.
+
+    Enforces per-account ownership: user credentials only reach their own
+    sessions; admin/master and local-dev principals pass through.
+    """
     state = get_session(session_id)
     if state is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if principal.kind == "user" and state.user_id != principal.account_id:
         raise HTTPException(status_code=404, detail="Session not found")
     return {
         "session_id": state.session_id,
@@ -228,7 +238,7 @@ async def drive_bind_folder(
             user_id=session["user_id"],
             connection_id=connection.connection_id,
             binding_id=binding_id,
-            details={"folder_id": req.folder_id, "folder_name": req.folder_name},
+            details={"folder_id": req.folder_id},
         )
     )
     return {"binding_id": binding_id, "folder_id": req.folder_id}
@@ -298,7 +308,7 @@ async def _run_sync_job(
             user_id=user_id,
             connection_id=job.connection_id,
             binding_id=binding_id,
-            details={"imported_count": job.imported_count, "error": job.error},
+            details={"imported_count": imported, "error": job.error},
         )
     )
 
