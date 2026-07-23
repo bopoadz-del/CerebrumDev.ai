@@ -6,17 +6,18 @@ draft_blueprint_from_brief / plan_blueprint / generate_product functions,
 the same ProductDesignState on the session. The chat is simply a second
 front door onto the same house.
 
-Routing contract (this is law, the domain smoke tests enforce it):
+Routing contract (this is law, the smoke tests enforce it):
   1. Explicit commands ALWAYS enter the platform flow:
      "/platform <brief>", "new platform <brief>", "platform: <brief>".
   2. Free-text NLP intent ("build me a platform for hotels") enters the
-     platform flow ONLY when PLATFORM_CHAT_FLOW_ENABLED is on. Default is
-     OFF so the legacy kit-configurator chat keeps its contract — messages
-     like "I want to build a retail analysis platform." are chain-config
-     prompts in the legacy flow and must not be hijacked.
+     platform flow by DEFAULT — factory doctrine: the chat's purpose is
+     building platforms. Set PLATFORM_CHAT_FLOW_ENABLED=off to keep the
+     legacy kit-configurator routing for unauthenticated deployments.
   3. Approval ("approve", "go ahead") is only intercepted when a blueprint
      is actually pending on the session.
-  4. Anything else falls through to the normal kit-configurator chat.
+  4. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
+     in the legacy chat flow even when it also mentions a platform noun.
+  5. Anything else falls through to the normal kit-configurator chat.
 """
 
 from __future__ import annotations
@@ -78,21 +79,26 @@ def is_explicit_platform_command(message: str) -> bool:
 
 
 def platform_chat_enabled() -> bool:
-    """Env gate for free-text NLP interception. Default OFF (house pattern)."""
-    return os.getenv("PLATFORM_CHAT_FLOW_ENABLED", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
+    """Free-text NLP interception gate.
+
+    Default ON (factory doctrine: the chat's purpose is building platforms).
+    Set PLATFORM_CHAT_FLOW_ENABLED to 0/false/no/off to force the legacy
+    kit-configurator routing.
+    """
+    return os.getenv("PLATFORM_CHAT_FLOW_ENABLED", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
     }
 
 
 def should_handle_platform_message(message: str) -> bool:
     """Router contract: should this chat message enter the platform flow?
 
-    Explicit commands always qualify. Free-text intent qualifies only when
-    PLATFORM_CHAT_FLOW_ENABLED is on. Everything else stays in the legacy
-    kit-configurator chat.
+    Explicit commands always qualify. Free-text intent qualifies when the
+    platform chat gate is on (default). Kit-configurator vocabulary stays in
+    the legacy chat. Everything else falls through to the legacy chat.
     """
     text = message or ""
     if is_explicit_platform_command(text):
@@ -188,8 +194,8 @@ def approve_and_generate(
     pd.last_error = None
 
     summary = (
-        f"Product generated: {result['product_id']} -> {result['output_dir']}. "
-        f"Open the Deploy panel (Phase 5) to package and ship it."
+        f"Product generated: {result['product_id']}. "
+        f"Download it from Your Platforms (product package) or keep refining."
     )
     return {
         "ok": True,

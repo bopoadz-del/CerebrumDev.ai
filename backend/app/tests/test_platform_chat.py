@@ -4,6 +4,10 @@ The bridge routes free-text chat messages onto the existing product_design
 state machine (same functions as routers/session_product.py). These tests
 cover the routing contract, intent detection, and the draft -> approve ->
 generate flow.
+
+Doctrine (2026-07-23): the chat's purpose is building platforms — free-text
+platform intent enters the flow by DEFAULT. The env var can force the legacy
+kit-configurator routing off/on; kit vocabulary always stays legacy.
 """
 
 from __future__ import annotations
@@ -73,37 +77,49 @@ def test_approval_negative(message):
     "platform: private estates",
 ])
 def test_explicit_command_always_enters_platform_flow(message, monkeypatch):
-    # Explicit commands work even with the env gate off.
-    monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    # Explicit commands work even with the env gate forced off.
+    monkeypatch.setenv("PLATFORM_CHAT_FLOW_ENABLED", "off")
     assert platform_chat_flow.should_handle_platform_message(message)
 
 
-def test_nlp_intent_gated_off_by_default(monkeypatch):
+def test_nlp_intent_gate_defaults_on(monkeypatch):
+    # Doctrine: the chat's purpose is building platforms — default ON.
     monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    assert platform_chat_flow.platform_chat_enabled()
+    assert platform_chat_flow.should_handle_platform_message(
+        "build me a platform for boutique hotels"
+    )
+
+
+def test_nlp_intent_gate_honors_explicit_off(monkeypatch):
+    monkeypatch.setenv("PLATFORM_CHAT_FLOW_ENABLED", "off")
     assert not platform_chat_flow.platform_chat_enabled()
     assert not platform_chat_flow.should_handle_platform_message(
         "build me a platform for boutique hotels"
     )
 
 
-def test_nlp_intent_when_gate_enabled(monkeypatch):
-    monkeypatch.setenv("PLATFORM_CHAT_FLOW_ENABLED", "true")
+def test_kit_vocabulary_stays_legacy_with_gate_on(monkeypatch):
+    monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
     assert platform_chat_flow.platform_chat_enabled()
-    assert platform_chat_flow.should_handle_platform_message(
-        "build me a platform for boutique hotels"
-    )
-    # kit-config vocabulary still stays in the legacy flow even when gated on
+    # kit-config vocabulary still stays in the legacy flow
     assert not platform_chat_flow.should_handle_platform_message(
         "build a chain with the blocks for hotels"
     )
+    assert not platform_chat_flow.should_handle_platform_message(
+        "create a product chain for the retail domain"
+    )
 
 
-def test_legacy_smoke_message_never_intercepted_by_default(monkeypatch):
-    """Regression lock: the 17 domain smoke contract messages
-    ('I want to build a {domain} analysis platform.') are legacy chain-config
-    prompts and must stay in the legacy flow unless the gate is explicitly on.
-    """
+def test_legacy_smoke_message_enters_platform_flow_by_default(monkeypatch):
+    """Doctrine lock: 'I want to build a {domain} analysis platform.' is the
+    factory front door and enters the platform flow by default. Forcing the
+    gate off restores the legacy chain-config routing."""
     monkeypatch.delenv("PLATFORM_CHAT_FLOW_ENABLED", raising=False)
+    assert platform_chat_flow.should_handle_platform_message(
+        "I want to build a retail analysis platform."
+    )
+    monkeypatch.setenv("PLATFORM_CHAT_FLOW_ENABLED", "off")
     assert not platform_chat_flow.should_handle_platform_message(
         "I want to build a retail analysis platform."
     )

@@ -5,16 +5,19 @@ POST /v1/sessions/{id}/product/plan
 POST /v1/sessions/{id}/product/approve
 POST /v1/sessions/{id}/product/generate
 GET  /v1/sessions/{id}/product
+GET  /v1/sessions/{id}/product/package   (export the generated platform zip)
 POST /v1/sessions/{id}/product/mode
 """
 
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.session_store import get_session, update_session
@@ -83,6 +86,32 @@ def get_product_design(session_id: str) -> Dict[str, Any]:
         "generation": pd.generation,
         "last_error": pd.last_error,
     }
+
+
+@router.get("/{session_id}/product/package")
+def download_product_package(session_id: str) -> FileResponse:
+    """Export the generated platform as a zip — the factory's deliverable."""
+    state = _require_session(session_id)
+    gen = state.product_design.generation
+    if not gen or not gen.get("output_dir"):
+        raise HTTPException(
+            status_code=404,
+            detail="no generated product — draft and approve a blueprint first",
+        )
+    out = Path(gen["output_dir"])
+    if not out.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="generated product not found on disk — generate again",
+        )
+    archive_base = out.parent / f"{out.name}-export"
+    archive = shutil.make_archive(str(archive_base), "zip", root_dir=out)
+    product_id = gen.get("product_id") or out.name
+    return FileResponse(
+        archive,
+        filename=f"cerebrumdev-{product_id}.zip",
+        media_type="application/zip",
+    )
 
 
 @router.post("/{session_id}/product/mode")
