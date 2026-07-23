@@ -262,6 +262,43 @@ def _draft_with_llm(
     return _blueprint_from_llm_payload(data, brief, vertical_hint, dual)
 
 
+# --- Deterministic keyword drafting (offline / canned demo path) --------------
+
+_VERTICAL_FILLER = {
+    "a", "an", "the", "me", "my", "our", "your", "us", "we", "i",
+    "build", "create", "make", "generate", "assemble", "design", "ship",
+    "new", "own", "custom", "secure", "multi", "user", "multiuser",
+    "for", "with", "and", "that", "to", "please",
+}
+_VERTICAL_GERUNDS = {"managing", "tracking", "running", "handling", "monitoring"}
+
+
+def _vertical_from_brief(text: str) -> str:
+    """Deterministic vertical extraction from the brief (offline demo quality).
+
+    Tries, in order: the descriptor preceding "platform/product/system/portal",
+    then the object following "platform for …". Falls back to "product".
+    """
+    m = re.search(
+        r"([a-z0-9][a-z0-9\s\-]{1,60}?)\s+(?:platform|product|system|portal)\b",
+        text,
+    )
+    phrase = m.group(1) if m else ""
+    if not phrase:
+        m2 = re.search(
+            r"\b(?:platform|product|system|portal)\s+(?:for|that|to)\s+"
+            r"([a-z0-9][a-z0-9\s\-]{1,60}?)(?:\s+(?:with|using|and)\b|$)",
+            text,
+        )
+        phrase = m2.group(1) if m2 else ""
+    words = [
+        w
+        for w in re.split(r"[\s\-]+", phrase)
+        if w and w not in _VERTICAL_FILLER and w not in _VERTICAL_GERUNDS
+    ]
+    return "_".join(words[:3]) or "product"
+
+
 # --- Public drafting API ------------------------------------------------------
 
 
@@ -298,31 +335,30 @@ def draft_blueprint_from_brief(
             )
 
     dual = sorted(dual_registered_ids())
-    # Pick blocks mentioned in the brief; fall back to audit if none
+    # Blocks the brief actually mentions become REUSE capabilities; audit is
+    # always added (governance is cross-cutting) so the demo blueprint never
+    # ships governance-less.
     mentioned = [b for b in dual if b.replace("_", " ") in text or b in text]
-    if not mentioned and "audit" in dual:
-        mentioned = ["audit"]
+    if "audit" in dual and "audit" not in mentioned:
+        mentioned.append("audit")
 
-    vertical = (vertical_hint or "product").replace(" ", "_").lower()
+    vertical = (vertical_hint or _vertical_from_brief(text)).replace(" ", "_").lower()
     product_id = re.sub(r"[^a-z0-9-]+", "-", vertical)[:48].strip("-") or "product"
-    caps = []
-    if mentioned:
-        for bid in mentioned[:8]:
-            caps.append(
-                {
-                    "id": bid,
-                    "description": f"Capability backed by dual-registered block {bid}",
-                    "block_ids": [bid],
-                    "strategy_hint": "REUSE",
-                }
-            )
-    else:
+    caps: List[Dict[str, Any]] = [
+        {
+            "id": f"{vertical.replace('-', '_')}_core",
+            "description": brief.strip()[:300] or f"Core {vertical} workflows",
+            "block_ids": [],
+            "strategy_hint": "GENERATE",
+        }
+    ]
+    for bid in mentioned[:7]:
         caps.append(
             {
-                "id": "health_surface",
-                "description": "Generated health and capability surface",
-                "block_ids": [],
-                "strategy_hint": "GENERATE",
+                "id": bid,
+                "description": f"Capability backed by dual-registered block {bid}",
+                "block_ids": [bid],
+                "strategy_hint": "REUSE",
             }
         )
 
