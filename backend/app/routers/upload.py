@@ -2,10 +2,11 @@ import os
 import uuid
 from pathlib import Path
 from typing import List
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 
 from ..models.session import SessionState
-from ..core.session_store import get_session, update_session
+from ..core.session_guard import require_owned_session
+from ..core.session_store import update_session
 from ..core.upload_processor import process_upload
 from ..core.background import start_task
 
@@ -21,10 +22,11 @@ def _session_files_dir(session_id: str) -> Path:
 
 
 @router.post("/{session_id}/upload")
-async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    state: SessionState = Depends(require_owned_session),
+):
+    session_id = state.session_id
 
     if state.upload.status == "processing":
         raise HTTPException(status_code=409, detail="Upload already in progress")
@@ -53,18 +55,12 @@ async def upload_files(session_id: str, files: List[UploadFile] = File(...)):
 
 
 @router.get("/{session_id}/upload/status")
-async def upload_status(session_id: str):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def upload_status(state: SessionState = Depends(require_owned_session)):
     return state.upload
 
 
 @router.get("/{session_id}/upload/result")
-async def upload_result(session_id: str):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def upload_result(state: SessionState = Depends(require_owned_session)):
     if state.upload.status not in ("completed", "completed_with_warnings", "failed"):
         raise HTTPException(status_code=400, detail="Upload not finished")
     return {

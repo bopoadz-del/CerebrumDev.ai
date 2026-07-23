@@ -3,10 +3,11 @@ import logging
 import re
 from datetime import datetime
 from typing import AsyncGenerator
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..core.session_guard import require_owned_session
 from ..core.session_store import get_session, update_session
 from ..core.chain_generator import (
     generate_chain_suggestion,
@@ -17,6 +18,7 @@ from ..core.chain_generator import (
 from ..core.rule_injector import inject_rules
 from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow
+from ..models.session import SessionState
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -239,21 +241,18 @@ def _sse_event(event: str, data: str) -> str:
 
 
 @router.post("/{session_id}/chat")
-async def chat(session_id: str, body: ChatMessage):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def chat(
+    body: ChatMessage,
+    state: SessionState = Depends(require_owned_session),
+):
     return StreamingResponse(
-        _stream_response(session_id, body.message),
+        _stream_response(state.session_id, body.message),
         media_type="text/event-stream",
     )
 
 
 @router.get("/{session_id}/chain/preview")
-async def preview_chain(session_id: str):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def preview_chain(state: SessionState = Depends(require_owned_session)):
     if not state.proposed_chain:
         raise HTTPException(status_code=404, detail="No chain proposed yet")
     response = {"chain": state.proposed_chain, "rules": state.extracted_rules}
@@ -263,10 +262,11 @@ async def preview_chain(session_id: str):
 
 
 @router.post("/{session_id}/chain/approve")
-async def approve_chain(session_id: str, body: ApproveRequest = ApproveRequest()):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def approve_chain(
+    body: ApproveRequest = ApproveRequest(),
+    state: SessionState = Depends(require_owned_session),
+):
+    session_id = state.session_id
     if not state.proposed_chain:
         raise HTTPException(status_code=400, detail="No chain to approve")
 

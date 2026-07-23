@@ -4,10 +4,11 @@ import os
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 
-from ..core.session_store import get_session, update_session
+from ..core.session_guard import require_owned_session
+from ..core.session_store import update_session
 from ..core.packager import package_session
 from ..core.platform_packager import package_platform_session, PlatformPackagerError
 from ..core.deployer import deploy_to_render, poll_deploy_status, generate_edge_package
@@ -40,13 +41,11 @@ def _update_deployment(state: SessionState, **kwargs):
     ),
 )
 async def start_deploy(
-    session_id: str,
-    target: str = DeployTarget.PLATFORM,
     background_tasks: BackgroundTasks = None,
+    target: str = DeployTarget.PLATFORM,
+    state: SessionState = Depends(require_owned_session),
 ):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session_id = state.session_id
 
     if not state.chain_approved or not state.proposed_chain:
         raise HTTPException(status_code=400, detail="Chain must be approved before deployment")
@@ -168,11 +167,7 @@ async def start_deploy(
 
 
 @router.get("/{session_id}/deploy/status")
-async def deploy_status(session_id: str):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+async def deploy_status(state: SessionState = Depends(require_owned_session)):
     deployment = state.deployment
     service_id: Optional[str] = None
 
@@ -201,11 +196,11 @@ async def deploy_status(session_id: str):
 
 
 @router.get("/{session_id}/deploy/package")
-async def download_package(session_id: str, variant: str = "cloud"):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+async def download_package(
+    variant: str = "cloud",
+    state: SessionState = Depends(require_owned_session),
+):
+    session_id = state.session_id
     package_path = state.deployment.package_path
     if not package_path or not os.path.exists(package_path):
         # Try to locate the package on disk
