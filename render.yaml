@@ -68,6 +68,14 @@ services:
         value: /app/storage
       - key: PYTHONIOENCODING
         value: utf-8
+      # Observability: paste the Sentry project DSN (python/fastapi) here.
+      # Inert when unset. Release is tagged from RENDER_GIT_COMMIT.
+      - key: SENTRY_DSN
+        sync: false
+      # Optional Redis / Render Key Value: auth rate limits, Drive OAuth
+      # pending states, session fan-out. Everything falls back to in-memory.
+      - key: REDIS_URL
+        sync: false
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
@@ -87,4 +95,8 @@ services:
       - key: VITE_API_URL
         value: https://cerebrumdev-backend.onrender.com
       - key: VITE_API_KEY
+        sync: false
+      # Observability: paste the Sentry project DSN (javascript-react) here.
+      # The frontend loads Sentry lazily only when this is set at build time.
+      - key: VITE_SENTRY_DSN
         sync: false

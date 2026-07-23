@@ -15,6 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app /app/app
 # Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
 COPY blueprints /app/blueprints
+# Alembic migration system for the accounts DB (runs at boot; see backend/alembic/)
+COPY backend/alembic.ini /app/alembic.ini
+COPY backend/alembic /app/alembic
 
 ENV PORT=8000
-CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}
+# Apply accounts-DB migrations before serving (no-op when already at head);
+# a migration failure never blocks boot — the app logs and continues.
+CMD ["sh", "-c", "python -m alembic upgrade head || echo 'alembic upgrade skipped (see logs)'; exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
