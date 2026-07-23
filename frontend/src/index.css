@@ -148,3 +148,65 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   .nav-btn::after { content: attr(label); font-size: 0; }
   .bubble { max-width: 92%; }
 }
+
+/* ---- auth modes, notices, plans (market-readiness screens) ---- */
+.auth-mode {
+  margin: 0.35rem 0 0.75rem;
+  font-size: 1rem;
+  color: var(--gold, #f0b429);
+  text-align: center;
+}
+
+.auth-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: center;
+  margin-top: 0.75rem;
+}
+
+.notice-box {
+  background: rgba(46, 160, 67, 0.12);
+  border: 1px solid rgba(46, 160, 67, 0.45);
+  color: #7ee2a0;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+}
+
+.plan-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.plan-card {
+  background: var(--panel, #151a22);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 0.9rem;
+}
+
+.plan-card.highlight {
+  border-color: var(--gold, #f0b429);
+}
+
+.plan-card h4 {
+  margin: 0 0 0.4rem;
+}
+
+.capitalize {
+  text-transform: capitalize;
+}
+
+.verify-row {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.verify-row input {
+  flex: 1;
+}

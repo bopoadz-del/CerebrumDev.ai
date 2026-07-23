@@ -42,7 +42,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
-  let data: unknown = null
+  let data: unknown
   try {
     data = text ? JSON.parse(text) : null
   } catch {
@@ -61,19 +61,45 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 export interface LoginResponse {
   login_token: string
 }
+export interface RegisterResponse extends LoginResponse {
+  account_id?: string
+  email_verified?: boolean
+  verification?: {
+    mode?: string
+    email_sent?: boolean
+    note?: string
+    dev_verification_token?: string
+  }
+}
+export interface ForgotResponse {
+  ok?: boolean
+  message?: string
+  note?: string
+  dev_reset_token?: string
+}
 export interface AccountInfo {
   email?: string
   account_id?: string
+  email_verified?: boolean
   created_at?: string
   [k: string]: unknown
 }
 
 export const auth = {
   register: (email: string, password: string) =>
-    req<LoginResponse>('POST', '/v1/auth/register', { email, password }),
+    req<RegisterResponse>('POST', '/v1/auth/register', { email, password }),
   login: (email: string, password: string) =>
     req<LoginResponse>('POST', '/v1/auth/login', { email, password }),
   me: () => req<AccountInfo>('GET', '/v1/auth/me'),
+  forgotPassword: (email: string) =>
+    req<ForgotResponse>('POST', '/v1/auth/forgot-password', { email }),
+  resetPassword: (token: string, newPassword: string) =>
+    req<{ ok?: boolean; message?: string }>('POST', '/v1/auth/reset-password', {
+      token,
+      new_password: newPassword,
+    }),
+  verifyEmail: (token: string) =>
+    req<{ ok?: boolean; email_verified?: boolean }>('POST', '/v1/auth/verify-email', { token }),
 }
 
 // --- Sessions ---------------------------------------------------------------
@@ -212,6 +238,10 @@ export interface BillingStatus {
   plan?: string
   subscription_status?: string
   trial_ends_at?: string | null
+  trial_days_left?: number | null
+  entitled?: boolean
+  checkout_available?: boolean
+  enforcement?: boolean
   [k: string]: unknown
 }
 
@@ -219,4 +249,5 @@ export const billing = {
   status: () => req<BillingStatus>('GET', '/v1/billing/status'),
   checkout: () =>
     req<{ url?: string; checkout_url?: string }>('POST', '/v1/billing/checkout', {}),
+  portal: () => req<{ url?: string; portal_url?: string }>('POST', '/v1/billing/portal', {}),
 }
