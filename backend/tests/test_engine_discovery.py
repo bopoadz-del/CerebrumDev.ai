@@ -13,8 +13,10 @@ import pytest
 from app.core.engine_discovery import (
     DEFAULT_CEREBRUM_BLOCKS_REF,
     EngineDiscoveryError,
+    _authenticated_repo_url,
     _fetch_engine_checkout,
     _git_rev_parse,
+    _sanitize_stderr,
     resolve_engine_source,
 )
 
@@ -208,3 +210,77 @@ def test_git_rev_parse_aborts_loudly(tmp_path: Path):
     with patch("subprocess.run", return_value=_BadResult()):
         with pytest.raises(EngineDiscoveryError, match="not a git repository"):
             _git_rev_parse(bad_repo)
+
+
+def test_authenticated_repo_url_injects_github_token(monkeypatch):
+    """GITHUB_TOKEN is injected into HTTPS GitHub URLs only."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
+    assert _authenticated_repo_url("https://github.com/owner/repo.git") == (
+        "https://ghp_secrettoken@github.com/owner/repo.git"
+    )
+
+
+def test_authenticated_repo_url_unchanged_without_token(monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    repo = "https://github.com/owner/repo.git"
+    assert _authenticated_repo_url(repo) == repo
+
+
+def test_authenticated_repo_url_unchanged_for_non_github(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
+    repo = "https://gitlab.com/owner/repo.git"
+    assert _authenticated_repo_url(repo) == repo
+
+
+def test_sanitize_stderr_redacts_github_token(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
+    stderr = "fatal: https://ghp_secrettoken@github.com/owner/repo.git not found"
+    assert _sanitize_stderr(stderr) == (
+        "fatal: https://<redacted>@github.com/owner/repo.git not found"
+    )
+
+
+def test_fetch_engine_checkout_uses_github_token(no_local_engine, tmp_path: Path, monkeypatch):
+    """When GITHUB_TOKEN is set, the remote-add URL includes the token."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
+    monkeypatch.setenv("CEREBRUM_BLOCKS_REF", "main")
+    repo = "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+    added_url = None
+
+    def _capture_run(args: List[str], **kwargs: Dict[str, Any]):
+        nonlocal added_url
+        if args[:3] == ["git", "remote", "add"]:
+            added_url = args[4]
+        return _fake_fetch(tmp_path, "main", repo)(args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _capture_run)
+
+    _fetch_engine_checkout(repo, "main")
+
+    assert added_url is not None
+    assert added_url.startswith("https://ghp_secrettoken@github.com/")
+
+
+def test_fetch_engine_checkout_error_does_not_leak_token(no_local_engine, tmp_path: Path, monkeypatch):
+    """A clone failure must not include the GITHUB_TOKEN in the raised message."""
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_secrettoken")
+    monkeypatch.setenv("CEREBRUM_BLOCKS_REF", "main")
+    repo = "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        _fake_fetch(
+            tmp_path,
+            "main",
+            repo,
+            should_fail=True,
+            fail_stderr="fatal: https://ghp_secrettoken@github.com/owner/repo.git not found",
+        ),
+    )
+
+    with pytest.raises(EngineDiscoveryError) as exc_info:
+        _fetch_engine_checkout(repo, "main")
+
+    assert "ghp_secrettoken" not in str(exc_info.value)
+    assert "<redacted>" in str(exc_info.value)
