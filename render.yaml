@@ -111,6 +111,12 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      # Engine checkout for platform packaging. GITHUB_TOKEN is required when
+      # CEREBRUM_BLOCKS_REPO is a private GitHub repository.
+      - key: CEREBRUM_BLOCKS_REPO
+        value: "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+      - key: GITHUB_TOKEN
+        sync: false
       # Flip to true to enforce paid entitlement on sessions/factory runs.
       - key: BILLING_ENFORCEMENT
         value: "false"
