@@ -331,21 +331,23 @@ def run_sweep(base_url: str) -> List[ProbeResult]:
     # --- Conversational chat --------------------------------------------------
     conv = client.sse_chat(session_id, "what is the status of my product?", token, timeout=120)
     conv_text = (conv.get("text") or "").lower()
+    # Catch invented claims ("it is deployed/live at X", "download link: http..."),
+    # not honest action prompts ("available for deployment").
+    invented_claim = (
+        ("deployed" in conv_text or "live at" in conv_text or "download link" in conv_text)
+        or ("http://" in conv_text or "https://" in conv_text)
+    )
     client.results.append(
         ProbeResult(
             name="chat conversational status",
             method="POST",
             path=f"/v1/sessions/{session_id}/chat",
-            want="200 SSE, grounded reply, no invented URL/deploy claim",
+            want="200 SSE, grounded reply, no invented URL/deployed claim",
             status=conv.get("status"),
             body=conv.get("text"),
             elapsed=conv.get("elapsed", 0),
             verdict="PASS"
-            if conv.get("status") == 200
-            and "http" not in conv_text
-            and "deploy" not in conv_text
-            and "url" not in conv_text
-            and "live" not in conv_text
+            if conv.get("status") == 200 and not invented_claim
             else "FAIL",
             note=f"events={[e['event'] for e in conv.get('events', [])]}, text={conv.get('text', '')[:120]}",
         )
