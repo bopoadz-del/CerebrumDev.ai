@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import yaml
 
-from app.core.llm_config import get_llm_config
+from app.core.llm_config import get_factory_llm_config
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
@@ -132,7 +132,7 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     architect's call sites (routers, chat flow, pipeline) are untouched.
     Raises on any failure — the caller falls back to keyword drafting.
     """
-    cfg = get_llm_config()
+    cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
     provider = cfg.get("provider")

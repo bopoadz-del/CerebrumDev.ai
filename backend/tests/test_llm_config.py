@@ -25,6 +25,12 @@ def _clear_env():
         "OLLAMA_URL",
         "OLLAMA_MODEL",
         "OLLAMA_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_BASE_URL",
+        "CEREBRUM_CHAT_LLM_MODEL",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_BASE_URL",
+        "CEREBRUM_FACTORY_LLM_MODEL",
     ]
     old = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -129,3 +135,27 @@ def test_auto_detect_ollama():
 def test_no_provider():
     cfg = get_llm_config()
     assert cfg["provider"] == ""
+
+
+def test_chat_and_factory_use_separate_models():
+    """Chat and Factory architect can point at different Kimi models."""
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-shared"
+    os.environ["CEREBRUM_CHAT_LLM_MODEL"] = "kimi-k2.7"
+    os.environ["CEREBRUM_FACTORY_LLM_MODEL"] = "kimi-k2.7-code"
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+    assert chat_cfg["model"] == "kimi-k2.7"
+    assert factory_cfg["model"] == "kimi-k2.7-code"
+    assert chat_cfg["provider"] == "kimi"
+    assert factory_cfg["provider"] == "kimi"
+
+
+def test_chat_and_factory_fallback_to_shared_vars():
+    """When scoped vars are absent, both paths fall back to CEREBRUM_LLM_*."""
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-shared"
+    os.environ["CEREBRUM_LLM_MODEL"] = "moonshot-v1-8k"
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+    assert chat_cfg["model"] == "moonshot-v1-8k"
+    assert factory_cfg["model"] == "moonshot-v1-8k"
+
