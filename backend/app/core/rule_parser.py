@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import Any, List, Dict
 import httpx
 
@@ -68,7 +69,7 @@ def _extract_json(text: str) -> Dict[str, Any]:
                 continue
             if ch == '"':
                 in_string = False
-            continue
+                continue
         if ch == '"':
             in_string = True
             continue
@@ -90,9 +91,16 @@ def _call_openai_sync(base_url: str, api_key: str, model: str, messages: List[Di
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": 0.1,
         "response_format": {"type": "json_object"},
     }
+    # Omit temperature unless explicitly configured: reasoning models
+    # (kimi-k2.x) reject any explicit value other than 1.
+    raw_temp = os.getenv("LLM_TEMPERATURE", "").strip()
+    if raw_temp:
+        try:
+            payload["temperature"] = float(raw_temp)
+        except ValueError:
+            pass
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -139,7 +147,7 @@ def _parse_with_llm(provider: str, rule_texts: List[str]) -> List[Dict[str, str]
         {"role": "user", "content": user_prompt},
     ]
 
-    if provider in ("qwen", "moonshot"):
+    if provider in ("qwen", "moonshot", "kimi"):
         result = _call_openai_sync(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
     elif provider == "ollama":
         result = _call_ollama_sync(cfg["base_url"], cfg["model"], messages)

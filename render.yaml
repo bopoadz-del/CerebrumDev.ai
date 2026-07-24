@@ -37,10 +37,12 @@ services:
         value: qwen-plus
       - key: CEREBRUM_LLM_API_KEY
         sync: false
+      # International console (platform.moonshot.ai) — verified against
+      # the owner's key. The .cn endpoint rejects it.
       - key: CEREBRUM_LLM_BASE_URL
-        value: https://api.moonshot.cn/v1
+        value: https://api.moonshot.ai/v1
       - key: CEREBRUM_LLM_MODEL
-        value: moonshot-v1-8k
+        value: kimi-k2.7-code
       - key: TINKER_API_KEY
         sync: false
       - key: TINKER_BASE_MODEL

@@ -35,7 +35,7 @@ def _kimi_base_url() -> str:
     return (
         os.getenv("KIMI_BASE_URL", "").strip()
         or os.getenv("CEREBRUM_LLM_BASE_URL", "").strip()
-        or "https://api.moonshot.cn/v1"
+        or "https://api.moonshot.ai/v1"
     )
 
 
@@ -47,6 +47,22 @@ def _kimi_model() -> str:
     )
 
 
+def _llm_temperature() -> float | None:
+    """Optional temperature override (LLM_TEMPERATURE).
+
+    None means: do not send a temperature at all — the provider applies the
+    model default. Required for reasoning models (kimi-k2.x) which reject
+    any explicit temperature other than 1.
+    """
+    raw = os.getenv("LLM_TEMPERATURE", "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
 def _kimi_config() -> Dict[str, Any]:
     return {
         "provider": "kimi",
@@ -54,6 +70,7 @@ def _kimi_config() -> Dict[str, Any]:
         "base_url": _kimi_base_url(),
         "model": _kimi_model(),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
+        "temperature": _llm_temperature(),
     }
 
 
