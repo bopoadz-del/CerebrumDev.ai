@@ -27,7 +27,7 @@
 | 15. AGENTS.md deploy gate | **WIRED** | See below |
 | 16. Auth enforcement on protected routes | **LIVE** | Unauthenticated requests to `/v1/sessions/`, `/v1/auth/me`, `/v1/domains/`, `/v1/billing/status` return 401 |
 | 17. Store credential path | **LIVE** | `CEREBRUM_API_KEY` set on backend; `/v1/sessions/{id}/chat` with "what blocks can I add?" returns store-backed block list (no 401) |
-| 18. Engine-discovery GitHub access | **PARKED-honest** | Code supports `GITHUB_TOKEN` (merged PR #110), but token not yet set in Render; `/v1/domains/virgin`, `/source-packs`, `/rag-packs` return 500 until credential lands |
+| 18. Engine-discovery GitHub access | **LIVE** | Owner set `GITHUB_TOKEN` in Render; `/v1/domains/virgin`, `/source-packs`, `/rag-packs` all return 200 with real shelf data |
 | 19. SMTP email delivery | **PARKED-honest** | No RESEND/SMTP provider configured; register/forgot-password expose dev tokens in response with explicit note |
 | 20. Frontend API-key pair | **LIVE** | `VITE_API_KEY` declared in `render.yaml` (sync:false); frontend builds and bundles the key at build time; pair must match `CEREBRUM_DEV_API_KEY` in Render dashboard |
 | 21. Secret leak rotation | **LIVE** | Git grep + frontend bundle scan find no hardcoded API keys/secrets; earlier leaked factory keys removed from packager output by PR #110 |
