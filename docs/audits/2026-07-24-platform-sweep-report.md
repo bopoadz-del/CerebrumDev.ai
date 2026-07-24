@@ -199,7 +199,7 @@ Register/forgot-password currently expose dev tokens in the API response with an
    - Adds `scripts/platform_sweep.py`
    - Updates `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`
    - Adds this report `docs/audits/2026-07-24-platform-sweep-report.md`
-2. **CI run for PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30128423318 — Backend, Frontend, and Production Docker build all pass
+2. **CI run for PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30133821448 — Backend, Frontend, and Production Docker build all pass
 3. **Post-deploy smoke:** all `[LIVE]`, exit 0
 4. **Phase-4 sweep:** 36/36 pass after `GITHUB_TOKEN` set
 
