@@ -19,7 +19,7 @@
 | 7. Resident engineer | **PARKED by design** | `enabled:false`, maturity APPRENTICE, allowlisted heals declared |
 | 8. Workbench / build mode | **PARKED by design** | `build_mode_enabled:false`, `kimi_workbench_enabled:false` |
 | 9. Change-request intake | **PARKED by design** | `intake_enabled:false`, M3 paperwork only |
-| 10. Redis rate limiting | **PARKED** — fix provisioned in `8a642ac` | Render Key Value added to `render.yaml`; becomes **LIVE** once blueprint sync populates `REDIS_URL` and `/health` reports `redis.ok: true` |
+| 10. Redis rate limiting | **LIVE** since 2026-07-24 | Render Key Value `cerebrumdev-redis` provisioned; `/health` reports `redis.configured: true`, `redis.ok: true` |
 | 11. Draft routing | **LIVE** after fix | LLM attempt now precedes deterministic steward fallback; `"estate"` no longer short-circuits LLM |
 | 12. CI wiring | **EXISTS** | `.github/workflows/ci.yml` runs pytest + frontend build + docker build on push to master |
 | 13. Audit kernel artifact | **LIVE** | This document + `test_registry_invariants.py` |
