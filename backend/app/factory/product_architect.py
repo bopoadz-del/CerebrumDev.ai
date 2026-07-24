@@ -1,14 +1,19 @@
-"""Product architect: brief analysis and platform blueprint drafting.
+"""Product Architect — drafts product_blueprint.v1 inside the Factory.
 
-Hybrid by design: deterministic pattern extraction first, LLM refinement
-behind ARCHITECT_LLM_DRAFTING_ENABLED, deterministic fallback always
-available. LLM output is structurally validated and merged onto the
-deterministic base — never trusted blindly.
+Today Steward may be predefined (golden YAML). The architect can:
+- load a checked-in blueprint (deterministic / mock / golden path)
+- draft from a brief using the LLM when ARCHITECT_LLM_DRAFTING_ENABLED is on
+- fall back to deterministic keyword drafting (always available, no keys)
+
+Architecture is always a validated ProductBlueprint; generation stays fail-closed
+via the capability planner + dual registry. LLM drafting is fail-SAFE: any LLM
+error, malformed payload, or all-foreign block ids falls back to the keyword
+drafter — a draft is always produced, and block ids are always filtered
+against the dual registry (never invent blocks).
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -19,155 +24,124 @@ from typing import Any, Dict, List, Optional
 import httpx
 import yaml
 
-from ..core.dual_registry import dual_registered_ids
-from ..core.llm_config import get_factory_llm_config
+from app.core.llm_config import get_llm_config
+from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
+from app.factory.dual_registry import DualRegistryError, dual_registered_ids
+from app.factory.generator import ProductGenerator, git_head
+from app.factory.paths import factory_repo_root
+from app.factory.planner import CapabilityPlanner, ProductPlan
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BLUEPRINTS_DIR = Path(__file__).resolve().parents[3] / "blueprints"
+
+def _repo_root() -> Path:
+    return factory_repo_root()
 
 
-def _blueprints_dir() -> Path:
-    override = os.getenv("ARCHITECT_BLUEPRINTS_DIR")
-    return Path(override) if override else _DEFAULT_BLUEPRINTS_DIR
+def steward_golden_path() -> Path:
+    return _repo_root() / "blueprints" / "steward" / "steward.v1.yaml"
 
 
-class ProductArchitect:
-    """Drafts product blueprints from briefs. Deterministic-first, LLM-optional."""
+# --- LLM drafting (gated, fail-safe) -----------------------------------------
 
-    def __init__(self, blueprints_dir: Optional[Path] = None) -> None:
-        self._dir = blueprints_dir or _blueprints_dir()
+LLM_DRAFTING_ENV = "ARCHITECT_LLM_DRAFTING_ENABLED"
 
-    # -- public API ----------------------------------------------------------
 
-    def analyze_brief(self, brief: str) -> Dict[str, Any]:
-        """Backward-compatible brief analysis (deterministic)."""
-        return self._deterministic_analysis(brief)
+def llm_drafting_enabled() -> bool:
+    """Env gate for LLM-powered brief drafting. Default OFF (house pattern)."""
+    return os.getenv(LLM_DRAFTING_ENV, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
-    def draft_blueprint(
-        self, brief: str, existing_yaml: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Draft a product blueprint dict.
 
-        Priority:
-        1. Golden steward match (estate/platform briefs) → golden blueprint.
-        2. LLM-drafted refinement (when enabled + configured) validated and
-           merged onto the deterministic base.
-        3. Deterministic fallback.
-        """
-        golden = self._try_golden_steward(brief)
-        if golden is not None:
-            return golden
+_LLM_DRAFT_SYSTEM = """You are the Cerebrum product architect. Given a user \
+brief for a software platform, draft a product blueprint as JSON.
 
-        base = self._deterministic_blueprint(brief, existing_yaml)
+Return ONLY a JSON object with this shape:
+{
+  "product_name": "<human-readable product name>",
+  "vertical": "<one or two word vertical slug, e.g. fleet_management>",
+  "summary": "<one paragraph: what the product does and who it serves>",
+  "capabilities": [
+    {
+      "id": "<snake_case capability id>",
+      "description": "<what this capability does>",
+      "block_ids": ["<ids from the AVAILABLE BLOCKS list only>"],
+      "strategy_hint": "REUSE"
+    }
+  ]
+}
 
-        if not os.getenv("ARCHITECT_LLM_DRAFTING_ENABLED", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            base["source"] = "deterministic"
-            return base
+Rules:
+- 3 to 8 capabilities, ordered by importance.
+- block_ids may ONLY contain ids from the AVAILABLE BLOCKS list. Never invent ids.
+- If no available block fits a capability, use "block_ids": [] and
+  "strategy_hint": "GENERATE".
+- vertical must be lowercase snake_case.
+"""
 
-        cfg = get_factory_llm_config()
-        if cfg.get("error"):
-            logger.warning("LLM drafting disabled: %s", cfg["error"])
-            base["source"] = "deterministic"
-            return base
 
-        try:
-            llm_draft = asyncio.run(self._llm_draft(brief, base, cfg))
-        except Exception as exc:  # honest fallback, never crash the flow
-            logger.warning("LLM drafting failed, using deterministic base: %s", exc)
-            base["source"] = "deterministic"
-            return base
+def _extract_json(text: str) -> Dict[str, Any]:
+    """Strip Markdown fences and parse the first JSON object in *text*."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+    if text.endswith("```"):
+        text = text.rsplit("\n", 1)[0] if "\n" in text else ""
+    text = text.strip()
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in model output")
+    depth = 0
+    end = start
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if depth != 0:
+        raise ValueError("Unbalanced JSON object in model output")
+    return json.loads(text[start:end])
 
-        merged = self._merge_validated(base, llm_draft)
-        merged["source"] = "llm+deterministic"
-        return merged
 
-    # -- golden steward ------------------------------------------------------
+def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Synchronous JSON call against the configured LLM provider.
 
-    def _try_golden_steward(self, brief: str) -> Optional[Dict[str, Any]]:
-        if "estate" not in brief.lower() and "platform" not in brief.lower():
-            return None
-        steward_path = self._dir / "steward_product.yaml"
-        if not steward_path.exists():
-            return None
-        try:
-            data = yaml.safe_load(steward_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("capabilities"):
-                data["source"] = "golden_steward"
-                return data
-        except Exception as exc:
-            logger.warning("Failed to load golden steward blueprint: %s", exc)
-        return None
+    Mirrors core.chain_generator's async callers but stays sync so the
+    architect's call sites (routers, chat flow, pipeline) are untouched.
+    Raises on any failure — the caller falls back to keyword drafting.
+    """
+    cfg = get_llm_config()
+    if cfg.get("mock"):
+        raise RuntimeError("LLM mock mode — no network call")
+    provider = cfg.get("provider")
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("api_key"):
+        headers["Authorization"] = f"Bearer {cfg['api_key']}"
 
-    # -- deterministic base --------------------------------------------------
-
-    def _deterministic_analysis(self, brief: str) -> Dict[str, Any]:
-        return {
-            "vertical": _vertical_from_brief(brief),
-            "mentioned_blocks": _extract_mentioned_blocks(brief),
-            "summary": brief.strip()[:200],
-        }
-
-    def _deterministic_blueprint(
-        self, brief: str, existing_yaml: Optional[str] = None
-    ) -> Dict[str, Any]:
-        analysis = self._deterministic_analysis(brief)
-        mentioned = [b for b in analysis["mentioned_blocks"] if b in dual_registered_ids()]
-        vertical = analysis["vertical"]
-        capabilities: List[Dict[str, Any]] = []
-        if mentioned:
-            capabilities.append(
-                {
-                    "id": f"{vertical}_core",
-                    "description": f"Core {vertical} capability from brief",
-                    "block_ids": mentioned[:8],
-                    "strategy_hint": "REUSE",
-                }
-            )
-        # audit is always available and useful
-        if "audit" in dual_registered_ids() and "audit" not in mentioned:
-            capabilities.append(
-                {
-                    "id": "audit_trail",
-                    "description": "Audit trail and compliance logging",
-                    "block_ids": ["audit"],
-                    "strategy_hint": "REUSE",
-                }
-            )
-        return {
-            "product_name": _product_name_from_brief(brief, vertical),
-            "vertical": vertical,
-            "brief_summary": analysis["summary"],
-            "capabilities": capabilities or _keyword_fallback_caps(brief, vertical),
-        }
-
-    # -- LLM refinement ------------------------------------------------------
-
-    async def _llm_draft(
-        self, brief: str, base: Dict[str, Any], cfg: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        registry = sorted(dual_registered_ids())
-        system = (
-            "You are a product architect for the CerebrumDev factory. "
-            "Draft a product blueprint as JSON with keys: product_name (string), "
-            "vertical (string), capabilities (list of objects with id, description, "
-            "block_ids (list of strings), strategy_hint (one of REUSE, ADAPT, GENERATE)). "
-            f"Only use block IDs from this registry: {registry}. "
-            "Do not invent block IDs. Return only JSON."
-        )
-        user = (
-            f"Brief: {brief}\n\n"
-            f"Deterministic base draft for reference: {json.dumps(base, indent=2)}"
-        )
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
+    if provider in ("qwen", "moonshot", "kimi"):
+        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
         payload = {
             "model": cfg["model"],
             "messages": messages,
@@ -177,147 +151,297 @@ class ProductArchitect:
         # (kimi-k2.x) reject any explicit value other than 1.
         if cfg.get("temperature") is not None:
             payload["temperature"] = cfg["temperature"]
-        headers = {"Authorization": f"Bearer {cfg['api_key']}"}
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{cfg['base_url'].rstrip('/')}/chat/completions",
-                json=payload,
-                headers=headers,
-            )
+        with httpx.Client(timeout=120.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
-            data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        draft = json.loads(content)
-        if not isinstance(draft, dict):
-            raise ValueError("LLM draft is not a JSON object")
-        return draft
+            content = resp.json()["choices"][0]["message"]["content"]
+            return json.loads(content)
 
-    def _merge_validated(
-        self, base: Dict[str, Any], llm_draft: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Merge LLM draft onto the deterministic base, validating structure.
+    if provider == "ollama":
+        url = f"{cfg['base_url'].rstrip('/')}/api/chat"
+        payload = {
+            "model": cfg["model"],
+            "messages": messages,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.3},
+        }
+        with httpx.Client(timeout=300.0) as client:
+            resp = client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            content = resp.json().get("message", {}).get("content", "")
+            if not content:
+                raise RuntimeError("Ollama returned empty content")
+            return _extract_json(content)
 
-        Only block_ids present in the dual registry survive. Invalid or
-        missing fields fall back to the deterministic base values.
-        """
-        registry = dual_registered_ids()
-        merged = dict(base)
-
-        name = llm_draft.get("product_name")
-        if isinstance(name, str) and name.strip():
-            merged["product_name"] = name.strip()
-
-        vertical = llm_draft.get("vertical")
-        if isinstance(vertical, str) and vertical.strip():
-            merged["vertical"] = _slugify(vertical)
-
-        caps = llm_draft.get("capabilities")
-        if isinstance(caps, list) and caps:
-            clean_caps: List[Dict[str, Any]] = []
-            for cap in caps:
-                if not isinstance(cap, dict):
-                    continue
-                cap_id = cap.get("id")
-                if not isinstance(cap_id, str) or not cap_id.strip():
-                    continue
-                raw_blocks = cap.get("block_ids")
-                block_ids = (
-                    [b for b in raw_blocks if isinstance(b, str) and b in registry]
-                    if isinstance(raw_blocks, list)
-                    else []
-                )
-                hint = cap.get("strategy_hint")
-                clean_caps.append(
-                    {
-                        "id": _slugify(cap_id),
-                        "description": str(cap.get("description") or ""),
-                        "block_ids": block_ids,
-                        "strategy_hint": hint if hint in ("REUSE", "ADAPT", "GENERATE") else "GENERATE",
-                    }
-                )
-            if clean_caps:
-                merged["capabilities"] = clean_caps
-
-        return merged
+    raise RuntimeError("No LLM provider configured")
 
 
-# ---------------------------------------------------------------------------
-# helpers
+def _slug(text: str, default: str = "product") -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", (text or "").lower())[:48].strip("-")
+    return slug or default
 
-_FILLER = {
+
+def _snake_slug(text: str, default: str = "product") -> str:
+    """Normalize a brief or LLM vertical into lowercase snake_case."""
+    normalized = (text or "").lower().replace(" ", "_").replace("-", "_")
+    slug = re.sub(r"[^a-z0-9_]+", "_", normalized).strip("_")[:48]
+    return slug or default
+
+
+def _blueprint_from_llm_payload(
+    data: Dict[str, Any],
+    brief: str,
+    vertical_hint: Optional[str],
+    dual_ids: List[str],
+) -> ProductBlueprint:
+    """Validate + sanitize an LLM draft payload into a ProductBlueprint.
+
+    Fail-closed on structure: malformed payloads raise (caller falls back).
+    Fail-safe on content: block ids are filtered against the dual registry.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("LLM draft is not a JSON object")
+
+    dual = set(dual_ids)
+    raw_caps = data.get("capabilities")
+    if not isinstance(raw_caps, list) or not raw_caps:
+        raise ValueError("LLM draft has no capabilities")
+
+    caps = []
+    for item in raw_caps[:8]:
+        if not isinstance(item, dict):
+            continue
+        cap_id = _slug(str(item.get("id", "")), default="")
+        if not cap_id:
+            continue
+        block_ids = [
+            b for b in item.get("block_ids", []) if isinstance(b, str) and b in dual
+        ]
+        caps.append(
+            {
+                "id": cap_id.replace("-", "_"),
+                "description": str(item.get("description", ""))[:300]
+                or f"Capability {cap_id}",
+                "block_ids": block_ids,
+                "strategy_hint": "REUSE" if block_ids else "GENERATE",
+            }
+        )
+    if not caps:
+        raise ValueError("LLM draft produced no usable capabilities")
+
+    vertical = _snake_slug(str(data.get("vertical") or vertical_hint or "product"))
+    product_name = str(data.get("product_name", "")).strip()[:120] or vertical.replace(
+        "_", " "
+    ).title()
+
+    raw = {
+        "schema_version": "product_blueprint.v1",
+        "product_id": _slug(vertical),
+        "product_name": product_name,
+        "vertical": vertical,
+        "summary": str(data.get("summary", "")).strip()[:500]
+        or brief.strip()[:500]
+        or f"Factory-drafted {vertical} product",
+        "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
+        "capabilities": caps,
+        "ui_modules": ["command_center", "operational_chat", "resident_engineer"],
+        "connectors": [],
+        "edge_profile": "standard",
+        "human_authority": True,
+    }
+    return ProductBlueprint.model_validate(raw)
+
+
+def _draft_with_llm(
+    brief: str,
+    *,
+    vertical_hint: Optional[str] = None,
+) -> ProductBlueprint:
+    """Draft a blueprint via the configured LLM. Raises on any failure."""
+    dual = sorted(dual_registered_ids())
+    block_list = "\n".join(f"- {b}" for b in dual) or "- (none registered)"
+    messages = [
+        {
+            "role": "system",
+            "content": _LLM_DRAFT_SYSTEM + f"\nAVAILABLE BLOCKS:\n{block_list}\n",
+        },
+        {"role": "user", "content": brief},
+    ]
+    data = _llm_json_call(messages)
+    return _blueprint_from_llm_payload(data, brief, vertical_hint, dual)
+
+
+# --- Deterministic keyword drafting (offline / canned demo path) --------------
+
+_VERTICAL_FILLER = {
     "a", "an", "the", "me", "my", "our", "your", "us", "we", "i",
     "build", "create", "make", "generate", "assemble", "design", "ship",
     "new", "own", "custom", "secure", "multi", "user", "multiuser",
     "for", "with", "and", "that", "to", "please",
 }
-_GERUNDS = {"managing", "tracking", "running", "handling", "monitoring"}
-
-_BLOCK_VOCAB = [
-    "audit",
-    "auth",
-    "chat",
-    "ocr",
-    "pdf",
-    "image",
-    "vector_search",
-    "memory",
-    "knowledge",
-    "llm_enhancer",
-    "validation_pipeline",
-    "formula_executor_v2",
-]
-
-
-def _slugify(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_") or "product"
+_VERTICAL_GERUNDS = {"managing", "tracking", "running", "handling", "monitoring"}
 
 
 def _vertical_from_brief(text: str) -> str:
+    """Deterministic vertical extraction from the brief (offline demo quality).
+
+    Tries, in order: the descriptor preceding "platform/product/system/portal",
+    then the object following "platform for …". Falls back to "product".
+    """
     m = re.search(
-        r"([a-z0-9][a-z0-9\s\-]{1,60}?)\s+(?:platform|product|system|portal)\b", text
+        r"([a-z0-9][a-z0-9\s\-]{1,60}?)\s+(?:platform|product|system|portal)\b",
+        text,
     )
     phrase = m.group(1) if m else ""
     if not phrase:
         m2 = re.search(
-            r"\b(?:platform|product|system|portal)\s+(?:for|that|to)\s+([a-z0-9][a-z0-9\s\-]{1,60}?)(?:\s+(?:with|using|and)\b|$)",
+            r"\b(?:platform|product|system|portal)\s+(?:for|that|to)\s+"
+            r"([a-z0-9][a-z0-9\s\-]{1,60}?)(?:\s+(?:with|using|and)\b|$)",
             text,
         )
         phrase = m2.group(1) if m2 else ""
     words = [
         w
         for w in re.split(r"[\s\-]+", phrase)
-        if w and w not in _FILLER and w not in _GERUNDS
+        if w and w not in _VERTICAL_FILLER and w not in _VERTICAL_GERUNDS
     ]
     return "_".join(words[:3]) or "product"
 
 
-def _product_name_from_brief(brief: str, vertical: str) -> str:
-    words = [w.capitalize() for w in vertical.split("_") if w]
-    return " ".join(words) or "Custom Product"
+# --- Public drafting API ------------------------------------------------------
 
 
-def _extract_mentioned_blocks(brief: str) -> List[str]:
-    lowered = brief.lower()
-    return [b for b in _BLOCK_VOCAB if b.replace("_", " ") in lowered or b in lowered]
+def draft_blueprint_from_brief(
+    brief: str,
+    *,
+    vertical_hint: Optional[str] = None,
+    use_golden_steward: bool = True,
+    use_llm: Optional[bool] = None,
+) -> ProductBlueprint:
+    """Draft a ProductBlueprint from a user brief.
 
+    Order of preference:
+    1. Golden steward blueprint for estate briefs (deterministic path).
+    2. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
+       ``use_llm=True``) — fail-safe: any error falls through to (3).
+    3. Deterministic keyword drafting (always works, no keys needed).
+    """
+    text = (brief or "").lower()
+    wants_steward = any(
+        k in text for k in ("steward", "estate", "private estate", "property readiness")
+    )
+    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
+        return load_blueprint(steward_golden_path())
 
-def _keyword_fallback_caps(brief: str, vertical: str) -> List[Dict[str, Any]]:
-    """Always produce at least one GENERATE capability plus audit when available."""
+    if use_llm is None:
+        use_llm = llm_drafting_enabled()
+    if use_llm:
+        try:
+            return _draft_with_llm(brief, vertical_hint=vertical_hint)
+        except Exception as exc:
+            logger.warning(
+                "LLM drafting failed, falling back to keyword drafting: %s", exc
+            )
+
+    dual = sorted(dual_registered_ids())
+    # Blocks the brief actually mentions become REUSE capabilities; audit is
+    # always added (governance is cross-cutting) so the demo blueprint never
+    # ships governance-less.
+    mentioned = [b for b in dual if b.replace("_", " ") in text or b in text]
+    if "audit" in dual and "audit" not in mentioned:
+        mentioned.append("audit")
+
+    vertical = (vertical_hint or _vertical_from_brief(text)).replace(" ", "_").lower()
+    product_id = re.sub(r"[^a-z0-9-]+", "-", vertical)[:48].strip("-") or "product"
     caps: List[Dict[str, Any]] = [
         {
-            "id": f"{vertical}_core",
-            "description": brief.strip()[:300],
+            "id": f"{vertical.replace('-', '_')}_core",
+            "description": brief.strip()[:300] or f"Core {vertical} workflows",
             "block_ids": [],
             "strategy_hint": "GENERATE",
         }
     ]
-    if "audit" in dual_registered_ids():
+    for bid in mentioned[:7]:
         caps.append(
             {
-                "id": "audit_trail",
-                "description": "Audit trail and compliance logging",
-                "block_ids": ["audit"],
+                "id": bid,
+                "description": f"Capability backed by dual-registered block {bid}",
+                "block_ids": [bid],
                 "strategy_hint": "REUSE",
             }
         )
-    return caps
+
+    raw = {
+        "schema_version": "product_blueprint.v1",
+        "product_id": product_id,
+        "product_name": product_id.replace("-", " ").title(),
+        "vertical": vertical,
+        "summary": brief.strip()[:500] or f"Factory-drafted {vertical} product",
+        "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
+        "capabilities": caps,
+        "ui_modules": ["command_center", "operational_chat", "resident_engineer"],
+        "connectors": [],
+        "edge_profile": "standard",
+        "human_authority": True,
+    }
+    return ProductBlueprint.model_validate(raw)
+
+
+def plan_blueprint(
+    blueprint: ProductBlueprint,
+    *,
+    blocks_root: Optional[Path] = None,
+) -> ProductPlan:
+    return CapabilityPlanner(blocks_root).plan(blueprint)
+
+
+def generate_product(
+    blueprint: ProductBlueprint,
+    output_dir: Path | str,
+    *,
+    blocks_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    factory_root = _repo_root()
+    blocks = Path(blocks_root) if blocks_root else None
+    if blocks is None:
+        env = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
+        if env:
+            blocks = Path(env)
+    gen = ProductGenerator(
+        blueprint,
+        blocks_root=blocks,
+        factory_commit=git_head(factory_root),
+        blocks_commit=git_head(blocks) if blocks else "unknown",
+    )
+    return gen.generate(output_dir)
+
+
+def architect_pipeline(
+    brief: str,
+    output_dir: Path | str,
+    *,
+    vertical_hint: Optional[str] = None,
+    blocks_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Brief → blueprint → plan → generate. Fail closed on UNSUPPORTED."""
+    try:
+        bp = draft_blueprint_from_brief(brief, vertical_hint=vertical_hint)
+        plan = plan_blueprint(bp, blocks_root=blocks_root)
+        result = generate_product(bp, output_dir, blocks_root=blocks_root)
+        return {
+            "ok": True,
+            "blueprint": bp.model_dump(mode="json"),
+            "plan": plan.to_dict(),
+            "generation": {
+                "output_dir": result["output_dir"],
+                "inputs_hash": result["inputs_hash"],
+                "product_id": result["product_id"],
+            },
+        }
+    except DualRegistryError as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def blueprint_to_yaml(bp: ProductBlueprint) -> str:
+    return yaml.safe_dump(bp.model_dump(mode="json"), sort_keys=False)
