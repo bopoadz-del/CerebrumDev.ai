@@ -47,12 +47,23 @@ def _build_source_pack_context(domain: str) -> str:
     )
 
 
-def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, docs_summary: str) -> str:
+def _build_system_prompt(
+    available_blocks: List[Dict[str, Any]],
+    domain: str,
+    docs_summary: str,
+    session_state: str = "",
+) -> str:
     optional_available = [b for b in available_blocks if b.get("name") in OPTIONAL_BLOCKS]
     optional_list = "\n".join(
         f"- {b.get('name')}: {b.get('description', 'No description')}" for b in optional_available
     ) or "- (none)"
     docs_section = f"\nUploaded documents summary:\n{docs_summary}\n" if docs_summary else ""
+    state_section = (
+        "\nSession state (authoritative — trust this over your own inference):\n"
+        f"{session_state}\n"
+        if session_state
+        else ""
+    )
     source_pack_section = _build_source_pack_context(domain)
     return (
         "You are an AI solution architect for CerebrumDev.ai. "
@@ -64,6 +75,7 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
         "Optional Fork primitives the user can add on top:\n"
         f"{optional_list}\n"
         f"{source_pack_section}"
+        f"{state_section}"
         f"{docs_section}\n"
         "When responding:\n"
         "1. Be concise and conversational.\n"
@@ -77,7 +89,14 @@ def _build_system_prompt(available_blocks: List[Dict[str, Any]], domain: str, do
         '{"blocks": [{"id": "<block_name>", "params": {...}}], "connections": [{"from": 0, "to": 1}]}\n\n'
         "Return your response as JSON with three top-level keys:\n"
         '{"message": "<conversational reply to user>", "chain": <chain JSON or null>, "rules": ["rule 1", "rule 2"]}\n'
-        "Only include 'chain' when you are ready to propose one."
+        "Only include 'chain' when you are ready to propose one.\n"
+        "7. Never claim that you or the platform have built, generated, deployed, exported, "
+        "or modified anything. Platform actions are reported only by explicit system events "
+        "in the chat (blueprint / generation cards).\n"
+        "8. Answer status questions strictly from the Session state section above. If something "
+        "is not stated there, say you do not have that information and point the user to the "
+        "Factory Floor flow.\n"
+        "9. Never invent URLs, prices, credentials, dates, product names, or deployment targets."
     )
 
 
@@ -106,7 +125,7 @@ def _extract_json(text: str) -> Dict[str, Any]:
                 continue
             if ch == '"':
                 in_string = False
-            continue
+                continue
         if ch == '"':
             in_string = True
             continue
@@ -216,13 +235,22 @@ async def generate_chain_suggestion(
     user_message: str,
     chat_history: List[Dict[str, str]],
     docs_summary: str,
+    session_state: str = "",
 ) -> Dict[str, Any]:
-    """Generate a chain suggestion and extract rules from a user message."""
+    """Generate a chain suggestion and extract rules from a user message.
+
+    session_state: authoritative session facts (blueprint / generation
+    status) used to ground the conversational reply — the model must never
+    invent platform actions or status.
+    """
     registry = await fetch_block_registry()
     available_blocks = list(registry.values())
 
     messages = [
-        {"role": "system", "content": _build_system_prompt(available_blocks, domain, docs_summary)},
+        {
+            "role": "system",
+            "content": _build_system_prompt(available_blocks, domain, docs_summary, session_state),
+        },
     ]
     messages.extend(chat_history)
     messages.append({"role": "user", "content": user_message})

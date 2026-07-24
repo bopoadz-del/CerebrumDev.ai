@@ -39,6 +39,34 @@ def _docs_summary(state) -> str:
     return f"Document preview: {preview}"
 
 
+def _session_state_summary(state) -> str:
+    """Authoritative session facts used to ground the conversational fallback.
+
+    The LLM fallback answers strictly from this summary; it performs no
+    platform actions itself, so it must not invent them either.
+    """
+    pd = getattr(state, "product_design", None)
+    if not pd or not getattr(pd, "blueprint", None):
+        return "No platform blueprint has been drafted in this session."
+    bp = pd.blueprint or {}
+    caps = bp.get("capabilities") or []
+    lines = [
+        f"Drafted blueprint: {bp.get('product_name')} (vertical: {bp.get('vertical')}), "
+        f"{len(caps)} capabilities.",
+        f"Blueprint approved: {'yes' if pd.blueprint_approved else 'no'}.",
+    ]
+    gen = getattr(pd, "generation", None)
+    if gen:
+        lines.append(
+            f"Generated product: {gen.get('product_id')} — available under Your Platforms."
+        )
+    else:
+        lines.append("No product has been generated yet.")
+    if getattr(pd, "last_error", None):
+        lines.append(f"Last error: {pd.last_error}")
+    return "\n".join(lines)
+
+
 def _parse_command(message: str):
     """Detect natural-language config commands. Returns (command, args) or (None, None)."""
     lowered = message.lower().strip()
@@ -194,6 +222,7 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             user_message=user_message,
             chat_history=state.chat_history[:-1],
             docs_summary=_docs_summary(state),
+            session_state=_session_state_summary(state),
         )
     except Exception as exc:
         logger.exception("Chain generation failed")
