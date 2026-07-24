@@ -43,7 +43,7 @@ services:
         value: https://api.moonshot.ai/v1
       # Shared fallback model. Per-path overrides below take precedence.
       - key: CEREBRUM_LLM_MODEL
-        value: moonshot-v1-8k
+        value: kimi-k2.7-code
       # Chat / chain_generator path (operational chat).
       - key: CEREBRUM_CHAT_LLM_MODEL
         value: kimi-k2.7
