@@ -2,7 +2,8 @@
 
 Contract:
 - gated by ARCHITECT_LLM_DRAFTING_ENABLED (default OFF — house flag pattern)
-- golden steward always wins for estate briefs, even with the gate on
+- golden steward is the deterministic fallback for explicit steward intent
+  when LLM drafting is disabled or the LLM call fails
 - fail-SAFE: LLM errors / malformed payloads / empty capabilities fall back
   to deterministic keyword drafting — a draft is always produced
 - fail-closed on blocks: LLM block ids are filtered against the dual
@@ -132,14 +133,20 @@ def test_llm_empty_capabilities_falls_back(monkeypatch, fake_dual_registry):
     assert bp.vertical == "fleet_operations"
 
 
-def test_golden_steward_still_wins_with_gate_on(
-    monkeypatch, fake_dual_registry, fake_llm
+def test_golden_steward_fallback_after_llm_failure_with_gate_on(
+    monkeypatch, fake_dual_registry
 ):
+    """Explicit steward intent falls back to the golden blueprint only after
+    the LLM path fails (estate alone must not short-circuit LLM drafting)."""
     monkeypatch.setenv(product_architect.LLM_DRAFTING_ENV, "true")
+
+    def _boom(messages):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(product_architect, "_llm_json_call", _boom)
     bp = product_architect.draft_blueprint_from_brief(
         "platform for private estate operations with staff and vehicles"
     )
-    assert fake_llm == [], "golden steward short-circuits before the LLM"
     assert bp.product_id == "cerebrum-steward"
 
 

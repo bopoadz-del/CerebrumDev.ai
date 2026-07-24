@@ -327,22 +327,20 @@ def draft_blueprint_from_brief(
        ``use_llm=True``) — fail-safe: any error falls through to (3).
     3. Deterministic keyword drafting (always works, no keys needed).
     """
-    text = (brief or "").lower()
-    wants_steward = any(
-        k in text for k in ("steward", "estate", "private estate", "property readiness")
-    )
-    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
-        return load_blueprint(steward_golden_path())
-
     if use_llm is None:
         use_llm = llm_drafting_enabled()
     if use_llm:
         try:
             return _draft_with_llm(brief, vertical_hint=vertical_hint)
         except Exception as exc:
-            logger.warning(
-                "LLM drafting failed, falling back to keyword drafting: %s", exc
-            )
+            logger.warning("LLM drafting failed, falling back: %s", exc)
+
+    text = (brief or "").lower()
+    wants_steward = any(
+        k in text for k in ("steward", "private estate", "property readiness")
+    )
+    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
+        return load_blueprint(steward_golden_path())
 
     dual = sorted(dual_registered_ids())
     # Blocks the brief actually mentions become REUSE capabilities; audit is
