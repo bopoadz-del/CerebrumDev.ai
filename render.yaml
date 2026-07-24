@@ -94,8 +94,13 @@ services:
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
-      # SMTP credentials for transactional email (verification + password reset).
-      # Without these, register/forgot-password surface dev tokens in the UI.
+      # Email provider: Resend API is the easiest reliable path. Set either
+      # RESEND_API_KEY (recommended) or SMTP_HOST + SMTP_USER + SMTP_PASS.
+      # Without any provider, register/forgot-password surface dev tokens in UI.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "no-reply@cerebrum.dev"
       - key: SMTP_HOST
         sync: false
       - key: SMTP_PORT
