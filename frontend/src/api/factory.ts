@@ -208,6 +208,18 @@ export interface ProductDesign {
 
 export const product = {
   get: (sid: string) => req<ProductDesign>('GET', `/v1/sessions/${sid}/product`),
+  draft: (sid: string, brief: string, vertical_hint?: string) =>
+    req<ProductDesign & { source?: string; yaml?: string }>('POST', `/v1/sessions/${sid}/product/draft`, {
+      brief,
+      vertical_hint,
+    }),
+  approve: (sid: string, approve: boolean, blueprint?: Record<string, unknown>) =>
+    req<{ ok: boolean; blueprint_approved: boolean }>('POST', `/v1/sessions/${sid}/product/approve`, {
+      approve,
+      blueprint,
+    }),
+  generate: (sid: string) =>
+    req<ProductDesign & { ok: boolean }>('POST', `/v1/sessions/${sid}/product/generate`, {}),
 }
 
 export async function downloadProductPackage(sid: string): Promise<void> {

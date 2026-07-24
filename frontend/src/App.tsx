@@ -19,10 +19,23 @@ import {
 
 type View = 'floor' | 'platforms' | 'subscription' | 'account'
 
+interface Capability {
+  id: string
+  description?: string
+  strategy_hint?: string
+  block_ids?: string[]
+}
+
 interface ChatMsg {
   role: 'user' | 'factory' | 'system'
   text: string
   card?: 'blueprint' | 'generation' | 'error' | 'info'
+  blueprint?: {
+    product_name?: string
+    vertical?: string
+    summary?: string
+    capabilities?: Capability[]
+  }
 }
 
 export default function App() {
@@ -123,6 +136,63 @@ function NavBtn({ label, active, onClick }: { label: string; active: boolean; on
     <button className={`nav-btn ${active ? 'active' : ''}`} onClick={onClick}>
       {label}
     </button>
+  )
+}
+
+/* ------------------------------ Blueprint card ----------------------------- */
+
+function BlueprintCard({
+  blueprint,
+  busy,
+  onApprove,
+  onRefine,
+}: {
+  blueprint: NonNullable<ChatMsg['blueprint']>
+  busy: boolean
+  onApprove: () => void
+  onRefine: (text: string) => void
+}) {
+  const caps = blueprint.capabilities ?? []
+  return (
+    <div className="blueprint-card">
+      <div className="bp-header">
+        <strong>{blueprint.product_name ?? 'Untitled platform'}</strong>
+        <span className="bp-vertical">{blueprint.vertical ?? '—'}</span>
+      </div>
+      {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
+      <h4>Capabilities ({caps.length})</h4>
+      <ul className="bp-caps">
+        {caps.map((c) => (
+          <li key={c.id}>
+            <span className="bp-cap-id">{c.id}</span>
+            <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
+            {c.description && <p className="bp-cap-desc">{c.description}</p>}
+            {c.block_ids && c.block_ids.length > 0 && (
+              <p className="bp-cap-blocks">blocks: {c.block_ids.join(', ')}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="card-actions">
+        <button disabled={busy} onClick={onApprove}>
+          Approve &amp; build
+        </button>
+      </div>
+      <p className="bp-refine-hint">
+        Refine:{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('list capabilities')}>
+          list capabilities
+        </button>{' '}
+        ·{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('add capability payments')}>
+          add payments
+        </button>{' '}
+        ·{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('remove capability audit')}>
+          remove audit
+        </button>
+      </p>
+    </div>
   )
 }
 
@@ -325,11 +395,19 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
             return
           }
           if (ev.event === 'blueprint') {
-            const d = ev.data as { summary?: string } | string
-            const summary = typeof d === 'string' ? d : d?.summary ?? 'Blueprint drafted.'
+            const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
+              summary?: string
+              blueprint?: ChatMsg['blueprint']
+            }
+            const summary = d?.summary ?? 'Blueprint drafted.'
             setMsgs((m) => [
               ...m.slice(0, -1),
-              { role: 'factory', text: summary, card: 'blueprint' },
+              {
+                role: 'factory',
+                text: summary,
+                card: 'blueprint',
+                blueprint: d?.blueprint,
+              },
             ])
           } else if (ev.event === 'generation') {
             const d = ev.data as { summary?: string } | string
@@ -377,12 +455,13 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
           <div key={i} className={`bubble-row ${m.role}`}>
             <div className={`bubble ${m.role} ${m.card ?? ''}`}>
               {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
-              {m.card === 'blueprint' && (
-                <div className="card-actions">
-                  <button disabled={busy} onClick={() => send('approve')}>
-                    Approve &amp; build
-                  </button>
-                </div>
+              {m.card === 'blueprint' && m.blueprint && (
+                <BlueprintCard
+                  blueprint={m.blueprint}
+                  busy={busy}
+                  onApprove={() => send('approve')}
+                  onRefine={(text) => send(text)}
+                />
               )}
               {m.card === 'generation' && (
                 <div className="card-actions">

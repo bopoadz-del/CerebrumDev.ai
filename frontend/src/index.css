@@ -210,3 +210,92 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .verify-row input {
   flex: 1;
 }
+
+/* blueprint card in chat */
+.blueprint-card {
+  margin-top: 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.bp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.bp-header strong {
+  font-size: 16px;
+  color: var(--gold);
+}
+.bp-vertical {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.bp-summary {
+  color: var(--dim);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.blueprint-card h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--dim);
+}
+.bp-caps {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bp-caps li {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.bp-cap-id {
+  font-weight: 600;
+  font-size: 14px;
+}
+.bp-strategy {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(240, 180, 41, 0.15);
+  color: var(--gold);
+}
+.bp-strategy.GENERATE {
+  background: rgba(139, 149, 163, 0.15);
+  color: var(--dim);
+}
+.bp-cap-desc {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.bp-cap-blocks {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--dim);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+.bp-refine-hint {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}

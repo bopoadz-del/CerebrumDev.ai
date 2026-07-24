@@ -131,6 +131,177 @@ def _session_output(session_id: str, product_id: str, output_root: Optional[Path
     return factory_repo_root() / "factory_outputs" / "sessions" / session_id / product_id
 
 
+# --- Refinement commands ------------------------------------------------------
+
+_ADD_CAP_RE = re.compile(
+    r"(?:add|include)\s+(?:capability\s+)?([a-z0-9_]+)", re.IGNORECASE
+)
+_REMOVE_CAP_RE = re.compile(
+    r"(?:remove|drop|exclude)\s+(?:capability\s+)?([a-z0-9_]+)", re.IGNORECASE
+)
+_RENAME_RE = re.compile(
+    r"(?:rename\s+(?:product\s+)?to\s+|product\s+name\s+(?:is\s+)?)\"?([^\"\n]+)\"?",
+    re.IGNORECASE,
+)
+_VERTICAL_RE = re.compile(
+    r"(?:change\s+vertical\s+to\s+|vertical\s+(?:is\s+)?)\"?([a-z0-9_]+)\"?",
+    re.IGNORECASE,
+)
+_LIST_CAPS_RE = re.compile(
+    r"^(?:list\s+capabilities|show\s+capabilities|what\s+is\s+in\s+the\s+blueprint|show\s+blueprint)$",
+    re.IGNORECASE,
+)
+
+
+def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
+    """Build a minimal capability spec for a user-added capability id."""
+    cap_id = re.sub(r"[^a-z0-9_]+", "_", cap_id.lower()).strip("_")
+    if cap_id in dual_ids:
+        return {
+            "id": cap_id,
+            "description": f"Capability backed by dual-registered block {cap_id}",
+            "block_ids": [cap_id],
+            "strategy_hint": "REUSE",
+            "required": True,
+        }
+    return {
+        "id": cap_id,
+        "description": f"Generated capability {cap_id} — extend via Factory templates",
+        "block_ids": [],
+        "strategy_hint": "GENERATE",
+        "required": True,
+    }
+
+
+def parse_refinement_command(message: str) -> tuple[str, Dict[str, Any]]:
+    """Parse a blueprint refinement command. Returns ('', {}) if not a command."""
+    text = (message or "").strip()
+    m = _ADD_CAP_RE.search(text)
+    if m:
+        return "add_capability", {"cap_id": m.group(1)}
+    m = _REMOVE_CAP_RE.search(text)
+    if m:
+        return "remove_capability", {"cap_id": m.group(1)}
+    m = _RENAME_RE.search(text)
+    if m:
+        return "rename_product", {"name": m.group(1).strip()}
+    m = _VERTICAL_RE.search(text)
+    if m:
+        return "set_vertical", {"vertical": m.group(1).strip()}
+    if _LIST_CAPS_RE.search(text):
+        return "list_capabilities", {}
+    return "", {}
+
+
+def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
+    """Apply a refinement command to the pending blueprint and return a summary.
+
+    Returns None if the message is not a refinement command.
+    """
+    pd = getattr(state, "product_design", None)
+    if not pd or not pd.blueprint:
+        return None
+
+    action, args = parse_refinement_command(message)
+    if not action:
+        return None
+
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    caps = [c.model_dump(mode="json") for c in bp.capabilities]
+    cap_ids = {c["id"] for c in caps}
+
+    if action == "add_capability":
+        cap_id = args["cap_id"]
+        if cap_id in cap_ids:
+            return {
+                "ok": True,
+                "refined": True,
+                "action": action,
+                "summary": f"Capability '{cap_id}' is already in the blueprint.",
+                "blueprint": pd.blueprint,
+                "yaml": blueprint_to_yaml(bp),
+            }
+        dual = sorted(dual_registered_ids())
+        caps.append(_capability_for_id(cap_id, dual))
+
+    elif action == "remove_capability":
+        cap_id = args["cap_id"]
+        new_caps = [c for c in caps if c["id"] != cap_id]
+        if len(new_caps) == len(caps):
+            return {
+                "ok": True,
+                "refined": True,
+                "action": action,
+                "summary": f"Capability '{cap_id}' was not found in the blueprint.",
+                "blueprint": pd.blueprint,
+                "yaml": blueprint_to_yaml(bp),
+            }
+        caps = new_caps
+        if not caps:
+            return {
+                "ok": False,
+                "refined": False,
+                "action": action,
+                "summary": "Cannot remove the last capability — a blueprint needs at least one.",
+                "blueprint": pd.blueprint,
+            }
+
+    elif action == "rename_product":
+        bp.product_name = args["name"][:120]
+        pd.blueprint = bp.model_dump(mode="json")
+        return {
+            "ok": True,
+            "refined": True,
+            "action": action,
+            "summary": f"Product renamed to '{bp.product_name}'.",
+            "blueprint": pd.blueprint,
+            "yaml": blueprint_to_yaml(bp),
+        }
+
+    elif action == "set_vertical":
+        vertical = re.sub(r"[^a-z0-9_]", "_", args["vertical"].lower()).strip("_")[:48]
+        bp.vertical = vertical
+        bp.product_id = vertical
+        pd.blueprint = bp.model_dump(mode="json")
+        return {
+            "ok": True,
+            "refined": True,
+            "action": action,
+            "summary": f"Vertical set to '{vertical}'.",
+            "blueprint": pd.blueprint,
+            "yaml": blueprint_to_yaml(bp),
+        }
+
+    elif action == "list_capabilities":
+        lines = [f"- {c['id']} ({c.get('strategy_hint','?')})" for c in caps]
+        return {
+            "ok": True,
+            "refined": False,
+            "action": action,
+            "summary": f"Blueprint '{bp.product_name}' has {len(caps)} capabilities:\n" + "\n".join(lines),
+            "blueprint": pd.blueprint,
+            "yaml": blueprint_to_yaml(bp),
+        }
+
+    # Rebuild blueprint after add/remove
+    bp.capabilities = [CapabilitySpec.model_validate(c) for c in caps]
+    pd.blueprint = bp.model_dump(mode="json")
+    pd.plan = None  # force re-plan after change
+    pd.generation = None
+    yaml_text = blueprint_to_yaml(bp)
+    return {
+        "ok": True,
+        "refined": True,
+        "action": action,
+        "summary": (
+            f"Blueprint updated: {len(bp.capabilities)} capabilities. "
+            "Reply 'approve' to build, or keep refining."
+        ),
+        "blueprint": pd.blueprint,
+        "yaml": yaml_text,
+    }
+
+
 # --- Flow actions ------------------------------------------------------------
 
 def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:

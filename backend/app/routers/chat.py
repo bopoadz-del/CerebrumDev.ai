@@ -189,6 +189,21 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             yield _sse_event("done", "")
             return
 
+        if platform_chat_flow.has_pending_blueprint(state):
+            refined = platform_chat_flow.refine_from_chat(state, user_message)
+            if refined:
+                state.chat_history.append({"role": "assistant", "content": refined["summary"]})
+                state.updated_at = datetime.utcnow()
+                update_session(session_id, state)
+                if refined.get("refined"):
+                    yield _sse_event("blueprint", json.dumps(refined))
+                else:
+                    yield _sse_event("info", json.dumps(refined))
+                for word in refined["summary"].split(" "):
+                    yield _sse_event("delta", word + " ")
+                yield _sse_event("done", "")
+                return
+
         if platform_chat_flow.should_handle_platform_message(user_message):
             result = platform_chat_flow.draft_from_chat(state, user_message)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
