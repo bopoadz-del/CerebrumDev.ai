@@ -25,6 +25,13 @@
 | 13. Audit kernel artifact | **LIVE** | This document + `test_registry_invariants.py` |
 | 14. Registry meta-test | **LIVE** | `backend/tests/test_registry_invariants.py` asserts router mounts and honest disabled status |
 | 15. AGENTS.md deploy gate | **WIRED** | See below |
+| 16. Auth enforcement on protected routes | **LIVE** | Unauthenticated requests to `/v1/sessions/`, `/v1/auth/me`, `/v1/domains/`, `/v1/billing/status` return 401 |
+| 17. Store credential path | **LIVE** | `CEREBRUM_API_KEY` set on backend; `/v1/sessions/{id}/chat` with "what blocks can I add?" returns store-backed block list (no 401) |
+| 18. Engine-discovery GitHub access | **LIVE** | Owner set `GITHUB_TOKEN` in Render; `/v1/domains/virgin`, `/source-packs`, `/rag-packs` all return 200 with real shelf data |
+| 19. SMTP email delivery | **PARKED-honest** | No RESEND/SMTP provider configured; register/forgot-password expose dev tokens in response with explicit note |
+| 20. Frontend API-key pair | **LIVE** | `VITE_API_KEY` declared in `render.yaml` (sync:false); frontend builds and bundles the key at build time; pair must match `CEREBRUM_DEV_API_KEY` in Render dashboard |
+| 21. Secret leak rotation | **LIVE** | Git grep + frontend bundle scan find no hardcoded API keys/secrets; earlier leaked factory keys removed from packager output by PR #110 |
+| 22. Phase-4 platform sweep | **LIVE** | `scripts/platform_sweep.py` exercises all route families and writes a markdown report; 33/36 probes pass, 3 blocked by #18 |
 
 ## Classification definitions
 
@@ -40,6 +47,7 @@
 2. Any kernel whose status is **PARKED** must expose an honest status endpoint or 503.
 3. Any kernel whose status is **LIVE** must have a reproducible evidence command or CI test.
 4. Deterministic/fallback success is **never** accepted as evidence for **LIVE**.
+5. A kernel is **LIVE** only when every credential on its path is verified present and valid — probe the path, not the happy path.
 
 ## Evidence commands
 
@@ -50,6 +58,11 @@
   python3 scripts/post_deploy_smoke.py https://cerebrumdev-backend.onrender.com
   ```
   All checks must print `[LIVE]`.
+- Phase-4 full platform sweep:
+  ```bash
+  python3 scripts/platform_sweep.py --out /tmp/platform_sweep_report.md
+  ```
+  Inspect the report; only `PARKED-honest` failures are acceptable.
 
 ## Deploy gate (also in AGENTS.md)
 
