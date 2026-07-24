@@ -2,16 +2,17 @@
 
 **Date:** 2026-07-25 UTC  
 **Repository:** `bopoadz-del/CerebrumDev.ai`  
-**Branch:** `master` @ `02a8769`  
+**Branch:** `master` @ `a5eca27e70f4648dc2bd929dc4354ab0f444239a`  
 **Live deployment:** https://cerebrumdev-backend.onrender.com  
 **Auditor:** Factory sweep agent  
 **Rule:** No kernel is LIVE without a probe of its path; deterministic/fallback success is never evidence.
+**Final verification sweep:** 2026-07-24T23:39:52Z — 36/36 probes passed.
 
 ---
 
 ## Executive Summary
 
-The platform is **fully live**. After the owner set `GITHUB_TOKEN` in Render, the Phase-4 sweep now reports **36/36 probes passing**. The post-deploy smoke script exits 0 with every check `[LIVE]`, and PR #111 (sweep script + audit update) has green CI.
+The platform is **fully live**. After the owner set `GITHUB_TOKEN` in Render, the Phase-4 sweep reports **36/36 probes passing**. The post-deploy smoke script exits 0 with every check `[LIVE]`. PR #111 (sweep script + audit update) has been **squash-merged to `master`** and CI on the merge commit is green.
 
 | Gate | Status |
 |------|--------|
@@ -21,9 +22,9 @@ The platform is **fully live**. After the owner set `GITHUB_TOKEN` in Render, th
 | Phase 1 seam B (engine-discovery GitHub clone) | ✅ Fixed after owner set `GITHUB_TOKEN` |
 | Phase 2 Redis | ✅ Live |
 | Phase 3 dead-config reconciliation | ✅ Clean |
-| Phase 4 full path sweep | ✅ 36/36 pass |
+| Phase 4 full path sweep | ✅ 36/36 pass (final run 2026-07-24T23:39:52Z) |
 | Phase 5 post-deploy smoke | ✅ All [LIVE] |
-| CI on PR #111 | ✅ Green |
+| CI on PR #111 / merge to `master` | ✅ Green — run 30134070574 on `a5eca27e` |
 
 ---
 
@@ -123,6 +124,7 @@ Script: `scripts/platform_sweep.py` (added in PR #111).
 
 ### Result summary
 
+- **Timestamp:** 2026-07-24T23:39:52Z
 - **Probes:** 36
 - **PASS:** 36
 - **FAIL:** 0
@@ -134,7 +136,7 @@ Script: `scripts/platform_sweep.py` (added in PR #111).
 - ✅ Unauthenticated protected routes → 401
 - ✅ Auth register/login/me → 200
 - ✅ Session create/list/read → 200
-- ✅ Chat platform brief → SSE `event: blueprint`, `source: drafted`, 5 capabilities
+- ✅ Chat platform brief → SSE `event: blueprint`, `source: drafted`, 5 capabilities (final run)
 - ✅ Product state → 200
 - ✅ Chat "approve" → SSE `event: generation`
 - ✅ Product package → zip, PK magic
@@ -159,7 +161,7 @@ No failing probes.
 | # | Gate | Result |
 |---|------|--------|
 | 1 | Local pytest (`backend/tests/`) | ⚠️ 6 local-only failures due to outdated `Cerebrum-Blocks` automotive kit; CI pytest is green |
-| 2 | CI on PR #111 | ✅ Green — https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30128423318 |
+| 2 | CI on merge to `master` | ✅ Green — https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30134070574 |
 | 3 | Post-deploy smoke | ✅ All `[LIVE]`, exit 0 |
 | 4 | Store + engine-discovery probes | ✅ Both fixed |
 | 5 | Sentry 30-min silence | ⛔ Cannot verify without dashboard access |
@@ -195,13 +197,14 @@ Register/forgot-password currently expose dev tokens in the API response with an
 
 ## Deliverables
 
-1. **PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/pull/111
+1. **PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/pull/111 — **merged** into `master`
+   - Merge commit: `a5eca27e70f4648dc2bd929dc4354ab0f444239a`
    - Adds `scripts/platform_sweep.py`
    - Updates `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`
    - Adds this report `docs/audits/2026-07-24-platform-sweep-report.md`
-2. **CI run for PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30133821448 — Backend, Frontend, and Production Docker build all pass
+2. **CI on merge commit:** https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30134070574 — Backend, Frontend, and Production Docker build all pass
 3. **Post-deploy smoke:** all `[LIVE]`, exit 0
-4. **Phase-4 sweep:** 36/36 pass after `GITHUB_TOKEN` set
+4. **Phase-4 sweep:** 36/36 pass after `GITHUB_TOKEN` set (final run 2026-07-24T23:39:52Z)
 
 ---
 
