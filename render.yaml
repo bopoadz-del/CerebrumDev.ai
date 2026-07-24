@@ -79,14 +79,34 @@ services:
       # Inert when unset. Release is tagged from RENDER_GIT_COMMIT.
       - key: SENTRY_DSN
         sync: false
-      # Optional Redis / Render Key Value: auth rate limits, Drive OAuth
-      # pending states, session fan-out. Everything falls back to in-memory.
+      # Render Key Value (Redis-compatible). Provisions automatically below.
+      # Shared auth rate limits, Drive OAuth pending states, session fan-out.
       - key: REDIS_URL
+        fromService:
+          name: cerebrumdev-redis
+          type: keyvalue
+          property: connectionString
+      # Stripe billing secrets. Set these in the dashboard; checkout/portal/webhook
+      # return 503 stripe_not_configured until all three are present.
+      - key: STRIPE_SECRET_KEY
         sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # Flip to true to enforce paid entitlement on sessions/factory runs.
+      - key: BILLING_ENFORCEMENT
+        value: "false"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
       sizeGB: 1
+
+  - type: keyvalue
+    name: cerebrumdev-redis
+    region: oregon
+    plan: starter
+    ipAllowList: []
 
   - type: static
     name: cerebrumdev-frontend
