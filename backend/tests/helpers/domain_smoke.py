@@ -116,7 +116,7 @@ def run_domain_smoke_contract(
     ):
         response = client.post(
             f"/v1/sessions/{session.session_id}/chat",
-            json={"message": f"I want to build a {domain} analysis platform."},
+            json={"message": f"Build a {domain} analysis chain using document_engine, pdf, and chat blocks."},
         )
     assert response.status_code == 200
 

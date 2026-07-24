@@ -23,19 +23,19 @@ class Envelope:
         files = declaration.get("files")
         if not isinstance(files, list) or not files or not all(isinstance(f, str) and f.strip() for f in files):
             stop.halt("declaration_invalid", {"declaration": declaration}, 'The model must declare {"files": [...]} first.')
-        self.declared = {str(self._resolve(f).relative_to(self.root)) for f in files}
+        self.declared = {self._resolve(f).relative_to(self.root).as_posix() for f in files}
 
     def read_path(self, rel: str) -> Path:
         return self._resolve(rel)
 
     def check_write(self, rel: str) -> Path:
         p = self._resolve(rel)
-        if str(p.relative_to(self.root)) not in self.declared:
-            stop.halt("envelope_violation", {"path": str(p.relative_to(self.root)), "declared": sorted(self.declared)}, "Escalate: the request needs files outside the declaration.")
+        if (rp := p.relative_to(self.root).as_posix()) not in self.declared:
+            stop.halt("envelope_violation", {"path": rp, "declared": sorted(self.declared)}, "Escalate: the request needs files outside the declaration.")
         return p
 
     def record_write(self, rel: str) -> None:
-        self.writes.append(str(self._resolve(rel).relative_to(self.root)))
+        self.writes.append(self._resolve(rel).relative_to(self.root).as_posix())
 
     def actual_writes(self) -> List[str]:
         return sorted(set(self.writes))
