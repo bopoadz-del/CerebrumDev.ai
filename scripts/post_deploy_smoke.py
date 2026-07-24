@@ -62,6 +62,8 @@ def main():
 
     s, h = req("GET", "/health")
     check("health endpoint", s == 200 and h.get("status") == "ok", f"status={h.get('status')}")
+    redis = h.get("redis") or {}
+    check("redis rate limiting configured", bool(redis.get("configured") and redis.get("ok")), f"redis={redis}")
 
     email = f"smoke-{uuid.uuid4().hex[:8]}@factory.dev"
     s, r = req("POST", "/v1/auth/register", {"email": email, "password": "Smoke!23456"})
