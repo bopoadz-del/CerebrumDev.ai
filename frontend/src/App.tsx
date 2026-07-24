@@ -141,6 +141,12 @@ function NavBtn({ label, active, onClick }: { label: string; active: boolean; on
 
 /* ------------------------------ Blueprint card ----------------------------- */
 
+function humanize(id: string): string {
+  return id
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
 function BlueprintCard({
   blueprint,
   busy,
@@ -164,7 +170,7 @@ function BlueprintCard({
       <ul className="bp-caps">
         {caps.map((c) => (
           <li key={c.id}>
-            <span className="bp-cap-id">{c.id}</span>
+            <span className="bp-cap-id">{humanize(c.id)}</span>
             <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
             {c.description && <p className="bp-cap-desc">{c.description}</p>}
             {c.block_ids && c.block_ids.length > 0 && (
