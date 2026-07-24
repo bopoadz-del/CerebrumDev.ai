@@ -22,3 +22,6 @@ generated/
 
 # Factory generate/regenerate outputs (local only; golden Steward tagged steward-golden-v1).
 factory_outputs/
+
+# Generated live audit artifacts (timestamps + deployment evidence; kept locally).
+artifacts/audits/
