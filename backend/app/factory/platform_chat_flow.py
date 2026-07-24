@@ -27,7 +27,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .blueprint import ProductBlueprint
+from .blueprint import CapabilitySpec, ProductBlueprint
+from .dual_registry import dual_registered_ids
 from .paths import factory_repo_root
 from .product_architect import (
     blueprint_to_yaml,
@@ -156,17 +157,18 @@ _LIST_CAPS_RE = re.compile(
 def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
     """Build a minimal capability spec for a user-added capability id."""
     cap_id = re.sub(r"[^a-z0-9_]+", "_", cap_id.lower()).strip("_")
+    human = cap_id.replace("_", " ").title()
     if cap_id in dual_ids:
         return {
             "id": cap_id,
-            "description": f"Capability backed by dual-registered block {cap_id}",
+            "description": f"{human} capability (reused from the block store)",
             "block_ids": [cap_id],
             "strategy_hint": "REUSE",
             "required": True,
         }
     return {
         "id": cap_id,
-        "description": f"Generated capability {cap_id} — extend via Factory templates",
+        "description": f"{human} capability — generated scaffolding, extend via Factory templates",
         "block_ids": [],
         "strategy_hint": "GENERATE",
         "required": True,
