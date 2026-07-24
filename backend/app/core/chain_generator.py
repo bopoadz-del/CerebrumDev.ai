@@ -142,16 +142,23 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
 
 async def _call_openai_compatible(
-    base_url: str, api_key: str, model: str, messages: List[Dict[str, str]]
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: List[Dict[str, str]],
+    temperature: float | None = None,
 ) -> Dict[str, Any]:
     """Call an OpenAI-compatible chat completion endpoint (Qwen, Moonshot, etc.)."""
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": 0.3,
         "response_format": {"type": "json_object"},
     }
+    # Omit temperature unless explicitly configured: reasoning models
+    # (kimi-k2.x) reject any explicit value other than 1.
+    if temperature is not None:
+        payload["temperature"] = temperature
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
@@ -195,7 +202,9 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         raise RuntimeError("LLM mock mode — no network call")
     provider = cfg["provider"]
     if provider in ("qwen", "moonshot", "kimi"):
-        return await _call_openai_compatible(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
+        return await _call_openai_compatible(
+            cfg["base_url"], cfg["api_key"], cfg["model"], messages, cfg.get("temperature")
+        )
     if provider == "ollama":
         return await _call_ollama(cfg["base_url"], cfg["model"], messages, cfg["api_key"])
     raise RuntimeError("No LLM provider configured")
