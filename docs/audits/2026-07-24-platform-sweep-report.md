@@ -1,6 +1,6 @@
 # CerebrumDev.ai Full Platform Sweep Report
 
-**Date:** 2026-07-24 UTC  
+**Date:** 2026-07-25 UTC  
 **Repository:** `bopoadz-del/CerebrumDev.ai`  
 **Branch:** `master` @ `02a8769`  
 **Live deployment:** https://cerebrumdev-backend.onrender.com  
@@ -11,19 +11,19 @@
 
 ## Executive Summary
 
-The platform is **functionally live** for the core factory flow. The post-deploy smoke script exits 0 with every check `[LIVE]`, and the new Phase-4 sweep shows **33/36 probes passing**. The only remaining production fault is engine discovery's private GitHub clone, which requires a `GITHUB_TOKEN` in Render that only the account owner can mint.
+The platform is **fully live**. After the owner set `GITHUB_TOKEN` in Render, the Phase-4 sweep now reports **36/36 probes passing**. The post-deploy smoke script exits 0 with every check `[LIVE]`, and PR #111 (sweep script + audit update) has green CI.
 
 | Gate | Status |
 |------|--------|
 | Phase 0 credential inventory | ✅ Complete |
 | Phase 0B leak scan | ✅ Clean |
 | Phase 1 seam A (store 401) | ✅ Fixed & verified |
-| Phase 1 seam B (engine-discovery GitHub clone) | ⛔ PARKED — needs owner credential |
+| Phase 1 seam B (engine-discovery GitHub clone) | ✅ Fixed after owner set `GITHUB_TOKEN` |
 | Phase 2 Redis | ✅ Live |
 | Phase 3 dead-config reconciliation | ✅ Clean |
-| Phase 4 full path sweep | ✅ 33/36 pass |
+| Phase 4 full path sweep | ✅ 36/36 pass |
 | Phase 5 post-deploy smoke | ✅ All [LIVE] |
-| CI on master | ✅ Green (run 30126933994) |
+| CI on PR #111 | ✅ Green |
 
 ---
 
@@ -43,7 +43,7 @@ The platform is **functionally live** for the core factory flow. The post-deploy
 | `PLATFORM_CHAT_FLOW_ENABLED` | `app/factory/platform_chat_flow.py` | ✅ `true` | ✅ yes | ✅ chat brief drafts | SET-VALID |
 | `ARCHITECT_LLM_DRAFTING_ENABLED` | `app/factory/product_architect.py` | ✅ `true` | ✅ yes | ✅ source=drafted | SET-VALID |
 | `REDIS_URL` | `app/main.py`, `app/core/rate_limit.py` | `fromService: cerebrumdev-redis` | ✅ auto-linked | ✅ `/health` redis.configured=true | SET-VALID |
-| `GITHUB_TOKEN` | `app/core/engine_discovery.py` | `sync:false` | ❌ missing | ❌ `/v1/domains/source-packs` 500 | MISSING |
+| `GITHUB_TOKEN` | `app/core/engine_discovery.py` | `sync:false` | ✅ yes | ✅ domains virgin/source-packs/rag-packs 200 | SET-VALID |
 | `STRIPE_SECRET_KEY` / `PRICE_ID` / `WEBHOOK_SECRET` | `app/core/stripe_billing.py` | `sync:false` | ❌ unset | ✅ honest 503 | PARKED-honest |
 | `RESEND_API_KEY` / SMTP vars | `app/core/mailer.py` | `sync:false` | ❌ unset | ✅ dev_token mode | PARKED-honest |
 | `SENTRY_DSN` | Sentry SDK init | `sync:false` | reported set | cannot probe without dashboard | FACTORY-WIRED |
@@ -73,15 +73,15 @@ The 401 on `/v1/sessions/{id}/chat` was caused by a missing/mismatched `CEREBRUM
 - No new Sentry event is generated.
 
 ### Seam B: Engine-discovery GitHub clone
-**Status: PARKED — requires owner credential**
+**Status: RESOLVED**
 
-`app/core/engine_discovery.py` now supports `GITHUB_TOKEN` for private clones (PR #110, `a153e2b`). The credential is not yet in Render. Until it lands:
+Owner set `GITHUB_TOKEN` in Render. After redeploy:
 
-- `GET /v1/domains/virgin` → 500
-- `GET /v1/domains/source-packs` → 500
-- `GET /v1/domains/rag-packs` → 500
+- `GET /v1/domains/virgin` → 200
+- `GET /v1/domains/source-packs` → 200
+- `GET /v1/domains/rag-packs` → 200
 
-The code path redacts the token in logs and only injects it into HTTPS URLs when present.
+The engine-discovery code redacts the token in logs.
 
 ---
 
@@ -124,8 +124,8 @@ Script: `scripts/platform_sweep.py` (added in PR #111).
 ### Result summary
 
 - **Probes:** 36
-- **PASS:** 33
-- **FAIL:** 3
+- **PASS:** 36
+- **FAIL:** 0
 - **ERROR:** 0
 
 ### Passing highlights
@@ -137,10 +137,11 @@ Script: `scripts/platform_sweep.py` (added in PR #111).
 - ✅ Chat platform brief → SSE `event: blueprint`, `source: drafted`, 5 capabilities
 - ✅ Product state → 200
 - ✅ Chat "approve" → SSE `event: generation`
-- ✅ Product package → zip, PK magic, 172 files
-- ✅ Conversational chat → grounded reply, no invented URL/deploy claim
+- ✅ Product package → zip, PK magic
+- ✅ Conversational chat → grounded reply, no invented URL/deployed claim
 - ✅ Store-backed chat → block list
 - ✅ `/v1/domains/` → 200
+- ✅ `/v1/domains/virgin`, `/source-packs`, `/rag-packs` → 200
 - ✅ Golden steward → 16 capabilities
 - ✅ Mode kit config → 200
 - ✅ Cross-account isolation → 404
@@ -149,15 +150,7 @@ Script: `scripts/platform_sweep.py` (added in PR #111).
 - ✅ Billing status → 200 structured; checkout → 503 `stripe_not_configured`
 - ✅ Drive/deploy/train status → 200 honest
 
-### Failing probes
-
-| Probe | Expected | Actual | Root cause |
-|-------|----------|--------|------------|
-| `GET /v1/domains/virgin` | 200 | 500 | Missing `GITHUB_TOKEN` |
-| `GET /v1/domains/source-packs` | 200 | 500 | Missing `GITHUB_TOKEN` |
-| `GET /v1/domains/rag-packs` | 200 | 500 | Missing `GITHUB_TOKEN` |
-
-These are the only live failures. They are blocked on the human gate below.
+No failing probes.
 
 ---
 
@@ -166,9 +159,9 @@ These are the only live failures. They are blocked on the human gate below.
 | # | Gate | Result |
 |---|------|--------|
 | 1 | Local pytest (`backend/tests/`) | ⚠️ 6 local-only failures due to outdated `Cerebrum-Blocks` automotive kit; CI pytest is green |
-| 2 | CI on master | ✅ Green — run [30126933994](https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30126933994) |
+| 2 | CI on PR #111 | ✅ Green — https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30128423318 |
 | 3 | Post-deploy smoke | ✅ All `[LIVE]`, exit 0 |
-| 4 | Store + engine-discovery probes | ⚠️ Store fixed; engine-discovery blocked on credential |
+| 4 | Store + engine-discovery probes | ✅ Both fixed |
 | 5 | Sentry 30-min silence | ⛔ Cannot verify without dashboard access |
 | 6 | Leak rotation | ✅ Clean |
 | 7 | Audit doc updated | ✅ PR #111 |
@@ -188,41 +181,13 @@ The legacy in-package suite (`backend/app/tests/`) has additional pre-existing f
 
 ---
 
-## ⛔ PARKED List — Owner Action Required
+## Optional Owner Integrations (PARKED-honest)
 
-### 1. GitHub token for engine discovery
+### Stripe billing
 
-**Why:** `/v1/domains/virgin`, `/v1/domains/source-packs`, `/v1/domains/rag-packs` return 500 because the backend cannot clone the private repo `https://github.com/bopoadz-del/Cerebrum-Blocks.git` without credentials.
+`billing/checkout` correctly returns `503 stripe_not_configured`. To enable paid checkout, set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIPE_WEBHOOK_SECRET` in Render.
 
-**Owner click-path:**
-
-1. Open https://github.com/settings/tokens?type=beta
-2. Click **Generate new token** → **Fine-grained personal access token**
-3. Token name: `cerebrumdev-engine-discovery`
-4. Expiration: 90 days
-5. Resource owner: `bopoadz-del`
-6. Repository access: **Only select repositories** → choose `bopoadz-del/Cerebrum-Blocks`
-7. Permissions → **Contents** → **Read-only**
-8. Generate and copy the token value
-9. Open https://dashboard.render.com/web/srv-cerebrumdev-backend
-10. Go to **Environment** → **Add Environment Variable**
-11. Key: `GITHUB_TOKEN`
-12. Value: paste the token
-13. Save — the service redeploys automatically
-
-**Re-verify after it lands:**
-
-```bash
-python3 scripts/platform_sweep.py
-```
-
-All 36 probes should then pass.
-
-### 2. Stripe billing (optional for launch)
-
-`billing/checkout` correctly returns `503 stripe_not_configured`. To enable paid checkout, set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `STRIKE_WEBHOOK_SECRET` in Render. Until then it remains PARKED-honest.
-
-### 3. SMTP / Resend email (optional for launch)
+### SMTP / Resend email
 
 Register/forgot-password currently expose dev tokens in the API response with an explicit note. To send real email, set `RESEND_API_KEY` (recommended) or `SMTP_HOST`/`SMTP_USER`/`SMTP_PASS` in Render.
 
@@ -233,12 +198,13 @@ Register/forgot-password currently expose dev tokens in the API response with an
 1. **PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/pull/111
    - Adds `scripts/platform_sweep.py`
    - Updates `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`
+   - Adds this report `docs/audits/2026-07-24-platform-sweep-report.md`
 2. **CI run for PR #111:** https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/30128423318 — Backend, Frontend, and Production Docker build all pass
 3. **Post-deploy smoke:** all `[LIVE]`, exit 0
-4. **This report:** `docs/audits/2026-07-24-platform-sweep-report.md`
+4. **Phase-4 sweep:** 36/36 pass after `GITHUB_TOKEN` set
 
 ---
 
 ## Conclusion
 
-CerebrumDev.ai is **market-ready on the core factory loop** (register → login → chat brief → approve → generate → package download) and **honestly PARKED** on owner-supplied integrations (Stripe, SMTP, GitHub token for domain shelf). The only hard blocker before the engine-discovery shelf is live is the `GITHUB_TOKEN` owner action above.
+CerebrumDev.ai is **live and market-ready on the core factory loop**. Every probed route family passes, including the engine-discovery shelf now that `GITHUB_TOKEN` is set. The remaining PARKED items (Stripe, SMTP) are owner-supplied integrations that correctly fail closed with honest messages.
