@@ -242,10 +242,11 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
         "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
     }
+    # Non-secret LLM configuration is fine to ship; the owner's API key is NOT.
     if llm_cfg["provider"] == "qwen":
-        env_vars["QWEN_API_KEY"] = llm_cfg["api_key"]
-    elif llm_cfg["provider"] == "moonshot":
-        env_vars["CEREBRUM_LLM_API_KEY"] = llm_cfg["api_key"]
+        env_vars["QWEN_BASE_URL"] = llm_cfg["base_url"]
+        env_vars["QWEN_MODEL"] = llm_cfg["model"]
+    elif llm_cfg["provider"] == "kimi":
         env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
         env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
@@ -254,17 +255,30 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
     _write_render_yaml(package_root, service_name, env_vars)
 
     dotenv = package_root / ".env"
-    dotenv.write_text(
-        "\n".join(f"{key}={value}" for key, value in env_vars.items()),
-        encoding="utf-8",
-    )
+    dotenv_lines = [f"{key}={value}" for key, value in env_vars.items()]
+    if llm_cfg["provider"] == "qwen":
+        dotenv_lines.append("# QWEN_API_KEY=<owner-supplied>")
+    elif llm_cfg["provider"] == "kimi":
+        dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
+    dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
 
     readme = package_root / "README.deploy.md"
+    llm_key_note = (
+        "Add your own `QWEN_API_KEY` to the environment."
+        if llm_cfg["provider"] == "qwen"
+        else "Add your own `CEREBRUM_LLM_API_KEY` to the environment."
+        if llm_cfg["provider"] == "kimi"
+        else "Configure the LLM provider key for your chosen provider."
+    )
     readme.write_text(
         f"""# Deploy package for session {session_id}
 
 Domain: {domain}
 Service name: {service_name}
+
+## Required owner-supplied credentials
+- {llm_key_note}
+- No factory credentials are bundled in this package.
 
 ## Option A: Render blueprint
 1. Push this folder to a Git repo.
