@@ -19,6 +19,7 @@ Last updated: 2026-07-19. Agent must re-read this file at the start of every Res
 7. **No secrets in code.** No GitHub credentials shipped into generated products. No unrestricted shell anywhere.
 8. **Babysit every PR until it is merged.** Watch CI + triage review/Bugbot comments; fix merge conflicts and in-scope CI failures.
 9. **Auto-merge when green (owner rule, 2026-07-21):** once checks are all green, the PR is mergeable/CLEAN, and unresolved blocking comments are triaged, **merge without waiting for further human review**. Then start the next milestone.
+10. **Deploy gate (owner rule, 2026-07-24):** before any "ready/live/done" claim, run `scripts/post_deploy_smoke.py` against the live deployment; all `[LIVE]` required; deterministic/fallback success is never evidence; workbench promotion hard-fails without a fresh all-LIVE audit artifact. See `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`.
 
 Branch naming for agent-created branches still follows Cloud Agent policy (`cursor/…-bd2c`) unless the human explicitly names a milestone branch (`feat/product-dna`, etc.). Prefer the human-named milestone branches when opening the four deliverable PRs.
 

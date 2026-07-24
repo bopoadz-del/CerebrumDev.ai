@@ -10,6 +10,7 @@ from app.factory.blueprint import ProductBlueprint, load_blueprint
 from app.factory.planner import CapabilityPlanner
 from app.product_dna.emit import verify_checksum_manifest
 from app.workbench.candidate import verify_candidate_checksum
+from app.workbench.live_audit import AuditRejected, validate_audit_artifact
 
 
 def _gate_result(name: str, passed: bool, evidence: Any = None, message: str = "") -> Dict[str, Any]:
@@ -60,6 +61,27 @@ def run_acceptance_gates(
             message="ok" if ok else "candidate checksum mismatch (tampered)",
         )
     )
+
+    artifact_ref = item.get("audit_artifact") or candidate.get("audit_artifact")
+    try:
+        if not artifact_ref:
+            raise AuditRejected("no audit_artifact reference on the request")
+        audit_data = validate_audit_artifact(Path(artifact_ref))
+        results.append(
+            _gate_result(
+                "live_audit_evidence",
+                True,
+                evidence={
+                    "ran_at": audit_data.get("ran_at"),
+                    "checks": len(audit_data.get("checks") or []),
+                },
+                message="live audit all-LIVE and fresh",
+            )
+        )
+    except AuditRejected as exc:
+        results.append(
+            _gate_result("live_audit_evidence", False, message=str(exc))
+        )
 
     mutation = candidate.get("mutation") or {}
     bp_data = mutation.get("blueprint")

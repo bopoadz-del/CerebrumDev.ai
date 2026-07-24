@@ -322,9 +322,11 @@ def draft_blueprint_from_brief(
     """Draft a ProductBlueprint from a user brief.
 
     Order of preference:
-    1. Golden steward blueprint for estate briefs (deterministic path).
-    2. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
-       ``use_llm=True``) — fail-safe: any error falls through to (3).
+    1. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
+       ``use_llm=True``) — fail-safe: any error falls through to (2).
+    2. Golden steward blueprint for explicit steward intent ("steward",
+       "private estate", "property readiness", or vertical_hint == "estate")
+       — deterministic fallback after LLM failure.
     3. Deterministic keyword drafting (always works, no keys needed).
     """
     if use_llm is None:

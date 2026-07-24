@@ -16,6 +16,7 @@ from app.factory.blueprint import ProductBlueprint, load_blueprint
 from app.factory.generator import ProductGenerator
 from app.product_dna.emit import verify_checksum_manifest
 from app.workbench.candidate import verify_candidate_checksum
+from app.workbench.live_audit import AuditRejected, validate_audit_artifact
 from app.workbench.sandbox import workbench_root
 
 
@@ -46,6 +47,14 @@ def promote_via_packager(
     """
     if item.get("state") != "gate_passed":
         raise PromotionRejected(f"state must be gate_passed, got {item.get('state')}")
+
+    artifact_ref = item.get("audit_artifact") or candidate.get("audit_artifact")
+    try:
+        if not artifact_ref:
+            raise AuditRejected("no audit_artifact reference on the request")
+        validate_audit_artifact(Path(artifact_ref))
+    except AuditRejected as exc:
+        raise PromotionRejected(f"audit_missing_or_stale: {exc}") from exc
 
     if not verify_candidate_checksum(candidate):
         raise PromotionRejected("tampered candidate — checksum failure at packager")
