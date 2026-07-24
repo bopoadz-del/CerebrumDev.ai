@@ -183,9 +183,12 @@ def test_planner_fail_closed_real_api():
     except DualRegistryError:
         # Fail-closed is the expected safe behavior.
         return
-    for cap in plan.capabilities:
-        if cap.capability_id == "ghost_capability":
-            assert cap.strategy not in {"REUSE", "ADAPT", "COMPOSE"}
+    ghost = [c for c in plan.capabilities if c.capability_id == "ghost_capability"]
+    if ghost:
+        assert ghost[0].strategy not in {"REUSE", "ADAPT", "COMPOSE"}, (
+            f"ghost capability planned as {ghost[0].strategy} with bogus block ids"
+        )
+    # absent from the plan is also an acceptable fail-closed disposition
 
 
 def test_suite_hygiene_no_skip_without_reason():

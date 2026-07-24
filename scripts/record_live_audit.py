@@ -78,7 +78,9 @@ def main() -> int:
 
     print(f"Wrote {dated_path}")
     print(f"Wrote {latest_path}")
-    print(f"Checks: {len(checks)} live, {sum(1 for c in checks if c['status'] == 'DEAD')} dead")
+    live = sum(1 for c in checks if c["status"] == "LIVE")
+    dead = sum(1 for c in checks if c["status"] == "DEAD")
+    print(f"Checks: {live} live, {dead} dead")
 
     return 0 if all_live else 1
 
