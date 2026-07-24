@@ -44,9 +44,10 @@ services:
       # Shared fallback model. Per-path overrides below take precedence.
       - key: CEREBRUM_LLM_MODEL
         value: kimi-k2.7-code
-      # Chat / chain_generator path (operational chat).
+      # Chat / chain_generator path (operational chat). Facilitator only —
+      # grounding, commands, and answers; no deep product reasoning needed.
       - key: CEREBRUM_CHAT_LLM_MODEL
-        value: kimi-k2.7
+        value: moonshot-v1-8k
       # Factory Product Architect / platform CLI path.
       - key: CEREBRUM_FACTORY_LLM_MODEL
         value: kimi-k2.7-code
