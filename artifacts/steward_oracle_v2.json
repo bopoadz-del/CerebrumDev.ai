@@ -1,38 +1,38 @@
 {
   "base_url": null,
-  "ran_at_utc": "2026-07-24T11:48:47.950128+00:00",
+  "ran_at_utc": "2026-07-21T14:28:52.208292+00:00",
   "schema_version": "steward_oracle_v2",
   "suites": [
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "health_and_version",
       "status": "NOT VERIFIED",
       "suite": "A"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "readiness_fail_closed",
       "status": "NOT VERIFIED",
       "suite": "B"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "authentication_anonymous_denied",
       "status": "NOT VERIFIED",
       "suite": "C"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "authorization_cross_estate_denied",
       "status": "NOT VERIFIED",
       "suite": "D"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "canonical_rag_query",
       "status": "NOT VERIFIED",
@@ -46,7 +46,7 @@
       "suite": "F"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "ingest_authz",
       "status": "NOT VERIFIED",
@@ -60,21 +60,21 @@
       "suite": "H"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "insufficiency_policy",
       "status": "NOT VERIFIED",
       "suite": "I"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "workflow_oracles",
       "status": "NOT VERIFIED",
       "suite": "J"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "agent_runtime",
       "status": "NOT VERIFIED",
@@ -102,7 +102,7 @@
       "suite": "N"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "provenance_and_version_pin",
       "status": "NOT VERIFIED",
@@ -123,7 +123,7 @@
       "suite": "Q"
     },
     {
-      "detail": "live or unimplemented suite \u2014 requires deployed URL or future work",
+      "detail": "live or unimplemented suite — requires deployed URL or future work",
       "mandatory": "true",
       "name": "deployment_readiness_live",
       "status": "NOT VERIFIED",
