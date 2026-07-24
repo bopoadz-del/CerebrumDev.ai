@@ -1,70 +1,96 @@
 """Unified LLM provider configuration for CerebrumDev.ai.
 
-Factory Product Architect (this milestone): **Kimi only** via
-``get_factory_llm_config()`` — refuses Ollama/Qwen.
+Two Kimi paths are supported independently:
 
-Kit-chain chat still uses ``get_llm_config()`` with legacy providers when
-explicitly configured.
+* Chat / chain_generator path: ``get_llm_config()``
+  - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL``
+  - Fallback: ``KIMI_*`` or ``CEREBRUM_LLM_*``
 
-Preferred Factory env:
-  KIMI_API_KEY / KIMI_BASE_URL / KIMI_MODEL
+* Factory Product Architect / platform CLI path: ``get_factory_llm_config()``
+  - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
+  - Fallback: ``CEREBRUM_LLM_*`` then ``KIMI_*``
 
-Aliases:
-  CEREBRUM_LLM_API_KEY / CEREBRUM_LLM_BASE_URL / CEREBRUM_LLM_MODEL
-  LLM_PROVIDER=kimi|moonshot
+Both paths are Kimi-only for the Factory milestone; Ollama/Qwen are refused
+for the architect. Legacy ``LLM_PROVIDER`` still works for chat.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def _truthy(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _kimi_key() -> str:
-    return (
-        os.getenv("KIMI_API_KEY", "").strip()
-        or os.getenv("CEREBRUM_LLM_API_KEY", "").strip()
-    )
+def _env_first(*names: str, default: str = "") -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return default
 
 
-def _kimi_base_url() -> str:
-    return (
-        os.getenv("KIMI_BASE_URL", "").strip()
-        or os.getenv("CEREBRUM_LLM_BASE_URL", "").strip()
-        or "https://api.moonshot.cn/v1"
-    )
+def _kimi_key(*prefixes: str) -> str:
+    """Resolve a Kimi API key from prefixed env vars, then shared fallbacks."""
+    candidates: List[str] = []
+    for prefix in prefixes:
+        candidates.append(f"{prefix}_LLM_API_KEY")
+    candidates.extend(["KIMI_API_KEY", "CEREBRUM_LLM_API_KEY"])
+    return _env_first(*candidates)
 
 
-def _kimi_model() -> str:
-    return (
-        os.getenv("KIMI_MODEL", "").strip()
-        or os.getenv("CEREBRUM_LLM_MODEL", "").strip()
-        or "moonshot-v1-8k"
-    )
+def _kimi_base_url(*prefixes: str) -> str:
+    candidates: List[str] = []
+    for prefix in prefixes:
+        candidates.append(f"{prefix}_LLM_BASE_URL")
+    candidates.extend(["KIMI_BASE_URL", "CEREBRUM_LLM_BASE_URL"])
+    return _env_first(*candidates, default="https://api.moonshot.ai/v1")
 
 
-def _kimi_config() -> Dict[str, Any]:
+def _kimi_model(*prefixes: str) -> str:
+    candidates: List[str] = []
+    for prefix in prefixes:
+        candidates.append(f"{prefix}_LLM_MODEL")
+    candidates.extend(["KIMI_MODEL", "CEREBRUM_LLM_MODEL"])
+    return _env_first(*candidates, default="moonshot-v1-8k")
+
+
+def _kimi_config(*prefixes: str) -> Dict[str, Any]:
     return {
         "provider": "kimi",
-        "api_key": _kimi_key(),
-        "base_url": _kimi_base_url(),
-        "model": _kimi_model(),
+        "api_key": _kimi_key(*prefixes),
+        "base_url": _kimi_base_url(*prefixes),
+        "model": _kimi_model(*prefixes),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
+        "temperature": _llm_temperature(),
     }
+
+
+def _llm_temperature() -> float | None:
+    """Optional temperature override (LLM_TEMPERATURE).
+
+    None means: do not send a temperature at all — the provider applies the
+    model default. Required for reasoning models (kimi-k2.x) which reject
+    any explicit temperature other than 1.
+    """
+    raw = os.getenv("LLM_TEMPERATURE", "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
 
 
 def _detect_provider() -> str:
     """Auto-detect provider from configured credentials.
 
-    ``KIMI_MOCK`` / ``CEREBRUM_LLM_MOCK`` are scoped to
-    ``get_factory_llm_config()`` only — they must not make kit chat think a
-    live Kimi provider is configured (that would hit the network).
+    Prefers the chat-scoped key so a factory-only key does not accidentally
+    turn on chat LLM calls.
     """
-    if _kimi_key():
+    if _kimi_key("CEREBRUM_CHAT") or _kimi_key():
         return "kimi"
     if os.getenv("QWEN_API_KEY"):
         return "qwen"
@@ -74,14 +100,14 @@ def _detect_provider() -> str:
 
 
 def get_llm_config() -> Dict[str, Any]:
-    """Return resolved LLM provider, model, base URL, and API key."""
+    """Return resolved LLM config for the chat/chain_generator path."""
     provider = os.getenv("LLM_PROVIDER", "").strip().lower() or _detect_provider()
 
     if provider == "moonshot":
         provider = "kimi"
 
     if provider == "kimi":
-        cfg = _kimi_config()
+        cfg = _kimi_config("CEREBRUM_CHAT")
         # Explicit LLM_PROVIDER=kimi with only mock flag and no key → inactive
         # for kit chat (stay offline). Factory path uses get_factory_llm_config.
         if cfg["mock"] and not cfg["api_key"]:
@@ -143,7 +169,7 @@ def get_factory_llm_config() -> Dict[str, Any]:
             ),
         }
 
-    cfg = _kimi_config()
+    cfg = _kimi_config("CEREBRUM_FACTORY")
     if cfg["mock"]:
         return cfg
     if not cfg["api_key"]:

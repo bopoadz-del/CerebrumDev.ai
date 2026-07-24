@@ -595,7 +595,9 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "CEREBRUM_MASTER_KEY": deploy_api_key,
         "CB_DEV_KEY": deploy_api_key,
         "CEREBRUM_API_KEY_PLATFORM": deploy_api_key,
-        "CORS_ORIGINS": "*",
+        # Hardened default: only the deployed service origin + local dev.
+        # Buyers override CORS_ORIGINS for custom domains.
+        "CORS_ORIGINS": f"https://{service_name}.onrender.com,http://localhost:5173",
         "CHROMA_PERSIST_DIR": "/app/chroma",
         "SECRET_KEY": deploy_api_key,
         "DATA_ENCRYPTION_KEY": deploy_api_key,
@@ -605,10 +607,11 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
     }
+    # Non-secret LLM configuration is fine to ship; owner API keys are NOT.
     if llm_cfg["provider"] == "qwen":
-        env_vars["QWEN_API_KEY"] = llm_cfg["api_key"]
-    elif llm_cfg["provider"] == "moonshot":
-        env_vars["CEREBRUM_LLM_API_KEY"] = llm_cfg["api_key"]
+        env_vars["QWEN_BASE_URL"] = llm_cfg["base_url"]
+        env_vars["QWEN_MODEL"] = llm_cfg["model"]
+    elif llm_cfg["provider"] == "kimi":
         env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
         env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
@@ -618,15 +621,18 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
             env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
             env_vars.setdefault("GROUNDED_ADAPTER_REWRITE_PASS", "false")
             env_vars.setdefault("GROUNDED_ADAPTER_TIMEOUT", "60")
-            tinker_key = os.getenv("TINKER_API_KEY", "")
-            if tinker_key:
-                env_vars["TINKER_API_KEY"] = tinker_key
+            # Owner must supply their own TINKER_API_KEY; never leak the factory key.
+
+    dotenv_lines = [f'{key}={value}' for key, value in env_vars.items()]
+    if llm_cfg["provider"] == "qwen":
+        dotenv_lines.append("# QWEN_API_KEY=<owner-supplied>")
+    elif llm_cfg["provider"] == "kimi":
+        dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
+    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id and state.training_job.fine_tuned_model_id.startswith("tinker://"):
+        dotenv_lines.append("# TINKER_API_KEY=<owner-supplied>")
 
     dotenv = package_root / ".env"
-    dotenv.write_text(
-        "\n".join(f'{key}={value}' for key, value in env_vars.items()),
-        encoding="utf-8",
-    )
+    dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
     _write_render_yaml(package_root, service_name, env_vars)
     _write_readme(package_root, service_name)
     _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)

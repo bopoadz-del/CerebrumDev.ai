@@ -74,6 +74,21 @@ Every block used to generate a product must be registered in **both**:
 - Generate: `cd backend && PYTHONPATH=. python3 -m app.factory.cli generate --blueprint ../blueprints/steward/steward.v1.yaml --out ../factory_outputs/Cerebrum-Steward --blocks-root $CEREBRUM_BLOCKS_ROOT`
 - Factory tests: `python3 -m pytest tests/factory --asyncio-mode=auto`
 
+## Deploy gate (market-ready claims)
+
+Before any market-ready claim, release tag, or public demo:
+
+1. Run the live post-deploy smoke against the deployed backend:
+   ```bash
+   python3 scripts/post_deploy_smoke.py https://cerebrumdev-backend.onrender.com
+   ```
+2. Every kernel must print `[LIVE]`.
+3. Deterministic or fallback success is **not** accepted as evidence.
+4. Do not merge to `main` or tag a release until the smoke script exits 0.
+
+See also `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`.
+
+
 
 ### Product architect API
 

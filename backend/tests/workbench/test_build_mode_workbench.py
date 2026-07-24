@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,33 @@ def _steward_product(tmp_path: Path) -> Path:
     out = tmp_path / "Cerebrum-Steward"
     ProductGenerator(bp, blocks_root=None).generate(out)
     return out
+
+
+@pytest.fixture
+def fresh_audit_artifact(tmp_path: Path) -> Path:
+    path = tmp_path / "live_audit.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "live_audit.v1",
+                "ran_at": datetime.now(timezone.utc).isoformat(),
+                "base_url": "http://test",
+                "all_live": True,
+                "checks": [{"name": "health", "status": "LIVE"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _attach_audit_artifact(request_id: str, path: Path) -> dict:
+    q = ChangeRequestQueue()
+    item = q.get(request_id)
+    assert item is not None
+    item["audit_artifact"] = str(path)
+    q._atomic_write(q._item_path(request_id), item)
+    return item
 
 
 def _approved_expansion(product_id: str, product_root: Path) -> dict:
@@ -97,11 +125,13 @@ def test_path_allowed_envelope_rules(tmp_path):
     assert not path_allowed(ws, tmp_path / "other" / "x", write=True)
 
 
-def test_tampered_candidate_fails_at_packager(tmp_path):
+def test_tampered_candidate_fails_at_packager(tmp_path, fresh_audit_artifact):
     product = _steward_product(tmp_path)
     item = _approved_expansion("cerebrum-steward", product)
+    _attach_audit_artifact(item["request_id"], fresh_audit_artifact)
     result = run_workbench_session(item["request_id"], product_root=product, run_gates=True)
     assert result["state"] == "gate_passed"
+    result["audit_artifact"] = str(fresh_audit_artifact)
     candidate = dict(result["candidate"])
     candidate["summary"] = "tampered summary"
     assert verify_candidate_checksum(candidate) is False
@@ -114,12 +144,13 @@ def test_tampered_candidate_fails_at_packager(tmp_path):
         )
 
 
-def test_steward_expansion_round_trip_to_staging(tmp_path):
+def test_steward_expansion_round_trip_to_staging(tmp_path, fresh_audit_artifact):
     """Signed EXPANSION → approved → workbench → gates → packager staging."""
     product = _steward_product(tmp_path)
     assert (product / "product-dna" / "checksum_manifest.json").is_file()
 
     item = _approved_expansion("cerebrum-steward", product)
+    _attach_audit_artifact(item["request_id"], fresh_audit_artifact)
     result = run_workbench_session(item["request_id"], product_root=product, run_gates=True)
     assert result["state"] == "gate_passed"
     assert result["candidate"]["applied"] is False

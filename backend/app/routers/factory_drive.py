@@ -11,7 +11,9 @@ API responses.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
+import os
 import secrets
 import time
 import uuid
@@ -47,6 +49,57 @@ callback_router = APIRouter()
 _store = DriveConnectionStore()
 _STATE_TTL = 600
 _pending_states: dict[str, tuple[str, str, float]] = {}  # state -> (session_id, user_id, issued_at)
+
+# Pending OAuth states live in Redis (REDIS_URL) when available so they survive
+# restarts and work across instances; the in-memory dict is the fallback.
+_REDIS_UNSET = object()
+_redis_client: object = _REDIS_UNSET
+
+
+def _redis():
+    """Lazy Redis client; None when unconfigured or unreachable."""
+    global _redis_client
+    if _redis_client is _REDIS_UNSET:
+        url = os.getenv("REDIS_URL", "").strip()
+        client = None
+        if url:
+            try:
+                import redis  # type: ignore
+
+                client = redis.from_url(url, socket_connect_timeout=1, socket_timeout=1)
+                client.ping()
+            except Exception:
+                client = None
+        _redis_client = client
+    return _redis_client
+
+
+def _state_save(state: str, session_id: str, user_id: str) -> None:
+    client = _redis()
+    if client is not None:
+        try:
+            client.setex(
+                f"drive_oauth_state:{state}",
+                _STATE_TTL,
+                json.dumps({"session_id": session_id, "user_id": user_id}),
+            )
+            return
+        except Exception:
+            pass  # fall back to memory
+    _pending_states[state] = (session_id, user_id, time.time())
+
+
+def _state_pop(state: str) -> tuple[str, str, float] | None:
+    client = _redis()
+    if client is not None:
+        try:
+            raw = client.getdel(f"drive_oauth_state:{state}")
+            if raw is not None:
+                data = json.loads(raw)
+                return data["session_id"], data["user_id"], 0.0
+        except Exception:
+            pass
+    return _pending_states.pop(state, None)
 
 
 class BindFolderRequest(BaseModel):
@@ -98,7 +151,7 @@ async def drive_connect(session: dict = Depends(_require_session)):
         )
     _prune_states()
     state = secrets.token_urlsafe(24)  # type: ignore[name-defined]
-    _pending_states[state] = (session["session_id"], session["user_id"], time.time())
+    _state_save(state, session["session_id"], session["user_id"])
     return {"auth_url": build_auth_url(state)}
 
 
@@ -109,7 +162,7 @@ async def drive_callback(
     error: str = Query(""),
 ):
     _prune_states()
-    pending = _pending_states.pop(state, None)
+    pending = _state_pop(state)
     if pending is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     session_id, user_id, _ = pending

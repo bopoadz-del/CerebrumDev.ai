@@ -19,10 +19,23 @@ import {
 
 type View = 'floor' | 'platforms' | 'subscription' | 'account'
 
+interface Capability {
+  id: string
+  description?: string
+  strategy_hint?: string
+  block_ids?: string[]
+}
+
 interface ChatMsg {
   role: 'user' | 'factory' | 'system'
   text: string
   card?: 'blueprint' | 'generation' | 'error' | 'info'
+  blueprint?: {
+    product_name?: string
+    vertical?: string
+    summary?: string
+    capabilities?: Capability[]
+  }
 }
 
 export default function App() {
@@ -30,6 +43,7 @@ export default function App() {
   const [view, setView] = useState<View>('floor')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
+  const [bootNonce, setBootNonce] = useState(0)
 
   useEffect(() => {
     if (!authed) return
@@ -59,7 +73,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [authed])
+  }, [authed, bootNonce])
 
   if (!authed) return <AuthGate onAuthed={() => setAuthed(true)} />
   if (bootError)
@@ -68,7 +82,15 @@ export default function App() {
         <div className="panel narrow">
           <h2>Factory unreachable</h2>
           <p className="dim">{bootError}</p>
-          <button onClick={() => setBootError(null)}>Retry</button>
+          <button
+            onClick={() => {
+              setBootError(null)
+              setSessionId(null)
+              setBootNonce((n) => n + 1)
+            }}
+          >
+            Retry
+          </button>
         </div>
       </div>
     )
@@ -117,28 +139,146 @@ function NavBtn({ label, active, onClick }: { label: string; active: boolean; on
   )
 }
 
+/* ------------------------------ Blueprint card ----------------------------- */
+
+function humanize(id: string): string {
+  return id
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
+function BlueprintCard({
+  blueprint,
+  busy,
+  onApprove,
+  onRefine,
+}: {
+  blueprint: NonNullable<ChatMsg['blueprint']>
+  busy: boolean
+  onApprove: () => void
+  onRefine: (text: string) => void
+}) {
+  const caps = blueprint.capabilities ?? []
+  return (
+    <div className="blueprint-card">
+      <div className="bp-header">
+        <strong>{blueprint.product_name ?? 'Untitled platform'}</strong>
+        <span className="bp-vertical">{blueprint.vertical ?? '—'}</span>
+      </div>
+      {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
+      <h4>Capabilities ({caps.length})</h4>
+      <ul className="bp-caps">
+        {caps.map((c) => (
+          <li key={c.id}>
+            <span className="bp-cap-id">{humanize(c.id)}</span>
+            <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
+            {c.description && <p className="bp-cap-desc">{c.description}</p>}
+            {c.block_ids && c.block_ids.length > 0 && (
+              <p className="bp-cap-blocks">blocks: {c.block_ids.join(', ')}</p>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="card-actions">
+        <button disabled={busy} onClick={onApprove}>
+          Approve &amp; build
+        </button>
+      </div>
+      <p className="bp-refine-hint">
+        Refine:{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('list capabilities')}>
+          list capabilities
+        </button>{' '}
+        ·{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('add capability payments')}>
+          add payments
+        </button>{' '}
+        ·{' '}
+        <button className="link" disabled={busy} onClick={() => onRefine('remove capability audit')}>
+          remove audit
+        </button>
+      </p>
+    </div>
+  )
+}
+
 /* ---------------------------------- Auth ---------------------------------- */
 
-function AuthGate({ onAuthed }: { onAuthed: () => void }) {
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+type AuthMode = 'login' | 'register' | 'forgot' | 'reset' | 'verify'
+
+export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
+  const [mode, setMode] = useState<AuthMode>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  function go(m: AuthMode) {
+    setMode(m)
+    setError(null)
+    setNotice(null)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
-      const res = mode === 'login' ? await auth.login(email, password) : await auth.register(email, password)
-      setSession(res.login_token, email)
-      onAuthed()
+      if (mode === 'register') {
+        const res = await auth.register(email, password)
+        setSession(res.login_token, email)
+        const v = res.verification
+        if (v && v.email_sent === false && v.dev_verification_token) {
+          setToken(v.dev_verification_token)
+          setNotice('Account created. SMTP is not configured on this deployment — verify with the token below.')
+          setMode('verify')
+          return
+        }
+        if (v && v.email_sent) {
+          setNotice('Account created. Check your inbox for the verification link, then sign in.')
+          setMode('login')
+          return
+        }
+        onAuthed()
+      } else if (mode === 'login') {
+        const res = await auth.login(email, password)
+        setSession(res.login_token, email)
+        onAuthed()
+      } else if (mode === 'forgot') {
+        const res = await auth.forgotPassword(email)
+        if (res.dev_reset_token) {
+          setToken(res.dev_reset_token)
+          setNotice('SMTP is not configured on this deployment — reset with the token below.')
+        } else {
+          setNotice(res.message ?? 'If the email is registered, a reset link follows.')
+        }
+        setMode('reset')
+      } else if (mode === 'reset') {
+        const res = await auth.resetPassword(token, password)
+        setNotice(res.message ?? 'Password updated — sign in again.')
+        setPassword('')
+        setMode('login')
+      } else if (mode === 'verify') {
+        await auth.verifyEmail(token)
+        setNotice('Email verified. Sign in to enter the factory.')
+        setMode('login')
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'authentication failed')
+      setError(err instanceof Error ? err.message : 'request failed')
     } finally {
       setBusy(false)
     }
+  }
+
+  const titles: Record<AuthMode, string> = {
+    login: 'Sign in',
+    register: 'Create your account',
+    forgot: 'Reset your password',
+    reset: 'Choose a new password',
+    verify: 'Verify your email',
   }
 
   return (
@@ -149,32 +289,76 @@ function AuthGate({ onAuthed }: { onAuthed: () => void }) {
         </div>
         <h1>CerebrumDev.ai</h1>
         <p className="dim center-text">One account. Tell the factory. Receive your platform.</p>
-        <input
-          type="email"
-          required
-          placeholder="you@company.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <input
-          type="password"
-          required
-          minLength={8}
-          placeholder="password (8+ characters)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+        <h2 className="auth-mode">{titles[mode]}</h2>
+
+        {(mode === 'login' || mode === 'register' || mode === 'forgot') && (
+          <input
+            type="email"
+            required
+            placeholder="you@company.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        )}
+        {(mode === 'login' || mode === 'register' || mode === 'reset') && (
+          <input
+            type="password"
+            required
+            minLength={8}
+            placeholder={mode === 'reset' ? 'new password (8+ characters)' : 'password (8+ characters)'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        )}
+        {(mode === 'reset' || mode === 'verify') && (
+          <input
+            type="text"
+            required
+            placeholder={mode === 'reset' ? 'reset token' : 'verification token'}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        )}
+
         {error && <div className="error-box">{error}</div>}
+        {notice && <div className="notice-box">{notice}</div>}
+
         <button type="submit" disabled={busy}>
-          {busy ? 'Working…' : mode === 'login' ? 'Enter the factory' : 'Create your account'}
+          {busy
+            ? 'Working…'
+            : mode === 'login'
+              ? 'Enter the factory'
+              : mode === 'register'
+                ? 'Create your account'
+                : mode === 'forgot'
+                  ? 'Send reset token'
+                  : mode === 'reset'
+                    ? 'Update password'
+                    : 'Verify email'}
         </button>
-        <button
-          type="button"
-          className="link"
-          onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-        >
-          {mode === 'login' ? 'New here? Create an account' : 'Have an account? Sign in'}
-        </button>
+
+        <div className="auth-links">
+          {mode !== 'login' && (
+            <button type="button" className="link" onClick={() => go('login')}>
+              Sign in
+            </button>
+          )}
+          {mode !== 'register' && (
+            <button type="button" className="link" onClick={() => go('register')}>
+              Create an account
+            </button>
+          )}
+          {mode !== 'forgot' && (
+            <button type="button" className="link" onClick={() => go('forgot')}>
+              Forgot password?
+            </button>
+          )}
+          {mode !== 'verify' && (
+            <button type="button" className="link" onClick={() => go('verify')}>
+              Have a verification token?
+            </button>
+          )}
+        </div>
       </form>
     </div>
   )
@@ -217,11 +401,19 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
             return
           }
           if (ev.event === 'blueprint') {
-            const d = ev.data as { summary?: string } | string
-            const summary = typeof d === 'string' ? d : d?.summary ?? 'Blueprint drafted.'
+            const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
+              summary?: string
+              blueprint?: ChatMsg['blueprint']
+            }
+            const summary = d?.summary ?? 'Blueprint drafted.'
             setMsgs((m) => [
               ...m.slice(0, -1),
-              { role: 'factory', text: summary, card: 'blueprint' },
+              {
+                role: 'factory',
+                text: summary,
+                card: 'blueprint',
+                blueprint: d?.blueprint,
+              },
             ])
           } else if (ev.event === 'generation') {
             const d = ev.data as { summary?: string } | string
@@ -269,12 +461,13 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
           <div key={i} className={`bubble-row ${m.role}`}>
             <div className={`bubble ${m.role} ${m.card ?? ''}`}>
               {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
-              {m.card === 'blueprint' && (
-                <div className="card-actions">
-                  <button disabled={busy} onClick={() => send('approve')}>
-                    Approve &amp; build
-                  </button>
-                </div>
+              {m.card === 'blueprint' && m.blueprint && (
+                <BlueprintCard
+                  blueprint={m.blueprint}
+                  busy={busy}
+                  onApprove={() => send('approve')}
+                  onRefine={(text) => send(text)}
+                />
               )}
               {m.card === 'generation' && (
                 <div className="card-actions">
@@ -383,10 +576,19 @@ function Platforms({ sessionId }: { sessionId: string }) {
 
 /* ------------------------------- Subscription ------------------------------- */
 
-function Subscription() {
+function trialDaysLeft(status: BillingStatus): number | null {
+  if (typeof status.trial_days_left === 'number') return status.trial_days_left
+  if (!status.trial_ends_at) return null
+  const end = Date.parse(status.trial_ends_at)
+  if (Number.isNaN(end)) return null
+  return Math.max(0, Math.ceil((end - Date.now()) / 86_400_000))
+}
+
+export function Subscription() {
   const [status, setStatus] = useState<BillingStatus | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     billing
@@ -396,22 +598,48 @@ function Subscription() {
   }, [])
 
   async function upgrade() {
+    setBusy(true)
     setNote(null)
     setError(null)
     try {
       const res = await billing.checkout()
       const url = res.url ?? res.checkout_url
       if (url) {
-        window.open(url, '_blank')
-      } else {
-        setNote('Billing is being connected — checkout opens here when the factory flips it on.')
+        window.location.href = url
+        return
       }
-    } catch (e) {
+      setNote('Checkout returned no redirect — the factory team has been notified.')
+    } catch {
       setNote(
-        `Billing is being connected — the only piece still pending at the factory. (${e instanceof Error ? e.message : 'checkout unavailable'})`,
+        'Payments are not connected on this deployment yet — the factory owner links the Stripe account. ' +
+          'This is the only piece still pending; your current access is unaffected.',
       )
+    } finally {
+      setBusy(false)
     }
   }
+
+  async function manage() {
+    setBusy(true)
+    setNote(null)
+    setError(null)
+    try {
+      const res = await billing.portal()
+      const url = res.url ?? res.portal_url
+      if (url) {
+        window.location.href = url
+        return
+      }
+      setNote('Billing portal returned no redirect.')
+    } catch {
+      setNote('The billing portal opens once payments are connected on this deployment.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const days = status ? trialDaysLeft(status) : null
+  const subStatus = (status?.subscription_status ?? status?.status ?? 'trialing') as string
 
   return (
     <div className="page">
@@ -422,18 +650,45 @@ function Subscription() {
       {error && <div className="error-box">{error}</div>}
       <div className="panel">
         {status ? (
-          <dl className="kv">
-            {Object.entries(status).map(([k, v]) => (
-              <div className="kv-row" key={k}>
-                <dt>{k.replace(/_/g, ' ')}</dt>
-                <dd>{v === null || v === undefined ? '—' : String(v)}</dd>
+          <>
+            <dl className="kv">
+              <dt>Plan</dt>
+              <dd className="capitalize">{String(status.plan ?? 'trial')}</dd>
+              <dt>Status</dt>
+              <dd className="capitalize">{subStatus.replace(/_/g, ' ')}</dd>
+              {days !== null && subStatus === 'trialing' && (
+                <>
+                  <dt>Trial days left</dt>
+                  <dd>{days}</dd>
+                </>
+              )}
+              <dt>Factory access</dt>
+              <dd>{status.entitled === false ? 'Paused' : 'Active'}</dd>
+            </dl>
+            <div className="plan-cards">
+              <div className="plan-card">
+                <h4>Trial</h4>
+                <p className="dim">Full factory access while you evaluate. No card required.</p>
               </div>
-            ))}
-          </dl>
+              <div className="plan-card highlight">
+                <h4>Factory</h4>
+                <p className="dim">
+                  Deeper builds, more sessions, priority generation. Upgrade when you are ready.
+                </p>
+                <button onClick={upgrade} disabled={busy}>
+                  {busy ? 'Working…' : 'Upgrade'}
+                </button>
+              </div>
+            </div>
+            {subStatus === 'active' && (
+              <button className="ghost" onClick={manage} disabled={busy}>
+                Manage billing
+              </button>
+            )}
+          </>
         ) : (
           <p className="dim">Loading…</p>
         )}
-        <button onClick={upgrade}>Upgrade</button>
         {note && <p className="dim note">{note}</p>}
       </div>
     </div>
@@ -444,10 +699,27 @@ function Subscription() {
 
 function Account({ onLogout }: { onLogout: () => void }) {
   const [me, setMe] = useState<Record<string, unknown> | null>(null)
+  const [verifyToken, setVerifyToken] = useState('')
+  const [note, setNote] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     auth.me().then((m) => setMe(m as Record<string, unknown>)).catch(() => setMe(null))
   }, [])
+
+  async function verify(e: FormEvent) {
+    e.preventDefault()
+    setNote(null)
+    setError(null)
+    try {
+      await auth.verifyEmail(verifyToken)
+      setNote('Email verified.')
+      const m = await auth.me()
+      setMe(m as Record<string, unknown>)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'verification failed')
+    }
+  }
 
   return (
     <div className="page">
@@ -458,6 +730,8 @@ function Account({ onLogout }: { onLogout: () => void }) {
         <dl className="kv">
           <dt>Email</dt>
           <dd>{me?.email ? String(me.email) : getEmail() ?? '—'}</dd>
+          <dt>Email verified</dt>
+          <dd>{me?.email_verified ? 'Yes' : 'No'}</dd>
           {!!me?.account_id && (
             <>
               <dt>Account</dt>
@@ -465,6 +739,20 @@ function Account({ onLogout }: { onLogout: () => void }) {
             </>
           )}
         </dl>
+        {me && !me.email_verified && (
+          <form className="verify-row" onSubmit={verify}>
+            <input
+              type="text"
+              required
+              placeholder="verification token"
+              value={verifyToken}
+              onChange={(e) => setVerifyToken(e.target.value)}
+            />
+            <button type="submit">Verify email</button>
+          </form>
+        )}
+        {note && <p className="dim note">{note}</p>}
+        {error && <div className="error-box">{error}</div>}
         <button className="danger" onClick={onLogout}>
           Sign out
         </button>

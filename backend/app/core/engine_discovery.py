@@ -67,13 +67,38 @@ def _git_rev_parse(repo_dir: Path) -> str:
     return result.stdout.strip()
 
 
+def _authenticated_repo_url(repo: str) -> str:
+    """Return *repo* with GITHUB_TOKEN injected for private HTTPS GitHub URLs.
+
+    The token is never logged. When no token is available or the URL is not a
+    plain GitHub HTTPS URL, *repo* is returned unchanged.
+    """
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if not token:
+        return repo
+    if not repo.startswith("https://github.com/"):
+        return repo
+    # https://github.com/owner/repo.git -> https://<token>@github.com/owner/repo.git
+    return repo.replace("https://github.com/", f"https://{token}@github.com/", 1)
+
+
+def _sanitize_stderr(stderr: str) -> str:
+    """Strip any GITHUB_TOKEN from git command stderr before raising/logging."""
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if not token or not stderr:
+        return stderr or ""
+    return stderr.replace(token, "<redacted>")
+
+
 def _fetch_engine_checkout(repo: str, ref: str) -> Path:
     """Clone or refresh a shallow engine checkout at *ref* and return its path.
 
     The checkout is cached under ``<tmp>/cerebrumdev/engine-cache/<ref>``.
     Existing cache entries are reused without re-cloning.
 
-    Supports branch/tag names and commit SHAs (short or full).
+    Supports branch/tag names and commit SHAs (short or full). When
+    ``GITHUB_TOKEN`` is set and *repo* is a GitHub HTTPS URL, the token is used
+    to authenticate the clone so private repositories can be fetched.
     """
     cache = _cache_dir() / ref.replace("/", "_")
 
@@ -91,7 +116,8 @@ def _fetch_engine_checkout(repo: str, ref: str) -> Path:
 
     cache.parent.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Fetching engine %s at ref %s into %s", repo, ref, cache)
+    authenticated_repo = _authenticated_repo_url(repo)
+    logger.info("Fetching engine at ref %s into %s", ref, cache)
     cache.mkdir(parents=True, exist_ok=True)
 
     def _git(cmd: list[str], cwd: Path = cache) -> subprocess.CompletedProcess[str]:
@@ -107,25 +133,25 @@ def _fetch_engine_checkout(repo: str, ref: str) -> Path:
     init = _git(["git", "init"])
     if init.returncode != 0:
         raise EngineDiscoveryError(
-            f"Failed to initialise engine cache for {repo} at ref {ref}: {init.stderr.strip()}"
+            f"Failed to initialise engine cache for {repo} at ref {ref}: {_sanitize_stderr(init.stderr)}"
         )
 
-    remote_add = _git(["git", "remote", "add", "origin", repo])
+    remote_add = _git(["git", "remote", "add", "origin", authenticated_repo])
     if remote_add.returncode != 0:
         raise EngineDiscoveryError(
-            f"Failed to add remote for engine {repo} at ref {ref}: {remote_add.stderr.strip()}"
+            f"Failed to add remote for engine {repo} at ref {ref}: {_sanitize_stderr(remote_add.stderr)}"
         )
 
     fetch = _git(["git", "fetch", "--depth", "1", "origin", ref])
     if fetch.returncode != 0:
         raise EngineDiscoveryError(
-            f"Failed to fetch engine {repo} at ref {ref}: {fetch.stderr.strip()}"
+            f"Failed to fetch engine {repo} at ref {ref}: {_sanitize_stderr(fetch.stderr)}"
         )
 
     checkout = _git(["git", "checkout", "FETCH_HEAD"])
     if checkout.returncode != 0:
         raise EngineDiscoveryError(
-            f"Failed to checkout engine {repo} at ref {ref}: {checkout.stderr.strip()}"
+            f"Failed to checkout engine {repo} at ref {ref}: {_sanitize_stderr(checkout.stderr)}"
         )
 
     commit_sha = _git_rev_parse(cache)

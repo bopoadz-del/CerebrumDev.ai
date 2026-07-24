@@ -134,6 +134,29 @@ def test_package_neutral_no_construction_strings(session: SessionState, fake_med
                 assert word not in text, f"forbidden word {word!r} found in {name}"
 
 
+def test_package_does_not_leak_factory_llm_key(session: SessionState, fake_medical_kit: Path, monkeypatch):
+    """Generated packages must not contain the factory's live LLM API key."""
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_medical_kit.parent.parent.parent))
+    monkeypatch.setenv("CEREBRUM_LLM_API_KEY", "sk-live-factory-key-must-not-leak")
+    monkeypatch.setenv("CEREBRUM_LLM_BASE_URL", "https://api.moonshot.ai/v1")
+    monkeypatch.setenv("CEREBRUM_LLM_MODEL", "kimi-k2.7-code")
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+
+    info = package_platform_session(session)
+
+    with zipfile.ZipFile(info["zip_path"], "r") as zf:
+        for name in zf.namelist():
+            if not name.endswith((".py", ".yml", ".yaml", ".json", ".md", ".sh", ".txt", ".env")):
+                continue
+            text = zf.read(name).decode(errors="ignore")
+            assert "sk-live-factory-key-must-not-leak" not in text, (
+                f"factory LLM key leaked in {name}"
+            )
+        env = zf.read(".env").decode()
+        assert "CEREBRUM_LLM_API_KEY=<owner-supplied>" in env or "# CEREBRUM_LLM_API_KEY" in env
+        assert "CEREBRUM_LLM_BASE_URL=https://api.moonshot.ai/v1" in env
+
+
 def test_package_cli_sourced_from_engine(session: SessionState, fake_medical_kit: Path, monkeypatch):
     """The packaged CLI is copied from the engine checkout."""
     engine_root = fake_medical_kit.parent.parent.parent

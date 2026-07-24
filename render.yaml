@@ -24,14 +24,11 @@ services:
         value: "true"
       - key: ARCHITECT_LLM_DRAFTING_ENABLED
         value: "true"
+      # Factory architect is Kimi-only (get_factory_llm_config refuses
+      # Ollama/Qwen). The key comes from KIMI_API_KEY or
+      # CEREBRUM_LLM_API_KEY below — no Ollama anywhere.
       - key: LLM_PROVIDER
-        value: ollama
-      - key: OLLAMA_URL
-        value: https://ollama.com
-      - key: OLLAMA_MODEL
-        value: kimi-k2.7-code:cloud
-      - key: OLLAMA_API_KEY
-        sync: false
+        value: kimi
       - key: QWEN_API_KEY
         sync: false
       - key: QWEN_BASE_URL
@@ -40,10 +37,20 @@ services:
         value: qwen-plus
       - key: CEREBRUM_LLM_API_KEY
         sync: false
+      # International console (platform.moonshot.ai) — verified against
+      # the owner's key. The .cn endpoint rejects it.
       - key: CEREBRUM_LLM_BASE_URL
-        value: https://api.moonshot.cn/v1
+        value: https://api.moonshot.ai/v1
+      # Shared fallback model. Per-path overrides below take precedence.
       - key: CEREBRUM_LLM_MODEL
+        value: kimi-k2.7-code
+      # Chat / chain_generator path (operational chat). Facilitator only —
+      # grounding, commands, and answers; no deep product reasoning needed.
+      - key: CEREBRUM_CHAT_LLM_MODEL
         value: moonshot-v1-8k
+      # Factory Product Architect / platform CLI path.
+      - key: CEREBRUM_FACTORY_LLM_MODEL
+        value: kimi-k2.7-code
       - key: TINKER_API_KEY
         sync: false
       - key: TINKER_BASE_MODEL
@@ -68,10 +75,61 @@ services:
         value: /app/storage
       - key: PYTHONIOENCODING
         value: utf-8
+      # Observability: paste the Sentry project DSN (python/fastapi) here.
+      # Inert when unset. Release is tagged from RENDER_GIT_COMMIT.
+      - key: SENTRY_DSN
+        sync: false
+      # Render Key Value (Redis-compatible). Provisions automatically below.
+      # Shared auth rate limits, Drive OAuth pending states, session fan-out.
+      - key: REDIS_URL
+        fromService:
+          name: cerebrumdev-redis
+          type: keyvalue
+          property: connectionString
+      # Stripe billing secrets. Set these in the dashboard; checkout/portal/webhook
+      # return 503 stripe_not_configured until all three are present.
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      # Email provider: Resend API is the easiest reliable path. Set either
+      # RESEND_API_KEY (recommended) or SMTP_HOST + SMTP_USER + SMTP_PASS.
+      # Without any provider, register/forgot-password surface dev tokens in UI.
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM
+        value: "no-reply@cerebrum.dev"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      # Engine checkout for platform packaging. GITHUB_TOKEN is required when
+      # CEREBRUM_BLOCKS_REPO is a private GitHub repository.
+      - key: CEREBRUM_BLOCKS_REPO
+        value: "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+      - key: GITHUB_TOKEN
+        sync: false
+      # Flip to true to enforce paid entitlement on sessions/factory runs.
+      - key: BILLING_ENFORCEMENT
+        value: "false"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
       sizeGB: 1
+
+  - type: keyvalue
+    name: cerebrumdev-redis
+    region: oregon
+    plan: starter
+    ipAllowList: []
 
   - type: static
     name: cerebrumdev-frontend
@@ -87,4 +145,8 @@ services:
       - key: VITE_API_URL
         value: https://cerebrumdev-backend.onrender.com
       - key: VITE_API_KEY
+        sync: false
+      # Observability: paste the Sentry project DSN (javascript-react) here.
+      # The frontend loads Sentry lazily only when this is set at build time.
+      - key: VITE_SENTRY_DSN
         sync: false

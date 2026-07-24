@@ -16,9 +16,20 @@ chromadb>=0.5.0
 sqlalchemy>=2.0.30
 psycopg[binary]>=3.1
 
+# Accounts DB migrations (Alembic). Runs at container boot; see backend/alembic/.
+alembic>=1.13.0
+
 # Billing (P3): Stripe subscription checkout + webhooks. Account state changes
 # only through accounts_store.set_subscription; this SDK is the transport.
 stripe>=8.0.0
+
+# Observability: error tracking + performance. Activates when SENTRY_DSN is
+# set; inert otherwise. See backend/.env.example.
+sentry-sdk[fastapi]>=2.0.0
+
+# Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
+# session fan-out. Optional — everything falls back to in-memory.
+redis>=5.0.0
 
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is

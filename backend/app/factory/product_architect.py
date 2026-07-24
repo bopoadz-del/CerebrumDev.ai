@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import yaml
 
-from app.core.llm_config import get_llm_config
+from app.core.llm_config import get_factory_llm_config
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
@@ -132,7 +132,7 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     architect's call sites (routers, chat flow, pipeline) are untouched.
     Raises on any failure — the caller falls back to keyword drafting.
     """
-    cfg = get_llm_config()
+    cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
     provider = cfg.get("provider")
@@ -145,9 +145,12 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         payload = {
             "model": cfg["model"],
             "messages": messages,
-            "temperature": 0.3,
             "response_format": {"type": "json_object"},
         }
+        # Omit temperature unless explicitly configured: reasoning models
+        # (kimi-k2.x) reject any explicit value other than 1.
+        if cfg.get("temperature") is not None:
+            payload["temperature"] = cfg["temperature"]
         with httpx.Client(timeout=120.0) as client:
             resp = client.post(url, json=payload, headers=headers)
             resp.raise_for_status()
@@ -176,6 +179,13 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 
 def _slug(text: str, default: str = "product") -> str:
     slug = re.sub(r"[^a-z0-9-]+", "-", (text or "").lower())[:48].strip("-")
+    return slug or default
+
+
+def _snake_slug(text: str, default: str = "product") -> str:
+    """Normalize a brief or LLM vertical into lowercase snake_case."""
+    normalized = (text or "").lower().replace(" ", "_").replace("-", "_")
+    slug = re.sub(r"[^a-z0-9_]+", "_", normalized).strip("_")[:48]
     return slug or default
 
 
@@ -220,9 +230,9 @@ def _blueprint_from_llm_payload(
     if not caps:
         raise ValueError("LLM draft produced no usable capabilities")
 
-    vertical = _slug(str(data.get("vertical") or vertical_hint or "product"))
+    vertical = _snake_slug(str(data.get("vertical") or vertical_hint or "product"))
     product_name = str(data.get("product_name", "")).strip()[:120] or vertical.replace(
-        "-", " "
+        "_", " "
     ).title()
 
     raw = {
@@ -262,6 +272,67 @@ def _draft_with_llm(
     return _blueprint_from_llm_payload(data, brief, vertical_hint, dual)
 
 
+# --- Deterministic keyword drafting (offline / canned demo path) --------------
+
+_VERTICAL_FILLER = {
+    "a", "an", "the", "me", "my", "our", "your", "us", "we", "i",
+    "build", "create", "make", "generate", "assemble", "design", "ship",
+    "new", "own", "custom", "secure", "multi", "user", "users", "multiuser",
+    "for", "with", "and", "that", "to", "please", "business", "company",
+    "app", "application", "tool", "solution", "service",
+}
+_VERTICAL_GERUNDS = {"managing", "tracking", "running", "handling", "monitoring"}
+
+
+def _normalize_brief(text: str) -> str:
+    """Normalize common noisy phrases before vertical extraction."""
+    text = (text or "").lower()
+    # "multi users" / "multi user" / "multi-user" → single token
+    text = re.sub(r"\bmulti[-\s]?users?\b", "multi_user", text)
+    return text
+
+
+def _vertical_from_brief(text: str) -> str:
+    """Deterministic vertical extraction from the brief (offline demo quality).
+
+    Tries, in order:
+      1. the descriptor preceding "platform/product/system/portal" (e.g.
+         "inventory management platform" → inventory_management).
+      2. the domain following "platform/product/system/portal for …" (e.g.
+         "platform for my retail business" → retail, when the descriptor is
+         only filler words like "secure multi users").
+    Falls back to "product".
+    """
+    text = _normalize_brief(text)
+
+    def _extract_words(phrase: str) -> list[str]:
+        return [
+            w
+            for w in re.split(r"[\s\-]+", phrase)
+            if w and w not in _VERTICAL_FILLER and w not in _VERTICAL_GERUNDS
+        ]
+
+    # 1) Descriptor before platform
+    m = re.search(
+        r"([a-z0-9][a-z0-9\s\-]{1,60}?)\s+(?:platform|product|system|portal)\b",
+        text,
+    )
+    phrase = m.group(1) if m else ""
+    words = _extract_words(phrase)
+
+    # 2) If the descriptor is all filler, try "platform for [domain]"
+    if not words:
+        m2 = re.search(
+            r"\b(?:platform|product|system|portal)\s+(?:for|that|to)\s+"
+            r"([a-z0-9][a-z0-9\s\-]{1,60}?)(?:\s+(?:with|using|and)\b|$)",
+            text,
+        )
+        phrase = m2.group(1) if m2 else ""
+        words = _extract_words(phrase)
+
+    return "_".join(words[:3]) or "product"
+
+
 # --- Public drafting API ------------------------------------------------------
 
 
@@ -275,61 +346,63 @@ def draft_blueprint_from_brief(
     """Draft a ProductBlueprint from a user brief.
 
     Order of preference:
-    1. Golden steward blueprint for estate briefs (deterministic path).
-    2. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
-       ``use_llm=True``) — fail-safe: any error falls through to (3).
+    1. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
+       ``use_llm=True``) — fail-safe: any error falls through to (2).
+    2. Golden steward blueprint for explicit steward intent ("steward",
+       "private estate", "property readiness", or vertical_hint == "estate")
+       — deterministic fallback after LLM failure.
     3. Deterministic keyword drafting (always works, no keys needed).
     """
-    text = (brief or "").lower()
-    wants_steward = any(
-        k in text for k in ("steward", "estate", "private estate", "property readiness")
-    )
-    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
-        return load_blueprint(steward_golden_path())
-
     if use_llm is None:
         use_llm = llm_drafting_enabled()
     if use_llm:
         try:
             return _draft_with_llm(brief, vertical_hint=vertical_hint)
         except Exception as exc:
-            logger.warning(
-                "LLM drafting failed, falling back to keyword drafting: %s", exc
-            )
+            logger.warning("LLM drafting failed, falling back: %s", exc)
+
+    text = (brief or "").lower()
+    wants_steward = any(
+        k in text for k in ("steward", "private estate", "property readiness")
+    )
+    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
+        return load_blueprint(steward_golden_path())
 
     dual = sorted(dual_registered_ids())
-    # Pick blocks mentioned in the brief; fall back to audit if none
+    # Blocks the brief actually mentions become REUSE capabilities; audit is
+    # always added (governance is cross-cutting) so the demo blueprint never
+    # ships governance-less.
     mentioned = [b for b in dual if b.replace("_", " ") in text or b in text]
-    if not mentioned and "audit" in dual:
-        mentioned = ["audit"]
+    if "audit" in dual and "audit" not in mentioned:
+        mentioned.append("audit")
 
-    vertical = (vertical_hint or "product").replace(" ", "_").lower()
+    vertical = (vertical_hint or _vertical_from_brief(text)).replace(" ", "_").lower()
     product_id = re.sub(r"[^a-z0-9-]+", "-", vertical)[:48].strip("-") or "product"
-    caps = []
-    if mentioned:
-        for bid in mentioned[:8]:
-            caps.append(
-                {
-                    "id": bid,
-                    "description": f"Capability backed by dual-registered block {bid}",
-                    "block_ids": [bid],
-                    "strategy_hint": "REUSE",
-                }
-            )
-    else:
+    product_name = (
+        vertical.replace("_", " ").replace("-", " ").title() + " Platform"
+    ).strip()
+    caps: List[Dict[str, Any]] = [
+        {
+            "id": f"{vertical.replace('-', '_')}_core",
+            "description": f"Core {vertical.replace('_', ' ')} workflows and data model",
+            "block_ids": [],
+            "strategy_hint": "GENERATE",
+        }
+    ]
+    for bid in mentioned[:7]:
         caps.append(
             {
-                "id": "health_surface",
-                "description": "Generated health and capability surface",
-                "block_ids": [],
-                "strategy_hint": "GENERATE",
+                "id": bid,
+                "description": f"{bid.replace('_', ' ').title()} capability (reused from the block store)",
+                "block_ids": [bid],
+                "strategy_hint": "REUSE",
             }
         )
 
     raw = {
         "schema_version": "product_blueprint.v1",
         "product_id": product_id,
-        "product_name": product_id.replace("-", " ").title(),
+        "product_name": product_name,
         "vertical": vertical,
         "summary": brief.strip()[:500] or f"Factory-drafted {vertical} product",
         "factory_scenario": FactoryScenario.CREATE_PRODUCT.value,
