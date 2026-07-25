@@ -265,6 +265,25 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   border-radius: 8px;
   padding: 10px 12px;
 }
+.bp-caps li.bp-cap-excluded {
+  opacity: 0.45;
+}
+.bp-cap-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.bp-cap-pick input[type='checkbox'] {
+  accent-color: var(--gold);
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+.bp-pick-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
 .bp-cap-id {
   font-weight: 600;
   font-size: 14px;
