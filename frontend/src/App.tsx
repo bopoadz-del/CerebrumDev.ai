@@ -416,8 +416,12 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
               },
             ])
           } else if (ev.event === 'generation') {
-            const d = ev.data as { summary?: string } | string
-            const summary = typeof d === 'string' ? d : d?.summary ?? 'Platform generated.'
+            // Same double-encoded payload as 'blueprint': parse before use so
+            // the bubble shows the summary, not the raw JSON blob.
+            const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
+              summary?: string
+            } | null
+            const summary = d?.summary ?? 'Platform generated.'
             setMsgs((m) => [
               ...m.slice(0, -1),
               { role: 'factory', text: summary, card: 'generation' },

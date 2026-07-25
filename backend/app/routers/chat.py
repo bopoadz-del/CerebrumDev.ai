@@ -178,14 +178,18 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
     # explicit commands always enter; free-text intent only when the env gate
     # is on; approvals only when a blueprint is actually pending.
     try:
+        # NOTE on emission: card events (blueprint/generation) already carry
+        # the full summary and the frontend renders it from the card. Do NOT
+        # also word-stream the same summary as `delta` tokens — the UI appends
+        # deltas to the card bubble, which doubled every blueprint text
+        # ("Blueprint drafted... Blueprint drafted..."). `info` has no card
+        # renderer, so info replies stream as deltas only.
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
             result = platform_chat_flow.approve_and_generate(state)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
             yield _sse_event("generation", json.dumps(result))
-            for word in result["summary"].split(" "):
-                yield _sse_event("delta", word + " ")
             yield _sse_event("done", "")
             return
 
@@ -199,7 +203,28 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                     yield _sse_event("blueprint", json.dumps(refined))
                 else:
                     yield _sse_event("info", json.dumps(refined))
-                for word in refined["summary"].split(" "):
+                    for word in refined["summary"].split(" "):
+                        yield _sse_event("delta", word + " ")
+                yield _sse_event("done", "")
+                return
+            if not platform_chat_flow.should_handle_platform_message(user_message):
+                # A blueprint is pending and the message is neither an
+                # approval, a refinement command, nor a new platform brief.
+                # Stay IN the platform flow — falling through to the legacy
+                # kit-chain generator here made a pending retail blueprint
+                # end in "Generated chain failed validation" (the LLM invents
+                # block ids the registry rejects; the refusal is correct, the
+                # routing was not).
+                guidance = (
+                    "A blueprint is drafted and waiting. Say 'approve' to "
+                    "generate it, refine it ('add capability X', 'remove "
+                    "capability X', 'rename product to Y'), or describe a "
+                    "different platform to start over."
+                )
+                state.chat_history.append({"role": "assistant", "content": guidance})
+                state.updated_at = datetime.utcnow()
+                update_session(session_id, state)
+                for word in guidance.split(" "):
                     yield _sse_event("delta", word + " ")
                 yield _sse_event("done", "")
                 return
@@ -210,8 +235,6 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
             yield _sse_event("blueprint", json.dumps(result))
-            for word in result["summary"].split(" "):
-                yield _sse_event("delta", word + " ")
             yield _sse_event("done", "")
             return
     except Exception as exc:  # honest failure, stay in chat
