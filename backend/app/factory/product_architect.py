@@ -142,20 +142,30 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
 
     if provider in ("moonshot", "kimi"):
         url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
-        payload = {
-            "model": cfg["model"],
-            "messages": messages,
-            "response_format": {"type": "json_object"},
-        }
-        # Omit temperature unless explicitly configured: reasoning models
-        # (kimi-k2.x) reject any explicit value other than 1.
-        if cfg.get("temperature") is not None:
-            payload["temperature"] = cfg["temperature"]
-        with httpx.Client(timeout=120.0) as client:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+
+        def _try(m: str) -> Dict[str, Any]:
+            payload = {
+                "model": m,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+            }
+            # Omit temperature unless explicitly configured: reasoning models
+            # (kimi-k2.x) reject any explicit temperature other than 1.
+            if cfg.get("temperature") is not None:
+                payload["temperature"] = cfg["temperature"]
+            with httpx.Client(timeout=120.0) as client:
+                resp = client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                content = resp.json()["choices"][0]["message"]["content"]
+                return json.loads(content)
+
+        try:
+            return _try(cfg["model"])
+        except Exception:
+            fallback = cfg.get("fallback_model")
+            if not fallback or fallback == cfg["model"]:
+                raise
+            return _try(fallback)
 
     raise RuntimeError("No LLM provider configured")
 

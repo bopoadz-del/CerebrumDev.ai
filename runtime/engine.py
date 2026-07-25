@@ -31,7 +31,8 @@ def _profile() -> Dict[str, str]:
     if name != "cloud_api":
         stop.halt("engine_profile_unknown", {"profile": name}, "ENGINE_PROFILE: cloud_api only (Kimi).")
     return {"name": name, "base": _env("CEREBRUM_LLM_BASE_URL") or "https://api.moonshot.cn/v1",
-            "key": _env("CEREBRUM_LLM_API_KEY"), "model": _env("CEREBRUM_LLM_MODEL") or "moonshot-v1-8k"}
+            "key": _env("CEREBRUM_LLM_API_KEY"), "model": _env("CEREBRUM_LLM_MODEL") or "moonshot-v1-8k",
+            "fallback_model": _env("CEREBRUM_LLM_FALLBACK_MODEL") or "kimi-k2.5-code"}
 
 def resolve() -> Engine:
     p = _profile()
@@ -39,8 +40,10 @@ def resolve() -> Engine:
         stop.halt("engine_key_missing", {"profile": p["name"]}, "Set CEREBRUM_LLM_API_KEY for the Kimi engine.")
     def complete(messages: List[Dict[str, str]]) -> str:
         last_err = ""
-        for _ in (1, 2):
-            try: return _chat(p["base"], p["key"], p["model"], messages)
+        for model in (p["model"], p["fallback_model"]):
+            if not model or model == p["model"] and model != p["fallback_model"]:
+                continue
+            try: return _chat(p["base"], p["key"], model, messages)
             except Exception as exc: last_err = str(exc)  # noqa: BLE001
         stop.halt("engine_failed_twice", {"profile": p["name"], "error": last_err}, "Restore engine connectivity, then resume the run.")
         return ""

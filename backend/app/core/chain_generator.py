@@ -147,38 +147,57 @@ async def _call_openai_compatible(
     model: str,
     messages: List[Dict[str, str]],
     temperature: float | None = None,
+    fallback_model: str | None = None,
 ) -> Dict[str, Any]:
-    """Call an OpenAI-compatible Kimi chat completion endpoint."""
+    """Call an OpenAI-compatible Kimi chat completion endpoint.
+
+    If *fallback_model* is provided and the primary call fails, retry once
+    with the fallback model before giving up.
+    """
     url = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "response_format": {"type": "json_object"},
-    }
-    # Omit temperature unless explicitly configured: reasoning models
-    # (kimi-k2.x) reject any explicit value other than 1.
-    if temperature is not None:
-        payload["temperature"] = temperature
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+
+    async def _try(m: str) -> Dict[str, Any]:
+        payload = {
+            "model": m,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        # Omit temperature unless explicitly configured: reasoning models
+        # (kimi-k2.x) reject any explicit temperature other than 1.
+        if temperature is not None:
+            payload["temperature"] = temperature
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            return json.loads(content)
+
+    try:
+        return await _try(model)
+    except Exception:
+        if not fallback_model or fallback_model == model:
+            raise
+        return await _try(fallback_model)
 
 
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the configured Kimi LLM. Returns parsed JSON."""
     cfg = get_llm_config()
     if cfg.get("mock"):
-        raise RuntimeError("LLM mock mode — no network call")
+        raise RuntimeError("LLM mock mode - no network call")
     provider = cfg["provider"]
     if provider in ("moonshot", "kimi"):
         return await _call_openai_compatible(
-            cfg["base_url"], cfg["api_key"], cfg["model"], messages, cfg.get("temperature")
+            cfg["base_url"],
+            cfg["api_key"],
+            cfg["model"],
+            messages,
+            cfg.get("temperature"),
+            cfg.get("fallback_model"),
         )
     raise RuntimeError("No LLM provider configured")
 
