@@ -40,7 +40,8 @@ from .product_architect import (
 # --- Intent detection -------------------------------------------------------
 
 _PLATFORM_INTENT_RE = re.compile(
-    r"\b(build|create|make|generate|assemble|design|spin\s*up|ship)\b"
+    r"\b(build|create|make|generate|assemble|design|spin\s*up|ship|"
+    r"want|need|give\s*me|get\s*me|set\s*up|looking\s+for|i'?d\s+like)\b"
     r"[\w\s,.'\-/:]{0,100}?"
     r"\b(platform|product|system|portal)\b",
     re.IGNORECASE,
