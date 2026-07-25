@@ -133,21 +133,15 @@ def test_gate_failed_twice_halts(workspace, monkeypatch, tmp_path):
     assert len([c for c in calls if "IMPLEMENT" in c]) == 2  # one repair round, then STOP — the law
 
 
-def test_two_engine_profiles_structurally_identical(workspace, monkeypatch, tmp_path):
+def test_cloud_api_engine_profile_runs(workspace, monkeypatch, tmp_path):
     _, product = workspace
-    reports = {}
-    for profile in ("cloud_api", "ollama_cloud"):
-        monkeypatch.setenv("ENGINE_PROFILE", profile)
-        monkeypatch.setenv("OLLAMA_API_KEY", "sk-test")
-        monkeypatch.setenv("RUNTIME_REPORT_DIR", str(tmp_path / f"report-{profile}"))
-        monkeypatch.setattr(eng_mod, "_chat", _script([]))
-        reports[profile] = rt.run(_make_cr(tmp_path / f"cr-{profile}.json"), str(product)).as_dict()
-    a, b = reports["cloud_api"], reports["ollama_cloud"]
-    assert a["engine_profile"] != b["engine_profile"]
-    assert set(a) == set(b)  # same contract — brains differ, law doesn't
-    for key in ("outcome", "files_changed", "deviations"):
-        assert a[key] == b[key]
-    assert len(a["gate_results"]) == len(b["gate_results"])
+    monkeypatch.setenv("ENGINE_PROFILE", "cloud_api")
+    monkeypatch.setenv("CEREBRUM_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("RUNTIME_REPORT_DIR", str(tmp_path / "report-cloud"))
+    monkeypatch.setattr(eng_mod, "_chat", _script([]))
+    rep = rt.run(_make_cr(tmp_path / "cr-cloud.json"), str(product)).as_dict()
+    assert rep["engine_profile"] == "cloud_api"
+    assert rep["outcome"] == "completed"
 
 
 def test_missing_law_halts(workspace, monkeypatch, tmp_path):

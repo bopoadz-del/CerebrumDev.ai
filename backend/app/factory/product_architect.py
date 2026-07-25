@@ -140,7 +140,7 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     if cfg.get("api_key"):
         headers["Authorization"] = f"Bearer {cfg['api_key']}"
 
-    if provider in ("qwen", "moonshot", "kimi"):
+    if provider in ("moonshot", "kimi"):
         url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
         payload = {
             "model": cfg["model"],
@@ -156,23 +156,6 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
             return json.loads(content)
-
-    if provider == "ollama":
-        url = f"{cfg['base_url'].rstrip('/')}/api/chat"
-        payload = {
-            "model": cfg["model"],
-            "messages": messages,
-            "stream": False,
-            "format": "json",
-            "options": {"temperature": 0.3},
-        }
-        with httpx.Client(timeout=300.0) as client:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            content = resp.json().get("message", {}).get("content", "")
-            if not content:
-                raise RuntimeError("Ollama returned empty content")
-            return _extract_json(content)
 
     raise RuntimeError("No LLM provider configured")
 

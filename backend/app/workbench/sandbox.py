@@ -18,9 +18,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from app.workbench.envelope import path_allowed
 
-# Network hosts the workbench may contact (read-only clone / LLM only).
+# Network hosts the workbench may contact (read-only clone / Kimi LLM only).
 DEFAULT_NETWORK_ALLOWLIST = (
-    "ollama.com",
     "api.github.com",
     "github.com",
 )

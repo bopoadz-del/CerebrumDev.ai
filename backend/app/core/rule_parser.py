@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 def parse_rules(rule_texts: List[str]) -> List[Dict[str, str]]:
     """Convert free-text rules into structured rule objects.
 
-    Uses the configured LLM (Qwen, Moonshot, or Ollama) when available;
-    otherwise falls back to the deterministic parser.
+    Uses the configured Kimi LLM when available; otherwise falls back to the
+    deterministic parser.
     """
     if not rule_texts:
         return []
@@ -112,28 +112,8 @@ def _call_openai_sync(base_url: str, api_key: str, model: str, messages: List[Di
         return json.loads(content)
 
 
-def _call_ollama_sync(base_url: str, model: str, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call Ollama /api/chat synchronously."""
-    url = f"{base_url.rstrip('/')}/api/chat"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.1},
-    }
-    with httpx.Client(timeout=300.0) as client:
-        resp = client.post(url, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
-        if not content:
-            raise RuntimeError("Ollama returned empty content")
-        return _extract_json(content)
-
-
 def _parse_with_llm(provider: str, rule_texts: List[str]) -> List[Dict[str, str]]:
-    """Ask the configured LLM to extract trigger/action/snippet for each rule."""
+    """Ask the configured Kimi LLM to extract trigger/action/snippet for each rule."""
     cfg = get_llm_config()
     system_prompt = (
         "You are a business-rule parser. Given a list of free-text rules, "
@@ -147,10 +127,8 @@ def _parse_with_llm(provider: str, rule_texts: List[str]) -> List[Dict[str, str]
         {"role": "user", "content": user_prompt},
     ]
 
-    if provider in ("qwen", "moonshot", "kimi"):
+    if provider in ("moonshot", "kimi"):
         result = _call_openai_sync(cfg["base_url"], cfg["api_key"], cfg["model"], messages)
-    elif provider == "ollama":
-        result = _call_ollama_sync(cfg["base_url"], cfg["model"], messages)
     else:
         return _parse_naive(rule_texts)
 

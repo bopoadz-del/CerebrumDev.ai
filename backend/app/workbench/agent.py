@@ -248,7 +248,7 @@ def run_kimi_cli_agent(
         honesty="KIMI_WORKBENCH_ENABLED=true — attempting CLI; key never committed",
     )
     cli = os.getenv("KIMI_CODE_CLI", "kimi").strip() or "kimi"
-    model = os.getenv("OLLAMA_MODEL", "kimi-k2.7-code:cloud")
+    model = os.getenv("CEREBRUM_FACTORY_LLM_MODEL", "kimi-k2.7-code")
     # The coder's brief: the full delivery standard when the CR carries a
     # domain pack (kimi_prompt.md); otherwise the legacy CR-scoped brief
     # (kimi_prompt.json), honestly labeled.
@@ -269,8 +269,6 @@ def run_kimi_cli_agent(
         }
         sandbox.write_text("candidate/kimi_prompt.json", json.dumps(prompt, indent=2) + "\n")
     try:
-        # Host allowlist check for ollama.com before any network
-        sandbox.assert_host_allowed("ollama.com")
         result = sandbox.run_command(
             [cli, "--version"],
             cwd_relative=".",

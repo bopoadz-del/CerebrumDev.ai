@@ -237,39 +237,22 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
         "CORS_ORIGINS": f"https://{service_name}.onrender.com,http://localhost:5173",
         "CHROMA_PERSIST_DIR": "/app/chroma",
         "LLM_PROVIDER": llm_cfg["provider"],
-        "OLLAMA_URL": os.getenv("OLLAMA_URL", ""),
-        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
-        "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
+        "CEREBRUM_LLM_BASE_URL": llm_cfg["base_url"],
+        "CEREBRUM_LLM_MODEL": llm_cfg["model"],
     }
     # Non-secret LLM configuration is fine to ship; the owner's API key is NOT.
-    if llm_cfg["provider"] == "qwen":
-        env_vars["QWEN_BASE_URL"] = llm_cfg["base_url"]
-        env_vars["QWEN_MODEL"] = llm_cfg["model"]
-    elif llm_cfg["provider"] == "kimi":
-        env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
-        env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
-        env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
+        env_vars["CEREBRUM_LLM_MODEL"] = state.training_job.fine_tuned_model_id
 
     _write_render_yaml(package_root, service_name, env_vars)
 
     dotenv = package_root / ".env"
     dotenv_lines = [f"{key}={value}" for key, value in env_vars.items()]
-    if llm_cfg["provider"] == "qwen":
-        dotenv_lines.append("# QWEN_API_KEY=<owner-supplied>")
-    elif llm_cfg["provider"] == "kimi":
-        dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
+    dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
     dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
 
     readme = package_root / "README.deploy.md"
-    llm_key_note = (
-        "Add your own `QWEN_API_KEY` to the environment."
-        if llm_cfg["provider"] == "qwen"
-        else "Add your own `CEREBRUM_LLM_API_KEY` to the environment."
-        if llm_cfg["provider"] == "kimi"
-        else "Configure the LLM provider key for your chosen provider."
-    )
+    llm_key_note = "Add your own `CEREBRUM_LLM_API_KEY` to the environment."
     readme.write_text(
         f"""# Deploy package for session {session_id}
 

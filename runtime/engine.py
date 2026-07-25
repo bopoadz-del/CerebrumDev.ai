@@ -1,18 +1,9 @@
-"""Engine profiles — the brain is a config line; one function: complete(messages).
-
-All three profiles speak OpenAI-compatible /chat/completions (Ollama local and
-cloud both expose it). One retry on any failure; second failure = STOP.
-"""
+"""Engine profile — one function: complete(messages). Kimi-only cloud_api."""
 from __future__ import annotations
-
-import json
-import os
-import urllib.request
+import json, os, urllib.request
 from dataclasses import dataclass
 from typing import Callable, Dict, List
-
 from . import stop
-
 
 @dataclass(frozen=True)
 class Engine:
@@ -20,44 +11,37 @@ class Engine:
     model: str
     complete: Callable[[List[Dict[str, str]]], str]
 
-
 def _env(*names: str) -> str:
     return next((v for n in names if (v := os.getenv(n, "").strip())), "")
 
-
 def _chat(base_url: str, api_key: str, model: str, messages: List[Dict[str, str]]) -> str:
-    body = json.dumps({"model": model, "messages": messages, "temperature": 0}).encode()
+    payload = {"model": model, "messages": messages}
+    # Omit temperature unless set; reasoning models reject explicit values != 1.
+    if (t := os.getenv("LLM_TEMPERATURE", "").strip()):
+        try: payload["temperature"] = float(t)
+        except ValueError: pass
+    body = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {api_key}"} if api_key else {})}
     req = urllib.request.Request(f"{base_url.rstrip('/')}/chat/completions", data=body, headers=headers, method="POST")
     with urllib.request.urlopen(req, timeout=180) as resp:
         return json.loads(resp.read().decode())["choices"][0]["message"]["content"]
 
-
 def _profile() -> Dict[str, str]:
     name = _env("ENGINE_PROFILE") or "cloud_api"
-    if name == "cloud_api":
-        return {"name": name, "base": _env("CEREBRUM_LLM_BASE_URL", "OPENAI_BASE_URL") or "https://api.openai.com/v1", "key": _env("CEREBRUM_LLM_API_KEY", "OPENAI_API_KEY"), "model": _env("CEREBRUM_LLM_MODEL", "OPENAI_MODEL") or "gpt-4o-mini"}
-    if name == "ollama_cloud":
-        return {"name": name, "base": (_env("OLLAMA_URL") or "https://ollama.com") + "/v1", "key": _env("OLLAMA_API_KEY"), "model": _env("OLLAMA_MODEL") or "kimi-k2.7-code:cloud"}
-    if name == "local_sovereign":
-        return {"name": name, "base": (_env("OLLAMA_URL") or "http://localhost:11434") + "/v1", "key": "", "model": _env("OLLAMA_MODEL") or "qwen3:32b"}
-    stop.halt("engine_profile_unknown", {"profile": name}, "ENGINE_PROFILE: cloud_api | ollama_cloud | local_sovereign.")
-    return {}
-
+    if name != "cloud_api":
+        stop.halt("engine_profile_unknown", {"profile": name}, "ENGINE_PROFILE: cloud_api only (Kimi).")
+    return {"name": name, "base": _env("CEREBRUM_LLM_BASE_URL") or "https://api.moonshot.cn/v1",
+            "key": _env("CEREBRUM_LLM_API_KEY"), "model": _env("CEREBRUM_LLM_MODEL") or "moonshot-v1-8k"}
 
 def resolve() -> Engine:
     p = _profile()
-    if p["name"] != "local_sovereign" and not p["key"]:
-        stop.halt("engine_key_missing", {"profile": p["name"]}, "Set the provider API key env var for this profile.")
-
+    if not p["key"]:
+        stop.halt("engine_key_missing", {"profile": p["name"]}, "Set CEREBRUM_LLM_API_KEY for the Kimi engine.")
     def complete(messages: List[Dict[str, str]]) -> str:
         last_err = ""
-        for _attempt in (1, 2):
-            try:
-                return _chat(p["base"], p["key"], p["model"], messages)
-            except Exception as exc:  # noqa: BLE001 — any failure gets exactly one retry
-                last_err = str(exc)
+        for _ in (1, 2):
+            try: return _chat(p["base"], p["key"], p["model"], messages)
+            except Exception as exc: last_err = str(exc)  # noqa: BLE001
         stop.halt("engine_failed_twice", {"profile": p["name"], "error": last_err}, "Restore engine connectivity, then resume the run.")
         return ""
-
     return Engine(profile=p["name"], model=p["model"], complete=complete)

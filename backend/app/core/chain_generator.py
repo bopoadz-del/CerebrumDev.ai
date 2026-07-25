@@ -148,7 +148,7 @@ async def _call_openai_compatible(
     messages: List[Dict[str, str]],
     temperature: float | None = None,
 ) -> Dict[str, Any]:
-    """Call an OpenAI-compatible chat completion endpoint (Qwen, Moonshot, etc.)."""
+    """Call an OpenAI-compatible Kimi chat completion endpoint."""
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": model,
@@ -170,43 +170,16 @@ async def _call_openai_compatible(
         return json.loads(content)
 
 
-async def _call_ollama(
-    base_url: str, model: str, messages: List[Dict[str, str]], api_key: str = ""
-) -> Dict[str, Any]:
-    """Call a local/remote Ollama server. Returns parsed JSON."""
-    url = f"{base_url.rstrip('/')}/api/chat"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0.3},
-    }
-    headers = {"Content-Type": "application/json"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data.get("message", {}).get("content", "")
-        if not content:
-            raise RuntimeError("Ollama returned empty content")
-        return _extract_json(content)
-
-
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call the configured LLM. Returns parsed JSON."""
+    """Call the configured Kimi LLM. Returns parsed JSON."""
     cfg = get_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
     provider = cfg["provider"]
-    if provider in ("qwen", "moonshot", "kimi"):
+    if provider in ("moonshot", "kimi"):
         return await _call_openai_compatible(
             cfg["base_url"], cfg["api_key"], cfg["model"], messages, cfg.get("temperature")
         )
-    if provider == "ollama":
-        return await _call_ollama(cfg["base_url"], cfg["model"], messages, cfg["api_key"])
     raise RuntimeError("No LLM provider configured")
 
 

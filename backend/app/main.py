@@ -163,8 +163,8 @@ async def ready():
     llm_configured = bool(
         os.getenv("KIMI_API_KEY")
         or os.getenv("CEREBRUM_LLM_API_KEY")
-        or os.getenv("OLLAMA_API_KEY")
-        or os.getenv("QWEN_API_KEY")
+        or os.getenv("CEREBRUM_CHAT_LLM_API_KEY")
+        or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY")
         or os.getenv("LLM_PROVIDER")
         or os.getenv("KIMI_MOCK")
     )
