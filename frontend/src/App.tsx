@@ -155,10 +155,17 @@ function BlueprintCard({
 }: {
   blueprint: NonNullable<ChatMsg['blueprint']>
   busy: boolean
-  onApprove: () => void
+  onApprove: (excludedIds: string[]) => void
   onRefine: (text: string) => void
 }) {
   const caps = blueprint.capabilities ?? []
+  // Tick what you want in the build — not every platform needs every
+  // proposed capability. Unticked ones are removed before generation.
+  const [ticked, setTicked] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(caps.map((c) => [c.id, true])),
+  )
+  const excluded = caps.filter((c) => ticked[c.id] === false).map((c) => c.id)
+  const selectedCount = caps.length - excluded.length
   return (
     <div className="blueprint-card">
       <div className="bp-header">
@@ -167,11 +174,22 @@ function BlueprintCard({
       </div>
       {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
       <h4>Capabilities ({caps.length})</h4>
+      <p className="bp-pick-hint dim">Tick what the platform should include, then approve.</p>
       <ul className="bp-caps">
         {caps.map((c) => (
-          <li key={c.id}>
-            <span className="bp-cap-id">{humanize(c.id)}</span>
-            <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
+          <li key={c.id} className={ticked[c.id] === false ? 'bp-cap-excluded' : ''}>
+            <label className="bp-cap-pick">
+              <input
+                type="checkbox"
+                checked={ticked[c.id] !== false}
+                disabled={busy}
+                onChange={(e) =>
+                  setTicked((t) => ({ ...t, [c.id]: e.target.checked }))
+                }
+              />
+              <span className="bp-cap-id">{humanize(c.id)}</span>
+              <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
+            </label>
             {c.description && <p className="bp-cap-desc">{c.description}</p>}
             {c.block_ids && c.block_ids.length > 0 && (
               <p className="bp-cap-blocks">blocks: {c.block_ids.join(', ')}</p>
@@ -180,8 +198,10 @@ function BlueprintCard({
         ))}
       </ul>
       <div className="card-actions">
-        <button disabled={busy} onClick={onApprove}>
-          Approve &amp; build
+        <button disabled={busy || selectedCount === 0} onClick={() => onApprove(excluded)}>
+          {excluded.length > 0
+            ? `Approve & build (${selectedCount} of ${caps.length})`
+            : 'Approve & build'}
         </button>
       </div>
       <p className="bp-refine-hint">
@@ -381,12 +401,11 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [msgs])
 
-  const send = useCallback(
-    async (text: string) => {
-      const message = text.trim()
-      if (!message || busy) return
-      setInput('')
-      setBusy(true)
+  // Core send without the busy guard — reused by `send` (single message)
+  // and `approveWithSelection` (sequential remove-capability commands +
+  // approve, driven by the blueprint card's checkboxes).
+  const sendCore = useCallback(
+    async (message: string) => {
       setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
       try {
         await chatStream(sessionId, message, (ev: ChatEvent) => {
@@ -447,11 +466,42 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
           ...m.slice(0, -1),
           { role: 'factory', text: e instanceof Error ? e.message : 'chat failed', card: 'error' },
         ])
+      }
+    },
+    [sessionId],
+  )
+
+  const send = useCallback(
+    async (text: string) => {
+      const message = text.trim()
+      if (!message || busy) return
+      setInput('')
+      setBusy(true)
+      try {
+        await sendCore(message)
       } finally {
         setBusy(false)
       }
     },
-    [busy, sessionId],
+    [busy, sendCore],
+  )
+
+  // Blueprint card checkboxes: unticked capabilities are removed from the
+  // pending blueprint (one refine command each), then the build is approved.
+  const approveWithSelection = useCallback(
+    async (excludedIds: string[]) => {
+      if (busy) return
+      setBusy(true)
+      try {
+        for (const id of excludedIds) {
+          await sendCore(`remove capability ${id}`)
+        }
+        await sendCore('approve')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [busy, sendCore],
   )
 
   return (
@@ -469,7 +519,7 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
                 <BlueprintCard
                   blueprint={m.blueprint}
                   busy={busy}
-                  onApprove={() => send('approve')}
+                  onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
                   onRefine={(text) => send(text)}
                 />
               )}
