@@ -602,20 +602,12 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "SECRET_KEY": deploy_api_key,
         "DATA_ENCRYPTION_KEY": deploy_api_key,
         "LLM_PROVIDER": llm_cfg["provider"],
-        "OLLAMA_URL": os.getenv("OLLAMA_URL", ""),
-        "OLLAMA_MODEL": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
-        "QWEN_BASE_URL": os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
-        "QWEN_MODEL": os.getenv("QWEN_MODEL", "qwen-plus"),
+        "CEREBRUM_LLM_BASE_URL": llm_cfg["base_url"],
+        "CEREBRUM_LLM_MODEL": llm_cfg["model"],
     }
     # Non-secret LLM configuration is fine to ship; owner API keys are NOT.
-    if llm_cfg["provider"] == "qwen":
-        env_vars["QWEN_BASE_URL"] = llm_cfg["base_url"]
-        env_vars["QWEN_MODEL"] = llm_cfg["model"]
-    elif llm_cfg["provider"] == "kimi":
-        env_vars["CEREBRUM_LLM_BASE_URL"] = llm_cfg["base_url"]
-        env_vars["CEREBRUM_LLM_MODEL"] = llm_cfg["model"]
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
-        env_vars["OLLAMA_MODEL"] = state.training_job.fine_tuned_model_id
+        env_vars["CEREBRUM_LLM_MODEL"] = state.training_job.fine_tuned_model_id
         if state.training_job.fine_tuned_model_id.startswith("tinker://"):
             env_vars["GROUNDED_ADAPTER_ENABLED"] = "true"
             env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
@@ -624,10 +616,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
             # Owner must supply their own TINKER_API_KEY; never leak the factory key.
 
     dotenv_lines = [f'{key}={value}' for key, value in env_vars.items()]
-    if llm_cfg["provider"] == "qwen":
-        dotenv_lines.append("# QWEN_API_KEY=<owner-supplied>")
-    elif llm_cfg["provider"] == "kimi":
-        dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
+    dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
     if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id and state.training_job.fine_tuned_model_id.startswith("tinker://"):
         dotenv_lines.append("# TINKER_API_KEY=<owner-supplied>")
 

@@ -10,8 +10,8 @@ Two Kimi paths are supported independently:
   - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
   - Fallback: ``CEREBRUM_LLM_*`` then ``KIMI_*``
 
-Both paths are Kimi-only for the Factory milestone; Ollama/Qwen are refused
-for the architect. Legacy ``LLM_PROVIDER`` still works for chat.
+Both paths are Kimi-only.
+Legacy ``LLM_PROVIDER`` still works for chat (kimi/moonshot only).
 """
 
 from __future__ import annotations
@@ -88,14 +88,10 @@ def _detect_provider() -> str:
     """Auto-detect provider from configured credentials.
 
     Prefers the chat-scoped key so a factory-only key does not accidentally
-    turn on chat LLM calls.
+    turn on chat LLM calls. Kimi is the only supported provider.
     """
     if _kimi_key("CEREBRUM_CHAT") or _kimi_key():
         return "kimi"
-    if os.getenv("QWEN_API_KEY"):
-        return "qwen"
-    if os.getenv("OLLAMA_URL"):
-        return "ollama"
     return ""
 
 
@@ -120,26 +116,6 @@ def get_llm_config() -> Dict[str, Any]:
             }
         return cfg
 
-    if provider == "qwen":
-        return {
-            "provider": "qwen",
-            "api_key": os.getenv("QWEN_API_KEY", ""),
-            "base_url": os.getenv(
-                "QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
-            ),
-            "model": os.getenv("QWEN_MODEL", "qwen-plus"),
-            "mock": False,
-        }
-
-    if provider == "ollama":
-        return {
-            "provider": "ollama",
-            "api_key": os.getenv("OLLAMA_API_KEY", ""),
-            "base_url": os.getenv("OLLAMA_URL", ""),
-            "model": os.getenv("OLLAMA_MODEL", "gpt-oss:120b-cloud"),
-            "mock": False,
-        }
-
     return {
         "provider": "",
         "api_key": "",
@@ -151,12 +127,9 @@ def get_llm_config() -> Dict[str, Any]:
 
 
 def get_factory_llm_config() -> Dict[str, Any]:
-    """Factory Product Architect — Kimi only (+ mock for tests).
-
-    Refuses Ollama/Qwen for the Store Manager Loop milestone.
-    """
+    """Factory Product Architect — Kimi only (+ mock for tests)."""
     explicit = os.getenv("LLM_PROVIDER", "").strip().lower()
-    if explicit in {"ollama", "qwen"}:
+    if explicit and explicit not in {"kimi", "moonshot"}:
         return {
             "provider": "",
             "api_key": "",
@@ -164,7 +137,7 @@ def get_factory_llm_config() -> Dict[str, Any]:
             "model": "",
             "mock": False,
             "error": (
-                f"Factory architect is Kimi-only this milestone; "
+                "Factory architect is Kimi-only; "
                 f"LLM_PROVIDER={explicit} is not allowed for product architecture"
             ),
         }

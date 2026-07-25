@@ -355,7 +355,7 @@ docker run -p 8000:8000 cerebrumdev-{state.session_id}
 - `POST /v1/execute`
 - `POST /v1/chat`
 
-Set `OLLAMA_URL` to point to your local Ollama instance for AI chat.
+Set `CEREBRUM_LLM_API_KEY` to your Kimi API key for AI chat.
 """,
         encoding="utf-8",
     )

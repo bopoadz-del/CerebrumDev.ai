@@ -3,7 +3,7 @@
 Gated by ``GROUNDED_ADAPTER_ENABLED`` (env var; default off). When the
 flag is on AND a sampler-weights path is configured, the chat block
 tries this backend first; on any failure it transparently falls back
-to the existing Ollama / llama.cpp path.
+to the Kimi cloud path.
 
 Sampler-weights are *not* the same checkpoint Tinker writes during
 training. The training script saves to ``/weights/...`` ; sampling

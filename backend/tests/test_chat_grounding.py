@@ -79,9 +79,9 @@ class TestGroundedSystemPrompt:
             new=fake_call_llm,
         ), patch(
             "app.core.chain_generator.get_llm_config",
-            return_value={"provider": "ollama", "base_url": "http://x", "model": "m", "api_key": "k"},
+            return_value={"provider": "kimi", "base_url": "http://x", "model": "m", "api_key": "k"},
         ), patch(
-            "app.core.chain_generator.active_provider", return_value="ollama"
+            "app.core.chain_generator.active_provider", return_value="kimi"
         ):
             result = await generate_chain_suggestion(
                 domain="construction",
