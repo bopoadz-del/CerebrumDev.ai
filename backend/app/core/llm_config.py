@@ -57,12 +57,34 @@ def _kimi_model(*prefixes: str) -> str:
     return _env_first(*candidates, default="moonshot-v1-8k")
 
 
+def _kimi_fallback_model(*prefixes: str, default: str) -> str:
+    candidates: List[str] = []
+    for prefix in prefixes:
+        candidates.append(f"{prefix}_LLM_FALLBACK_MODEL")
+    candidates.extend(["KIMI_FALLBACK_MODEL", "CEREBRUM_LLM_FALLBACK_MODEL"])
+    return _env_first(*candidates, default=default)
+
+
 def _kimi_config(*prefixes: str) -> Dict[str, Any]:
     return {
         "provider": "kimi",
         "api_key": _kimi_key(*prefixes),
         "base_url": _kimi_base_url(*prefixes),
         "model": _kimi_model(*prefixes),
+        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
+        "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
+        "temperature": _llm_temperature(),
+    }
+
+
+def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
+    """Factory config with a code-oriented fallback model default."""
+    return {
+        "provider": "kimi",
+        "api_key": _kimi_key(*prefixes),
+        "base_url": _kimi_base_url(*prefixes),
+        "model": _kimi_model(*prefixes),
+        "fallback_model": _kimi_fallback_model(*prefixes, default="kimi-k2.5-code"),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
         "temperature": _llm_temperature(),
     }
@@ -142,7 +164,7 @@ def get_factory_llm_config() -> Dict[str, Any]:
             ),
         }
 
-    cfg = _kimi_config("CEREBRUM_FACTORY")
+    cfg = _factory_kimi_config("CEREBRUM_FACTORY")
     if cfg["mock"]:
         return cfg
     if not cfg["api_key"]:
