@@ -147,7 +147,7 @@ function humanize(id: string): string {
     .replace(/\b\w/g, (ch) => ch.toUpperCase())
 }
 
-function BlueprintCard({
+export function BlueprintCard({
   blueprint,
   busy,
   onApprove,
