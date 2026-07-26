@@ -257,6 +257,12 @@ class ProductGenerator:
             "ENV=development",
             "PYTHONPATH=.",
             "RESIDENT_ENGINEER_ENABLED=false",
+            "",
+            "# Cerebrum-Blocks store — REUSE actions invoke blocks via POST {URL}/v1/execute.",
+            "# Without this the generated actions degrade to DEPENDENCY_REQUIRED (honest),",
+            "# never a fake success.",
+            "# CEREBRUM_API_URL=https://cerebrum-blocks.onrender.com",
+            "# CEREBRUM_API_KEY=",
         ]
         if self.blueprint.vertical == "estate":
             lines += [
@@ -828,7 +834,10 @@ Factory templates / dual-registered blocks — regenerate rather than hand-edit.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List
+
+import httpx
 
 from app.cerebrum_product_kernel.contract.models import (
     ActionEvidence,
@@ -861,15 +870,71 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
         )
         return outcome.to_dict()
 
-    evidence = [
-        ActionEvidence(
-            source_id=bid,
-            filename=f"block:{{bid}}",
-            excerpt=f"Resolved via dual-registered block {{bid}}",
-            metadata={{"strategy": STRATEGY}},
+    # No store block bound (GENERATE strategy): do not claim work was done —
+    # surface honestly rather than returning a templated success.
+    if not BLOCK_IDS:
+        outcome = ActionOutcome(
+            status=ActionStatus.DEPENDENCY_REQUIRED,
+            error_code="no_block_bound",
+            error_message=(
+                "capability " + CAPABILITY_ID + " is strategy " + STRATEGY
+                + " with no dual-registered block to invoke"
+            ),
         )
-        for bid in BLOCK_IDS
-    ]
+        return outcome.to_dict()
+
+    # REUSE: actually invoke each block via the Cerebrum-Blocks store
+    # (POST /v1/execute). Real output, real evidence — never a canned string.
+    store_url = (os.getenv("CEREBRUM_API_URL") or "").rstrip("/")
+    if not store_url:
+        outcome = ActionOutcome(
+            status=ActionStatus.DEPENDENCY_REQUIRED,
+            error_code="store_unconfigured",
+            error_message=(
+                "block store not configured — set CEREBRUM_API_URL to invoke "
+                + repr(BLOCK_IDS) + "; no block was executed"
+            ),
+        )
+        return outcome.to_dict()
+
+    headers = {{"Content-Type": "application/json"}}
+    key = os.getenv("CEREBRUM_API_KEY") or os.getenv("CEREBRUM_API_TOKEN")
+    if key:
+        headers["Authorization"] = "Bearer " + key
+
+    results: Dict[str, Any] = {{}}
+    errors: Dict[str, str] = {{}}
+    evidence = []
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        for bid in BLOCK_IDS:
+            try:
+                resp = await client.post(
+                    store_url + "/v1/execute",
+                    json={{"block": bid, "input": arguments or {{}}, "params": {{}}}},
+                    headers=headers,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                results[bid] = data
+                evidence.append(
+                    ActionEvidence(
+                        source_id=bid,
+                        filename="block:" + bid,
+                        excerpt=str(data.get("result", data))[:280],
+                        metadata={{"strategy": STRATEGY, "invoked": True}},
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                errors[bid] = type(exc).__name__ + ": " + str(exc)
+
+    if not results:
+        outcome = ActionOutcome(
+            status=ActionStatus.EXECUTION_ERROR,
+            error_code="block_invocation_failed",
+            error_message="all blocks failed: " + repr(errors),
+        )
+        return outcome.to_dict()
+
     output = {{
         "action_id": ACTION_ID,
         "capability_id": CAPABILITY_ID,
@@ -879,8 +944,9 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
         "tenant_id": tenant_id,
         "result": {{
             "ok": True,
-            "summary": f"{{CAPABILITY_ID}} executed via Factory template ({{STRATEGY}})",
-            "blocks_used": BLOCK_IDS,
+            "blocks_used": list(results.keys()),
+            "block_results": results,
+            "block_errors": errors or None,
         }},
     }}
     outcome = ActionOutcome.success(output, evidence=evidence)
