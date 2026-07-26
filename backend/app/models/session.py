@@ -37,18 +37,6 @@ class DeploymentResult(BaseModel):
     package_path: Optional[str] = None
 
 
-class TrainingJob(BaseModel):
-    provider: str = "tinker"
-    job_id: str = ""
-    status: Literal["queued", "running", "completed", "failed", "cancelled"] = "queued"
-    fine_tuned_model_id: Optional[str] = None
-    progress: float = 0.0
-    error: Optional[str] = None
-    dataset_size: int = 0
-    started_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
 class ProductDesignState(BaseModel):
     """In-session product architecture (Factory Design Product mode)."""
 
@@ -85,10 +73,6 @@ class SessionState(BaseModel):
     container_modified_path: Optional[str] = None
     validation_passed: bool = False
     chain_quality: Optional[Dict[str, Any]] = None
-    # Phase 4: Tinker – user-provided Q&A pairs for fine-tuning
-    training_data: List[Dict[str, str]] = Field(default_factory=list)
-    training_job: TrainingJob = Field(default_factory=TrainingJob)
-    training_enabled: bool = True
     # Phase 5: deploy / ship
     deployment: DeploymentResult = Field(default_factory=DeploymentResult)
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -79,8 +79,7 @@ Error tracking and performance are wired on both tiers and activate by DSN:
   universal kernel); the factory never ships unregistered blocks.
 - **Resident Engineer** — each generated platform carries its resident
   engineer charter (observe/diagnose/repair under human authority).
-- **Reasoning layer** — chain generation, rule injection, grounded-adapter
-  training hooks (Tinker) for platforms that opt in.
+- **Reasoning layer** — chain generation, rule injection.
 
 ## Development
 

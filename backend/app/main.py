@@ -17,7 +17,6 @@ from .routers import (
     upload,
     chat,
     deploy,
-    train,
     factory_drive,
     product_factory,
     session_product,
@@ -60,7 +59,6 @@ app.include_router(domains.router, prefix="/v1/domains", tags=["domains"], depen
 app.include_router(upload.router, prefix="/v1/sessions", tags=["upload"], dependencies=[Depends(require_api_key)])
 app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"], dependencies=[Depends(require_api_key)])
 app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], dependencies=[Depends(require_api_key)])
-app.include_router(train.router, prefix="/v1/sessions", tags=["training"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.callback_router)
 # Factory runs are paid actions: require_entitled blocks expired trials with

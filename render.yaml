@@ -51,22 +51,6 @@ services:
       # Factory Product Architect / platform CLI path.
       - key: CEREBRUM_FACTORY_LLM_MODEL
         value: kimi-k2.7-code
-      - key: TINKER_API_KEY
-        sync: false
-      - key: TINKER_BASE_MODEL
-        value: Qwen/Qwen2.5-7B-Instruct
-      - key: TINKER_LORA_RANK
-        value: "16"
-      - key: TINKER_BATCH_SIZE
-        value: "4"
-      - key: TINKER_MAX_STEPS
-        value: "10"
-      - key: GROUNDED_ADAPTER_ENABLED
-        value: "false"
-      - key: GROUNDED_ADAPTER_REWRITE_PASS
-        value: "false"
-      - key: GROUNDED_ADAPTER_TIMEOUT
-        value: "60"
       - key: MARKER_ENABLED
         value: "false"
       - key: CHROMA_PERSIST_DIR

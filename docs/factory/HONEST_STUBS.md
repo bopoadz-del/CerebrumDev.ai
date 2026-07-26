@@ -19,7 +19,7 @@ Last audited against live `cerebrumdev-backend` / `cerebrumdev-frontend` (API ma
 
 | Flow | Honest state |
 |------|----------------|
-| **Fine-tune (Tinker)** | Real when ≥10 Q&A pairs + `TINKER_API_KEY`. UI has **Skip Fine-Tuning**. Deploy no longer requires training completion. |
+| **Fine-tune** | Removed. Platforms deploy without a fine-tuning step. |
 | **Google Drive connector** | API real when `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` set; otherwise status shows **not configured** (UI panel). Connect returns 503 until env is set. |
 | **Cloud Render deploy** | Packager real; live Render ship needs Render credentials on the service. |
 
@@ -40,7 +40,6 @@ Emitted by Factory generator into product repos (e.g. Steward):
 | Capability | Where it lives |
 |------------|----------------|
 | Domains RAG dry-run / ingestion APIs | `/v1/domains/...` API only |
-| Train cancel `DELETE …/train` | API only |
 | Standalone `/v1/factory/product/*` draft/plan/generate | API only (session Design Product covers UX) |
 | Orphan `ChatChainGenerator.tsx` | Unused duplicate — do not mount |
 

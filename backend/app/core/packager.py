@@ -241,8 +241,6 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
         "CEREBRUM_LLM_MODEL": llm_cfg["model"],
     }
     # Non-secret LLM configuration is fine to ship; the owner's API key is NOT.
-    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
-        env_vars["CEREBRUM_LLM_MODEL"] = state.training_job.fine_tuned_model_id
 
     _write_render_yaml(package_root, service_name, env_vars)
 

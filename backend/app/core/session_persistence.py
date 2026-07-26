@@ -38,10 +38,9 @@ def _backup_path(session_id: str) -> Path:
 def save_session_state(state: SessionState) -> None:
     """Atomically persist a versioned snapshot of *state* to disk.
 
-    Persist chat_history and training_data so restarts preserve conversational
-    context and fine-tuning data. chat_history is capped to
-    ``MAX_PERSISTED_CHAT_MESSAGES`` entries. Keeps the previous snapshot as
-    ``state.json.bak`` for recovery.
+    Persist chat_history so restarts preserve conversational context.
+    chat_history is capped to ``MAX_PERSISTED_CHAT_MESSAGES`` entries. Keeps
+    the previous snapshot as ``state.json.bak`` for recovery.
     """
     try:
         snapshot = state.model_dump(mode="json")
@@ -69,10 +68,9 @@ def save_session_state(state: SessionState) -> None:
 def load_session_state(session_id: str) -> Optional[SessionState]:
     """Load a session snapshot from disk.
 
-    Supports both version 1 (chat_history/training_data excluded) and version 2
-    snapshots. Missing fields fall back to Pydantic defaults. Returns ``None``
-    if no snapshot exists, the version is unsupported, or the file is corrupt.
-    Falls back to ``state.json.bak`` if the main file is bad.
+    Supports versioned snapshots. Missing fields fall back to Pydantic defaults.
+    Returns ``None`` if no snapshot exists, the version is unsupported, or the
+    file is corrupt. Falls back to ``state.json.bak`` if the main file is bad.
     """
     state_path = _state_path(session_id)
     backup_path = _backup_path(session_id)

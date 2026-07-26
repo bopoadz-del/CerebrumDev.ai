@@ -1,42 +1,12 @@
 import logging
 import os
-from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 
 from ..models.session import SessionState, UploadResult
 from .session_persistence import load_session_state, save_session_state
 
 logger = logging.getLogger(__name__)
-
 _session_store: Dict[str, SessionState] = {}
-
-TRAINING_MAX_RUNTIME_S = int(os.getenv("TRAINING_MAX_RUNTIME_S", "7200"))
-
-
-def _apply_training_watchdog(state: SessionState) -> bool:
-    """Fail a stale running training job and return True if a change was made."""
-    job = state.training_job
-    if job.status != "running" or not job.started_at:
-        return False
-
-    # started_at may be a datetime or an ISO string after snapshot reload.
-    if isinstance(job.started_at, str):
-        try:
-            started = datetime.fromisoformat(job.started_at.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-    else:
-        started = job.started_at
-
-    if started.tzinfo is None:
-        started = started.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
-    if (now - started).total_seconds() > TRAINING_MAX_RUNTIME_S:
-        job.status = "failed"
-        job.error = "exceeded max runtime or interrupted by restart"
-        job.updated_at = now.replace(tzinfo=None)
-        return True
-    return False
 
 
 def create_session(session_id: str, user_id: str) -> SessionState:
@@ -92,8 +62,6 @@ def get_session(session_id: str) -> Optional[SessionState]:
     """Return session state from memory, disk snapshot, or ChromaDB."""
     state = _session_store.get(session_id)
     if state is not None:
-        if _apply_training_watchdog(state):
-            save_session_state(state)
         return state
 
     # Try the persisted JSON snapshot first.
@@ -101,8 +69,6 @@ def get_session(session_id: str) -> Optional[SessionState]:
     if state is not None:
         _session_store[session_id] = state
         logger.info("Restored session %s from disk snapshot", session_id)
-        if _apply_training_watchdog(state):
-            save_session_state(state)
         return state
 
     # Snapshot missing; try to rebuild from vector index alone.

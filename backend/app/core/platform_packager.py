@@ -606,19 +606,9 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
         "CEREBRUM_LLM_MODEL": llm_cfg["model"],
     }
     # Non-secret LLM configuration is fine to ship; owner API keys are NOT.
-    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id:
-        env_vars["CEREBRUM_LLM_MODEL"] = state.training_job.fine_tuned_model_id
-        if state.training_job.fine_tuned_model_id.startswith("tinker://"):
-            env_vars["GROUNDED_ADAPTER_ENABLED"] = "true"
-            env_vars["GROUNDED_ADAPTER_TINKER_PATH"] = state.training_job.fine_tuned_model_id
-            env_vars.setdefault("GROUNDED_ADAPTER_REWRITE_PASS", "false")
-            env_vars.setdefault("GROUNDED_ADAPTER_TIMEOUT", "60")
-            # Owner must supply their own TINKER_API_KEY; never leak the factory key.
 
     dotenv_lines = [f'{key}={value}' for key, value in env_vars.items()]
     dotenv_lines.append("# CEREBRUM_LLM_API_KEY=<owner-supplied>")
-    if state.training_job.status == "completed" and state.training_job.fine_tuned_model_id and state.training_job.fine_tuned_model_id.startswith("tinker://"):
-        dotenv_lines.append("# TINKER_API_KEY=<owner-supplied>")
 
     dotenv = package_root / ".env"
     dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")

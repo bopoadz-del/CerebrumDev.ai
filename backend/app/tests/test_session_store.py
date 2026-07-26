@@ -78,21 +78,18 @@ async def test_embedding_meta_persists_in_snapshot():
 async def test_large_fields_persisted_in_snapshot():
     state = session_store.create_session("sess_large", "u3")
     state.chat_history = [{"role": "user", "content": "hello"}]
-    state.training_data = [{"question": "q", "answer": "a"}]
     session_store.update_session("sess_large", state)
 
-    # Snapshot should now contain the previously-excluded fields.
+    # Snapshot should contain chat_history.
     snapshot_path = _state_path("sess_large")
     assert snapshot_path.exists()
     text = snapshot_path.read_text(encoding="utf-8")
     assert "chat_history" in text
-    assert "training_data" in text
 
     # Restored state should preserve the persisted values.
     session_store._session_store.clear()
     restored = session_store.get_session("sess_large")
     assert restored.chat_history == state.chat_history
-    assert restored.training_data == state.training_data
 
 
 @pytest.mark.asyncio
@@ -144,13 +141,10 @@ async def test_unknown_version_is_skipped():
 
 
 @pytest.mark.asyncio
-async def test_chat_history_and_training_data_restored_after_restart():
+async def test_chat_history_restored_after_restart():
     state = session_store.create_session("sess_restore", "u7")
     state.chat_history = [
         {"role": "user", "content": f"message {i}"} for i in range(5)
-    ]
-    state.training_data = [
-        {"question": f"q{i}", "answer": f"a{i}"} for i in range(3)
     ]
     session_store.update_session("sess_restore", state)
 
@@ -158,7 +152,6 @@ async def test_chat_history_and_training_data_restored_after_restart():
     restored = session_store.get_session("sess_restore")
     assert restored is not None
     assert restored.chat_history == state.chat_history
-    assert restored.training_data == state.training_data
 
 
 @pytest.mark.asyncio
@@ -186,7 +179,7 @@ async def test_chat_history_capped_to_max_persisted_messages(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_version_1_snapshot_loads_with_defaults():
-    """A version-1 snapshot missing chat_history/training_data loads successfully."""
+    """A version-1 snapshot missing chat_history loads successfully."""
     session_dir = _state_path("sess_v1").parent
     session_dir.mkdir(parents=True, exist_ok=True)
     version_1 = {
@@ -206,4 +199,3 @@ async def test_version_1_snapshot_loads_with_defaults():
     assert restored.session_id == "sess_v1"
     assert restored.user_id == "u9"
     assert restored.chat_history == []
-    assert restored.training_data == []
