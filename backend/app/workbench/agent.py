@@ -235,6 +235,34 @@ def run_factory_regenerator_stub(
     }
 
 
+def _ensure_mutation_summary(
+    sandbox: WorkbenchSandbox,
+    envelope: Dict[str, Any],
+) -> None:
+    """Write a minimal mutation.json if the CLI left none.
+
+    The gates/packager read mutation.json for metadata, but the real blueprint
+    diff is computed separately by the candidate builder. This keeps the CLI
+    path honest: we record what the CLI was asked to do, not what we hope it did.
+    """
+    mutation_path = sandbox.workspace / "candidate" / "mutation.json"
+    if mutation_path.is_file():
+        return
+    request = envelope.get("request") or {}
+    kind = request.get("kind")
+    summary = f"{kind} — materialized by Kimi CLI"
+    mutation = {
+        "kind": kind,
+        "product_dna_version": "1.0.0",
+        "pin_versions": {},
+        "blueprint": None,
+        "summary": summary,
+        "agent": "kimi_cli",
+        "honesty": "CLI-edited workspace; mutation summary only — real diff computed from blueprint/",
+    }
+    sandbox.write_text("candidate/mutation.json", json.dumps(mutation, indent=2, sort_keys=True) + "\n")
+
+
 def run_kimi_cli_agent(
     sandbox: WorkbenchSandbox,
     *,
@@ -257,6 +285,7 @@ def run_kimi_cli_agent(
     if standard is not None:
         brief_mode = "delivery_standard"
         sandbox.write_text("candidate/kimi_prompt.md", standard)
+        prompt_arg = "@candidate/kimi_prompt.md"
     else:
         prompt = {
             "instruction": (
@@ -268,6 +297,7 @@ def run_kimi_cli_agent(
             "request": envelope.get("request"),
         }
         sandbox.write_text("candidate/kimi_prompt.json", json.dumps(prompt, indent=2) + "\n")
+        prompt_arg = "@candidate/kimi_prompt.json"
     try:
         result = sandbox.run_command(
             [cli, "--version"],
@@ -284,25 +314,59 @@ def run_kimi_cli_agent(
                 "kimi_error": "cli_unavailable",
                 "brief_mode": brief_mode,
             }
-        # Honest: full interactive Kimi coding session is env-specific; record intent
-        # and still produce candidate via regenerator so the pipeline is testable.
+
+        # Preflight passed — run the actual coding session inside the sandbox.
         sandbox.log(
             "kimi_cli_present",
             model=model,
             brief_mode=brief_mode,
-            note="CLI detected; candidate still produced via regenerator for deterministic gates",
+            note="CLI detected; invoking real coding session on the brief",
         )
-        out = run_factory_regenerator_stub(
-            sandbox, envelope=envelope, product_root=product_root
+        cmd = [
+            cli,
+            "--prompt",
+            prompt_arg,
+            "--add-dir",
+            ".",
+            "--yolo",
+            "--auto",
+        ]
+        # Reserve a little time for post-CLI bookkeeping.
+        session_timeout = max(30, sandbox.timeout_seconds - 30)
+        cli_result = sandbox.run_command(
+            cmd,
+            cwd_relative=".",
+            timeout=session_timeout,
         )
-        out["backend"] = "kimi_cli+factory_regenerator"
-        out["kimi_model"] = model
-        out["brief_mode"] = brief_mode
-        out["honesty"] = (
-            "Kimi CLI present; candidate materialization uses Factory regenerator "
-            "so packager path stays deterministic"
-        )
-        return out
+        if cli_result.get("returncode") != 0:
+            sandbox.log(
+                "kimi_cli_session_failed",
+                returncode=cli_result.get("returncode"),
+                stderr_tail=cli_result.get("stderr_tail"),
+            )
+            return {
+                **run_factory_regenerator_stub(
+                    sandbox, envelope=envelope, product_root=product_root
+                ),
+                "kimi_fallback": True,
+                "kimi_error": "cli_session_failed",
+                "brief_mode": brief_mode,
+                "cli_returncode": cli_result.get("returncode"),
+            }
+
+        _ensure_mutation_summary(sandbox, envelope)
+        return {
+            "backend": "kimi_cli",
+            "kimi_model": model,
+            "brief_mode": brief_mode,
+            "honesty": (
+                "Kimi CLI invoked on the brief; candidate diff computed from "
+                "blueprint/ workspace changes by the Factory packager"
+            ),
+            "summary": f"{envelope.get('kind')} — Kimi CLI session completed",
+            "product_dna_version": "1.0.0",
+            "pin_versions": {},
+        }
     except FileNotFoundError:
         sandbox.log("kimi_cli_missing")
         out = run_factory_regenerator_stub(

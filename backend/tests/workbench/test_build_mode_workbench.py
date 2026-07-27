@@ -14,6 +14,7 @@ from app.change_requests.queue import ChangeRequestQueue
 from app.factory.blueprint import load_blueprint
 from app.factory.generator import ProductGenerator
 from app.product_dna.emit import verify_checksum_manifest
+from app.workbench.agent import run_kimi_cli_agent
 from app.workbench.candidate import verify_candidate_checksum
 from app.workbench.envelope import build_task_envelope, load_verified_dna, path_allowed
 from app.workbench.promote import PromotionRejected, promote_via_packager
@@ -208,3 +209,56 @@ def test_envelope_checksum_stable(tmp_path):
     )
     assert env["envelope_checksum"]
     assert "production_deploy" in env["mutable"]["forbidden"]
+
+
+def test_kimi_cli_invoked_with_prompt_and_workspace(monkeypatch, tmp_path):
+    """When KIMI_WORKBENCH_ENABLED is true, the agent must pass the brief to the
+    Kimi CLI inside the sandbox workspace — not only run --version and fall back.
+    """
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
+    monkeypatch.setenv("KIMI_CODE_CLI", "kimi")
+
+    product = _steward_product(tmp_path)
+    dna = load_verified_dna(product)
+    req = {
+        "request_id": "r1",
+        "kind": "EXPANSION",
+        "product_id": "cerebrum-steward",
+        "dna_version": "1.0.0",
+        "expansion": {"capability": "x", "block_id": "audit"},
+    }
+    envelope = build_task_envelope(
+        request=req,
+        dry_run={"acceptance_gates_to_rerun": ["dna_checksum_verify"], "would_change": []},
+        dna_bundle=dna,
+        workspace_root=tmp_path / "ws",
+        product_root=product,
+    )
+    sandbox = WorkbenchSandbox("kimi-cli-test")
+    calls = []
+
+    def fake_run_command(argv, *, cwd_relative=".", timeout=None):
+        calls.append({"argv": list(argv), "cwd": cwd_relative})
+        if argv[1:] == ["--version"]:
+            return {"returncode": 0, "stdout_tail": "kimi 1.0.0", "stderr_tail": ""}
+        # Simulate Kimi editing the blueprint in the workspace.
+        bp_path = sandbox.workspace / "blueprint" / "product_blueprint.yaml"
+        if bp_path.is_file():
+            text = bp_path.read_text(encoding="utf-8")
+            bp_path.write_text(text + "\n# edited by kimi\n", encoding="utf-8")
+        return {"returncode": 0, "stdout_tail": "done", "stderr_tail": ""}
+
+    monkeypatch.setattr(sandbox, "run_command", fake_run_command)
+
+    result = run_kimi_cli_agent(sandbox, envelope=envelope, product_root=product)
+
+    # Must invoke the CLI with the prompt file and the workspace, not only --version.
+    non_version = [c for c in calls if c["argv"][1:] != ["--version"]]
+    assert len(non_version) >= 1, f"expected a real CLI invocation, got {calls}"
+    real = non_version[0]
+    assert "--prompt" in real["argv"], f"missing --prompt in {real['argv']}"
+    prompt_index = real["argv"].index("--prompt")
+    prompt_arg = real["argv"][prompt_index + 1]
+    assert "kimi_prompt" in prompt_arg, f"expected prompt file arg, got {prompt_arg}"
+    assert "--add-dir" in real["argv"], f"missing --add-dir in {real['argv']}"
+    assert result.get("backend") != "factory_regenerator_stub"
