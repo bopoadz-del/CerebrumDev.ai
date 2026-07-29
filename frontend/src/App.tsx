@@ -509,6 +509,15 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
       <header className="page-head">
         <h2>Factory Floor</h2>
         <p className="dim">Tell the factory what to build. The architect drafts, you approve, the generator ships.</p>
+        <p className="dim notice-not-yet">
+          What this is not yet: the factory generates a working prototype — real code,
+          tests and deploy files — not a finished production system. Third-party
+          integrations in generated products are stubs until you connect your own
+          credentials, deployment is a step you run rather than something that happens
+          for you, and free-trial accounts have server-enforced caps on generations,
+          daily chat and exports. Answers are grounding-checked: when a claim can't be
+          verified it is withheld, not invented.
+        </p>
       </header>
       <div className="chat-scroll">
         {msgs.map((m, i) => (

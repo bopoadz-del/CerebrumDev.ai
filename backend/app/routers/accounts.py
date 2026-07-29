@@ -95,6 +95,16 @@ async def register(body: RegisterBody, request: Request):
         "login_token": login_token,
         "verification": verification,
         "billing": billing.billing_status(account["account_id"]),
+        "what_this_is_not_yet": (
+            "The factory generates a working prototype — real code, tests and "
+            "deploy files — not a finished production system. Third-party "
+            "integrations in generated products are stubs until you connect "
+            "your own credentials, deployment is a step you run rather than "
+            "something that happens for you, and free-trial accounts have "
+            "server-enforced caps on generations, daily chat and exports. "
+            "Answers are grounding-checked: when a claim can't be verified it "
+            "is withheld, not invented."
+        ),
     }
 
 

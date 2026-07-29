@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import Principal, require_api_key
 from app.core.session_store import get_session, update_session
+from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
 from app.factory.paths import factory_repo_root
@@ -69,6 +70,16 @@ def _session_output(session_id: str, product_id: str) -> Path:
     return root / "factory_outputs" / "sessions" / session_id / product_id
 
 
+def _enforce_export_quota(account_id: Optional[str]) -> None:
+    """Server-side trial boundary: exports are metered per account."""
+    require_within_limit(account_id, "export")
+
+
+def _enforce_generation_quota(account_id: Optional[str]) -> None:
+    """Server-side trial boundary: generations are metered per account."""
+    require_within_limit(account_id, "generation")
+
+
 @router.get("/{session_id}/product")
 def get_product_design(
     session_id: str, principal: Principal = Depends(require_api_key)
@@ -100,6 +111,7 @@ def download_product_package(
 ) -> FileResponse:
     """Export the generated platform as a zip — the factory's deliverable."""
     state = _require_session(session_id, principal)
+    _enforce_export_quota(principal.account_id)
     gen = state.product_design.generation
     if not gen or not gen.get("output_dir"):
         raise HTTPException(
@@ -215,6 +227,7 @@ def generate_approved_product(
     principal: Principal = Depends(require_api_key),
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
+    _enforce_generation_quota(principal.account_id)
     body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")
