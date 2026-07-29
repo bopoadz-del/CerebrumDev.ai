@@ -105,7 +105,12 @@ def test_sandbox_escape_refused_and_logged(tmp_path):
     assert any(e.get("event") == "boundary_refused" for e in sandbox.transcript)
 
 
-def test_store_write_impossible(tmp_path):
+def test_store_write_impossible(tmp_path, monkeypatch):
+    # Seed the forbidden keys so their absence is proven scrubbing, not
+    # a vacuously-true assertion about an env that never had them.
+    monkeypatch.setenv("RENDER_API_KEY", "seeded")
+    monkeypatch.setenv("GITHUB_TOKEN", "seeded")
+    monkeypatch.setenv("STORE_WRITE_TOKEN", "seeded")
     sandbox = WorkbenchSandbox("store-test")
     env = sandbox.scrubbed_env()
     assert "RENDER_API_KEY" not in env
