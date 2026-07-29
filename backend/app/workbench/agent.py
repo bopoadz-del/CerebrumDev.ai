@@ -30,6 +30,22 @@ class AgentError(RuntimeError):
     """Agent failed inside the sandbox."""
 
 
+class KimiCliError(AgentError):
+    """Kimi CLI path failed while KIMI_WORKBENCH_ENABLED=true — fail loudly.
+
+    Never silently substituted by the deterministic stub: a caller who asked
+    for the CLI must see the CLI failure, not a stub success envelope.
+    """
+
+    def __init__(self, kimi_error: str, *, cli_returncode: Optional[int] = None):
+        detail = f"kimi_cli_failed: {kimi_error}"
+        if cli_returncode is not None:
+            detail += f" (returncode={cli_returncode})"
+        super().__init__(detail)
+        self.kimi_error = kimi_error
+        self.cli_returncode = cli_returncode
+
+
 def _bump_patch(version: str) -> str:
     parts = str(version or "1.0.0").split(".")
     while len(parts) < 3:
@@ -269,7 +285,8 @@ def run_kimi_cli_agent(
     envelope: Dict[str, Any],
     product_root: Path,
 ) -> Dict[str, Any]:
-    """Invoke Kimi Code CLI when enabled. Falls back to stub if CLI unavailable."""
+    """Invoke Kimi Code CLI when enabled. Fails loudly if the CLI is unavailable;
+    the deterministic stub is only ever used when KIMI_WORKBENCH_ENABLED=false."""
     sandbox.log(
         "agent_start",
         backend="kimi_cli",
@@ -306,14 +323,7 @@ def run_kimi_cli_agent(
         )
         if result.get("returncode") != 0:
             sandbox.log("kimi_cli_unavailable", detail=result.get("stderr_tail"))
-            return {
-                **run_factory_regenerator_stub(
-                    sandbox, envelope=envelope, product_root=product_root
-                ),
-                "kimi_fallback": True,
-                "kimi_error": "cli_unavailable",
-                "brief_mode": brief_mode,
-            }
+            raise KimiCliError("cli_unavailable", cli_returncode=result.get("returncode"))
 
         # Preflight passed — run the actual coding session inside the sandbox.
         sandbox.log(
@@ -322,14 +332,14 @@ def run_kimi_cli_agent(
             brief_mode=brief_mode,
             note="CLI detected; invoking real coding session on the brief",
         )
+        # --prompt implies auto permission mode; --yolo/--auto are mutually
+        # exclusive with it and the real CLI rejects the combination at startup.
         cmd = [
             cli,
             "--prompt",
             prompt_arg,
             "--add-dir",
             ".",
-            "--yolo",
-            "--auto",
         ]
         # Reserve a little time for post-CLI bookkeeping.
         session_timeout = max(30, sandbox.timeout_seconds - 30)
@@ -344,15 +354,9 @@ def run_kimi_cli_agent(
                 returncode=cli_result.get("returncode"),
                 stderr_tail=cli_result.get("stderr_tail"),
             )
-            return {
-                **run_factory_regenerator_stub(
-                    sandbox, envelope=envelope, product_root=product_root
-                ),
-                "kimi_fallback": True,
-                "kimi_error": "cli_session_failed",
-                "brief_mode": brief_mode,
-                "cli_returncode": cli_result.get("returncode"),
-            }
+            raise KimiCliError(
+                "cli_session_failed", cli_returncode=cli_result.get("returncode")
+            )
 
         _ensure_mutation_summary(sandbox, envelope)
         return {
@@ -367,15 +371,9 @@ def run_kimi_cli_agent(
             "product_dna_version": "1.0.0",
             "pin_versions": {},
         }
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         sandbox.log("kimi_cli_missing")
-        out = run_factory_regenerator_stub(
-            sandbox, envelope=envelope, product_root=product_root
-        )
-        out["kimi_fallback"] = True
-        out["kimi_error"] = "cli_not_found"
-        out["brief_mode"] = brief_mode
-        return out
+        raise KimiCliError("cli_not_found") from exc
 
 
 def run_agent(

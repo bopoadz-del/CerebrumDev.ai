@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.change_requests.queue import ChangeRequestQueue
-from app.workbench.agent import run_agent
+from app.workbench.agent import AgentError, KimiCliError, run_agent
 from app.workbench.audit import audit_event
 from app.workbench.candidate import build_candidate_artifact
 from app.workbench.envelope import EnvelopeError, build_task_envelope, load_verified_dna
@@ -133,7 +133,15 @@ def run_workbench_session(
         candidate = build_candidate_artifact(
             sandbox, agent_result=agent_result, product_root=root
         )
-    except (SandboxViolation, SandboxTimeout, EnvelopeError) as exc:
+    except (SandboxViolation, SandboxTimeout, EnvelopeError, AgentError) as exc:
+        gate_report: Dict[str, Any] = {
+            "passed": False,
+            "error": str(exc),
+            "honesty": "session died loudly",
+        }
+        if isinstance(exc, KimiCliError):
+            gate_report["kimi_error"] = exc.kimi_error
+            gate_report["cli_returncode"] = exc.cli_returncode
         q.update_state(
             request_id,
             "gate_failed",
@@ -143,14 +151,15 @@ def run_workbench_session(
                 "status": "failed",
                 "error": str(exc),
             },
-            gate_report={"passed": False, "error": str(exc), "honesty": "session died loudly"},
+            gate_report=gate_report,
             audit_append=audit_event(
                 "workbench_failed",
                 summary=str(exc),
                 details={"session_id": session_id, "transcript_tail": sandbox.transcript[-5:]},
             ),
         )
-        raise WorkbenchRejected(str(exc)) from exc
+        status = 502 if isinstance(exc, KimiCliError) else 400
+        raise WorkbenchRejected(str(exc), status_code=status) from exc
 
     item = q.update_state(
         request_id,
