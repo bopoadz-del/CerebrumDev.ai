@@ -1,0 +1,52 @@
+"""Health must report evaluated capability, not configuration."""
+
+import pytest
+
+import app.main as main
+
+
+@pytest.mark.asyncio
+async def test_health_kimi_flag_without_binary_is_not_capability(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
+    monkeypatch.setenv("KIMI_CODE_CLI", str(tmp_path / "no-such-kimi"))
+
+    body = await main.health()
+    assert body["kimi_workbench_enabled"] is False, (
+        "flag=true with no binary must not be reported as capability"
+    )
+    probe = body["kimi_workbench"]
+    assert probe["flag_enabled"] is True
+    assert probe["cli_ok"] is False
+
+
+@pytest.mark.asyncio
+async def test_health_kimi_capability_true_when_cli_responds(tmp_path, monkeypatch):
+    fake = tmp_path / "kimi"
+    fake.write_text("#!/bin/sh\necho kimi 9.9.9\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
+    monkeypatch.setenv("KIMI_CODE_CLI", str(fake))
+
+    body = await main.health()
+    assert body["kimi_workbench_enabled"] is True
+    assert body["kimi_workbench"]["cli_ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "LLM_PROVIDER",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("KIMI_MOCK", "1")
+
+    body = await main.ready()
+    assert body["checks"]["llm_configured"] is False, "KIMI_MOCK is not a configured LLM"
+    assert body["checks"]["llm_mock"] is True

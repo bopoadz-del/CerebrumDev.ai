@@ -61,7 +61,19 @@ def test_health_flag_is_evaluated_bool_matching_flag_fn(
         f"{field} reported {payload[field]!r} (type {type(payload[field]).__name__}); "
         "health must report an evaluated bool, not the raw env string"
     )
-    # 2. Matches the single source of truth (the flag function).
-    assert payload[field] == fn() == expected, (
-        f"{field}={payload[field]} disagrees with flag fn {fn()} for env={value!r}"
-    )
+    assert fn() == expected, f"flag fn {fn()} disagrees with env={value!r}"
+    if field == "kimi_workbench_enabled":
+        # Evaluated capability, not configuration: the flag alone is not
+        # enough — the CLI must actually answer. flag=false is always false;
+        # flag=true reports the probed CLI result.
+        probe = payload["kimi_workbench"]
+        assert isinstance(probe["cli_ok"], bool)
+        assert payload[field] == (expected and probe["cli_ok"]), (
+            f"{field}={payload[field]} must equal flag AND cli_ok "
+            f"(flag={expected}, cli_ok={probe['cli_ok']})"
+        )
+    else:
+        # 2. Matches the single source of truth (the flag function).
+        assert payload[field] == fn() == expected, (
+            f"{field}={payload[field]} disagrees with flag fn {fn()} for env={value!r}"
+        )
