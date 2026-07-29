@@ -275,3 +275,16 @@ def test_database_url_normalizes_postgres(monkeypatch):
 
     monkeypatch.setenv("ACCOUNTS_DATABASE_URL", "postgresql://u:p@host:5432/db")
     assert accounts_store._database_url() == "postgresql+psycopg://u:p@host:5432/db"
+
+
+def test_create_session_honors_requested_domain(client):
+    """A stranger asking for a retail platform must not silently get a
+    construction-flavored session (2.5.3 walk finding)."""
+    a = _register(client)
+    resp = client.post(
+        "/v1/sessions/",
+        json={"domain": "retail"},
+        headers={"Authorization": f"Bearer {a['login_token']}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["config"]["domain"] == "retail"

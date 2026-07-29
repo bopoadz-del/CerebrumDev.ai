@@ -1,7 +1,7 @@
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from ..core import accounts_store
 from ..core.auth import Principal, require_api_key
@@ -13,12 +13,24 @@ router = APIRouter()
 
 
 @router.post("/", response_model=SessionState)
-async def create_new_session(principal: Principal = Depends(require_entitled)):
+async def create_new_session(
+    body: Optional[Dict[str, Any]] = Body(default=None),
+    principal: Principal = Depends(require_entitled),
+):
     # Creating a session is a paid action: require_entitled blocks expired
     # trials / canceled subscriptions with 402 when BILLING_ENFORCEMENT is on.
     owner = principal.account_id or "dev-local"
     session_id = f"sess_{uuid.uuid4().hex[:16]}"
-    return create_session(session_id=session_id, user_id=owner)
+    state = create_session(session_id=session_id, user_id=owner)
+    # Honor a requested domain instead of silently defaulting: a caller who
+    # asks for a retail session must not get a construction-flavored one.
+    domain = (body or {}).get("domain")
+    if isinstance(domain, str) and domain.strip():
+        state.config.domain = domain.strip()
+        from ..core.session_store import update_session
+
+        update_session(session_id, state)
+    return state
 
 
 @router.get("/")
