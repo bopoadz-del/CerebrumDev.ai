@@ -142,17 +142,54 @@ def _probe_blocks() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
+def _probe_kimi_cli() -> dict:
+    """Evaluated Kimi workbench capability: flag AND a CLI that answers.
+
+    A true flag with no binary is configuration, not capability — health
+    must never report it as enabled.
+    """
+    flag = kimi_workbench_enabled()
+    probe: dict = {"flag_enabled": flag, "cli_ok": False}
+    if not flag:
+        return probe
+    cli = os.getenv("KIMI_CODE_CLI", "kimi").strip() or "kimi"
+    try:
+        import subprocess
+
+        proc = subprocess.run(
+            [cli, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        probe["cli_ok"] = proc.returncode == 0
+        if proc.returncode == 0:
+            probe["cli_version"] = (proc.stdout or "").strip()[:80]
+        else:
+            probe["error"] = (proc.stderr or "").strip()[:200] or f"exit {proc.returncode}"
+    except FileNotFoundError:
+        probe["error"] = f"CLI not found: {cli}"
+    except Exception as exc:  # noqa: BLE001 - health probes must not raise
+        probe["error"] = str(exc)[:200]
+    return probe
+
+
 @app.get("/health")
 async def health():
     storage = _probe_storage()
     redis = _probe_redis()
+    kimi = _probe_kimi_cli()
     return {
         "status": "ok" if storage.get("ok") else "degraded",
         "storage": storage,
         "redis": redis,
         "resident_engineer_enabled": resident_engineer_enabled(),
         "build_mode_enabled": build_mode_enabled(),
-        "kimi_workbench_enabled": kimi_workbench_enabled(),
+        # Evaluated capability, not configuration: enabled only when the
+        # flag is on AND the CLI actually answers.
+        "kimi_workbench_enabled": bool(kimi["flag_enabled"] and kimi["cli_ok"]),
+        "kimi_workbench": kimi,
     }
 
 
@@ -160,18 +197,19 @@ async def health():
 async def ready():
     storage = _probe_storage()
     blocks = _probe_blocks()
+    # KIMI_MOCK is a mock, not a configured LLM — reported separately.
     llm_configured = bool(
         os.getenv("KIMI_API_KEY")
         or os.getenv("CEREBRUM_LLM_API_KEY")
         or os.getenv("CEREBRUM_CHAT_LLM_API_KEY")
         or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY")
         or os.getenv("LLM_PROVIDER")
-        or os.getenv("KIMI_MOCK")
     )
     checks = {
         "storage": bool(storage.get("ok")),
         "cerebrum_blocks": bool(blocks.get("ok")),
         "llm_configured": llm_configured,
+        "llm_mock": bool(os.getenv("KIMI_MOCK")),
         "api_key_configured": bool(os.getenv("CEREBRUM_DEV_API_KEY"))
         or os.getenv("ENV", "development") != "production",
     }

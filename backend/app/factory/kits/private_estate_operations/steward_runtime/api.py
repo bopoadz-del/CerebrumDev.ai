@@ -22,6 +22,7 @@ from app.steward.config import PLATFORM_PROJECT_ID, PLATFORM_TENANT_ID, get_conf
 from app.steward.db import init_engine, session_scope
 from app.steward.embeddings import get_embedder, reset_embedder
 from app.steward.errors import safe_http_exception
+from app.steward.grounding import record_verdict, retrieval_verdict
 from app.steward.migrations_runner import run_migrations
 from app.steward.models import Document, FacilityAsset, FleetVehicle, HospitalityIntent, SourceRecord
 from app.steward.money import serialize_money
@@ -121,6 +122,22 @@ def steward_query(
             tenant_id=tenant_id,
             estate_id=estate_id,
         )
+        def _with_grounding(payload: Dict[str, Any], hit_dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
+            # Mandatory grounding stage: verdict on every retrieval response,
+            # persisted to the audit ledger. Zero hits → answer stays null.
+            verdict = retrieval_verdict(hit_dicts)
+            record_verdict(
+                session,
+                tenant_id=tenant_id,
+                estate_id=estate_id,
+                user_id=principal.principal_id,
+                query=q,
+                verdict=verdict,
+                surface="steward_rag_query",
+            )
+            payload["grounding"] = verdict
+            return payload
+
         if layer == 1:
             hits = hybrid_search(
                 session,
@@ -130,14 +147,18 @@ def steward_query(
                 top_k=top_k,
                 knowledge_layer=1,
             )
-            return {
-                "ok": True,
-                "query": q,
-                "layer": 1,
-                "hit_count": len(hits),
-                "hits": [h.to_dict() for h in hits],
-                "insufficiency": len(hits) == 0,
-            }
+            hit_dicts = [h.to_dict() for h in hits]
+            return _with_grounding(
+                {
+                    "ok": True,
+                    "query": q,
+                    "layer": 1,
+                    "hit_count": len(hits),
+                    "hits": hit_dicts,
+                    "insufficiency": len(hits) == 0,
+                },
+                hit_dicts,
+            )
         if layer == 2:
             hits = hybrid_search(
                 session,
@@ -147,23 +168,28 @@ def steward_query(
                 top_k=top_k,
                 knowledge_layer=2,
             )
-            return {
-                "ok": True,
-                "query": q,
-                "layer": 2,
-                "tenant_id": tenant_id,
-                "estate_id": estate_id,
-                "hit_count": len(hits),
-                "hits": [h.to_dict() for h in hits],
-                "insufficiency": len(hits) == 0,
-            }
-        return combined_layer_search(
+            hit_dicts = [h.to_dict() for h in hits]
+            return _with_grounding(
+                {
+                    "ok": True,
+                    "query": q,
+                    "layer": 2,
+                    "tenant_id": tenant_id,
+                    "estate_id": estate_id,
+                    "hit_count": len(hits),
+                    "hits": hit_dicts,
+                    "insufficiency": len(hits) == 0,
+                },
+                hit_dicts,
+            )
+        combined = combined_layer_search(
             session,
             estate_tenant_id=tenant_id,
             estate_project_id=estate_id,
             query=q,
             top_k=top_k,
         )
+        return _with_grounding(combined, combined.get("hits") or [])
 
 
 @router.post("/v1/steward/rag/ingest")
