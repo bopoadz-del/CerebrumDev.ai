@@ -32,7 +32,11 @@ deploy credentials**.
 | `CHANGE_REQUEST_INTAKE_ENABLED` | `false` | M3 intake/queue (required upstream) |
 | `WORKBENCH_SESSION_TIMEOUT_SECONDS` | `300` | Hard session timeout (dies loudly) |
 | `WORKBENCH_MAX_COMMANDS` | `200` | Command cap |
-| `WORKBENCH_NETWORK_ALLOWLIST` | `ollama.com,api.github.com,github.com` | Network allowlist |
+
+> **Network honesty:** the workbench sandbox does **not** restrict network
+> egress. Subprocesses inherit the host's network access. Real enforcement
+> would need a network namespace, egress proxy, or firewall rules — none of
+> which exist today.
 
 Documented in the root README feature-flag table.
 
