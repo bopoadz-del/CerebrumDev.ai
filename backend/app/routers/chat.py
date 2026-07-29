@@ -15,6 +15,7 @@ from ..core.chain_generator import (
     fetch_block_registry,
     check_chain_quality,
 )
+from ..core.grounding import evaluate_grounding, persist_verdict
 from ..core.rule_injector import inject_rules
 from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow
@@ -270,6 +271,50 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
     assistant_message = suggestion.get("message", "")
     chain = suggestion.get("chain")
     rules = suggestion.get("rules", [])
+
+    # Mandatory grounding stage: the LLM answer never reaches the stream
+    # unverified. Blocked → answer null; flagged → estimate disclosure attached.
+    grounding_sources = [
+        _docs_summary(state),
+        _session_state_summary(state),
+        *[m.get("content", "") for m in state.chat_history],
+    ]
+    verdict = evaluate_grounding(
+        assistant_message, sources=grounding_sources, query=user_message
+    )
+    persist_verdict(
+        {
+            "surface": "chat",
+            "session_id": session_id,
+            "query": user_message,
+            "verdict": verdict["verdict"],
+            "reasons": verdict["reasons"],
+            "unsupported_figures": verdict["unsupported_figures"],
+        }
+    )
+    yield _sse_event(
+        "grounding",
+        json.dumps(
+            {"verdict": verdict["verdict"], "answer": verdict["allowed_response"]}
+        ),
+    )
+    if verdict["verdict"] == "blocked":
+        # The refusal must not echo the invented content; full reasons live
+        # only in the persisted verdict record.
+        refusal = (
+            "I can't answer that from the grounded session context — the drafted "
+            "reply contained unverifiable claims (such as links or figures with "
+            "no grounded source) and was withheld."
+        )
+        state.chat_history.append({"role": "assistant", "content": refusal})
+        state.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+        for word in refusal.split(" "):
+            yield _sse_event("delta", word + " ")
+        yield _sse_event("done", "")
+        return
+
+    assistant_message = verdict["allowed_response"]
 
     # Stream the assistant message word-by-word for UI effect
     words = assistant_message.split(" ")
