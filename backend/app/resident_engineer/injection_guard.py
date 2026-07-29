@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Union
+from typing import Any
 
 # Instruction-like patterns commonly used in prompt-injection payloads.
 _INSTRUCTION_PATTERNS = [
@@ -47,13 +47,3 @@ def sanitize_untrusted(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(k): sanitize_untrusted(v) for k, v in value.items()}
     return value
-
-
-def assert_not_executable(text: str) -> List[str]:
-    """Return warnings if text still looks instruction-like after sanitize."""
-    cleaned = strip_instruction_patterns(text)
-    warnings: List[str] = []
-    for pat in _INSTRUCTION_PATTERNS:
-        if pat.search(cleaned):
-            warnings.append(f"residual pattern: {pat.pattern}")
-    return warnings

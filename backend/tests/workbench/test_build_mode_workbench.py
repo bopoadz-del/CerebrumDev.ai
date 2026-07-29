@@ -354,3 +354,26 @@ def test_candidate_artifact_propagates_cli_error_fields(monkeypatch, tmp_path):
     )
     assert candidate["agent"]["kimi_error"] == "cli_session_failed"
     assert candidate["agent"]["cli_returncode"] == 3
+
+
+def test_load_verified_dna_rejects_schema_invalid_doc(tmp_path):
+    """A DNA doc that passes checksums but violates its schema must be refused."""
+    import hashlib
+
+    from app.workbench.envelope import EnvelopeError
+
+    product = _steward_product(tmp_path)
+    dna = product / "product-dna"
+    bad_path = dna / "security_policy.json"
+    # Valid checksum, invalid document: required fields removed.
+    bad_path.write_text(json.dumps({"nonsense": True}), encoding="utf-8")
+    manifest_path = dna / "checksum_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["security_policy.json"] = hashlib.sha256(
+        bad_path.read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    with pytest.raises(EnvelopeError) as exc:
+        load_verified_dna(product)
+    assert "security_policy" in str(exc.value)

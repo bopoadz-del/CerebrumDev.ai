@@ -643,6 +643,14 @@ def run_vector_index_dry_run(
             code="VECTOR_INDEX_ARTIFACT_MISMATCH",
             message="Manifest artifact hash mismatch on read-back.",
         )
+    validation_errors = adapter.validate_index(index_spec)
+    if validation_errors:
+        index_run.status = VectorIndexRunStatus.FAILED
+        index_run.last_error = "; ".join(validation_errors)
+        raise _error(
+            code="VECTOR_INDEX_VALIDATION_FAILED",
+            message="; ".join(validation_errors),
+        )
 
     index_run.status = VectorIndexRunStatus.COMPLETED
     index_run.completed_at = datetime.utcnow()
