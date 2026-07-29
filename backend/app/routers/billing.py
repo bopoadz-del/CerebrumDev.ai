@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..core import accounts_store, billing, stripe_billing
 from ..core.auth import Principal, require_api_key
+from ..core.trial_limits import quota_snapshot
 
 router = APIRouter()
 
@@ -31,6 +32,7 @@ async def status(principal: Principal = Depends(require_api_key)):
     if snap is None:
         raise HTTPException(status_code=404, detail="Account not found")
     snap["checkout_available"] = stripe_billing.stripe_configured()
+    snap["quotas"] = quota_snapshot(principal.account_id or "")
     return {"ok": True, "billing": snap}
 
 

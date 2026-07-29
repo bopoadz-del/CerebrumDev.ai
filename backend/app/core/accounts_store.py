@@ -81,6 +81,18 @@ _t_session_owners = sa.Table(
     sa.Column("created_at", sa.String(64), nullable=False),
 )
 
+# Per-account usage counters for server-side trial quotas.
+# ``period`` is "lifetime" or an ISO date for daily counters.
+_t_usage_counters = sa.Table(
+    "usage_counters",
+    _META,
+    sa.Column("account_id", sa.String(64), primary_key=True),
+    sa.Column("counter", sa.String(64), primary_key=True),
+    sa.Column("period", sa.String(32), primary_key=True),
+    sa.Column("value", sa.Integer, nullable=False, default=0),
+    sa.Column("updated_at", sa.String(64), nullable=False),
+)
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -545,3 +557,49 @@ def all_session_ids() -> List[str]:
             )
         ).all()
     return [r._mapping["session_id"] for r in rows]
+
+
+def get_usage(account_id: str, counter: str, period: str) -> int:
+    """Current value of one usage counter (0 when never incremented)."""
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_usage_counters.c.value).where(
+                _t_usage_counters.c.account_id == account_id,
+                _t_usage_counters.c.counter == counter,
+                _t_usage_counters.c.period == period,
+            )
+        ).first()
+    return int(row[0]) if row else 0
+
+
+def increment_usage(account_id: str, counter: str, period: str) -> int:
+    """Atomically increment one usage counter; returns the new value."""
+    with _LOCK, _engine().begin() as conn:
+        updated = conn.execute(
+            sa.update(_t_usage_counters)
+            .where(
+                _t_usage_counters.c.account_id == account_id,
+                _t_usage_counters.c.counter == counter,
+                _t_usage_counters.c.period == period,
+            )
+            .values(value=_t_usage_counters.c.value + 1, updated_at=_iso(_utcnow()))
+        )
+        if updated.rowcount == 0:
+            conn.execute(
+                sa.insert(_t_usage_counters).values(
+                    account_id=account_id,
+                    counter=counter,
+                    period=period,
+                    value=1,
+                    updated_at=_iso(_utcnow()),
+                )
+            )
+            return 1
+        row = conn.execute(
+            sa.select(_t_usage_counters.c.value).where(
+                _t_usage_counters.c.account_id == account_id,
+                _t_usage_counters.c.counter == counter,
+                _t_usage_counters.c.period == period,
+            )
+        ).first()
+        return int(row[0])

@@ -17,6 +17,7 @@ from ..core.chain_generator import (
 )
 from ..core.grounding import evaluate_grounding, persist_verdict
 from ..core.rule_injector import inject_rules
+from ..core.trial_limits import TrialLimitExceeded, require_within_limit
 from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow
 from ..models.session import SessionState
@@ -144,6 +145,14 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         yield _sse_event("error", "Session not found")
         return
 
+    # Server-side trial boundary: chat messages are metered per account.
+    try:
+        require_within_limit(getattr(state, "user_id", None), "chat_message")
+    except TrialLimitExceeded as exc:
+        yield _sse_event("error", exc.detail["message"])
+        yield _sse_event("done", "")
+        return
+
     state.chat_history.append({"role": "user", "content": user_message})
     state.updated_at = datetime.utcnow()
 
@@ -186,6 +195,13 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         # ("Blueprint drafted... Blueprint drafted..."). `info` has no card
         # renderer, so info replies stream as deltas only.
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
+            # Server-side trial boundary: generations are metered per account.
+            try:
+                require_within_limit(getattr(state, "user_id", None), "generation")
+            except TrialLimitExceeded as exc:
+                yield _sse_event("error", exc.detail["message"])
+                yield _sse_event("done", "")
+                return
             result = platform_chat_flow.approve_and_generate(state)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()

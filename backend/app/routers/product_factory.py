@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.auth import Principal, require_api_key
+from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError
 from app.factory.paths import factory_repo_root
@@ -82,7 +84,11 @@ def plan_product(body: PlanRequest) -> Dict[str, Any]:
 
 
 @router.post("/generate")
-def generate_from_architecture(body: GenerateRequest) -> Dict[str, Any]:
+def generate_from_architecture(
+    body: GenerateRequest, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    # Server-side trial boundary: generations are metered per account.
+    require_within_limit(principal.account_id, "generation")
     blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
     blocks_root = Path(blocks) if blocks else None
     try:
