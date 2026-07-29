@@ -15,7 +15,7 @@ from app.factory.blueprint import load_blueprint
 from app.factory.generator import ProductGenerator
 from app.product_dna.emit import verify_checksum_manifest
 from app.workbench.agent import run_kimi_cli_agent
-from app.workbench.candidate import verify_candidate_checksum
+from app.workbench.candidate import build_candidate_artifact, verify_candidate_checksum
 from app.workbench.envelope import build_task_envelope, load_verified_dna, path_allowed
 from app.workbench.promote import PromotionRejected, promote_via_packager
 from app.workbench.sandbox import SandboxViolation, WorkbenchSandbox
@@ -105,7 +105,12 @@ def test_sandbox_escape_refused_and_logged(tmp_path):
     assert any(e.get("event") == "boundary_refused" for e in sandbox.transcript)
 
 
-def test_store_write_impossible(tmp_path):
+def test_store_write_impossible(tmp_path, monkeypatch):
+    # Seed the forbidden keys so their absence is proven scrubbing, not
+    # a vacuously-true assertion about an env that never had them.
+    monkeypatch.setenv("RENDER_API_KEY", "seeded")
+    monkeypatch.setenv("GITHUB_TOKEN", "seeded")
+    monkeypatch.setenv("STORE_WRITE_TOKEN", "seeded")
     sandbox = WorkbenchSandbox("store-test")
     env = sandbox.scrubbed_env()
     assert "RENDER_API_KEY" not in env
@@ -211,9 +216,23 @@ def test_envelope_checksum_stable(tmp_path):
     assert "production_deploy" in env["mutable"]["forbidden"]
 
 
+def _assert_legal_kimi_argv(argv):
+    """Reject argv combinations the real Kimi CLI refuses at startup.
+
+    ``--prompt`` implies auto permission mode; ``--yolo`` and ``--auto`` are
+    mutually exclusive with it (and with each other).
+    """
+    flags = set(argv)
+    if "--prompt" in flags and ({"--yolo", "--auto"} & flags):
+        raise AssertionError(f"illegal Kimi argv: --prompt with --yolo/--auto: {argv}")
+    if "--yolo" in flags and "--auto" in flags:
+        raise AssertionError(f"illegal Kimi argv: --yolo with --auto: {argv}")
+
+
 def test_kimi_cli_invoked_with_prompt_and_workspace(monkeypatch, tmp_path):
     """When KIMI_WORKBENCH_ENABLED is true, the agent must pass the brief to the
-    Kimi CLI inside the sandbox workspace — not only run --version and fall back.
+    Kimi CLI inside the sandbox workspace — not only run --version and fall back —
+    and the CLI's edits must survive into the candidate diff.
     """
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
     monkeypatch.setenv("KIMI_CODE_CLI", "kimi")
@@ -238,14 +257,17 @@ def test_kimi_cli_invoked_with_prompt_and_workspace(monkeypatch, tmp_path):
     calls = []
 
     def fake_run_command(argv, *, cwd_relative=".", timeout=None):
+        _assert_legal_kimi_argv(argv)
         calls.append({"argv": list(argv), "cwd": cwd_relative})
         if argv[1:] == ["--version"]:
             return {"returncode": 0, "stdout_tail": "kimi 1.0.0", "stderr_tail": ""}
-        # Simulate Kimi editing the blueprint in the workspace.
+        # Simulate Kimi producing the candidate blueprint in the workspace.
+        baseline = (product / "product-dna" / "product_blueprint.yaml").read_text(
+            encoding="utf-8"
+        )
         bp_path = sandbox.workspace / "blueprint" / "product_blueprint.yaml"
-        if bp_path.is_file():
-            text = bp_path.read_text(encoding="utf-8")
-            bp_path.write_text(text + "\n# edited by kimi\n", encoding="utf-8")
+        bp_path.parent.mkdir(parents=True, exist_ok=True)
+        bp_path.write_text(baseline + "\n# edited by kimi\n", encoding="utf-8")
         return {"returncode": 0, "stdout_tail": "done", "stderr_tail": ""}
 
     monkeypatch.setattr(sandbox, "run_command", fake_run_command)
@@ -262,3 +284,101 @@ def test_kimi_cli_invoked_with_prompt_and_workspace(monkeypatch, tmp_path):
     assert "kimi_prompt" in prompt_arg, f"expected prompt file arg, got {prompt_arg}"
     assert "--add-dir" in real["argv"], f"missing --add-dir in {real['argv']}"
     assert result.get("backend") != "factory_regenerator_stub"
+
+    # The sentinel must survive into the candidate diff — behaviour, not shape.
+    candidate = build_candidate_artifact(
+        sandbox, agent_result=result, product_root=product
+    )
+    assert "# edited by kimi" in candidate["diff"], (
+        "CLI edit did not survive into candidate diff"
+    )
+
+
+def test_workbench_fails_loudly_when_cli_missing(monkeypatch, tmp_path, fresh_audit_artifact):
+    """KIMI_WORKBENCH_ENABLED=true with no CLI must NOT succeed via silent stub."""
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
+    monkeypatch.setenv("KIMI_CODE_CLI", str(tmp_path / "definitely-missing-kimi"))
+
+    product = _steward_product(tmp_path)
+    item = _approved_expansion("cerebrum-steward", product)
+    _attach_audit_artifact(item["request_id"], fresh_audit_artifact)
+
+    with pytest.raises(WorkbenchRejected) as exc:
+        run_workbench_session(item["request_id"], product_root=product, run_gates=True)
+    assert "cli_not_found" in exc.value.reason
+    assert exc.value.status_code == 502
+
+    after = ChangeRequestQueue().get(item["request_id"])
+    assert after["state"] != "gate_passed"
+    assert "cli_not_found" in json.dumps(after.get("gate_report") or {})
+
+
+def test_workbench_fails_loudly_when_cli_session_fails(
+    monkeypatch, tmp_path, fresh_audit_artifact
+):
+    """A CLI that exists but whose coding session fails must not become ok:True."""
+    fake_cli = tmp_path / "fake-kimi"
+    fake_cli.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo kimi 9.9.9; exit 0; fi\n'
+        "echo boom >&2; exit 3\n",
+        encoding="utf-8",
+    )
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
+    monkeypatch.setenv("KIMI_CODE_CLI", str(fake_cli))
+
+    product = _steward_product(tmp_path)
+    item = _approved_expansion("cerebrum-steward", product)
+    _attach_audit_artifact(item["request_id"], fresh_audit_artifact)
+
+    with pytest.raises(WorkbenchRejected) as exc:
+        run_workbench_session(item["request_id"], product_root=product, run_gates=True)
+    assert "cli_session_failed" in exc.value.reason
+    assert "returncode=3" in exc.value.reason
+
+    after = ChangeRequestQueue().get(item["request_id"])
+    assert after["state"] != "gate_passed"
+
+
+def test_candidate_artifact_propagates_cli_error_fields(monkeypatch, tmp_path):
+    """candidate.agent must carry kimi_error and cli_returncode, not drop them."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    product = _steward_product(tmp_path)
+    sandbox = WorkbenchSandbox("candidate-propagation-test")
+    agent_result = {
+        "backend": "factory_regenerator_stub",
+        "honesty": "STUB",
+        "kimi_fallback": True,
+        "kimi_error": "cli_session_failed",
+        "cli_returncode": 3,
+        "summary": "fell back",
+    }
+    candidate = build_candidate_artifact(
+        sandbox, agent_result=agent_result, product_root=product
+    )
+    assert candidate["agent"]["kimi_error"] == "cli_session_failed"
+    assert candidate["agent"]["cli_returncode"] == 3
+
+
+def test_load_verified_dna_rejects_schema_invalid_doc(tmp_path):
+    """A DNA doc that passes checksums but violates its schema must be refused."""
+    import hashlib
+
+    from app.workbench.envelope import EnvelopeError
+
+    product = _steward_product(tmp_path)
+    dna = product / "product-dna"
+    bad_path = dna / "security_policy.json"
+    # Valid checksum, invalid document: required fields removed.
+    bad_path.write_text(json.dumps({"nonsense": True}), encoding="utf-8")
+    manifest_path = dna / "checksum_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"]["security_policy.json"] = hashlib.sha256(
+        bad_path.read_bytes()
+    ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    with pytest.raises(EnvelopeError) as exc:
+        load_verified_dna(product)
+    assert "security_policy" in str(exc.value)

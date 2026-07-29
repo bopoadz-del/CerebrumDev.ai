@@ -1,8 +1,12 @@
 """Isolated sandbox for Build Mode sessions.
 
-Filesystem confined to the session workspace. Network confined to an allowlist.
-No shell outside the workspace. No Store write credentials. Every command logged.
-Timeout + resource caps; runaway sessions die loudly.
+Filesystem confined to the session workspace. No shell outside the workspace.
+No Store write credentials. Every command logged. Timeout + resource caps;
+runaway sessions die loudly.
+
+Network is NOT restricted: subprocesses inherit the host's network access.
+Real egress control would require a network namespace, an egress proxy, or
+firewall rules — none of which this sandbox provides.
 """
 
 from __future__ import annotations
@@ -17,12 +21,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.workbench.envelope import path_allowed
-
-# Network hosts the workbench may contact (read-only clone / Kimi LLM only).
-DEFAULT_NETWORK_ALLOWLIST = (
-    "api.github.com",
-    "github.com",
-)
 
 # Env vars that must NEVER be present inside a sandbox process.
 FORBIDDEN_ENV_KEYS = (
@@ -62,13 +60,6 @@ def session_timeout_seconds() -> int:
         return 300
 
 
-def network_allowlist() -> List[str]:
-    raw = os.getenv("WORKBENCH_NETWORK_ALLOWLIST", "").strip()
-    if raw:
-        return [h.strip() for h in raw.split(",") if h.strip()]
-    return list(DEFAULT_NETWORK_ALLOWLIST)
-
-
 class WorkbenchSandbox:
     """Session-scoped workspace with command logging and confinement checks."""
 
@@ -80,7 +71,6 @@ class WorkbenchSandbox:
         self.transcript: List[Dict[str, Any]] = []
         self.started_at = time.monotonic()
         self.timeout_seconds = session_timeout_seconds()
-        self.network_allowlist = network_allowlist()
         self._command_count = 0
         self.max_commands = int(os.getenv("WORKBENCH_MAX_COMMANDS", "200"))
 
@@ -173,19 +163,10 @@ class WorkbenchSandbox:
         env["WORKBENCH_SANDBOX"] = "1"
         env["WORKBENCH_SESSION_ID"] = self.session_id
         env["WORKBENCH_WORKSPACE"] = str(self.workspace)
-        env["WORKBENCH_NETWORK_ALLOWLIST"] = ",".join(self.network_allowlist)
         # Honest: no Store write path
         env["WORKBENCH_STORE_WRITE"] = "impossible"
         env.pop("STORE_ROOT_WRITE", None)
         return env
-
-    def assert_host_allowed(self, host: str) -> None:
-        host_l = host.lower().strip()
-        for allowed in self.network_allowlist:
-            if host_l == allowed or host_l.endswith("." + allowed):
-                return
-        self.log("network_refused", host=host, allowlist=self.network_allowlist)
-        raise SandboxViolation(f"network host not allowlisted: {host}")
 
     def run_command(
         self,
@@ -248,7 +229,7 @@ class WorkbenchSandbox:
             "session_id": self.session_id,
             "workspace": str(self.workspace),
             "timeout_seconds": self.timeout_seconds,
-            "network_allowlist": self.network_allowlist,
+            "network_isolation": "none — subprocesses inherit host network access",
             "command_count": self._command_count,
             "deploy_credentials": False,
             "store_write": "impossible",

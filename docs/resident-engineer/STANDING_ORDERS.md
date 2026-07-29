@@ -129,7 +129,7 @@ Tests: schema reject cases, signature verification, queue persistence, idempoten
 
 Sandboxed Kimi Code lane inside CerebrumDev:
 
-- `backend/app/workbench/`: consumes approved `change_requests` queue items, runs coding agent (`kimi-k2.7-code:cloud` via Ollama Cloud when `KIMI_WORKBENCH_ENABLED=true`; default honest Factory regenerator stub) in an isolated workspace: session-scoped filesystem, network allowlist (`ollama.com` + GitHub API only), no deploy credentials, no Store publish rights
+- `backend/app/workbench/`: consumes approved `change_requests` queue items, runs coding agent (`kimi-k2.7-code:cloud` via Ollama Cloud when `KIMI_WORKBENCH_ENABLED=true`; default honest Factory regenerator stub) in an isolated workspace: session-scoped filesystem, no deploy credentials, no Store publish rights (network egress is NOT restricted — subprocesses inherit host network access)
 - Agent output is a **candidate** only; packager promotion lands at `staging/community` trust tier; certified/production still requires existing chain-approve
 - Product regeneration goes through the existing deterministic packager — the workbench never bypasses it
 - Full audit: envelope, transcript, diff, gate results, promotion receipt on the queue item

@@ -12,7 +12,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+import yaml
+
 from app.product_dna.emit import verify_checksum_manifest
+from app.product_dna.validate import validate_dna_document
 from app.resident_engineer.heal.catalog import ALLOWLISTED_HEAL_ACTIONS
 from app.resident_engineer.injection_guard import sanitize_untrusted
 
@@ -59,6 +62,23 @@ def load_verified_dna(product_root: Path) -> Dict[str, Any]:
             files[path.name] = path.read_text(encoding="utf-8")
         else:
             files[path.name] = path.read_bytes().hex()
+
+    # Checksums prove integrity, not validity: every DNA document that has a
+    # versioned schema must also conform to it — fail closed on violations.
+    schema_errors: List[str] = []
+    for name, content in files.items():
+        stem = name.rsplit(".", 1)[0]
+        document = content
+        if Path(name).suffix in {".yaml", ".yml"}:
+            document = yaml.safe_load(content)
+        try:
+            errors = validate_dna_document(stem, document)
+        except FileNotFoundError:
+            continue
+        schema_errors.extend(f"{stem}: {e}" for e in errors)
+    if schema_errors:
+        raise EnvelopeError(f"DNA schema validation failure: {'; '.join(schema_errors)}")
+
     return {
         "path": str(dna_dir),
         "checksum_ok": True,

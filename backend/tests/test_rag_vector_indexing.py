@@ -182,3 +182,20 @@ def test_run_vector_index_dry_run_state_isolation(tmp_path, monkeypatch):
     run_vector_index_dry_run(doc.domain, doc.document_id, run.run_id)
     doc_after = get_canonical_document(doc.domain, doc.document_id)
     assert doc_after.index_status == IndexStatus.NOT_INDEXED
+
+
+def test_index_validation_errors_fail_the_run(tmp_path, monkeypatch):
+    """adapter.validate_index errors must fail the index run, not be ignored."""
+    from app.core import rag_vector_store_adapters as adapters
+
+    doc, chunk, run, embedding = _seed(tmp_path, monkeypatch)
+
+    def broken_validate(self, index_spec):
+        return ["records artifact corrupted"]
+
+    monkeypatch.setattr(
+        adapters._LocalFlatJsonAdapterV1, "validate_index", broken_validate
+    )
+    with pytest.raises(VectorIndexError) as exc:
+        run_vector_index_dry_run(doc.domain, doc.document_id, run.run_id)
+    assert exc.value.code == "VECTOR_INDEX_VALIDATION_FAILED"

@@ -73,6 +73,9 @@ def build_candidate_artifact(
             "backend": agent_result.get("backend"),
             "honesty": agent_result.get("honesty"),
             "kimi_fallback": agent_result.get("kimi_fallback"),
+            "kimi_error": agent_result.get("kimi_error"),
+            "cli_returncode": agent_result.get("cli_returncode"),
+            "brief_mode": agent_result.get("brief_mode"),
         },
         "mutation": mutation,
         "product_dna_version": agent_result.get("product_dna_version")
