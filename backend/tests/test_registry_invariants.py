@@ -42,18 +42,39 @@ def _flags_off(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
+def _add_path(prefixes: set, path: str) -> None:
+    parts = path.strip("/").split("/")
+    if len(parts) >= 2:
+        prefixes.add(f"/{parts[0]}/{parts[1]}")
+    elif parts and parts[0]:
+        prefixes.add(f"/{parts[0]}")
+
+
 def _route_prefixes(app) -> set:
-    """Collect the unique path prefixes mounted on the FastAPI app."""
+    """Collect the unique path prefixes mounted on the FastAPI app.
+
+    Newer FastAPI represents ``include_router`` results as lazy
+    ``_IncludedRouter`` objects without a ``path`` attribute — the mounted
+    prefix lives on ``include_context`` and the concrete routes on
+    ``original_router``. Read both shapes so the invariant checks the app,
+    not one FastAPI version's internals.
+    """
     prefixes = set()
     for route in app.routes:
+        ctx = getattr(route, "include_context", None)
+        if ctx is not None:
+            base = (getattr(ctx, "prefix", "") or "").rstrip("/")
+            inner = getattr(route, "original_router", None)
+            inner_routes = getattr(inner, "routes", []) if inner else []
+            if base:
+                _add_path(prefixes, base)
+            for sub in inner_routes:
+                sub_path = getattr(sub, "path", "") or ""
+                _add_path(prefixes, f"{base}{sub_path}")
+            continue
         path = getattr(route, "path", "")
         if path:
-            # Normalize to a prefix like /v1/sessions or /v1/auth
-            parts = path.strip("/").split("/")
-            if len(parts) >= 2:
-                prefixes.add(f"/{parts[0]}/{parts[1]}")
-            elif parts and parts[0]:
-                prefixes.add(f"/{parts[0]}")
+            _add_path(prefixes, path)
     return prefixes
 
 
