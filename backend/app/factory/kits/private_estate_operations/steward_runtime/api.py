@@ -22,7 +22,12 @@ from app.steward.config import PLATFORM_PROJECT_ID, PLATFORM_TENANT_ID, get_conf
 from app.steward.db import init_engine, session_scope
 from app.steward.embeddings import get_embedder, reset_embedder
 from app.steward.errors import safe_http_exception
-from app.steward.grounding import record_verdict, retrieval_verdict
+from app.steward.grounding import (
+    VERDICT_OUT_OF_SCOPE,
+    check_scope_refusal,
+    record_verdict,
+    retrieval_verdict,
+)
 from app.steward.migrations_runner import run_migrations
 from app.steward.models import Document, FacilityAsset, FleetVehicle, HospitalityIntent, SourceRecord
 from app.steward.money import serialize_money
@@ -122,6 +127,28 @@ def steward_query(
             tenant_id=tenant_id,
             estate_id=estate_id,
         )
+
+        # Scope refusal precedes retrieval: a refused question is never
+        # attempted, however grounded the corpus may be.
+        refusal = check_scope_refusal(q)
+        if refusal is not None:
+            verdict = {
+                "verdict": VERDICT_OUT_OF_SCOPE,
+                "answer": None,
+                "refusal_id": refusal["id"],
+                "reason": refusal["reason"],
+            }
+            record_verdict(
+                session,
+                tenant_id=tenant_id,
+                estate_id=estate_id,
+                user_id=principal.principal_id,
+                query=q,
+                verdict=verdict,
+                surface="steward_rag_query",
+            )
+            return {"ok": True, "query": q, "hits": [], "hit_count": 0, "grounding": verdict}
+
         def _with_grounding(payload: Dict[str, Any], hit_dicts: List[Dict[str, Any]]) -> Dict[str, Any]:
             # Mandatory grounding stage: verdict on every retrieval response,
             # persisted to the audit ledger. Zero hits → answer stays null.

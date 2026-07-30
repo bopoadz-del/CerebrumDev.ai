@@ -240,4 +240,12 @@ def combined_layer_search(
         "hits": [c.to_dict() for c in merged],
         "hit_count": len(merged),
         "insufficiency": len(merged) == 0,
+        # Source precedence, disclosed: when both layers answer, estate
+        # documents (layer 2) win over platform documents (layer 1).
+        "precedence": {
+            "rule": "estate_overrides_platform",
+            "layer2_hits": len(layer2),
+            "layer1_hits": len(layer1),
+            "conflict_possible": bool(layer1 and layer2),
+        },
     }
