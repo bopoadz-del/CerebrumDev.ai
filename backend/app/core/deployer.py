@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,18 @@ from typing import Any, Dict, Optional, Tuple
 from ..models.session import SessionState
 
 logger = logging.getLogger(__name__)
+
+# Matches any userinfo (``user:token@`` or ``token@``) embedded in a URL, so a
+# credential echoed by git in stderr/stdout is redacted before it is logged or
+# returned to a caller.
+_URL_CREDENTIAL_RE = re.compile(r"(https?://)[^/\s@]+@")
+
+
+def _scrub_git_output(text: Optional[str]) -> str:
+    """Redact embedded URL credentials from git subprocess output."""
+    if not text:
+        return ""
+    return _URL_CREDENTIAL_RE.sub(r"\1", text)
 
 RENDER_API_KEY = os.getenv("RENDER_API_KEY", "")
 RENDER_OWNER_ID = os.getenv("RENDER_OWNER_ID", "")
@@ -160,8 +173,9 @@ def _push_package_to_branch(session_id: str, package_dir: str) -> Tuple[Optional
     with tempfile.TemporaryDirectory(prefix="cerebrum-deploy-") as clone_dir:
         clone = _run_git(["clone", "--depth", "1", _authenticated_repo_url(DEPLOY_REPO_URL, GITHUB_TOKEN), clone_dir])
         if clone.returncode != 0:
-            logger.error("Failed to clone deploy repo %s: %s", DEPLOY_REPO_URL, clone.stderr)
-            return None, f"Failed to clone deploy repo: {clone.stderr}"
+            clone_err = _scrub_git_output(clone.stderr)
+            logger.error("Failed to clone deploy repo %s: %s", DEPLOY_REPO_URL, clone_err)
+            return None, f"Failed to clone deploy repo: {clone_err}"
 
         _ensure_git_identity(clone_dir)
         _run_git(["checkout", "-B", branch], cwd=clone_dir)
@@ -202,16 +216,18 @@ def _push_package_to_branch(session_id: str, package_dir: str) -> Tuple[Optional
             cwd=clone_dir,
         )
         if commit.returncode != 0:
-            logger.error("Git commit failed: %s", commit.stderr)
-            return None, f"Git commit failed: {commit.stderr}"
+            commit_err = _scrub_git_output(commit.stderr)
+            logger.error("Git commit failed: %s", commit_err)
+            return None, f"Git commit failed: {commit_err}"
 
         push = _run_git(
             ["push", "-u", _authenticated_repo_url(DEPLOY_REPO_URL, GITHUB_TOKEN), branch],
             cwd=clone_dir,
         )
         if push.returncode != 0:
-            logger.error("Git push failed: %s", push.stderr)
-            return None, f"Git push failed: {push.stderr}"
+            push_err = _scrub_git_output(push.stderr)
+            logger.error("Git push failed: %s", push_err)
+            return None, f"Git push failed: {push_err}"
 
         logger.info("Pushed deployment package to branch %s in %s", branch, DEPLOY_REPO_URL)
         return branch, None
