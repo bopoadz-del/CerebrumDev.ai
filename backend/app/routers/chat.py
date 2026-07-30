@@ -15,7 +15,12 @@ from ..core.chain_generator import (
     fetch_block_registry,
     check_chain_quality,
 )
-from ..core.grounding import evaluate_grounding, persist_verdict
+from ..core.grounding import (
+    VERDICT_OUT_OF_SCOPE,
+    check_scope_refusal,
+    evaluate_grounding,
+    persist_verdict,
+)
 from ..core.rule_injector import inject_rules
 from ..core.trial_limits import TrialLimitExceeded, require_within_limit
 from ..core.block_taxonomy import list_optional_blocks
@@ -150,6 +155,31 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         require_within_limit(getattr(state, "user_id", None), "chat_message")
     except TrialLimitExceeded as exc:
         yield _sse_event("error", exc.detail["message"])
+        yield _sse_event("done", "")
+        return
+
+    # Scope refusal precedes everything: a refused question never reaches
+    # the platform flow or the LLM, however grounded the corpus may be.
+    refusal = check_scope_refusal(user_message)
+    if refusal is not None:
+        persist_verdict(
+            {
+                "surface": "chat",
+                "session_id": session_id,
+                "query": user_message,
+                "verdict": VERDICT_OUT_OF_SCOPE,
+                "refusal_id": refusal["id"],
+            }
+        )
+        notice = (
+            "I can't help with that: " + refusal["reason"] + " (out_of_scope)"
+        )
+        state.chat_history.append({"role": "user", "content": user_message})
+        state.chat_history.append({"role": "assistant", "content": notice})
+        state.updated_at = datetime.utcnow()
+        update_session(session_id, state)
+        for word in notice.split(" "):
+            yield _sse_event("delta", word + " ")
         yield _sse_event("done", "")
         return
 
