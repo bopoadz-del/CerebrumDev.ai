@@ -25,7 +25,7 @@ from app.core.session_store import get_session, update_session
 from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
-from app.factory.paths import factory_repo_root
+from app.factory.paths import UnsafeOutputDir, factory_repo_root, safe_output_dir
 from app.factory.product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,
@@ -239,11 +239,13 @@ def generate_approved_product(
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         if not state.product_design.plan:
             state.product_design.plan = plan_blueprint(bp, blocks_root=blocks_root).to_dict()
-        out = (
-            Path(body.output_dir)
-            if body.output_dir
-            else _session_output(session_id, bp.product_id)
-        )
+        # A caller-supplied output_dir is a recursive-delete target inside the
+        # generator, so it must stay inside factory_outputs/. None keeps the
+        # per-session default.
+        if body.output_dir:
+            out = safe_output_dir(body.output_dir, bp.product_id)
+        else:
+            out = _session_output(session_id, bp.product_id)
         # Also mirror Steward golden to canonical factory_outputs path
         result = generate_product(bp, out, blocks_root=blocks_root)
         if bp.product_id == "cerebrum-steward":
@@ -264,6 +266,10 @@ def generate_approved_product(
             "plan": state.product_design.plan,
             "generation": state.product_design.generation,
         }
+    except UnsafeOutputDir as exc:
+        state.product_design.last_error = str(exc)
+        update_session(session_id, state)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DualRegistryError as exc:
         state.product_design.last_error = str(exc)
         update_session(session_id, state)

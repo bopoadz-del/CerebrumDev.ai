@@ -20,7 +20,10 @@ def client(monkeypatch):
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(BLOCKS))
     monkeypatch.setenv("ENV", "test")
     # auth module caches the key at import time — clear the cached value for tests
-    monkeypatch.setattr("app.core.auth._API_KEY", "")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # No master key now means "refuse", not "let everyone in", so an
+    # unauthenticated fixture has to ask for the dev principal.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     return TestClient(app)
 
 
@@ -54,13 +57,17 @@ def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path):
     )
     assert r.status_code == 200
 
+    # No caller-supplied output_dir: an absolute path chosen by the client was
+    # a recursive-delete primitive, so the server picks the location and the
+    # test asserts against what it reports back.
     r = client.post(
         "/v1/sessions/sess_product_1/product/generate",
-        json={"output_dir": str(out)},
+        json={},
     )
     assert r.status_code == 200, r.text
     gen = r.json()["generation"]
     assert gen["product_id"] == "cerebrum-steward"
+    out = Path(gen["output_dir"])
     assert (out / "app" / "main.py").exists()
     assert (out / "docs" / "provenance" / "provenance.json").exists()
     # kernel-shaped action (not bare echo-only)

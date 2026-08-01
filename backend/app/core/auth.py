@@ -4,7 +4,18 @@ Resolution order for every request:
 1. ``CEREBRUM_DEV_API_KEY`` (master/admin key) — full access, unchanged.
 2. Per-account API key (``cdk_…``) via Bearer or X-API-Key.
 3. Per-account login token (``cdt_…``) via Bearer.
-4. No master key configured (local dev) → open dev principal, as before.
+4. No master key configured AND ``ALLOW_ANONYMOUS_DEV=1`` → open dev principal.
+
+The anonymous dev principal is opt-in. It used to be the fallback whenever no
+master key was configured, gated only by ``ENV == "production"`` matching that
+exact string. That failed open: an unset or misspelled ``ENV``, or a typo in
+the ``CEREBRUM_DEV_API_KEY`` variable name, silently granted every caller a
+``dev`` principal. Because ownership checks throughout the codebase are written
+as ``if principal.kind == "user"``, a ``dev`` principal bypasses every one of
+them and reads all tenants' sessions, products and uploads, with billing and
+trial quotas disabled. One missing environment variable must not do that, so
+open mode now requires deliberate opt-in and the process refuses to boot
+without either a master key or that opt-in.
 
 Set ``ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1`` to block unverified accounts from
 all credential-gated routes (403 ``email_not_verified``). Verification and
@@ -13,13 +24,29 @@ password-reset endpoints stay public so users can always complete the flow.
 
 from __future__ import annotations
 
+import hmac
 import os
 from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Header, HTTPException, Request
 
-_API_KEY = os.getenv("CEREBRUM_DEV_API_KEY", "").strip()
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _master_key() -> str:
+    """Read the master key per call.
+
+    Deliberately not cached at import time: a module-level snapshot is taken
+    before the process finishes loading its environment, so a key set slightly
+    later reads as absent and silently downgrades auth.
+    """
+    return os.getenv("CEREBRUM_DEV_API_KEY", "").strip()
+
+
+def _anonymous_dev_allowed() -> bool:
+    """Whether the credential-free ``dev`` principal may be issued."""
+    return os.getenv("ALLOW_ANONYMOUS_DEV", "").strip().lower() in _TRUTHY
 
 
 @dataclass(frozen=True)
@@ -33,12 +60,24 @@ class Principal:
 
 
 def verify_production_auth() -> None:
-    """Refuse to boot in production without an API key.
+    """Refuse to boot in any configuration that would accept anonymous callers.
 
-    In local development (ENV != production) auth remains optional.
+    Not conditional on ``ENV`` any more. The previous check only fired when
+    ``ENV`` was exactly ``"production"``, so ``prod``, ``PRODUCTION``, or an
+    unset value booted wide open. The safe invariant is simply: either a
+    master key exists, or someone deliberately asked for open mode.
     """
-    if os.getenv("ENV") == "production" and not os.getenv("CEREBRUM_DEV_API_KEY", "").strip():
-        raise RuntimeError("CEREBRUM_DEV_API_KEY must be set in production")
+    if _master_key():
+        return
+    if _anonymous_dev_allowed():
+        return
+    raise RuntimeError(
+        "Refusing to start: no CEREBRUM_DEV_API_KEY is configured and "
+        "ALLOW_ANONYMOUS_DEV is not set. Without one of these every request "
+        "would be granted an anonymous 'dev' principal, which bypasses all "
+        "per-account ownership checks. Set CEREBRUM_DEV_API_KEY in any shared "
+        "environment, or ALLOW_ANONYMOUS_DEV=1 for a local sandbox."
+    )
 
 
 def _provided_token(authorization: Optional[str], x_api_key: Optional[str]) -> str:
@@ -95,19 +134,26 @@ def require_api_key(
     depend on this same function (FastAPI dedupes it per request).
     """
     provided = _provided_token(authorization, x_api_key)
+    master = _master_key()
 
-    if _API_KEY:
-        if provided == _API_KEY:
+    if master:
+        if provided and hmac.compare_digest(provided, master):
             return Principal(kind="admin")
         principal = _resolve_user_principal(provided) if provided else None
         if principal is not None:
             return _enforce_verification(principal)
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
-    # Local-dev open mode (no master key configured): honor account credentials
-    # when presented, otherwise fall back to the anonymous dev principal.
+    # No master key configured. Account credentials still work.
     if provided:
         principal = _resolve_user_principal(provided)
         if principal is not None:
             return _enforce_verification(principal)
-    return Principal(kind="dev")
+
+    # Anonymous access is opt-in only. Falling through to a `dev` principal
+    # here is what turns a missing environment variable into cross-tenant
+    # exposure, because ownership checks elsewhere are written as
+    # `principal.kind == "user"` and a `dev` principal skips all of them.
+    if _anonymous_dev_allowed():
+        return Principal(kind="dev")
+    raise HTTPException(status_code=401, detail="Invalid or missing API key")

@@ -37,7 +37,7 @@
       "status": "PASS"
     },
     {
-      "detail": "block runtime execution not wired — GENERATE stubs only",
+      "detail": "block runtime execution not wired \u2014 GENERATE stubs only",
       "gate": "G7_store",
       "owner": "Factory",
       "status": "FAIL"
@@ -86,7 +86,7 @@
     }
   ],
   "pilot_verdict": "NO-GO",
-  "ran_at_utc": "2026-07-21T14:28:51.965925+00:00",
-  "repo_root": "C:\\Users\\shimm\\CerebrumDev.ai",
+  "ran_at_utc": "2026-08-01T23:26:50.585383+00:00",
+  "repo_root": "C:\\Users\\shimm\\.worktrees\\cdev-public-readiness",
   "schema_version": "steward_gate_v2"
 }

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -44,6 +45,29 @@ class ResetBody(BaseModel):
     new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
 
 
+def _dev_tokens_exposed() -> bool:
+    """Whether verification/reset tokens may be returned in an HTTP response.
+
+    Off unless explicitly enabled. These endpoints are public and
+    unauthenticated, so returning a live ``cdr_`` reset token to the caller is
+    an account takeover for anyone who knows a victim's email address.
+
+    The old condition was "mail delivery returned False", which fails open in
+    two ways: mail is unconfigured until an operator fills in the credentials
+    (they ship as ``sync: false``), and ``mailer`` swallows every exception and
+    reports False -- so a provider outage, a 429, or a rotated key silently
+    reopens it on a correctly configured deployment. Convenience during local
+    development is not worth a control that switches itself off during an
+    incident.
+    """
+    return os.getenv("ACCOUNTS_EXPOSE_DEV_TOKENS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _rate_limit(request: Request, bucket: str) -> None:
     ip = request.client.host if request.client else "unknown"
     if not check_rate_limit(bucket, ip):
@@ -80,12 +104,18 @@ async def register(body: RegisterBody, request: Request):
 
     if sent:
         verification = {"mode": "smtp", "email_sent": True}
-    else:
+    elif _dev_tokens_exposed():
         verification = {
             "mode": "dev_token",
             "email_sent": False,
             "note": "SMTP not configured — verify via POST /v1/auth/verify-email with this token",
             "dev_verification_token": verify_token,
+        }
+    else:
+        verification = {
+            "mode": "unavailable",
+            "email_sent": False,
+            "note": "Verification email could not be sent. Request a new one shortly.",
         }
     return {
         "ok": True,
@@ -153,7 +183,7 @@ async def forgot_password(body: ForgotBody, request: Request):
         "ok": True,
         "message": "If the email is registered, a reset link follows.",
     }
-    if token and not sent:
+    if token and not sent and _dev_tokens_exposed():
         resp["note"] = "SMTP not configured — reset via POST /v1/auth/reset-password with this token"
         resp["dev_reset_token"] = token
     return resp
