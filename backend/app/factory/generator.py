@@ -37,6 +37,7 @@ class ProductGenerator:
         product_dna_version: str = "1.0.0",
         pin_versions: Optional[Dict[str, str]] = None,
     ):
+        self._coder_report: Dict[str, Any] = {"written": [], "stubbed": {}}
         self.blueprint = blueprint
         self.planner = CapabilityPlanner(blocks_root, factory_shelf)
         self.plan = plan or self.planner.plan(blueprint)
@@ -138,6 +139,10 @@ class ProductGenerator:
             "resident_engineer": re_meta,
             "product_dna": dna_meta,
             "resident_runtime": re_runtime,
+            # What the coder actually did for GENERATE capabilities — written
+            # module ids vs {capability_id: reason} it fell back to stubs.
+            # Degraded output is fine; invisible degradation is not.
+            "coder": self._coder_report,
         }
 
     # --- Clone-and-test standard -------------------------------------------
@@ -360,6 +365,34 @@ def test_factory_plan_present():
     assert plan_path.is_file()
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     assert plan, "factory_plan.json is empty"
+
+
+def test_actions_are_reachable_over_http():
+    """Every planned capability must be callable — a 404 here means the
+    export self-describes but cannot do work (the 'skeleton' failure mode,
+    field-found 2026-08-02). Without a configured block store the kernel
+    answers 424 dependency_required; with one it answers 200. Both prove
+    the route exists and dispatches to the real handler."""
+    r = client.get("/v1/actions")
+    assert r.status_code == 200
+    for cap_id in EXPECTED_CAPABILITIES:
+        resp = client.post(
+            "/v1/actions/" + cap_id,
+            json={"arguments": {"probe": True}},
+            headers={"X-Tenant-Id": "smoke"},
+        )
+        assert resp.status_code != 404, "capability has no route: " + cap_id
+        outcome = resp.json()
+        assert outcome.get("status") in {
+            "success",
+            "dependency_required",
+            "execution_error",
+        }, "non-kernel outcome for " + cap_id + ": " + str(outcome)[:200]
+
+
+def test_unknown_action_is_a_404_not_a_shrug():
+    r = client.post("/v1/actions/definitely-not-a-capability", json={})
+    assert r.status_code == 404
 '''
         smoke = smoke.replace("__PRODUCT_NAME__", bp.product_name)
         smoke = smoke.replace("__PRODUCT_ID__", bp.product_id)
@@ -451,11 +484,79 @@ if __name__ == "__main__":
             main_py = self._basic_main_py()
         (app / "main.py").write_text(main_py, encoding="utf-8")
 
+    # Appended to every generated main.py. Without this the action modules
+    # exist but no HTTP route reaches them — the export self-describes and
+    # does nothing, which field-tested as "a skeleton" (2026-08-02).
+    _ACTIONS_ROUTE_PY = '''
+
+@app.post("/v1/actions/{capability_id}")
+async def run_action(capability_id: str, request: Request):
+    """Invoke a generated capability action (kernel ActionOutcome contract).
+
+    Body: {"arguments": {...}} (or the arguments object directly).
+    Tenant comes from X-Tenant-Id (defaults to "default" — these exports are
+    single-tenant per deployment).
+    """
+    import importlib
+
+    from app.actions import ACTION_CATALOG
+
+    spec = next(
+        (s for s in ACTION_CATALOG if s["capability_id"] == capability_id), None
+    )
+    if spec is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "unknown_capability",
+                "capability_id": capability_id,
+                "known": [s["capability_id"] for s in ACTION_CATALOG],
+            },
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    arguments = body.get("arguments") if isinstance(body.get("arguments"), dict) else body
+
+    module_name = capability_id.replace("-", "_")
+    mod = importlib.import_module("app.actions." + module_name)
+    context = {
+        "tenant_id": request.headers.get("X-Tenant-Id") or "default",
+        "capability_id": capability_id,
+        "action_id": spec["action_id"],
+    }
+    outcome = await mod.handle(context, arguments or {})
+
+    # ActionOutcome.status -> HTTP, so callers and monitors see failure as
+    # failure instead of a 200 that must be parsed to be believed.
+    status_http = {
+        "success": 200,
+        "dependency_required": 424,
+        "validation_error": 422,
+        "permission_denied": 403,
+        "unsupported": 501,
+        "execution_error": 502,
+    }.get(str(outcome.get("status")), 500)
+    return JSONResponse(status_code=status_http, content=outcome)
+
+
+@app.get("/v1/actions")
+def list_actions():
+    from app.actions import ACTION_CATALOG
+
+    return {"actions": ACTION_CATALOG}
+'''
+
     def _basic_main_py(self) -> str:
         bp = self.blueprint
         return f'''"""Generated FastAPI entrypoint for {bp.product_id}."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 app = FastAPI(title="{bp.product_name}", version="1.0.0")
 
@@ -492,7 +593,7 @@ def workflows():
     from pathlib import Path
     path = Path(__file__).resolve().parent / "workflows" / "workflows.json"
     return json.loads(path.read_text())
-'''
+''' + self._ACTIONS_ROUTE_PY
 
     def _estate_main_py(self) -> str:
         bp = self.blueprint
@@ -502,7 +603,8 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 from app.steward.errors import attach_request_id_middleware
 from app.steward.probes import health_payload, readiness_checks, version_payload
@@ -593,7 +695,7 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
     init_engine()
     with session_scope() as session:
         seed_pilot_fixture(session)
-'''
+''' + self._ACTIONS_ROUTE_PY
 
     def _write_estate_kit_surfaces(self, out: Path) -> None:
         """Emit demo fixtures + dual RAG API for estate vertical products."""
@@ -821,9 +923,13 @@ databases:
         )
 
     def _write_actions(self, out: Path) -> list:
+        from .coder import CoderError, coder_enabled, generate_handler_body
+
         actions_dir = out / "app" / "actions"
         actions_dir.mkdir(parents=True, exist_ok=True)
         specs = []
+        self._coder_report = {"written": [], "stubbed": {}}
+        bp_caps = {c.id: c for c in self.blueprint.capabilities}
         for cap in self.plan.capabilities:
             action_name = cap.capability_id.replace("-", "_")
             domain = self.blueprint.vertical.replace("-", "_")
@@ -839,6 +945,32 @@ databases:
                 }
             )
             mod = actions_dir / f"{action_name}.py"
+
+            # GENERATE strategy: the coder writes the handler. On any coder
+            # failure the honest stub ships instead and the reason is
+            # recorded — never a fabricated success, never a silent stub.
+            if cap.strategy == "GENERATE":
+                bp_cap = bp_caps.get(cap.capability_id)
+                if not coder_enabled():
+                    self._coder_report["stubbed"][cap.capability_id] = (
+                        "coder disabled (FACTORY_CODER_ENABLED=0)"
+                    )
+                elif bp_cap is None:
+                    self._coder_report["stubbed"][cap.capability_id] = (
+                        "capability missing from blueprint"
+                    )
+                else:
+                    try:
+                        impl = generate_handler_body(bp_cap, self.blueprint)
+                        mod.write_text(
+                            self._coder_module_py(action_id, cap, impl),
+                            encoding="utf-8",
+                        )
+                        self._coder_report["written"].append(cap.capability_id)
+                        continue
+                    except CoderError as exc:
+                        self._coder_report["stubbed"][cap.capability_id] = str(exc)
+
             blocks_list = ", ".join(cap.block_ids) or "(none — kernel/GENERATE)"
             mod.write_text(
                 f'''"""Generated action module for {action_id} (strategy={cap.strategy}).
@@ -974,6 +1106,76 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             encoding="utf-8",
         )
         return specs
+
+    def _coder_module_py(self, action_id: str, cap, impl: Dict[str, Any]) -> str:
+        """Module for a coder-written GENERATE capability.
+
+        The emitted body runs inside try/except and answers with kernel
+        outcomes — a broken generated body is an execution_error response,
+        never a crashed product. Provenance (model, capability) is stamped
+        in the header for review.
+        """
+        return f'''"""Coder-written action module for {action_id} (strategy=GENERATE).
+
+Written by the factory coder LLM ({impl["model"]}) from the approved
+blueprint. Review before production use. Regenerate rather than hand-edit;
+durable fixes belong in the Factory.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict
+
+from app.cerebrum_product_kernel.contract.models import (
+    ActionOutcome,
+    ActionStatus,
+)
+
+ACTION_ID = "{action_id}"
+CAPABILITY_ID = "{cap.capability_id}"
+STRATEGY = "GENERATE"
+BLOCK_IDS: list = []
+CODER_MODEL = "{impl["model"]}"
+
+# In-memory state for the generated logic. Swap for a durable store block
+# via regeneration when this capability graduates from prototype.
+_STATE: Dict[str, Any] = {{}}
+
+
+async def generated_logic(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
+{impl["body"]}
+
+
+async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute the coder-written capability with kernel-shaped outcomes."""
+    tenant_id = context.get("tenant_id")
+    if not tenant_id:
+        return ActionOutcome(
+            status=ActionStatus.PERMISSION_DENIED,
+            error_code="missing_tenant",
+            error_message="tenant_id is required in trusted context",
+        ).to_dict()
+
+    try:
+        result = await generated_logic(context, arguments or {{}})
+    except Exception as exc:  # noqa: BLE001 — generated code must not crash the product
+        return ActionOutcome(
+            status=ActionStatus.EXECUTION_ERROR,
+            error_code="generated_logic_error",
+            error_message=type(exc).__name__ + ": " + str(exc),
+        ).to_dict()
+
+    output = {{
+        "action_id": ACTION_ID,
+        "capability_id": CAPABILITY_ID,
+        "strategy": STRATEGY,
+        "coder_model": CODER_MODEL,
+        "arguments": arguments or {{}},
+        "tenant_id": tenant_id,
+        "result": result,
+    }}
+    return ActionOutcome.success(output).to_dict()
+'''
 
     def _write_hats(self, out: Path) -> list:
         manifests = build_hat_manifests(self.blueprint, self.plan)

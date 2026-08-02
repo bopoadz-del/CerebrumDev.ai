@@ -355,14 +355,27 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
     capabilities = [c.id for c in bp.capabilities]
     blocks = sorted({b for c in bp.capabilities for b in c.block_ids})
     source = "golden_steward" if bp.product_id == "cerebrum-steward" else "drafted"
+    # Say who drafted it. A dead LLM key must not look identical to a
+    # working architect.
+    mode_labels = {
+        "architect_llm": "Drafted by the architect LLM.",
+        "golden_steward": "Drafted from the golden steward blueprint.",
+        "keyword_fallback": "Drafted by deterministic templates (no LLM).",
+    }
+    mode_line = mode_labels.get(bp.drafting_mode or "", "")
+    if bp.drafting_note:
+        mode_line = (mode_line + " " + bp.drafting_note + ".").strip()
     summary = (
         f"Blueprint drafted: {bp.product_name} ({bp.vertical}). "
         f"{len(capabilities)} capabilities, {len(blocks)} blocks. "
-        f"Reply 'approve' to generate the product, or refine your brief."
+        + (mode_line + " " if mode_line else "")
+        + "Reply 'approve' to generate the product, or refine your brief."
     )
     return {
         "ok": True,
         "source": source,
+        "drafting_mode": bp.drafting_mode,
+        "drafting_note": bp.drafting_note,
         "blueprint": pd.blueprint,
         "yaml": blueprint_to_yaml(bp),
         "summary": summary,
@@ -393,13 +406,32 @@ def approve_and_generate(
         "output_dir": result["output_dir"],
         "inputs_hash": result["inputs_hash"],
         "product_id": result["product_id"],
+        "coder": result.get("coder"),
     }
     pd.last_error = None
 
+    # Say what generation actually is: deterministic composition of prebuilt
+    # blocks (plus LLM-written handlers for GENERATE capabilities when the
+    # coder runs). "Generated" alone oversold this as bespoke code.
+    strategies = [c.get("strategy") for c in (pd.plan or {}).get("capabilities", [])]
+    reuse_n = sum(1 for s in strategies if s == "REUSE")
+    composition = f"composed from {reuse_n} prebuilt block capabilities"
+    coder = result.get("coder") or {}
+    if coder.get("written"):
+        composition += f" + {len(coder['written'])} coder-written"
     summary = (
-        f"Product generated: {result['product_id']}. "
+        f"Product generated: {result['product_id']} ({composition}). "
         f"Download it from Your Platforms (product package) or keep refining."
     )
+    stubbed = coder.get("stubbed") or {}
+    if stubbed:
+        # Degraded output is fine; invisible degradation is not.
+        names = ", ".join(sorted(stubbed))
+        reason = next(iter(stubbed.values()))
+        summary += (
+            f" Note: {len(stubbed)} capability(ies) shipped as honest stubs "
+            f"— the coder could not write them ({names}: {reason})."
+        )
     return {
         "ok": True,
         "generation": pd.generation,

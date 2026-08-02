@@ -401,18 +401,29 @@ def draft_blueprint_from_brief(
     """
     if use_llm is None:
         use_llm = llm_drafting_enabled()
+    fallback_note = "LLM drafting disabled" if not use_llm else None
     if use_llm:
         try:
-            return _draft_with_llm(brief, vertical_hint=vertical_hint)
+            bp = _draft_with_llm(brief, vertical_hint=vertical_hint)
+            bp.drafting_mode = "architect_llm"
+            return bp
         except Exception as exc:
+            # Falling back is right for availability; hiding it is not. The
+            # note travels on the blueprint so the chat/UI can say templates
+            # drafted this, instead of a dead LLM key looking identical to a
+            # working architect.
             logger.warning("LLM drafting failed, falling back: %s", exc)
+            fallback_note = f"LLM drafting failed ({type(exc).__name__}); deterministic fallback used"
 
     text = (brief or "").lower()
     wants_steward = any(
         k in text for k in ("steward", "private estate", "property readiness")
     )
     if use_golden_steward and (wants_steward or vertical_hint == "estate"):
-        return load_blueprint(steward_golden_path())
+        bp = load_blueprint(steward_golden_path())
+        bp.drafting_mode = "golden_steward"
+        bp.drafting_note = fallback_note
+        return bp
 
     dual = sorted(dual_registered_ids())
     # Blocks the brief actually mentions become REUSE capabilities; audit is
@@ -457,6 +468,8 @@ def draft_blueprint_from_brief(
         "connectors": [],
         "edge_profile": "standard",
         "human_authority": True,
+        "drafting_mode": "keyword_fallback",
+        "drafting_note": fallback_note,
     }
     return ProductBlueprint.model_validate(raw)
 
