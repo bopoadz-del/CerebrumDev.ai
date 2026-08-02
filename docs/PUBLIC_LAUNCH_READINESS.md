@@ -33,6 +33,19 @@ single largest is that there are no backups of anything.
   quietly corrupt), integrity-checks every snapshot, and restores to an
   explicit target so a drill can never overwrite production. `backup_cli drill`
   proves the round trip.
+
+  *Correction (2026-08-02, post-merge):* the `type: cron` job this page
+  originally scheduled the backup with **can never run on Render** — cron jobs
+  cannot mount persistent disks, and a disk is readable by exactly one
+  service, so no separate job can ever see `/app/storage`. The vehicle is now
+  an in-process asyncio task inside the web service
+  (`core/backup_scheduler.py`): bootstrap snapshot at first boot when no
+  archive exists, nightly at `BACKUP_UTC_HOUR` (03 UTC), retention via
+  `BACKUP_KEEP`, every run's report written to `backups/last_backup.json` and
+  surfaced (non-gating) at `/ready` under `details.last_backup`. Failures log
+  at ERROR, which Sentry's logging integration exports. The invariant test now
+  asserts the inverse shape: no cron in the blueprint may declare a disk, and
+  the web service must arm the scheduler at startup.
 - **Managed Postgres declared**, with `scripts/migrate_accounts_to_postgres.py`
   (`--verify` re-reads both sides). `ACCOUNTS_DATABASE_URL` is deliberately
   left unwired: setting it against an empty database loses every account while
@@ -222,8 +235,9 @@ Worth recording so nobody "fixes" these:
    `gh pr merge`, so these are operator commands.
 2. Set up a backup of `/app/storage` and `/app/data`, or move accounts to
    managed Postgres with PITR. Confirm whether Render retains disk snapshots.
-   (CDEV's nightly backup cron ships with #127 and starts on merge; Blocks
-   `/app/data` still has no equivalent.)
+   (CDEV backups now run in-process inside the web service — the #127 cron
+   design was impossible on Render, see the Durability correction above.
+   Blocks `/app/data` still has no equivalent.)
 3. Confirm what **Moonshot AI** does with submitted content — whether it is
    retained or trained on, and whether that can be disabled. The privacy policy
    cannot truthfully claim "we do not train on your content" until this is

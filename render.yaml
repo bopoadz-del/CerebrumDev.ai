@@ -61,6 +61,14 @@ services:
         value: /app/storage/chroma
       - key: STORAGE_PATH
         value: /app/storage
+      # In-process nightly backup (core/backup_scheduler.py) — see the note
+      # below on why this is not a cron job.
+      - key: BACKUP_SCHEDULE_ENABLED
+        value: "1"
+      - key: BACKUP_UTC_HOUR
+        value: "3"
+      - key: BACKUP_KEEP
+        value: "14"
       # Accounts engine. Left UNWIRED on purpose.
       #
       # Setting this switches accounts_store from SQLite to Postgres, and the
@@ -142,39 +150,20 @@ services:
       mountPath: /app/storage
       sizeGB: 1
 
-  # Nightly snapshot of the accounts database and on-disk content.
+  # Nightly backups run INSIDE the web service (core/backup_scheduler.py),
+  # not as a Render cron job. A cron job here would be a lie twice over:
+  # Render cron jobs cannot mount persistent disks, and a disk is readable by
+  # exactly one service -- so no other service can ever see /app/storage.
+  # The web service is the only process that can take the snapshot, and it
+  # runs continuously on a paid plan. Knobs: BACKUP_SCHEDULE_ENABLED,
+  # BACKUP_UTC_HOUR (03 UTC default), BACKUP_KEEP (14 default) on the web
+  # service above; the last run's report is at /ready under details.last_backup.
   #
-  # Mounts the SAME disk as the web service, which is what makes the snapshot
-  # possible at all -- but note what that does and does not buy. It protects
-  # against logical loss: an accidental delete, a bad migration, the
-  # arbitrary-rmtree class of bug. It does NOT protect against losing the
-  # disk, because the copy is on it.
-  #
-  # For disk-loss protection, either set BACKUP_DIR to a volume on another
-  # service, or move accounts to managed Postgres (set ACCOUNTS_DATABASE_URL)
-  # and rely on its point-in-time recovery. The job detects Postgres
-  # automatically and switches to pg_dump.
-  - type: cron
-    name: cerebrumdev-backup
-    env: docker
-    dockerfilePath: ./Dockerfile
-    dockerCommand: python -m scripts.backup_cli backup --keep 14
-    schedule: "0 3 * * *"
-    plan: starter
-    region: oregon
-    envVars:
-      - key: STORAGE_PATH
-        value: /app/storage
-      - key: BACKUP_DIR
-        sync: false
-      - key: ACCOUNTS_DATABASE_URL
-        sync: false
-      - key: ACCOUNTS_DB_PATH
-        sync: false
-    disk:
-      name: cerebrumdev-storage
-      mountPath: /app/storage
-      sizeGB: 1
+  # What an on-disk snapshot buys: protection against logical loss (accidental
+  # delete, bad migration, the arbitrary-rmtree class of bug). It does NOT
+  # protect against losing the disk, because the copy is on it. For disk-loss
+  # protection, move accounts to managed Postgres (below) and rely on its
+  # point-in-time recovery.
 
   - type: keyvalue
     name: cerebrumdev-redis
