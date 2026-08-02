@@ -20,7 +20,10 @@ def client(monkeypatch, tmp_path):
     import app.core.session_persistence as session_persistence
 
     monkeypatch.setattr(session_persistence, "STORAGE_PATH", storage_path)
-    monkeypatch.setattr("app.core.auth._API_KEY", "")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # No master key now means "refuse", not "let everyone in", so an
+    # unauthenticated fixture has to ask for the dev principal.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     for var in (
         "SMTP_HOST",
         "ACCOUNTS_REQUIRE_VERIFIED_EMAIL",

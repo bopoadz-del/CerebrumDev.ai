@@ -17,7 +17,7 @@ from app.core.auth import Principal, require_api_key
 from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError
-from app.factory.paths import factory_repo_root
+from app.factory.paths import UnsafeOutputDir, factory_repo_root, safe_output_dir
 from app.factory.product_architect import (
     architect_pipeline,
     blueprint_to_yaml,
@@ -57,7 +57,14 @@ def get_steward_golden() -> Dict[str, Any]:
 
 
 @router.post("/draft")
-def draft_product_architecture(body: DraftRequest) -> Dict[str, Any]:
+def draft_product_architecture(
+    body: DraftRequest, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    # Drafting is a paid LLM call (and retries once against a fallback model),
+    # so it is metered exactly like generation/chat/export. The gate runs
+    # BEFORE the spend and outside the try/except below, which would otherwise
+    # rewrite the 429 into a 400 (TrialLimitExceeded is an HTTPException).
+    require_within_limit(principal.account_id, "draft")
     try:
         bp = draft_blueprint_from_brief(
             body.brief, vertical_hint=body.vertical_hint
@@ -74,7 +81,13 @@ def draft_product_architecture(body: DraftRequest) -> Dict[str, Any]:
 
 
 @router.post("/plan")
-def plan_product(body: PlanRequest) -> Dict[str, Any]:
+def plan_product(
+    body: PlanRequest, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    # The planner runs over caller-supplied blueprint JSON, so it is an
+    # unauthenticated-shaped compute path unless metered. Same counter as
+    # draft, and again outside the try/except so the 429 survives.
+    require_within_limit(principal.account_id, "draft")
     try:
         bp = ProductBlueprint.model_validate(body.blueprint)
         plan = plan_blueprint(bp)
@@ -94,7 +107,7 @@ def generate_from_architecture(
     try:
         if body.blueprint:
             bp = ProductBlueprint.model_validate(body.blueprint)
-            out = Path(body.output_dir) if body.output_dir else _default_output(bp.product_id)
+            out = safe_output_dir(body.output_dir, bp.product_id)
             plan = plan_blueprint(bp, blocks_root=blocks_root)
             result = generate_product(bp, out, blocks_root=blocks_root)
             return {
@@ -109,11 +122,7 @@ def generate_from_architecture(
             }
         if not body.brief:
             raise HTTPException(status_code=400, detail="brief or blueprint required")
-        out = (
-            Path(body.output_dir)
-            if body.output_dir
-            else _default_output("cerebrum-steward")
-        )
+        out = safe_output_dir(body.output_dir, "cerebrum-steward")
         result = architect_pipeline(
             body.brief,
             out,
@@ -123,6 +132,8 @@ def generate_from_architecture(
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error", "generate failed"))
         return result
+    except UnsafeOutputDir as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DualRegistryError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except BlueprintError as exc:

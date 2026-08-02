@@ -3,7 +3,11 @@ services:
     name: cerebrumdev-backend
     env: docker
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
+    # /ready probes real dependencies and returns a non-200 when they are
+    # broken. /health was pointed here before, but it returned 200 even while
+    # reporting "degraded" -- and Render only reads the status code, so a
+    # service with an unwritable disk looked healthy to the platform.
+    healthCheckPath: /ready
     plan: starter
     region: oregon
     envVars:
@@ -57,6 +61,35 @@ services:
         value: /app/storage/chroma
       - key: STORAGE_PATH
         value: /app/storage
+      # Accounts engine. Left UNWIRED on purpose.
+      #
+      # Setting this switches accounts_store from SQLite to Postgres, and the
+      # switch copies nothing -- pointing a live service at an empty database
+      # silently loses every account. Do the cutover deliberately:
+      #   1. sync the blueprint so cerebrumdev-accounts (below) is provisioned
+      #   2. python -m scripts.migrate_accounts_to_postgres --verify
+      #   3. only then paste the connection string here
+      # Until step 3, accounts stay on SQLite and the nightly backup job keeps
+      # snapshotting them.
+      - key: ACCOUNTS_DATABASE_URL
+        sync: false
+      # Encryption at rest for Drive OAuth refresh tokens and stored documents.
+      # file_crypto is a pass-through while this is unset, which is why those
+      # tokens are currently plaintext on the disk despite docstrings saying
+      # otherwise. generateValue creates it once and keeps it stable.
+      - key: DATA_ENCRYPTION_KEY
+        generateValue: true
+        sync: false
+      # Flip to "1" once a mail provider above is actually configured. Turning
+      # it on without working mail locks every new account out, because nobody
+      # can complete verification.
+      - key: ACCOUNTS_REQUIRE_VERIFIED_EMAIL
+        value: "0"
+      # Never set this in a shared environment. It returns live verification
+      # and password-reset tokens in HTTP responses, which is an account
+      # takeover for anyone who knows a user's email address.
+      - key: ACCOUNTS_EXPOSE_DEV_TOKENS
+        value: "0"
       - key: PYTHONIOENCODING
         value: utf-8
       # Observability: paste the Sentry project DSN (python/fastapi) here.
@@ -109,6 +142,40 @@ services:
       mountPath: /app/storage
       sizeGB: 1
 
+  # Nightly snapshot of the accounts database and on-disk content.
+  #
+  # Mounts the SAME disk as the web service, which is what makes the snapshot
+  # possible at all -- but note what that does and does not buy. It protects
+  # against logical loss: an accidental delete, a bad migration, the
+  # arbitrary-rmtree class of bug. It does NOT protect against losing the
+  # disk, because the copy is on it.
+  #
+  # For disk-loss protection, either set BACKUP_DIR to a volume on another
+  # service, or move accounts to managed Postgres (set ACCOUNTS_DATABASE_URL)
+  # and rely on its point-in-time recovery. The job detects Postgres
+  # automatically and switches to pg_dump.
+  - type: cron
+    name: cerebrumdev-backup
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python -m scripts.backup_cli backup --keep 14
+    schedule: "0 3 * * *"
+    plan: starter
+    region: oregon
+    envVars:
+      - key: STORAGE_PATH
+        value: /app/storage
+      - key: BACKUP_DIR
+        sync: false
+      - key: ACCOUNTS_DATABASE_URL
+        sync: false
+      - key: ACCOUNTS_DB_PATH
+        sync: false
+    disk:
+      name: cerebrumdev-storage
+      mountPath: /app/storage
+      sizeGB: 1
+
   - type: keyvalue
     name: cerebrumdev-redis
     region: oregon
@@ -134,3 +201,24 @@ services:
       # The frontend loads Sentry lazily only when this is set at build time.
       - key: VITE_SENTRY_DSN
         sync: false
+
+# Managed Postgres for the accounts database.
+#
+# Without this, accounts_store falls back to SQLite at
+# $STORAGE_PATH/accounts.db -- a single file on one disk holding every account,
+# password hash, API key and the trial-quota ledger, with no point-in-time
+# recovery and a single-writer lock that turns concurrent public signups into
+# "database is locked" 500s.
+#
+# Declaring it here does not provision anything until the blueprint is synced.
+# Once synced, ACCOUNTS_DATABASE_URL is wired automatically below and
+# accounts_store switches engines on its own; alembic runs against it at boot.
+# MIGRATE THE EXISTING SQLITE DATA BEFORE CUTTING OVER -- the switch does not
+# copy anything, and an empty Postgres means every existing account is gone.
+databases:
+  - name: cerebrumdev-accounts
+    databaseName: cerebrumdev
+    user: cerebrumdev
+    plan: basic-256mb
+    region: oregon
+    ipAllowList: []

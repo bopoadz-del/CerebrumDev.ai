@@ -603,3 +603,181 @@ def increment_usage(account_id: str, counter: str, period: str) -> int:
             )
         ).first()
         return int(row[0])
+
+
+def list_usage_counters(account_id: str) -> List[Dict[str, Any]]:
+    """Every usage counter held for an account (data-export input)."""
+    with _LOCK, _engine().begin() as conn:
+        rows = conn.execute(
+            sa.select(_t_usage_counters)
+            .where(_t_usage_counters.c.account_id == account_id)
+            .order_by(_t_usage_counters.c.counter, _t_usage_counters.c.period)
+        ).all()
+    return [
+        {
+            "counter": r._mapping["counter"],
+            "period": r._mapping["period"],
+            "value": int(r._mapping["value"]),
+            "updated_at": r._mapping["updated_at"],
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Data rights: re-authentication, export, erasure, retention
+# ---------------------------------------------------------------------------
+
+
+def verify_account_password(account_id: str, password: str) -> bool:
+    """Re-authenticate an already-identified account by password.
+
+    ``authenticate`` resolves by email; destructive endpoints already know the
+    account id from the bearer credential and must confirm the *human* is
+    present. Returns False for unknown accounts, so a stolen token cannot even
+    probe which ids exist.
+    """
+    if not account_id or not password:
+        return False
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts.c.password_hash).where(_t_accounts.c.id == account_id)
+        ).first()
+    if row is None:
+        return False
+    return _verify_password(password, row[0])
+
+
+def export_account(account_id: str) -> Optional[Dict[str, Any]]:
+    """Everything the accounts database holds about one account.
+
+    Field-by-field whitelist, deliberately not ``dict(row._mapping)`` minus a
+    denylist: the accounts row also carries ``password_hash``,
+    ``verify_token_hash`` and ``reset_token_hash``, and a denylist silently
+    starts leaking the day a new secret column is added. Secret material is
+    never exported — not even in hashed form, since a hash is still an offline
+    cracking target and a bearer-equality oracle.
+    """
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts).where(_t_accounts.c.id == account_id)
+        ).first()
+    if row is None:
+        return None
+    m = row._mapping
+    return {
+        "profile": {
+            "account_id": m["id"],
+            "email": m["email"],
+            "email_verified": bool(m["email_verified"]),
+            "created_at": m["created_at"],
+        },
+        "billing": {
+            "subscription_status": m["subscription_status"],
+            "trial_ends_at": m["trial_ends_at"],
+            "stripe_customer_id": m["stripe_customer_id"],
+            "stripe_subscription_id": m["stripe_subscription_id"],
+        },
+        "usage_counters": list_usage_counters(account_id),
+        "sessions": sessions_for_owner(account_id),
+        "api_keys": list_api_keys(account_id),
+    }
+
+
+def delete_account(account_id: str) -> bool:
+    """Erase an account and every dependent row in one transaction.
+
+    Order is child-rows-first so a mid-way failure rolls back to a consistent
+    state rather than leaving credentials that authenticate against a missing
+    account. Returns True when an account row was actually removed.
+    """
+    if not account_id:
+        return False
+    with _LOCK, _engine().begin() as conn:
+        conn.execute(sa.delete(_t_api_keys).where(_t_api_keys.c.account_id == account_id))
+        conn.execute(
+            sa.delete(_t_login_tokens).where(_t_login_tokens.c.account_id == account_id)
+        )
+        conn.execute(
+            sa.delete(_t_session_owners).where(
+                _t_session_owners.c.account_id == account_id
+            )
+        )
+        conn.execute(
+            sa.delete(_t_usage_counters).where(
+                _t_usage_counters.c.account_id == account_id
+            )
+        )
+        result = conn.execute(sa.delete(_t_accounts).where(_t_accounts.c.id == account_id))
+        return result.rowcount > 0
+
+
+def _is_expired(raw: Optional[str], now: datetime) -> bool:
+    """Whether an ISO timestamp is in the past. Unparseable values are not
+    treated as expired — deleting rows we cannot read is worse than keeping
+    them one cycle longer."""
+    parsed = _parse(raw)
+    if parsed is None:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed <= now
+
+
+def purge_expired_tokens() -> Dict[str, int]:
+    """Delete time-limited credential material whose lifetime has elapsed.
+
+    Covers login tokens (7d) and the single-use email-verification (24h) and
+    password-reset (1h) hashes parked on the account row. Nothing else here is
+    genuinely time-limited: ``trial_ends_at`` and ``subscription_status`` are
+    billing state, not retention state, and are left alone.
+
+    Timestamps are compared as parsed datetimes, not strings: the stored values
+    carry UTC offsets and lexical comparison of offset-bearing ISO strings is
+    wrong. Callable from ops or the admin endpoint; deliberately no scheduler.
+    """
+    now = _utcnow()
+    removed_login = 0
+    cleared_verify = 0
+    cleared_reset = 0
+    with _LOCK, _engine().begin() as conn:
+        rows = conn.execute(
+            sa.select(_t_login_tokens.c.id, _t_login_tokens.c.expires_at)
+        ).all()
+        stale = [r._mapping["id"] for r in rows if _is_expired(r._mapping["expires_at"], now)]
+        if stale:
+            result = conn.execute(
+                sa.delete(_t_login_tokens).where(_t_login_tokens.c.id.in_(stale))
+            )
+            removed_login = result.rowcount
+
+        acct_rows = conn.execute(
+            sa.select(
+                _t_accounts.c.id,
+                _t_accounts.c.verify_token_hash,
+                _t_accounts.c.verify_expires_at,
+                _t_accounts.c.reset_token_hash,
+                _t_accounts.c.reset_expires_at,
+            )
+        ).all()
+        for r in acct_rows:
+            m = r._mapping
+            if m["verify_token_hash"] and _is_expired(m["verify_expires_at"], now):
+                conn.execute(
+                    sa.update(_t_accounts)
+                    .where(_t_accounts.c.id == m["id"])
+                    .values(verify_token_hash=None, verify_expires_at=None)
+                )
+                cleared_verify += 1
+            if m["reset_token_hash"] and _is_expired(m["reset_expires_at"], now):
+                conn.execute(
+                    sa.update(_t_accounts)
+                    .where(_t_accounts.c.id == m["id"])
+                    .values(reset_token_hash=None, reset_expires_at=None)
+                )
+                cleared_reset += 1
+    return {
+        "login_tokens_deleted": removed_login,
+        "verify_tokens_cleared": cleared_verify,
+        "reset_tokens_cleared": cleared_reset,
+    }

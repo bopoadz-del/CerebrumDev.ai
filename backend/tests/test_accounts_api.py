@@ -14,8 +14,16 @@ def client(monkeypatch, tmp_path):
     import app.core.session_persistence as session_persistence
 
     monkeypatch.setattr(session_persistence, "STORAGE_PATH", storage_path)
-    monkeypatch.setattr("app.core.auth._API_KEY", "")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # No master key now means "refuse", not "let everyone in", so an
+    # unauthenticated fixture has to ask for the dev principal.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("SMTP_HOST", raising=False)
+    # These tests drive the verify/reset flows end to end, so they need the
+    # tokens in the response. That is now opt-in: returning them by default
+    # made POST /v1/auth/forgot-password an account-takeover endpoint whenever
+    # mail delivery failed.
+    monkeypatch.setenv("ACCOUNTS_EXPOSE_DEV_TOKENS", "1")
     monkeypatch.delenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", raising=False)
     monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
     monkeypatch.delenv("ACCOUNTS_DATABASE_URL", raising=False)
@@ -140,7 +148,7 @@ def test_api_keys_and_session_ownership(client):
 
 
 def test_master_key_admin_access(client, monkeypatch):
-    monkeypatch.setattr("app.core.auth._API_KEY", "master-secret")
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-secret")
     a = _register(client, "owner@example.com")
     created = client.post(
         "/v1/sessions/", headers={"Authorization": f"Bearer {a['login_token']}"}

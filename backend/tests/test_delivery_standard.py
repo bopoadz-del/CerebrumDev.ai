@@ -120,7 +120,10 @@ def test_render_missing_mission_fails_closed():
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr("app.core.auth._API_KEY", "")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # No master key now means "refuse", not "let everyone in", so an
+    # unauthenticated fixture has to ask for the dev principal.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     from app.routers import delivery_standard as router_mod
 
     app = FastAPI()

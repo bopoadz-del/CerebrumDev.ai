@@ -14,7 +14,10 @@ def client(monkeypatch, tmp_path):
     import app.core.session_persistence as session_persistence
 
     monkeypatch.setattr(session_persistence, "STORAGE_PATH", storage_path)
-    monkeypatch.setattr("app.core.auth._API_KEY", "")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # No master key now means "refuse", not "let everyone in", so an
+    # unauthenticated fixture has to ask for the dev principal.
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     for var in (
         "SMTP_HOST",
         "ACCOUNTS_REQUIRE_VERIFIED_EMAIL",
@@ -135,7 +138,7 @@ def test_admin_and_dev_bypass_enforcement(client, monkeypatch):
     res = client.post("/v1/sessions/")
     assert res.status_code == 200
     # Admin master key.
-    monkeypatch.setattr("app.core.auth._API_KEY", "master-secret")
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-secret")
     res = client.post("/v1/sessions/", headers={"Authorization": "Bearer master-secret"})
     assert res.status_code == 200
 

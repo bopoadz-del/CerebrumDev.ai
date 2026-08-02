@@ -46,6 +46,21 @@ def steward_golden_path() -> Path:
 
 LLM_DRAFTING_ENV = "ARCHITECT_LLM_DRAFTING_ENABLED"
 
+# Cost ceilings for the drafting call. The brief is caller-supplied and the
+# response was previously unbounded, so a single request could bill an
+# arbitrary number of tokens in each direction (twice, because the call
+# retries against a fallback model). Both are generous for a real brief and
+# env-overridable for deployments that want more headroom.
+BRIEF_MAX_CHARS_ENV = "ARCHITECT_BRIEF_MAX_CHARS"
+BRIEF_MAX_CHARS_DEFAULT = 8000
+LLM_MAX_TOKENS_ENV = "ARCHITECT_LLM_MAX_TOKENS"
+LLM_MAX_TOKENS_DEFAULT = 2000
+
+BRIEF_TRUNCATION_MARKER = (
+    "\n\n[brief truncated by the server at {limit} characters; "
+    "{dropped} characters were not sent to the model]"
+)
+
 
 def llm_drafting_enabled() -> bool:
     """Env gate for LLM-powered brief drafting. Default OFF (house pattern)."""
@@ -55,6 +70,38 @@ def llm_drafting_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive int from the environment, per call, falling back."""
+    try:
+        value = int(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def brief_max_chars() -> int:
+    return _positive_int_env(BRIEF_MAX_CHARS_ENV, BRIEF_MAX_CHARS_DEFAULT)
+
+
+def llm_max_tokens() -> int:
+    return _positive_int_env(LLM_MAX_TOKENS_ENV, LLM_MAX_TOKENS_DEFAULT)
+
+
+def truncate_brief(brief: str) -> str:
+    """Bound the caller-supplied brief, marking the cut explicitly.
+
+    Silent truncation is worse than a bounded prompt: the model would draft
+    against text the user cannot see was dropped. The marker is part of the
+    prompt so the model knows the brief is incomplete.
+    """
+    text = brief or ""
+    limit = brief_max_chars()
+    if len(text) <= limit:
+        return text
+    dropped = len(text) - limit
+    return text[:limit] + BRIEF_TRUNCATION_MARKER.format(limit=limit, dropped=dropped)
 
 
 _LLM_DRAFT_SYSTEM = """You are the Cerebrum product architect. Given a user \
@@ -148,6 +195,10 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
                 "model": m,
                 "messages": messages,
                 "response_format": {"type": "json_object"},
+                # Hard ceiling on the completion. Without it a single draft
+                # can bill the model's full context window, and this call
+                # retries once against the fallback model.
+                "max_tokens": llm_max_tokens(),
             }
             # Omit temperature unless explicitly configured: reasoning models
             # (kimi-k2.x) reject any explicit temperature other than 1.
@@ -254,15 +305,17 @@ def _draft_with_llm(
     """Draft a blueprint via the configured LLM. Raises on any failure."""
     dual = sorted(dual_registered_ids())
     block_list = "\n".join(f"- {b}" for b in dual) or "- (none registered)"
+    # The brief is caller-supplied and was previously sent whole.
+    bounded_brief = truncate_brief(brief)
     messages = [
         {
             "role": "system",
             "content": _LLM_DRAFT_SYSTEM + f"\nAVAILABLE BLOCKS:\n{block_list}\n",
         },
-        {"role": "user", "content": brief},
+        {"role": "user", "content": bounded_brief},
     ]
     data = _llm_json_call(messages)
-    return _blueprint_from_llm_payload(data, brief, vertical_hint, dual)
+    return _blueprint_from_llm_payload(data, bounded_brief, vertical_hint, dual)
 
 
 # --- Deterministic keyword drafting (offline / canned demo path) --------------

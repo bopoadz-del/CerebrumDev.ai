@@ -13,6 +13,11 @@ from typing import Any, Dict, Optional
 from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, write_provenance
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
+from app.factory.paths import (
+    UnsafeOutputDir,
+    factory_outputs_root,
+    is_safe_to_clean,
+)
 from app.factory.planner import CapabilityPlanner, ProductPlan
 from app.factory.resident_engineer import write_resident_engineer, write_store_docs
 from app.product_dna.emit import emit_product_dna
@@ -44,6 +49,16 @@ class ProductGenerator:
     def generate(self, output_dir: Path | str, *, clean: bool = True) -> Dict[str, Any]:
         out = Path(output_dir).resolve()
         if clean and out.exists():
+            # This is the line that actually destroys, so it refuses on its own
+            # account rather than trusting whoever called it. Untrusted paths
+            # are already confined to the outputs root at the HTTP boundary
+            # (paths.safe_output_dir); this second check exists so a future
+            # call site cannot reintroduce an arbitrary delete.
+            if not is_safe_to_clean(out):
+                raise UnsafeOutputDir(
+                    f"refusing to clean {out}: outside {factory_outputs_root()} "
+                    "and not a temporary directory"
+                )
             shutil.rmtree(out)
         out.mkdir(parents=True, exist_ok=True)
 

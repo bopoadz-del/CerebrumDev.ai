@@ -4,6 +4,7 @@ Counters (env-overridable):
 - ``generation``    lifetime product generations   (TRIAL_GENERATION_LIMIT, 3)
 - ``chat_message``  chat messages per day          (TRIAL_CHAT_MESSAGES_PER_DAY, 100)
 - ``export``        lifetime prototype exports     (TRIAL_EXPORT_LIMIT, 5)
+- ``draft``         blueprint drafts/plans per day (TRIAL_DRAFT_LIMIT, 20)
 
 Applies to real user accounts without an active subscription. Active
 subscribers, admin/master-key and local-dev principals are exempt. Enforced
@@ -25,6 +26,9 @@ TRIAL_COUNTERS: Dict[str, tuple] = {
     "generation": ("TRIAL_GENERATION_LIMIT", 3, "lifetime"),
     "chat_message": ("TRIAL_CHAT_MESSAGES_PER_DAY", 100, "daily"),
     "export": ("TRIAL_EXPORT_LIMIT", 5, "lifetime"),
+    # Drafting is an iterative, paid LLM action: daily like chat, not lifetime
+    # like generation, so refining a brief cannot burn the generation budget.
+    "draft": ("TRIAL_DRAFT_LIMIT", 20, "daily"),
 }
 
 
