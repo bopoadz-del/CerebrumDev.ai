@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .core.request_limits import BodySizeLimitMiddleware
+from .core import backup_scheduler
 from .core.auth import require_api_key, verify_production_auth
 from .core.billing import require_entitled
 from .routers import (
@@ -34,6 +35,21 @@ from .resident_engineer.flags import resident_engineer_enabled
 verify_production_auth()
 
 app = FastAPI(title="CerebrumDev.ai API", version="0.1.0")
+
+
+# Nightly backups run in-process: Render cron jobs cannot mount persistent
+# disks and a disk belongs to exactly one service, so this process is the only
+# one that can read /app/storage at all. See core/backup_scheduler.py.
+@app.on_event("startup")
+async def _arm_backup_scheduler() -> None:
+    app.state.backup_task = backup_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _disarm_backup_scheduler() -> None:
+    task = getattr(app.state, "backup_task", None)
+    if task is not None:
+        task.cancel()
 
 _frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 _cors_origins = [
@@ -224,10 +240,22 @@ async def ready():
     }
     # Storage + API key are hard requirements; blocks/LLM may be degraded in local dev.
     ready_ok = checks["storage"] and checks["api_key_configured"]
+    # Informational, not gating: a failed backup must page someone, not take
+    # the API out of rotation.
+    last_backup = backup_scheduler.last_status()
     body = {
         "status": "ready" if ready_ok else "not_ready",
         "checks": checks,
-        "details": {"storage": storage, "cerebrum_blocks": blocks},
+        "details": {
+            "storage": storage,
+            "cerebrum_blocks": blocks,
+            "last_backup": {
+                "ok": bool(last_backup.get("ok")),
+                "at": last_backup.get("at"),
+            }
+            if last_backup
+            else None,
+        },
     }
     # Answer with a status code the platform can act on. This endpoint is the
     # Render health check: returning 200 while reporting "not_ready" means an

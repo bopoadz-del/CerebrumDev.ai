@@ -10,6 +10,11 @@ import os
 # below or collection fails.
 os.environ.setdefault("ALLOW_ANONYMOUS_DEV", "1")
 
+# TestClient fires startup events; without this every test app would arm the
+# nightly backup scheduler and take a bootstrap snapshot into ./storage.
+# Scheduler tests opt back in explicitly with monkeypatch.
+os.environ.setdefault("BACKUP_SCHEDULE_ENABLED", "0")
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

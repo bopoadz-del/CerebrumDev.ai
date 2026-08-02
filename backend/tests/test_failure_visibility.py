@@ -88,17 +88,41 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "health check must point at /ready; /health returns 200 even when degraded"
         )
 
-    def test_a_backup_job_is_scheduled(self):
+    def test_backups_are_scheduled_in_process_not_as_a_cron(self):
+        """The backup vehicle must be one that can actually reach the data.
+
+        The previous shape asserted a `type: cron` backup existed in
+        render.yaml — but that design can never run on Render: cron jobs
+        cannot mount persistent disks, and a disk is readable by exactly one
+        service. A green test was certifying a backup that was impossible to
+        take. The correct shape is the inverse invariant: no cron in the
+        blueprint may claim a disk, and the web service (the only process
+        that can see /app/storage) must arm the in-process scheduler.
+        """
         import yaml
 
         render = yaml.safe_load((REPO_ROOT / "render.yaml").read_text(encoding="utf-8"))
-        crons = [s for s in render["services"] if s.get("type") == "cron"]
-        backup = [c for c in crons if "backup" in c.get("name", "")]
-        assert backup, "no backup cron job is defined; user data has no copy"
-        job = backup[0]
-        assert job.get("schedule"), "backup job has no schedule"
-        assert "backup_cli" in job.get("dockerCommand", ""), (
-            "backup job does not invoke the backup CLI"
+        for service in render["services"]:
+            if service.get("type") == "cron":
+                assert "disk" not in service, (
+                    f"cron '{service.get('name')}' declares a disk; Render cron "
+                    "jobs cannot mount disks, so this job can never do its work"
+                )
+
+        from app.main import app as fastapi_app
+
+        startup_names = [
+            getattr(h, "__name__", "") for h in fastapi_app.router.on_startup
+        ]
+        assert any("backup" in name for name in startup_names), (
+            "the web service does not arm the in-process backup scheduler at "
+            f"startup; hooks seen: {startup_names}"
+        )
+
+        web = [s for s in render["services"] if s.get("name") == "cerebrumdev-backend"]
+        keys = {e.get("key") for e in web[0].get("envVars", [])}
+        assert "BACKUP_SCHEDULE_ENABLED" in keys, (
+            "blueprint does not pin BACKUP_SCHEDULE_ENABLED on the web service"
         )
 
     def test_every_scheduled_entry_point_is_actually_in_the_image(self):
