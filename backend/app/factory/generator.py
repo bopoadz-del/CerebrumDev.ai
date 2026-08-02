@@ -80,6 +80,7 @@ class ProductGenerator:
         agents = self._write_hats(out)
         workflows = self._write_workflows(out)
         self._write_ui_stub(out)
+        self._write_universal_console(out)
         self._write_connectors(out)
         self._copy_referenced_blocks(out)
         self._write_blueprint_copy(out)
@@ -205,7 +206,12 @@ class ProductGenerator:
             + "python3 -m pip install -r requirements.txt\n"
             + "PYTHONPATH=. uvicorn app.main:app --port 8000\n"
             + "```\n\n"
-            + "Open `http://127.0.0.1:8000/health`. Then verify everything yourself:\n\n"
+            + "Open `http://127.0.0.1:8000/` — the **universal console**: every\n"
+            + "capability as a card with a live Run panel (real action invocations,\n"
+            + "honest kernel outcomes), plus workflows and agents. It is one\n"
+            + "self-contained static page served by the app; regenerating with the\n"
+            + "factory coder enabled replaces it with a capability-specific UI.\n"
+            + "API check: `http://127.0.0.1:8000/health`. Then verify everything yourself:\n\n"
             + "```bash\n"
             + "python3 scripts/release_gate.py\n"
             + "```\n\n"
@@ -393,6 +399,18 @@ def test_actions_are_reachable_over_http():
 def test_unknown_action_is_a_404_not_a_shrug():
     r = client.post("/v1/actions/definitely-not-a-capability", json={})
     assert r.status_code == 404
+
+
+def test_console_ui_is_served_at_root():
+    """The export must ship a usable UI, not only an API. The universal
+    console is a self-contained page served at / — its absence is the
+    'API-only skeleton' failure mode (field-found 2026-08-02)."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    body = r.text
+    assert "/v1/capabilities" in body, "console does not read the plan"
+    assert "/v1/actions/" in body, "console cannot invoke actions"
 '''
         smoke = smoke.replace("__PRODUCT_NAME__", bp.product_name)
         smoke = smoke.replace("__PRODUCT_ID__", bp.product_id)
@@ -549,6 +567,23 @@ def list_actions():
     from app.actions import ACTION_CATALOG
 
     return {"actions": ACTION_CATALOG}
+
+
+@app.get("/", include_in_schema=False)
+def console():
+    """Standard universal console — self-contained static page, no build step.
+
+    Data-driven from this platform's own APIs so the same page works on
+    every export; regenerate with the coder enabled to specialise it.
+    """
+    from pathlib import Path as _Path
+
+    from fastapi.responses import HTMLResponse
+
+    page = _Path(__file__).resolve().parent / "static" / "console.html"
+    if not page.is_file():
+        raise HTTPException(status_code=404, detail="console asset missing")
+    return HTMLResponse(page.read_text(encoding="utf-8"))
 '''
 
     def _basic_main_py(self) -> str:
@@ -1193,6 +1228,26 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
             encoding="utf-8",
         )
         return manifests
+
+    def _write_universal_console(self, out: Path) -> None:
+        """Ship the standard universal console into the export.
+
+        One self-contained static HTML page (inline CSS/JS, no build step,
+        no external requests) served by the generated app at ``/``. It is
+        data-driven from the export's own APIs — /health, /v1/capabilities,
+        /v1/actions, /v1/workflows, /v1/agents — so the identical asset
+        works on every platform the factory ships. Capability-specific UI
+        is the coder's job at regeneration time; a missing UI is not.
+        """
+        src = Path(__file__).resolve().parent / "standards" / "universal_console.html"
+        if not src.is_file():
+            raise RuntimeError(
+                "universal_console.html missing from factory standards — "
+                "the export would ship without its UI"
+            )
+        static_dir = out / "app" / "static"
+        static_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, static_dir / "console.html")
 
     def _write_workflows(self, out: Path) -> list:
         workflows = build_workflows(self.blueprint, self.plan)
