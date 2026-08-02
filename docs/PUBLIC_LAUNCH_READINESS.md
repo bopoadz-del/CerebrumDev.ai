@@ -153,22 +153,36 @@ single largest is that there are no backups of anything.
 
 ### Disclosure
 
+Four of the five items below are fixed in Cerebrum-Blocks PR #59
+(`chore/public-launch-readiness`, 2026-08-02) — **UNMERGED**, so production is
+unprotected until it lands:
+
 - **Sentry on Blocks has no `before_send` and no body-size cap**, so
   `/v1/execute` bodies — which carry plaintext secrets for the `secrets`,
   `config` and `auth` blocks — go to a third-party SaaS on any exception.
+  *Fix in PR #59: bodies never attached, two-pass scrubber over frame locals
+  and breadcrumbs, failed scrub drops the event.*
 - **Encryption at rest is off.** `DATA_ENCRYPTION_KEY` appears nowhere in
   `render.yaml`, so Google OAuth refresh tokens are written plaintext despite
   docstrings claiming otherwise; uploads never go through `file_crypto` at all.
+  **Still open — no fix in any PR.** Setting the key requires a read-path
+  migration for existing plaintext tokens; do not set it blind.
 - **Unauthenticated `/health` on Blocks** runs a subprocess and returns its
   stderr plus the raw value of `KIMI_CLI_PATH`. `/stats` re-exposes the block
   inventory that `/blocks` is deliberately auth-gated to protect.
+  *Fix in PR #59: liveness/readiness/diagnostics split; `/stats` gated; CLI
+  probe authenticated and TTL-cached.*
 - **Raw API keys stored plaintext** as a SQLite primary key in Blocks
   (`rate_limits.db`), including the master key.
+  *Fix in PR #59: salted-digest keys, legacy plaintext rows purged with
+  VACUUM + WAL truncation.*
 - **Per-tier block access is a silent no-op** in Blocks: live tiers are
   `standard`/`unlimited`, the `Tier` enum only accepts `free|pro|enterprise`, so
   the check `ValueError`s into a bare `return`. The primary gate still holds —
   `code`/`sandbox`/`secrets` are not open — but `workbench` (returns raw
   subprocess output) is reachable by any issued key.
+  *Fix in PR #59: `TIER_ALIASES` maps issued strings; unknown tiers fail
+  closed to FREE.*
 
 ---
 
@@ -192,15 +206,25 @@ Worth recording so nobody "fixes" these:
 
 ## Owner actions — nobody else can do these
 
-1. Merge PR #126 (CDEV) and PR #58 (Blocks). The tenant-isolation fix is in #58.
+1. Merge, in order: CDEV PR #126, CDEV PR #127, Blocks PR #58, Blocks PR #59.
+   The tenant-isolation fix is in #58; the disclosure fixes (Sentry scrubbing,
+   health/stats gating, fail-closed tiers, hashed rate-limit keys) are in #59.
+   All four are green and mergeable; the session permission classifier blocks
+   `gh pr merge`, so these are operator commands.
 2. Set up a backup of `/app/storage` and `/app/data`, or move accounts to
    managed Postgres with PITR. Confirm whether Render retains disk snapshots.
+   (CDEV's nightly backup cron ships with #127 and starts on merge; Blocks
+   `/app/data` still has no equivalent.)
 3. Confirm what **Moonshot AI** does with submitted content — whether it is
    retained or trained on, and whether that can be disabled. The privacy policy
    cannot truthfully claim "we do not train on your content" until this is
    answered upstream.
 4. Set `STORAGE_PATH=/app/data` on the live `cerebrum-blocks` service
    (`srv-d8rrorvavr4c73evhvi0`); the blueprint does not manage that service.
+   (Attempted 2026-08-02 via the Render MCP env tool; blocked by the session
+   permission classifier — still pending.) After #59 deploys, also flip the
+   service's Health Check Path from `/health` to `/ready` in the dashboard —
+   one click, Settings → Health & Alerts.
 5. Rotate the Render API key that was pasted into a working session, and move
    the block-signing private key out of the ephemeral scratchpad.
 6. Have counsel review `docs/legal/` and resolve every `[[NEEDS INPUT]]`.
