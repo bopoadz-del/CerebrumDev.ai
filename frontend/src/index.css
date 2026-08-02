@@ -239,6 +239,25 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   border-radius: 6px;
   padding: 2px 8px;
 }
+/* Drafting provenance: a working architect must not look identical to the
+   template fallback that runs when the LLM is down or out of credit. */
+.bp-drafting-mode {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border-radius: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.bp-drafting-mode.architect_llm {
+  color: #7dd3a0;
+  border-color: #2f5c43;
+}
+.bp-drafting-mode.keyword_fallback {
+  color: #e0b653;
+  border-color: #6b5620;
+}
 .bp-summary {
   color: var(--dim);
   font-size: 13px;

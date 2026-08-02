@@ -35,6 +35,8 @@ interface ChatMsg {
     vertical?: string
     summary?: string
     capabilities?: Capability[]
+    drafting_mode?: string
+    drafting_note?: string
   }
 }
 
@@ -171,7 +173,26 @@ export function BlueprintCard({
       <div className="bp-header">
         <strong>{blueprint.product_name ?? 'Untitled platform'}</strong>
         <span className="bp-vertical">{blueprint.vertical ?? '—'}</span>
+        {blueprint.drafting_mode && (
+          <span
+            className={`bp-drafting-mode ${blueprint.drafting_mode}`}
+            title={blueprint.drafting_note ?? undefined}
+          >
+            {blueprint.drafting_mode === 'architect_llm'
+              ? 'architect LLM'
+              : blueprint.drafting_mode === 'golden_steward'
+                ? 'golden blueprint'
+                : 'template fallback — no LLM'}
+          </span>
+        )}
       </div>
+      {blueprint.drafting_mode === 'keyword_fallback' && (
+        <p className="bp-summary dim">
+          The architect LLM did not draft this blueprint
+          {blueprint.drafting_note ? ` (${blueprint.drafting_note})` : ''} — it was
+          assembled from deterministic templates.
+        </p>
+      )}
       {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
       <h4>Capabilities ({caps.length})</h4>
       <p className="bp-pick-hint dim">Tick what the platform should include, then approve.</p>
