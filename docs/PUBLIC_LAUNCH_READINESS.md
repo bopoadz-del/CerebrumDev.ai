@@ -157,6 +157,15 @@ Four of the five items below are fixed in Cerebrum-Blocks PR #59
 (`chore/public-launch-readiness`, 2026-08-02) — **UNMERGED**, so production is
 unprotected until it lands:
 
+> **Follow-up finding (2026-08-02), also fixed in PR #59:** `app.core.file_crypto`
+> was imported by the OCR and image blocks on main but the module only existed on
+> the unmerged `feat/automotive-pilot-pr2` branch — Phase 1 shipped the imports
+> without the module. Image-block metadata raised `ModuleNotFoundError` and OCR
+> degraded to an error dict on every execution; OCR is in the FREE tier's
+> allowlist, so entry-tier functionality was broken in production. The module
+> (passthrough when `DATA_ENCRYPTION_KEY` is unset) is restored with its tests,
+> which also unblocks ever enabling encryption at rest.
+
 - **Sentry on Blocks has no `before_send` and no body-size cap**, so
   `/v1/execute` bodies — which carry plaintext secrets for the `secrets`,
   `config` and `auth` blocks — go to a third-party SaaS on any exception.
