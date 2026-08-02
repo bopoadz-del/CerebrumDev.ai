@@ -1,40 +1,40 @@
 fastapi==0.115.6
-uvicorn==0.34.0
+uvicorn==0.52.0
 pydantic==2.10.4
 python-multipart==0.0.20
 httpx==0.28.1
-python-dotenv==1.0.1
-cryptography>=41.0.0
-pypdf>=5.0.0
-python-docx>=1.1.0
-beautifulsoup4>=4.12.0
-chromadb>=0.5.0
+python-dotenv==1.2.2
+cryptography==41.0.7
+pypdf==6.14.2
+python-docx==1.2.0
+beautifulsoup4==4.15.0
+chromadb==1.5.9
 
 # User accounts storage (P0): SQLAlchemy Core drives both the default sqlite
 # file and Postgres (ACCOUNTS_DATABASE_URL). psycopg is only exercised when a
 # Postgres URL is configured.
-sqlalchemy>=2.0.30
-psycopg[binary]>=3.1
+sqlalchemy==2.0.51
+psycopg[binary]==3.3.4
 
 # Accounts DB migrations (Alembic). Runs at container boot; see backend/alembic/.
-alembic>=1.13.0
+alembic==1.18.5
 
 # Billing (P3): Stripe subscription checkout + webhooks. Account state changes
 # only through accounts_store.set_subscription; this SDK is the transport.
-stripe>=8.0.0
+stripe==15.3.1
 
 # Observability: error tracking + performance. Activates when SENTRY_DSN is
 # set; inert otherwise. See backend/.env.example.
-sentry-sdk[fastapi]>=2.0.0
+sentry-sdk[fastapi]==2.66.1
 
 # Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
 # session fan-out. Optional — everything falls back to in-memory.
-redis>=5.0.0
+redis==8.0.1
 
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is
 # BAAI/bge-small-en-v1.5: ~67 MB ONNX weights, 384 dimensions.
-fastembed>=0.6.0
+fastembed==0.8.0
 
 # High-quality PDF -> Markdown parsing is optional and local-only.
 # See requirements-marker.txt. It is NOT installed in production images
@@ -43,11 +43,11 @@ fastembed>=0.6.0
 # Heavier embedding / parsing backends are grouped in
 # requirements-embeddings-full.txt and installed only when needed.
 
-anyio>=3.5.0,<5
-click>=8.0.0
-numpy>=2.0.0
-orjson>=3.10.0
-rich>=13.0.0
-sniffio>=1.3.0
-transformers>=4.36.0
-typing-extensions>=4.10.0,<5
+anyio==4.14.2
+click==8.4.2
+numpy==2.4.6
+orjson==3.11.9
+rich==15.0.0
+sniffio==1.3.1
+transformers==5.14.1
+typing-extensions==4.16.0
