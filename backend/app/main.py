@@ -6,6 +6,9 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from .core.request_limits import BodySizeLimitMiddleware
 from .core.auth import require_api_key, verify_production_auth
 from .core.billing import require_entitled
 from .routers import (
@@ -41,6 +44,12 @@ _cors_origins = [
     ).split(",")
     if origin.strip()
 ]
+
+# Body-size ceiling. Added BEFORE the CORS block on purpose: Starlette runs the
+# last-added middleware outermost, so registering this first leaves CORS on the
+# outside and the 413 comes back with the CORS headers attached. Reversed, the
+# browser reports an opaque CORS failure instead of "file too large".
+app.add_middleware(BodySizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -215,8 +224,12 @@ async def ready():
     }
     # Storage + API key are hard requirements; blocks/LLM may be degraded in local dev.
     ready_ok = checks["storage"] and checks["api_key_configured"]
-    return {
+    body = {
         "status": "ready" if ready_ok else "not_ready",
         "checks": checks,
         "details": {"storage": storage, "cerebrum_blocks": blocks},
     }
+    # Answer with a status code the platform can act on. This endpoint is the
+    # Render health check: returning 200 while reporting "not_ready" means an
+    # unwritable disk reads as healthy and no restart or alert ever happens.
+    return JSONResponse(status_code=200 if ready_ok else 503, content=body)

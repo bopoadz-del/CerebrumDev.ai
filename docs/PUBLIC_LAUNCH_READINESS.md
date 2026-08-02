@@ -16,11 +16,75 @@ single largest is that there are no backups of anything.
 
 ## Fixed in this branch
 
+### Security
+
 | # | Finding | Where |
 |---|---|---|
 | C1 | **Arbitrary recursive delete.** `output_dir` from the request body reached `shutil.rmtree`. Any registered user could delete `/app/storage` — accounts DB, all sessions, all uploads. Found independently by three reviewers. | `factory/paths.py`, `factory/generator.py`, both generate routes |
 | C2 | **Account takeover.** `/v1/auth/forgot-password` returned the live reset token to an unauthenticated caller whenever mail delivery failed — and it failed open both when unconfigured and on any transient provider error. | `routers/accounts.py` |
 | C3 | **Fail-open auth.** The anonymous `dev` principal was the default whenever no master key was set, guarded only by `ENV == "production"` exactly. Not live (render.yaml pins it), but one typo away. | `core/auth.py` |
+
+### Durability
+
+- **Nightly backups with a verified restore path.** `core/backup.py` +
+  `scripts/backup_cli.py`, scheduled at 03:00 UTC with 14-day retention. Uses
+  SQLite's online backup API rather than a file copy (a copy of a live database
+  can capture a torn write and produce an archive that restores cleanly and is
+  quietly corrupt), integrity-checks every snapshot, and restores to an
+  explicit target so a drill can never overwrite production. `backup_cli drill`
+  proves the round trip.
+- **Managed Postgres declared**, with `scripts/migrate_accounts_to_postgres.py`
+  (`--verify` re-reads both sides). `ACCOUNTS_DATABASE_URL` is deliberately
+  left unwired: setting it against an empty database loses every account while
+  the app boots normally reporting no users.
+- **Orphan sessions eliminated.** Ownership is now recorded before the session
+  exists and its failure is fatal. Previously it was written afterwards and
+  swallowed, producing sessions tied to no account — unlistable, unexportable
+  and unerasable, while still holding chat history and uploads.
+- **Learning engine moved off `/tmp`** (Blocks), where every deploy was wiping
+  accumulated user corrections.
+
+### Cost and abuse
+
+- **The unmetered LLM path is metered.** `/product/draft` and `/plan` now spend
+  a `draft` counter (daily, like chat — not the lifetime generation counter).
+  The gate sits outside the handlers' `try/except`, which catches bare
+  `Exception` and would otherwise downgrade every 429 into a 400.
+- **Prompt and response bounded** — `max_tokens` plus an explicit brief
+  truncation marker, so a 200k-character brief cannot become a 200k-token bill.
+- **Body-size ceiling** (`core/request_limits.py`), registered before CORS so a
+  413 carries CORS headers and reads as "file too large" rather than an opaque
+  browser CORS failure.
+- **Upload caps** — per-file size, file count, extension allowlist, chunked
+  reads that abort mid-write, and cleanup of partial files on rejection.
+- **Rate limiter bounded and proxy-aware** — the bucket store can no longer
+  grow without limit, and `X-Forwarded-For` is honoured only when
+  `TRUSTED_PROXY` is explicitly set, read from the right by hop count. Default
+  remains the socket peer, because trusting the header by default makes the
+  limit key caller-controlled.
+
+### Privacy
+
+- **Data export and erasure** (`core/data_rights.py`, three routes). Deletion
+  requires the current password, so a stolen bearer token is not enough, and
+  purges sessions, uploads, Drive tokens, workbench state and vector
+  collections before the account row. Categories it cannot reach are named in
+  the response rather than silently claimed — a partial purge reporting success
+  is worse than an honest one.
+- **Retention pass** for expired tokens, callable rather than scheduled.
+
+### Failure visibility
+
+- `/ready` returns **503** when dependencies are broken, and is now the
+  health-check path. It previously returned 200 while reporting "degraded", and
+  Render only reads the status code.
+- **A failed migration stops the boot** instead of leaving a service running on
+  the wrong schema answering health checks normally.
+- **Scheduled jobs are packaged.** `backend/scripts/` was missing from the
+  image while render.yaml scheduled `python -m scripts.backup_cli` — the backup
+  would have failed at import nightly and, since `notifyOnFail` covers only
+  deploy failures, said nothing. An invariant test now ties every cron
+  entry point to a `COPY`.
 
 ---
 

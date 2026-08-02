@@ -48,6 +48,90 @@ Render disk is ephemeral across service deletion but persists across deploys whi
 - Restore: stop service, restore files to mount path, restart.
 - Pilot Postgres: use managed DB backups / `pg_dump` before pack rebuilds.
 
+### Automated backups
+
+A nightly cron (`cerebrumdev-backup`, 03:00 UTC) snapshots the accounts
+database plus `uploads/`, `sessions/` and `chroma/` into `$BACKUP_DIR`
+(default `$STORAGE_PATH/backups`), keeping 14 archives.
+
+The accounts snapshot uses SQLite's online backup API rather than a file copy —
+copying a live database can capture a torn write, producing an archive that
+restores cleanly and is quietly corrupt. Every snapshot is opened and
+integrity-checked before the job reports success.
+
+**What this does not cover:** by default the copy is on the same disk as the
+original. That protects against logical loss (accidental delete, bad migration)
+but not against losing the disk. For that, point `BACKUP_DIR` at another
+volume, or move accounts to managed Postgres and use its point-in-time
+recovery.
+
+**Rehearse the restore.** An untested backup is not a backup:
+
+```bash
+python -m scripts.backup_cli drill    # snapshot -> restore -> verify row counts
+```
+
+Non-zero exit means the archive cannot be put back. Run it now, and again after
+any change to the storage layout.
+
+**Restore for real:**
+
+```bash
+python -m scripts.backup_cli list
+python -m scripts.backup_cli restore <archive> /tmp/restore-check
+# inspect, confirm counts, THEN promote deliberately
+```
+
+Restore never writes over the live location, so a drill cannot destroy
+production. Promoting is a separate manual act.
+
+## Moving accounts to Postgres
+
+SQLite is one file with one writer: under public signup load it returns
+`database is locked` as HTTP 500s, and it has no point-in-time recovery.
+
+**The switch copies nothing.** Setting `ACCOUNTS_DATABASE_URL` against an empty
+database loses every account — and the app boots fine reporting no users, so
+nobody notices until a customer cannot log in.
+
+```bash
+# 1. sync the blueprint so cerebrumdev-accounts is provisioned
+# 2. create the schema in the new database
+ACCOUNTS_DATABASE_URL=<url> python -m alembic upgrade head
+# 3. copy the data and check it landed
+ACCOUNTS_DATABASE_URL=<url> python -m scripts.migrate_accounts_to_postgres --verify
+# 4. only now set ACCOUNTS_DATABASE_URL on the web service
+```
+
+The migration refuses a non-empty target unless forced, and `--verify` re-reads
+both sides and compares counts rather than trusting that the inserts ran.
+
+## Health and alerting
+
+- `/ready` is the platform health check. It probes real dependencies and returns
+  **503** when they are broken, so Render can act on it.
+- `/health` is informational and always 200 — never point a health check at it.
+- A failed migration now stops the boot instead of leaving a service running on
+  the wrong schema. Render shows a failed deploy and keeps the previous version.
+
+**Gap:** `notifyOnFail: default` is deploy-failure email only. Nothing pages
+anyone for an OOM, a hang, or a full disk. Add an external uptime check against
+`/ready` before opening registration, or the first signal of an outage is a
+customer complaining.
+
+## Before opening registration
+
+- [ ] `backup_cli drill` passes.
+- [ ] An external uptime check points at `/ready`.
+- [ ] A mail provider is set (`RESEND_API_KEY`), **then**
+      `ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1`. The second without the first locks
+      out every new account.
+- [ ] `ACCOUNTS_EXPOSE_DEV_TOKENS` is unset or `0` everywhere.
+- [ ] `DATA_ENCRYPTION_KEY` is set, or you accept that Drive OAuth tokens and
+      stored documents sit plaintext on disk.
+- [ ] The Postgres cutover is decided before launch, not under load.
+- [ ] Counsel has cleared `docs/legal/`.
+
 ## Provider failure
 
 If Ollama/Moonshot/Qwen fails:

@@ -80,6 +80,15 @@ def _enforce_generation_quota(account_id: Optional[str]) -> None:
     require_within_limit(account_id, "generation")
 
 
+def _enforce_draft_quota(account_id: Optional[str]) -> None:
+    """Server-side trial boundary: blueprint drafts are metered per account.
+
+    Drafting is a paid LLM call that retries once against a fallback model, so
+    an unmetered draft endpoint is an unbounded spend path for a free account.
+    """
+    require_within_limit(account_id, "draft")
+
+
 @router.get("/{session_id}/product")
 def get_product_design(
     session_id: str, principal: Principal = Depends(require_api_key)
@@ -149,6 +158,9 @@ def draft_product(
     session_id: str, body: DraftBody, principal: Principal = Depends(require_api_key)
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
+    # Outside the try/except below on purpose: that handler catches bare
+    # Exception and re-raises as 400, which would mask the 429.
+    _enforce_draft_quota(principal.account_id)
     try:
         bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
         state.product_design.brief = body.brief

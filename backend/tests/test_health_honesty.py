@@ -1,5 +1,7 @@
 """Health must report evaluated capability, not configuration."""
 
+import json
+
 import pytest
 
 import app.main as main
@@ -47,6 +49,9 @@ async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("KIMI_MOCK", "1")
 
-    body = await main.ready()
+    # /ready answers with a real status code now (503 when not ready), so it
+    # returns a Response rather than a bare dict.
+    resp = await main.ready()
+    body = json.loads(resp.body)
     assert body["checks"]["llm_configured"] is False, "KIMI_MOCK is not a configured LLM"
     assert body["checks"]["llm_mock"] is True

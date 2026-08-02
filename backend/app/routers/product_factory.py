@@ -57,7 +57,14 @@ def get_steward_golden() -> Dict[str, Any]:
 
 
 @router.post("/draft")
-def draft_product_architecture(body: DraftRequest) -> Dict[str, Any]:
+def draft_product_architecture(
+    body: DraftRequest, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    # Drafting is a paid LLM call (and retries once against a fallback model),
+    # so it is metered exactly like generation/chat/export. The gate runs
+    # BEFORE the spend and outside the try/except below, which would otherwise
+    # rewrite the 429 into a 400 (TrialLimitExceeded is an HTTPException).
+    require_within_limit(principal.account_id, "draft")
     try:
         bp = draft_blueprint_from_brief(
             body.brief, vertical_hint=body.vertical_hint
@@ -74,7 +81,13 @@ def draft_product_architecture(body: DraftRequest) -> Dict[str, Any]:
 
 
 @router.post("/plan")
-def plan_product(body: PlanRequest) -> Dict[str, Any]:
+def plan_product(
+    body: PlanRequest, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    # The planner runs over caller-supplied blueprint JSON, so it is an
+    # unauthenticated-shaped compute path unless metered. Same counter as
+    # draft, and again outside the try/except so the 429 survives.
+    require_within_limit(principal.account_id, "draft")
     try:
         bp = ProductBlueprint.model_validate(body.blueprint)
         plan = plan_blueprint(bp)

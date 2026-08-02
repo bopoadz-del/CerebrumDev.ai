@@ -10,15 +10,29 @@ _session_store: Dict[str, SessionState] = {}
 
 
 def create_session(session_id: str, user_id: str) -> SessionState:
+    """Create a session, recording ownership BEFORE any content can exist.
+
+    Ownership is written first and its failure is fatal. It used to be written
+    after the session and its failure swallowed with a warning, on the reasoning
+    that the index "must never break sessions". That reasoning is inverted: the
+    ownership row is the only thing that ties a session to an account, so a
+    session created without one is invisible to every per-account query --
+    including the erasure path. It cannot be listed, cannot be exported, and
+    cannot be deleted on request, while still holding chat history and uploaded
+    documents. Under GDPR that is an unerasable record created by a swallowed
+    exception.
+
+    Failing loudly costs one session. Failing quietly costs a permanent orphan.
+    """
+    if user_id and user_id != "anonymous":
+        from .accounts_store import record_session_owner
+
+        # Deliberately unguarded: if ownership cannot be recorded, no session.
+        record_session_owner(session_id, user_id)
+
     state = SessionState(session_id=session_id, user_id=user_id)
     _session_store[session_id] = state
     save_session_state(state)
-    try:
-        from .accounts_store import record_session_owner
-
-        record_session_owner(session_id, user_id)
-    except Exception as exc:  # noqa: BLE001 — ownership index must never break sessions
-        logger.warning("Could not record session owner for %s: %s", session_id, exc)
     return state
 
 
