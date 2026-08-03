@@ -54,7 +54,8 @@ def _kimi_model(*prefixes: str) -> str:
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_MODEL")
     candidates.extend(["KIMI_MODEL", "CEREBRUM_LLM_MODEL"])
-    return _env_first(*candidates, default="moonshot-v1-8k")
+    # Aligned with Cerebrum-Blocks on the K2 model; overridable via KIMI_MODEL.
+    return _env_first(*candidates, default="kimi-k2-0905-preview")
 
 
 def _kimi_fallback_model(*prefixes: str, default: str) -> str:
