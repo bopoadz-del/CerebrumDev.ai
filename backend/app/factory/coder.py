@@ -24,6 +24,7 @@ answers ``execution_error``, it does not crash the product.
 
 from __future__ import annotations
 
+import ast
 import logging
 import os
 from typing import Any, Dict, List
@@ -68,18 +69,61 @@ Contract:
   requests rather than raising.
 """
 
-_FORBIDDEN_SNIPPETS = (
-    "import os",
-    "import sys",
-    "import subprocess",
-    "import socket",
-    "import shutil",
-    "open(",
-    "eval(",
-    "exec(",
-    "__import__",
-    "importlib",
-)
+# Dangerous stdlib modules the generated body may not import (directly or via
+# ``from X import ...`` / ``import X.Y`` / ``import X as Z``). Safe stdlib
+# (math, json, datetime, re, ...) is allowed.
+_FORBIDDEN_MODULES = frozenset({
+    "os", "sys", "subprocess", "socket", "shutil", "importlib", "ctypes",
+    "pickle", "marshal", "builtins", "multiprocessing", "threading", "pty",
+    "posix", "nt", "resource", "mmap", "fcntl", "signal", "code", "codeop",
+    "gc", "inspect", "platform", "pathlib", "tempfile", "glob", "urllib",
+    "http", "ftplib", "smtplib", "asyncio",
+})
+# Builtins that read/write the host or escape the sandbox.
+_FORBIDDEN_NAMES = frozenset({
+    "eval", "exec", "open", "__import__", "compile", "globals", "locals",
+    "vars", "getattr", "setattr", "delattr", "input", "breakpoint",
+    "__builtins__", "memoryview", "exit", "quit",
+})
+# Dunder attributes used for classic sandbox escapes
+# (``().__class__.__bases__[0].__subclasses__()`` and friends).
+_FORBIDDEN_ATTRS = frozenset({
+    "__globals__", "__subclasses__", "__bases__", "__mro__", "__class__",
+    "__code__", "__builtins__", "__dict__", "__import__", "__getattribute__",
+    "__reduce__", "__reduce_ex__", "__base__", "__closure__",
+})
+
+
+class _ForbiddenNodeVisitor(ast.NodeVisitor):
+    """Collect sandbox-escape constructs. AST-based, so it is not fooled by
+    ``from os import environ``, ``import  os`` (odd spacing), aliasing, or
+    ``getattr(__builtins__, "o"+"pen")`` that a substring scan misses."""
+
+    def __init__(self) -> None:
+        self.found: List[str] = []
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            root = alias.name.split(".", 1)[0]
+            if root in _FORBIDDEN_MODULES:
+                self.found.append(f"import {alias.name}")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        root = (node.module or "").split(".", 1)[0]
+        if root in _FORBIDDEN_MODULES:
+            self.found.append(f"from {node.module} import ...")
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id in _FORBIDDEN_NAMES:
+            self.found.append(f"name {node.id!r}")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in _FORBIDDEN_ATTRS:
+            self.found.append(f"attribute {node.attr!r}")
+        self.generic_visit(node)
 
 
 def _llm_code_call(messages: List[Dict[str, str]]) -> str:
@@ -138,15 +182,16 @@ def _strip_fences(text: str) -> str:
 
 
 def _validate_body(body: str, capability_id: str) -> str:
-    """Static gate on emitted code. Reject, never repair."""
+    """Static gate on emitted code. Reject, never repair.
+
+    The gate parses the emitted body inside the exact wrapper it will live in
+    and walks the AST for sandbox-escape constructs (dangerous imports,
+    builtins, dunder attribute access). An AST walk — not a substring scan —
+    is required: ``from os import environ``, aliased imports, odd spacing, and
+    ``getattr(__builtins__, "o"+"pen")`` all slip past substrings.
+    """
     if not body.strip():
         raise CoderError(f"coder returned an empty body for {capability_id}")
-    lowered = body
-    for bad in _FORBIDDEN_SNIPPETS:
-        if bad in lowered:
-            raise CoderError(
-                f"coder output for {capability_id} contains forbidden construct: {bad!r}"
-            )
     # Must compile inside the wrapper shape it will actually live in.
     indented = "\n".join(
         ("    " + line) if line.strip() else line for line in body.splitlines()
@@ -155,11 +200,21 @@ def _validate_body(body: str, capability_id: str) -> str:
         "async def generated_logic(context, arguments):\n" + indented + "\n"
     )
     try:
-        compile(wrapper, f"<coder:{capability_id}>", "exec")
+        tree = compile(
+            wrapper, f"<coder:{capability_id}>", "exec", flags=ast.PyCF_ONLY_AST
+        )
     except SyntaxError as exc:
         raise CoderError(
             f"coder output for {capability_id} does not compile: {exc}"
         ) from exc
+
+    visitor = _ForbiddenNodeVisitor()
+    visitor.visit(tree)
+    if visitor.found:
+        raise CoderError(
+            f"coder output for {capability_id} contains forbidden construct(s): "
+            f"{', '.join(sorted(set(visitor.found)))}"
+        )
     return indented
 
 
