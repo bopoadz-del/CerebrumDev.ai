@@ -50,9 +50,13 @@ Render disk is ephemeral across service deletion but persists across deploys whi
 
 ### Automated backups
 
-A nightly cron (`cerebrumdev-backup`, 03:00 UTC) snapshots the accounts
+An in-process scheduler inside the web service (03:00 UTC nightly, plus a
+bootstrap snapshot on first boot when no archive exists) snapshots the accounts
 database plus `uploads/`, `sessions/` and `chroma/` into `$BACKUP_DIR`
-(default `$STORAGE_PATH/backups`), keeping 14 archives.
+(default `$STORAGE_PATH/backups`), keeping 14 archives. It is deliberately not
+a Render cron job: cron jobs cannot mount the persistent disk, so only the
+service that owns the disk can back it up. Status surfaces non-gating at
+`/ready` under `details.last_backup`.
 
 The accounts snapshot uses SQLite's online backup API rather than a file copy —
 copying a live database can capture a torn write, producing an archive that

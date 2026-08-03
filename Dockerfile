@@ -19,15 +19,14 @@ COPY blueprints /app/blueprints
 COPY backend/alembic.ini /app/alembic.ini
 COPY backend/alembic /app/alembic
 
-# Operational entry points invoked by scheduled jobs (see render.yaml):
-# the nightly backup and the Postgres cutover. Without this the backup cron
-# fails at import -- and since notifyOnFail only covers deploy failures, it
-# would fail silently every night while appearing to be configured.
+# Operational entry points: the backup CLI (manual snapshot/restore/drill; the
+# nightly backup itself runs IN-PROCESS in the web service, not as a cron —
+# Render cron jobs cannot mount the disk) and the Postgres cutover script.
+# Without this COPY those tools fail at import.
 COPY backend/scripts /app/scripts
 
 ENV PORT=8000
-# Apply accounts-DB migrations before serving (no-op when already at head);
-# a migration failure never blocks boot — the app logs and continues.
+# Apply accounts-DB migrations before serving (no-op when already at head).
 # A failed migration must stop the boot. The previous form swallowed the
 # failure with `|| echo`, which produced a RUNNING service on the wrong schema:
 # /health still answered 200, Render never restarted it, no alert fired, and
