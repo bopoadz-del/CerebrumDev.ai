@@ -87,6 +87,7 @@ Error tracking and performance are wired on both tiers and activate by DSN:
 # backend
 cd backend && pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest
+uvicorn app.main:app --reload   # serve on :8000  (GET /health -> 200)
 
 # frontend
 cd frontend && npm install && npm run build && npm run lint && npm run test
@@ -94,6 +95,10 @@ cd frontend && npm install && npm run build && npm run lint && npm run test
 # accounts migrations
 cd backend && alembic upgrade head
 ```
+
+Admin-gated routes (e.g. the automotive-core foundation pack) require
+`CEREBRUM_ADMIN_KEY` set on the server and passed as the `X-Admin-Key` header;
+without it those routes fail closed (503 unconfigured / 403 unauthorized).
 
 ## Repository layout
 
