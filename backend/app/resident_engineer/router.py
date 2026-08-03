@@ -141,8 +141,13 @@ class DraftBody(BaseModel):
 
 
 @router.post("/draft-change-request")
-async def resident_draft(body: DraftBody) -> Dict[str, Any]:
+async def resident_draft(
+    body: DraftBody,
+    principal: Optional[Any] = Depends(_resolve_principal),
+) -> Dict[str, Any]:
     _require_enabled()
+    if not _STEWARD_AUTH or principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
     try:
         return draft_change_request(
             level=body.level,  # type: ignore[arg-type]
@@ -164,12 +169,17 @@ class EscalateBody(BaseModel):
 
 
 @router.post("/change-request")
-async def resident_emit_change_request(body: EscalateBody) -> Dict[str, Any]:
+async def resident_emit_change_request(
+    body: EscalateBody,
+    principal: Optional[Any] = Depends(_resolve_principal),
+) -> Dict[str, Any]:
     """Emit a signed REPAIR change-request (flag-gated; M3 paperwork).
 
     Used when L2 heals dead-end and Resident escalates to Factory intake.
     """
     _require_enabled()
+    if not _STEWARD_AUTH or principal is None:
+        raise HTTPException(status_code=401, detail="authentication required")
     from app.change_requests.emit import EmitRejected, emit_repair_from_escalation
 
     try:
@@ -191,32 +201,26 @@ async def resident_heal(
     principal: Optional[Any] = Depends(_resolve_principal),
 ) -> Dict[str, Any]:
     _require_enabled()
-    tenant_id = principal.tenant_id if _STEWARD_AUTH and principal else "default"
-    user_id = principal.principal_id if _STEWARD_AUTH and principal else "operator"
-    principal_id = principal.principal_id if _STEWARD_AUTH and principal else user_id
-    if _STEWARD_AUTH and principal is None:
+    # Heal EXECUTES allowlisted repair actions — it must fail closed. Require the
+    # steward auth module AND an authenticated principal; never run as a default
+    # "operator" when auth is unavailable.
+    if not _STEWARD_AUTH or principal is None:
         raise HTTPException(status_code=401, detail="authentication required")
+    tenant_id = principal.tenant_id
+    user_id = principal.principal_id
+    principal_id = principal.principal_id
     try:
-        if _STEWARD_AUTH:
-            init_engine()
-            with session_scope() as session:
-                return await execute_heal(
-                    body.action_id,
-                    confirmed=body.confirmed,
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    principal_id=principal_id,
-                    approval_id=body.approval_id,
-                    db_session=session,
-                )
-        return await execute_heal(
-            body.action_id,
-            confirmed=body.confirmed,
-            tenant_id=tenant_id,
-            user_id=user_id,
-            principal_id=principal_id,
-            approval_id=body.approval_id,
-        )
+        init_engine()
+        with session_scope() as session:
+            return await execute_heal(
+                body.action_id,
+                confirmed=body.confirmed,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                principal_id=principal_id,
+                approval_id=body.approval_id,
+                db_session=session,
+            )
     except HealRejected as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except HealValidationError as exc:

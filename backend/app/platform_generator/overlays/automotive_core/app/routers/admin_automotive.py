@@ -20,7 +20,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import hmac
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
@@ -51,9 +53,25 @@ def _history_path() -> Path:
     return _pack_root() / "activation_history.jsonl"
 
 
-def _require_admin() -> None:
-    """Admin gate hook — replaced by The_Fork's admin dependency when wired."""
-    # Generated platforms mount this router behind Fork's admin auth.
+def _require_admin(x_admin_key: Optional[str] = Header(default=None)) -> None:
+    """Admin gate — FAILS CLOSED.
+
+    These routes build/activate/rollback the foundation pack, so an open gate is
+    a takeover primitive. The gate requires ``X-Admin-Key`` to match
+    ``AUTOMOTIVE_ADMIN_KEY`` (or ``CEREBRUM_ADMIN_KEY``). If no admin key is
+    configured on the server, or the header is missing/wrong, the request is
+    rejected — never allowed through by default. When the generated platform is
+    mounted behind The_Fork's own admin dependency, that runs as an additional
+    outer gate; this one still stands on its own.
+    """
+    expected = os.getenv("AUTOMOTIVE_ADMIN_KEY") or os.getenv("CEREBRUM_ADMIN_KEY")
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="admin key not configured (set CEREBRUM_ADMIN_KEY)",
+        )
+    if not x_admin_key or not hmac.compare_digest(x_admin_key, expected):
+        raise HTTPException(status_code=403, detail="admin authorization required")
     return None
 
 
