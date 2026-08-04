@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import Principal, require_api_key
+from app.core.llm_throttle import require_llm_rate
 from app.core.session_store import get_session, update_session
 from app.core.trial_limits import require_within_limit
 from app.factory.blocks_source import resolve_blocks_root
@@ -160,6 +161,7 @@ def draft_product(
     # Outside the try/except below on purpose: that handler catches bare
     # Exception and re-raises as 400, which would mask the 429.
     _enforce_draft_quota(principal.account_id)
+    require_llm_rate(principal, "draft")
     try:
         bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
         state.product_design.brief = body.brief
@@ -191,6 +193,7 @@ def plan_product(
     state = _require_session(session_id, principal)
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="draft a blueprint first")
+    require_llm_rate(principal, "plan")
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
@@ -239,6 +242,7 @@ def generate_approved_product(
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
     _enforce_generation_quota(principal.account_id)
+    require_llm_rate(principal, "generate")
     body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")

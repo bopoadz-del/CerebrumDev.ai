@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.auth import Principal, require_api_key
+from app.core.llm_throttle import require_llm_rate
 from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
 from app.factory.blocks_source import resolve_blocks_root
@@ -65,6 +66,7 @@ def draft_product_architecture(
     # BEFORE the spend and outside the try/except below, which would otherwise
     # rewrite the 429 into a 400 (TrialLimitExceeded is an HTTPException).
     require_within_limit(principal.account_id, "draft")
+    require_llm_rate(principal, "draft")
     try:
         bp = draft_blueprint_from_brief(
             body.brief, vertical_hint=body.vertical_hint
@@ -88,6 +90,7 @@ def plan_product(
     # unauthenticated-shaped compute path unless metered. Same counter as
     # draft, and again outside the try/except so the 429 survives.
     require_within_limit(principal.account_id, "draft")
+    require_llm_rate(principal, "plan")
     try:
         bp = ProductBlueprint.model_validate(body.blueprint)
         plan = plan_blueprint(bp)
@@ -102,6 +105,7 @@ def generate_from_architecture(
 ) -> Dict[str, Any]:
     # Server-side trial boundary: generations are metered per account.
     require_within_limit(principal.account_id, "generation")
+    require_llm_rate(principal, "generate")
     # Same resolver as the chat flow — env path, then Store clone — so this
     # door never silently ships vendor-mirror stubs while chat ships real code.
     blocks_root = resolve_blocks_root()

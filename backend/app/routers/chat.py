@@ -22,6 +22,7 @@ from ..core.grounding import (
     persist_verdict,
 )
 from ..core.rule_injector import inject_rules
+from ..core.llm_throttle import require_llm_rate
 from ..core.trial_limits import TrialLimitExceeded, require_within_limit
 from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow
@@ -403,6 +404,10 @@ async def chat(
     body: ChatMessage,
     state: SessionState = Depends(require_owned_session),
 ):
+    # Burst throttle before the stream opens (429 is clean here; inside the
+    # SSE generator it could only surface as an event). Quotas exempt
+    # subscribers; this binds every account.
+    require_llm_rate(getattr(state, "user_id", None), "chat")
     return StreamingResponse(
         _stream_response(state.session_id, body.message),
         media_type="text/event-stream",
