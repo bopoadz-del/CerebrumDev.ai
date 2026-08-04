@@ -21,3 +21,6 @@ and `HashEmbedder` / FastEmbed provide the real bodies. These entries are the
 
 ## Benign guarded fallback
 - backend/app/resident_engineer/router.py :: _resolve_principal  — the `else` (non-estate, no steward-auth module) branch returns None; every state-changing resident route fails closed (401) when the principal is None, so a None here authorizes nothing.
+
+## Deliberate no-op by policy
+- backend/alembic/versions/0001_baseline.py :: downgrade  — the baseline migration's reverse would be `DROP TABLE` on every accounts table; destroying user/account data is never an acceptable automated rollback. Schema rollback below the baseline is a manual, operator-decided act (restore from backup).

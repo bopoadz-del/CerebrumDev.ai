@@ -46,7 +46,8 @@ def main():
     for root, dirs, files in os.walk("."):
         dirs[:] = [d for d in dirs if d not in
                    {".git","__pycache__",".venv","venv","env","node_modules","generated",
-                    "bundle","factory_outputs","deployments","site-packages",".postgres"}]
+                    "bundle","factory_outputs","deployments","site-packages",".postgres",
+                    ".worktrees","storage"}]
         for f in files:
             if not f.endswith(".py"): continue
             p = os.path.join(root, f)

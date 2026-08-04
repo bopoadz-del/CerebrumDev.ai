@@ -38,6 +38,17 @@ jobs:
       - name: Run pytest suite
         run: python -m pytest
 
+      # Repo-wide gates (run from repo root, not backend/): every hollow
+      # function must be implemented or registered in KNOWN_INCOMPLETE.md,
+      # and no secret-shaped literal may ship on a non-test path.
+      - name: Stub audit (implement or register)
+        working-directory: .
+        run: python scripts/audit_stubs.py
+
+      - name: Secret scan
+        working-directory: .
+        run: python scripts/scan_secrets.py
+
   frontend:
     name: Frontend (build + lint)
     runs-on: ubuntu-latest
