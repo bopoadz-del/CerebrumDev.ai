@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .dual_registry import dual_registered_ids
-from .paths import factory_repo_root
+from .paths import factory_outputs_root, factory_repo_root
 from .product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,
@@ -159,7 +159,7 @@ def _blocks_root() -> Optional[Path]:
 def _session_output(session_id: str, product_id: str, output_root: Optional[Path]) -> Path:
     if output_root is not None:
         return Path(output_root) / product_id
-    return factory_repo_root() / "factory_outputs" / "sessions" / session_id / product_id
+    return factory_outputs_root() / "sessions" / session_id / product_id
 
 
 # --- Refinement commands ------------------------------------------------------

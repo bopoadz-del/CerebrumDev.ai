@@ -17,7 +17,7 @@ from app.core.auth import Principal, require_api_key
 from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError
-from app.factory.paths import UnsafeOutputDir, factory_repo_root, safe_output_dir
+from app.factory.paths import UnsafeOutputDir, factory_outputs_root, safe_output_dir
 from app.factory.product_architect import (
     architect_pipeline,
     blueprint_to_yaml,
@@ -47,7 +47,7 @@ class GenerateRequest(BaseModel):
 
 
 def _default_output(product_id: str) -> Path:
-    return factory_repo_root() / "factory_outputs" / product_id
+    return factory_outputs_root() / product_id
 
 
 @router.get("/golden/steward")

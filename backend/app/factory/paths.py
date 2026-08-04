@@ -10,6 +10,7 @@ Docker image (Dockerfile copies ``backend/app`` → ``/app/app``)::
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
@@ -28,7 +29,25 @@ class UnsafeOutputDir(ValueError):
 
 
 def factory_outputs_root() -> Path:
-    """The only directory tree generation is allowed to create or destroy."""
+    """The only directory tree generation is allowed to create or destroy.
+
+    Resolution order:
+
+    1. ``FACTORY_OUTPUTS_ROOT`` — explicit operator override.
+    2. ``$STORAGE_PATH/factory_outputs`` — production. The repo root lives on
+       the ephemeral container filesystem; only ``STORAGE_PATH`` is a mounted
+       persistent disk. Generated platforms are the product's deliverable, so
+       they must survive a deploy — before this, every generation was wiped by
+       the next release and the download endpoint answered 404
+       ("generate again"), burning the customer's metered quota.
+    3. ``<repo>/factory_outputs`` — local checkouts and tests, unchanged.
+    """
+    explicit = os.getenv("FACTORY_OUTPUTS_ROOT", "").strip()
+    if explicit:
+        return Path(explicit)
+    storage = os.getenv("STORAGE_PATH", "").strip()
+    if storage:
+        return Path(storage) / "factory_outputs"
     return factory_repo_root() / "factory_outputs"
 
 
