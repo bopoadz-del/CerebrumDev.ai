@@ -179,9 +179,22 @@ def _bucket_locked(
     return entry
 
 
-def check_rate_limit(bucket: str, key: str) -> bool:
-    """Record an attempt; False when the bucket is full (caller returns 429)."""
-    max_attempts, window = _limits()
+def check_rate_limit(
+    bucket: str,
+    key: str,
+    *,
+    max_attempts: int | None = None,
+    window: int | None = None,
+) -> bool:
+    """Record an attempt; False when the bucket is full (caller returns 429).
+
+    Defaults to the auth limits; callers with their own budget (e.g. the LLM
+    burst throttle) pass explicit ``max_attempts``/``window``.
+    """
+    if max_attempts is None or window is None:
+        auth_max, auth_window = _limits()
+        max_attempts = auth_max if max_attempts is None else max_attempts
+        window = auth_window if window is None else window
     client = _redis()
     if client is not None:
         try:

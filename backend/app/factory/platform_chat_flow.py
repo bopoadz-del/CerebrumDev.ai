@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .dual_registry import dual_registered_ids
-from .paths import factory_repo_root
+from .blocks_source import resolve_blocks_root
+from .paths import factory_outputs_root, factory_repo_root
 from .product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,
@@ -126,40 +127,17 @@ def has_pending_blueprint(state: Any) -> bool:
 
 
 def _blocks_root() -> Optional[Path]:
-    """Resolve a real Cerebrum-Blocks checkout for the generator to vendor
-    REAL block code from.
-
-    Order: (1) explicit local path via CEREBRUM_BLOCKS_ROOT/_PATH; (2) clone
-    the Store repo (CEREBRUM_BLOCKS_REPO, GITHUB_TOKEN-auth'd) via
-    engine_discovery. Returns None only when both fail — in which case the
-    generator falls back to its vendor-mirror stubs (honestly labeled).
-
-    This is the fix for hollow products: previously only the env path was
-    consulted, so on any deploy without a local checkout every referenced
-    block was echo-stubbed. Now the factory clones the Store and vendors the
-    canonical block code (block_registry/<id>) the plan references.
-    """
-    root = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    if root:
-        return Path(root)
-    try:
-        from app.core import engine_discovery
-        checkout = engine_discovery.find_engine_root()
-        # Only use it if it actually carries the block registry the generator
-        # copies from — otherwise it's not a usable blocks root.
-        if checkout and (Path(checkout) / "block_registry").is_dir():
-            logger.info("blocks_root: cloned Store checkout at %s", checkout)
-            return Path(checkout)
-        logger.warning("blocks_root: checkout %s has no block_registry/", checkout)
-    except Exception as exc:  # noqa: BLE001 — never break generation on clone failure
-        logger.warning("blocks_root: Store clone unavailable (%s); vendor mirror will be used", exc)
-    return None
+    """Thin alias for the shared resolver (kept so existing monkeypatches and
+    call sites stay valid). See app.factory.blocks_source for the fix history:
+    every generation door — chat AND the HTTP plan/generate routes — must use
+    the same resolution or products differ in fidelity by entry point."""
+    return resolve_blocks_root()
 
 
 def _session_output(session_id: str, product_id: str, output_root: Optional[Path]) -> Path:
     if output_root is not None:
         return Path(output_root) / product_id
-    return factory_repo_root() / "factory_outputs" / "sessions" / session_id / product_id
+    return factory_outputs_root() / "sessions" / session_id / product_id
 
 
 # --- Refinement commands ------------------------------------------------------

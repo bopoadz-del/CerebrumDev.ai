@@ -33,12 +33,6 @@ services:
       # CEREBRUM_LLM_API_KEY below — no Ollama anywhere.
       - key: LLM_PROVIDER
         value: kimi
-      - key: QWEN_API_KEY
-        sync: false
-      - key: QWEN_BASE_URL
-        value: https://dashscope.aliyuncs.com/compatible-mode/v1
-      - key: QWEN_MODEL
-        value: qwen-plus
       - key: CEREBRUM_LLM_API_KEY
         sync: false
       # International console (platform.moonshot.ai) — verified against

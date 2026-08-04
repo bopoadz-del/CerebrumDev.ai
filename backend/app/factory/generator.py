@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -958,13 +959,17 @@ databases:
         )
 
     def _write_actions(self, out: Path) -> list:
-        from .coder import CoderError, coder_enabled, generate_handler_body
+        from .coder import CoderError, coder_budget_s, coder_enabled, generate_handler_body
 
         actions_dir = out / "app" / "actions"
         actions_dir.mkdir(parents=True, exist_ok=True)
         specs = []
         self._coder_report = {"written": [], "stubbed": {}}
         bp_caps = {c.id: c for c in self.blueprint.capabilities}
+        # Wall-clock budget across ALL GENERATE capabilities of this
+        # generation — bounds how long one HTTP request can hold the worker.
+        budget = coder_budget_s()
+        deadline = (time.monotonic() + budget) if budget > 0 else None
         for cap in self.plan.capabilities:
             action_name = cap.capability_id.replace("-", "_")
             domain = self.blueprint.vertical.replace("-", "_")
@@ -993,6 +998,11 @@ databases:
                 elif bp_cap is None:
                     self._coder_report["stubbed"][cap.capability_id] = (
                         "capability missing from blueprint"
+                    )
+                elif deadline is not None and time.monotonic() >= deadline:
+                    self._coder_report["stubbed"][cap.capability_id] = (
+                        f"coder budget exhausted ({budget:g}s total for this "
+                        "generation, FACTORY_CODER_BUDGET_S); honest stub shipped"
                     )
                 else:
                     try:

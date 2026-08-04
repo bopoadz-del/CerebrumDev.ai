@@ -11,7 +11,6 @@ POST /v1/sessions/{id}/product/mode
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
@@ -21,11 +20,13 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.core.auth import Principal, require_api_key
+from app.core.llm_throttle import require_llm_rate
 from app.core.session_store import get_session, update_session
 from app.core.trial_limits import require_within_limit
+from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
-from app.factory.paths import UnsafeOutputDir, factory_repo_root, safe_output_dir
+from app.factory.paths import UnsafeOutputDir, factory_outputs_root, safe_output_dir
 from app.factory.product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,
@@ -66,8 +67,7 @@ def _require_session(session_id: str, principal: Principal):
 
 
 def _session_output(session_id: str, product_id: str) -> Path:
-    root = factory_repo_root()
-    return root / "factory_outputs" / "sessions" / session_id / product_id
+    return factory_outputs_root() / "sessions" / session_id / product_id
 
 
 def _enforce_export_quota(account_id: Optional[str]) -> None:
@@ -161,6 +161,7 @@ def draft_product(
     # Outside the try/except below on purpose: that handler catches bare
     # Exception and re-raises as 400, which would mask the 429.
     _enforce_draft_quota(principal.account_id)
+    require_llm_rate(principal, "draft")
     try:
         bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
         state.product_design.brief = body.brief
@@ -192,8 +193,9 @@ def plan_product(
     state = _require_session(session_id, principal)
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="draft a blueprint first")
-    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    blocks_root = Path(blocks) if blocks else None
+    require_llm_rate(principal, "plan")
+    # Same resolver as the chat flow (env path, then Store clone).
+    blocks_root = resolve_blocks_root()
     try:
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         plan = plan_blueprint(bp, blocks_root=blocks_root)
@@ -240,13 +242,14 @@ def generate_approved_product(
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
     _enforce_generation_quota(principal.account_id)
+    require_llm_rate(principal, "generate")
     body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint")
-    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    blocks_root = Path(blocks) if blocks else None
+    # Same resolver as the chat flow (env path, then Store clone).
+    blocks_root = resolve_blocks_root()
     try:
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         if not state.product_design.plan:
@@ -261,7 +264,7 @@ def generate_approved_product(
         # Also mirror Steward golden to canonical factory_outputs path
         result = generate_product(bp, out, blocks_root=blocks_root)
         if bp.product_id == "cerebrum-steward":
-            canonical = factory_repo_root() / "factory_outputs" / "Cerebrum-Steward"
+            canonical = factory_outputs_root() / "Cerebrum-Steward"
             generate_product(bp, canonical, blocks_root=blocks_root)
             result["canonical_output"] = str(canonical)
         state.product_design.generation = {

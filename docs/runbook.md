@@ -4,10 +4,10 @@ One-page operations guide for CerebrumDev.ai factory and Automotive Safety Intel
 
 ## Deploy (factory)
 
-1. Ensure Render Blueprint uses [render.yaml](../../render.yaml).
+1. Ensure Render Blueprint uses [render.yaml](../render.yaml).
 2. Set secrets in Render dashboard (never commit):
    - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key (`sync: false`)
-   - `OLLAMA_API_KEY` / LLM keys as needed
+   - `KIMI_API_KEY` (or `CEREBRUM_LLM_API_KEY`) — Kimi/Moonshot is the only LLM provider
    - `VITE_API_KEY` on the static site — must match backend `CEREBRUM_DEV_API_KEY`
 3. Deploy backend first, copy generated `CEREBRUM_DEV_API_KEY`, set frontend `VITE_API_KEY`, redeploy frontend.
 4. Confirm `GET /health` and `GET /ready` return healthy.
@@ -138,8 +138,13 @@ customer complaining.
 
 ## Provider failure
 
-If Ollama/Moonshot/Qwen fails:
+Kimi (Moonshot) is the only LLM provider — there is no cross-provider
+fallback to switch to.
 
-1. Check `/ready` and backend logs.
-2. Switch `LLM_PROVIDER` to a configured fallback.
-3. Keep RAG/admin read paths available even when chat generation is degraded.
+1. Check `/ready` and backend logs; confirm https://api.moonshot.ai is
+   reachable and the key is valid.
+2. Model-level fallback is automatic (`fallback_model` in
+   `backend/app/core/llm_config.py`; override via `KIMI_FALLBACK_MODEL`).
+3. While the provider is down: drafting falls back through Golden Steward /
+   keyword mode with the mode disclosed on the blueprint; the coder ships
+   honest stubs with reasons. RAG/admin read paths stay available.

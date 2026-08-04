@@ -199,7 +199,10 @@ def create_backup(
 
         if include_content:
             root = storage_root()
-            for name in ("uploads", "sessions", "chroma"):
+            # factory_outputs: generated platforms are the deliverable; they
+            # live under STORAGE_PATH in production (factory/paths.py) and
+            # must be part of the snapshot.
+            for name in ("uploads", "sessions", "chroma", "factory_outputs"):
                 src_dir = root / name
                 if src_dir.is_dir():
                     shutil.copytree(src_dir, staging / name, dirs_exist_ok=True)
