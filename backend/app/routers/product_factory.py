@@ -6,7 +6,6 @@ Steward may still use the predefined golden blueprint when the brief matches.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import Principal, require_api_key
 from app.core.trial_limits import require_within_limit
 from app.factory.blueprint import BlueprintError, ProductBlueprint, load_blueprint
+from app.factory.blocks_source import resolve_blocks_root
 from app.factory.dual_registry import DualRegistryError
 from app.factory.paths import UnsafeOutputDir, factory_outputs_root, safe_output_dir
 from app.factory.product_architect import (
@@ -102,8 +102,9 @@ def generate_from_architecture(
 ) -> Dict[str, Any]:
     # Server-side trial boundary: generations are metered per account.
     require_within_limit(principal.account_id, "generation")
-    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    blocks_root = Path(blocks) if blocks else None
+    # Same resolver as the chat flow — env path, then Store clone — so this
+    # door never silently ships vendor-mirror stubs while chat ships real code.
+    blocks_root = resolve_blocks_root()
     try:
         if body.blueprint:
             bp = ProductBlueprint.model_validate(body.blueprint)

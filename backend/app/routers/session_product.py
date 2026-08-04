@@ -11,7 +11,6 @@ POST /v1/sessions/{id}/product/mode
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
@@ -23,6 +22,7 @@ from pydantic import BaseModel, Field
 from app.core.auth import Principal, require_api_key
 from app.core.session_store import get_session, update_session
 from app.core.trial_limits import require_within_limit
+from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
 from app.factory.paths import UnsafeOutputDir, factory_outputs_root, safe_output_dir
@@ -191,8 +191,8 @@ def plan_product(
     state = _require_session(session_id, principal)
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="draft a blueprint first")
-    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    blocks_root = Path(blocks) if blocks else None
+    # Same resolver as the chat flow (env path, then Store clone).
+    blocks_root = resolve_blocks_root()
     try:
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         plan = plan_blueprint(bp, blocks_root=blocks_root)
@@ -244,8 +244,8 @@ def generate_approved_product(
         raise HTTPException(status_code=400, detail="approve blueprint before generate")
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint")
-    blocks = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    blocks_root = Path(blocks) if blocks else None
+    # Same resolver as the chat flow (env path, then Store clone).
+    blocks_root = resolve_blocks_root()
     try:
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
         if not state.product_design.plan:
