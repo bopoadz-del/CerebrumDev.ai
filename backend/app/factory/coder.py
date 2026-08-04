@@ -51,6 +51,25 @@ def coder_enabled() -> bool:
     }
 
 
+CODER_BUDGET_ENV = "FACTORY_CODER_BUDGET_S"
+
+
+def coder_budget_s() -> float:
+    """Total wall-clock the coder may spend across one generation (seconds).
+
+    Each GENERATE capability is up to two sequential 120 s LLM calls and the
+    loop runs inside the HTTP request on a single-worker service, so an
+    uncapped plan of N such capabilities holds a worker for N x 240 s. When
+    the budget runs out, remaining capabilities ship the honest stub with the
+    reason recorded — the same disclosure path as any other coder failure.
+    0 disables the budget.
+    """
+    try:
+        return float(os.getenv(CODER_BUDGET_ENV, "300"))
+    except ValueError:
+        return 300.0
+
+
 _SYSTEM = """You write ONE Python function body for a generated business platform.
 
 Contract:

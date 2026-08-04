@@ -35,6 +35,11 @@ corpus-blind questions hit a relevant KB entry at 0.25 hit@5
 - Billing enforcement is opt-in (`BILLING_ENFORCEMENT`); until Stripe env
   keys are set, checkout returns `503 stripe_not_configured` (honest, but
   no revenue path).
+- Generation runs synchronously inside the HTTP request. It is bounded — the
+  coder loop stops at `FACTORY_CODER_BUDGET_S` (default 300 s, remaining
+  capabilities ship honest stubs) and every LLM route is burst-throttled per
+  account (`LLM_RATE_LIMIT_MAX`/`_WINDOW_S`) — but a background job queue
+  with status polling is the real multi-user answer and remains roadmap.
 
 ## Grounding coverage
 
