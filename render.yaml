@@ -21,9 +21,11 @@ services:
       - key: CEREBRUM_API_KEY
         sync: false
       - key: FRONTEND_URL
-        value: https://cerebrumdev-frontend.onrender.com
+        value: https://cerebrum-dev.com
+      # Custom domain (2026-08-05) + the legacy onrender origin kept during
+      # transition. Live values are dashboard-managed; keep this in sync.
       - key: CORS_ALLOW_ORIGINS
-        value: https://cerebrumdev-frontend.onrender.com
+        value: https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend.onrender.com
       - key: PLATFORM_CHAT_FLOW_ENABLED
         value: "true"
       - key: ARCHITECT_LLM_DRAFTING_ENABLED
@@ -177,7 +179,7 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://cerebrumdev-backend.onrender.com
+        value: https://api.cerebrum-dev.com
       - key: VITE_API_KEY
         sync: false
       # Observability: paste the Sentry project DSN (javascript-react) here.
