@@ -12,7 +12,7 @@ Kimi is the default. Put this in `backend/.env`:
 
 ```bash
 CEREBRUM_LLM_API_KEY=<your Moonshot key>
-CEREBRUM_FACTORY_LLM_MODEL=kimi-k2-0905-preview
+CEREBRUM_FACTORY_LLM_MODEL=kimi-k2.7-code
 FACTORY_CODER_ENABLED=1
 ```
 
@@ -29,19 +29,33 @@ runner inside the service. The CLI command below always uses the runner.
 
 ### The model matters more than anything else here
 
-Measured on the same blueprint, same code, three runs:
+Measured on the same blueprint, same code:
 
 | Model | Result |
 |---|---|
-| `moonshot-v1-8k` | **FAILED_BUDGET_SPENT** — agent wrote 7/10 artifacts, its route returned `None`, three rework rounds could not fix it |
-| `kimi-k2-0905-preview` | not enabled on the test key (HTTP error); every artifact fell back to template |
-| no key | SUCCESS, fully templated |
+| **`kimi-k2.7-code`** | **SUCCESS, rework 0, 7/10 artifacts agent-written** — use this |
+| `moonshot-v1-8k` | FAILED_BUDGET_SPENT — the agent's route returned `None`; three rework rounds could not fix it |
+| `kimi-k2.5-code` | does not exist on the API (`404`); it was the old fallback default, now corrected |
+| no key | SUCCESS, fully templated, `agent_written: 0` |
 
-`moonshot-v1-8k` is not strong enough to satisfy the route contract. **Use a
-K2-class model or a current Claude model.** If your key cannot reach the model
-you set, the build still succeeds — but every artifact is templated, and
-`coder_failures` in the output says so. Read that field before concluding the
-agent worked.
+`kimi-k2.7-code` writes a route that validates every field against the schema
+it designed itself, type-checks each one, rejects empty strings and wraps the
+handler in try/except — and it passes the strict route test on the first
+attempt. `moonshot-v1-8k` is the weakest model on the endpoint and declares
+one type in the model while checking another in the route.
+
+> **Historical note, because it reversed this advice.** Until `coder.py` was
+> fixed, every K2/K3 model failed with
+> `400 invalid temperature: only 1 is allowed for this model` — the coder
+> hardcoded `temperature: 0.2`, which reasoning models reject. Builds still
+> reported SUCCESS with everything templated, which read as *"the capable
+> models don't work, use the weak one."* The opposite was true. If you ever
+> see `coder_failures` full of `HTTPStatusError`, suspect the request before
+> the model.
+
+If your key cannot reach the model you set, the build still succeeds — but
+every artifact is templated and `coder_failures` says so. Read that field
+before concluding the agent worked.
 
 ---
 

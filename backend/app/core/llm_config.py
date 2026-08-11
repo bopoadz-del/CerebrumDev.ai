@@ -100,7 +100,13 @@ def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
         "api_key": _kimi_key(*prefixes),
         "base_url": _kimi_base_url(*prefixes),
         "model": _kimi_model(*prefixes),
-        "fallback_model": _kimi_fallback_model(*prefixes, default="kimi-k2.5-code"),
+        # kimi-k2.5-code does not exist on api.moonshot.ai — it answered 404
+        # "Not found the model", so the factory's fallback leg was dead and a
+        # primary failure always surfaced as two errors instead of one retry.
+        # kimi-k2.7-code-highspeed is a real, code-oriented sibling.
+        "fallback_model": _kimi_fallback_model(
+            *prefixes, default="kimi-k2.7-code-highspeed"
+        ),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
         "temperature": _llm_temperature(),
     }
