@@ -12,9 +12,8 @@ reported the agent working as a failure. These two split the claim in half so
 both halves stay true and both run without an API key.
 """
 
+import os
 from pathlib import Path
-
-import pytest
 
 from app.cerebrum_product_kernel.provenance import hash_tree
 from app.factory.blueprint import load_blueprint
@@ -22,12 +21,29 @@ from app.factory.generator import ProductGenerator
 
 
 ROOT = Path(__file__).resolve().parents[3]
-# NOTE: absolute path that exists on no machine, CI included -- generation
-# falls back to the vendored mirror. Left as-is deliberately; changing it
-# changes what these tests exercise.
-BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
 
 IGNORED = {".git", "__pycache__", "provenance.json", ".pytest_cache"}
+
+
+def real_blocks_root():
+    """The actual Cerebrum-Blocks checkout, or None when there isn't one.
+
+    Replaces a hardcoded ``/home/ubuntu/repos/Cerebrum-Blocks`` that existed
+    on no machine, CI included. A path that silently resolves to nothing is
+    worse than no path: the tests passed while exercising something other
+    than what their argument claimed.
+
+    A candidate only counts if it carries ``block_registry/`` -- an empty or
+    wrong directory must not masquerade as the store.
+    """
+    env = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
+    candidates = [Path(env)] if env else []
+    # Sibling checkout next to this repo, the standard local layout.
+    candidates.append(ROOT.parent / "Cerebrum-Blocks")
+    for candidate in candidates:
+        if (candidate / "block_registry").is_dir():
+            return candidate
+    return None
 
 
 def _stable_hash(root: Path) -> str:
@@ -51,8 +67,12 @@ def _snapshot(root: Path) -> dict:
 
 
 def _generator() -> ProductGenerator:
+    # blocks_root=None on purpose: these assert reproducibility, which does
+    # not depend on block fidelity. Pinning them to the vendor mirror keeps
+    # CI and a developer laptop with a real checkout byte-identical, instead
+    # of quietly testing two different things.
     bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
-    return ProductGenerator(bp, blocks_root=BLOCKS, factory_commit="test", blocks_commit="test")
+    return ProductGenerator(bp, blocks_root=None, factory_commit="test", blocks_commit="test")
 
 
 def test_scaffold_is_byte_reproducible_without_the_coder(tmp_path, monkeypatch):
@@ -147,12 +167,39 @@ def test_turning_the_coder_on_does_not_perturb_the_scaffold(tmp_path, monkeypatc
 
 
 def test_steward_generate(tmp_path):
+    """Generate against the real Store checkout when one is present."""
     bp = load_blueprint(ROOT / "blueprints/steward/steward.v1.yaml")
     out = tmp_path / "steward"
-    gen = ProductGenerator(bp, blocks_root=BLOCKS, factory_commit="test", blocks_commit="test")
+    gen = ProductGenerator(
+        bp, blocks_root=real_blocks_root(), factory_commit="test", blocks_commit="test"
+    )
     result = gen.generate(out)
     assert (out / "vendor" / "blocks" / "estate_registry" / "block.json").exists()
     assert (out / "docs" / "edge_profile.json").exists()
     assert "portfolio_rollup" in result["plan"]["dual_registered_blocks"]
     catalog = (out / "app" / "actions" / "__init__.py").read_text()
     assert "estate_registry" in catalog
+
+
+def test_steward_blocks_come_from_the_mirror_not_the_store(tmp_path):
+    """Pin where the steward blocks actually come from.
+
+    ``estate_registry`` and ``portfolio_rollup`` are absent from the real
+    Cerebrum-Blocks repo; ``dual_registry.load_blocks_registry`` merges the
+    factory's own ``vendor_blocks_mirror`` into the registry unconditionally,
+    so they dual-register against a copy the factory ships to itself. That is
+    why pointing blocks_root at the real Store changes nothing here.
+
+    Asserting the provenance keeps the situation visible instead of implied.
+    This test is meant to go red the day those blocks land upstream -- that is
+    the signal to drop them from the mirror, not a regression.
+    """
+    from app.factory.dual_registry import load_blocks_registry
+
+    registry = load_blocks_registry(real_blocks_root())
+    for block_id in ("estate_registry", "portfolio_rollup"):
+        assert block_id in registry, f"{block_id} vanished from both store and mirror"
+        assert registry[block_id].source == "factory-vendor-mirror", (
+            f"{block_id} now resolves from {registry[block_id].source} — if it "
+            "landed in the real Store, remove it from vendor_blocks_mirror"
+        )
