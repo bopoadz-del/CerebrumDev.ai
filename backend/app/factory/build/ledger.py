@@ -1,0 +1,287 @@
+"""Build ledger — the durable, resumable record of one manufacturing run.
+
+A two-hour build cannot be a function call whose only output is its return
+value. It has to survive an interrupt, be auditable afterwards, and answer
+"what did each role actually do" without anyone having to trust a summary.
+
+The ledger is append-only JSONL for that reason: a crash mid-phase leaves
+every prior line intact and readable, where a rewritten JSON document would
+leave a truncated file and no history. Nothing here mutates or deletes a
+past event -- a phase that is re-run appends a new event, and
+:meth:`BuildLedger.completed_roles` reads the latest verdict per role.
+
+The ledger is also the registrar's source of truth. ``CLONE`` events record
+which block landed in which platform at which commit, so the Store Manager
+can answer "what did this platform take from the store, and has any of it
+gone stale against store head" by reading ledgers rather than by re-scanning
+delivered artifacts.
+
+Only the orchestrator writes here. Roles do not -- a role that can edit the
+record of its own gate is the same hole that
+:mod:`app.factory.build.authority` closes for source files.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Set
+
+from app.factory.build.authority import BUILD_PHASES, BuildRole
+
+LEDGER_SCHEMA = "build_ledger.v1"
+
+
+class EventKind(str, Enum):
+    RUN_STARTED = "RUN_STARTED"
+    PHASE_STARTED = "PHASE_STARTED"
+    GATE_PASSED = "GATE_PASSED"
+    GATE_FAILED = "GATE_FAILED"
+    PHASE_ABORTED = "PHASE_ABORTED"
+    #: A writer<->tester round trip. Recorded so a run that converged after
+    #: eleven attempts does not read like one that passed first try.
+    REWORK = "REWORK"
+    CLONE = "CLONE"
+    NOTE = "NOTE"
+
+
+#: Kinds that end a phase. The last terminal event for a role is its verdict.
+TERMINAL_KINDS = frozenset(
+    {EventKind.GATE_PASSED, EventKind.GATE_FAILED, EventKind.PHASE_ABORTED}
+)
+
+
+class LedgerError(RuntimeError):
+    """The ledger on disk cannot be trusted for the run being attempted."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+@dataclass(frozen=True)
+class BuildEvent:
+    seq: int
+    ts: str
+    kind: EventKind
+    role: Optional[BuildRole] = None
+    detail: str = ""
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> Dict[str, Any]:
+        return {
+            "seq": self.seq,
+            "ts": self.ts,
+            "kind": self.kind.value,
+            "role": self.role.value if self.role else None,
+            "detail": self.detail,
+            "payload": dict(self.payload),
+        }
+
+    @staticmethod
+    def from_json(raw: Mapping[str, Any]) -> "BuildEvent":
+        role = raw.get("role")
+        return BuildEvent(
+            seq=int(raw["seq"]),
+            ts=str(raw.get("ts", "")),
+            kind=EventKind(raw["kind"]),
+            role=BuildRole(role) if role else None,
+            detail=str(raw.get("detail", "")),
+            payload=dict(raw.get("payload") or {}),
+        )
+
+
+class BuildLedger:
+    """Append-only run record at *path*.
+
+    ``inputs_hash`` pins the run to the blueprint that started it. Resuming
+    against a different blueprint is refused rather than silently continuing
+    a build whose earlier phases were made from different inputs.
+    """
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        clock: Callable[[], str] = _utc_now,
+    ) -> None:
+        self.path = Path(path)
+        self._clock = clock
+
+    # -- reading ---------------------------------------------------------
+
+    def exists(self) -> bool:
+        return self.path.is_file()
+
+    def events(self) -> List[BuildEvent]:
+        if not self.path.is_file():
+            return []
+        out: List[BuildEvent] = []
+        with self.path.open("r", encoding="utf-8") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(BuildEvent.from_json(json.loads(line)))
+                except (ValueError, KeyError) as exc:
+                    # A half-written final line is the expected shape of a
+                    # crash; anything earlier means real corruption.
+                    raise LedgerError(
+                        f"{self.path}:{lineno} is not a readable ledger event: {exc}"
+                    ) from exc
+        return out
+
+    def _next_seq(self) -> int:
+        events = self.events()
+        return (events[-1].seq + 1) if events else 1
+
+    # -- writing ---------------------------------------------------------
+
+    def append(
+        self,
+        kind: EventKind,
+        *,
+        role: Optional[BuildRole | str] = None,
+        detail: str = "",
+        payload: Optional[Mapping[str, Any]] = None,
+    ) -> BuildEvent:
+        event = BuildEvent(
+            seq=self._next_seq(),
+            ts=self._clock(),
+            kind=EventKind(kind),
+            role=BuildRole(role) if role else None,
+            detail=detail,
+            payload=dict(payload or {}),
+        )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(event.to_json(), sort_keys=True) + "\n"
+        # One write plus fsync per event: the whole point of the ledger is
+        # that it is intact after the process dies, so buffering it away
+        # would defeat it.
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
+        return event
+
+    def start_run(self, *, product_id: str, inputs_hash: str) -> BuildEvent:
+        return self.append(
+            EventKind.RUN_STARTED,
+            detail=f"build of {product_id}",
+            payload={
+                "schema": LEDGER_SCHEMA,
+                "product_id": product_id,
+                "inputs_hash": inputs_hash,
+            },
+        )
+
+    def record_clone(
+        self,
+        *,
+        block_id: str,
+        source_commit: str,
+        store_repo: str,
+        vendored_path: str,
+    ) -> BuildEvent:
+        """Register one block taken from the store into this platform."""
+        return self.append(
+            EventKind.CLONE,
+            role=BuildRole.CLONER,
+            detail=f"cloned {block_id}@{source_commit[:12]}",
+            payload={
+                "block_id": block_id,
+                "source_commit": source_commit,
+                "store_repo": store_repo,
+                "vendored_path": vendored_path,
+            },
+        )
+
+    # -- derived state ---------------------------------------------------
+
+    def inputs_hash(self) -> Optional[str]:
+        for event in self.events():
+            if event.kind is EventKind.RUN_STARTED:
+                return str(event.payload.get("inputs_hash") or "") or None
+        return None
+
+    def completed_roles(self) -> Set[BuildRole]:
+        """Roles whose most recent terminal event was a pass.
+
+        Latest-verdict-wins, so a role that failed, was reworked and then
+        passed counts as complete, and one that passed and was later aborted
+        does not.
+        """
+        verdict: Dict[BuildRole, EventKind] = {}
+        for event in self.events():
+            if event.role and event.kind in TERMINAL_KINDS:
+                verdict[event.role] = event.kind
+        return {r for r, k in verdict.items() if k is EventKind.GATE_PASSED}
+
+    def resume_point(self) -> Optional[BuildRole]:
+        """The first phase not yet passed, or None when the run is finished."""
+        done = self.completed_roles()
+        for phase in BUILD_PHASES:
+            if phase not in done:
+                return phase
+        return None
+
+    def assert_resumable(self, *, inputs_hash: str) -> None:
+        """Refuse to continue a run whose inputs changed underneath it."""
+        recorded = self.inputs_hash()
+        if recorded is None:
+            return
+        if recorded != inputs_hash:
+            raise LedgerError(
+                "cannot resume: ledger was started from inputs "
+                f"{recorded[:12]} but this run supplies {inputs_hash[:12]} — "
+                "start a fresh build rather than mixing them"
+            )
+
+    def clones(self) -> List[Dict[str, Any]]:
+        """Every block this platform took from the store, latest per block."""
+        latest: Dict[str, Dict[str, Any]] = {}
+        for event in self.events():
+            if event.kind is EventKind.CLONE:
+                bid = str(event.payload.get("block_id") or "")
+                if bid:
+                    latest[bid] = {**dict(event.payload), "ts": event.ts}
+        return [latest[k] for k in sorted(latest)]
+
+    def rework_counts(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for event in self.events():
+            if event.kind is EventKind.REWORK and event.role:
+                counts[event.role.value] = counts.get(event.role.value, 0) + 1
+        return counts
+
+    def summary(self) -> Dict[str, Any]:
+        events = self.events()
+        done = self.completed_roles()
+        resume = self.resume_point()
+        return {
+            "schema_version": LEDGER_SCHEMA,
+            "path": str(self.path),
+            "events": len(events),
+            "started": events[0].ts if events else None,
+            "last_event": events[-1].ts if events else None,
+            "inputs_hash": self.inputs_hash(),
+            "completed_roles": [p.value for p in BUILD_PHASES if p in done],
+            "resume_point": resume.value if resume else None,
+            "complete": resume is None,
+            "rework": self.rework_counts(),
+            "clones": self.clones(),
+        }
+
+
+def iter_ledgers(root: Path | str, *, filename: str = "build_ledger.jsonl") -> Iterator[BuildLedger]:
+    """Every build ledger under *root* — the registrar's scan entry point."""
+    base = Path(root)
+    if not base.is_dir():
+        return
+    for path in sorted(base.rglob(filename)):
+        yield BuildLedger(path)
