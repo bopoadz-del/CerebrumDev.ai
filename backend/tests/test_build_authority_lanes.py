@@ -10,6 +10,7 @@ nothing, so every one of them has to raise.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -102,14 +103,22 @@ def test_absolute_path_outside_the_workspace_is_refused(workspace, tmp_path):
 
 
 def test_symlink_out_of_the_workspace_is_refused(workspace, tmp_path):
-    """A lane check on the unresolved path would pass this."""
+    """A lane check on the unresolved path would pass this.
+
+    Windows needs SeCreateSymbolicLinkPrivilege, which a normal dev shell
+    does not hold, so this skips there. It must NOT skip on POSIX -- a skip
+    everywhere would make this a dead test that only looks like coverage, so
+    on POSIX a failure to create the link is a failure, not a skip.
+    """
     outside = tmp_path / "outside"
     outside.mkdir()
     link = workspace / "app"
     try:
         link.symlink_to(outside, target_is_directory=True)
     except (OSError, NotImplementedError):
-        pytest.skip("symlink creation not permitted on this host")
+        if os.name != "nt":
+            raise
+        pytest.skip("Windows without SeCreateSymbolicLinkPrivilege")
 
     with pytest.raises(AuthorityError):
         assert_write_allowed(BuildRole.WRITER, link / "escaped.py", workspace=workspace)
