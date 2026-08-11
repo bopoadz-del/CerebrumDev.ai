@@ -57,11 +57,20 @@ def test_explicit_kimi():
     assert cfg["model"] == "kimi-k2"
 
 
-def test_factory_llm_kimi_only_rejects_qwen():
+def test_factory_llm_rejects_an_unsupported_provider():
+    """Behaviour unchanged; only the message names the supported set.
+
+    Was `test_factory_llm_kimi_only_rejects_qwen`, asserting the error said
+    "Kimi-only". Claude support makes that string false, so the assertion moved
+    to what actually matters: an unknown provider is still refused, still with
+    an empty provider and an error, and the message says what IS allowed.
+    """
     os.environ["LLM_PROVIDER"] = "qwen"
     cfg = get_factory_llm_config()
     assert cfg["provider"] == ""
-    assert "Kimi-only" in cfg.get("error", "")
+    error = cfg.get("error", "")
+    assert "qwen" in error
+    assert "kimi" in error and "claude" in error
 
 
 def test_factory_llm_mock():
