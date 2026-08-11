@@ -108,9 +108,17 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         write_lanes=(
             (LaneRoot.WORKSPACE, "app/**"),
             (LaneRoot.WORKSPACE, "ui/**"),
+            # The run scaffold a delivered platform needs. Named files rather
+            # than a root wildcard: the writer produces these three and must
+            # not be able to drop anything else at the workspace root.
+            (LaneRoot.WORKSPACE, "README.md"),
+            (LaneRoot.WORKSPACE, "requirements.txt"),
+            (LaneRoot.WORKSPACE, "pyproject.toml"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that
-        # judge it has no gate at all.
+        # judge it has no gate at all. Also not vendor/** or blocks.lock.json:
+        # rewriting the vendored source would let the writer make its own
+        # handlers pass by changing the blocks underneath them.
         gate="workspace imports and type-checks clean",
     ),
     BuildRole.TESTER: RoleContract(

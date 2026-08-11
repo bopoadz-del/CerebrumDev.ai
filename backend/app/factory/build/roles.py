@@ -248,6 +248,307 @@ def _templated_body(block_ids: Sequence[str]) -> str:
     )
 
 
+_PY_DEFAULTS = {"str": '""', "int": "0", "float": "0.0", "bool": "False"}
+_SQL_TYPES = {"str": "TEXT", "int": "INTEGER", "float": "REAL", "bool": "INTEGER"}
+
+
+def _fallback_spec(cap: Any) -> Dict[str, Any]:
+    """Deterministic schema when no coder is available.
+
+    Deliberately minimal and honest: a generic record envelope rather than a
+    guessed domain model. The template does not pretend to domain knowledge it
+    does not have.
+    """
+    return {
+        "entity": cap.capability_id.replace("-", "_"),
+        "fields": [
+            {"name": "reference", "type": "str", "required": True},
+            {"name": "status", "type": "str", "required": True},
+            {"name": "quantity", "type": "int", "required": False},
+        ],
+        "model": None,
+    }
+
+
+def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
+    """dataclass per entity. Stdlib only, so the artifact needs no ORM."""
+    out = [
+        '"""Domain models for this platform.',
+        "",
+        "Plain dataclasses on purpose: the delivered platform must run with no",
+        "ORM, no service, and no network. Persistence is in app/store.py.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from dataclasses import asdict, dataclass, field",
+        "from typing import Any, Dict, Optional",
+        "",
+        "",
+    ]
+    for cap_id, spec in sorted(specs.items()):
+        cls = "".join(p.title() for p in spec["entity"].split("_")) or "Record"
+        out += [
+            "@dataclass",
+            f"class {cls}:",
+            f'    """Entity for capability {cap_id}."""',
+            "",
+            "    id: Optional[int] = None",
+        ]
+        for f in spec["fields"]:
+            out.append(f"    {f['name']}: {f['type']} = {_PY_DEFAULTS[f['type']]}")
+        out += [
+            "",
+            "    FIELDS = " + repr([f["name"] for f in spec["fields"]]),
+            "",
+            "    def to_dict(self) -> Dict[str, Any]:",
+            "        return asdict(self)",
+            "",
+            "    @classmethod",
+            "    def from_dict(cls, data: Dict[str, Any]) -> \"" + cls + "\":",
+            "        known = {k: v for k, v in (data or {}).items() if k in cls.FIELDS}",
+            "        return cls(id=(data or {}).get(\"id\"), **known)",
+            "",
+            "",
+        ]
+    out.append("MODELS = {")
+    for cap_id, spec in sorted(specs.items()):
+        cls = "".join(p.title() for p in spec["entity"].split("_")) or "Record"
+        out.append(f'    "{cap_id}": {cls},')
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
+def _render_store(specs: Dict[str, Dict[str, Any]]) -> str:
+    """sqlite3 persistence derived from the same specs the models came from.
+
+    stdlib sqlite3, file-backed, no server. One table per entity, columns
+    generated from the spec so the schema cannot drift from the dataclass.
+    """
+    tables = []
+    for spec in sorted(specs.values(), key=lambda s: s["entity"]):
+        cols = ", ".join(
+            f"{f['name']} {_SQL_TYPES[f['type']]}" for f in spec["fields"]
+        )
+        tables.append(
+            f'    "{spec["entity"]}": "CREATE TABLE IF NOT EXISTS {spec["entity"]} '
+            f'(id INTEGER PRIMARY KEY AUTOINCREMENT, {cols})",'
+        )
+    columns = {
+        spec["entity"]: [f["name"] for f in spec["fields"]]
+        for spec in specs.values()
+    }
+    return (
+        '"""SQLite persistence for the domain models.\n'
+        "\n"
+        "stdlib sqlite3 and a local file: the platform stores data with no\n"
+        "database server and no network. STORAGE_PATH relocates the file.\n"
+        '"""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "import os\n"
+        "import sqlite3\n"
+        "from pathlib import Path\n"
+        "from typing import Any, Dict, List\n"
+        "\n"
+        "SCHEMA = {\n" + "\n".join(tables) + "\n}\n"
+        "\n"
+        f"COLUMNS: Dict[str, List[str]] = {columns!r}\n"
+        "\n"
+        "\n"
+        "def db_path() -> Path:\n"
+        '    root = Path(os.getenv("STORAGE_PATH", "./data"))\n'
+        "    root.mkdir(parents=True, exist_ok=True)\n"
+        '    return root / "platform.db"\n'
+        "\n"
+        "\n"
+        "def connect() -> sqlite3.Connection:\n"
+        "    conn = sqlite3.connect(db_path())\n"
+        "    conn.row_factory = sqlite3.Row\n"
+        "    for ddl in SCHEMA.values():\n"
+        "        conn.execute(ddl)\n"
+        "    conn.commit()\n"
+        "    return conn\n"
+        "\n"
+        "\n"
+        "def save(entity: str, record: Dict[str, Any]) -> Dict[str, Any]:\n"
+        '    """Insert a record and return it with its assigned id."""\n'
+        "    cols = COLUMNS[entity]\n"
+        "    values = [record.get(c) for c in cols]\n"
+        '    placeholders = ", ".join("?" for _ in cols)\n'
+        "    conn = connect()\n"
+        "    try:\n"
+        "        cur = conn.execute(\n"
+        '            f"INSERT INTO {entity} ({\', \'.join(cols)}) VALUES ({placeholders})",\n'
+        "            values,\n"
+        "        )\n"
+        "        conn.commit()\n"
+        '        return {"id": cur.lastrowid, **{c: record.get(c) for c in cols}}\n'
+        "    finally:\n"
+        "        conn.close()\n"
+        "\n"
+        "\n"
+        "def list_all(entity: str) -> List[Dict[str, Any]]:\n"
+        "    conn = connect()\n"
+        "    try:\n"
+        '        rows = conn.execute(f"SELECT * FROM {entity} ORDER BY id").fetchall()\n'
+        "        return [dict(r) for r in rows]\n"
+        "    finally:\n"
+        "        conn.close()\n"
+        "\n"
+        "\n"
+        "def get(entity: str, record_id: int) -> Dict[str, Any] | None:\n"
+        "    conn = connect()\n"
+        "    try:\n"
+        "        row = conn.execute(\n"
+        '            f"SELECT * FROM {entity} WHERE id = ?", (record_id,)\n'
+        "        ).fetchone()\n"
+        "        return dict(row) if row else None\n"
+        "    finally:\n"
+        "        conn.close()\n"
+    )
+
+
+def _templated_route_body() -> str:
+    return (
+        "    if not isinstance(payload, dict):\n"
+        '        return {"ok": False, "error": "payload must be an object"}\n'
+        "    result = handle(payload)\n"
+        "    stored = save(payload)\n"
+        '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,\n'
+        '            "stored": stored}'
+    )
+
+
+def _render_routes(entries: List[Dict[str, Any]]) -> str:
+    """FastAPI router: one POST and one GET per capability."""
+    out = [
+        '"""HTTP surface for the platform\'s capabilities.',
+        "",
+        "Every route runs entirely in-process: the handler dispatches to a",
+        "vendored block and the result is persisted locally. No outbound call.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "from typing import Any, Dict",
+        "",
+        "from fastapi import APIRouter",
+        "",
+        "from app import store",
+        "",
+        "router = APIRouter()",
+        "",
+        "",
+    ]
+    for e in entries:
+        name, entity = e["name"], e["entity"]
+        out += [
+            f"# --- {e['capability_id']} ({e['source']}) ---",
+            f"from app.actions import {name} as _{name}_action  # noqa: E402",
+            "",
+            "",
+            f"def _{name}_handle(payload: Dict[str, Any]) -> Dict[str, Any]:",
+            f"    return _{name}_action.handle(payload)",
+            "",
+            "",
+            f'@router.post("/{name}")',
+            f"def {name}_create(payload: Dict[str, Any]) -> Dict[str, Any]:",
+            f'    CAPABILITY_ID = "{e["capability_id"]}"',
+            f"    handle = _{name}_handle",
+            f'    save = lambda record: store.save("{entity}", record)',
+            f'    list_all = lambda: store.list_all("{entity}")',
+            e["body"],
+            "",
+            "",
+            f'@router.get("/{name}")',
+            f"def {name}_list() -> Dict[str, Any]:",
+            f'    return {{"items": store.list_all("{entity}")}}',
+            "",
+            "",
+        ]
+    return "\n".join(out)
+
+
+def _render_main(product_name: str) -> str:
+    return (
+        '"""Entrypoint for the generated platform.\n'
+        "\n"
+        "Runs standalone: uvicorn app.main:app. No factory, no block store, no\n"
+        "outbound dependency at runtime.\n"
+        '"""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "from fastapi import FastAPI\n"
+        "\n"
+        "from app.routes import router\n"
+        "\n"
+        f'app = FastAPI(title="{product_name}")\n'
+        'app.include_router(router, prefix="/v1")\n'
+        "\n"
+        "\n"
+        '@app.get("/health")\n'
+        "def health() -> dict:\n"
+        '    return {"status": "ok"}\n'
+    )
+
+
+def _render_requirements() -> str:
+    return (
+        "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
+        "# the platform runs with no database server and no network.\n"
+        "fastapi>=0.110\n"
+        "uvicorn>=0.29\n"
+    )
+
+
+def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
+    cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
+    block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
+    return f"""# {product_name}
+
+Generated by the CerebrumDev factory role runner.
+
+## What this is
+
+A standalone platform. Every capability runs in-process: handlers invoke
+blocks that were vendored into `vendor/blocks/` at build time, through
+`app/dispatch.py`. There is **no call back to a block store at runtime** — the
+platform runs with the factory switched off.
+
+## Capabilities
+
+{cap_lines}
+
+## Vendored blocks
+
+{block_lines}
+
+## Run it
+
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --reload      # GET /health -> 200
+python -m pytest tests             # the platform's own suite
+```
+
+Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `app/models.py` | domain dataclasses |
+| `app/store.py` | sqlite persistence |
+| `app/routes.py` | HTTP surface |
+| `app/actions/` | capability handlers |
+| `app/dispatch.py` | local block dispatch |
+| `vendor/blocks/` | vendored block source, pinned by `blocks.lock.json` |
+"""
+
+
 def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[tuple]:
     """Ask the coding agent for this handler's body, or None if unavailable.
 
@@ -274,6 +575,95 @@ def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[t
         ctx.state.setdefault("coder_failures", {})[cap.capability_id] = str(exc)
         return None
     return result["body"], f"coder LLM ({result['model']})"
+
+
+def _record_failure(ctx: RoleContext, key: str, exc: Exception) -> None:
+    ctx.state.setdefault("coder_failures", {})[key] = str(exc)
+
+
+def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
+    """Let the agent design the schema. None means fall back to the template."""
+    from app.factory.coder import CoderError, coder_enabled, generate_model_spec
+
+    if not coder_enabled():
+        return None
+    try:
+        return generate_model_spec(
+            capability_id=cap.capability_id,
+            description=getattr(cap, "notes", "") or cap.capability_id,
+            product_name=getattr(ctx.blueprint, "product_name", "platform"),
+            vertical=getattr(ctx.blueprint, "vertical", "product"),
+        )
+    except CoderError as exc:
+        _record_failure(ctx, f"model:{cap.capability_id}", exc)
+        return None
+
+
+def _coder_route_body(
+    ctx: RoleContext, cap: Any, spec: Dict[str, Any]
+) -> Optional[tuple]:
+    from app.factory.coder import CoderError, coder_enabled, generate_route_body
+
+    if not coder_enabled():
+        return None
+    try:
+        result = generate_route_body(
+            capability_id=cap.capability_id,
+            description=getattr(cap, "notes", "") or cap.capability_id,
+            entity=spec["entity"],
+            field_names=[f["name"] for f in spec["fields"]],
+            work_list=list(ctx.work_list),
+        )
+    except CoderError as exc:
+        _record_failure(ctx, f"route:{cap.capability_id}", exc)
+        return None
+    return result["body"], f"coder LLM ({result['model']})"
+
+
+def _coder_readme(
+    ctx: RoleContext, product_name: str, caps: Sequence[str], blocks: Sequence[str]
+) -> Optional[tuple]:
+    """Prose is the one artifact where the template is nearly as good.
+
+    Kept on the dual path anyway so every artifact class is consistent, but a
+    failure here is uninteresting and silently templated.
+    """
+    from app.factory.coder import CoderError, coder_enabled
+
+    if not coder_enabled():
+        return None
+    try:
+        from app.factory.coder import _llm_code_call, get_factory_llm_config_model
+
+        text = _llm_code_call(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "Write a concise README.md for a generated business platform. "
+                        "Markdown only, no code fences around the whole document. "
+                        "Cover: what it does, its capabilities, how to run it "
+                        "(pip install -r requirements.txt; uvicorn app.main:app), "
+                        "and that it runs fully offline with blocks vendored into "
+                        "vendor/blocks/ and no call back to any store."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Platform: {product_name}\n"
+                        f"Capabilities: {list(caps)!r}\n"
+                        f"Vendored blocks: {list(blocks)!r}"
+                    ),
+                },
+            ]
+        )
+    except CoderError as exc:
+        _record_failure(ctx, "readme", exc)
+        return None
+    if not text.strip():
+        return None
+    return text, f"coder LLM ({get_factory_llm_config_model()})"
 
 
 def run_writer(ctx: RoleContext) -> RoleResult:
@@ -316,10 +706,60 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
     )
 
+    # --- domain models, designed by the agent when one is available --------
+    specs: Dict[str, Dict[str, Any]] = {}
+    for cap in ctx.plan.capabilities:
+        spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
+        specs[cap.capability_id] = spec
+        sources[f"model:{cap.capability_id}"] = (
+            f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
+        )
+    ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
+
+    # Persistence is rendered from the same specs, so the schema cannot drift
+    # from the dataclasses it stores.
+    ctx.workspace.write_text(Path("app") / "store.py", _render_store(specs))
+    sources["persistence"] = (
+        "derived from coder-designed models"
+        if any(s.get("model") for s in specs.values())
+        else fallback_source
+    )
+
+    # --- API surface -------------------------------------------------------
+    entries: List[Dict[str, Any]] = []
+    for cap in ctx.plan.capabilities:
+        spec = specs[cap.capability_id]
+        authored = _coder_route_body(ctx, cap, spec)
+        body, route_source = authored or (_templated_route_body(), fallback_source)
+        entries.append(
+            {
+                "capability_id": cap.capability_id,
+                "name": cap.capability_id.replace("-", "_"),
+                "entity": spec["entity"],
+                "body": body,
+                "source": route_source,
+            }
+        )
+        sources[f"route:{cap.capability_id}"] = route_source
+    ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
+
+    # --- run scaffold ------------------------------------------------------
+    product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
+    ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
+    ctx.workspace.write_text("requirements.txt", _render_requirements())
+    readme = _coder_readme(ctx, product_name, written, sorted(vendored))
+    ctx.workspace.write_text(
+        "README.md",
+        readme[0] if readme else _templated_readme(product_name, written, sorted(vendored)),
+    )
+    sources["readme"] = readme[1] if readme else fallback_source
+    sources["entrypoint"] = fallback_source
+    sources["requirements"] = fallback_source
+
     by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     detail = (
-        f"{len(written)} handler(s) written — {by_coder} by the coding agent, "
-        f"{len(written) - by_coder} from the contract template"
+        f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
+        f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
     )
     if ctx.work_list:
         detail += f"; reworking {len(ctx.work_list)} finding(s)"
@@ -328,8 +768,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         detail=detail,
         notes={
             "handlers": written,
-            "handler_sources": sources,
-            "coder_handlers": by_coder,
+            "artifact_sources": sources,
+            "coder_artifacts": by_coder,
+            "model_specs": specs,
         },
     )
 
@@ -337,35 +778,69 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 # -- TESTER --------------------------------------------------------------
 
 
-def run_tester(ctx: RoleContext) -> RoleResult:
-    """Write tests against what the WRITER produced. Writes only under tests/.
+_SAMPLE_VALUES = {"str": "sample", "int": 1, "float": 1.5, "bool": True}
 
-    The smoke test executes a capability through the local dispatch runtime
-    with no store configured, which is the assertion the old generated
-    platforms shipped but could not honour.
+
+def _sample_payload(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """A valid instance of the entity, typed from its own spec."""
+    return {f["name"]: _SAMPLE_VALUES[f["type"]] for f in spec.get("fields", [])}
+
+
+_CONFTEST = '''"""Test bootstrap for the generated platform.
+
+Puts the platform root on sys.path and points persistence at a scratch
+directory, so running the suite never touches a real data file.
+"""
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+os.environ.setdefault("STORAGE_PATH", tempfile.mkdtemp(prefix="platform-test-"))
+'''
+
+
+def run_tester(ctx: RoleContext) -> RoleResult:
+    """Write tests that EXERCISE the platform. Writes only under tests/.
+
+    Import-only tests are worthless here: they pass on a platform whose
+    persistence is broken, whose routes 500, and whose blocks never run.
+    These drive the real surface -- a model round-trips through sqlite, each
+    route returns its documented shape, and every capability executes end to
+    end through local dispatch with the store environment stripped.
+
+    That last one is the assertion the old generated platforms shipped but
+    could not honour, because their handlers called the store over HTTP.
     """
     caps = [c.capability_id.replace("-", "_") for c in ctx.plan.capabilities]
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
+    specs = ctx.state.get("model_specs") or {}
+    entities = {
+        cap.capability_id.replace("-", "_"): specs.get(cap.capability_id, {}).get(
+            "entity", cap.capability_id.replace("-", "_")
+        )
+        for cap in ctx.plan.capabilities
+    }
 
-    lines = [
-        '"""Smoke tests for the generated platform (written by the TESTER role)."""',
+    ctx.workspace.write_text(Path("tests") / "conftest.py", _CONFTEST)
+
+    # -- capability + offline dispatch ------------------------------------
+    smoke = [
+        '"""The platform runs, and it runs without the store."""',
         "",
         "import os",
-        "import sys",
-        "from pathlib import Path",
-        "",
-        "sys.path.insert(0, str(Path(__file__).resolve().parents[1]))",
         "",
         "",
         "def test_capabilities_import():",
     ]
     for name in caps:
-        lines.append(f"    from app.actions import {name}")
-        lines.append(f"    assert {name}.CAPABILITY_ID")
+        smoke.append(f"    from app.actions import {name}")
+        smoke.append(f"    assert {name}.CAPABILITY_ID")
     if not caps:
-        lines.append("    pass")
-
-    lines += [
+        smoke.append("    pass")
+    smoke += [
         "",
         "",
         "def test_dispatch_runs_offline():",
@@ -373,18 +848,132 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):',
         "        os.environ.pop(var, None)",
         "    from app.dispatch import execute",
-        f"    vendored = {vendored!r}",
-        "    for block_id in vendored:",
+        f"    for block_id in {vendored!r}:",
         "        result = execute(block_id, {'probe': True})",
         "        assert isinstance(result, dict), block_id",
-        "    assert True",
+        "",
+        "",
+        "def test_every_capability_executes_end_to_end():",
+        '    """Each handler actually runs its blocks, not just imports."""',
+        '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY"):',
+        "        os.environ.pop(var, None)",
     ]
+    for name in caps:
+        smoke += [
+            f"    from app.actions import {name}",
+            f"    out = {name}.handle({{'reference': 'probe', 'status': 'new', 'quantity': 1,",
+            "                          'data': {'product_id': 'p1', 'metrics': {}}})",
+            f"    assert isinstance(out, dict), '{name} returned a non-dict'",
+        ]
+    if not caps:
+        smoke.append("    pass")
+    ctx.workspace.write_text(Path("tests") / "test_smoke.py", "\n".join(smoke) + "\n")
 
-    ctx.workspace.write_text(Path("tests") / "test_smoke.py", "\n".join(lines) + "\n")
+    # -- models round-trip through persistence -----------------------------
+    model_lines = [
+        '"""Models must survive a round trip through sqlite."""',
+        "",
+        "from app import store",
+        "from app.models import MODELS",
+        "",
+        "",
+        "def test_every_model_round_trips():",
+    ]
+    if entities:
+        for cap_id, spec in sorted(specs.items()):
+            entity = spec.get("entity", cap_id)
+            sample = {
+                f["name"]: {"str": "'x'", "int": "1", "float": "1.5", "bool": "True"}[
+                    f["type"]
+                ]
+                for f in spec.get("fields", [])
+            }
+            payload = "{" + ", ".join(f"'{k}': {v}" for k, v in sample.items()) + "}"
+            model_lines += [
+                f"    record = {payload}",
+                f"    saved = store.save('{entity}', record)",
+                f"    assert saved['id'] is not None, 'no id assigned for {entity}'",
+                f"    fetched = store.get('{entity}', saved['id'])",
+                f"    assert fetched is not None, '{entity} did not persist'",
+                "    for key, value in record.items():",
+                "        assert fetched[key] == value, (key, fetched[key], value)",
+                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}'))",
+            ]
+        model_lines += [
+            "",
+            "",
+            "def test_models_expose_their_fields():",
+            "    assert MODELS, 'no models were generated'",
+            "    for cap_id, cls in MODELS.items():",
+            "        instance = cls.from_dict({})",
+            "        assert instance.to_dict()['id'] is None",
+            "        assert cls.FIELDS, cap_id",
+        ]
+    else:
+        model_lines.append("    pass")
+    ctx.workspace.write_text(
+        Path("tests") / "test_models.py", "\n".join(model_lines) + "\n"
+    )
+
+    # -- routes return their documented shape ------------------------------
+    route_lines = [
+        '"""The HTTP surface answers, and what it answers has the right shape."""',
+        "",
+        "from fastapi.testclient import TestClient",
+        "",
+        "from app.main import app",
+        "",
+        "client = TestClient(app)",
+        "",
+        "",
+        "def test_health():",
+        '    resp = client.get("/health")',
+        "    assert resp.status_code == 200",
+        '    assert resp.json()["status"] == "ok"',
+        "",
+        "",
+        "def test_every_capability_route_answers():",
+    ]
+    if caps:
+        for cap in ctx.plan.capabilities:
+            name = cap.capability_id.replace("-", "_")
+            spec = specs.get(cap.capability_id, {})
+            # A payload built from the entity's OWN fields. Posting an
+            # arbitrary body would let a route that rejects everything pass:
+            # it answers 200 with {"ok": false} and a shape-only assertion
+            # cannot tell that apart from success.
+            sample = _sample_payload(spec)
+            route_lines += [
+                f"    payload = {sample!r}",
+                f'    resp = client.post("/v1/{name}", json=payload)',
+                f'    assert resp.status_code == 200, ("{name}", resp.text)',
+                "    body = resp.json()",
+                f'    assert isinstance(body, dict), "{name} returned a non-object"',
+                "    # A valid payload must not come back as an error.",
+                '    assert body.get("ok") is not False, (',
+                f'        "{name} rejected a payload built from its own schema: "',
+                '        + str(body.get("error"))',
+                "    )",
+                "",
+                f'    listed = client.get("/v1/{name}")',
+                f'    assert listed.status_code == 200, ("{name} list", listed.text)',
+                '    items = listed.json()["items"]',
+                "    assert isinstance(items, list)",
+                f'    assert items, "{name} accepted a record but persisted nothing"',
+            ]
+    else:
+        route_lines.append("    pass")
+    ctx.workspace.write_text(
+        Path("tests") / "test_routes.py", "\n".join(route_lines) + "\n"
+    )
+
     return RoleResult(
         ok=True,
-        detail=f"smoke suite written for {len(caps)} capability(ies)",
-        notes={"capabilities": caps, "vendored": vendored},
+        detail=(
+            f"suite written for {len(caps)} capability(ies): dispatch, "
+            "persistence round-trip, and route shape"
+        ),
+        notes={"capabilities": caps, "vendored": vendored, "entities": entities},
     )
 
 
