@@ -20,16 +20,32 @@ from app.factory.build.authority import (
     authority_manifest,
     role_contract,
 )
+from app.factory.build.runner import (
+    BuildBudget,
+    BuildOutcome,
+    Outcome,
+    RoleRunner,
+    blueprint_hash,
+    runner_enabled,
+)
+from app.factory.build.workspace import RoleWorkspace
 
 __all__ = [
     "BUILD_PHASES",
     "ROLE_CONTRACTS",
     "AuthorityError",
+    "BuildBudget",
+    "BuildOutcome",
     "BuildRole",
     "LaneRoot",
+    "Outcome",
     "RoleContract",
+    "RoleRunner",
+    "RoleWorkspace",
     "assert_phase_order",
     "assert_write_allowed",
     "authority_manifest",
+    "blueprint_hash",
     "role_contract",
+    "runner_enabled",
 ]
