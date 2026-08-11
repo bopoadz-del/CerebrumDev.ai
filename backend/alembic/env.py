@@ -43,6 +43,15 @@ def _database_url() -> str:
     if not db_path:
         storage = os.getenv("STORAGE_PATH", "./storage")
         db_path = str(Path(storage) / "accounts.db")
+    # SQLite will not create missing parent directories -- it fails the whole
+    # boot with "unable to open database file". accounts_store._db_path()
+    # already makes them, but the Dockerfile runs `alembic upgrade head`
+    # BEFORE uvicorn, so nothing has imported that module yet. The directory
+    # only pre-exists when a Render disk is mounted over it; without one
+    # (free tier, plain `docker run`, CI) this is the first thing to touch it.
+    parent = Path(db_path).expanduser().parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     return f"sqlite:///{db_path}"
 
 
