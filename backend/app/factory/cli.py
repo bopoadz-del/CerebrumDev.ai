@@ -42,6 +42,26 @@ def main(argv: list[str] | None = None) -> int:
     p_gen.add_argument("--blocks-root", default=None)
     p_gen.add_argument("--no-clean", action="store_true")
 
+    p_build = sub.add_parser(
+        "build",
+        help="Build a platform through the role runner (agent-manufactured)",
+    )
+    p_build.add_argument("--blueprint", required=True)
+    p_build.add_argument("--out", required=True)
+    p_build.add_argument("--blocks-root", default=None)
+    p_build.add_argument(
+        "--max-rework",
+        type=int,
+        default=3,
+        help="writer/tester rounds before the run fails on budget",
+    )
+    p_build.add_argument(
+        "--wall-clock",
+        type=float,
+        default=7200.0,
+        help="seconds before the run fails on budget (0 disables)",
+    )
+
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
     store_sub.add_parser("manifest", help="Print Store Manager authority manifest")
@@ -80,6 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     bp = load_blueprint(args.blueprint)
     blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
 
+    if args.cmd == "build":
+        return _build_cmd(args, bp, blocks_root)
+
     try:
         if args.cmd == "plan":
             plan = CapabilityPlanner(blocks_root).plan(bp)
@@ -109,6 +132,41 @@ def main(argv: list[str] | None = None) -> int:
     except DualRegistryError as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
+
+
+def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
+    """Drive a build through the role runner.
+
+    Separate from `generate`, which is the legacy template path and remains
+    what production calls. Exit 0 only on RUN_SUCCEEDED -- a run that spent
+    its budget or failed a gate exits non-zero, so a CI or shell caller
+    cannot mistake a failed build for a delivered one.
+    """
+    from app.factory.build.runner import BuildBudget, RoleRunner
+
+    runner = RoleRunner(
+        blueprint,
+        args.out,
+        blocks_root=blocks_root,
+        budget=BuildBudget(max_rework=args.max_rework, wall_clock_s=args.wall_clock),
+    )
+    outcome = runner.run()
+    sources = runner.state.get("artifact_sources", {})
+    by_agent = sorted(k for k, v in sources.items() if v.startswith("coder LLM"))
+    print(
+        json.dumps(
+            {
+                **outcome.to_dict(),
+                "artifacts": len(sources),
+                "agent_written": len(by_agent),
+                "agent_artifacts": by_agent,
+                "coder_failures": runner.state.get("coder_failures", {}),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0 if outcome.ok else 1
 
 
 def _store_cmd(args: argparse.Namespace) -> int:

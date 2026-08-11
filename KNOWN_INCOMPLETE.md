@@ -57,22 +57,51 @@ each handler, so nothing claims LLM authorship that did not have it. This is
 the difference between "the runner manufactures" and "the agent manufactures"
 — the harness is real, the coder is not yet plugged into it.
 
-**(c) STORE_MANAGER is minimal.** It records the clone manifest and applies
-no `StoreOp`. Harvesting proven improvements out of mature platforms back
-into the Store, and admitting client-driven net-new capability into
-inventory, are unbuilt. `store_manager.py` still only prints its authority
-manifest; no op is executed anywhere.
+**(c) STORE_MANAGER is minimal — DECIDED: deferred, not implemented.** It
+records the clone manifest and executes no `StoreOp`. `store_manager.py`
+defines 15 ops with approval gates and every consumer still only prints the
+manifest. Deferred deliberately rather than half-built: executing store ops
+means writing to the Cerebrum-Blocks repo (publish, version, deprecate) with
+a human-approval path for MAJOR and DELETE, plus the registrar queries over
+`iter_ledgers()` for staleness. That is its own milestone, and a partial
+implementation that writes to the Store without the approval path is worse
+than none.
 
 The factory rebuild is **in progress, not concluded**.
 
+### 1b. Cutover is the next milestone
+The runner is opt-in (`FACTORY_RUNNER_ENABLED`, or the `cli.py build`
+subcommand) and nothing in the HTTP or chat generation path calls it.
+`ProductGenerator` remains the default and still emits
+`httpx.post(store_url + "/v1/execute")` handlers. The runner's artifact is now
+~23 files (models, sqlite persistence, FastAPI routes, entrypoint, README,
+requirements, a real test suite) against `ProductGenerator`'s ~93, so parity
+is closer but not reached — the runner does not yet emit hats, workflows, the
+universal console, connectors, edge profile, certification scaffold, Product
+DNA or the Resident Engineer. Decide cutover on what the live test shows.
+
+### 1c. Agent output quality is model-bound — MEASURED
+On the same blueprint: `moonshot-v1-8k` wrote 7 of 10 artifacts and produced a
+route that returns `None`, failing the TESTER gate through all three rework
+rounds and ending `FAILED_BUDGET_SPENT`. The rework findings did reach the
+writer (`ResponseValidationError ... input: None`) and it still could not fix
+it. The runner behaved correctly — it refused to ship a broken platform — but
+this model cannot satisfy the route contract. A K2-class or current Claude
+model is required for the agent path to be useful. See `docs/LIVE_TEST_READY.md`.
+
 ### 2. CEREBRUM_LLM_API_KEY missing on the Render backend — BLOCKS PRODUCTION
+**Owner: Chadi. Dashboard secret. Not fixable in code — do not work around it.**
+
 The Render service `cerebrumdev-backend` (`srv-d9ta2pad0e5s738lllpg`) has no
 LLM key set. Factory drafting there falls back to keyword mode and the coder
-cannot run at all, so a production factory run cannot produce coder-written
-capabilities. Needs a dashboard secret set by the operator; not fixable in
-code. Note `/ready`'s `llm_configured` field reports `true` regardless
+cannot run at all, so a production factory run cannot produce any
+agent-written capability — every artifact would silently take the template
+path. Local development is unaffected (`backend/.env` carries a key).
+
+Note `/ready`'s `llm_configured` field reports `true` regardless
 (`app/main.py`, `or os.getenv("LLM_PROVIDER")`) — do not trust it as evidence
-the LLM works.
+the LLM works. Verify instead with the `coder_failures` field of a build, or
+`POST /v1/factory/product/draft` and check `drafting_mode`.
 
 ### 3. Steward blocks dual-register against the factory's own mirror
 `estate_registry` and `portfolio_rollup` do not exist in the real
