@@ -31,7 +31,37 @@ def blueprint():
 
 @pytest.fixture(autouse=True)
 def _coder_on(monkeypatch):
+    """Coder enabled, but every entry point stubbed — no paid calls, ever.
+
+    The WRITER now asks the coder for four artifact classes, not one. Stubbing
+    only generate_platform_handler left the model-spec, route-body and README
+    calls hitting the live API on any machine with a key: the suite went past
+    two minutes and started costing money. Each test below overrides the one
+    entry point it is actually about.
+    """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setattr(
+        "app.factory.coder.generate_model_spec",
+        lambda **kw: {
+            "entity": kw["capability_id"].replace("-", "_"),
+            "fields": [{"name": "reference", "type": "str", "required": True}],
+            "model": "stub-spec",
+        },
+    )
+    monkeypatch.setattr(
+        "app.factory.coder.generate_route_body",
+        lambda **kw: {"body": _STUB_ROUTE, "model": "stub-route"},
+    )
+    # The README path calls _llm_code_call directly.
+    monkeypatch.setattr(
+        "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
+    )
+
+
+_STUB_ROUTE = (
+    "    result = handle(payload)\n"
+    '    return {"ok": True, "capability": CAPABILITY_ID, "result": result}'
+)
 
 
 def _headers(out: Path) -> dict:
@@ -97,12 +127,14 @@ def test_a_coder_failure_ships_the_template_and_records_why(
     assert set(failures) == {"analytics_surface", "dashboard_surface"}
     assert "model refused" in failures["analytics_surface"]
 
-    writer_gate = [
-        e
-        for e in runner.ledger.events()
-        if e.role is BuildRole.WRITER and e.payload.get("role_detail")
-    ][-1]
-    assert "0 by the coding agent" in writer_gate.payload["role_detail"]
+    # Only the handler coder failed, so only the handlers fall back. The other
+    # artifact classes have their own coder calls and are unaffected -- the
+    # accounting must be per-artifact, not a single global verdict.
+    sources = runner.state["artifact_sources"]
+    for cap_id in ("analytics_surface", "dashboard_surface"):
+        assert sources[cap_id] == "deterministic contract template", cap_id
+        assert sources[f"model:{cap_id}"].startswith("coder LLM")
+        assert sources[f"route:{cap_id}"].startswith("coder LLM")
 
 
 def test_the_coder_is_not_called_when_disabled(blueprint, tmp_path, monkeypatch):
