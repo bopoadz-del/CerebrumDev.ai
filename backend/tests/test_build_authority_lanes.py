@@ -118,7 +118,7 @@ def test_symlink_out_of_the_workspace_is_refused(workspace, tmp_path):
     except (OSError, NotImplementedError):
         if os.name != "nt":
             raise
-        pytest.skip("Windows without SeCreateSymbolicLinkPrivilege")
+        pytest.skip(reason="Windows without SeCreateSymbolicLinkPrivilege")
 
     with pytest.raises(AuthorityError):
         assert_write_allowed(BuildRole.WRITER, link / "escaped.py", workspace=workspace)
