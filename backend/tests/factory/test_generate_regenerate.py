@@ -1,6 +1,20 @@
-"""Generate + delete + regenerate deterministic smoke."""
+"""Generate + regenerate reproducibility.
+
+What is actually guaranteed here changed once the factory coder started
+writing GENERATE capabilities: an LLM does not emit the same bytes twice, so
+"same blueprint -> same tree hash" can only ever hold for the part of the
+product the coder did not write.
+
+The old single test asserted whole-tree byte equality and therefore passed
+only while the coder was doing nothing -- green on CI, which has no LLM key,
+and red on any machine with one. That is the worst shape a test can have: it
+reported the agent working as a failure. These two split the claim in half so
+both halves stay true and both run without an API key.
+"""
 
 from pathlib import Path
+
+import pytest
 
 from app.cerebrum_product_kernel.provenance import hash_tree
 from app.factory.blueprint import load_blueprint
@@ -8,29 +22,128 @@ from app.factory.generator import ProductGenerator
 
 
 ROOT = Path(__file__).resolve().parents[3]
+# NOTE: absolute path that exists on no machine, CI included -- generation
+# falls back to the vendored mirror. Left as-is deliberately; changing it
+# changes what these tests exercise.
 BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+
+IGNORED = {".git", "__pycache__", "provenance.json", ".pytest_cache"}
 
 
 def _stable_hash(root: Path) -> str:
     # Exclude provenance timestamp file for byte-stability comparison of code tree
-    return hash_tree(root, ignore_names={".git", "__pycache__", "provenance.json", ".pytest_cache"})
+    return hash_tree(root, ignore_names=IGNORED)
 
 
-def test_basic_generate_regenerate(tmp_path):
+def _snapshot(root: Path) -> dict:
+    """Per-file digests, so a diff names the file instead of one tree hash."""
+    import hashlib
+
+    out = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if any(part in IGNORED for part in path.relative_to(root).parts):
+            continue
+        out[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return out
+
+
+def _generator() -> ProductGenerator:
     bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
+    return ProductGenerator(bp, blocks_root=BLOCKS, factory_commit="test", blocks_commit="test")
+
+
+def test_scaffold_is_byte_reproducible_without_the_coder(tmp_path, monkeypatch):
+    """Everything the factory itself writes must be deterministic."""
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     out = tmp_path / "basic"
-    gen = ProductGenerator(bp, blocks_root=BLOCKS, factory_commit="test", blocks_commit="test")
+    gen = _generator()
+
     r1 = gen.generate(out)
     h1 = _stable_hash(out)
     assert (out / "app" / "main.py").exists()
     assert (out / "factory_plan.json").exists()
     assert r1["product_id"] == "basic-factory-smoke"
 
-    # delete and regenerate
     r2 = gen.generate(out)
-    h2 = _stable_hash(out)
-    assert h1 == h2
-    assert r1["inputs_hash"] == r2["inputs_hash"] or h1 == h2
+    assert _stable_hash(out) == h1
+    assert r1["inputs_hash"] == r2["inputs_hash"]
+
+
+def test_only_coder_written_modules_vary_between_builds(tmp_path, monkeypatch):
+    """Non-determinism must be confined to what the coder wrote.
+
+    The coder is stubbed rather than called, so this runs in CI with no LLM
+    key and still fails if a future change lets LLM output bleed into a
+    catalog, manifest or provenance file that is supposed to be stable.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+
+    calls = {"n": 0}
+
+    def fake_body(cap, blueprint):
+        calls["n"] += 1
+        return {"model": "stub-coder", "body": f'    return {{"run": {calls["n"]}}}'}
+
+    monkeypatch.setattr("app.factory.coder.generate_handler_body", fake_body)
+
+    out = tmp_path / "basic"
+    gen = _generator()
+    gen.generate(out)
+    first = _snapshot(out)
+    gen.generate(out)
+    second = _snapshot(out)
+
+    assert calls["n"] >= 2, "the coder never ran — this test would prove nothing"
+    assert set(first) == set(second), "regeneration changed the file set"
+
+    changed = {k for k in first if first[k] != second[k]}
+    assert changed, "the stub returns different bodies; something must differ"
+
+    # Every changed file is a coder-written action module, and it says so.
+    for rel in changed:
+        assert rel.startswith("app/actions/"), f"non-determinism escaped into {rel}"
+        assert "strategy=GENERATE" in (out / rel).read_text(encoding="utf-8")
+
+
+def test_turning_the_coder_on_does_not_perturb_the_scaffold(tmp_path, monkeypatch):
+    """Everything outside app/actions/ is identical coder-on and coder-off.
+
+    Both builds happen in one test so the two snapshots can actually be
+    compared -- parametrising over the flag would run them in separate
+    invocations with nothing to compare against, which asserts nothing.
+    """
+    monkeypatch.setattr(
+        "app.factory.coder.generate_handler_body",
+        lambda cap, bp: {"model": "stub-coder", "body": '    return {"stub": True}'},
+    )
+
+    full: dict = {}
+
+    def scaffold_of(target: Path) -> dict:
+        _generator().generate(target)
+        snap = _snapshot(target)
+        full[target.name] = snap
+        return {k: v for k, v in snap.items() if not k.startswith("app/actions/")}
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    off = scaffold_of(tmp_path / "off")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    on = scaffold_of(tmp_path / "on")
+
+    assert off, "no scaffold files were produced"
+    # Proves the comparison below is live rather than equal for the wrong
+    # reason: the two builds genuinely differ, just only under app/actions/.
+    assert {
+        k for k in set(full["off"]) & set(full["on"]) if full["off"][k] != full["on"][k]
+    }, "coder-on and coder-off produced identical trees — the flag did nothing"
+    assert set(off) == set(on), (
+        f"coder-on added/removed scaffold files: {set(off) ^ set(on)}"
+    )
+    drifted = {k for k in off if off[k] != on[k]}
+    assert not drifted, f"a coder run leaked into the scaffold: {sorted(drifted)}"
 
 
 def test_steward_generate(tmp_path):
