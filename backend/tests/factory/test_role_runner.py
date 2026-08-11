@@ -340,8 +340,14 @@ def test_blueprint_hash_is_the_resume_key_and_is_stable(blueprint):
     assert blueprint_hash(load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")) not in hashes
 
 
-def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path):
-    """The runner's own output is byte-reproducible on the deterministic path."""
+def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path, monkeypatch):
+    """Byte-reproducible with the coding agent off.
+
+    Scoped deliberately. Once the coder is wired in, whole-tree equality is
+    only achievable while the agent is idle -- an LLM does not emit the same
+    bytes twice. The coder-on guarantee is the narrower one asserted below.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     a, b = tmp_path / "a", tmp_path / "b"
     assert RoleRunner(blueprint, a).run().ok
     assert RoleRunner(blueprint, b).run().ok
@@ -350,6 +356,40 @@ def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path):
     assert set(tree_a) == set(tree_b)
     drifted = {k for k in tree_a if tree_a[k] != tree_b[k]}
     assert not drifted, sorted(drifted)
+
+
+def test_coder_nondeterminism_is_confined_to_the_handlers(
+    blueprint, tmp_path, monkeypatch
+):
+    """With the agent writing, only app/actions/ may differ between builds.
+
+    Stubbed rather than calling a live model, so this runs in CI with no key
+    and still fails if agent output ever bleeds into the vendored blocks, the
+    lockfile, the dispatch runtime or the tests.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    counter = {"n": 0}
+
+    def varying(**kwargs):
+        counter["n"] += 1
+        return {
+            "body": f'    return {{"capability": CAPABILITY_ID, "run": {counter["n"]}}}',
+            "model": "stub-coder",
+        }
+
+    monkeypatch.setattr("app.factory.coder.generate_platform_handler", varying)
+
+    a, b = tmp_path / "a", tmp_path / "b"
+    assert RoleRunner(blueprint, a).run().ok
+    assert RoleRunner(blueprint, b).run().ok
+    tree_a, tree_b = _tree(a), _tree(b)
+
+    assert set(tree_a) == set(tree_b)
+    drifted = {k for k in tree_a if tree_a[k] != tree_b[k]}
+    assert drifted, "the stub varies per call; something must differ"
+    assert all(
+        k.startswith("app/actions/") for k in drifted
+    ), f"agent output escaped into {sorted(k for k in drifted if not k.startswith('app/actions/'))}"
 
 
 # -- flag ----------------------------------------------------------------

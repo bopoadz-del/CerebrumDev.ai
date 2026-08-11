@@ -27,7 +27,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -36,6 +36,21 @@ from .blueprint import CapabilitySpec, ProductBlueprint
 logger = logging.getLogger("cerebrumdev.factory.coder")
 
 CODER_ENABLED_ENV = "FACTORY_CODER_ENABLED"
+
+#: Provider-agnostic name for the agentic coding CLI. ``KIMI_CODE_CLI`` stays
+#: honoured so existing deployments keep working unchanged; point
+#: FACTORY_CODE_CLI at the Claude Code CLI to use Claude as the agentic coder.
+#: The seam is "run this command, read its result" -- no CLI's internals are
+#: depended on, and neither CLI's name is hardcoded at a call site.
+CODE_CLI_ENV = "FACTORY_CODE_CLI"
+LEGACY_CODE_CLI_ENV = "KIMI_CODE_CLI"
+
+
+def code_cli_command(default: str = "kimi") -> str:
+    """The agentic coder CLI to invoke. FACTORY_CODE_CLI wins, then legacy."""
+    return os.getenv(CODE_CLI_ENV, "").strip() or os.getenv(
+        LEGACY_CODE_CLI_ENV, ""
+    ).strip() or default
 
 
 class CoderError(RuntimeError):
@@ -145,6 +160,63 @@ class _ForbiddenNodeVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+#: Anthropic pins its API by date rather than by URL path.
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _anthropic_request(cfg: Dict[str, Any], messages: List[Dict[str, str]], model: str):
+    """Build the Messages API call. Deliberately not OpenAI-shaped.
+
+    Three differences that silently break an OpenAI-style port:
+    auth is ``x-api-key`` rather than a bearer token, the ``anthropic-version``
+    header is mandatory, and the system prompt is a **top-level parameter** --
+    a ``{"role": "system"}`` entry inside ``messages`` is rejected. The reply
+    is a list of typed content blocks, not ``choices[0].message.content``.
+    """
+    system = "\n\n".join(
+        m["content"] for m in messages if m.get("role") == "system"
+    ).strip()
+    turns = [m for m in messages if m.get("role") != "system"]
+
+    headers = {
+        "content-type": "application/json",
+        "anthropic-version": ANTHROPIC_VERSION,
+    }
+    if cfg.get("api_key"):
+        headers["x-api-key"] = cfg["api_key"]
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "max_tokens": 2048,
+        "temperature": 0.2,
+        "messages": turns,
+    }
+    if system:
+        payload["system"] = system
+
+    url = f"{cfg['base_url'].rstrip('/')}/messages"
+    return url, payload, headers
+
+
+def _anthropic_text(data: Dict[str, Any]) -> str:
+    """Concatenate the text blocks of a Messages response.
+
+    Content is a list of typed blocks; non-text blocks are skipped rather than
+    stringified, so a future block type cannot leak JSON into generated code.
+    """
+    blocks = data.get("content") or []
+    if not isinstance(blocks, list):
+        raise ValueError("malformed Anthropic response: content is not a list")
+    text = "".join(
+        b.get("text", "")
+        for b in blocks
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+    if not text.strip():
+        raise ValueError("empty completion")
+    return text
+
+
 def _llm_code_call(messages: List[Dict[str, str]]) -> str:
     """Text completion against the factory LLM. Raises CoderError on failure."""
     from .product_architect import get_factory_llm_config
@@ -152,16 +224,25 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
     cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise CoderError("LLM mock mode — coder has no model to call")
+    if cfg.get("error"):
+        # Fail closed with the provider's own message; never borrow the other
+        # provider's credentials to keep going.
+        raise CoderError(str(cfg["error"]))
     provider = cfg.get("provider")
-    if provider not in ("moonshot", "kimi"):
+    if provider not in ("moonshot", "kimi", "claude"):
         raise CoderError(f"unsupported coder provider: {provider!r}")
 
-    headers = {"Content-Type": "application/json"}
-    if cfg.get("api_key"):
-        headers["Authorization"] = f"Bearer {cfg['api_key']}"
-    url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
-
     def _try(model: str) -> str:
+        if provider == "claude":
+            url, payload, headers = _anthropic_request(cfg, messages, model)
+            resp = httpx.post(url, json=payload, headers=headers, timeout=120.0)
+            resp.raise_for_status()
+            return _anthropic_text(resp.json())
+
+        headers = {"Content-Type": "application/json"}
+        if cfg.get("api_key"):
+            headers["Authorization"] = f"Bearer {cfg['api_key']}"
+        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
         payload = {
             "model": model,
             "messages": messages,
@@ -235,6 +316,79 @@ def _validate_body(body: str, capability_id: str) -> str:
             f"{', '.join(sorted(set(visitor.found)))}"
         )
     return indented
+
+
+_PLATFORM_SYSTEM = """You write ONE Python function body for a generated business platform.
+
+Contract:
+- Emit ONLY the body of:  def handle(payload: dict) -> dict
+- Module-level names already available to you:
+    CAPABILITY_ID : str        the capability you are implementing
+    BLOCK_IDS     : list[str]  vendored blocks you may call
+    execute(block_id: str, payload: dict) -> dict
+      Runs a vendored block LOCALLY, in-process. There is no network and no
+      remote store; do not attempt HTTP, and do not import anything.
+- Use execute() for every block in BLOCK_IDS whose output the capability needs.
+- Return a JSON-serialisable dict. Include "capability": CAPABILITY_ID.
+- Standard library only, and no import statements at all. No network, no
+  filesystem, no subprocess, no eval/exec.
+- Validate inputs and return {"ok": False, "error": "..."} for bad requests
+  rather than raising.
+- No markdown fences, no def line, no commentary — statements only, written at
+  column zero. They are indented into the function for you; do not add leading
+  indentation yourself or the body will not compile.
+"""
+
+
+def generate_platform_handler(
+    *,
+    capability_id: str,
+    description: str,
+    block_ids: List[str],
+    product_name: str,
+    vertical: str,
+    work_list: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Write the ``handle`` body for one runner-built capability.
+
+    Distinct from :func:`generate_handler_body`, which serves the legacy
+    template generator: that contract is a sandboxed in-memory stub with no
+    block access, whereas this one is allowed to drive vendored blocks through
+    the local dispatch runtime. Same validation gate applies to both.
+
+    ``work_list`` carries the TESTER's findings on a rework pass so the coder
+    is told what failed rather than guessing from scratch.
+    """
+    from .product_architect import get_factory_llm_config
+
+    lines = [
+        f"Platform: {product_name} (vertical: {vertical})",
+        f"Capability id: {capability_id}",
+        f"Capability description: {description}",
+        f"BLOCK_IDS available to execute(): {block_ids!r}",
+    ]
+    if work_list:
+        lines.append(
+            "\nA previous attempt failed these checks — fix them:\n"
+            + "\n".join(f"- {item}" for item in work_list)
+        )
+    lines.append("\nWrite the handle() body now.")
+
+    raw = _llm_code_call(
+        [
+            {"role": "system", "content": _PLATFORM_SYSTEM},
+            {"role": "user", "content": "\n".join(lines)},
+        ]
+    )
+    body = _validate_body(_strip_fences(raw), capability_id)
+    model = get_factory_llm_config().get("model", "unknown")
+    logger.info(
+        "coder wrote platform handler %s (%d lines) via %s",
+        capability_id,
+        body.count("\n") + 1,
+        model,
+    )
+    return {"body": body, "model": model}
 
 
 def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> Dict[str, Any]:

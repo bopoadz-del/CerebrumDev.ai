@@ -292,7 +292,9 @@ def run_kimi_cli_agent(
         backend="kimi_cli",
         honesty="KIMI_WORKBENCH_ENABLED=true — attempting CLI; key never committed",
     )
-    cli = os.getenv("KIMI_CODE_CLI", "kimi").strip() or "kimi"
+    from app.factory.coder import code_cli_command
+
+    cli = code_cli_command()
     model = os.getenv("CEREBRUM_FACTORY_LLM_MODEL", "kimi-k2.7-code")
     # The coder's brief: the full delivery standard when the CR carries a
     # domain pack (kimi_prompt.md); otherwise the legacy CR-scoped brief

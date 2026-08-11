@@ -177,7 +177,9 @@ def _probe_kimi_cli() -> dict:
     probe: dict = {"flag_enabled": flag, "cli_ok": False}
     if not flag:
         return probe
-    cli = os.getenv("KIMI_CODE_CLI", "kimi").strip() or "kimi"
+    from app.factory.coder import code_cli_command
+
+    cli = code_cli_command()
     try:
         import subprocess
 

@@ -248,41 +248,89 @@ def _templated_body(block_ids: Sequence[str]) -> str:
     )
 
 
+def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[tuple]:
+    """Ask the coding agent for this handler's body, or None if unavailable.
+
+    Returns ``(body, source)``. None means the agent could not be used --
+    disabled, unconfigured, or it failed its validation gate. The caller then
+    ships the deterministic body and records *which* path produced it, so the
+    artifact never implies authorship it did not have.
+    """
+    from app.factory.coder import CoderError, coder_enabled, generate_platform_handler
+
+    if not coder_enabled():
+        return None
+    try:
+        result = generate_platform_handler(
+            capability_id=cap.capability_id,
+            description=getattr(cap, "notes", "") or cap.capability_id,
+            block_ids=list(usable),
+            product_name=getattr(ctx.blueprint, "product_name", "platform"),
+            vertical=getattr(ctx.blueprint, "vertical", "product"),
+            work_list=list(ctx.work_list),
+        )
+    except CoderError as exc:
+        # Degraded output is acceptable; invisible degradation is not.
+        ctx.state.setdefault("coder_failures", {})[cap.capability_id] = str(exc)
+        return None
+    return result["body"], f"coder LLM ({result['model']})"
+
+
 def run_writer(ctx: RoleContext) -> RoleResult:
     """Manufacture the platform: dispatch runtime plus one handler per capability.
 
-    On a rework pass ``ctx.work_list`` carries the TESTER's findings. They are
-    recorded in the module header so a human reading the artifact can see what
-    the writer was reacting to, rather than having to diff builds.
+    The coding agent writes each body when one is configured; otherwise the
+    body is composed from the block contract deterministically. Which path ran
+    is stamped into every module header and reported in the result -- CI has
+    no key and must still exercise this route, so the fallback is a first-class
+    path rather than an error.
+
+    On a rework pass ``ctx.work_list`` carries the TESTER's findings, which are
+    handed to the coder as the thing to fix.
     """
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     ctx.workspace.write_text(Path("app") / "dispatch.py", _DISPATCH_RUNTIME)
 
     vendored = set(ctx.state.get("vendored_blocks", ()))
     written: List[str] = []
-    source = "deterministic contract template"
+    sources: Dict[str, str] = {}
+    fallback_source = "deterministic contract template"
 
     actions_init = ['"""Capability handlers."""', ""]
     for cap in ctx.plan.capabilities:
         name = cap.capability_id.replace("-", "_")
         usable = [b for b in cap.block_ids if b in vendored]
-        body = _templated_body(usable)
+
+        authored = _coder_body(ctx, cap, usable)
+        body, source = authored or (_templated_body(usable), fallback_source)
+
         ctx.workspace.write_text(
             Path("app") / "actions" / f"{name}.py",
             _handler_module(cap.capability_id, usable, body, source),
         )
         actions_init.append(f"from app.actions import {name}  # noqa: F401")
         written.append(name)
+        sources[cap.capability_id] = source
 
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
     )
 
-    detail = f"{len(written)} handler(s) written ({source})"
+    by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
+    detail = (
+        f"{len(written)} handler(s) written — {by_coder} by the coding agent, "
+        f"{len(written) - by_coder} from the contract template"
+    )
     if ctx.work_list:
         detail += f"; reworking {len(ctx.work_list)} finding(s)"
     return RoleResult(
-        ok=True, detail=detail, notes={"handlers": written, "body_source": source}
+        ok=True,
+        detail=detail,
+        notes={
+            "handlers": written,
+            "handler_sources": sources,
+            "coder_handlers": by_coder,
+        },
     )
 
 
