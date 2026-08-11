@@ -96,6 +96,61 @@ cd frontend && npm install && npm run build && npm run lint && npm run test
 cd backend && alembic upgrade head
 ```
 
+### Running the tests: the factory coder changes the results
+
+The single most confusing thing about this suite is that a test can pass in CI
+and fail on your laptop, or the reverse, **because of a key you forgot you
+had**. Read this before debugging a local-only failure.
+
+`backend/app/main.py` calls `load_dotenv()`, so a `backend/.env` carrying
+`CEREBRUM_LLM_API_KEY` is picked up by the whole pytest session. When that key
+is present the factory coder really calls the LLM for every `GENERATE`
+capability and writes a live module into the generated product. When it is
+absent — as on CI — the coder raises `CoderError` and an honest stub ships
+instead. Same command, two different products.
+
+**The one-command diagnostic.** If a test fails locally and you suspect the
+coder rather than your machine:
+
+```bash
+cd backend
+FACTORY_CODER_ENABLED=0 python -m pytest <the failing test>
+```
+
+If that turns it green, the coder is the variable. `FACTORY_CODER_ENABLED`
+defaults to `1` (`app/factory/coder.py`), so the coder is **on** by default
+whenever a key is reachable.
+
+**No test requires an LLM key.** Tests that care about coder behaviour stub
+`app.factory.coder.generate_handler_body` instead of calling it — it is
+imported inside `ProductGenerator._write_actions`, so it is patchable at call
+time. That is deliberate: CI must exercise the coder's *wiring* without an API
+key and without paying for non-deterministic output.
+
+**What is and is not reproducible.** An LLM does not emit the same bytes
+twice, so whole-tree byte equality across a regeneration only holds while the
+coder is idle. The guarantee the suite actually enforces
+(`tests/factory/test_generate_regenerate.py`) is narrower and true:
+
+- the scaffold is byte-reproducible with the coder off;
+- every file that differs between two builds is a coder-written
+  `app/actions/` module carrying `strategy=GENERATE`;
+- turning the coder on perturbs nothing outside `app/actions/`.
+
+**Blocks resolution.** Tests never hardcode a Store path. `real_blocks_root()`
+resolves `CEREBRUM_BLOCKS_ROOT` / `CEREBRUM_BLOCKS_PATH`, then a sibling
+`../Cerebrum-Blocks` checkout, and only counts a candidate that actually
+contains `block_registry/`. With no checkout the factory's
+`vendor_blocks_mirror` supplies blocks — note that
+`dual_registry.load_blocks_registry` merges that mirror in *unconditionally*,
+so some blocks resolve from the mirror even when a real Store is present (see
+`KNOWN_INCOMPLETE.md`).
+
+**Dev dependencies are not optional.** `requirements-dev.txt` pins
+`pgvector`, which the Steward kit's SQLAlchemy models import at module scope.
+A venv built from `requirements.txt` alone fails ~7 tests with
+`ModuleNotFoundError: No module named 'pgvector'`.
+
 Admin-gated routes (e.g. the automotive-core foundation pack) require
 `CEREBRUM_ADMIN_KEY` set on the server and passed as the `X-Admin-Key` header;
 without it those routes fail closed (503 unconfigured / 403 unauthorized).
