@@ -47,6 +47,12 @@ class EventKind(str, Enum):
     REWORK = "REWORK"
     CLONE = "CLONE"
     NOTE = "NOTE"
+    #: Terminal verdicts. Exactly one of these ends a finished run, so the
+    #: outcome is readable from the ledger alone without re-deriving it from
+    #: phase events -- and a run that stopped without one is, correctly, not
+    #: a run that succeeded.
+    RUN_SUCCEEDED = "RUN_SUCCEEDED"
+    RUN_FAILED = "RUN_FAILED"
 
 
 #: Kinds that end a phase. The last terminal event for a role is its verdict.
@@ -252,6 +258,21 @@ class BuildLedger:
                     latest[bid] = {**dict(event.payload), "ts": event.ts}
         return [latest[k] for k in sorted(latest)]
 
+    def terminal_event(self) -> Optional[BuildEvent]:
+        """The run's recorded verdict, or None if it never finished.
+
+        None is the honest answer for a killed run: absence of a verdict is
+        not success, and callers must not infer one from "no failures seen".
+        """
+        for event in reversed(self.events()):
+            if event.kind in (EventKind.RUN_SUCCEEDED, EventKind.RUN_FAILED):
+                return event
+        return None
+
+    def succeeded(self) -> bool:
+        event = self.terminal_event()
+        return event is not None and event.kind is EventKind.RUN_SUCCEEDED
+
     def rework_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
         for event in self.events():
@@ -275,6 +296,9 @@ class BuildLedger:
             "complete": resume is None,
             "rework": self.rework_counts(),
             "clones": self.clones(),
+            "outcome": (
+                self.terminal_event().kind.value if self.terminal_event() else None
+            ),
         }
 
 

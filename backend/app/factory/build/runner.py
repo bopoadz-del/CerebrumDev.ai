@@ -1,0 +1,378 @@
+"""The role runner — drives a gated, lane-restricted, resumable build.
+
+This is what turns the three kernels from inert checks into a manufacturing
+run. It owns the phase order, hands each role a workspace it cannot write
+outside of, runs the phase's gate afterwards, and drives the WRITER<->TESTER
+rework loop until a gate passes or the budget is spent.
+
+Three properties are load-bearing and each is enforced here rather than
+trusted:
+
+* **Gates are looked up by phase**, never supplied by the role. A role cannot
+  weaken, mock or skip the check that judges it.
+* **A spent budget is a failure.** A run that ends without its gates green
+  terminates ``FAILED`` with the reason in the ledger. There is no code path
+  that reports success for an ungated build -- that is the same "plausible
+  green" hazard the gates were written against, and it must not be
+  reintroduced one layer up.
+* **Resume keys on the blueprint, not the output tree.** ``ProductGenerator``
+  reports an ``inputs_hash`` that is really ``hash_tree`` of the generated
+  output, so it changes whenever an LLM writes a handler. Keying resume on it
+  would refuse every resume of an unchanged blueprint. :func:`blueprint_hash`
+  hashes the inputs instead, which is stable by construction.
+
+The old ``ProductGenerator`` template path is untouched and still the default;
+this runs only when explicitly invoked or when ``FACTORY_RUNNER_ENABLED`` is
+set.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
+
+from app.factory.build.authority import (
+    BUILD_PHASES,
+    AuthorityError,
+    BuildRole,
+    assert_phase_order,
+    authority_manifest,
+)
+from app.factory.build.gates import GateContext, GateResult, gate_for
+from app.factory.build.ledger import BuildLedger, EventKind
+from app.factory.build.roles import (
+    ROLE_IMPLEMENTATIONS,
+    RoleContext,
+    RoleError,
+    RoleResult,
+)
+from app.factory.build.workspace import RoleWorkspace
+
+RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
+LEDGER_FILENAME = "build_ledger.jsonl"
+
+#: Phases that participate in the rework loop. A failed TESTER gate sends the
+#: WRITER back round with the findings as its work list.
+REWORK_SOURCE = BuildRole.TESTER
+REWORK_TARGET = BuildRole.WRITER
+
+
+def runner_enabled() -> bool:
+    """The runner is opt-in. The template path stays the default until cutover."""
+    return os.getenv(RUNNER_FLAG_ENV, "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def blueprint_hash(blueprint: Any) -> str:
+    """Stable hash of the build's *inputs*.
+
+    Canonical JSON with sorted keys, so it does not move with dict ordering,
+    and it never touches the generated tree -- an output hash cannot be a
+    resume key because it is unknown until the build it is meant to authorise
+    has already run.
+    """
+    from app.factory.blueprint import blueprint_to_dict
+
+    payload = json.dumps(
+        blueprint_to_dict(blueprint), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class Outcome(str, Enum):
+    SUCCESS = "SUCCESS"
+    FAILED_GATE = "FAILED_GATE"
+    FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
+    FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
+    FAILED_AUTHORITY = "FAILED_AUTHORITY"
+
+
+@dataclass(frozen=True)
+class BuildBudget:
+    """Bounds on a run. Exhausting either one ends the build as a failure."""
+
+    max_rework: int = 3
+    wall_clock_s: float = 7200.0
+
+    def deadline_from(self, started: float) -> Optional[float]:
+        return (started + self.wall_clock_s) if self.wall_clock_s > 0 else None
+
+
+@dataclass
+class BuildOutcome:
+    outcome: Outcome
+    detail: str = ""
+    failed_phase: Optional[BuildRole] = None
+    rework_used: int = 0
+    completed: tuple = ()
+    findings: Sequence[str] = ()
+    ledger_path: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome is Outcome.SUCCESS
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "outcome": self.outcome.value,
+            "ok": self.ok,
+            "detail": self.detail,
+            "failed_phase": self.failed_phase.value if self.failed_phase else None,
+            "rework_used": self.rework_used,
+            "completed": [p.value for p in self.completed],
+            "findings": list(self.findings),
+            "ledger": self.ledger_path,
+        }
+
+
+class RoleRunner:
+    """Drives one build of *blueprint* into *workspace*."""
+
+    def __init__(
+        self,
+        blueprint: Any,
+        workspace: Path | str,
+        *,
+        plan: Any = None,
+        blocks_root: Optional[Path | str] = None,
+        store_root: Optional[Path | str] = None,
+        ledger: Optional[BuildLedger] = None,
+        budget: Optional[BuildBudget] = None,
+        roles: Optional[Mapping[BuildRole, Callable[[RoleContext], RoleResult]]] = None,
+        gate_timeout_s: Optional[float] = None,
+        subprocess_runner: Optional[Callable[..., Any]] = None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        from app.factory.planner import CapabilityPlanner
+
+        self.blueprint = blueprint
+        self.workspace = Path(workspace).resolve()
+        self.blocks_root = Path(blocks_root) if blocks_root else None
+        self.store_root = Path(store_root) if store_root else None
+        self.plan = plan or CapabilityPlanner(self.blocks_root).plan(blueprint)
+        self.budget = budget or BuildBudget()
+        # Roles are injectable so a test can drive a misbehaving role; gates
+        # are NOT -- see the module docstring.
+        self.roles = dict(roles or ROLE_IMPLEMENTATIONS)
+        self.gate_timeout_s = gate_timeout_s
+        self.subprocess_runner = subprocess_runner
+        self.clock = clock
+        self.ledger = ledger or BuildLedger(self.workspace / LEDGER_FILENAME)
+        self.state: Dict[str, Any] = {}
+        self.manifest = authority_manifest()
+
+    # -- gate plumbing ---------------------------------------------------
+
+    def _gate_context(self, role: BuildRole) -> GateContext:
+        kwargs: Dict[str, Any] = {
+            "workspace": self.workspace,
+            "role": role,
+            "gaps": tuple(self.state.get("gaps", ())),
+            "vendored_blocks": tuple(self.state.get("vendored_blocks", ())),
+        }
+        if self.gate_timeout_s is not None:
+            kwargs["timeout_s"] = self.gate_timeout_s
+        if self.subprocess_runner is not None:
+            kwargs["runner"] = self.subprocess_runner
+        return GateContext(**kwargs)
+
+    def _absorb(self, result: RoleResult) -> None:
+        if result.gaps:
+            self.state["gaps"] = tuple(result.gaps)
+        if result.vendored_blocks:
+            self.state["vendored_blocks"] = tuple(result.vendored_blocks)
+        for key, value in (result.notes or {}).items():
+            self.state[key] = value
+
+    # -- one phase -------------------------------------------------------
+
+    def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
+        """Run the role then its gate. Raises RoleError / AuthorityError up."""
+        self.ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
+        ws = RoleWorkspace(role, self.workspace, store_root=self.store_root)
+        ctx = RoleContext(
+            role=role,
+            workspace=ws,
+            blueprint=self.blueprint,
+            plan=self.plan,
+            blocks_root=self.blocks_root,
+            work_list=tuple(work_list),
+            state=self.state,
+        )
+        result = self.roles[role](ctx)
+        if not result.ok:
+            raise RoleError(result.detail or f"{role.value} reported failure")
+        self._absorb(result)
+
+        if role is BuildRole.CLONER:
+            for bid in result.vendored_blocks:
+                lock = (self.state.get("lock") or {}).get("blocks", {}).get(bid, {})
+                self.ledger.record_clone(
+                    block_id=bid,
+                    source_commit=str(lock.get("commit", "unpinned")),
+                    store_repo=str(lock.get("source", "unknown")),
+                    vendored_path=str(lock.get("path", f"vendor/blocks/{bid}")),
+                )
+
+        gate = gate_for(role)
+        verdict = gate(self._gate_context(role))
+        kind = EventKind.GATE_PASSED if verdict.ok else EventKind.GATE_FAILED
+        self.ledger.append(
+            kind,
+            role=role,
+            detail=verdict.detail,
+            payload={
+                "gate": verdict.gate,
+                "findings": list(verdict.findings),
+                "role_detail": result.detail,
+                "wrote": list(ws.written),
+            },
+        )
+        return verdict
+
+    # -- terminal bookkeeping --------------------------------------------
+
+    def _finish(
+        self,
+        outcome: Outcome,
+        detail: str,
+        *,
+        phase: Optional[BuildRole] = None,
+        rework: int = 0,
+        findings: Sequence[str] = (),
+    ) -> BuildOutcome:
+        kind = (
+            EventKind.RUN_SUCCEEDED
+            if outcome is Outcome.SUCCESS
+            else EventKind.RUN_FAILED
+        )
+        self.ledger.append(
+            kind,
+            role=phase,
+            detail=detail,
+            payload={
+                "outcome": outcome.value,
+                "rework_used": rework,
+                "findings": list(findings),
+            },
+        )
+        return BuildOutcome(
+            outcome=outcome,
+            detail=detail,
+            failed_phase=phase,
+            rework_used=rework,
+            completed=tuple(p for p in BUILD_PHASES if p in self.ledger.completed_roles()),
+            findings=list(findings),
+            ledger_path=str(self.ledger.path),
+        )
+
+    # -- the run ---------------------------------------------------------
+
+    def run(self) -> BuildOutcome:
+        started = self.clock()
+        deadline = self.budget.deadline_from(started)
+        inputs_hash = blueprint_hash(self.blueprint)
+
+        # Refuse to continue a run whose blueprint changed underneath it.
+        self.ledger.assert_resumable(inputs_hash=inputs_hash)
+        if not self.ledger.exists():
+            self.workspace.mkdir(parents=True, exist_ok=True)
+            self.ledger.start_run(
+                product_id=getattr(self.blueprint, "product_id", "unknown"),
+                inputs_hash=inputs_hash,
+            )
+
+        done = self.ledger.completed_roles()
+        rework_used = 0
+        work_list: Sequence[str] = ()
+
+        index = 0
+        while index < len(BUILD_PHASES):
+            role = BUILD_PHASES[index]
+            if role in done:
+                index += 1
+                continue
+
+            if deadline is not None and self.clock() >= deadline:
+                return self._finish(
+                    Outcome.FAILED_BUDGET_SPENT,
+                    f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
+                    f"before {role.value} completed",
+                    phase=role,
+                    rework=rework_used,
+                )
+
+            try:
+                assert_phase_order(role, done)
+                verdict = self._run_phase(role, work_list)
+            except AuthorityError as exc:
+                self.ledger.append(
+                    EventKind.PHASE_ABORTED, role=role, detail=f"lane violation: {exc}"
+                )
+                return self._finish(
+                    Outcome.FAILED_AUTHORITY,
+                    f"{role.value} wrote outside its lane: {exc}",
+                    phase=role,
+                    rework=rework_used,
+                )
+            except RoleError as exc:
+                self.ledger.append(
+                    EventKind.PHASE_ABORTED, role=role, detail=str(exc)
+                )
+                return self._finish(
+                    Outcome.FAILED_ROLE_ERROR,
+                    f"{role.value} failed: {exc}",
+                    phase=role,
+                    rework=rework_used,
+                )
+
+            if verdict.ok:
+                done.add(role)
+                work_list = ()
+                index += 1
+                continue
+
+            # Gate failed. Only the TESTER sends work back to the WRITER;
+            # every other failed gate is terminal, because there is no role
+            # positioned to act on its findings.
+            if role is not REWORK_SOURCE:
+                return self._finish(
+                    Outcome.FAILED_GATE,
+                    f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}",
+                    phase=role,
+                    rework=rework_used,
+                    findings=verdict.findings,
+                )
+
+            if rework_used >= self.budget.max_rework:
+                return self._finish(
+                    Outcome.FAILED_BUDGET_SPENT,
+                    f"rework budget of {self.budget.max_rework} exhausted; "
+                    f"{REWORK_SOURCE.value} gate still failing: {verdict.detail}",
+                    phase=role,
+                    rework=rework_used,
+                    findings=verdict.findings,
+                )
+
+            rework_used += 1
+            work_list = tuple(verdict.findings)
+            self.ledger.append(
+                EventKind.REWORK,
+                role=REWORK_TARGET,
+                detail=f"round {rework_used}: {verdict.detail}",
+                payload={"findings": list(verdict.findings)},
+            )
+            # Send the WRITER back round. Its earlier pass no longer counts.
+            done.discard(REWORK_TARGET)
+            index = BUILD_PHASES.index(REWORK_TARGET)
+
+        return self._finish(
+            Outcome.SUCCESS,
+            "all phase gates passed",
+            rework=rework_used,
+        )

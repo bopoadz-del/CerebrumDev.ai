@@ -34,19 +34,36 @@ Not hollow functions. These are known-incomplete *systems*, listed so nobody
 reads a green suite as "finished". `scripts/audit_stubs.py` ignores this
 section (it only parses `- ` lines containing `::`).
 
-### 1. Factory role runner — NOT BUILT
-The manufacturing kernel is three of four pieces: `app/factory/build/`
-provides `authority.py` (role write-lanes), `ledger.py` (durable resumable
-run record) and `gates.py` (per-phase verification). **Nothing binds them
-together and nothing calls them.** There is no runner that walks
-COLLECTOR → CLONER → WRITER → TESTER → STORE_MANAGER, hands each role a
-lane-restricted writer, records verdicts, or drives the writer/tester rework
-loop. The five roles themselves do not exist either.
+### 1. Role runner — BUILT; cutover and the LLM writer are NOT
+`app/factory/build/runner.py` binds the three kernels and drives a real
+build: phase order via `assert_phase_order`, a lane-restricted `RoleWorkspace`
+per role, the phase's gate after each role, the WRITER↔TESTER rework loop, a
+budget whose exhaustion is a recorded failure, and resume from the ledger.
+It runs end to end and produces a platform that invokes vendored blocks
+locally instead of calling the store over HTTP.
 
-Consequence: the kernels are enforced nowhere at runtime. Product generation
-still goes through `ProductGenerator` unchanged, which renders templates and
-emits `httpx.post(store_url + "/v1/execute")` handlers for REUSE
-capabilities. The factory rebuild is **in progress, not concluded**.
+Three things are genuinely still open:
+
+**(a) Cutover has not happened — this is the next milestone.** The runner is
+opt-in behind `FACTORY_RUNNER_ENABLED` and nothing in the HTTP or chat
+generation path calls it. `ProductGenerator` remains the default and still
+emits `httpx.post(store_url + "/v1/execute")` handlers. Both paths exist side
+by side on purpose; retiring the template path is a separate piece of work.
+
+**(b) The WRITER does not call the LLM coder yet.** It composes handler
+bodies from the block contract deterministically. The seam is a single
+function (`roles._templated_body`) and the module records which path produced
+each handler, so nothing claims LLM authorship that did not have it. This is
+the difference between "the runner manufactures" and "the agent manufactures"
+— the harness is real, the coder is not yet plugged into it.
+
+**(c) STORE_MANAGER is minimal.** It records the clone manifest and applies
+no `StoreOp`. Harvesting proven improvements out of mature platforms back
+into the Store, and admitting client-driven net-new capability into
+inventory, are unbuilt. `store_manager.py` still only prints its authority
+manifest; no op is executed anywhere.
+
+The factory rebuild is **in progress, not concluded**.
 
 ### 2. CEREBRUM_LLM_API_KEY missing on the Render backend — BLOCKS PRODUCTION
 The Render service `cerebrumdev-backend` (`srv-d9ta2pad0e5s738lllpg`) has no
@@ -67,11 +84,18 @@ real Store checkout changes nothing. Pinned by
 `test_steward_blocks_come_from_the_mirror_not_the_store`, which is designed to
 go red when they land upstream — that is the cue to drop them from the mirror.
 
-### 4. Generation is not byte-reproducible when the coder runs
+### 4. Generation is not byte-reproducible when the coder runs — RESOLVED for resume
 Same blueprint, two builds, different tree hash — because an LLM does not emit
-the same bytes twice. Not a defect in itself, but it is a real constraint on
-the role runner's resume path, which compares an inputs hash to decide whether
-a partially-complete build may continue. Blueprint-input hashing is safe;
-any provenance check that hashes the *generated tree* is permanently unstable
-and must not be added. The suite now asserts the narrower true guarantee (see
+the same bytes twice. This is irreducible, not a bug to fix.
+
+It no longer blocks resume. `ProductGenerator`'s `inputs_hash` is misnamed: it
+is `hash_tree` of the *generated output* (`generator.py`), so it moves with any
+LLM-written file and could never have been a resume key anyway — the value is
+unknown until the build it is meant to authorise has already run. The runner
+uses `runner.blueprint_hash()` instead: canonical sorted-key JSON of the
+blueprint, hashing the build's actual inputs. Stable by construction, proven
+by `test_blueprint_hash_is_the_resume_key_and_is_stable`.
+
+Standing constraint: never add a provenance or resume check that hashes the
+generated tree. The scaffold's own reproducibility is asserted separately (see
 "Running the tests" in README.md).

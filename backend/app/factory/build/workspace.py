@@ -1,0 +1,139 @@
+"""Lane-restricted workspace handed to a build role.
+
+A role never touches the filesystem directly. It gets one of these, and every
+write is routed through :func:`app.factory.build.authority.assert_write_allowed`
+for that role. A path outside the role's lane raises ``AuthorityError`` and
+kills the build -- it is never caught, downgraded, or skipped, because the
+whole value of the authority kernel is that a mis-scoped role aborts instead
+of quietly producing an artifact whose provenance nobody can vouch for.
+
+Reads are deliberately wider than writes: the WRITER must be able to read the
+block contracts the CLONER vendored in order to write against them, but must
+not be able to edit them. Reads are still confined to the workspace (or the
+store root, when one is supplied) so a role cannot exfiltrate the factory.
+"""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+from typing import List, Optional
+
+from app.factory.build.authority import (
+    AuthorityError,
+    BuildRole,
+    assert_write_allowed,
+)
+
+
+class RoleWorkspace:
+    """The only filesystem handle a role is given."""
+
+    def __init__(
+        self,
+        role: BuildRole | str,
+        workspace: Path | str,
+        *,
+        store_root: Optional[Path | str] = None,
+    ) -> None:
+        self.role = BuildRole(role)
+        self.workspace = Path(workspace).resolve()
+        self.store_root = Path(store_root).resolve() if store_root else None
+        #: Every path this role wrote, workspace-relative, in order.
+        self.written: List[str] = []
+
+    # -- writes (authority-checked) --------------------------------------
+
+    def _authorise(self, relpath: str | Path) -> Path:
+        target = Path(relpath)
+        if not target.is_absolute():
+            target = self.workspace / target
+        return assert_write_allowed(
+            self.role, target, workspace=self.workspace, store_root=self.store_root
+        )
+
+    def _record(self, resolved: Path) -> None:
+        try:
+            self.written.append(resolved.relative_to(self.workspace).as_posix())
+        except ValueError:
+            self.written.append(str(resolved))
+
+    def write_text(self, relpath: str | Path, content: str) -> Path:
+        resolved = self._authorise(relpath)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        self._record(resolved)
+        return resolved
+
+    def write_bytes(self, relpath: str | Path, content: bytes) -> Path:
+        resolved = self._authorise(relpath)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_bytes(content)
+        self._record(resolved)
+        return resolved
+
+    def mkdir(self, relpath: str | Path) -> Path:
+        resolved = self._authorise(relpath)
+        resolved.mkdir(parents=True, exist_ok=True)
+        return resolved
+
+    def copy_file(self, source: Path | str, relpath: str | Path) -> Path:
+        """Copy one file in. The destination is lane-checked; the source is not
+        -- roles legitimately read from the Store, which is outside the
+        workspace."""
+        resolved = self._authorise(relpath)
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(source), resolved)
+        self._record(resolved)
+        return resolved
+
+    def copy_tree(self, source: Path | str, relpath: str | Path) -> Path:
+        """Copy a directory in, authorising every file rather than the root.
+
+        A single check on the destination root would let a tree containing
+        ``../`` symlinks land outside the lane, so each file is authorised on
+        its own account.
+        """
+        src = Path(source)
+        dest_root = self._authorise(relpath)
+        for item in sorted(src.rglob("*")):
+            if not item.is_file():
+                continue
+            rel = item.relative_to(src)
+            self._authorise(dest_root / rel)
+        dest_root.mkdir(parents=True, exist_ok=True)
+        for item in sorted(src.rglob("*")):
+            if not item.is_file():
+                continue
+            target = dest_root / item.relative_to(src)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, target)
+            self._record(target)
+        return dest_root
+
+    # -- reads (workspace-confined, not lane-confined) --------------------
+
+    def read_text(self, relpath: str | Path) -> str:
+        return self._resolve_read(relpath).read_text(encoding="utf-8")
+
+    def exists(self, relpath: str | Path) -> bool:
+        try:
+            return self._resolve_read(relpath).exists()
+        except AuthorityError:
+            return False
+
+    def _resolve_read(self, relpath: str | Path) -> Path:
+        target = Path(relpath)
+        if not target.is_absolute():
+            target = self.workspace / target
+        resolved = target.resolve()
+        roots = [self.workspace] + ([self.store_root] if self.store_root else [])
+        for root in roots:
+            try:
+                resolved.relative_to(root)
+                return resolved
+            except ValueError:
+                continue
+        raise AuthorityError(
+            f"{self.role.value} may not read {relpath} — outside the workspace"
+        )
