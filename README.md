@@ -96,6 +96,55 @@ cd frontend && npm install && npm run build && npm run lint && npm run test
 cd backend && alembic upgrade head
 ```
 
+### LLM providers: Kimi by default, Claude on request
+
+Two providers are supported. **Kimi is the default workhorse**; Claude exists
+so the factory keeps running when Kimi credits are out, and so the two can be
+compared on the same blueprint.
+
+```bash
+# Kimi (default) — nothing to do beyond the key
+CEREBRUM_LLM_API_KEY=...        # or KIMI_API_KEY
+
+# Claude — opt in explicitly
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=...
+```
+
+Two rules make provider choice deliberate rather than accidental:
+
+- **A second key never moves your traffic.** `_detect_provider()` resolves to
+  Kimi whenever Kimi credentials exist, *even if Claude credentials also
+  exist*. Claude is auto-selected only when it is the sole provider
+  configured; otherwise you ask for it by name. Adding `ANTHROPIC_API_KEY` to
+  a running deployment changes nothing about what it calls or what it costs.
+- **A missing key is an error, not a fallback.** Setting `LLM_PROVIDER=claude`
+  without `ANTHROPIC_API_KEY` fails loudly naming that variable. It will not
+  quietly borrow the Kimi key. A silent provider switch is a cost surprise,
+  which is a product bug.
+
+`LLM_PROVIDER` accepts `kimi`/`moonshot` (aliased to `kimi`) and
+`claude`/`anthropic` (aliased to `claude`).
+
+Claude is called through the **native Messages API**, not an OpenAI-compatible
+shim: `x-api-key` rather than a bearer token, a mandatory `anthropic-version`
+header, the system prompt as a top-level `system` parameter rather than a
+message role, and a reply of typed content blocks. Those are the three things
+an OpenAI-shaped port silently gets wrong, so they are asserted by a
+request-shape test.
+
+**Agentic coding CLI.** The factory can hand coding work to a CLI agent. The
+seam is deliberately shallow — run a command, read its result — so no CLI's
+internals are depended on:
+
+```bash
+FACTORY_CODE_CLI=claude    # Claude Code CLI as the agentic coder
+FACTORY_CODE_CLI=kimi      # Kimi CLI (default)
+```
+
+`KIMI_CODE_CLI` is still honoured so existing deployments keep working;
+`FACTORY_CODE_CLI` takes precedence when both are set.
+
 ### Running the tests: the factory coder changes the results
 
 The single most confusing thing about this suite is that a test can pass in CI
