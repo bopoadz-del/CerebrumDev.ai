@@ -38,6 +38,22 @@ ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
+@pytest.fixture(autouse=True)
+def _no_paid_calls(monkeypatch):
+    """These tests are about the RUNNER, not the coder.
+
+    FACTORY_CODER_ENABLED defaults to 1, so on any machine with a live key in
+    backend/.env every build here hit the real LLM: 399s locally against 29s
+    in CI, real money per run, and non-determinism injected into tests that
+    have nothing to do with the coder. Pinned off; the coder path is covered
+    by tests/factory/test_writer_coder_wiring.py, which mocks it and asserts
+    authorship, fallback, disabled-state and rework hand-off.
+
+    Individual tests below re-enable it deliberately with a stub.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+
+
 @pytest.fixture()
 def blueprint():
     return load_blueprint(SMOKE)
@@ -144,6 +160,87 @@ def test_the_generated_platform_suite_really_runs_in_a_subprocess(blueprint, tmp
         text=True,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
+    """Every artifact class a delivered platform needs is present.
+
+    The runner used to emit ~8 files -- handlers, vendored blocks, a lockfile
+    and an import-only smoke test. That is a parts list: it cannot be run,
+    stores nothing, and exposes nothing.
+    """
+    out = tmp_path / "build"
+    assert RoleRunner(blueprint, out).run().ok
+
+    for rel in (
+        "app/models.py",
+        "app/store.py",
+        "app/routes.py",
+        "app/main.py",
+        "app/dispatch.py",
+        "README.md",
+        "requirements.txt",
+        "tests/conftest.py",
+        "tests/test_models.py",
+        "tests/test_routes.py",
+        "tests/test_smoke.py",
+        "blocks.lock.json",
+    ):
+        assert (out / rel).is_file(), f"missing {rel}"
+
+    # Persistence and models are generated from one spec, so their columns
+    # cannot drift apart.
+    store_src = (out / "app" / "store.py").read_text(encoding="utf-8")
+    models_src = (out / "app" / "models.py").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS analytics_surface" in store_src
+    assert "class AnalyticsSurface" in models_src
+    assert "MODELS = {" in models_src
+
+    routes_src = (out / "app" / "routes.py").read_text(encoding="utf-8")
+    assert '@router.post("/analytics_surface")' in routes_src
+    assert '@router.get("/analytics_surface")' in routes_src
+
+
+def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
+    blueprint, tmp_path
+):
+    """An import-only suite passes on a platform whose storage is broken."""
+    out = tmp_path / "build"
+    assert RoleRunner(blueprint, out).run().ok
+
+    models_test = (out / "tests" / "test_models.py").read_text(encoding="utf-8")
+    assert "store.save(" in models_test and "store.get(" in models_test
+    assert "did not persist" in models_test
+
+    routes_test = (out / "tests" / "test_routes.py").read_text(encoding="utf-8")
+    assert "TestClient" in routes_test
+    assert "client.post(" in routes_test
+    # A route that rejects everything answers 200 with ok:false; the suite must
+    # not accept that as success.
+    assert 'body.get("ok") is not False' in routes_test
+
+    smoke = (out / "tests" / "test_smoke.py").read_text(encoding="utf-8")
+    assert ".handle(" in smoke, "capabilities must be executed, not imported"
+
+
+def test_the_writer_still_cannot_write_the_tests_after_the_lane_widened(
+    blueprint, tmp_path
+):
+    """The scaffold lanes must not have opened a path into tests/.
+
+    README.md, requirements.txt and pyproject.toml were added to the WRITER's
+    lane so it can emit a runnable project. That widening must not have been
+    a root wildcard.
+    """
+    from app.factory.build.authority import AuthorityError, assert_write_allowed
+
+    ws = tmp_path / "w"
+    ws.mkdir()
+    for allowed in ("README.md", "requirements.txt", "pyproject.toml"):
+        assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
+    for denied in ("tests/test_x.py", "vendor/blocks/x/block.py", "blocks.lock.json", "setup.py"):
+        with pytest.raises(AuthorityError):
+            assert_write_allowed(BuildRole.WRITER, ws / denied, workspace=ws)
 
 
 # -- failure is a failure ------------------------------------------------
@@ -378,6 +475,26 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
         }
 
     monkeypatch.setattr("app.factory.coder.generate_platform_handler", varying)
+    # Every other coder entry point is stubbed *stably*, so the only source of
+    # variation is the handler -- and no entry point reaches a live API.
+    monkeypatch.setattr(
+        "app.factory.coder.generate_model_spec",
+        lambda **kw: {
+            "entity": kw["capability_id"].replace("-", "_"),
+            "fields": [{"name": "reference", "type": "str", "required": True}],
+            "model": "stub-spec",
+        },
+    )
+    monkeypatch.setattr(
+        "app.factory.coder.generate_route_body",
+        lambda **kw: {
+            "body": '    return {"ok": True, "capability": CAPABILITY_ID}',
+            "model": "stub-route",
+        },
+    )
+    monkeypatch.setattr(
+        "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
+    )
 
     a, b = tmp_path / "a", tmp_path / "b"
     assert RoleRunner(blueprint, a).run().ok
