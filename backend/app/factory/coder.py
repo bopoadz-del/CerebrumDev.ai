@@ -340,6 +340,150 @@ Contract:
 """
 
 
+_SPEC_SYSTEM = """You design the data model for one capability of a business platform.
+
+Return ONLY a JSON object, no prose and no markdown fences:
+{
+  "entity": "<snake_case entity name, singular>",
+  "fields": [
+    {"name": "<snake_case>", "type": "str|int|float|bool", "required": true}
+  ]
+}
+
+Rules:
+- 3 to 8 fields, ordered with identifiers first.
+- Types are limited to str, int, float, bool. No nested objects, no lists.
+- Do NOT include an "id" field; the platform adds its own primary key.
+- Field names must be valid Python identifiers and must not shadow builtins.
+"""
+
+_ALLOWED_FIELD_TYPES = {"str", "int", "float", "bool"}
+
+
+def generate_model_spec(
+    *, capability_id: str, description: str, product_name: str, vertical: str
+) -> Dict[str, Any]:
+    """Ask the coder to *design* a schema, returned as validated JSON.
+
+    Structured artifacts go through a spec rather than raw Python. The model
+    is the one thing every other artifact is derived from -- persistence
+    columns, route payloads, tests -- so a hallucinated import or a subtly
+    broken class definition would propagate into four files instead of one.
+    Asking for JSON and rendering it deterministically keeps the *design*
+    with the agent and the *structure* guaranteed.
+    """
+    import json as _json
+
+    user = (
+        f"Platform: {product_name} (vertical: {vertical})\n"
+        f"Capability id: {capability_id}\n"
+        f"Capability description: {description}\n\n"
+        "Design the entity this capability stores. Return the JSON now."
+    )
+    raw = _llm_code_call(
+        [
+            {"role": "system", "content": _SPEC_SYSTEM},
+            {"role": "user", "content": user},
+        ]
+    )
+    text = _strip_fences(raw).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise CoderError(f"model spec for {capability_id} is not JSON")
+    try:
+        data = _json.loads(text[start : end + 1])
+    except ValueError as exc:
+        raise CoderError(f"model spec for {capability_id} is not valid JSON: {exc}") from exc
+
+    entity = str(data.get("entity") or "").strip()
+    if not entity.isidentifier():
+        raise CoderError(f"model spec for {capability_id} has a bad entity name: {entity!r}")
+
+    fields = []
+    for item in data.get("fields") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        ftype = str(item.get("type") or "str").strip()
+        if not name.isidentifier() or name in {"id", "self"} or name.startswith("_"):
+            continue
+        if ftype not in _ALLOWED_FIELD_TYPES:
+            continue
+        fields.append({"name": name, "type": ftype, "required": bool(item.get("required", True))})
+
+    # Dedupe, keeping first occurrence, and cap the width.
+    seen, unique = set(), []
+    for f in fields:
+        if f["name"] in seen:
+            continue
+        seen.add(f["name"])
+        unique.append(f)
+    if not unique:
+        raise CoderError(f"model spec for {capability_id} declared no usable fields")
+
+    model = get_factory_llm_config_model()
+    logger.info("coder designed %s.%s (%d fields)", capability_id, entity, len(unique))
+    return {"entity": entity, "fields": unique[:8], "model": model}
+
+
+def get_factory_llm_config_model() -> str:
+    from .product_architect import get_factory_llm_config
+
+    return get_factory_llm_config().get("model", "unknown")
+
+
+_ROUTE_SYSTEM = """You write ONE Python function body for an API route in a generated platform.
+
+Contract:
+- Emit ONLY the body of:  def endpoint(payload: dict) -> dict
+- Module-level names already available to you:
+    CAPABILITY_ID : str
+    handle(payload: dict) -> dict    the capability handler
+    save(record: dict) -> dict       persists and returns the stored record
+    list_all() -> list[dict]         every stored record
+- Typical shape: validate the payload, call handle(), persist the result with
+  save(), and return a dict describing what happened.
+- Return a JSON-serialisable dict. Return {"ok": False, "error": "..."} for a
+  bad request rather than raising.
+- Standard library only, and no import statements at all. No network, no
+  filesystem, no subprocess, no eval/exec.
+- No markdown fences, no def line, no commentary — statements only, written at
+  column zero. They are indented for you; do not add leading indentation.
+"""
+
+
+def generate_route_body(
+    *,
+    capability_id: str,
+    description: str,
+    entity: str,
+    field_names: List[str],
+    work_list: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Write the endpoint body for one capability's route."""
+    lines = [
+        f"Capability id: {capability_id}",
+        f"Capability description: {description}",
+        f"Entity being stored: {entity}",
+        f"Fields on that entity: {field_names!r}",
+    ]
+    if work_list:
+        lines.append(
+            "\nA previous attempt failed these checks — fix them:\n"
+            + "\n".join(f"- {item}" for item in work_list)
+        )
+    lines.append("\nWrite the endpoint() body now.")
+
+    raw = _llm_code_call(
+        [
+            {"role": "system", "content": _ROUTE_SYSTEM},
+            {"role": "user", "content": "\n".join(lines)},
+        ]
+    )
+    body = _validate_body(_strip_fences(raw), f"{capability_id}:route")
+    return {"body": body, "model": get_factory_llm_config_model()}
+
+
 def generate_platform_handler(
     *,
     capability_id: str,
