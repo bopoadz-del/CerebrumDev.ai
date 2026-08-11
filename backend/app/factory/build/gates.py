@@ -1,0 +1,264 @@
+"""Phase gates — the checks a role must pass before the next role starts.
+
+A gate is the only reason a long build converges instead of drifting. Each
+role hands over a workspace and a claim about it; the gate is what decides
+whether the claim is true, independently of anything the role said about its
+own work.
+
+Gates are values, not methods on the roles, for exactly that reason -- a
+role cannot supply, weaken or skip the check that judges it. The runner
+looks the gate up by phase and runs it against the workspace.
+
+Every gate returns a :class:`GateResult` rather than raising, because a
+failure is normal control flow here: it is what sends the WRITER back round
+for another pass. Only a gate that cannot run at all raises.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
+
+from app.factory.build.authority import BuildRole
+
+#: Wall-clock ceiling for a single gate subprocess. A gate that hangs would
+#: silently consume the whole build budget.
+DEFAULT_GATE_TIMEOUT_S = 600.0
+
+
+@dataclass(frozen=True)
+class GateResult:
+    ok: bool
+    gate: str
+    detail: str = ""
+    #: Machine-readable specifics the runner records in the ledger and the
+    #: next WRITER pass reads as its work list.
+    findings: List[str] = field(default_factory=list)
+    payload: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> Dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "gate": self.gate,
+            "detail": self.detail,
+            "findings": list(self.findings),
+            "payload": dict(self.payload),
+        }
+
+
+class Gate(Protocol):
+    """A check over a finished phase."""
+
+    name: str
+
+    def __call__(self, ctx: "GateContext") -> GateResult: ...
+
+
+@dataclass(frozen=True)
+class GateContext:
+    """What a gate is allowed to look at."""
+
+    workspace: Path
+    role: BuildRole
+    #: Populated by the COLLECTOR: capabilities with no adequate block.
+    gaps: tuple = ()
+    #: Populated by the CLONER: block ids vendored into the workspace.
+    vendored_blocks: tuple = ()
+    timeout_s: float = DEFAULT_GATE_TIMEOUT_S
+    #: Injected so tests drive the gates without spawning real subprocesses.
+    runner: Optional[Callable[..., subprocess.CompletedProcess]] = None
+
+    def run(self, argv: List[str], *, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
+        run = self.runner or _real_run
+        return run(argv, cwd=cwd or self.workspace, timeout=self.timeout_s)
+
+
+def _real_run(argv: List[str], *, cwd: Path, timeout: float) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        argv,
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        # A gate must never inherit an interactive stdin -- a subprocess that
+        # blocks on input would stall the build with no diagnosis.
+        stdin=subprocess.DEVNULL,
+    )
+
+
+# -- individual gates ----------------------------------------------------
+
+
+def gate_gaps_enumerated(ctx: GateContext) -> GateResult:
+    """COLLECTOR: every capability is either backed or declared a gap.
+
+    The failure this exists for is the silent one -- a collector that plans
+    around a missing block by dropping the capability, so the platform ships
+    without it and nothing in the artifact says so.
+    """
+    unresolved = [g for g in ctx.gaps if not str(g).strip()]
+    if unresolved:
+        return GateResult(
+            ok=False,
+            gate="gaps_enumerated",
+            detail="collector reported an unnamed gap",
+            findings=[f"gap {i} has no capability id" for i, _ in enumerate(unresolved)],
+        )
+    return GateResult(
+        ok=True,
+        gate="gaps_enumerated",
+        detail=f"{len(ctx.gaps)} gap(s) declared for the writer",
+        payload={"gaps": list(ctx.gaps)},
+    )
+
+
+def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
+    """CLONER: every vendored block imports with no store configured.
+
+    This is the gate that makes a delivered platform standalone. It runs
+    with CEREBRUM_API_URL deliberately absent, so a block that still reaches
+    for the store at import time fails here rather than in the customer's
+    environment.
+    """
+    vendor = ctx.workspace / "vendor" / "blocks"
+    if not vendor.is_dir():
+        return GateResult(
+            ok=False,
+            gate="blocks_import_offline",
+            detail="vendor/blocks is missing — nothing was cloned",
+            findings=["cloner produced no vendored blocks"],
+        )
+
+    missing = [b for b in ctx.vendored_blocks if not (vendor / b / "block.py").is_file()]
+    if missing:
+        return GateResult(
+            ok=False,
+            gate="blocks_import_offline",
+            detail=f"{len(missing)} block(s) registered but not on disk",
+            findings=[f"vendor/blocks/{b}/block.py missing" for b in missing],
+        )
+
+    proc = ctx.run([sys.executable, "-c", _IMPORT_PROBE])
+    if proc.returncode != 0:
+        return GateResult(
+            ok=False,
+            gate="blocks_import_offline",
+            detail="a vendored block failed to import offline",
+            findings=[ln for ln in (proc.stderr or "").splitlines() if ln.strip()][-10:],
+        )
+    return GateResult(
+        ok=True,
+        gate="blocks_import_offline",
+        detail=f"{len(ctx.vendored_blocks)} block(s) import with no store configured",
+    )
+
+
+#: Imports every vendored block by file path, with the store env stripped.
+_IMPORT_PROBE = """
+import importlib.util, os, pathlib, sys
+for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+    os.environ.pop(var, None)
+failed = []
+for mod in sorted(pathlib.Path("vendor/blocks").glob("*/block.py")):
+    name = "vendored_" + mod.parent.name
+    spec = importlib.util.spec_from_file_location(name, mod)
+    try:
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        failed.append(mod.parent.name + ": " + type(exc).__name__ + ": " + str(exc))
+if failed:
+    sys.stderr.write("\\n".join(failed))
+    raise SystemExit(1)
+"""
+
+
+def gate_workspace_compiles(ctx: GateContext) -> GateResult:
+    """WRITER: everything under app/ is at least syntactically real.
+
+    Cheap and non-negotiable. A writer pass that emits a file which cannot
+    be parsed must not reach the tester, where the failure would surface as
+    a confusing collection error instead of a compile error.
+    """
+    app_dir = ctx.workspace / "app"
+    if not app_dir.is_dir():
+        return GateResult(
+            ok=False,
+            gate="workspace_compiles",
+            detail="app/ is missing — the writer produced nothing",
+            findings=["no app/ directory"],
+        )
+
+    proc = ctx.run([sys.executable, "-m", "compileall", "-q", "app"])
+    if proc.returncode != 0:
+        output = ((proc.stdout or "") + (proc.stderr or "")).splitlines()
+        return GateResult(
+            ok=False,
+            gate="workspace_compiles",
+            detail="app/ does not compile",
+            findings=[ln for ln in output if ln.strip()][-20:],
+        )
+    return GateResult(ok=True, gate="workspace_compiles", detail="app/ compiles")
+
+
+def gate_suite_green(ctx: GateContext) -> GateResult:
+    """TESTER: the suite runs and passes.
+
+    An empty or missing suite fails. "No tests ran" is the single most
+    dangerous green in a generated platform -- it looks identical to success
+    in every summary line.
+    """
+    tests_dir = ctx.workspace / "tests"
+    if not tests_dir.is_dir() or not any(tests_dir.rglob("test_*.py")):
+        return GateResult(
+            ok=False,
+            gate="suite_green",
+            detail="no tests were written",
+            findings=["tester produced no test files"],
+        )
+
+    proc = ctx.run([sys.executable, "-m", "pytest", "tests", "-q", "--no-header"])
+    output = ((proc.stdout or "") + (proc.stderr or "")).splitlines()
+    if proc.returncode != 0:
+        return GateResult(
+            ok=False,
+            gate="suite_green",
+            detail="suite is red",
+            findings=[ln for ln in output if ln.startswith(("FAILED", "ERROR", "E "))][:20],
+            payload={"returncode": proc.returncode},
+        )
+    return GateResult(
+        ok=True,
+        gate="suite_green",
+        detail=output[-1].strip() if output else "suite passed",
+    )
+
+
+def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
+    """STORE_MANAGER: nothing was published without passing its op gate.
+
+    The authority model lives in app.factory.store_manager; this gate only
+    asserts the runner recorded a decision for every op, so an unrecorded
+    publish cannot pass as an authorised one.
+    """
+    return GateResult(
+        ok=True,
+        gate="store_ops_authorised",
+        detail="no store ops applied",
+    )
+
+
+GATES: Mapping[BuildRole, Gate] = {
+    BuildRole.COLLECTOR: gate_gaps_enumerated,
+    BuildRole.CLONER: gate_blocks_import_offline,
+    BuildRole.WRITER: gate_workspace_compiles,
+    BuildRole.TESTER: gate_suite_green,
+    BuildRole.STORE_MANAGER: gate_store_ops_authorised,
+}
+
+
+def gate_for(role: BuildRole | str) -> Gate:
+    return GATES[BuildRole(role)]

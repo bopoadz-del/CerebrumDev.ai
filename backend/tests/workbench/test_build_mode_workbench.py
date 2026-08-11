@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -32,6 +33,36 @@ def _flags(monkeypatch, tmp_path):
     monkeypatch.setenv("BUILD_MODE_ENABLED", "true")
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "false")
     monkeypatch.setenv("WORKBENCH_SESSION_TIMEOUT_SECONDS", "120")
+
+
+def _write_fake_kimi(tmp_path: Path) -> Path:
+    """A stand-in Kimi CLI: `--version` succeeds, any real invocation fails.
+
+    Written per-platform rather than as a `#!/bin/sh` script, because Windows
+    cannot exec a shebang file and raised WinError 193 -- which made this
+    guard unverifiable on the machine the factory is developed on. A `.cmd`
+    launched by absolute path runs without shell=True and gives the same
+    exit codes as the POSIX version.
+    """
+    if os.name == "nt":
+        cli = tmp_path / "fake-kimi.cmd"
+        cli.write_text(
+            "@echo off\r\n"
+            'if "%1"=="--version" (echo kimi 9.9.9 & exit /b 0)\r\n'
+            "echo boom 1>&2\r\n"
+            "exit /b 3\r\n",
+            encoding="utf-8",
+        )
+        return cli
+    cli = tmp_path / "fake-kimi"
+    cli.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--version" ]; then echo kimi 9.9.9; exit 0; fi\n'
+        "echo boom >&2; exit 3\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+    return cli
 
 
 def _steward_product(tmp_path: Path) -> Path:
@@ -317,14 +348,7 @@ def test_workbench_fails_loudly_when_cli_session_fails(
     monkeypatch, tmp_path, fresh_audit_artifact
 ):
     """A CLI that exists but whose coding session fails must not become ok:True."""
-    fake_cli = tmp_path / "fake-kimi"
-    fake_cli.write_text(
-        "#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo kimi 9.9.9; exit 0; fi\n'
-        "echo boom >&2; exit 3\n",
-        encoding="utf-8",
-    )
-    fake_cli.chmod(0o755)
+    fake_cli = _write_fake_kimi(tmp_path)
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
     monkeypatch.setenv("KIMI_CODE_CLI", str(fake_cli))
 
