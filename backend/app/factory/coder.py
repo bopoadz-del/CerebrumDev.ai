@@ -188,9 +188,11 @@ def _anthropic_request(cfg: Dict[str, Any], messages: List[Dict[str, str]], mode
     payload: Dict[str, Any] = {
         "model": model,
         "max_tokens": 2048,
-        "temperature": 0.2,
         "messages": turns,
     }
+    temperature = cfg.get("temperature")
+    if temperature is not None:
+        payload["temperature"] = temperature
     if system:
         payload["system"] = system
 
@@ -246,9 +248,18 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         payload = {
             "model": model,
             "messages": messages,
-            "temperature": 0.2,
             "max_tokens": 2048,
         }
+        # Send a temperature ONLY when one was configured. This hardcoded 0.2
+        # made the coder unusable on every reasoning model: kimi-k2.x and k3
+        # answer 400 "invalid temperature: only 1 is allowed for this model",
+        # so the factory silently fell back to templates on exactly the models
+        # capable enough to write working code. llm_config._llm_temperature()
+        # already returns None by default for this reason; the coder was the
+        # one caller ignoring it.
+        temperature = cfg.get("temperature")
+        if temperature is not None:
+            payload["temperature"] = temperature
         resp = httpx.post(url, json=payload, headers=headers, timeout=120.0)
         resp.raise_for_status()
         data = resp.json()

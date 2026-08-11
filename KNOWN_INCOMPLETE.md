@@ -80,14 +80,27 @@ is closer but not reached — the runner does not yet emit hats, workflows, the
 universal console, connectors, edge profile, certification scaffold, Product
 DNA or the Resident Engineer. Decide cutover on what the live test shows.
 
-### 1c. Agent output quality is model-bound — MEASURED
-On the same blueprint: `moonshot-v1-8k` wrote 7 of 10 artifacts and produced a
-route that returns `None`, failing the TESTER gate through all three rework
-rounds and ending `FAILED_BUDGET_SPENT`. The rework findings did reach the
-writer (`ResponseValidationError ... input: None`) and it still could not fix
-it. The runner behaved correctly — it refused to ship a broken platform — but
-this model cannot satisfy the route contract. A K2-class or current Claude
-model is required for the agent path to be useful. See `docs/LIVE_TEST_READY.md`.
+### 1c. Agent output quality is model-bound — MEASURED, and the first reading was wrong
+`kimi-k2.7-code` builds the smoke blueprint end to end: **SUCCESS, rework 0,
+7 of 10 artifacts agent-written, no coder failures**, passing the strict route
+test first time. The agent path works.
+
+`moonshot-v1-8k` does not — it writes a route returning `None` and cannot fix
+it across three rework rounds, ending `FAILED_BUDGET_SPENT`. The runner
+behaved correctly in refusing to ship it.
+
+**The original conclusion here — "K2-class models are required but unavailable"
+— was wrong, and the cause is worth remembering.** `coder.py` hardcoded
+`temperature: 0.2`; every kimi-k2.x/k3 model answers `400 invalid temperature:
+only 1 is allowed for this model`. The coder caught the HTTPStatusError,
+recorded a CoderError and shipped templates, so builds reported SUCCESS with
+`agent_written: 0` and the symptom read as a weak or unavailable model. The
+request never reached the model. Fixed: the temperature is now sent only when
+`LLM_TEMPERATURE` is configured, matching what `llm_config._llm_temperature()`
+already documented. Regression-tested in `tests/test_coder_temperature.py`.
+
+Also fixed: the factory fallback default was `kimi-k2.5-code`, which returns
+`404 Not found the model` — the retry leg had never been real.
 
 ### 2. CEREBRUM_LLM_API_KEY missing on the Render backend — BLOCKS PRODUCTION
 **Owner: Chadi. Dashboard secret. Not fixable in code — do not work around it.**
