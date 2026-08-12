@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import smtplib
 from email.message import EmailMessage
-from typing import Dict
 
 import httpx
 

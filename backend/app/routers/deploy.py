@@ -73,7 +73,6 @@ async def start_deploy(
         _update_deployment(state, status="failed", progress=0.0, message=f"Packaging failed: {exc}")
         raise HTTPException(status_code=500, detail=f"Packaging failed: {exc}")
 
-    variant = "platform" if target == DeployTarget.PLATFORM else "cloud"
     _update_deployment(
         state,
         status="packaged" if target in (DeployTarget.EDGE, DeployTarget.PLATFORM) else "deploying",

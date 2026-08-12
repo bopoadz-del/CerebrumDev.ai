@@ -6,7 +6,7 @@ import hashlib
 import json
 import difflib
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.workbench.sandbox import WorkbenchSandbox
 

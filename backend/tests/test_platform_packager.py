@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Dict
+
 import json
 import os
 import re
@@ -281,7 +283,7 @@ def test_platform_auth_single_source_of_truth(
     assert env["CEREBRUM_API_KEY_PLATFORM"] == deploy_key
 
     render = (package_dir / "render.yaml").read_text(encoding="utf-8")
-    assert f"key: CEREBRUM_MASTER_KEY" in render
+    assert "key: CEREBRUM_MASTER_KEY" in render
 
     try:
         import tomllib

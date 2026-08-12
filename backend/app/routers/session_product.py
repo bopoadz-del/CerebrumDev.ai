@@ -33,7 +33,6 @@ from app.factory.product_architect import (
     generate_product,
     plan_blueprint,
 )
-from app.models.session import ProductDesignState
 
 router = APIRouter()
 

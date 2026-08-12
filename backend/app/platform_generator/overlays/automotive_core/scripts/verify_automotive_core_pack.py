@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import sys
-from pathlib import Path
 
 from sqlalchemy import create_engine, text
 
@@ -72,7 +71,6 @@ def _indexes_present(engine) -> list[str]:
 
 def _verify_retrieval(project_id: str, queries: dict[str, str]) -> dict:
     from app.core.automotive_retrieval import (
-        FOUNDATION_PROJECT_ID,
         retrieve_by_campaign_number,
         retrieve_foundation_evidence,
     )

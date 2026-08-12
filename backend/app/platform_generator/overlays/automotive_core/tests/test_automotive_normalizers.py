@@ -10,7 +10,6 @@ from app.core.automotive_normalizers import (
     normalize_recall_rows,
     normalize_safety_rating_row,
 )
-from app.models.automotive_records import AutomotiveRecall
 
 
 def test_normalize_recall_row_maps_official_columns() -> None:

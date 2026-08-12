@@ -1,13 +1,9 @@
 import json
-import os
-import tempfile
-from pathlib import Path
 
 import pytest
 
 from app.core import session_store
 from app.core.session_persistence import _backup_path, _state_path
-from app.models.session import SessionState
 
 
 @pytest.fixture(autouse=True)

@@ -14,7 +14,6 @@ only copy of anything (Postgres/disk truth survives a flush).
 """
 from __future__ import annotations
 
-import pytest
 
 
 class _DeadRedis:

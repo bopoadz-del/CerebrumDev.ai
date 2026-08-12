@@ -10,9 +10,9 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from app.factory.blueprint import ProductBlueprint, load_blueprint
+from app.factory.blueprint import ProductBlueprint
 from app.factory.generator import ProductGenerator
 from app.product_dna.emit import verify_checksum_manifest
 from app.workbench.candidate import verify_candidate_checksum

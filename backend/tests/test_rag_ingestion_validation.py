@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
 
 from app.core.rag_ingestion_store import save_source_record
 from app.core.rag_ingestion_validation import (
-    PRECLUDED_SOURCE_CLASSES,
     create_ingestion_job,
     validate_source_record,
 )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -1016,7 +1015,6 @@ databases:
                     except CoderError as exc:
                         self._coder_report["stubbed"][cap.capability_id] = str(exc)
 
-            blocks_list = ", ".join(cap.block_ids) or "(none — kernel/GENERATE)"
             mod.write_text(
                 f'''"""Generated action module for {action_id} (strategy={cap.strategy}).
 

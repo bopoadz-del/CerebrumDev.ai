@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Dict, Optional
 
 from ..models.session import SessionState, UploadResult

@@ -1,4 +1,3 @@
-import pytest
 
 from app.core.rag_vector_store_adapters import (
     LOCAL_FLAT_JSON_V1,

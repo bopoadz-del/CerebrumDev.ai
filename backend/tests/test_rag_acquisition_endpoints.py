@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from app.core.rag_ingestion_store import save_job, save_source_record
 from app.models.rag_ingestion import (
-    AcquisitionStatus,
     DuplicateStatus,
     JobStatus,
     RagIngestionJob,

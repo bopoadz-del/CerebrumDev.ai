@@ -16,7 +16,6 @@ from app.change_requests.builders import (
 from app.change_requests.emit import EmitRejected, emit_repair_from_escalation
 from app.change_requests.intake import IntakeRejected, intake_change_request
 from app.change_requests.queue import ChangeRequestQueue, log_rejection, rejection_log_path
-from app.change_requests.signing import generate_keypair, sign_document, verify_document
 from app.change_requests.store_compare import compare_lockfile_to_store
 from app.change_requests.validate import validate_change_request
 from app.factory.blueprint import load_blueprint

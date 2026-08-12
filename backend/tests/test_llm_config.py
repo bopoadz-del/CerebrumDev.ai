@@ -2,7 +2,6 @@
 
 import os
 import pytest
-from unittest.mock import patch
 
 from app.core.llm_config import get_factory_llm_config, get_llm_config, active_provider
 

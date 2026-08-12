@@ -406,7 +406,7 @@ def test_run_acquisition_preview_persists_failed_report(_mock, tmp_path, monkeyp
     with pytest.raises(AcquisitionError):
         run_acquisition_preview("legal", job.job_id, client=client)
 
-    reports = get_acquisition_report("legal", job.job_id)
+    get_acquisition_report("legal", job.job_id)
     # The report id is not job_id; just assert a report was saved via list.
     from app.core.rag_ingestion_store import list_acquisition_reports
 

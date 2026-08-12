@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from app.models.automotive_records import (
     AutomotiveComplaint,
@@ -202,7 +202,7 @@ def normalize_investigation_row(
         opening_date=opening_date,
         closing_date=closing_date,
         associated_campaign_number=associated_campaign or None,
-        source_url=f"https://www.nhtsa.gov/nhtsa-datasets-and-apis" if investigation_number else None,
+        source_url="https://www.nhtsa.gov/nhtsa-datasets-and-apis" if investigation_number else None,
         jurisdiction="US",
         authority_rating="primary",
         harvest_timestamp=_utc_now(),

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 from pathlib import Path
 from typing import Callable
 
 from app.models.platform_manifest import AutomotivePlatformManifest
-from app.platform_generator.template_filters import make_text_filter, should_transform_file
+from app.platform_generator.template_filters import should_transform_file
 
 
 # Directory names that must not be copied into a generated package.

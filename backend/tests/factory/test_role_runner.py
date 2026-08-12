@@ -23,7 +23,6 @@ import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
-from app.factory.build.gates import GateResult
 from app.factory.build.ledger import BuildLedger, EventKind, LedgerError
 from app.factory.build.roles import ROLE_IMPLEMENTATIONS, RoleResult
 from app.factory.build.runner import (

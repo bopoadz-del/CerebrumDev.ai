@@ -10,7 +10,6 @@ from __future__ import annotations
 from alembic import op
 
 from app.steward.auth_models import EstateAccess, PilotAccessToken, PilotPrincipal
-from app.steward.models import Base
 
 revision = "0002_pilot_auth"
 down_revision = "0001_steward_rag"

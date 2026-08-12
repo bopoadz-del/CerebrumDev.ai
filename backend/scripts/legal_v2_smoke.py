@@ -1,7 +1,6 @@
 """Quick legal-domain smoke test for legal_v2 inclusion."""
 import json
 import sys
-import time
 import zipfile
 from pathlib import Path
 

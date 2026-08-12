@@ -173,7 +173,7 @@ def test_drive_folder_binding_and_sync(
     drive_store: DriveConnectionStore,
 ):
     session_id = _create_session(client)
-    connection_id = _connect_session(client, session_id, "syncer@example.com")
+    _connect_session(client, session_id, "syncer@example.com")
 
     bind_resp = client.post(
         f"/v1/sessions/{session_id}/drive/bind-folder",
@@ -226,7 +226,6 @@ def _connect_session(client: TestClient, session_id: str, email: str) -> str:
     connect_resp = client.get(f"/v1/sessions/{session_id}/drive/connect")
     state = _extract_state(connect_resp.json()["auth_url"])
 
-    captured: dict = {}
 
     async def fake_exchange(_code: str) -> dict:
         return {"access_token": "tok", "refresh_token": "ref", "expires_in": 3600}

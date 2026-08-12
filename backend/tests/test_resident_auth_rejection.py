@@ -6,7 +6,6 @@ auth module was absent. All of them now fail closed (401) without an
 authenticated principal.
 """
 
-import os
 import sys
 from pathlib import Path
 

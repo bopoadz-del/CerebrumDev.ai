@@ -5,9 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from unittest.mock import patch
 
-import pytest
 
 from app.core import deployer
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 
 from app.factory.blueprint import load_blueprint
 from app.factory.generator import ProductGenerator

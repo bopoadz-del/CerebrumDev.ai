@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.factory.blueprint import CapabilitySpec, CapabilityStrategyHint, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError, assert_dual_registered, dual_registered_ids

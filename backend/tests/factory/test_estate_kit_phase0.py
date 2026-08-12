@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.dual_registry import assert_dual_registered
@@ -127,7 +126,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
     import textwrap
 
     probe = textwrap.dedent(
-        f"""
+        """
         from fastapi.testclient import TestClient
         from app.main import app
         c = TestClient(app)
@@ -135,7 +134,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
         demo = c.get("/v1/estate/demo")
         assert demo.status_code == 200, demo.text
         assert demo.json()["properties"]
-        rag = c.get("/v1/rag/query", params={{"q": "guest arrival"}})
+        rag = c.get("/v1/rag/query", params={"q": "guest arrival"})
         assert rag.status_code == 200, rag.text
         body = rag.json()
         assert body["hit_count"] >= 1
@@ -144,7 +143,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
         assert body["embedding_provider"] == "local_feature_hash_v1"
         top_doc = body["hits"][0]["doc_id"]
         assert top_doc == "sop-global-guest-arrival"
-        layer2 = c.get("/v1/rag/query", params={{"q": "pool chemicals", "layer": 2}})
+        layer2 = c.get("/v1/rag/query", params={"q": "pool chemicals", "layer": 2})
         assert layer2.status_code == 200, layer2.text
         l2 = layer2.json()
         assert l2["hit_count"] >= 1
@@ -157,16 +156,16 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
         assert indices[1]["document_count"] >= 2
         ingest = c.post(
             "/v1/rag/ingest",
-            json={{
+            json={
                 "layer": 1,
                 "doc_id": "sop-test-ingest",
                 "title": "Test SOP",
                 "text": "Emergency generator failover drill every quarter.",
-            }},
+            },
         )
         assert ingest.status_code == 200, ingest.text
         assert ingest.json()["chunk_count"] >= 1
-        failover = c.get("/v1/rag/query", params={{"q": "generator failover drill", "layer": 1}})
+        failover = c.get("/v1/rag/query", params={"q": "generator failover drill", "layer": 1})
         assert failover.status_code == 200, failover.text
         assert any(hit["doc_id"] == "sop-test-ingest" for hit in failover.json()["hits"])
         print("estate_kit_probe_ok")

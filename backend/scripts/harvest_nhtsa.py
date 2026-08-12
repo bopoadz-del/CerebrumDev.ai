@@ -14,13 +14,11 @@ import argparse
 import csv
 import hashlib
 import importlib.util
-import io
 import json
 import logging
 import os
 import shutil
 import sys
-import tempfile
 import types
 import zipfile
 from datetime import datetime, timezone
