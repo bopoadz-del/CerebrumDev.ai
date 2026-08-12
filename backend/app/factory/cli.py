@@ -64,6 +64,26 @@ def main(argv: list[str] | None = None) -> int:
 
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
+    p_registry = store_sub.add_parser(
+        "registry",
+        help="Read-only registrar: what each platform cloned, and what has drifted",
+    )
+    p_registry.add_argument(
+        "--root",
+        required=True,
+        help="directory containing built platforms (scanned for build ledgers)",
+    )
+    p_registry.add_argument(
+        "--store-head",
+        default=None,
+        help="Store commit to compare against; without it every clone is 'unknown'",
+    )
+    p_registry.add_argument(
+        "--stale-only",
+        action="store_true",
+        help="exit non-zero if any clone is stale",
+    )
+
     store_sub.add_parser("manifest", help="Print Store Manager authority manifest")
     store_sub.add_parser("health-scan", help="Print Store Health Cycle steps")
     p_classify = store_sub.add_parser("classify", help="Classify a product vs Store diff")
@@ -170,6 +190,17 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
 
 
 def _store_cmd(args: argparse.Namespace) -> int:
+    if args.store_cmd == "registry":
+        from app.factory.build.registrar import registrar_report
+
+        report = registrar_report(args.root, store_head=args.store_head)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        # Read-only: exit 0 unless the caller explicitly asked to be told
+        # about drift. "unknown" is never treated as a failure -- it means the
+        # comparison could not be made, not that anything is wrong.
+        if args.stale_only and report["status_counts"].get("stale"):
+            return 2
+        return 0
     if args.store_cmd == "manifest":
         print(json.dumps(store_manager_manifest(), indent=2, sort_keys=True))
         return 0

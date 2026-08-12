@@ -57,13 +57,16 @@ each handler, so nothing claims LLM authorship that did not have it. This is
 the difference between "the runner manufactures" and "the agent manufactures"
 — the harness is real, the coder is not yet plugged into it.
 
-**(c) STORE_MANAGER is minimal — DECIDED: deferred, not implemented.** It
-records the clone manifest and executes no `StoreOp`. `store_manager.py`
+**(c) STORE_MANAGER is half built.** The **read-only registrar is
+implemented** (`app/factory/build/registrar.py`, `cli.py store registry`): it
+scans build ledgers and answers which platform cloned which block at which
+revision, which clones have drifted from a given Store head, and where the
+estate has diverged — two platforms running different code behind one block
+name. It executes no `StoreOp`. `store_manager.py`
 defines 15 ops with approval gates and every consumer still only prints the
-manifest. Deferred deliberately rather than half-built: executing store ops
+manifest. The write half stays deferred deliberately: executing store ops
 means writing to the Cerebrum-Blocks repo (publish, version, deprecate) with
-a human-approval path for MAJOR and DELETE, plus the registrar queries over
-`iter_ledgers()` for staleness. That is its own milestone, and a partial
+a human-approval path for MAJOR and DELETE. That is its own milestone, and a partial
 implementation that writes to the Store without the approval path is worse
 than none.
 
