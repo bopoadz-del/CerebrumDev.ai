@@ -31,8 +31,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
@@ -194,7 +195,22 @@ class RoleRunner:
     def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
         """Run the role then its gate. Raises RoleError / AuthorityError up."""
         self.ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
-        ws = RoleWorkspace(role, self.workspace, store_root=self.store_root)
+        # The WRITER is staged: it rewrites app/ wholesale on every rework
+        # round, and the agent picks different entity names each call, so a
+        # pass killed part-way through would leave models.py from one attempt
+        # beside routes.py from another. Observed live as
+        # "no such table: field_defect". Other roles append rather than
+        # replace, so a partial pass is recoverable by re-running them.
+        staging = (
+            self.workspace.parent / f".{self.workspace.name}.staging-{role.value.lower()}"
+            if role is BuildRole.WRITER
+            else None
+        )
+        if staging is not None and staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        ws = RoleWorkspace(
+            role, self.workspace, store_root=self.store_root, staging=staging
+        )
         ctx = RoleContext(
             role=role,
             workspace=ws,
@@ -207,6 +223,11 @@ class RoleRunner:
         result = self.roles[role](ctx)
         if not result.ok:
             raise RoleError(result.detail or f"{role.value} reported failure")
+        # Only now does the staged pass become visible. Everything before this
+        # line could be interrupted without the destination ever changing.
+        ws.commit()
+        if staging is not None:
+            shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
 
         if role is BuildRole.CLONER:
