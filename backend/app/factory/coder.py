@@ -357,7 +357,9 @@ Return ONLY a JSON object, no prose and no markdown fences:
 {
   "entity": "<snake_case entity name, singular>",
   "fields": [
-    {"name": "<snake_case>", "type": "str|int|float|bool", "required": true}
+    {"name": "<snake_case>", "type": "str|int|float|bool", "required": true,
+     "allowed_values": ["<one of a fixed set>", "..."],
+     "min": <number>, "max": <number>}
   ]
 }
 
@@ -366,9 +368,64 @@ Rules:
 - Types are limited to str, int, float, bool. No nested objects, no lists.
 - Do NOT include an "id" field; the platform adds its own primary key.
 - Field names must be valid Python identifiers and must not shadow builtins.
+
+Constraints are OPTIONAL, and they are the ONLY place a value restriction may
+be expressed:
+- "allowed_values": for a str field with a fixed vocabulary (a status, a
+  severity, a category). 2 to 8 entries. Declare it whenever the field really
+  does have a fixed set -- the platform enforces it and tests against it.
+- "min" / "max": inclusive bounds for an int or float field.
+Omit a constraint you do not mean. Anything you do NOT declare here cannot be
+enforced later, so a restriction that matters must appear in this spec.
 """
 
 _ALLOWED_FIELD_TYPES = {"str", "int", "float", "bool"}
+#: Guard rails on agent-declared vocabularies. A field with one allowed value
+#: is a constant, not an enum; an unbounded list is usually a hallucinated
+#: free-text field.
+_MIN_ALLOWED_VALUES = 2
+_MAX_ALLOWED_VALUES = 8
+
+
+def _clean_constraints(item: Dict[str, Any], ftype: str) -> Dict[str, Any]:
+    """Validate the optional constraints on one field spec.
+
+    Silently drops anything malformed rather than trusting it: a constraint
+    the platform cannot enforce is worse than none, because the route would
+    reject payloads the tests are entitled to send.
+    """
+    out: Dict[str, Any] = {}
+
+    raw_allowed = item.get("allowed_values")
+    if ftype == "str" and isinstance(raw_allowed, list):
+        values, seen = [], set()
+        for v in raw_allowed:
+            if not isinstance(v, str):
+                continue
+            v = v.strip()
+            if v and v not in seen:
+                seen.add(v)
+                values.append(v)
+        if _MIN_ALLOWED_VALUES <= len(values) <= _MAX_ALLOWED_VALUES:
+            out["allowed_values"] = values
+
+    if ftype in ("int", "float"):
+        lo, hi = item.get("min"), item.get("max")
+        cast = int if ftype == "int" else float
+        try:
+            lo = cast(lo) if isinstance(lo, (int, float)) and not isinstance(lo, bool) else None
+            hi = cast(hi) if isinstance(hi, (int, float)) and not isinstance(hi, bool) else None
+        except (TypeError, ValueError):
+            lo = hi = None
+        # An inverted range would make every value invalid.
+        if lo is not None and hi is not None and lo > hi:
+            lo = hi = None
+        if lo is not None:
+            out["min"] = lo
+        if hi is not None:
+            out["max"] = hi
+
+    return out
 
 
 def generate_model_spec(
@@ -420,7 +477,14 @@ def generate_model_spec(
             continue
         if ftype not in _ALLOWED_FIELD_TYPES:
             continue
-        fields.append({"name": name, "type": ftype, "required": bool(item.get("required", True))})
+        fields.append(
+            {
+                "name": name,
+                "type": ftype,
+                "required": bool(item.get("required", True)),
+                **_clean_constraints(item, ftype),
+            }
+        )
 
     # Dedupe, keeping first occurrence, and cap the width.
     seen, unique = set(), []
@@ -456,6 +520,14 @@ Contract:
   save(), and return a dict describing what happened.
 - Return a JSON-serialisable dict. Return {"ok": False, "error": "..."} for a
   bad request rather than raising.
+
+VALIDATION IS BOUNDED BY THE SPEC. You are given each field's type and, where
+one exists, its allowed_values or min/max. Enforce presence, the declared
+type, and those declared constraints -- and nothing else. Do NOT invent a
+vocabulary, a format, a regex or a range that the spec does not state. The
+platform's tests build their payloads from this same spec, so a restriction
+you invent will reject a request that is valid by contract, and the build
+fails with no way for either side to give way.
 - Standard library only, and no import statements at all. No network, no
   filesystem, no subprocess, no eval/exec.
 - No markdown fences, no def line, no commentary — statements only, written at
@@ -463,20 +535,43 @@ Contract:
 """
 
 
+def describe_fields(fields: List[Dict[str, Any]]) -> str:
+    """Render the field contract the route must validate against, and only that."""
+    lines = []
+    for f in fields:
+        bits = [f"{f['name']}: {f['type']}"]
+        if f.get("allowed_values"):
+            bits.append("one of " + ", ".join(repr(v) for v in f["allowed_values"]))
+        if f.get("min") is not None:
+            bits.append(f"min {f['min']}")
+        if f.get("max") is not None:
+            bits.append(f"max {f['max']}")
+        if not f.get("required", True):
+            bits.append("optional")
+        lines.append("  - " + " | ".join(bits))
+    return "\n".join(lines)
+
+
 def generate_route_body(
     *,
     capability_id: str,
     description: str,
     entity: str,
-    field_names: List[str],
+    fields: List[Dict[str, Any]],
     work_list: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Write the endpoint body for one capability's route."""
+    """Write the endpoint body for one capability's route.
+
+    Takes the full field specs, not just names: the route may enforce the
+    declared constraints and nothing beyond them, so it has to be told what
+    those constraints are.
+    """
     lines = [
         f"Capability id: {capability_id}",
         f"Capability description: {description}",
         f"Entity being stored: {entity}",
-        f"Fields on that entity: {field_names!r}",
+        "Fields, with every constraint you are permitted to enforce:",
+        describe_fields(fields),
     ]
     if work_list:
         lines.append(
