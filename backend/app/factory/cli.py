@@ -21,6 +21,24 @@ from app.factory.store_manager import (
 )
 
 
+def _load_backend_env() -> None:
+    """Load backend/.env into the environment, without overriding it.
+
+    The API server gets its environment from the platform (Render) or the
+    operator's shell; this CLI is run directly, and on the first live build
+    the coder silently fell back to templates on every artifact because the
+    configured key sat in backend/.env, which nothing loaded. Existing
+    environment variables win -- this only fills gaps.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    if env_file.is_file():
+        load_dotenv(env_file, override=False)
+
+
 def _resolve_blocks_root(cli_value: str | None) -> Path | None:
     if cli_value:
         return Path(cli_value).resolve()
@@ -29,6 +47,7 @@ def _resolve_blocks_root(cli_value: str | None) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _load_backend_env()
     parser = argparse.ArgumentParser(prog="cerebrum-factory")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

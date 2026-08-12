@@ -69,8 +69,11 @@ def _kimi_model(*prefixes: str) -> str:
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_MODEL")
     candidates.extend(["KIMI_MODEL", "CEREBRUM_LLM_MODEL"])
-    # Aligned with Cerebrum-Blocks on the K2 model; overridable via KIMI_MODEL.
-    return _env_first(*candidates, default="kimi-k2-0905-preview")
+    # kimi-k2-0905-preview (the old Cerebrum-Blocks-aligned default) answers
+    # 404 on api.moonshot.ai — measured live on the 2026-08-13 factory build:
+    # every primary call failed and only the fallback leg did the work. The
+    # code-oriented sibling is real on this endpoint; override via KIMI_MODEL.
+    return _env_first(*candidates, default="kimi-k2.7-code-highspeed")
 
 
 def _kimi_fallback_model(*prefixes: str, default: str) -> str:
@@ -100,13 +103,12 @@ def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
         "api_key": _kimi_key(*prefixes),
         "base_url": _kimi_base_url(*prefixes),
         "model": _kimi_model(*prefixes),
-        # kimi-k2.5-code does not exist on api.moonshot.ai — it answered 404
-        # "Not found the model", so the factory's fallback leg was dead and a
-        # primary failure always surfaced as two errors instead of one retry.
-        # kimi-k2.7-code-highspeed is a real, code-oriented sibling.
-        "fallback_model": _kimi_fallback_model(
-            *prefixes, default="kimi-k2.7-code-highspeed"
-        ),
+        # The fallback leg must be a DIFFERENT, live model: with the primary
+        # now kimi-k2.7-code-highspeed, falling back to itself would just
+        # replay a 429 into the same rate limit. moonshot-v1-8k is weaker but
+        # proven to write handlers, and provenance headers record which leg
+        # produced every artifact.
+        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
         "temperature": _llm_temperature(),
     }
