@@ -25,6 +25,7 @@ answers ``execution_error``, it does not crash the product.
 from __future__ import annotations
 
 import ast
+import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -373,9 +374,19 @@ Contract:
 - Module-level names already available to you:
     CAPABILITY_ID : str        the capability you are implementing
     BLOCK_IDS     : list[str]  vendored blocks you may call
-    execute(block_id: str, payload: dict) -> dict
+    BLOCK_DEFAULT_ACTIONS : dict[str, str]  each block's default action
+    execute(block_id: str, payload: dict, action: str | None = None,
+            params: dict | None = None) -> dict
       Runs a vendored block LOCALLY, in-process. There is no network and no
       remote store; do not attempt HTTP, and do not import anything.
+- Blocks are ACTION-DISPATCHED. Pass the action that fits the capability
+  (the user message lists each block's contract: actions, declared inputs,
+  and the input fields its schema REQUIRES). The dict you pass as `payload`
+  becomes the block's input: build it so every required input field is
+  present, mapped or derived from the caller's payload.
+- A block returns an envelope. Treat result.get("status") == "error" (or an
+  "error" key in the result) as a failure: surface it in your return value
+  as {"ok": False, "error": ...} rather than pretending success.
 - Use execute() for every block in BLOCK_IDS whose output the capability needs.
 - Return a JSON-serialisable dict. Include "capability": CAPABILITY_ID.
 - Standard library only, and no import statements at all. No network, no
@@ -635,6 +646,7 @@ def generate_platform_handler(
     product_name: str,
     vertical: str,
     work_list: Optional[List[str]] = None,
+    block_contracts: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Write the ``handle`` body for one runner-built capability.
 
@@ -644,7 +656,10 @@ def generate_platform_handler(
     the local dispatch runtime. Same validation gate applies to both.
 
     ``work_list`` carries the TESTER's findings on a rework pass so the coder
-    is told what failed rather than guessing from scratch.
+    is told what failed rather than guessing from scratch. ``block_contracts``
+    carries what each block actually accepts (actions, declared inputs, schema
+    required fields) -- without it the coder guesses payload shapes and real
+    blocks reject them with "Input validation failed".
     """
     from .product_architect import get_factory_llm_config
 
@@ -654,6 +669,12 @@ def generate_platform_handler(
         f"Capability description: {description}",
         f"BLOCK_IDS available to execute(): {block_ids!r}",
     ]
+    if block_contracts:
+        lines.append(
+            "\nBlock contracts (invoke each block with an action it supports "
+            "and an input dict carrying every required field):\n"
+            + json.dumps(block_contracts, indent=2, sort_keys=True)
+        )
     if work_list:
         lines.append(
             "\nA previous attempt failed these checks — fix them:\n"

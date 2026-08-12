@@ -148,6 +148,311 @@ def _pin_source(source: Path, blocks_root: Optional[Path]) -> tuple:
     return "factory-vendor-mirror", _content_digest(source)
 
 
+# -- runtime slice (defect 1g) -------------------------------------------
+#
+# Real Store blocks are shims: block.py does ``from app.blocks import
+# get_block`` and the logic lives in the Store's ``app/blocks/<name>.py``,
+# resting on ``app/core``. The first build against the real Store failed its
+# own offline gate on every block with ``No module named 'app'`` because only
+# the shim was vendored. The name ``app`` cannot be vendored as-is -- the
+# delivered platform's own package is ``app`` -- so the slice lives under
+# ``vendor/cerebrum/`` and every ``app.blocks``/``app.core`` import in copied
+# source is mechanically rewritten to the vendored name.
+
+#: Any reference to the Store's runtime packages, in code or import strings.
+_STORE_RUNTIME_RE = re.compile(r"\bapp\.(blocks|core)\b")
+#: A module-level reference to the Store's ``app`` package that is NOT
+#: blocks/core -- it executes at import time, so the block cannot load
+#: offline at all. Column 0 on purpose: an indented (function-local) import
+#: only breaks the one feature that runs it, and is recorded instead.
+_STORE_FOREIGN_TOP_RE = re.compile(
+    r"^(?:from\s+app(?:\.(?!blocks\b|core\b)[\w.]+)?\s+import|import\s+app\b)",
+    re.MULTILINE,
+)
+#: The same reference inside a function body (indented).
+_STORE_FOREIGN_LAZY_RE = re.compile(
+    r"^\s+from\s+(app(?:\.(?!blocks\b|core\b)[\w.]+)?)\s+import",
+    re.MULTILINE,
+)
+#: Names importable from ``app.blocks`` that are registry API, not block
+#: classes. The generated registry provides them (or core does).
+_REGISTRY_API_NAMES = frozenset(
+    {
+        "get_block",
+        "get_all_blocks",
+        "get_block_capabilities",
+        "BLOCK_REGISTRY",
+        "BlockCapabilities",
+        "UniversalBlock",
+        "UniversalContainer",
+        "TypedBlock",
+    }
+)
+#: One entry of the Store registry's literal defs:
+#: ``"name": ("app.blocks.module", "ClassName")``.
+_BLOCK_DEF_RE = re.compile(
+    r'"(?P<name>[\w-]+)"\s*:\s*\(\s*"app\.blocks\.(?P<mod>[\w.]+)"\s*,\s*"(?P<cls>\w+)"\s*\)'
+)
+
+
+def _rewrite_runtime_imports(text: str) -> str:
+    text = re.sub(r"\bapp\.blocks\b", "vendor.cerebrum.blocks", text)
+    return re.sub(r"\bapp\.core\b", "vendor.cerebrum.core", text)
+
+
+def _store_block_defs(blocks_root: Path) -> Dict[str, tuple]:
+    """block id -> (module name, class name), parsed from the Store registry's
+    literal defs. Parsed, not imported: importing the Store's ``app`` package
+    into the factory process would drag in its whole runtime."""
+    init = blocks_root / "app" / "blocks" / "__init__.py"
+    if not init.is_file():
+        return {}
+    text = init.read_text(encoding="utf-8")
+    return {
+        m.group("name"): (m.group("mod"), m.group("cls"))
+        for m in _BLOCK_DEF_RE.finditer(text)
+    }
+
+
+def _shim_needs_runtime(source: Path) -> bool:
+    return any(
+        _STORE_RUNTIME_RE.search(p.read_text(encoding="utf-8", errors="replace"))
+        for p in source.rglob("*.py")
+        if "__pycache__" not in p.parts
+    )
+
+
+def _closure_over_runtime(
+    blocks_root: Path, block_ids: Sequence[str], defs: Dict[str, tuple]
+) -> tuple:
+    """(block modules, core modules) the vendored blocks transitively need.
+
+    Every referenced module must exist; a reference the closure cannot
+    resolve fails the clone here, with the module named, rather than passing
+    the clone and surfacing as a ModuleNotFoundError on the customer's
+    machine.
+    """
+    blocks_dir = blocks_root / "app" / "blocks"
+    core_dir = blocks_root / "app" / "core"
+    class_to_name = {cls: name for name, (_, cls) in defs.items()}
+
+    block_mods: Dict[str, None] = {}
+    core_mods: Dict[str, None] = {}
+    todo: List[str] = []
+
+    for bid in block_ids:
+        if bid not in defs:
+            raise RoleError(
+                f"{bid}: shim imports the Store runtime but the Store registry "
+                f"({blocks_dir / '__init__.py'}) has no entry for it"
+            )
+        todo.append(defs[bid][0])
+
+    while todo:
+        mod = todo.pop()
+        if mod in block_mods:
+            continue
+        if "." in mod:
+            raise RoleError(
+                f"runtime slice cannot vendor app.blocks.{mod}: subpackage "
+                "blocks are not supported by the slice vendorer yet"
+            )
+        path = blocks_dir / f"{mod}.py"
+        if not path.is_file():
+            raise RoleError(
+                f"runtime slice needs app/blocks/{mod}.py which does not "
+                "exist in the Store checkout"
+            )
+        block_mods[mod] = None
+        text = path.read_text(encoding="utf-8", errors="replace")
+        core_mods.update(dict.fromkeys(re.findall(r"\bapp\.core\.(\w+)\b", text)))
+        todo.extend(re.findall(r"\bapp\.blocks\.(\w+)\b", text))
+        # Line-bounded on purpose: ``[\w,\s]+`` would swallow the next line.
+        for cls in re.findall(r"from\s+app\.blocks\s+import\s+([^\n(#]+)", text):
+            for name in (c.strip() for c in cls.split(",")):
+                if not name or name in _REGISTRY_API_NAMES:
+                    continue
+                ref = class_to_name.get(name)
+                if ref is None:
+                    raise RoleError(
+                        f"app/blocks/{mod}.py imports {name} from app.blocks "
+                        "but the Store registry maps no block to that class"
+                    )
+                todo.append(defs[ref][0])
+
+    seen_core: Dict[str, None] = {}
+    core_todo = list(core_mods)
+    while core_todo:
+        name = core_todo.pop()
+        if name in seen_core:
+            continue
+        path = core_dir / f"{name}.py"
+        if not path.is_file():
+            raise RoleError(
+                f"runtime slice needs app/core/{name}.py which does not "
+                "exist in the Store checkout"
+            )
+        seen_core[name] = None
+        text = path.read_text(encoding="utf-8", errors="replace")
+        core_todo.extend(re.findall(r"\bapp\.core\.(\w+)\b", text))
+        core_todo.extend(re.findall(r"^\s*from\s+\.(\w+)\s+import", text, re.MULTILINE))
+
+    return tuple(block_mods), tuple(seen_core)
+
+
+def _check_foreign_app_imports(rel: str, text: str) -> List[str]:
+    """Fail on a module-level foreign ``app`` import; return the lazy ones.
+
+    A top-level import executes when the block loads, so the block cannot
+    import offline at all -- the clone must fail with the module named. An
+    indented one only breaks the single feature that runs it; it is returned
+    so the lockfile records the limitation instead of shipping a surprise.
+    """
+    leftover = _STORE_FOREIGN_TOP_RE.search(text)
+    if leftover:
+        raise RoleError(
+            f"{rel} imports the Store's app package outside blocks/core at "
+            f"module level ({leftover.group(0).strip()!r}); the factory "
+            "cannot vendor that"
+        )
+    return [
+        f"{rel}: {module}"
+        for module in _STORE_FOREIGN_LAZY_RE.findall(text)
+    ]
+
+
+def _render_vendored_registry(entries: Dict[str, tuple]) -> str:
+    defs = "\n".join(
+        f'    "{name}": ("vendor.cerebrum.blocks.{mod}", "{cls}"),'
+        for name, (mod, cls) in sorted(entries.items())
+    )
+    return f'''"""Vendored Cerebrum block runtime registry.
+
+Generated by the factory CLONER. Lists ONLY the blocks vendored into this
+platform -- an entry pointing at a module that is not on disk would be a
+latent ModuleNotFoundError in the customer's environment.
+"""
+
+import importlib
+
+_BLOCK_DEFS = {{
+{defs}
+}}
+
+
+def get_block(name):
+    try:
+        module_path, class_name = _BLOCK_DEFS[name]
+    except KeyError:
+        raise KeyError(f"block {{name!r}} is not vendored in this platform") from None
+    return getattr(importlib.import_module(module_path), class_name)
+
+
+class _LazyRegistry:
+    """Mapping-shaped view over the vendored defs. Blocks use it for
+    cross-block dispatch (``"x" in BLOCK_REGISTRY``, ``BLOCK_REGISTRY[x]``)."""
+
+    def __contains__(self, name):
+        return name in _BLOCK_DEFS
+
+    def __getitem__(self, name):
+        return get_block(name)
+
+    def get(self, name, default=None):
+        try:
+            return get_block(name)
+        except KeyError:
+            return default
+
+    def keys(self):
+        return _BLOCK_DEFS.keys()
+
+
+BLOCK_REGISTRY = _LazyRegistry()
+
+_CLASS_TO_NAME = {{cls: name for name, (_, cls) in _BLOCK_DEFS.items()}}
+
+
+def __getattr__(name):
+    block = _CLASS_TO_NAME.get(name)
+    if block is None:
+        raise AttributeError(name)
+    return get_block(block)
+'''
+
+
+def _vendor_runtime_slice(
+    ctx: RoleContext, runtime_block_ids: Sequence[str]
+) -> tuple:
+    """Vendor the Store runtime the given blocks stand on.
+
+    Returns ``(files, lazy_foreign_imports)`` -- the workspace-relative paths
+    written and any function-local imports of unvendorable Store packages,
+    both for the lockfile.
+    """
+    blocks_root = Path(ctx.blocks_root)
+    defs = _store_block_defs(blocks_root)
+    block_mods, core_mods = _closure_over_runtime(blocks_root, runtime_block_ids, defs)
+
+    written: List[str] = []
+    lazy_foreign: List[str] = []
+
+    def _write(rel: Path, text: str) -> None:
+        lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
+        ctx.workspace.write_text(rel, text)
+        written.append(rel.as_posix())
+
+    base = Path("vendor") / "cerebrum"
+    _write(
+        base / "__init__.py",
+        '"""Cerebrum Store runtime, vendored at build time (see blocks.lock.json)."""\n',
+    )
+    _write(
+        base / "core" / "__init__.py",
+        '"""Vendored slice of the Store\'s app.core. Deliberately minimal."""\n',
+    )
+    for name in sorted(core_mods):
+        source = (blocks_root / "app" / "core" / f"{name}.py").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        _write(base / "core" / f"{name}.py", _rewrite_runtime_imports(source))
+
+    registry = {
+        bid: defs[bid] for bid in runtime_block_ids
+    }
+    _write(base / "blocks" / "__init__.py", _render_vendored_registry(registry))
+    for mod in sorted(block_mods):
+        source = (blocks_root / "app" / "blocks" / f"{mod}.py").read_text(
+            encoding="utf-8", errors="replace"
+        )
+        _write(base / "blocks" / f"{mod}.py", _rewrite_runtime_imports(source))
+
+    # The shims themselves still say ``from app.blocks import get_block`` --
+    # rewrite them in place to point at the vendored runtime.
+    for bid in runtime_block_ids:
+        shim_dir = Path("vendor") / "blocks" / bid
+        for py in sorted(
+            (ctx.workspace.workspace / shim_dir).rglob("*.py")
+        ):
+            if "__pycache__" in py.parts:
+                continue
+            rel = shim_dir / py.relative_to(ctx.workspace.workspace / shim_dir)
+            text = _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
+            lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
+            ctx.workspace.write_text(rel, text)
+
+    return written, sorted(set(lazy_foreign))
+
+
+def _runtime_pin(blocks_root: Path) -> str:
+    from app.factory.generator import git_head
+
+    revision = git_head(Path(blocks_root))
+    if revision and revision != "unknown":
+        return revision
+    return _content_digest(Path(blocks_root) / "app")
+
+
 def run_cloner(ctx: RoleContext) -> RoleResult:
     """Vendor each resolved block's real source into the workspace.
 
@@ -164,6 +469,7 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     lock: Dict[str, Any] = {"schema": "blocks.lock.v1", "blocks": {}}
     vendored: List[str] = []
     missing: List[str] = []
+    runtime_blocks: List[str] = []
 
     for bid in block_ids:
         source = _block_source_dir(bid, ctx.blocks_root)
@@ -178,11 +484,29 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "path": f"vendor/blocks/{bid}",
         }
         vendored.append(bid)
+        # A shim that reaches for the Store's runtime cannot import offline
+        # on its own -- the slice it stands on must be vendored with it.
+        if ctx.blocks_root and _shim_needs_runtime(source):
+            runtime_blocks.append(bid)
 
     if missing:
         raise RoleError(
             "no source found for block(s): " + ", ".join(sorted(missing))
         )
+
+    if runtime_blocks:
+        runtime_files, lazy_foreign = _vendor_runtime_slice(ctx, runtime_blocks)
+        lock["runtime"] = {
+            "source": "cerebrum-blocks",
+            "commit": _runtime_pin(Path(ctx.blocks_root)),
+            "path": "vendor/cerebrum",
+            "for_blocks": sorted(runtime_blocks),
+            "files": sorted(runtime_files),
+            # Function-local imports of Store packages the factory cannot
+            # vendor. Each breaks only the feature that runs it; listed so
+            # the limitation ships in the artifact instead of as a surprise.
+            "lazy_foreign_imports": lazy_foreign,
+        }
 
     ctx.workspace.write_text(
         "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
@@ -242,17 +566,37 @@ def load_block(block_id: str):
     return module
 
 
-def execute(block_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Run a vendored block locally and return its result."""
+def execute(
+    block_id: str,
+    payload: Dict[str, Any],
+    action: str | None = None,
+    params: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """Run a vendored block locally and return its result envelope.
+
+    Real Store blocks are action-dispatched: the domain data travels as
+    ``input`` and the operation name as ``action`` (each block declares a
+    default in its block.json). A call with no action reaches blocks that
+    answer "Unknown action" -- pass the one the capability needs.
+    """
     module = load_block(block_id)
     run = getattr(module, "run", None)
     if run is None:
         raise BlockNotVendored(f"{block_id} exposes no run() entry point")
-    return run(input=payload)
+    kwargs = dict(params or {})
+    if action is not None:
+        kwargs["action"] = action
+    return run(input=payload, **kwargs)
 '''
 
 
-def _handler_module(capability_id: str, block_ids: Sequence[str], body: str, source: str) -> str:
+def _handler_module(
+    capability_id: str,
+    block_ids: Sequence[str],
+    body: str,
+    source: str,
+    default_actions: Optional[Dict[str, str]] = None,
+) -> str:
     return f'''"""Handler for capability {capability_id}.
 
 Written by the factory WRITER role ({source}). Blocks are invoked through the
@@ -267,6 +611,9 @@ from app.dispatch import execute
 
 CAPABILITY_ID = "{capability_id}"
 BLOCK_IDS = {list(block_ids)!r}
+#: Each block's declared default action (from its block.json). Blocks are
+#: action-dispatched; calling one with no action is answered with an error.
+BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -283,7 +630,9 @@ def _templated_body(block_ids: Sequence[str]) -> str:
     return (
         "    results = {}\n"
         "    for block_id in BLOCK_IDS:\n"
-        "        results[block_id] = execute(block_id, payload)\n"
+        "        results[block_id] = execute(\n"
+        "            block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id)\n"
+        "        )\n"
         '    return {"capability": CAPABILITY_ID, "status": "ok", "results": results}'
     )
 
@@ -722,6 +1071,59 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 """
 
 
+def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
+    """What this vendored block actually accepts, gathered at build time.
+
+    Two sources, both already in the workspace: the block.json the CLONER
+    vendored (declared inputs, default action, action options) and -- for
+    Store runtime blocks -- the ``input_schema`` required fields parsed from
+    the vendored module. The first live build failed precisely here: handlers
+    sent raw domain payloads to blocks that validate their input, and nothing
+    told either the coder or the template what the blocks wanted.
+    """
+    contract: Dict[str, Any] = {"block_id": block_id}
+    meta_rel = Path("vendor") / "blocks" / block_id / "block.json"
+    if ctx.workspace.exists(meta_rel):
+        try:
+            meta = json.loads(ctx.workspace.read_text(meta_rel))
+        except (ValueError, OSError):
+            meta = {}
+        declared = []
+        for item in meta.get("inputs", []):
+            name = item.get("name")
+            if not name:
+                continue
+            if name == "action":
+                if item.get("default") is not None:
+                    contract["default_action"] = item["default"]
+                if item.get("options"):
+                    contract["action_options"] = list(item["options"])
+                continue
+            declared.append(
+                {
+                    "name": name,
+                    "type": item.get("type"),
+                    "required": bool(item.get("required")),
+                }
+            )
+        if declared:
+            contract["declared_inputs"] = declared
+
+    module_rel = Path("vendor") / "cerebrum" / "blocks" / f"{block_id}.py"
+    if ctx.workspace.exists(module_rel):
+        source = ctx.workspace.read_text(module_rel)
+        schema = re.search(
+            r"input_schema\s*=\s*Schema\((.*?)\)", source, re.DOTALL
+        )
+        if schema:
+            required = re.search(r"required_fields\s*=\s*\[([^\]]*)\]", schema.group(1))
+            if required:
+                fields = re.findall(r"[\"'](\w+)[\"']", required.group(1))
+                if fields:
+                    contract["input_required_fields"] = fields
+    return contract
+
+
 def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[tuple]:
     """Ask the coding agent for this handler's body, or None if unavailable.
 
@@ -742,6 +1144,7 @@ def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[t
             product_name=getattr(ctx.blueprint, "product_name", "platform"),
             vertical=getattr(ctx.blueprint, "vertical", "product"),
             work_list=list(ctx.work_list),
+            block_contracts={b: _block_contract(ctx, b) for b in usable},
         )
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.
@@ -867,9 +1270,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         authored = _coder_body(ctx, cap, usable)
         body, source = authored or (_templated_body(usable), fallback_source)
 
+        default_actions = {
+            b: contract["default_action"]
+            for b in usable
+            if (contract := _block_contract(ctx, b)).get("default_action")
+        }
         ctx.workspace.write_text(
             Path("app") / "actions" / f"{name}.py",
-            _handler_module(cap.capability_id, usable, body, source),
+            _handler_module(
+                cap.capability_id, usable, body, source, default_actions
+            ),
         )
         actions_init.append(f"from app.actions import {name}  # noqa: F401")
         written.append(name)
