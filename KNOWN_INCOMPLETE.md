@@ -89,6 +89,11 @@ test first time. The agent path works.
 it across three rework rounds, ending `FAILED_BUDGET_SPENT`. The runner
 behaved correctly in refusing to ship it.
 
+**Scope that result honestly: it holds for a 2-capability blueprint.** A
+realistic 5-capability build does not converge even on `kimi-k2.7-code` — see
+1d. "The agent path works" is true of the smoke case and not yet of a client-
+grade one.
+
 **The original conclusion here — "K2-class models are required but unavailable"
 — was wrong, and the cause is worth remembering.** `coder.py` hardcoded
 `temperature: 0.2`; every kimi-k2.x/k3 model answers `400 invalid temperature:
@@ -101,6 +106,47 @@ already documented. Regression-tested in `tests/test_coder_temperature.py`.
 
 Also fixed: the factory fallback default was `kimi-k2.5-code`, which returns
 `404 Not found the model` — the retry leg had never been real.
+
+### 1d. The agent path does not converge on a realistic blueprint — MEASURED
+The 2-capability smoke (`runner_smoke.yaml`) builds SUCCESS with zero rework.
+The 5-capability realistic one (`field_ops.yaml`) fails its TESTER gate three
+times and does not converge. Both on `kimi-k2.7-code`. Scale, not model.
+
+**Root cause: the model spec is thinner than the code the agent writes
+against it.** `coder.generate_model_spec` returns only `name` + `type` per
+field. The agent then, reasonably, writes route validation the spec cannot
+express — e.g. `severity must be one of: Critical, High, Informational, Low,
+Medium`. `roles._sample_payload` builds the TESTER's payload from generic
+type samples, sends `severity="sample"`, and the route correctly rejects it.
+
+The rework loop **cannot** resolve this. The only way for the WRITER to pass
+is to delete its own validation — to write worse code to satisfy a weaker
+test. Three rounds confirmed it. The gates are not too strict; the spec is
+too thin.
+
+Fix direction: extend the spec with value constraints (`allowed_values`,
+`min`/`max`), have `_sample_payload` honour them, and constrain the route
+prompt to enforce nothing the spec does not declare.
+
+### 1e. A phase killed mid-write leaves a torn workspace — MEASURED
+The runner records verdicts per *phase*. A phase killed part-way through
+leaves a state no verdict describes, and the agent picks different entity
+names on each call, so two partial passes do not compose.
+
+Observed on the `field_ops` run: the process was killed during a WRITER pass.
+`models.py`/`store.py` came from that pass (table `defect`) while
+`routes.py`/`main.py` survived from an earlier one (`store.save("field_defect")`).
+The platform booted and then answered
+`sqlite3.OperationalError: no such table: field_defect`.
+
+Worse for resume: `completed_roles()` reads WRITER's last terminal event as
+`GATE_PASSED` from the previous round, so `resume_point()` returns TESTER and
+would test a half-written `app/`. `test_resume_picks_up_where_the_kill_happened`
+only ever kills *between* phases, so it does not cover this.
+
+Fix direction: make a WRITER pass atomic — stage and swap on success — and
+treat a `PHASE_STARTED` with no terminal event as "must re-run", not as the
+previous verdict.
 
 ### 2. CEREBRUM_LLM_API_KEY missing on the Render backend — BLOCKS PRODUCTION
 **Owner: Chadi. Dashboard secret. Not fixable in code — do not work around it.**
