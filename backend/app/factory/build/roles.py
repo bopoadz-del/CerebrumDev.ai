@@ -1140,7 +1140,11 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
 
 
 def _coder_body(
-    ctx: RoleContext, cap: Any, usable: Sequence[str], spec: Optional[Dict[str, Any]] = None
+    ctx: RoleContext,
+    cap: Any,
+    usable: Sequence[str],
+    spec: Optional[Dict[str, Any]] = None,
+    previous_attempt: Optional[str] = None,
 ) -> Optional[tuple]:
     """Ask the coding agent for this handler's body, or None if unavailable.
 
@@ -1167,6 +1171,7 @@ def _coder_body(
             work_list=list(ctx.work_list),
             block_contracts={b: _block_contract(ctx, b) for b in usable},
             model_fields=(spec or {}).get("fields"),
+            previous_attempt=previous_attempt,
         )
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.
@@ -1198,7 +1203,10 @@ def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
 
 
 def _coder_route_body(
-    ctx: RoleContext, cap: Any, spec: Dict[str, Any]
+    ctx: RoleContext,
+    cap: Any,
+    spec: Dict[str, Any],
+    previous_attempt: Optional[str] = None,
 ) -> Optional[tuple]:
     from app.factory.coder import CoderError, coder_enabled, generate_route_body
 
@@ -1211,6 +1219,7 @@ def _coder_route_body(
             entity=spec["entity"],
             fields=list(spec["fields"]),
             work_list=list(ctx.work_list),
+            previous_attempt=previous_attempt,
         )
     except CoderError as exc:
         _record_failure(ctx, f"route:{cap.capability_id}", exc)
@@ -1362,7 +1371,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             continue
 
         usable = [b for b in cap.block_ids if b in vendored]
-        authored = _coder_body(ctx, cap, usable, specs[cid])
+        # On rework, hand the coder its own last attempt: eight live rounds
+        # proved that regenerating from the same prompt converges to the
+        # same wrong code, verbatim.
+        previous_attempt = (
+            ctx.workspace.read_text(handler_rel)
+            if ctx.work_list and ctx.workspace.exists(handler_rel)
+            else None
+        )
+        authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
         body, source = authored or (_templated_body(usable), fallback_source)
 
         default_actions = {
@@ -1392,7 +1409,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 f"route:{cid}", "unchanged from previous round"
             )
         else:
-            authored = _coder_route_body(ctx, cap, spec)
+            authored = _coder_route_body(
+                ctx,
+                cap,
+                spec,
+                previous_attempt=previous_routes.get(cid) if ctx.work_list else None,
+            )
             body, route_source = authored or (
                 _templated_route_body(spec),
                 fallback_source,

@@ -341,3 +341,38 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
     assert "create_team" in user_message
     assert "input_required_fields" in user_message
     assert "members" in user_message
+
+
+def test_a_rework_prompt_carries_the_previous_attempt(monkeypatch):
+    """Eight live rounds proved regeneration from the same prompt converges
+    to the same wrong code, verbatim. A rework is an EDIT: the coder must see
+    what it wrote last time next to what failed."""
+    from app.factory import coder
+
+    captured = {}
+
+    def _capture(messages):
+        captured["messages"] = messages
+        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setattr(coder, "_llm_code_call", _capture)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {"model": "stub"},
+    )
+
+    coder.generate_platform_handler(
+        capability_id="operations_dashboard",
+        description="rollup",
+        block_ids=["analytics"],
+        product_name="Field Ops",
+        vertical="field_operations",
+        work_list=["analytics rejected: metric and value required"],
+        previous_attempt='result = execute("analytics", data, "track_event")\nreturn result',
+    )
+
+    user_message = captured["messages"][-1]["content"]
+    assert "YOUR PREVIOUS ATTEMPT" in user_message
+    assert 'execute("analytics", data, "track_event")' in user_message
+    assert "metric and value required" in user_message

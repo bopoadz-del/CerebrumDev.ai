@@ -642,6 +642,7 @@ def generate_route_body(
     entity: str,
     fields: List[Dict[str, Any]],
     work_list: Optional[List[str]] = None,
+    previous_attempt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write the endpoint body for one capability's route.
 
@@ -660,6 +661,12 @@ def generate_route_body(
         lines.append(
             "\nA previous attempt failed these checks — fix them:\n"
             + "\n".join(f"- {item}" for item in work_list)
+        )
+    if previous_attempt:
+        lines.append(
+            "\nYOUR PREVIOUS ATTEMPT is below. It produced the failures "
+            "above. Do not start over: keep what works and change only what "
+            "the findings demand.\n----\n" + previous_attempt + "\n----"
         )
     lines.append("\nWrite the endpoint() body now.")
 
@@ -683,6 +690,7 @@ def generate_platform_handler(
     work_list: Optional[List[str]] = None,
     block_contracts: Optional[Dict[str, Any]] = None,
     model_fields: Optional[List[Dict[str, Any]]] = None,
+    previous_attempt: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Write the ``handle`` body for one runner-built capability.
 
@@ -722,6 +730,16 @@ def generate_platform_handler(
         lines.append(
             "\nA previous attempt failed these checks — fix them:\n"
             + "\n".join(f"- {item}" for item in work_list)
+        )
+    if previous_attempt:
+        lines.append(
+            "\nYOUR PREVIOUS ATTEMPT is below. It produced the failures "
+            "above. Do not start over: keep what works and change only what "
+            "the findings demand. If a block action rejected your input, "
+            "either supply the fields its error names (derived from the "
+            "payload) or pick a different action from that block's "
+            "action_options that matches the capability's intent.\n"
+            "----\n" + previous_attempt + "\n----"
         )
     lines.append("\nWrite the handle() body now.")
 
