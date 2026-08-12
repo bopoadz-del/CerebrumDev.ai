@@ -1421,6 +1421,12 @@ _CONFTEST = '''"""Test bootstrap for the generated platform.
 
 Puts the platform root on sys.path and points persistence at a scratch
 directory, so running the suite never touches a real data file.
+
+STORAGE_PATH is FORCED, not defaulted. The build environment legitimately
+carries its own STORAGE_PATH (the factory backend sets one), and a
+``setdefault`` here made every tester round share one database file: a
+table created by round N rejected round N+1's columns, and the rework loop
+burned its budget chasing schema errors no round had actually caused.
 """
 
 import os
@@ -1429,7 +1435,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-os.environ.setdefault("STORAGE_PATH", tempfile.mkdtemp(prefix="platform-test-"))
+os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
 '''
 
 
