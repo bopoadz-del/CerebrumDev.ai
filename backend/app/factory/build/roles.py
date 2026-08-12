@@ -1139,13 +1139,19 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
     return contract
 
 
-def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[tuple]:
+def _coder_body(
+    ctx: RoleContext, cap: Any, usable: Sequence[str], spec: Optional[Dict[str, Any]] = None
+) -> Optional[tuple]:
     """Ask the coding agent for this handler's body, or None if unavailable.
 
     Returns ``(body, source)``. None means the agent could not be used --
     disabled, unconfigured, or it failed its validation gate. The caller then
     ships the deterministic body and records *which* path produced it, so the
     artifact never implies authorship it did not have.
+
+    ``spec`` is the capability's data model. Without it the coder invents its
+    own required payload fields, and the suite -- which builds payloads from
+    the spec -- rejects the handler for demanding fields no caller sends.
     """
     from app.factory.coder import CoderError, coder_enabled, generate_platform_handler
 
@@ -1160,6 +1166,7 @@ def _coder_body(ctx: RoleContext, cap: Any, usable: Sequence[str]) -> Optional[t
             vertical=getattr(ctx.blueprint, "vertical", "product"),
             work_list=list(ctx.work_list),
             block_contracts={b: _block_contract(ctx, b) for b in usable},
+            model_fields=(spec or {}).get("fields"),
         )
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.
@@ -1257,6 +1264,34 @@ def _coder_readme(
     return text, f"coder LLM ({get_factory_llm_config_model()})"
 
 
+def _failing_capability_ids(work_list: Sequence[str], cap_ids: Sequence[str]) -> set:
+    """Which capabilities the TESTER's findings actually implicate.
+
+    On the seventh live build the loop fixed defect_register and REGRESSED
+    site_inspection_log, because every rework round regenerated every
+    handler -- a nondeterministic coder given the whole platform each round
+    plays whack-a-mole. A rework pass must be a ratchet: touch only what
+    failed, keep what passed.
+
+    Empty findings (the first pass) mean everything. Findings that name no
+    capability mean everything too -- an infrastructure failure cannot be
+    localised, and guessing "nothing" would end the rework with the suite
+    still red.
+    """
+    if not work_list:
+        return set(cap_ids)
+    text = "\n".join(str(item) for item in work_list)
+    failing = {
+        cap_id
+        for cap_id in cap_ids
+        # Word-bounded: a short capability id must not match inside an
+        # unrelated word of the traceback.
+        if re.search(rf"\b{re.escape(cap_id)}\b", text)
+        or re.search(rf"\b{re.escape(cap_id.replace('-', '_'))}\b", text)
+    }
+    return failing or set(cap_ids)
+
+
 def run_writer(ctx: RoleContext) -> RoleResult:
     """Manufacture the platform: dispatch runtime plus one handler per capability.
 
@@ -1266,50 +1301,39 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     no key and must still exercise this route, so the fallback is a first-class
     path rather than an error.
 
-    On a rework pass ``ctx.work_list`` carries the TESTER's findings, which are
-    handed to the coder as the thing to fix.
+    On a rework pass ``ctx.work_list`` carries the TESTER's findings. Only the
+    capabilities those findings implicate are regenerated; everything else is
+    reused from the previous round (specs from state, handler files from the
+    committed destination, route bodies from state), so a green capability
+    cannot regress while a red one is being fixed.
     """
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     ctx.workspace.write_text(Path("app") / "dispatch.py", _DISPATCH_RUNTIME)
 
     vendored = set(ctx.state.get("vendored_blocks", ()))
+    cap_ids = [cap.capability_id for cap in ctx.plan.capabilities]
+    failing = _failing_capability_ids(ctx.work_list, cap_ids)
+    previous_specs: Dict[str, Any] = dict(ctx.state.get("model_specs") or {})
+    previous_sources: Dict[str, str] = dict(ctx.state.get("artifact_sources") or {})
+    previous_routes: Dict[str, str] = dict(ctx.state.get("route_bodies") or {})
+
     written: List[str] = []
     sources: Dict[str, str] = {}
     fallback_source = "deterministic contract template"
 
-    actions_init = ['"""Capability handlers."""', ""]
-    for cap in ctx.plan.capabilities:
-        name = cap.capability_id.replace("-", "_")
-        usable = [b for b in cap.block_ids if b in vendored]
-
-        authored = _coder_body(ctx, cap, usable)
-        body, source = authored or (_templated_body(usable), fallback_source)
-
-        default_actions = {
-            b: contract["default_action"]
-            for b in usable
-            if (contract := _block_contract(ctx, b)).get("default_action")
-        }
-        ctx.workspace.write_text(
-            Path("app") / "actions" / f"{name}.py",
-            _handler_module(
-                cap.capability_id, usable, body, source, default_actions
-            ),
-        )
-        actions_init.append(f"from app.actions import {name}  # noqa: F401")
-        written.append(name)
-        sources[cap.capability_id] = source
-
-    ctx.workspace.write_text(
-        Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
-    )
-
-    # --- domain models, designed by the agent when one is available --------
+    # --- domain models FIRST: handlers and routes are written against them --
     specs: Dict[str, Dict[str, Any]] = {}
     for cap in ctx.plan.capabilities:
+        cid = cap.capability_id
+        if cid not in failing and cid in previous_specs:
+            specs[cid] = previous_specs[cid]
+            sources[f"model:{cid}"] = previous_sources.get(
+                f"model:{cid}", "unchanged from previous round"
+            )
+            continue
         spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
-        specs[cap.capability_id] = spec
-        sources[f"model:{cap.capability_id}"] = (
+        specs[cid] = spec
+        sources[f"model:{cid}"] = (
             f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
         )
     ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
@@ -1323,34 +1347,86 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         else fallback_source
     )
 
+    # --- capability handlers ------------------------------------------------
+    actions_init = ['"""Capability handlers."""', ""]
+    for cap in ctx.plan.capabilities:
+        cid = cap.capability_id
+        name = cid.replace("-", "_")
+        handler_rel = Path("app") / "actions" / f"{name}.py"
+        actions_init.append(f"from app.actions import {name}  # noqa: F401")
+        written.append(name)
+
+        if cid not in failing and ctx.workspace.exists(handler_rel):
+            # Ratchet: the previous round's handler passed; keep it.
+            sources[cid] = previous_sources.get(cid, "unchanged from previous round")
+            continue
+
+        usable = [b for b in cap.block_ids if b in vendored]
+        authored = _coder_body(ctx, cap, usable, specs[cid])
+        body, source = authored or (_templated_body(usable), fallback_source)
+
+        default_actions = {
+            b: contract["default_action"]
+            for b in usable
+            if (contract := _block_contract(ctx, b)).get("default_action")
+        }
+        ctx.workspace.write_text(
+            handler_rel,
+            _handler_module(cid, usable, body, source, default_actions),
+        )
+        sources[cid] = source
+
+    ctx.workspace.write_text(
+        Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
+    )
+
     # --- API surface -------------------------------------------------------
     entries: List[Dict[str, Any]] = []
+    route_bodies: Dict[str, str] = {}
     for cap in ctx.plan.capabilities:
-        spec = specs[cap.capability_id]
-        authored = _coder_route_body(ctx, cap, spec)
-        body, route_source = authored or (_templated_route_body(spec), fallback_source)
+        cid = cap.capability_id
+        spec = specs[cid]
+        if cid not in failing and cid in previous_routes:
+            body = previous_routes[cid]
+            route_source = previous_sources.get(
+                f"route:{cid}", "unchanged from previous round"
+            )
+        else:
+            authored = _coder_route_body(ctx, cap, spec)
+            body, route_source = authored or (
+                _templated_route_body(spec),
+                fallback_source,
+            )
+        route_bodies[cid] = body
         entries.append(
             {
-                "capability_id": cap.capability_id,
-                "name": cap.capability_id.replace("-", "_"),
+                "capability_id": cid,
+                "name": cid.replace("-", "_"),
                 "entity": spec["entity"],
                 "body": body,
                 "source": route_source,
             }
         )
-        sources[f"route:{cap.capability_id}"] = route_source
+        sources[f"route:{cid}"] = route_source
     ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
 
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
     ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
     ctx.workspace.write_text("requirements.txt", _render_requirements())
-    readme = _coder_readme(ctx, product_name, written, sorted(vendored))
-    ctx.workspace.write_text(
-        "README.md",
-        readme[0] if readme else _templated_readme(product_name, written, sorted(vendored)),
-    )
-    sources["readme"] = readme[1] if readme else fallback_source
+    if ctx.work_list and ctx.workspace.exists("README.md"):
+        # The README does not fail tests; regenerating it on rework spends
+        # coder budget for churn.
+        sources["readme"] = previous_sources.get("readme", "unchanged from previous round")
+    else:
+        readme = _coder_readme(ctx, product_name, written, sorted(vendored))
+        ctx.workspace.write_text(
+            "README.md",
+            readme[0]
+            if readme
+            else _templated_readme(product_name, written, sorted(vendored)),
+        )
+        sources["readme"] = readme[1] if readme else fallback_source
     sources["entrypoint"] = fallback_source
     sources["requirements"] = fallback_source
 
@@ -1378,6 +1454,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             "artifact_sources": sources,
             "coder_artifacts": by_coder,
             "model_specs": specs,
+            # Kept for the next rework round's ratchet: bodies of routes that
+            # passed are reused verbatim instead of regenerated.
+            "route_bodies": route_bodies,
         },
     )
 
@@ -1530,18 +1609,23 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY"):',
         "        os.environ.pop(var, None)",
     ]
+    smoke.append("    failures = []")
     for cap in ctx.plan.capabilities:
         name = cap.capability_id.replace("-", "_")
         sample = _sample_payload(specs.get(cap.capability_id, {}))
+        # Collect, never abort: a run that stops at the first failing
+        # capability hides the rest, and the rework round fixes one thing
+        # per round instead of all of them.
         smoke += [
             f"    from app.actions import {name}",
             f"    out = {name}.handle({sample!r})",
-            f"    assert isinstance(out, dict), '{name} returned a non-dict'",
-            '    assert out.get("ok") is not False, (',
-            f'        "{name} rejected a payload built from its own schema: "',
-            '        + str(out.get("error"))',
-            "    )",
+            "    if not isinstance(out, dict):",
+            f"        failures.append('{name} returned a non-dict: ' + repr(out)[:120])",
+            '    elif out.get("ok") is False:',
+            f"        failures.append('{name} rejected a payload built from its own "
+            "schema: ' + str(out.get('error')))",
         ]
+    smoke.append('    assert not failures, "; ".join(failures)')
     if not caps:
         smoke.append("    pass")
     ctx.workspace.write_text(Path("tests") / "test_smoke.py", "\n".join(smoke) + "\n")
@@ -1612,32 +1696,37 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "def test_every_capability_route_answers():",
     ]
     if caps:
+        route_lines.append("    failures = []")
         for cap in ctx.plan.capabilities:
             name = cap.capability_id.replace("-", "_")
             spec = specs.get(cap.capability_id, {})
             # A payload built from the entity's OWN fields. Posting an
             # arbitrary body would let a route that rejects everything pass:
             # it answers 200 with {"ok": false} and a shape-only assertion
-            # cannot tell that apart from success.
+            # cannot tell that apart from success. Failures are collected,
+            # not raised, so one round's findings name EVERY broken
+            # capability instead of the first one.
             sample = _sample_payload(spec)
             route_lines += [
                 f"    payload = {sample!r}",
                 f'    resp = client.post("/v1/{name}", json=payload)',
-                f'    assert resp.status_code == 200, ("{name}", resp.text)',
-                "    body = resp.json()",
-                f'    assert isinstance(body, dict), "{name} returned a non-object"',
-                "    # A valid payload must not come back as an error.",
-                '    assert body.get("ok") is not False, (',
-                f'        "{name} rejected a payload built from its own schema: "',
-                '        + str(body.get("error"))',
-                "    )",
+                "    if resp.status_code != 200:",
+                f"        failures.append('{name}: HTTP ' + str(resp.status_code)"
+                " + ': ' + resp.text[:200])",
+                '    elif resp.json().get("ok") is False:',
+                f"        failures.append('{name} rejected a payload built from its "
+                "own schema: ' + str(resp.json().get('error')))",
+                "    else:",
+                f'        listed = client.get("/v1/{name}")',
+                "        if listed.status_code != 200:",
+                f"            failures.append('{name} list: HTTP '"
+                " + str(listed.status_code))",
+                '        elif not listed.json()["items"]:',
+                f"            failures.append('{name} accepted a record but "
+                "persisted nothing')",
                 "",
-                f'    listed = client.get("/v1/{name}")',
-                f'    assert listed.status_code == 200, ("{name} list", listed.text)',
-                '    items = listed.json()["items"]',
-                "    assert isinstance(items, list)",
-                f'    assert items, "{name} accepted a record but persisted nothing"',
             ]
+        route_lines.append('    assert not failures, "; ".join(failures)')
     else:
         route_lines.append("    pass")
     ctx.workspace.write_text(

@@ -682,6 +682,7 @@ def generate_platform_handler(
     vertical: str,
     work_list: Optional[List[str]] = None,
     block_contracts: Optional[Dict[str, Any]] = None,
+    model_fields: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Write the ``handle`` body for one runner-built capability.
 
@@ -704,10 +705,17 @@ def generate_platform_handler(
         f"Capability description: {description}",
         f"BLOCK_IDS available to execute(): {block_ids!r}",
     ]
+    if model_fields:
+        lines.append(
+            "\nThe payload arriving at handle() carries the capability's data "
+            "model. Validate ONLY these fields; never demand any other:\n"
+            + describe_fields(model_fields)
+        )
     if block_contracts:
         lines.append(
             "\nBlock contracts (invoke each block with an action it supports "
-            "and an input dict carrying every required field):\n"
+            "and an input dict carrying every required field, CONSTRUCTED "
+            "from the payload fields above -- the caller sends only those):\n"
             + json.dumps(block_contracts, indent=2, sort_keys=True)
         )
     if work_list:

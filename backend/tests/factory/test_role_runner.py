@@ -216,7 +216,10 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     assert "client.post(" in routes_test
     # A route that rejects everything answers 200 with ok:false; the suite must
     # not accept that as success.
-    assert 'body.get("ok") is not False' in routes_test
+    # The collector form: an ok=False answer is recorded as a failure, so a
+    # route that rejects everything cannot pass on shape alone.
+    assert '.get("ok") is False' in routes_test
+    assert "rejected a payload built from its own schema" in routes_test
 
     smoke = (out / "tests" / "test_smoke.py").read_text(encoding="utf-8")
     assert ".handle(" in smoke, "capabilities must be executed, not imported"
