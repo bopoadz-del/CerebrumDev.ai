@@ -89,6 +89,32 @@ def test_dispatch_without_action_stays_bare(tmp_path):
     assert block.CALLS[-1] == {"input": {"name": "x"}}
 
 
+def test_dispatch_turns_a_block_raise_into_a_named_envelope(tmp_path):
+    """The Store shim raises bare "Input validation failed" -- no block, no
+    field list -- and three rework rounds burned without converging because
+    that was the whole finding. Dispatch must return the failure as data,
+    with the block named, so handlers and tests can report something
+    actionable."""
+    root = _platform_with_recording_block(tmp_path)
+    raiser = root / "vendor" / "blocks" / "raiser"
+    raiser.mkdir(parents=True)
+    (raiser / "block.py").write_text(
+        "def run(**kwargs):\n    raise RuntimeError('Input validation failed')\n",
+        encoding="utf-8",
+    )
+    dispatch = _load("dispatch_envelope_probe", root / "app" / "dispatch.py")
+
+    out = dispatch.execute("raiser", {"x": 1}, action="run")
+    assert out["status"] == "error"
+    assert out["block"] == "raiser"
+    assert "Input validation failed" in out["error"]
+
+    # Structural failures still raise: a missing block is a build defect,
+    # not a runtime outcome to report politely.
+    with pytest.raises(dispatch.BlockNotVendored):
+        dispatch.execute("not_vendored", {})
+
+
 def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):
     """The deterministic path must at least reach a real action -- the
     block.json default -- instead of the guaranteed 'Unknown action: None'."""

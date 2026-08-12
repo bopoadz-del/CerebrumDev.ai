@@ -586,7 +586,22 @@ def execute(
     kwargs = dict(params or {})
     if action is not None:
         kwargs["action"] = action
-    return run(input=payload, **kwargs)
+    # A block-level failure comes back as data, not as an exception. The
+    # Store's shim raises RuntimeError on an error envelope, which destroys
+    # the diagnosis: a handler (and a failing test) sees "Input validation
+    # failed" with no block name and no field list. Structural failures --
+    # a block that is not vendored -- still raise above.
+    try:
+        return run(input=payload, **kwargs)
+    except BlockNotVendored:
+        raise
+    except Exception as exc:
+        return {
+            "status": "error",
+            "block": block_id,
+            "action": action,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 '''
 
 

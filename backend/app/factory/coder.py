@@ -408,9 +408,14 @@ Contract:
   and the input fields its schema REQUIRES). The dict you pass as `payload`
   becomes the block's input: build it so every required input field is
   present, mapped or derived from the caller's payload.
-- A block returns an envelope. Treat result.get("status") == "error" (or an
-  "error" key in the result) as a failure: surface it in your return value
-  as {"ok": False, "error": ...} rather than pretending success.
+- The caller knows NOTHING about blocks. NEVER require a block-specific
+  field (like "steps" or "channel") from the caller's payload -- CONSTRUCT
+  it inside the handler from the domain data the capability does have.
+  Validate only the capability's own fields.
+- execute() never raises for a block-level failure; it returns an envelope.
+  Treat result.get("status") == "error" (or an "error" key in the result)
+  as a failure: surface it in your return value as {"ok": False,
+  "error": ...} rather than pretending success.
 - Use execute() for every block in BLOCK_IDS whose output the capability needs.
 - Return a JSON-serialisable dict. Include "capability": CAPABILITY_ID.
 - Standard library only, and no import statements at all. No network, no
