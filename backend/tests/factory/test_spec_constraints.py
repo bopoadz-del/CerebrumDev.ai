@@ -1,0 +1,217 @@
+"""The spec must be able to express every rule the route enforces.
+
+New-shape tests for the defect a realistic 5-capability build exposed. The
+model spec carried only name+type, so the agent wrote route validation the
+spec could not express -- `severity must be one of: Critical, High,
+Informational, Low, Medium` -- while the tester built its payload from generic
+type samples and sent `severity="sample"`. The route correctly rejected it and
+the gate correctly failed.
+
+That failure is unrecoverable by design: the only way for the WRITER to pass
+would be to delete its own validation, i.e. write worse code to satisfy a
+weaker test. Three rework rounds confirmed it. The fix is not a looser gate --
+it is a spec rich enough to hold the constraint, so the route enforces and the
+tester satisfies the same declaration.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from app.factory.blueprint import load_blueprint
+from app.factory.build.roles import (
+    _constraints_of,
+    _field_default,
+    _sample_payload,
+    _sample_value,
+)
+from app.factory.build.runner import RoleRunner
+from app.factory.coder import _clean_constraints, describe_fields
+
+ROOT = Path(__file__).resolve().parents[3]
+FIELD_OPS = ROOT / "blueprints/examples/field_ops.yaml"
+
+
+# -- the sample payload must satisfy what the field declares --------------
+
+
+def test_a_vocabulary_field_samples_from_its_own_vocabulary():
+    """The exact bug: a generic "sample" is type-valid and domain-invalid."""
+    field = {
+        "name": "severity",
+        "type": "str",
+        "allowed_values": ["Critical", "High", "Low"],
+    }
+    assert _sample_value(field) == "Critical"
+    assert _sample_value(field) in field["allowed_values"]
+
+
+def test_a_bounded_number_samples_inside_its_bounds():
+    assert _sample_value({"name": "n", "type": "int", "min": 5, "max": 9}) == 5
+    assert _sample_value({"name": "n", "type": "int", "max": 0}) == 0
+    # No bounds declared -> the generic sample is fine.
+    assert _sample_value({"name": "n", "type": "int"}) == 1
+
+
+def test_a_whole_payload_satisfies_every_declared_constraint():
+    spec = {
+        "entity": "defect",
+        "fields": [
+            {"name": "ref", "type": "str"},
+            {"name": "severity", "type": "str", "allowed_values": ["High", "Low"]},
+            {"name": "days_open", "type": "int", "min": 1, "max": 30},
+            {"name": "is_open", "type": "bool"},
+        ],
+    }
+    payload = _sample_payload(spec)
+    assert payload["severity"] in ("High", "Low")
+    assert 1 <= payload["days_open"] <= 30
+    assert isinstance(payload["is_open"], bool)
+
+
+def test_the_dataclass_default_is_itself_valid():
+    """A default-constructed model must not violate its own constraints."""
+    assert _field_default({"name": "s", "type": "str", "allowed_values": ["a", "b"]}) == "'a'"
+    assert _field_default({"name": "n", "type": "int", "min": 3}) == "3"
+    assert _field_default({"name": "n", "type": "int"}) == "0"
+
+
+# -- the spec validator ---------------------------------------------------
+
+
+def test_a_vocabulary_is_accepted_and_deduped():
+    out = _clean_constraints(
+        {"allowed_values": ["open", "closed", "open", " done "]}, "str"
+    )
+    assert out["allowed_values"] == ["open", "closed", "done"]
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        {"allowed_values": ["only_one"]},          # a constant, not an enum
+        {"allowed_values": []},                     # nothing declared
+        {"allowed_values": "open,closed"},          # not a list
+        {"allowed_values": [1, 2, 3]},              # not strings
+    ),
+)
+def test_a_malformed_vocabulary_is_dropped_not_trusted(raw):
+    """A constraint the platform cannot enforce is worse than none — the route
+    would reject payloads the tests are entitled to send."""
+    assert "allowed_values" not in _clean_constraints(raw, "str")
+
+
+def test_an_inverted_range_is_dropped():
+    """min > max makes every value invalid and every build unpassable."""
+    assert _clean_constraints({"min": 10, "max": 2}, "int") == {}
+
+
+def test_bounds_are_typed_and_booleans_are_not_numbers():
+    assert _clean_constraints({"min": 1, "max": 9}, "int") == {"min": 1, "max": 9}
+    assert _clean_constraints({"min": True}, "int") == {}
+    # A vocabulary is meaningless on a numeric field.
+    assert _clean_constraints({"allowed_values": ["a", "b"]}, "int") == {}
+
+
+def test_constraints_are_extracted_for_the_model():
+    spec = {
+        "fields": [
+            {"name": "a", "type": "str"},
+            {"name": "b", "type": "str", "allowed_values": ["x", "y"]},
+            {"name": "c", "type": "int", "min": 0},
+        ]
+    }
+    assert _constraints_of(spec) == {
+        "b": {"allowed_values": ["x", "y"]},
+        "c": {"min": 0},
+    }
+
+
+# -- what the route is told -----------------------------------------------
+
+
+def test_the_route_prompt_states_every_permitted_constraint():
+    """The route may enforce these and nothing else, so it must see them."""
+    text = describe_fields(
+        [
+            {"name": "severity", "type": "str", "allowed_values": ["High", "Low"]},
+            {"name": "days", "type": "int", "min": 1, "max": 30},
+            {"name": "note", "type": "str", "required": False},
+        ]
+    )
+    assert "one of 'High', 'Low'" in text
+    assert "min 1" in text and "max 30" in text
+    assert "optional" in text
+
+
+def test_the_route_prompt_forbids_inventing_constraints():
+    from app.factory.coder import _ROUTE_SYSTEM
+
+    assert "VALIDATION IS BOUNDED BY THE SPEC" in _ROUTE_SYSTEM
+    assert "Do NOT invent" in _ROUTE_SYSTEM
+
+
+# -- end to end, keyless ---------------------------------------------------
+
+
+def test_a_constrained_build_passes_its_own_route_test(tmp_path, monkeypatch):
+    """The regression, end to end: the five-capability blueprint that failed.
+
+    Runs on the deterministic path so CI exercises it with no key. The
+    templated route enforces the declared constraints, so this would go red
+    again if the sample payload and the route ever stopped agreeing.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    out = tmp_path / "build"
+    outcome = RoleRunner(load_blueprint(FIELD_OPS), out).run()
+
+    assert outcome.ok, outcome.to_dict()
+    models = (out / "app" / "models.py").read_text(encoding="utf-8")
+    assert "CONSTRAINTS = {" in models
+    assert "'allowed_values': ['open', 'in_progress', 'closed']" in models
+
+    routes = (out / "app" / "routes.py").read_text(encoding="utf-8")
+    assert "must be one of" in routes, "the route must enforce the vocabulary"
+
+    tests = (out / "tests" / "test_routes.py").read_text(encoding="utf-8")
+    assert "'status': 'open'" in tests, "the payload must use a declared value"
+    assert "'sample'" not in tests.split("status")[1][:80]
+
+
+def test_the_route_actually_rejects_a_value_outside_the_vocabulary(tmp_path, monkeypatch):
+    """The constraint must be real, not decorative.
+
+    Without this, a route that ignored CONSTRAINTS entirely would pass every
+    other test here -- the payload is valid, so nothing would notice.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    out = tmp_path / "build"
+    assert RoleRunner(load_blueprint(FIELD_OPS), out).run().ok
+
+    import subprocess
+    import sys
+
+    probe = out / "probe.py"
+    probe.write_text(
+        "import os, sys\n"
+        "sys.path.insert(0, r'%s')\n" % str(out).replace("\\", "\\\\")
+        + "os.environ['STORAGE_PATH'] = r'%s'\n" % str(out / "d").replace("\\", "\\\\")
+        + "from fastapi.testclient import TestClient\n"
+        "from app.main import app\n"
+        "c = TestClient(app)\n"
+        "r = c.post('/v1/site_inspection_log', json={'reference': 'x',"
+        " 'status': 'NOT_A_REAL_STATUS', 'quantity': 1})\n"
+        "b = r.json()\n"
+        "assert r.status_code == 200, r.text\n"
+        "assert b.get('ok') is False, b\n"
+        "assert 'must be one of' in b.get('error', ''), b\n"
+        "print('rejected as expected')\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(probe)], cwd=out, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "rejected as expected" in proc.stdout

@@ -263,8 +263,22 @@ def _fallback_spec(cap: Any) -> Dict[str, Any]:
         "entity": cap.capability_id.replace("-", "_"),
         "fields": [
             {"name": "reference", "type": "str", "required": True},
-            {"name": "status", "type": "str", "required": True},
-            {"name": "quantity", "type": "int", "required": False},
+            # A vocabulary and a bound on the deterministic path too, so the
+            # constraint contract is exercised on a keyless CI run rather than
+            # only when an agent happens to declare one.
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["open", "in_progress", "closed"],
+            },
+            {
+                "name": "quantity",
+                "type": "int",
+                "required": False,
+                "min": 0,
+                "max": 10000,
+            },
         ],
         "model": None,
     }
@@ -296,10 +310,14 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             "    id: Optional[int] = None",
         ]
         for f in spec["fields"]:
-            out.append(f"    {f['name']}: {f['type']} = {_PY_DEFAULTS[f['type']]}")
+            out.append(f"    {f['name']}: {f['type']} = {_field_default(f)}")
         out += [
             "",
             "    FIELDS = " + repr([f["name"] for f in spec["fields"]]),
+            # The single source of truth for value restrictions: the route
+            # validates against these and the tests build payloads from them,
+            # so neither side can invent a rule the other cannot satisfy.
+            "    CONSTRAINTS = " + repr(_constraints_of(spec)),
             "",
             "    def to_dict(self) -> Dict[str, Any]:",
             "        return asdict(self)",
@@ -410,15 +428,39 @@ def _render_store(specs: Dict[str, Dict[str, Any]]) -> str:
     )
 
 
-def _templated_route_body() -> str:
-    return (
-        "    if not isinstance(payload, dict):\n"
-        '        return {"ok": False, "error": "payload must be an object"}\n'
-        "    result = handle(payload)\n"
-        "    stored = save(payload)\n"
-        '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,\n'
-        '            "stored": stored}'
-    )
+def _templated_route_body(spec: Dict[str, Any]) -> str:
+    """Deterministic endpoint that validates exactly the declared constraints.
+
+    Enforcing them here too keeps the two paths honest against one contract:
+    CI has no LLM key, so without this the constraint mechanism would only
+    ever be exercised on a keyed run.
+    """
+    constraints = _constraints_of(spec)
+    lines = [
+        "    if not isinstance(payload, dict):",
+        '        return {"ok": False, "error": "payload must be an object"}',
+        f"    constraints = {constraints!r}",
+        "    for name, rules in constraints.items():",
+        "        if name not in payload:",
+        "            continue",
+        "        value = payload[name]",
+        '        allowed = rules.get("allowed_values")',
+        "        if allowed is not None and value not in allowed:",
+        '            return {"ok": False,',
+        '                    "error": name + " must be one of: " + ", ".join(allowed)}',
+        '        low, high = rules.get("min"), rules.get("max")',
+        "        if isinstance(value, bool) or not isinstance(value, (int, float)):",
+        "            continue",
+        "        if low is not None and value < low:",
+        '            return {"ok": False, "error": name + " is below the minimum"}',
+        "        if high is not None and value > high:",
+        '            return {"ok": False, "error": name + " is above the maximum"}',
+        "    result = handle(payload)",
+        "    stored = save(payload)",
+        '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,',
+        '            "stored": stored}',
+    ]
+    return "\n".join(lines)
 
 
 def _render_routes(entries: List[Dict[str, Any]]) -> str:
@@ -611,7 +653,7 @@ def _coder_route_body(
             capability_id=cap.capability_id,
             description=getattr(cap, "notes", "") or cap.capability_id,
             entity=spec["entity"],
-            field_names=[f["name"] for f in spec["fields"]],
+            fields=list(spec["fields"]),
             work_list=list(ctx.work_list),
         )
     except CoderError as exc:
@@ -730,7 +772,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     for cap in ctx.plan.capabilities:
         spec = specs[cap.capability_id]
         authored = _coder_route_body(ctx, cap, spec)
-        body, route_source = authored or (_templated_route_body(), fallback_source)
+        body, route_source = authored or (_templated_route_body(spec), fallback_source)
         entries.append(
             {
                 "capability_id": cap.capability_id,
@@ -781,9 +823,48 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 _SAMPLE_VALUES = {"str": "sample", "int": 1, "float": 1.5, "bool": True}
 
 
+def _sample_value(field: Dict[str, Any]) -> Any:
+    """A value that satisfies every constraint the field declares.
+
+    Typing alone is not enough. An agent-designed field often carries a
+    vocabulary or a range, and a generic "sample" is type-valid but
+    domain-invalid -- the route rejects it, the gate fails, and the rework
+    loop cannot recover because the only way for the writer to pass would be
+    to delete its own validation.
+    """
+    if field.get("allowed_values"):
+        return field["allowed_values"][0]
+    ftype = field["type"]
+    if ftype in ("int", "float"):
+        lo, hi = field.get("min"), field.get("max")
+        if lo is not None:
+            return lo
+        if hi is not None:
+            return hi if hi < _SAMPLE_VALUES[ftype] else _SAMPLE_VALUES[ftype]
+    return _SAMPLE_VALUES[ftype]
+
+
 def _sample_payload(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """A valid instance of the entity, typed from its own spec."""
-    return {f["name"]: _SAMPLE_VALUES[f["type"]] for f in spec.get("fields", [])}
+    """A valid instance of the entity, built from its own spec."""
+    return {f["name"]: _sample_value(f) for f in spec.get("fields", [])}
+
+
+def _field_default(field: Dict[str, Any]) -> str:
+    """Python literal for the dataclass default, valid under the constraints."""
+    if field.get("allowed_values"):
+        return repr(field["allowed_values"][0])
+    if field["type"] in ("int", "float") and field.get("min") is not None:
+        return repr(field["min"])
+    return _PY_DEFAULTS[field["type"]]
+
+
+def _constraints_of(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    for f in spec.get("fields", []):
+        c = {k: f[k] for k in ("allowed_values", "min", "max") if f.get(k) is not None}
+        if c:
+            out[f["name"]] = c
+    return out
 
 
 _CONFTEST = '''"""Test bootstrap for the generated platform.
