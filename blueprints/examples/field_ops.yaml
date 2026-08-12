@@ -1,0 +1,45 @@
+schema_version: product_blueprint.v1
+product_id: field-ops
+product_name: Field Operations Platform
+vertical: field_operations
+summary: >-
+  Operations platform for a contractor running site crews: log site
+  inspections, raise and route defects, track crew assignments, notify
+  stakeholders, and roll the whole lot up into a dashboard. Used as the
+  realistic end-to-end exercise of the role runner — five capabilities across
+  five distinct blocks, each needing its own schema, persistence and route.
+capabilities:
+  - id: site_inspection_log
+    description: >-
+      Record a site inspection: who inspected, which area, the findings, and
+      whether it passed. Validated on entry and retained for audit.
+    block_ids: [validation]
+    strategy_hint: REUSE
+  - id: defect_register
+    description: >-
+      Raise a construction defect against a location, with severity, trade
+      responsible, and remedial status tracked through to close-out.
+    block_ids: [workflow]
+    strategy_hint: REUSE
+  - id: crew_assignment
+    description: >-
+      Assign a crew to a work package for a date range, with the trade and
+      headcount required.
+    block_ids: [team]
+    strategy_hint: REUSE
+  - id: stakeholder_notification
+    description: >-
+      Notify a stakeholder that a defect or inspection needs their attention,
+      recording channel, recipient and delivery state.
+    block_ids: [notification]
+    strategy_hint: REUSE
+  - id: operations_dashboard
+    description: >-
+      Aggregate open defects, inspection pass rate and crew utilisation into a
+      single operations rollup.
+    block_ids: [dashboard, analytics]
+    strategy_hint: COMPOSE
+ui_modules: [command_center]
+connectors: []
+edge_profile: standard
+human_authority: true
