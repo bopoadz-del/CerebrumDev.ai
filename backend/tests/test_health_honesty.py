@@ -22,11 +22,29 @@ async def test_health_kimi_flag_without_binary_is_not_capability(tmp_path, monke
     assert probe["cli_ok"] is False
 
 
+def _write_fake_cli(tmp_path):
+    """A stand-in coding CLI that answers `--version` successfully.
+
+    Per-platform rather than a `#!/bin/sh` script: Windows cannot exec a
+    shebang file and raised WinError 193, so this test only ever ran on Linux
+    — on the machine the factory is developed on it was permanently red. A
+    `.cmd` launched by absolute path runs without shell=True.
+    """
+    import os
+
+    if os.name == "nt":
+        cli = tmp_path / "kimi.cmd"
+        cli.write_text("@echo off\r\necho kimi 9.9.9\r\nexit /b 0\r\n", encoding="utf-8")
+        return cli
+    cli = tmp_path / "kimi"
+    cli.write_text("#!/bin/sh\necho kimi 9.9.9\nexit 0\n", encoding="utf-8")
+    cli.chmod(0o755)
+    return cli
+
+
 @pytest.mark.asyncio
 async def test_health_kimi_capability_true_when_cli_responds(tmp_path, monkeypatch):
-    fake = tmp_path / "kimi"
-    fake.write_text("#!/bin/sh\necho kimi 9.9.9\nexit 0\n", encoding="utf-8")
-    fake.chmod(0o755)
+    fake = _write_fake_cli(tmp_path)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
     monkeypatch.setenv("KIMI_CODE_CLI", str(fake))

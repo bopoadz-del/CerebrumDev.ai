@@ -128,7 +128,19 @@ Fix direction: extend the spec with value constraints (`allowed_values`,
 `min`/`max`), have `_sample_payload` honour them, and constrain the route
 prompt to enforce nothing the spec does not declare.
 
-### 1e. A phase killed mid-write leaves a torn workspace — MEASURED
+### 1f. Clones are recorded unpinned, so staleness is uncomputable
+Every `CLONE` ledger event carries `source_commit: "unpinned"` — see any
+ledger, `cloned analytics@unpinned`. `roles.run_cloner` writes no commit into
+`blocks.lock.json`, so the runner has nothing to record.
+
+This is the hard prerequisite for the read-only registrar half of
+STORE_MANAGER: "which platform took which block, and is it stale against
+store head" cannot be answered without the commit each clone came from.
+Vendored blocks come from either a real Store checkout or the factory's own
+mirror, so the fix is to resolve `git rev-parse HEAD` for the checkout and a
+content hash for the mirror, and put both in the lockfile.
+
+### 1e. A phase killed mid-write leaves a torn workspace — FIXED
 The runner records verdicts per *phase*. A phase killed part-way through
 leaves a state no verdict describes, and the agent picks different entity
 names on each call, so two partial passes do not compose.
@@ -144,9 +156,16 @@ Worse for resume: `completed_roles()` reads WRITER's last terminal event as
 would test a half-written `app/`. `test_resume_picks_up_where_the_kill_happened`
 only ever kills *between* phases, so it does not cover this.
 
-Fix direction: make a WRITER pass atomic — stage and swap on success — and
-treat a `PHASE_STARTED` with no terminal event as "must re-run", not as the
-previous verdict.
+**Fixed.** The WRITER now writes to a staging directory and its output is
+copied into the destination only after the pass returns successfully, so a
+hard kill leaves the previous complete attempt rather than a splice.
+Exception-rollback would not have been enough — a kill runs no Python, so the
+protection has to be that the destination was never touched.
+`completed_roles()` now treats a role whose last event is `PHASE_STARTED` as
+running rather than complete, so a stale `GATE_PASSED` from an earlier attempt
+can no longer mask an interrupted pass, and `interrupted_role()` names it.
+Covered by `tests/factory/test_interrupted_phase.py`, including an assertion
+that every table `routes.py` references is one `store.py` actually creates.
 
 ### 2. CEREBRUM_LLM_API_KEY missing on the Render backend — BLOCKS PRODUCTION
 **Owner: Chadi. Dashboard secret. Not fixable in code — do not work around it.**

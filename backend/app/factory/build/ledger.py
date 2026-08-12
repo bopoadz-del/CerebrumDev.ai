@@ -216,17 +216,40 @@ class BuildLedger:
         return None
 
     def completed_roles(self) -> Set[BuildRole]:
-        """Roles whose most recent terminal event was a pass.
+        """Roles whose most recent *completed* attempt was a pass.
 
         Latest-verdict-wins, so a role that failed, was reworked and then
         passed counts as complete, and one that passed and was later aborted
         does not.
+
+        A role whose last event is ``PHASE_STARTED`` is **running, not
+        complete**, even if an earlier attempt passed. That distinction is the
+        difference between resuming correctly and resuming onto rubble: a
+        process killed mid-WRITER leaves files from two different attempts,
+        and the agent picks different entity names each call, so the halves do
+        not compose. Reading the stale GATE_PASSED would resume at TESTER and
+        test a torn workspace.
         """
-        verdict: Dict[BuildRole, EventKind] = {}
+        state: Dict[BuildRole, EventKind] = {}
         for event in self.events():
-            if event.role and event.kind in TERMINAL_KINDS:
-                verdict[event.role] = event.kind
-        return {r for r, k in verdict.items() if k is EventKind.GATE_PASSED}
+            if not event.role:
+                continue
+            if event.kind is EventKind.PHASE_STARTED or event.kind in TERMINAL_KINDS:
+                state[event.role] = event.kind
+        return {r for r, k in state.items() if k is EventKind.GATE_PASSED}
+
+    def interrupted_role(self) -> Optional[BuildRole]:
+        """The role that started and never finished, if the run was killed."""
+        state: Dict[BuildRole, EventKind] = {}
+        for event in self.events():
+            if not event.role:
+                continue
+            if event.kind is EventKind.PHASE_STARTED or event.kind in TERMINAL_KINDS:
+                state[event.role] = event.kind
+        for role, kind in state.items():
+            if kind is EventKind.PHASE_STARTED:
+                return role
+        return None
 
     def resume_point(self) -> Optional[BuildRole]:
         """The first phase not yet passed, or None when the run is finished."""

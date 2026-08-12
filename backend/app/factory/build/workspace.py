@@ -35,12 +35,39 @@ class RoleWorkspace:
         workspace: Path | str,
         *,
         store_root: Optional[Path | str] = None,
+        staging: Optional[Path | str] = None,
     ) -> None:
         self.role = BuildRole(role)
-        self.workspace = Path(workspace).resolve()
+        #: Where the artifact really lives.
+        self.destination = Path(workspace).resolve()
+        #: Where writes land. Equal to destination unless staged.
+        self.workspace = Path(staging).resolve() if staging else self.destination
+        self.staged = staging is not None
         self.store_root = Path(store_root).resolve() if store_root else None
         #: Every path this role wrote, workspace-relative, in order.
         self.written: List[str] = []
+        if self.staged:
+            self.workspace.mkdir(parents=True, exist_ok=True)
+
+    def commit(self) -> List[str]:
+        """Move staged writes into the real workspace. No-op when unstaged.
+
+        Called only after the role returns successfully, so a process killed
+        part-way through a pass leaves the destination holding the previous
+        complete attempt rather than a splice of two. Exception-rollback would
+        not do: a hard kill runs no Python, so the protection has to be that
+        the destination was never touched in the first place.
+        """
+        if not self.staged:
+            return list(self.written)
+        for rel in self.written:
+            src = self.workspace / rel
+            if not src.exists():
+                continue
+            dest = self.destination / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
+        return list(self.written)
 
     # -- writes (authority-checked) --------------------------------------
 
@@ -124,10 +151,23 @@ class RoleWorkspace:
 
     def _resolve_read(self, relpath: str | Path) -> Path:
         target = Path(relpath)
+        # Reads span staging AND the destination: a staged WRITER still has to
+        # read what the CLONER already put in the real workspace. Staging is
+        # searched first so a role sees its own in-progress writes, then the
+        # destination -- resolving only against staging would hide every
+        # artifact an earlier phase produced.
+        roots = [self.workspace, self.destination]
+        if self.store_root:
+            roots.append(self.store_root)
+
         if not target.is_absolute():
-            target = self.workspace / target
+            candidates = [(root / target).resolve() for root in roots]
+            for candidate in candidates:
+                if candidate.exists():
+                    return candidate
+            return candidates[0]  # non-existent: report against staging
+
         resolved = target.resolve()
-        roots = [self.workspace] + ([self.store_root] if self.store_root else [])
         for root in roots:
             try:
                 resolved.relative_to(root)

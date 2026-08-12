@@ -76,7 +76,50 @@ def test_no_temperature_is_sent_when_none_is_configured(monkeypatch, sent):
         "a temperature was sent with none configured — kimi-k2.x/k3 reject "
         "any value but 1 and the coder falls back to templates"
     )
-    assert sent["json"]["max_tokens"] == 2048
+    assert sent["json"]["max_tokens"] == coder.code_max_tokens()
+
+
+def test_the_completion_budget_is_configurable_and_generous(monkeypatch, sent):
+    """2048 starved reasoning models: they spend it on reasoning tokens and
+    return finish_reason="length" with empty content, which the coder then
+    reported as a bare "empty completion" and dropped to the template."""
+    _clear(monkeypatch)
+    monkeypatch.delenv("FACTORY_CODER_MAX_TOKENS", raising=False)
+    assert coder.code_max_tokens() >= 4096
+
+    monkeypatch.setenv("FACTORY_CODER_MAX_TOKENS", "1234")
+    assert coder.code_max_tokens() == 1234
+    monkeypatch.setenv("FACTORY_CODER_MAX_TOKENS", "not-a-number")
+    assert coder.code_max_tokens() >= 4096
+
+
+def test_an_empty_completion_says_why(monkeypatch):
+    """A bare "empty completion" costs a live debugging run to interpret."""
+    _clear(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("KIMI_API_KEY", FAKE_KIMI)
+
+    class _Empty:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [
+                    {"message": {"content": "", "reasoning_content": "x" * 40},
+                     "finish_reason": "length"}
+                ],
+                "usage": {"completion_tokens": 8192},
+            }
+
+    monkeypatch.setattr(coder.httpx, "post", lambda *a, **k: _Empty())
+
+    with pytest.raises(coder.CoderError) as exc:
+        coder._llm_code_call([{"role": "user", "content": "hi"}])
+    message = str(exc.value)
+    assert "finish_reason='length'" in message
+    assert "completion_tokens=8192" in message
+    assert "reasoning_chars=40" in message
 
 
 def test_an_explicit_temperature_is_still_honoured(monkeypatch, sent):

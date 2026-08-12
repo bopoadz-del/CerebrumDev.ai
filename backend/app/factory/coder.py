@@ -163,6 +163,21 @@ class _ForbiddenNodeVisitor(ast.NodeVisitor):
 #: Anthropic pins its API by date rather than by URL path.
 ANTHROPIC_VERSION = "2023-06-01"
 
+#: Completion budget for one artifact. 2048 was too tight for reasoning
+#: models: they spend the budget on reasoning tokens and return
+#: finish_reason="length" with empty content, which surfaced as a
+#: CoderError and silently dropped that artifact to the template path
+#: (observed once per five routes on a live kimi-k2.7-code build).
+#: Override with FACTORY_CODER_MAX_TOKENS.
+def code_max_tokens() -> int:
+    try:
+        return max(256, int(os.getenv("FACTORY_CODER_MAX_TOKENS", "8192")))
+    except ValueError:
+        return 8192
+
+
+MAX_CODE_TOKENS = code_max_tokens()
+
 
 def _anthropic_request(cfg: Dict[str, Any], messages: List[Dict[str, str]], model: str):
     """Build the Messages API call. Deliberately not OpenAI-shaped.
@@ -187,7 +202,7 @@ def _anthropic_request(cfg: Dict[str, Any], messages: List[Dict[str, str]], mode
 
     payload: Dict[str, Any] = {
         "model": model,
-        "max_tokens": 2048,
+        "max_tokens": code_max_tokens(),
         "messages": turns,
     }
     temperature = cfg.get("temperature")
@@ -248,7 +263,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 2048,
+            "max_tokens": code_max_tokens(),
         }
         # Send a temperature ONLY when one was configured. This hardcoded 0.2
         # made the coder unusable on every reasoning model: kimi-k2.x and k3
@@ -260,12 +275,27 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         temperature = cfg.get("temperature")
         if temperature is not None:
             payload["temperature"] = temperature
-        resp = httpx.post(url, json=payload, headers=headers, timeout=120.0)
+        resp = httpx.post(url, json=payload, headers=headers, timeout=180.0)
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"].get("content")
         if not content or not content.strip():
-            raise ValueError("empty completion")
+            # Say WHY it was empty. A bare "empty completion" costs a live
+            # debugging run to interpret; finish_reason and usage identify the
+            # cause for free the next time it happens. On a reasoning model the
+            # usual answer is finish_reason="length" with the budget spent on
+            # reasoning tokens before any content was emitted.
+            usage = data.get("usage") or {}
+            reasoning = choice["message"].get("reasoning_content") or ""
+            raise ValueError(
+                "empty completion from "
+                + str(model)
+                + f" (finish_reason={choice.get('finish_reason')!r}, "
+                + f"max_tokens={MAX_CODE_TOKENS}, "
+                + f"completion_tokens={usage.get('completion_tokens')}, "
+                + f"reasoning_chars={len(reasoning)})"
+            )
         return content
 
     try:
@@ -277,9 +307,16 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         try:
             return _try(fallback)
         except Exception as second:  # noqa: BLE001
+            # Carry both MESSAGES, not just the class names. This line used to
+            # read "failed on primary (ValueError) and fallback
+            # (HTTPStatusError)", which is unactionable: it cost a live
+            # debugging run to discover the ValueError was an empty completion
+            # from a starved token budget. coder_failures is often the only
+            # record anyone sees, so it has to carry the reason.
             raise CoderError(
-                f"coder LLM failed on primary ({type(first).__name__}) and "
-                f"fallback ({type(second).__name__})"
+                f"coder LLM failed on primary {cfg['model']} "
+                f"({type(first).__name__}: {first}) and fallback {fallback} "
+                f"({type(second).__name__}: {second})"
             ) from second
 
 
