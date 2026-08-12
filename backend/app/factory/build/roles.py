@@ -18,6 +18,7 @@ Which path ran is recorded, never implied.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -585,6 +586,97 @@ def _render_requirements() -> str:
     )
 
 
+# -- deploy scaffold ------------------------------------------------------
+#
+# Templated, not coder-written, and deliberately so. Container and process
+# config is mechanical: there is no domain judgement for an agent to
+# contribute, and a hallucinated base image or start command is a deployment
+# failure rather than a test failure. The dual path exists for artifacts where
+# the agent knows something the template cannot.
+
+
+def _render_dockerfile() -> str:
+    return (
+        "# Standalone image. Blocks are vendored into the repository at build\n"
+        "# time, so the container needs no block store and no outbound network\n"
+        "# at runtime.\n"
+        "FROM python:3.12-slim\n"
+        "WORKDIR /app\n"
+        "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
+        "\n"
+        "COPY requirements.txt .\n"
+        "RUN pip install --no-cache-dir -r requirements.txt\n"
+        "\n"
+        "COPY . .\n"
+        "ENV PYTHONPATH=/app\n"
+        "# Persistence is a sqlite file; mount a volume here to keep it.\n"
+        "ENV STORAGE_PATH=/app/data\n"
+        "RUN mkdir -p /app/data\n"
+        "\n"
+        "EXPOSE 8000\n"
+        'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n'
+    )
+
+
+def _render_dockerignore() -> str:
+    return (
+        "__pycache__/\n"
+        "*.py[cod]\n"
+        ".pytest_cache/\n"
+        "data/\n"
+        ".env\n"
+        "build_ledger.jsonl\n"
+    )
+
+
+def _render_procfile() -> str:
+    return "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
+
+
+def _render_platform_env_example() -> str:
+    """Note what is absent: there is no store URL and no store key.
+
+    The template generator's .env.example documents CEREBRUM_API_URL because
+    its handlers POST to the block store. This platform's handlers import the
+    blocks vendored beside them, so a store variable here would be a lie about
+    how it runs.
+    """
+    return (
+        "# Copy to .env and fill in. Never commit real values.\n"
+        "ENV=production\n"
+        "\n"
+        "# Where the sqlite file lives. Mount a volume at this path to persist.\n"
+        "STORAGE_PATH=./data\n"
+        "\n"
+        "# Deliberately absent: there is no block-store URL and no store key\n"
+        "# to set. Blocks are vendored under vendor/blocks/ and invoked\n"
+        "# in-process via app/dispatch.py, so this platform makes no outbound\n"
+        "# call at runtime and needs neither the factory nor the store to be\n"
+        "# reachable. The omission is the design, not an oversight.\n"
+    )
+
+
+def _render_render_yaml(product_id: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", str(product_id).lower()).strip("-") or "platform"
+    return (
+        "# Render blueprint. One web service, no database and no key-value\n"
+        "# store: persistence is a sqlite file on the mounted disk.\n"
+        "services:\n"
+        "  - type: web\n"
+        f"    name: {slug}\n"
+        "    runtime: docker\n"
+        "    dockerfilePath: ./Dockerfile\n"
+        "    healthCheckPath: /health\n"
+        "    envVars:\n"
+        "      - key: STORAGE_PATH\n"
+        "        value: /app/data\n"
+        "    disk:\n"
+        f"      name: {slug}-data\n"
+        "      mountPath: /app/data\n"
+        "      sizeGB: 1\n"
+    )
+
+
 def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
     cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
     block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
@@ -836,6 +928,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     sources["readme"] = readme[1] if readme else fallback_source
     sources["entrypoint"] = fallback_source
     sources["requirements"] = fallback_source
+
+    # Deploy scaffold: without these the artifact can only be run locally.
+    product_id = getattr(ctx.blueprint, "product_id", "platform")
+    ctx.workspace.write_text("Dockerfile", _render_dockerfile())
+    ctx.workspace.write_text(".dockerignore", _render_dockerignore())
+    ctx.workspace.write_text("Procfile", _render_procfile())
+    ctx.workspace.write_text(".env.example", _render_platform_env_example())
+    ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
+    sources["deploy_scaffold"] = fallback_source
 
     by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     detail = (
