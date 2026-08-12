@@ -1477,30 +1477,55 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         smoke.append(f"    assert {name}.CAPABILITY_ID")
     if not caps:
         smoke.append("    pass")
+    default_actions = {
+        b: contract["default_action"]
+        for b in vendored
+        if (contract := _block_contract(ctx, b)).get("default_action")
+    }
     smoke += [
         "",
         "",
         "def test_dispatch_runs_offline():",
-        '    """No store env, no network: blocks must run from vendor/."""',
+        '    """No store env, no network: every block must LOAD and EXECUTE from',
+        "    vendor/. A block-level refusal of this bare probe is still local",
+        "    execution; an import failure is the store dependency this test",
+        '    exists to catch."""',
         '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):',
         "        os.environ.pop(var, None)",
-        "    from app.dispatch import execute",
+        "    from app.dispatch import execute, load_block",
         f"    for block_id in {vendored!r}:",
-        "        result = execute(block_id, {'probe': True})",
-        "        assert isinstance(result, dict), block_id",
+        "        load_block(block_id)",
+        f"    actions = {default_actions!r}",
+        f"    for block_id in {vendored!r}:",
+        "        try:",
+        "            result = execute(block_id, {}, action=actions.get(block_id))",
+        "        except RuntimeError as exc:",
+        "            # The block ran and refused the empty probe -- fine here;",
+        "            # the capability test below demands real success through",
+        "            # the handlers. An import error is never fine.",
+        '            assert "No module named" not in str(exc), (block_id, exc)',
+        '            assert "cannot import" not in str(exc), (block_id, exc)',
+        "        else:",
+        "            assert isinstance(result, dict), block_id",
         "",
         "",
         "def test_every_capability_executes_end_to_end():",
-        '    """Each handler actually runs its blocks, not just imports."""',
+        '    """Each handler runs its blocks on a payload built from the',
+        '    capability\'s own schema -- the same payload the route test uses."""',
         '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY"):',
         "        os.environ.pop(var, None)",
     ]
-    for name in caps:
+    for cap in ctx.plan.capabilities:
+        name = cap.capability_id.replace("-", "_")
+        sample = _sample_payload(specs.get(cap.capability_id, {}))
         smoke += [
             f"    from app.actions import {name}",
-            f"    out = {name}.handle({{'reference': 'probe', 'status': 'new', 'quantity': 1,",
-            "                          'data': {'product_id': 'p1', 'metrics': {}}})",
+            f"    out = {name}.handle({sample!r})",
             f"    assert isinstance(out, dict), '{name} returned a non-dict'",
+            '    assert out.get("ok") is not False, (',
+            f'        "{name} rejected a payload built from its own schema: "',
+            '        + str(out.get("error"))',
+            "    )",
         ]
     if not caps:
         smoke.append("    pass")

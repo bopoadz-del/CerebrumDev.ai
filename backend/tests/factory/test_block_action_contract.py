@@ -195,6 +195,89 @@ def test_block_contract_survives_a_bare_block(tmp_path):
     assert _block_contract(ctx, "solo") == {"block_id": "solo"}
 
 
+def test_a_body_that_only_returns_from_a_nested_def_is_rejected():
+    """Seen live: the model wrapped its logic in ``def endpoint(...)`` that
+    nothing calls, the route fell through to None, and every request answered
+    ResponseValidationError. The gate must reject that shape, not ship it."""
+    from app.factory.coder import CoderError, _validate_body
+
+    nested = (
+        "def endpoint(payload):\n"
+        '    return {"ok": True}\n'
+    )
+    with pytest.raises(CoderError, match="never returns"):
+        _validate_body(nested, "cap")
+
+
+def test_a_return_inside_try_except_still_counts():
+    """The gate must not over-reject: a body whose returns live inside
+    try/except (or any compound statement) does return from the function."""
+    from app.factory.coder import _validate_body
+
+    body = (
+        "try:\n"
+        "    value = payload\n"
+        "except Exception as exc:\n"
+        '    return {"ok": False, "error": str(exc)}\n'
+        'return {"ok": True}\n'
+    )
+    assert _validate_body(body, "cap")
+
+    only_in_handler = (
+        "try:\n"
+        '    return {"ok": True}\n'
+        "except Exception as exc:\n"
+        '    return {"ok": False, "error": str(exc)}\n'
+    )
+    assert _validate_body(only_in_handler, "cap")
+
+
+def test_the_tester_smoke_speaks_the_contract(tmp_path):
+    """The generated smoke must probe blocks with their default action and
+    drive handlers with the spec-derived payload -- the canned junk payload
+    is what made every real block reject the suite."""
+    from app.factory.build.roles import run_tester
+
+    # Side effect wanted: writes the vendored block.json + runtime module
+    # the tester's contract lookup reads.
+    _workspace_with_contract(tmp_path)
+
+    class _Cap:
+        capability_id = "crew_assignment"
+        block_ids = ("team",)
+
+    class _Plan:
+        capabilities = (_Cap(),)
+
+    tester_ws = RoleWorkspace(BuildRole.TESTER, tmp_path / "build")
+    tester_ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=tester_ws,
+        blueprint=None,
+        plan=_Plan(),
+        state={
+            "vendored_blocks": ("team",),
+            "model_specs": {
+                "crew_assignment": {
+                    "entity": "crew_assignment",
+                    "fields": [
+                        {"name": "crew", "type": "str", "required": True},
+                        {"name": "headcount", "type": "int", "required": True},
+                    ],
+                }
+            },
+        },
+    )
+    result = run_tester(tester_ctx)
+    assert result.ok, result.detail
+
+    smoke = (tmp_path / "build" / "tests" / "test_smoke.py").read_text(encoding="utf-8")
+    assert "'team': 'create_team'" in smoke, "block default action missing"
+    assert "load_block" in smoke, "import failures are no longer hard-asserted"
+    assert "'crew'" in smoke, "handler payload is not built from the spec"
+    assert "'reference': 'probe'" not in smoke, "canned junk payload is back"
+
+
 def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
     """The agent cannot honour a contract it was never shown. The prompt must
     contain the actions and required fields the handler has to satisfy."""

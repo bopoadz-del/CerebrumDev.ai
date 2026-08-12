@@ -364,6 +364,30 @@ def _validate_body(body: str, capability_id: str) -> str:
             f"coder output for {capability_id} contains forbidden construct(s): "
             f"{', '.join(sorted(set(visitor.found)))}"
         )
+
+    # The body must actually return from the function it lives in. Seen live:
+    # the model wrapped its whole logic in a nested ``def endpoint(...)`` that
+    # nothing calls, so the real function fell through to None and every route
+    # answered ResponseValidationError. A return inside a nested function does
+    # not count.
+    outer = tree.body[0]
+    todo = list(outer.body)
+    has_return = False
+    while todo:
+        node = todo.pop()
+        if isinstance(node, ast.Return):
+            has_return = True
+            break
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue  # a nested scope's return is not this function's return
+        todo.extend(ast.iter_child_nodes(node))
+
+    if not has_return:
+        raise CoderError(
+            f"coder output for {capability_id} never returns from the function "
+            "body (a return inside a nested def does not count) -- the caller "
+            "would receive None"
+        )
     return indented
 
 
@@ -393,6 +417,9 @@ Contract:
   filesystem, no subprocess, no eval/exec.
 - Validate inputs and return {"ok": False, "error": "..."} for bad requests
   rather than raising.
+- Do NOT define a nested function and put your logic inside it — the
+  enclosing function would fall through and return None. Return directly
+  from the statements you write.
 - No markdown fences, no def line, no commentary — statements only, written at
   column zero. They are indented into the function for you; do not add leading
   indentation yourself or the body will not compile.
@@ -578,6 +605,9 @@ you invent will reject a request that is valid by contract, and the build
 fails with no way for either side to give way.
 - Standard library only, and no import statements at all. No network, no
   filesystem, no subprocess, no eval/exec.
+- Do NOT define a nested function and put your logic inside it — the
+  enclosing function would fall through and return None. Return directly
+  from the statements you write.
 - No markdown fences, no def line, no commentary — statements only, written at
   column zero. They are indented for you; do not add leading indentation.
 """
