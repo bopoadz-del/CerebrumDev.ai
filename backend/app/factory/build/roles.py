@@ -108,6 +108,45 @@ def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Pa
     return None
 
 
+def _content_digest(source: Path) -> str:
+    """Stable digest of a block's files, for a source with no commit.
+
+    The vendor mirror is not a git repository, so a mirror-sourced clone has
+    no revision to pin. Hashing the content gives the registrar something that
+    still changes when the block does, which is what staleness detection
+    actually needs.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    for path in sorted(source.rglob("*")):
+        if not path.is_file() or "__pycache__" in path.parts:
+            continue
+        digest.update(path.relative_to(source).as_posix().encode("utf-8"))
+        digest.update(path.read_bytes())
+    return "sha256:" + digest.hexdigest()[:40]
+
+
+def _pin_source(source: Path, blocks_root: Optional[Path]) -> tuple:
+    """(origin, revision) for one vendored block.
+
+    Clones used to be recorded as "unpinned", which left the Store registrar
+    unable to answer its own question -- once a platform ships, the commit a
+    block came from is unrecoverable, because the vendored files look
+    identical whether they are current or eight months behind.
+    """
+    from app.factory.generator import git_head
+
+    if blocks_root and str(source).startswith(str(Path(blocks_root).resolve())):
+        revision = git_head(Path(blocks_root))
+        # A checkout that is not a git repo answers "unknown"; fall back to
+        # content rather than recording a revision that means nothing.
+        if revision and revision != "unknown":
+            return "cerebrum-blocks", revision
+        return "cerebrum-blocks", _content_digest(source)
+    return "factory-vendor-mirror", _content_digest(source)
+
+
 def run_cloner(ctx: RoleContext) -> RoleResult:
     """Vendor each resolved block's real source into the workspace.
 
@@ -131,12 +170,12 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             missing.append(bid)
             continue
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
-        origin = (
-            "cerebrum-blocks"
-            if ctx.blocks_root and str(source).startswith(str(ctx.blocks_root))
-            else "factory-vendor-mirror"
-        )
-        lock["blocks"][bid] = {"source": origin, "path": f"vendor/blocks/{bid}"}
+        origin, revision = _pin_source(source, ctx.blocks_root)
+        lock["blocks"][bid] = {
+            "source": origin,
+            "commit": revision,
+            "path": f"vendor/blocks/{bid}",
+        }
         vendored.append(bid)
 
     if missing:
