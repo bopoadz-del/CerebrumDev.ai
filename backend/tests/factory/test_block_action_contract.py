@@ -154,6 +154,71 @@ def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):
     assert calls == [("team", "create_team")]
 
 
+def test_the_templated_handler_does_not_report_ok_around_a_failed_block(tmp_path):
+    """The ninth live build's fake green: three template handlers answered
+    status ok while every nested block call had failed. A block error must
+    surface as ok=False with the block named."""
+    module_text = _handler_module(
+        "defect_register",
+        ["workflow"],
+        _templated_body(["workflow"]),
+        "deterministic contract template",
+        {"workflow": "run"},
+    )
+    handler_path = tmp_path / "handler.py"
+    handler_path.write_text(module_text, encoding="utf-8")
+
+    import sys
+    import types
+
+    fake = types.ModuleType("app.dispatch")
+    fake.execute = lambda block_id, payload, action=None, params=None: {
+        "status": "error",
+        "block": block_id,
+        "error": "RuntimeError: Input validation failed",
+    }
+    sys.modules["app.dispatch"] = fake
+    try:
+        spec = importlib.util.spec_from_file_location("handler_honesty_probe", handler_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.handle({"defect_id": "D1"})
+    finally:
+        del sys.modules["app.dispatch"]
+
+    assert out["ok"] is False
+    assert "workflow" in out["error"]
+    assert "Input validation failed" in out["error"]
+
+
+def test_the_smoke_scans_nested_results_for_block_errors(tmp_path):
+    """Defence in depth: whoever wrote the handler, a green that wraps a
+    failed block call must fail the generated suite."""
+    from app.factory.build.roles import run_tester
+
+    _workspace_with_contract(tmp_path)
+
+    class _Cap:
+        capability_id = "crew_assignment"
+        block_ids = ("team",)
+
+    class _Plan:
+        capabilities = (_Cap(),)
+
+    tester_ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=RoleWorkspace(BuildRole.TESTER, tmp_path / "build"),
+        blueprint=None,
+        plan=_Plan(),
+        state={"vendored_blocks": ("team",), "model_specs": {}},
+    )
+    assert run_tester(tester_ctx).ok
+
+    smoke = (tmp_path / "build" / "tests" / "test_smoke.py").read_text(encoding="utf-8")
+    assert "reported ok around a failed block call" in smoke
+    assert '\\"status\\": \\"error\\"' in smoke
+
+
 def _workspace_with_contract(tmp_path: Path) -> RoleContext:
     ws = RoleWorkspace(BuildRole.CLONER, tmp_path / "build")
     ctx = RoleContext(

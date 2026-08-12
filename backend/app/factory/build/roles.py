@@ -642,13 +642,29 @@ def _templated_body(block_ids: Sequence[str]) -> str:
             '    return {"capability": CAPABILITY_ID, "status": "no_block_bound",\n'
             '            "detail": "no vendored block backs this capability"}'
         )
+    # The nested check is the honesty line: the ninth live build shipped
+    # three capabilities whose block calls all failed while the handler
+    # reported ok -- the suite passed on a payload the blocks had rejected.
     return (
         "    results = {}\n"
+        "    errors = {}\n"
         "    for block_id in BLOCK_IDS:\n"
-        "        results[block_id] = execute(\n"
+        "        result = execute(\n"
         "            block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id)\n"
         "        )\n"
-        '    return {"capability": CAPABILITY_ID, "status": "ok", "results": results}'
+        "        results[block_id] = result\n"
+        "        if isinstance(result, dict) and (\n"
+        '            result.get("status") == "error" or "error" in result\n'
+        "        ):\n"
+        '            errors[block_id] = str(result.get("error") or result)[:200]\n'
+        "    if errors:\n"
+        "        return {\n"
+        '            "ok": False,\n'
+        '            "capability": CAPABILITY_ID,\n'
+        '            "error": "; ".join(f"{b}: {e}" for b, e in sorted(errors.items())),\n'
+        '            "results": results,\n'
+        "        }\n"
+        '    return {"ok": True, "capability": CAPABILITY_ID, "results": results}'
     )
 
 
@@ -1631,13 +1647,16 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '    for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY"):',
         "        os.environ.pop(var, None)",
     ]
+    smoke.append("    import json as _json")
     smoke.append("    failures = []")
     for cap in ctx.plan.capabilities:
         name = cap.capability_id.replace("-", "_")
         sample = _sample_payload(specs.get(cap.capability_id, {}))
         # Collect, never abort: a run that stops at the first failing
         # capability hides the rest, and the rework round fixes one thing
-        # per round instead of all of them.
+        # per round instead of all of them. The nested scan is the fake-green
+        # stop: a handler that reports ok around a failed block call is
+        # caught here no matter who wrote it.
         smoke += [
             f"    from app.actions import {name}",
             f"    out = {name}.handle({sample!r})",
@@ -1646,6 +1665,9 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             '    elif out.get("ok") is False:',
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get('error')))",
+            "    elif '\\\"status\\\": \\\"error\\\"' in _json.dumps(out):",
+            f"        failures.append('{name} reported ok around a failed block "
+            "call: ' + _json.dumps(out)[:300])",
         ]
     smoke.append('    assert not failures, "; ".join(failures)')
     if not caps:
