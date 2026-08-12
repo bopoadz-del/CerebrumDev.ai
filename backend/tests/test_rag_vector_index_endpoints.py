@@ -193,7 +193,7 @@ def test_list_vector_index_records_endpoint(client: TestClient, tmp_path, monkey
 
 def test_vector_index_run_wrong_domain(client: TestClient, tmp_path, monkeypatch):
     _seed_document(client, tmp_path, monkeypatch, domain="legal", document_id="doc1")
-    run_id = _create_embedding_run(client)
+    _create_embedding_run(client)
     response = client.get(
         "/v1/domains/medical/rag-ingestion/documents/doc1/vector-index-runs"
     )

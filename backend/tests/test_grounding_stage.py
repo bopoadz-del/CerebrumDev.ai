@@ -7,7 +7,6 @@ never a raw ungrounded fallback. Every verdict is persisted.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest

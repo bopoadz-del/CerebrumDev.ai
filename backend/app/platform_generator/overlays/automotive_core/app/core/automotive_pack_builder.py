@@ -17,7 +17,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from app.core.automotive_normalizers import normalize_recall_rows
 from app.models.automotive_records import (
     AutomotiveChunk,
     AutomotiveComplaint,

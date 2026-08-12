@@ -13,13 +13,12 @@ import ipaddress
 import logging
 import os
 import re
-import shutil
 import socket
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -37,16 +36,14 @@ from app.models.rag_ingestion import (
 )
 
 from .rag_ingestion_store import (
-    get_acquisition_report,
     get_job,
     get_source_record,
     list_source_records,
     save_acquisition_report,
-    save_job,
     save_source_record,
 )
 from .rag_ingestion_validation import validate_source_record
-from .rag_source_parsers import ParseResult, parse_bytes
+from .rag_source_parsers import parse_bytes
 
 logger = logging.getLogger(__name__)
 

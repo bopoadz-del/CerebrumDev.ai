@@ -9,7 +9,6 @@ answered 404 ("generate again"), burning the customer's metered export quota.
 from __future__ import annotations
 
 import tarfile
-from pathlib import Path
 
 from app.core import backup
 from app.factory.paths import (

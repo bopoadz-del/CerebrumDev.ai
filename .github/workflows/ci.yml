@@ -35,6 +35,13 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
+      # Pyflakes only -- see backend/ruff.toml for why the default rule set is
+      # deliberately not used. Runs before pytest because an undefined name or
+      # a duplicate test definition is cheaper to read here than as a confusing
+      # test failure.
+      - name: Lint (ruff, pyflakes)
+        run: python -m ruff check .
+
       - name: Run pytest suite
         # -rs names every skipped test and its reason. A skip is invisible in
         # the default summary, so a platform-guarded test that quietly stops

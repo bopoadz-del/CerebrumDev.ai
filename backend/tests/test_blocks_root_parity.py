@@ -9,9 +9,8 @@ silently vendored stub-mirror blocks while chat vendored real code.
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
 
-from app.factory import blocks_source, platform_chat_flow
+from app.factory import platform_chat_flow
 from app.factory.blocks_source import resolve_blocks_root
 
 

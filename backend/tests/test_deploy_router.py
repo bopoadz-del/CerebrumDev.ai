@@ -7,7 +7,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.session_store import create_session, get_session
+from app.core.session_store import create_session
 
 
 client = TestClient(app)

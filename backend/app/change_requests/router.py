@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.change_requests.flags import change_request_intake_enabled
 from app.change_requests.intake import IntakeRejected, intake_change_request

@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import hashlib
-from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.core.rag_ingestion_store import (
-    get_acquisition_report,
     save_acquisition_report,
     save_job,
     save_source_record,

@@ -1,32 +1,21 @@
 import hashlib
-import os
 from datetime import datetime
 
 import pytest
 
-from app.core.rag_canonical_documents import create_canonical_document
 from app.core.rag_embeddings import run_embedding_dry_run
 from app.core.rag_ingestion_store import (
-    get_canonical_document,
     get_chunk_embeddings,
     get_embedding_run,
-    list_canonical_chunks,
     list_embedding_runs,
     save_canonical_document,
-    save_embedding_run,
 )
 from app.models.rag_ingestion import (
-    AcquisitionStatus,
     CanonicalizationStatus,
     ChunkingStatus,
-    DuplicateStatus,
     IndexStatus,
-    JobStatus,
-    ParseStatus,
-    RagAcquisitionReport,
     RagCanonicalChunk,
     RagCanonicalDocument,
-    RagIngestionJob,
 )
 
 

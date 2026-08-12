@@ -82,7 +82,7 @@ class TestRoundTrip:
         assert result.ok
         assert "uploads" in result.included
 
-        restored = bk.restore_backup(result.archive, tmp_path / "restored")
+        bk.restore_backup(result.archive, tmp_path / "restored")
         assert (tmp_path / "restored" / "uploads" / "a.txt").read_text(
             encoding="utf-8"
         ) == "payload"

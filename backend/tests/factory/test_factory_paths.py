@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from app.factory.paths import factory_repo_root
 from app.factory.product_architect import steward_golden_path

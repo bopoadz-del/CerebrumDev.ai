@@ -1,7 +1,6 @@
 """Tests for the Fork-derived platform generator."""
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest

@@ -140,7 +140,7 @@ class TestProcessUpload:
 
         monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
 
-        session = create_session("sess_embed_ok", "u1")
+        create_session("sess_embed_ok", "u1")
         txt = tmp_path / "doc.txt"
         txt.write_text("Line one.\n\nLine two.\n\nLine three.", encoding="utf-8")
         await upload_processor.process_upload("sess_embed_ok", [str(txt)])
@@ -164,7 +164,7 @@ class TestProcessUpload:
 
         monkeypatch.setattr(upload_processor, "_execute_block", _failing_zvec)
 
-        session = create_session("sess_onnx_fallback", "u1")
+        create_session("sess_onnx_fallback", "u1")
         txt = tmp_path / "doc.txt"
         txt.write_text(
             "The quick brown fox jumps over the lazy dog.\n\n"
@@ -226,7 +226,7 @@ class TestProcessUpload:
 
         monkeypatch.setattr(upload_processor, "embed_chunks", _fake_embed)
 
-        session = create_session("sess_embed_fail", "u1")
+        create_session("sess_embed_fail", "u1")
         txt = tmp_path / "doc.txt"
         txt.write_text("Line one.\n\nLine two.", encoding="utf-8")
         await upload_processor.process_upload("sess_embed_fail", [str(txt)])
@@ -248,7 +248,7 @@ class TestProcessUpload:
 
         monkeypatch.setattr(upload_processor, "embed_chunks", _fail_embed)
 
-        session = create_session("sess_reupload", "u1")
+        create_session("sess_reupload", "u1")
         txt = tmp_path / "doc.txt"
         txt.write_text("First upload.\n\nSecond paragraph.", encoding="utf-8")
         await upload_processor.process_upload("sess_reupload", [str(txt)])

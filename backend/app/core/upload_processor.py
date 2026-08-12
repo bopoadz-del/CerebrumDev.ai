@@ -5,9 +5,7 @@ import logging
 import mimetypes
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
-from fastapi import HTTPException
 
-from ..models.session import SessionState
 from .session_store import get_session, update_session
 from .chroma_store import store_chunks, collection_name, _stable_file_hash
 

@@ -3,7 +3,6 @@
 import pytest
 
 from app.models.platform_manifest import (
-    AutomotivePlatformManifest,
     parse_manifest,
     validate_manifest,
 )

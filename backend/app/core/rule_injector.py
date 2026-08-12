@@ -1,7 +1,7 @@
 import os
 import logging
 from pathlib import Path
-from typing import List, Dict
+from typing import List
 from .rule_parser import parse_rules
 
 logger = logging.getLogger(__name__)

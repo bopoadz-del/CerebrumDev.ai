@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from ..models.session import SessionState
 from .chroma_store import load_chunks, collection_exists
-from .engine_discovery import CEREBRUM_BLOCKS_REPO, EngineDiscoveryError, resolve_engine_source
+from .engine_discovery import EngineDiscoveryError, resolve_engine_source
 from .packager import _safe_name
 from .llm_config import get_llm_config
 

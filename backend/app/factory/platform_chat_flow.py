@@ -26,14 +26,14 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .dual_registry import dual_registered_ids
 from .blocks_source import resolve_blocks_root
-from .paths import factory_outputs_root, factory_repo_root
+from .paths import factory_outputs_root
 from .product_architect import (
     blueprint_to_yaml,
     draft_blueprint_from_brief,

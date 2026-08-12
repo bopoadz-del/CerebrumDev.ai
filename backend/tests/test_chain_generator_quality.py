@@ -6,7 +6,6 @@ import json
 from typing import Any, Dict
 from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.core.chain_generator import check_chain_quality

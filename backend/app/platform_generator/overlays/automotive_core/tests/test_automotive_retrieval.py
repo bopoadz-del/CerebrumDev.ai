@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 
 from app.core.automotive_normalizers import normalize_investigation_rows, normalize_recall_rows
 from app.core.automotive_pack_builder import build_automotive_core_pack, build_automotive_core_pack_from_families

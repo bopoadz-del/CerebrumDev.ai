@@ -16,7 +16,6 @@ from ..core.rag_ingestion_store import (
     get_canonical_chunk,
     get_canonical_document,
     get_canonical_text,
-    get_chunk_embedding,
     get_chunk_embeddings,
     get_embedding_run,
     get_job,

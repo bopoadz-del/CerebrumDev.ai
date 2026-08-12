@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, List, Set
 
 from app.cerebrum_product_kernel.contract.models import ActionSpec
 from app.cerebrum_product_kernel.contract.registry import ActionRegistry

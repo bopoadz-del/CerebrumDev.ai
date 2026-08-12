@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
 from pathlib import Path
 
-import pytest
 
 from app.core.automotive_normalizers import normalize_recall_rows
 from app.core.automotive_pack_builder import (
@@ -17,7 +14,6 @@ from app.core.automotive_pack_builder import (
     build_automotive_core_pack_from_families,
     chunk_investigation_records,
     chunk_recall_records,
-    load_canonical_records,
 )
 from app.models.automotive_records import AutomotiveChunk, AutomotiveInvestigation, AutomotiveRecall
 

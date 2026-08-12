@@ -30,7 +30,7 @@ import os
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, Optional, Tuple
+from typing import Any, Deque, Dict, Tuple
 
 _LOCK = threading.Lock()
 # Plain dict, not defaultdict: every insert goes through _bucket_locked so the

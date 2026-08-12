@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -110,7 +110,6 @@ def upsert_source_record(
     release_id = str(manifest["release_id"])
     pack_id = str(manifest["rag_pack_id"])
     source_id = str(manifest["source_id"])
-    from sqlalchemy import select
 
     existing = session.execute(
         select(SourceRecord).where(

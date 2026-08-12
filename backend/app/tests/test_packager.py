@@ -1,9 +1,7 @@
 import asyncio
 import json
-import os
 import subprocess
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 from typing import Dict
@@ -403,23 +401,6 @@ def _load_deployed_router(package_root: Path):
 def _run(coro):
     """Run an async coroutine in a sync test."""
     return asyncio.get_event_loop().run_until_complete(coro)
-
-
-def test_package_cli_config_stamps_deployed_mode(fake_engine_checkout: Path, monkeypatch):
-    """The packaged CLI config.toml declares mode = 'deployed'."""
-    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(fake_engine_checkout))
-    state = _make_state()
-    result = package_session(state)
-
-    config_path = Path(result["package_dir"]) / "cli" / "config.toml"
-    assert config_path.exists()
-    try:
-        import tomllib
-    except ImportError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore[no-redef]
-    with open(config_path, "rb") as f:
-        cfg = tomllib.load(f)
-    assert cfg.get("mode") == "deployed"
 
 
 def test_deployed_router_health_reports_rag_mismatch(tmp_path: Path):

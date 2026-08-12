@@ -19,7 +19,6 @@ from app.models.rag_ingestion import (
     JobStatus,
     RagIngestionJob,
     RagSourceRecord,
-    SourceClass,
     ValidationError,
 )
 

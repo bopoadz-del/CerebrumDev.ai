@@ -17,7 +17,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.core.engine_discovery import EngineDiscoveryError, find_engine_root
+from app.core.engine_discovery import find_engine_root
 
 logger = logging.getLogger(__name__)
 

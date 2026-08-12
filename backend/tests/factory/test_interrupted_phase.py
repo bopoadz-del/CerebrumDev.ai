@@ -31,7 +31,7 @@ import pytest
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
-from app.factory.build.roles import ROLE_IMPLEMENTATIONS, RoleResult
+from app.factory.build.roles import ROLE_IMPLEMENTATIONS
 from app.factory.build.runner import RoleRunner
 from app.factory.build.workspace import RoleWorkspace
 
