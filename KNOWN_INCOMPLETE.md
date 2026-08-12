@@ -128,17 +128,43 @@ Fix direction: extend the spec with value constraints (`allowed_values`,
 `min`/`max`), have `_sample_payload` honour them, and constrain the route
 prompt to enforce nothing the spec does not declare.
 
-### 1f. Clones are recorded unpinned, so staleness is uncomputable
-Every `CLONE` ledger event carries `source_commit: "unpinned"` — see any
-ledger, `cloned analytics@unpinned`. `roles.run_cloner` writes no commit into
-`blocks.lock.json`, so the runner has nothing to record.
+### 1f. Clones are recorded unpinned — FIXED
+Every `CLONE` event used to carry `source_commit: "unpinned"`, which made
+staleness unanswerable and unrecoverably so: once a platform ships, the commit
+a block came from cannot be reconstructed, because the vendored files look
+identical whether they are current or a year behind.
 
-This is the hard prerequisite for the read-only registrar half of
-STORE_MANAGER: "which platform took which block, and is it stale against
-store head" cannot be answered without the commit each clone came from.
-Vendored blocks come from either a real Store checkout or the factory's own
-mirror, so the fix is to resolve `git rev-parse HEAD` for the checkout and a
-content hash for the mirror, and put both in the lockfile.
+`run_cloner` now pins each block. A real Store checkout records
+`git rev-parse HEAD`; the vendor mirror is not a git repository, so it records
+a content digest that moves when the block does. A checkout that is not a git
+repo falls back to content rather than recording `"unknown"`, which would be a
+revision that means nothing. Both land in `blocks.lock.json` and in the
+ledger. Covered by `tests/factory/test_clone_pinning.py`.
+
+### 1g. Real Store blocks are NOT standalone — the offline promise rests on stubs
+**83 of 106 blocks in the real Cerebrum-Blocks registry import `app.*`.** They
+are generated adapters — `analytics/block.py` is literally *"Auto-generated
+adapter … Wraps app.blocks.analytics into a synchronous run() function"* and
+does `from app.blocks import get_block`. They are written to run **inside** the
+Blocks platform, not on their own.
+
+Consequence, measured: building `runner_smoke.yaml` with `blocks_root` pointed
+at the real checkout **fails the CLONER gate** with
+`analytics: ModuleNotFoundError: No module named 'app'`. The gate is right to
+refuse — that platform genuinely would not run.
+
+Every offline-standalone result so far was obtained against the 25-block
+`vendor_blocks_mirror`, whose blocks are stubs returning a canned envelope
+(`"honesty": "factory-vendor-mirror stub — canonical code is Cerebrum-Blocks"`).
+So "the delivered platform runs with the store switched off" is currently true
+of **stub behaviour**, not of real block logic.
+
+This is the central open question for the whole local-dispatch direction, and
+it is a Store-side problem, not a runner one. Options, none of them free:
+vendor `app.blocks.<name>` and its transitive deps alongside each adapter;
+publish standalone block builds from the Store; or accept that real blocks
+need the Blocks runtime and ship it inside the platform. Nothing in the runner
+can fix a block that imports a platform it was not given.
 
 ### 1e. A phase killed mid-write leaves a torn workspace — FIXED
 The runner records verdicts per *phase*. A phase killed part-way through
