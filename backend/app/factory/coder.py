@@ -391,6 +391,37 @@ def _validate_body(body: str, capability_id: str) -> str:
     return indented
 
 
+def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> str:
+    """One LLM call, statically validated; ONE bounded retry on rejection.
+
+    The tenth live build lost a whole capability -- and with it the run --
+    because a single emitted body failed the never-returns check and the
+    CoderError dropped it straight to the template. The model that wrote it
+    could have fixed it in seconds if told; a full rework round to rediscover
+    the same thing costs ~15 calls. Still "reject, never repair": the repair
+    is another model call judged by the same gate, and a second rejection
+    raises exactly as before.
+    """
+    raw = _llm_code_call(messages)
+    try:
+        return _validate_body(_strip_fences(raw), capability_id)
+    except CoderError as exc:
+        retry = messages + [
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": (
+                    "Your code was rejected by a static gate:\n"
+                    f"{exc}\n"
+                    "Emit the corrected body now, following every rule in the "
+                    "system message."
+                ),
+            },
+        ]
+        raw = _llm_code_call(retry)
+        return _validate_body(_strip_fences(raw), capability_id)
+
+
 _PLATFORM_SYSTEM = """You write ONE Python function body for a generated business platform.
 
 Contract:
@@ -670,13 +701,13 @@ def generate_route_body(
         )
     lines.append("\nWrite the endpoint() body now.")
 
-    raw = _llm_code_call(
+    body = _call_validate_retry(
         [
             {"role": "system", "content": _ROUTE_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
-        ]
+        ],
+        f"{capability_id}:route",
     )
-    body = _validate_body(_strip_fences(raw), f"{capability_id}:route")
     return {"body": body, "model": get_factory_llm_config_model()}
 
 
@@ -743,13 +774,13 @@ def generate_platform_handler(
         )
     lines.append("\nWrite the handle() body now.")
 
-    raw = _llm_code_call(
+    body = _call_validate_retry(
         [
             {"role": "system", "content": _PLATFORM_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
-        ]
+        ],
+        capability_id,
     )
-    body = _validate_body(_strip_fences(raw), capability_id)
     model = get_factory_llm_config().get("model", "unknown")
     logger.info(
         "coder wrote platform handler %s (%d lines) via %s",

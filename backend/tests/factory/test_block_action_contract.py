@@ -408,6 +408,43 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
     assert "members" in user_message
 
 
+def test_a_rejected_body_gets_one_repair_retry(monkeypatch):
+    """The tenth live build lost the run to a single never-returning body
+    that went straight to the template. The gate now hands the validation
+    error back to the model once; a second rejection still raises."""
+    from app.factory import coder
+
+    outputs = [
+        'def endpoint(payload):\n    return {"ok": True}\n',  # rejected: no return
+        'return {"ok": True, "capability": CAPABILITY_ID}',
+    ]
+    calls = []
+
+    def _stub(messages):
+        calls.append(messages)
+        return outputs[len(calls) - 1]
+
+    monkeypatch.setattr(coder, "_llm_code_call", _stub)
+    body = coder._call_validate_retry(
+        [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], "cap"
+    )
+    assert "ok" in body
+    assert len(calls) == 2
+    # The retry conversation carries the rejected code and the gate's reason.
+    retry_messages = calls[1]
+    assert any("rejected by a static gate" in m["content"] for m in retry_messages)
+    assert any("never returns" in m["content"] for m in retry_messages)
+
+
+def test_a_second_rejection_still_raises(monkeypatch):
+    from app.factory import coder
+
+    bad = 'def endpoint(payload):\n    return {"ok": True}\n'
+    monkeypatch.setattr(coder, "_llm_code_call", lambda messages: bad)
+    with pytest.raises(coder.CoderError, match="never returns"):
+        coder._call_validate_retry([{"role": "user", "content": "u"}], "cap")
+
+
 def test_a_rework_prompt_carries_the_previous_attempt(monkeypatch):
     """Eight live rounds proved regeneration from the same prompt converges
     to the same wrong code, verbatim. A rework is an EDIT: the coder must see
