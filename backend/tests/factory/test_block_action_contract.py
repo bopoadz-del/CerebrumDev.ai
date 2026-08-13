@@ -260,6 +260,37 @@ def _workspace_with_contract(tmp_path: Path) -> RoleContext:
     return ctx
 
 
+def test_block_contract_harvests_runtime_error_literals(tmp_path):
+    """Blocks self-document per-action requirements in the error literals
+    they answer with ("user_id and name required"). Three live builds
+    discovered these one paid round at a time; the contract must carry them
+    up front."""
+    ctx = _workspace_with_contract(tmp_path)
+    module_rel = Path("vendor") / "cerebrum" / "blocks" / "team.py"
+    source = ctx.workspace.read_text(module_rel)
+    ctx.workspace.write_text(
+        module_rel,
+        source
+        + textwrap.dedent(
+            '''
+            async def _create_team(self, data):
+                if not data.get("user_id") or not data.get("name"):
+                    return {"error": "user_id and name required"}
+                if data.get("role") not in ("member", "admin"):
+                    return {"error": f"Invalid role: {data.get('role')}"}
+                return {"team_id": "t1"}
+            '''
+        ),
+    )
+
+    contract = _block_contract(ctx, "team")
+    harvested = contract["runtime_error_contracts"]
+    assert "user_id and name required" in harvested
+    # f-string interpolation fragments are excluded -- a half-message with a
+    # dangling brace would mislead more than it informs.
+    assert not any("{" in item for item in harvested)
+
+
 def test_block_contract_reads_json_and_schema(tmp_path):
     """default action + options from block.json; required input fields from
     the vendored module's Schema. Both existed on disk during the failed

@@ -1152,6 +1152,16 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
                 fields = re.findall(r"[\"'](\w+)[\"']", required.group(1))
                 if fields:
                     contract["input_required_fields"] = fields
+        # Blocks self-document their per-action requirements in the error
+        # literals they answer with ("user_id and name required", "metric and
+        # value required", ...). Three live builds discovered these one 429
+        # at a time; harvesting them into the contract lets the coder satisfy
+        # them before the first attempt instead of after the third.
+        errors = re.findall(
+            r"[\"']error[\"']\s*:\s*f?[\"']([^\"'{}]{4,120})[\"']", source
+        )
+        if errors:
+            contract["runtime_error_contracts"] = sorted(set(errors))[:25]
     return contract
 
 
