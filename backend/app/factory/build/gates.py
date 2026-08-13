@@ -77,12 +77,20 @@ class GateContext:
 
 
 def _real_run(argv: List[str], *, cwd: Path, timeout: float) -> subprocess.CompletedProcess:
+    import os
+
+    # UTF-8, unconditionally. On Windows a gate subprocess otherwise inherits
+    # the console codepage, and a vendored block that prints one checkmark
+    # ("✓") dies with a charmap UnicodeEncodeError that looks like a
+    # block failure -- measured live on the team block.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     return subprocess.run(
         argv,
         cwd=str(cwd),
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
         # A gate must never inherit an interactive stdin -- a subprocess that
         # blocks on input would stall the build with no diagnosis.
         stdin=subprocess.DEVNULL,
