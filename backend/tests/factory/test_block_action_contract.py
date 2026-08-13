@@ -291,6 +291,60 @@ def test_block_contract_harvests_runtime_error_literals(tmp_path):
     assert not any("{" in item for item in harvested)
 
 
+def test_block_contract_lists_the_input_keys_the_block_reads(tmp_path):
+    """A pipeline step written as {"block_id": ...} failed with "No block
+    specified" because the block reads step.get("block") -- vocabulary that
+    sat in the vendored source the whole time."""
+    ctx = _workspace_with_contract(tmp_path)
+    module_rel = Path("vendor") / "cerebrum" / "blocks" / "team.py"
+    ctx.workspace.write_text(
+        module_rel,
+        ctx.workspace.read_text(module_rel)
+        + '\ndef _run_steps(self, steps):\n'
+        '    for step in steps:\n'
+        '        name = step.get("block")\n'
+        '        data = step.get("input", {})\n',
+    )
+
+    contract = _block_contract(ctx, "team")
+    keys = contract["input_keys_read_by_block"]
+    assert "block" in keys
+    assert "input" in keys
+
+
+def test_the_coder_prompt_carries_the_vendored_roster(monkeypatch):
+    """defect_register's pipeline step referenced the workflow block itself
+    (recursion) because the prompt only listed the capability's own blocks --
+    a pipeline block needs the whole roster to build steps."""
+    from app.factory import coder
+
+    captured = {}
+
+    def _capture(messages):
+        captured["messages"] = messages
+        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setattr(coder, "_llm_code_call", _capture)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {"model": "stub"},
+    )
+
+    coder.generate_platform_handler(
+        capability_id="defect_register",
+        description="register defects",
+        block_ids=["workflow"],
+        product_name="Field Ops",
+        vertical="field_operations",
+        vendored_roster=["analytics", "team", "validation", "workflow"],
+    )
+
+    user_message = captured["messages"][-1]["content"]
+    assert "validation" in user_message
+    assert "never reference the pipeline block itself" in user_message
+
+
 def test_block_contract_reads_json_and_schema(tmp_path):
     """default action + options from block.json; required input fields from
     the vendored module's Schema. Both existed on disk during the failed

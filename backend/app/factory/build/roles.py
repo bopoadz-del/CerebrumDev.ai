@@ -1162,6 +1162,13 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
         )
         if errors:
             contract["runtime_error_contracts"] = sorted(set(errors))[:25]
+        # The dict keys the block's code reads from its input are its de
+        # facto vocabulary. A pipeline step written as {"block_id": ...}
+        # failed with "No block specified" because the workflow block reads
+        # step.get("block") -- knowledge that sat in the vendored source.
+        keys_read = re.findall(r"\.get\(\s*[\"'](\w{2,30})[\"']", source)
+        if keys_read:
+            contract["input_keys_read_by_block"] = sorted(set(keys_read))[:40]
     return contract
 
 
@@ -1198,6 +1205,7 @@ def _coder_body(
             block_contracts={b: _block_contract(ctx, b) for b in usable},
             model_fields=(spec or {}).get("fields"),
             previous_attempt=previous_attempt,
+            vendored_roster=sorted(ctx.state.get("vendored_blocks", ())),
         )
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.

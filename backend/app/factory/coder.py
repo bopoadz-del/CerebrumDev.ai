@@ -727,6 +727,7 @@ def generate_platform_handler(
     block_contracts: Optional[Dict[str, Any]] = None,
     model_fields: Optional[List[Dict[str, Any]]] = None,
     previous_attempt: Optional[str] = None,
+    vendored_roster: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Write the ``handle`` body for one runner-built capability.
 
@@ -761,6 +762,13 @@ def generate_platform_handler(
             "and an input dict carrying every required field, CONSTRUCTED "
             "from the payload fields above -- the caller sends only those):\n"
             + json.dumps(block_contracts, indent=2, sort_keys=True)
+        )
+    if vendored_roster:
+        lines.append(
+            "\nEvery block vendored into this platform (a pipeline or "
+            "orchestrator block's steps may reference any of these by id; "
+            "a step must never reference the pipeline block itself): "
+            + ", ".join(vendored_roster)
         )
     if work_list:
         lines.append(
