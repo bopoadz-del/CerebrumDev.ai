@@ -36,8 +36,16 @@ if config.config_file_name is not None:
 def _database_url() -> str:
     url = os.getenv("ACCOUNTS_DATABASE_URL", "").strip()
     if url:
+        # Normalise exactly like accounts_store._database_url(). This copy
+        # used to upgrade only the short "postgres://" prefix; Render hands
+        # out "postgresql://", which fell through unchanged, SQLAlchemy
+        # defaulted to the psycopg2 dialect, and the boot migration crashed
+        # with ModuleNotFoundError (only psycopg3 is installed) -- measured
+        # live on the first deploy with a real database attached.
         if url.startswith("postgres://"):
-            url = "postgresql+psycopg://" + url[len("postgres://"):]
+            url = "postgresql://" + url[len("postgres://"):]
+        if url.startswith("postgresql://") and "+psycopg" not in url:
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
         return url
     db_path = os.getenv("ACCOUNTS_DB_PATH", "").strip()
     if not db_path:

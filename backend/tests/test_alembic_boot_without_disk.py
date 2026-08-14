@@ -71,3 +71,26 @@ def test_migrations_are_idempotent_on_existing_dir(tmp_path, attempt):
 
     assert result.returncode == 0, result.stderr
     assert (storage / "accounts.db").is_file()
+
+
+def test_postgres_url_resolves_the_installed_driver(tmp_path):
+    """New-shape test for the 2026-08-14 deploy failure: Render hands out
+    ``postgresql://`` and env.py only upgraded the short ``postgres://``
+    prefix, so SQLAlchemy defaulted to the psycopg2 dialect and the boot
+    migration died on ModuleNotFoundError (psycopg3 is what's installed).
+
+    No database server needed: the old code crashes on the missing driver
+    BEFORE any connection attempt, the fixed code must get past dialect
+    loading and fail on the unreachable host instead."""
+    result = _run_migrations(
+        {"ACCOUNTS_DATABASE_URL": "postgresql://u:p@127.0.0.1:9/none"}
+    )
+
+    assert result.returncode != 0, "connecting to port 9 cannot succeed"
+    assert "No module named 'psycopg2'" not in result.stderr, (
+        "the postgresql:// prefix fell through to the psycopg2 dialect again"
+    )
+    assert (
+        "OperationalError" in result.stderr
+        or "connection" in result.stderr.lower()
+    ), result.stderr[-400:]
