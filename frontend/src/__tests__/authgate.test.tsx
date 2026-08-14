@@ -63,3 +63,42 @@ describe('AuthGate', () => {
     )
   })
 })
+
+describe('email deep links', () => {
+  // New-shape tests for the 2026-08-15 finding: the verification email links
+  // to /verify-email?token=… , the SPA rewrite served the app, and nothing
+  // read the URL — clicking the email link landed on the login screen with
+  // the token silently ignored.
+  it('completes verification when opened from the email link', async () => {
+    const { auth } = await import('../api/factory')
+    ;(auth.verifyEmail as ReturnType<typeof vi.fn>) = vi
+      .fn()
+      .mockResolvedValue({ ok: true })
+    window.history.pushState(null, '', '/verify-email?token=vtk_from_email')
+
+    render(<AuthGate onAuthed={() => {}} />)
+
+    await waitFor(() =>
+      expect(auth.verifyEmail).toHaveBeenCalledWith('vtk_from_email'),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByText('Email verified. Sign in to enter the factory.'),
+      ).toBeInTheDocument(),
+    )
+    expect(window.location.pathname).toBe('/')
+  })
+
+  it('prefills the reset form when opened from the reset link', async () => {
+    window.history.pushState(null, '', '/reset-password?token=rst_from_email')
+
+    render(<AuthGate onAuthed={() => {}} />)
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Choose a new password to finish the reset.'),
+      ).toBeInTheDocument(),
+    )
+    expect(window.location.pathname).toBe('/')
+  })
+})

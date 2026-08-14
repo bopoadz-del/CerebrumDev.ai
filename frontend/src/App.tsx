@@ -262,6 +262,39 @@ export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
     setNotice(null)
   }
 
+  // The verification and reset emails link to /verify-email?token=… and
+  // /reset-password?token=… . The SPA rewrite serves the app for those
+  // paths, but nothing read them: clicking the email link landed on the
+  // login screen with the token silently ignored. Verify links complete
+  // themselves; reset links prefill the token and ask for the new password.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const linkToken = params.get('token')
+    if (!linkToken) return
+    const path = window.location.pathname
+    if (path !== '/verify-email' && path !== '/reset-password') return
+    window.history.replaceState(null, '', '/')
+    if (path === '/reset-password') {
+      setToken(linkToken)
+      setMode('reset')
+      setNotice('Choose a new password to finish the reset.')
+      return
+    }
+    setBusy(true)
+    auth
+      .verifyEmail(linkToken)
+      .then(() => {
+        setMode('login')
+        setNotice('Email verified. Sign in to enter the factory.')
+      })
+      .catch((err) => {
+        setToken(linkToken)
+        setMode('verify')
+        setError(err instanceof Error ? err.message : 'verification failed')
+      })
+      .finally(() => setBusy(false))
+  }, [])
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
