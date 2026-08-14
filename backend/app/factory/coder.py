@@ -299,14 +299,37 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
             )
         return content
 
+    def _try_with_connect_retries(model: str) -> str:
+        """Transient transport failures get bounded retries with backoff.
+
+        Two live campaign runs were lost to intermittent DNS: a single
+        ``getaddrinfo failed`` at the wrong moment permanently degraded an
+        artifact to the template path and the whole build failed honestly on
+        it hours later. Only connection-class errors retry -- an HTTP status
+        or an empty completion is the model answering, and retrying those
+        would just spend money on the same answer.
+        """
+        import time as _time
+
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return _try(model)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
+                    httpx.RemoteProtocolError) as exc:
+                last = exc
+                if attempt < 2:
+                    _time.sleep(2 * (attempt + 1))
+        raise last
+
     try:
-        return _try(cfg["model"])
+        return _try_with_connect_retries(cfg["model"])
     except Exception as first:  # noqa: BLE001 — one fallback, then honest failure
         fallback = cfg.get("fallback_model")
         if not fallback or fallback == cfg["model"]:
             raise CoderError(f"coder LLM failed: {type(first).__name__}: {first}") from first
         try:
-            return _try(fallback)
+            return _try_with_connect_retries(fallback)
         except Exception as second:  # noqa: BLE001
             # Carry both MESSAGES, not just the class names. This line used to
             # read "failed on primary (ValueError) and fallback

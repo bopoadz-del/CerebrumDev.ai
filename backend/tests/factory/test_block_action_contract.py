@@ -493,6 +493,95 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
     assert "members" in user_message
 
 
+def test_a_transient_connect_error_is_retried_not_templated(monkeypatch):
+    """Two live runs were lost to intermittent DNS: one getaddrinfo failure
+    permanently degraded the artifact to the template path. Connection-class
+    errors retry with backoff; the third success answers."""
+    import httpx
+
+    from app.factory import coder
+
+    attempts = []
+
+    def _flaky(url, json=None, headers=None, timeout=None):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise httpx.ConnectError("[Errno 11001] getaddrinfo failed")
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {"content": 'return {"ok": True}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"completion_tokens": 5},
+                }
+
+        return _Resp()
+
+    monkeypatch.setattr(coder.httpx, "post", _flaky)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {
+            "provider": "kimi",
+            "model": "kimi-k2.7-code-highspeed",
+            "fallback_model": "moonshot-v1-8k",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "test-key-not-real",
+        },
+    )
+
+    out = coder._llm_code_call([{"role": "user", "content": "u"}])
+    assert out == 'return {"ok": True}'
+    assert len(attempts) == 3, "the transient failures were not retried"
+
+
+def test_an_http_status_error_is_not_retried(monkeypatch):
+    """A 4xx/5xx is the model answering; retrying spends money on the same
+    answer. It must fall to the fallback leg after ONE attempt per model."""
+    import httpx
+
+    from app.factory import coder
+
+    attempts = []
+
+    def _refuse(url, json=None, headers=None, timeout=None):
+        attempts.append(json.get("model") if isinstance(json, dict) else None)
+
+        class _Resp:
+            status_code = 404
+
+            def raise_for_status(self):
+                raise httpx.HTTPStatusError(
+                    "404", request=None, response=None
+                )
+
+        return _Resp()
+
+    monkeypatch.setattr(coder.httpx, "post", _refuse)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {
+            "provider": "kimi",
+            "model": "primary-model",
+            "fallback_model": "fallback-model",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "test-key-not-real",
+        },
+    )
+
+    with pytest.raises(coder.CoderError, match="primary-model"):
+        coder._llm_code_call([{"role": "user", "content": "u"}])
+    assert attempts == ["primary-model", "fallback-model"], attempts
+
+
 def test_a_rejected_body_gets_one_repair_retry(monkeypatch):
     """The tenth live build lost the run to a single never-returning body
     that went straight to the template. The gate now hands the validation
