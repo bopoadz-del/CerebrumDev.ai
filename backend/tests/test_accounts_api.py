@@ -296,3 +296,25 @@ def test_create_session_honors_requested_domain(client):
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["config"]["domain"] == "retail"
+
+
+def test_unconfigured_mail_is_reported_honestly(client, monkeypatch):
+    """New-shape test for the live finding (2026-08-14): with no mail
+    provider configured at all, registration answered "Request a new one
+    shortly" -- a retry that can never succeed until an operator sets
+    RESEND_API_KEY or SMTP_*. The response must say verification is not
+    enabled, not imply a transient failure."""
+    monkeypatch.delenv("ACCOUNTS_EXPOSE_DEV_TOKENS", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    monkeypatch.delenv("SMTP_HOST", raising=False)
+
+    res = client.post(
+        "/v1/auth/register",
+        json={"email": "unconf@example.com", "password": "pilot-pass-123"},
+    )
+    assert res.status_code == 201, res.text
+    verification = res.json()["verification"]
+    assert verification["mode"] == "unconfigured"
+    assert verification["email_sent"] is False
+    assert "Request a new one" not in verification["note"]
+    assert "not yet enabled" in verification["note"]

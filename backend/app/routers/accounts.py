@@ -121,6 +121,20 @@ async def register(body: RegisterBody, request: Request):
             "note": "SMTP not configured — verify via POST /v1/auth/verify-email with this token",
             "dev_verification_token": verify_token,
         }
+    elif not mailer.email_configured():
+        # No provider at all. "Request a new one shortly" here was a lie --
+        # retrying can never succeed until an operator configures
+        # RESEND_API_KEY or SMTP_*, and telling users to retry dead-ends
+        # them. Say what is actually true.
+        verification = {
+            "mode": "unconfigured",
+            "email_sent": False,
+            "note": (
+                "Email verification is not yet enabled on this deployment. "
+                "Your account works without it; verification will be "
+                "requested by email once enabled."
+            ),
+        }
     else:
         verification = {
             "mode": "unavailable",
