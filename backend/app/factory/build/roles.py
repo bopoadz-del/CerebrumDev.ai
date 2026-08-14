@@ -1152,6 +1152,23 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
                 fields = re.findall(r"[\"'](\w+)[\"']", required.group(1))
                 if fields:
                     contract["input_required_fields"] = fields
+        # Blocks self-document their per-action requirements in the error
+        # literals they answer with ("user_id and name required", "metric and
+        # value required", ...). Three live builds discovered these one 429
+        # at a time; harvesting them into the contract lets the coder satisfy
+        # them before the first attempt instead of after the third.
+        errors = re.findall(
+            r"[\"']error[\"']\s*:\s*f?[\"']([^\"'{}]{4,120})[\"']", source
+        )
+        if errors:
+            contract["runtime_error_contracts"] = sorted(set(errors))[:25]
+        # The dict keys the block's code reads from its input are its de
+        # facto vocabulary. A pipeline step written as {"block_id": ...}
+        # failed with "No block specified" because the workflow block reads
+        # step.get("block") -- knowledge that sat in the vendored source.
+        keys_read = re.findall(r"\.get\(\s*[\"'](\w{2,30})[\"']", source)
+        if keys_read:
+            contract["input_keys_read_by_block"] = sorted(set(keys_read))[:40]
     return contract
 
 
@@ -1188,6 +1205,7 @@ def _coder_body(
             block_contracts={b: _block_contract(ctx, b) for b in usable},
             model_fields=(spec or {}).get("fields"),
             previous_attempt=previous_attempt,
+            vendored_roster=sorted(ctx.state.get("vendored_blocks", ())),
         )
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.
@@ -1559,15 +1577,40 @@ carries its own STORAGE_PATH (the factory backend sets one), and a
 ``setdefault`` here made every tester round share one database file: a
 table created by round N rejected round N+1's columns, and the rework loop
 burned its budget chasing schema errors no round had actually caused.
+
+Outbound network is BLOCKED, not merely unconfigured. Stripping the store
+env only proves the platform does not call the store; a handler that posts
+to an arbitrary public URL still passed, and one did -- "sent" a webhook to
+the open internet from a platform whose whole claim is running offline.
+Loopback stays open so TestClient-style local servers keep working.
 """
 
 import os
+import socket
 import sys
 import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_real_connect = socket.socket.connect
+
+
+def _offline_connect(self, address):
+    host = address[0] if isinstance(address, tuple) else address
+    if isinstance(host, (bytes, bytearray)):
+        host = host.decode("utf-8", "replace")
+    if str(host) not in _LOCAL_HOSTS:
+        raise OSError(
+            f"offline suite: outbound connection to {host!r} refused -- this "
+            "platform must run with no network"
+        )
+    return _real_connect(self, address)
+
+
+socket.socket.connect = _offline_connect
 '''
 
 
@@ -1665,7 +1708,8 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             '    elif out.get("ok") is False:',
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get('error')))",
-            "    elif '\\\"status\\\": \\\"error\\\"' in _json.dumps(out):",
+            "    elif '\\\"status\\\": \\\"error\\\"' in _json.dumps(out) or "
+            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out):",
             f"        failures.append('{name} reported ok around a failed block "
             "call: ' + _json.dumps(out)[:300])",
         ]

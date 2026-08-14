@@ -110,26 +110,27 @@ already documented. Regression-tested in `tests/test_coder_temperature.py`.
 Also fixed: the factory fallback default was `kimi-k2.5-code`, which returns
 `404 Not found the model` — the retry leg had never been real.
 
-### 1d. The agent path does not converge on a realistic blueprint — MEASURED
-The 2-capability smoke (`runner_smoke.yaml`) builds SUCCESS with zero rework.
-The 5-capability realistic one (`field_ops.yaml`) fails its TESTER gate three
-times and does not converge. Both on `kimi-k2.7-code`. Scale, not model.
+### 1d. The agent path did not converge on a realistic blueprint — FIXED in layers
+First fixed for route/spec drift (constraints in the spec, `_sample_payload`
+honouring them, the route prompt enforcing nothing the spec does not declare).
+Live builds against the real Store then exposed the rest of the convergence
+stack, each fixed with a new-shape test:
 
-**Root cause: the model spec is thinner than the code the agent writes
-against it.** `coder.generate_model_spec` returns only `name` + `type` per
-field. The agent then, reasonably, writes route validation the spec cannot
-express — e.g. `severity must be one of: Critical, High, Informational, Low,
-Medium`. `roles._sample_payload` builds the TESTER's payload from generic
-type samples, sends `severity="sample"`, and the route correctly rejects it.
+- findings must NAME what failed (dispatch error envelopes carry block and
+  action; route/smoke tests collect every failing capability, not the first);
+- a rework round is a **ratchet** (only implicated capabilities regenerate;
+  green specs/handlers/routes are reused, so fixing red cannot regress green);
+- a rework is an **edit** (the coder sees its own previous body — verbatim
+  regeneration was measured converging to the same wrong code five rounds
+  running);
+- a statically rejected body earns one repair retry with the gate's reason;
+- the block contract carries what blocks enforce at runtime (block.json
+  actions, `input_schema` required fields, and the requirement strings blocks
+  answer in their own error literals).
 
-The rework loop **cannot** resolve this. The only way for the WRITER to pass
-is to delete its own validation — to write worse code to satisfy a weaker
-test. Three rounds confirmed it. The gates are not too strict; the spec is
-too thin.
-
-Fix direction: extend the spec with value constraints (`allowed_values`,
-`min`/`max`), have `_sample_payload` honour them, and constrain the route
-prompt to enforce nothing the spec does not declare.
+Measured end state: `field_ops.yaml` on `kimi-k2.7-code-highspeed` reaches
+RUN_SUCCEEDED with rework 2, all five handlers coder-written, zero coder
+failures.
 
 ### 1f. Clones are recorded unpinned — FIXED
 Every `CLONE` event used to carry `source_commit: "unpinned"`, which made
@@ -144,30 +145,36 @@ repo falls back to content rather than recording `"unknown"`, which would be a
 revision that means nothing. Both land in `blocks.lock.json` and in the
 ledger. Covered by `tests/factory/test_clone_pinning.py`.
 
-### 1g. Real Store blocks are NOT standalone — the offline promise rests on stubs
-**83 of 106 blocks in the real Cerebrum-Blocks registry import `app.*`.** They
-are generated adapters — `analytics/block.py` is literally *"Auto-generated
-adapter … Wraps app.blocks.analytics into a synchronous run() function"* and
-does `from app.blocks import get_block`. They are written to run **inside** the
-Blocks platform, not on their own.
+### 1g. Real Store blocks are NOT standalone — FIXED, and proven live
+**Was:** 83 of 106 blocks in the real Cerebrum-Blocks registry are shims that
+import `app.*` and only run inside the Blocks platform. The first build against
+the real checkout failed its own CLONER gate on all six blocks with
+`ModuleNotFoundError: No module named 'app'`, and every earlier
+offline-standalone result had been measured against mirror stubs.
 
-Consequence, measured: building `runner_smoke.yaml` with `blocks_root` pointed
-at the real checkout **fails the CLONER gate** with
-`analytics: ModuleNotFoundError: No module named 'app'`. The gate is right to
-refuse — that platform genuinely would not run.
+**Fix (the "vendor the runtime slice" option):** the CLONER vendors the
+transitive `app.blocks`/`app.core` slice under `vendor/cerebrum/` with imports
+mechanically rewritten (the platform's own package is already named `app`), a
+generated registry listing only vendored blocks, and the slice pinned in
+`blocks.lock.json`. Module-level imports of unvendorable Store packages fail
+the clone loudly; function-local ones are recorded in the lockfile. Covered by
+`tests/factory/test_cloner_runtime_slice.py`.
 
-Every offline-standalone result so far was obtained against the 25-block
-`vendor_blocks_mirror`, whose blocks are stubs returning a canned envelope
-(`"honesty": "factory-vendor-mirror stub — canonical code is Cerebrum-Blocks"`).
-So "the delivered platform runs with the store switched off" is currently true
-of **stub behaviour**, not of real block logic.
+**Proven, not asserted:** `field_ops.yaml` (5 capabilities, 6 real blocks)
+builds RUN_SUCCEEDED against the real Store, boots in a clean venv, and
+answers every capability route over HTTP with records persisted — with the
+generated suite *blocking outbound network* and scanning nested results, so
+the green cannot be a wrapper around failed block calls. Two Store-side
+defects found by these builds were fixed upstream in Cerebrum-Blocks
+(#66 workflow failed-step crash, #67 MCP channel standalone), which is the
+Store-Manager harvest loop working end to end.
 
-This is the central open question for the whole local-dispatch direction, and
-it is a Store-side problem, not a runner one. Options, none of them free:
-vendor `app.blocks.<name>` and its transitive deps alongside each adapter;
-publish standalone block builds from the Store; or accept that real blocks
-need the Blocks runtime and ship it inside the platform. Nothing in the runner
-can fix a block that imports a platform it was not given.
+**Still true and registered:** blocks whose features need external services
+(notification email/webhook/slack, anything with lazy `app.dependencies`-class
+imports) carry those limits into the platform; they are listed per-clone in
+`blocks.lock.json` under `lazy_foreign_imports`, and delivery-style features
+need operator config in production. The offline guarantee covers what the
+suite enforces: local execution, no store, no network.
 
 ### 1e. A phase killed mid-write leaves a torn workspace — FIXED
 The runner records verdicts per *phase*. A phase killed part-way through

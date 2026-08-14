@@ -260,6 +260,91 @@ def _workspace_with_contract(tmp_path: Path) -> RoleContext:
     return ctx
 
 
+def test_block_contract_harvests_runtime_error_literals(tmp_path):
+    """Blocks self-document per-action requirements in the error literals
+    they answer with ("user_id and name required"). Three live builds
+    discovered these one paid round at a time; the contract must carry them
+    up front."""
+    ctx = _workspace_with_contract(tmp_path)
+    module_rel = Path("vendor") / "cerebrum" / "blocks" / "team.py"
+    source = ctx.workspace.read_text(module_rel)
+    ctx.workspace.write_text(
+        module_rel,
+        source
+        + textwrap.dedent(
+            '''
+            async def _create_team(self, data):
+                if not data.get("user_id") or not data.get("name"):
+                    return {"error": "user_id and name required"}
+                if data.get("role") not in ("member", "admin"):
+                    return {"error": f"Invalid role: {data.get('role')}"}
+                return {"team_id": "t1"}
+            '''
+        ),
+    )
+
+    contract = _block_contract(ctx, "team")
+    harvested = contract["runtime_error_contracts"]
+    assert "user_id and name required" in harvested
+    # f-string interpolation fragments are excluded -- a half-message with a
+    # dangling brace would mislead more than it informs.
+    assert not any("{" in item for item in harvested)
+
+
+def test_block_contract_lists_the_input_keys_the_block_reads(tmp_path):
+    """A pipeline step written as {"block_id": ...} failed with "No block
+    specified" because the block reads step.get("block") -- vocabulary that
+    sat in the vendored source the whole time."""
+    ctx = _workspace_with_contract(tmp_path)
+    module_rel = Path("vendor") / "cerebrum" / "blocks" / "team.py"
+    ctx.workspace.write_text(
+        module_rel,
+        ctx.workspace.read_text(module_rel)
+        + '\ndef _run_steps(self, steps):\n'
+        '    for step in steps:\n'
+        '        name = step.get("block")\n'
+        '        data = step.get("input", {})\n',
+    )
+
+    contract = _block_contract(ctx, "team")
+    keys = contract["input_keys_read_by_block"]
+    assert "block" in keys
+    assert "input" in keys
+
+
+def test_the_coder_prompt_carries_the_vendored_roster(monkeypatch):
+    """defect_register's pipeline step referenced the workflow block itself
+    (recursion) because the prompt only listed the capability's own blocks --
+    a pipeline block needs the whole roster to build steps."""
+    from app.factory import coder
+
+    captured = {}
+
+    def _capture(messages):
+        captured["messages"] = messages
+        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setattr(coder, "_llm_code_call", _capture)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {"model": "stub"},
+    )
+
+    coder.generate_platform_handler(
+        capability_id="defect_register",
+        description="register defects",
+        block_ids=["workflow"],
+        product_name="Field Ops",
+        vertical="field_operations",
+        vendored_roster=["analytics", "team", "validation", "workflow"],
+    )
+
+    user_message = captured["messages"][-1]["content"]
+    assert "validation" in user_message
+    assert "never reference the pipeline block itself" in user_message
+
+
 def test_block_contract_reads_json_and_schema(tmp_path):
     """default action + options from block.json; required input fields from
     the vendored module's Schema. Both existed on disk during the failed
@@ -406,6 +491,132 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
     assert "create_team" in user_message
     assert "input_required_fields" in user_message
     assert "members" in user_message
+
+
+def test_a_transient_connect_error_is_retried_not_templated(monkeypatch):
+    """Two live runs were lost to intermittent DNS: one getaddrinfo failure
+    permanently degraded the artifact to the template path. Connection-class
+    errors retry with backoff; the third success answers."""
+    import httpx
+
+    from app.factory import coder
+
+    attempts = []
+
+    def _flaky(url, json=None, headers=None, timeout=None):
+        attempts.append(url)
+        if len(attempts) < 3:
+            raise httpx.ConnectError("[Errno 11001] getaddrinfo failed")
+
+        class _Resp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "choices": [
+                        {
+                            "message": {"content": 'return {"ok": True}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"completion_tokens": 5},
+                }
+
+        return _Resp()
+
+    monkeypatch.setattr(coder.httpx, "post", _flaky)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {
+            "provider": "kimi",
+            "model": "kimi-k2.7-code-highspeed",
+            "fallback_model": "moonshot-v1-8k",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "test-key-not-real",
+        },
+    )
+
+    out = coder._llm_code_call([{"role": "user", "content": "u"}])
+    assert out == 'return {"ok": True}'
+    assert len(attempts) == 3, "the transient failures were not retried"
+
+
+def test_an_http_status_error_is_not_retried(monkeypatch):
+    """A 4xx/5xx is the model answering; retrying spends money on the same
+    answer. It must fall to the fallback leg after ONE attempt per model."""
+    import httpx
+
+    from app.factory import coder
+
+    attempts = []
+
+    def _refuse(url, json=None, headers=None, timeout=None):
+        attempts.append(json.get("model") if isinstance(json, dict) else None)
+
+        class _Resp:
+            status_code = 404
+
+            def raise_for_status(self):
+                raise httpx.HTTPStatusError(
+                    "404", request=None, response=None
+                )
+
+        return _Resp()
+
+    monkeypatch.setattr(coder.httpx, "post", _refuse)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {
+            "provider": "kimi",
+            "model": "primary-model",
+            "fallback_model": "fallback-model",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "test-key-not-real",
+        },
+    )
+
+    with pytest.raises(coder.CoderError, match="primary-model"):
+        coder._llm_code_call([{"role": "user", "content": "u"}])
+    assert attempts == ["primary-model", "fallback-model"], attempts
+
+
+def test_a_rejected_body_gets_one_repair_retry(monkeypatch):
+    """The tenth live build lost the run to a single never-returning body
+    that went straight to the template. The gate now hands the validation
+    error back to the model once; a second rejection still raises."""
+    from app.factory import coder
+
+    outputs = [
+        'def endpoint(payload):\n    return {"ok": True}\n',  # rejected: no return
+        'return {"ok": True, "capability": CAPABILITY_ID}',
+    ]
+    calls = []
+
+    def _stub(messages):
+        calls.append(messages)
+        return outputs[len(calls) - 1]
+
+    monkeypatch.setattr(coder, "_llm_code_call", _stub)
+    body = coder._call_validate_retry(
+        [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], "cap"
+    )
+    assert "ok" in body
+    assert len(calls) == 2
+    # The retry conversation carries the rejected code and the gate's reason.
+    retry_messages = calls[1]
+    assert any("rejected by a static gate" in m["content"] for m in retry_messages)
+    assert any("never returns" in m["content"] for m in retry_messages)
+
+
+def test_a_second_rejection_still_raises(monkeypatch):
+    from app.factory import coder
+
+    bad = 'def endpoint(payload):\n    return {"ok": True}\n'
+    monkeypatch.setattr(coder, "_llm_code_call", lambda messages: bad)
+    with pytest.raises(coder.CoderError, match="never returns"):
+        coder._call_validate_retry([{"role": "user", "content": "u"}], "cap")
 
 
 def test_a_rework_prompt_carries_the_previous_attempt(monkeypatch):

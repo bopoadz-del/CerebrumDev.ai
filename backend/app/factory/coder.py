@@ -299,14 +299,37 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
             )
         return content
 
+    def _try_with_connect_retries(model: str) -> str:
+        """Transient transport failures get bounded retries with backoff.
+
+        Two live campaign runs were lost to intermittent DNS: a single
+        ``getaddrinfo failed`` at the wrong moment permanently degraded an
+        artifact to the template path and the whole build failed honestly on
+        it hours later. Only connection-class errors retry -- an HTTP status
+        or an empty completion is the model answering, and retrying those
+        would just spend money on the same answer.
+        """
+        import time as _time
+
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return _try(model)
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
+                    httpx.RemoteProtocolError) as exc:
+                last = exc
+                if attempt < 2:
+                    _time.sleep(2 * (attempt + 1))
+        raise last
+
     try:
-        return _try(cfg["model"])
+        return _try_with_connect_retries(cfg["model"])
     except Exception as first:  # noqa: BLE001 — one fallback, then honest failure
         fallback = cfg.get("fallback_model")
         if not fallback or fallback == cfg["model"]:
             raise CoderError(f"coder LLM failed: {type(first).__name__}: {first}") from first
         try:
-            return _try(fallback)
+            return _try_with_connect_retries(fallback)
         except Exception as second:  # noqa: BLE001
             # Carry both MESSAGES, not just the class names. This line used to
             # read "failed on primary (ValueError) and fallback
@@ -391,6 +414,37 @@ def _validate_body(body: str, capability_id: str) -> str:
     return indented
 
 
+def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> str:
+    """One LLM call, statically validated; ONE bounded retry on rejection.
+
+    The tenth live build lost a whole capability -- and with it the run --
+    because a single emitted body failed the never-returns check and the
+    CoderError dropped it straight to the template. The model that wrote it
+    could have fixed it in seconds if told; a full rework round to rediscover
+    the same thing costs ~15 calls. Still "reject, never repair": the repair
+    is another model call judged by the same gate, and a second rejection
+    raises exactly as before.
+    """
+    raw = _llm_code_call(messages)
+    try:
+        return _validate_body(_strip_fences(raw), capability_id)
+    except CoderError as exc:
+        retry = messages + [
+            {"role": "assistant", "content": raw},
+            {
+                "role": "user",
+                "content": (
+                    "Your code was rejected by a static gate:\n"
+                    f"{exc}\n"
+                    "Emit the corrected body now, following every rule in the "
+                    "system message."
+                ),
+            },
+        ]
+        raw = _llm_code_call(retry)
+        return _validate_body(_strip_fences(raw), capability_id)
+
+
 _PLATFORM_SYSTEM = """You write ONE Python function body for a generated business platform.
 
 Contract:
@@ -412,6 +466,11 @@ Contract:
   field (like "steps" or "channel") from the caller's payload -- CONSTRUCT
   it inside the handler from the domain data the capability does have.
   Validate only the capability's own fields.
+- The platform runs OFFLINE and its suite BLOCKS outbound network. Never
+  choose a block action or channel that reaches an external service
+  (webhook URLs, SMTP/email, Slack): it will fail the suite. Prefer
+  in-process choices (e.g. a notification block's "mcp" channel targeting
+  another vendored block).
 - execute() never raises for a block-level failure; it returns an envelope.
   Treat result.get("status") == "error" (or an "error" key in the result)
   as a failure: surface it in your return value as {"ok": False,
@@ -670,13 +729,13 @@ def generate_route_body(
         )
     lines.append("\nWrite the endpoint() body now.")
 
-    raw = _llm_code_call(
+    body = _call_validate_retry(
         [
             {"role": "system", "content": _ROUTE_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
-        ]
+        ],
+        f"{capability_id}:route",
     )
-    body = _validate_body(_strip_fences(raw), f"{capability_id}:route")
     return {"body": body, "model": get_factory_llm_config_model()}
 
 
@@ -691,6 +750,7 @@ def generate_platform_handler(
     block_contracts: Optional[Dict[str, Any]] = None,
     model_fields: Optional[List[Dict[str, Any]]] = None,
     previous_attempt: Optional[str] = None,
+    vendored_roster: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Write the ``handle`` body for one runner-built capability.
 
@@ -726,6 +786,13 @@ def generate_platform_handler(
             "from the payload fields above -- the caller sends only those):\n"
             + json.dumps(block_contracts, indent=2, sort_keys=True)
         )
+    if vendored_roster:
+        lines.append(
+            "\nEvery block vendored into this platform (a pipeline or "
+            "orchestrator block's steps may reference any of these by id; "
+            "a step must never reference the pipeline block itself): "
+            + ", ".join(vendored_roster)
+        )
     if work_list:
         lines.append(
             "\nA previous attempt failed these checks — fix them:\n"
@@ -743,13 +810,13 @@ def generate_platform_handler(
         )
     lines.append("\nWrite the handle() body now.")
 
-    raw = _llm_code_call(
+    body = _call_validate_retry(
         [
             {"role": "system", "content": _PLATFORM_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
-        ]
+        ],
+        capability_id,
     )
-    body = _validate_body(_strip_fences(raw), capability_id)
     model = get_factory_llm_config().get("model", "unknown")
     logger.info(
         "coder wrote platform handler %s (%d lines) via %s",
