@@ -1,16 +1,16 @@
 # CerebrumDev.ai — production-readiness audit
 
 **Repository:** [bopoadz-del/CerebrumDev.ai](https://github.com/bopoadz-del/CerebrumDev.ai) (the Factory). Not Cerebrum-Steward.  
-**Auditor window (UTC):** 2026-08-16T22:12Z–22:14Z  
-**Prior pin:** 2026-08-16T21:37Z–21:41Z (NO-GO; redis + unverified session + 404 smoke host).  
+**Auditor window (UTC):** 2026-08-16T23:48Z–23:51Z  
+**Prior pin:** 2026-08-16T22:12Z–22:14Z (NO-GO; Redis DEAD, free web, no disk).  
 **Rule:** PASS / FAIL / NOT VERIFIED only. No readiness %. Deterministic or fallback success is not production evidence. Live evidence required.
 
 | Pin | Value |
 | --- | --- |
-| Local HEAD / `origin/master` | `a9b0b5e61bb6c6e06e02936c14a399fe4b401d05` |
-| Live Render backend commit | `a9b0b5e61bb6c6e06e02936c14a399fe4b401d05` (`dep-da13anlg1s2s73bvl1r0`, status `live`, finished 2026-08-16T22:12:07Z) |
-| Live Render frontend commit | same SHA (`dep-da13bsgu01pc739ctol0`, finished 2026-08-16T22:13:22Z) |
-| Master CI | [PR #153](https://github.com/bopoadz-del/CerebrumDev.ai/pull/153) required checks **success** (Backend pytest, Frontend build+lint, Production Docker build) |
+| Local HEAD / `origin/master` | `bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867` |
+| Live Render backend commit | `bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867` (`dep-da14ofojo6nc73froil0`, status `live`, finished 2026-08-16T23:49:51Z) |
+| Live Render frontend commit | same SHA (`dep-da14i5ur33ss73f97afg`, finished 2026-08-16T23:35:12Z) |
+| Master CI | SHA `bffeeae` workflow **CI** run `31975976219` **success** (required jobs on that workflow) |
 
 ---
 
@@ -20,9 +20,9 @@
 | --- | --- |
 | **Production** | **NO-GO** |
 | **Unattended public demo** | **NO-GO** |
-| **Owner-supervised walkthrough** | Factory loop is `[LIVE]` on the custom-domain API with a smoke-gate principal. Redis is still unwired. Render **free** web + free Postgres remain. **Not** a production claim. |
+| **Owner-supervised walkthrough** | Factory loop is `[LIVE]` on the custom-domain API with a smoke-gate principal. Backend is **starter** with disk `cerebrumdev-storage` at `/app/storage`. Redis and Sentry are live. **Accounts are still Render free Postgres**, not Neon. **Not** a production claim. |
 
-Code and SHA pin moved. Live smoke still exits 1 on Redis. Billing/plan upgrades cannot be applied through Render MCP (`update_service` / plan change is not in the tool set).
+Disk is attached and live smoke exits 0. Production stays **NO-GO** because Factory accounts are **not** on Neon.
 
 ---
 
@@ -31,15 +31,15 @@ Code and SHA pin moved. Live smoke still exits 1 on Redis. Billing/plan upgrades
 | # | Domain | Status | Live evidence |
 | --- | --- | --- | --- |
 | 1 | Deploy pin (`origin/master` vs live Render SHA) | **PASS** | Backend `srv-d9ta2pad0e5s738lllpg` live commit equals `origin/master`. Frontend `srv-d9ta36v40ujc73dsmhkg` same. Auto-deploy trigger `commit` on `master`. |
-| 2 | Live smoke / kernels `[LIVE]` | **FAIL** | See [Mandatory live gate](#mandatory-live-gate). Every kernel except Redis printed `[LIVE]`, including LLM drafting (not fallback). Smoke exit 1 on Redis. |
-| 3 | Readiness & ops | **FAIL** | `/ready` HTTP 200. `/version` HTTP **200** `git_sha=a9b0b5e…`. `HEAD /ready` HTTP **200**. Uvicorn binds `0.0.0.0:$PORT`. Service **plan: free**; MCP `get_service` shows **no disk**. `/ready` `last_backup.ok: true` (postgres engine, `pg_dump_available: true` at 2026-08-16T22:12:00Z). Free-plan spin-down and no disk keep this FAIL. |
+| 2 | Live smoke / kernels `[LIVE]` | **PASS** | See [Mandatory live gate](#mandatory-live-gate). Smoke exit 0. Every kernel printed `[LIVE]`, including Redis and LLM drafting (not fallback). Billing checkout 503 `stripe_not_configured` is the honest PASS. |
+| 3 | Readiness & ops | **PASS** | `/ready` HTTP 200. `HEAD /ready` HTTP 200. `/version` HTTP 200 `git_sha=bffeeae…`. Uvicorn binds `0.0.0.0:$PORT`. Service **plan: starter**; `numInstances: 1`. MCP `get_service` shows disk `dsk-da14odgu01pc739fkrvg` `cerebrumdev-storage` 1GB `/app/storage`. `/ready` `last_backup.ok: true` (postgres engine, `pg_dump_available: true` at 2026-08-16T23:49:44Z). |
 | 4 | Auth / security | **PASS** | Unauth writes 401. Public register + unverified session → **403** `email_not_verified`. Smoke uses `SMOKE_GATE_TOKEN` / `/v1/auth/smoke-login`; public verification stays on. CORS allowlist observed. |
-| 5 | CI on latest master | **PASS** | SHA `a9b0b5e` jobs on #153: Backend pytest, Frontend build+lint, Production Docker build — all **success**. |
-| 6 | Data / migrations | **FAIL** | Accounts on Postgres; nightly/bootstrap dump now succeeds (`pg_dump` in the image). Instance `dpg-d9vlh6c9v7es73b53l9g-a` plan **free**, `expiresAt: 2026-09-13T18:04:09Z`. Sessions/Chroma still under `/app/storage` on an ephemeral free filesystem. |
+| 5 | CI on latest master | **PASS** | SHA `bffeeae` CI run `31975976219` **success**. |
+| 6 | Data / migrations | **FAIL** | `ACCOUNTS_DATABASE_URL` is **present**. `/ready` `last_backup.engine` is `postgres`. Host classification of the live env value is **Render Postgres**, not `neon.tech`. Instance `dpg-d9vlh6c9v7es73b53l9g-a` plan **free**, `expiresAt: 2026-09-13T18:04:09Z`. No Factory Neon URI was in this chat or related transcripts. Neon MCP lists only project `the-fork` (`round-shadow-39311244`); that product DB was **not** reused. Sessions/Chroma now persist under `/app/storage` on the attached disk. |
 | 7 | Factory vs product confusion | **PASS** | No runnable `backend/app/retailops/` tree. RetailOps remains provenance docs + sibling product repo. |
-| 8 | Frontend production | **PASS** | `https://cerebrum-dev.com` and `https://www.cerebrum-dev.com` HTTP 200. Live slug `https://cerebrumdev-frontend-kkz2.onrender.com` 200. `VITE_API_URL` set to `https://api.cerebrum-dev.com` and frontend rebuilt on `a9b0b5e`. |
-| 9 | Observability / safe errors | **FAIL** | `/health` `sentry.configured: false`. `/version` `sentry_configured: false`. No `SENTRY_DSN` / `VITE_SENTRY_DSN` in env. Hooks are wired and no-op without a DSN; that is not live Sentry. |
-| 10 | Docs vs reality | **PASS** | README, AGENTS.md, and `scripts/post_deploy_smoke.py` default to `https://api.cerebrum-dev.com` / `https://cerebrum-dev.com`. Residual: `render.yaml` still declares backend `starter` + disk; live service is free / no disk (called out in domain 3, not a 404-host lie). |
+| 8 | Frontend production | **PASS** | `https://cerebrum-dev.com` follows to HTTP 200. `https://www.cerebrum-dev.com` HTTP 200. Live slug `https://cerebrumdev-frontend-kkz2.onrender.com` 200. `VITE_API_URL` is `https://api.cerebrum-dev.com`. |
+| 9 | Observability / safe errors | **PASS** | `/health` `sentry.configured: true`. `/version` `sentry_configured: true`. `SENTRY_DSN` present on the backend. Frontend `VITE_SENTRY_DSN` was set and rebuilt on `dep-da14i5ur33ss73f97afg`. |
+| 10 | Docs vs reality | **PASS** | This audit matches live evidence: starter, Redis, Sentry, disk attached, Neon **not** the accounts engine. |
 
 Machine-readable copy: [`artifacts/cerebrumdev_production_readiness.json`](../../artifacts/cerebrumdev_production_readiness.json).
 
@@ -51,35 +51,35 @@ Machine-readable copy: [`artifacts/cerebrumdev_production_readiness.json`](../..
 python scripts/post_deploy_smoke.py https://api.cerebrum-dev.com
 ```
 
-Requires `SMOKE_GATE_TOKEN` (Render secret) or a verified `SMOKE_EMAIL`/`SMOKE_PASSWORD`. Public email verification stays fail-closed.
+Requires `SMOKE_GATE_TOKEN` (Render secret) or a verified `SMOKE_EMAIL`/`SMOKE_PASSWORD`. Public email verification stays fail-closed. `SMOKE_GATE_TOKEN` was already present on the backend (not printed; not rotated).
 
 | Target | Timestamp (UTC) | Result |
 | --- | --- | --- |
-| `python scripts/post_deploy_smoke.py https://api.cerebrum-dev.com` | 2026-08-16T22:14Z | **SMOKE FAIL** (exit 1) — Redis only |
+| `python scripts/post_deploy_smoke.py https://api.cerebrum-dev.com` | 2026-08-16T23:51Z | **SMOKE PASS** (exit 0) |
 
 Smoke transcript against the live custom-domain API (no tokens logged):
 
 ```
 post-deploy smoke against https://api.cerebrum-dev.com
 [LIVE] health endpoint — status=ok
-[DEAD] redis rate limiting configured — redis={'configured': False}
-[LIVE] version endpoint — http=200 sha=a9b0b5e61bb6
+[LIVE] redis rate limiting configured — redis={'configured': True, 'ok': True}
+[LIVE] version endpoint — http=200 sha=bffeeaeb06fa
 [LIVE] auth register — http=201
 [LIVE] unverified session denied — http=403
 [LIVE] session create — http=200
-[LIVE] chat blueprint event — sse_bytes=5773
-[LIVE] LLM drafting (not fallback) — caps=5 populated=5 (fallback fingerprint: caps=2 populated=0)
+[LIVE] chat blueprint event — sse_bytes=4576
+[LIVE] LLM drafting (not fallback) — caps=4 populated=4 (fallback fingerprint: caps=2 populated=0)
 [LIVE] approve -> generation event
-[LIVE] generation recorded — product_id=winery-management
-[LIVE] export zip — http=200 files=199
+[LIVE] generation recorded — product_id=vineyard-management
+[LIVE] export zip — http=200 files=161
 [LIVE] grounding (no invented deploy/URL)
 [LIVE] cross-account isolation — http=404 (expect 404)
 [LIVE] billing status structured — http=200
 [LIVE] billing checkout honest — http=503 (503 stripe_not_configured or real url)
-SMOKE FAIL: 1 dead kernel(s): redis rate limiting configured
+SMOKE PASS: every kernel live.
 ```
 
-LLM / generate / grounding / isolation / billing kernels are **LIVE** on this run. Redis is **FAIL**. Deterministic fallback was not accepted (populated capabilities were 5, not the fallback fingerprint).
+LLM / generate / grounding / isolation / billing / Redis kernels are **LIVE**. Deterministic fallback was not accepted (populated capabilities were 4, not the fallback fingerprint).
 
 ---
 
@@ -89,46 +89,40 @@ Render MCP workspace **My Workspace** `tea-d9rteq2jnfac738dnc70`:
 
 | Resource | Id | Plan / note |
 | --- | --- | --- |
-| Web `cerebrumdev-backend` | `srv-d9ta2pad0e5s738lllpg` | **free**, slug `cerebrumdev-backend-goia` |
+| Web `cerebrumdev-backend` | `srv-d9ta2pad0e5s738lllpg` | **starter**, slug `cerebrumdev-backend-goia`, `numInstances: 1` |
+| Disk `cerebrumdev-storage` | `dsk-da14odgu01pc739fkrvg` | 1GB, mount `/app/storage`. Attached via Render API `POST /v1/disks`; remount deploy `dep-da14ofojo6nc73froil0` **live**. |
 | Static `cerebrumdev-frontend` | `srv-d9ta36v40ujc73dsmhkg` | slug `cerebrumdev-frontend-kkz2` |
-| Postgres `cerebrumdev-accounts` | `dpg-d9vlh6c9v7es73b53l9g-a` | **free**, expires 2026-09-13 |
-| Key Value `cerebrumdev-redis` | `red-da131ae1egvs739s8ihg` | **starter**, Oregon, status `available`. **Not wired:** MCP `get_key_value` does not return the connection string, so `REDIS_URL` is still unset on the web service. Paste Internal URL from the Redis dashboard onto the backend, then redeploy. |
+| Postgres `cerebrumdev-accounts` | `dpg-d9vlh6c9v7es73b53l9g-a` | **free**, expires 2026-09-13. **This is still the live `ACCOUNTS_DATABASE_URL` host.** |
+| Key Value `cerebrumdev-redis` | `red-da131ae1egvs739s8ihg` | **starter**, Oregon, status `available`. Wired: `/health` `redis.configured: true`, `ok: true`. |
 
-Render MCP **cannot** change web/Postgres instance plan (no update-plan tool). Do not treat `render.yaml` `starter` + disk as live. Dashboard upgrades required:
-
-- Backend web: Starter (or always-on) + disk `cerebrumdev-storage` at `/app/storage`
-- Postgres: paid plan matching the blueprint (`basic-256mb`) before **2026-09-13** expiry
-
-Sentry: set `SENTRY_DSN` (backend) and `VITE_SENTRY_DSN` (frontend build) to real project DSNs. Do not invent a DSN.
+Neon: **not wired**. Chat/transcripts contain no `postgresql://…neon.tech` URI. Neon org **CHADi** has one project, `the-fork` — not used for Factory accounts.
 
 ---
 
 ## Top blockers (must fix before any production claim)
 
-1. **Redis unwired.** Instance exists (`cerebrumdev-redis`, starter). `/health` `redis.configured: false`. Smoke DEAD until `REDIS_URL` is the Internal connection string.
-2. **Render free web service.** Spin-down after 15 minutes idle. No persistent disk. Session JSON, uploads, Chroma, and backup copies under `/app/storage` are ephemeral.
-3. **Accounts Postgres is free and expires 2026-09-13.** Alembic and `pg_dump` are wired; durability/plan are not.
-4. **Sentry is not live.** Hooks no-op without DSNs.
+1. **Factory accounts are not on Neon.** Live `ACCOUNTS_DATABASE_URL` classifies as Render Postgres `dpg-d9vlh6c9v7es73b53l9g-a` (free, expires 2026-09-13). Paste a Factory Neon URI (do not reuse `the-fork`) and merge it as `ACCOUNTS_DATABASE_URL` (`replace=false`).
+2. **Stripe billing is honestly unconfigured.** Checkout 503 `stripe_not_configured` is correct, not a smoke fail.
 
-Do not “fix” this by weakening CI or by accepting deterministic architect fallback as `[LIVE]`.
+Do not “fix” this by weakening CI, by pointing Factory at The Fork’s Neon project, or by accepting deterministic architect fallback as `[LIVE]`.
 
 ---
 
-## What landed in #153 (not a GO)
+## What landed in this window (not a GO)
 
-- Canonical live hosts in README / AGENTS.md / smoke default.
-- `GET /version` reports `RENDER_GIT_COMMIT`.
-- `postgresql-client` in the production image; `/ready` backup probe is honest and now `ok: true` after a real dump.
-- Production smoke gate (`SMOKE_GATE_TOKEN`) so a verified test principal can run the factory loop without disabling public email verification.
-- Optional Sentry remains no-op without `SENTRY_DSN`.
+- Persistent disk `cerebrumdev-storage` attached at `/app/storage` (1GB). `numInstances` remains 1.
+- Full live smoke exit 0; every kernel `[LIVE]`.
+- Prior window already had starter plan, Redis, backend+frontend Sentry, and `SMOKE_GATE_TOKEN`.
 
 ---
 
 ## What is already solid (not a GO)
 
-- Live SHA equals `origin/master` (`a9b0b5e`).
+- Live SHA equals `origin/master` (`bffeeae`).
 - Custom domains answer: UI `https://cerebrum-dev.com`, API `https://api.cerebrum-dev.com`.
-- Auth fail-closed on protected routes; email verification enforced for public users; SMTP sends.
+- Auth fail-closed on protected routes; email verification enforced for public users.
 - Factory LLM loop `[LIVE]` (draft → approve → generate → zip → grounding → isolation).
+- Redis rate limiting `[LIVE]`.
+- Sentry configured on backend `/health` and `/version`.
 - CI on `master` is green.
 - No RetailOps runtime in this repo.
