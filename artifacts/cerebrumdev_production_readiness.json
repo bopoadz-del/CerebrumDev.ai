@@ -1,81 +1,94 @@
 {
   "repo": "bopoadz-del/CerebrumDev.ai",
   "scope": "Factory, not Cerebrum-Steward",
-  "audited_at_utc": "2026-08-16T22:14:00Z",
+  "audited_at_utc": "2026-08-16T23:51:00Z",
   "verdicts": {
     "production": "NO-GO",
     "unattended_public_demo": "NO-GO"
   },
   "shas": {
-    "local_head": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05",
-    "origin_master": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05",
-    "live_backend": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05",
-    "live_frontend": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05"
+    "local_head": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
+    "origin_master": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
+    "live_backend": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
+    "live_frontend": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867"
   },
   "render": {
-    "workspace_id_cited_by_operators": "tea-d2gv3pf5r7bs73fh82eg",
-    "workspace_id_cited_status": "404",
     "workspace_id_live": "tea-d9rteq2jnfac738dnc70",
     "workspace_name": "My Workspace",
     "backend": {
       "id": "srv-d9ta2pad0e5s738lllpg",
       "slug": "cerebrumdev-backend-goia",
-      "plan": "free",
-      "disk": null,
+      "plan": "starter",
+      "num_instances": 1,
+      "disk": {
+        "id": "dsk-da14odgu01pc739fkrvg",
+        "name": "cerebrumdev-storage",
+        "size_gb": 1,
+        "mount_path": "/app/storage"
+      },
       "health_check_path": "/ready",
       "url": "https://cerebrumdev-backend-goia.onrender.com",
-      "live_deploy_id": "dep-da13anlg1s2s73bvl1r0",
-      "live_deploy_finished_at": "2026-08-16T22:12:07.536964Z"
+      "live_deploy_id": "dep-da14ofojo6nc73froil0",
+      "live_deploy_finished_at": "2026-08-16T23:49:51.42656Z"
     },
     "frontend": {
       "id": "srv-d9ta36v40ujc73dsmhkg",
       "slug": "cerebrumdev-frontend-kkz2",
       "url": "https://cerebrumdev-frontend-kkz2.onrender.com",
-      "live_deploy_id": "dep-da13bsgu01pc739ctol0",
-      "live_deploy_finished_at": "2026-08-16T22:13:22.951221Z"
+      "live_deploy_id": "dep-da14i5ur33ss73f97afg",
+      "live_deploy_finished_at": "2026-08-16T23:35:12.91756Z"
     },
     "postgres": {
       "id": "dpg-d9vlh6c9v7es73b53l9g-a",
       "name": "cerebrumdev-accounts",
       "plan": "free",
-      "expires_at": "2026-09-13T18:04:09.374913Z"
+      "expires_at": "2026-09-13T18:04:09.374913Z",
+      "is_live_accounts_engine": true
     },
     "factory_redis": {
       "id": "red-da131ae1egvs739s8ihg",
       "name": "cerebrumdev-redis",
       "plan": "starter",
       "status": "available",
-      "wired_as_REDIS_URL": false
+      "wired_as_REDIS_URL": true
     }
+  },
+  "neon": {
+    "wired_as_accounts_database_url": false,
+    "uri_found_in_chat_or_transcripts": false,
+    "accounts_host_kind": "render_postgres",
+    "mcp_org": "CHADi",
+    "mcp_projects": ["the-fork"],
+    "the_fork_reused_for_factory": false
   },
   "domains": [
     {"id": 1, "name": "deploy_pin", "status": "PASS"},
-    {"id": 2, "name": "live_smoke_kernels", "status": "FAIL"},
-    {"id": 3, "name": "readiness_ops", "status": "FAIL"},
+    {"id": 2, "name": "live_smoke_kernels", "status": "PASS"},
+    {"id": 3, "name": "readiness_ops", "status": "PASS"},
     {"id": 4, "name": "auth_security", "status": "PASS"},
     {"id": 5, "name": "ci_latest_master", "status": "PASS"},
     {"id": 6, "name": "data_migrations", "status": "FAIL"},
     {"id": 7, "name": "factory_vs_product", "status": "PASS"},
     {"id": 8, "name": "frontend_production", "status": "PASS"},
-    {"id": 9, "name": "observability_safe_errors", "status": "FAIL"},
+    {"id": 9, "name": "observability_safe_errors", "status": "PASS"},
     {"id": 10, "name": "docs_vs_reality", "status": "PASS"}
   ],
   "probes": {
     "live_api": "https://api.cerebrum-dev.com",
-    "health": {"http": 200, "status": "ok", "redis_configured": false, "sentry_configured": false, "at": "2026-08-16T22:13:00Z"},
-    "ready": {"http": 200, "status": "ready", "last_backup_ok": true, "last_backup_at": "2026-08-16T22:12:00.926139+00:00", "pg_dump_available": true, "engine": "postgres"},
+    "health": {"http": 200, "status": "ok", "redis_configured": true, "redis_ok": true, "sentry_configured": true, "at": "2026-08-16T23:50:00Z"},
+    "ready": {"http": 200, "status": "ready", "last_backup_ok": true, "last_backup_at": "2026-08-16T23:49:44.989472+00:00", "pg_dump_available": true, "engine": "postgres"},
     "ready_head": {"http": 200},
-    "version": {"http": 200, "git_sha": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05", "sentry_configured": false},
-    "frontend_custom_domain": {"url": "https://cerebrum-dev.com/", "http": 200},
+    "version": {"http": 200, "git_sha": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867", "sentry_configured": true},
+    "frontend_custom_domain": {"url": "https://cerebrum-dev.com/", "http": 200, "follow_redirects": true},
     "frontend_www": {"url": "https://www.cerebrum-dev.com/", "http": 200},
     "frontend_live_slug": {"url": "https://cerebrumdev-frontend-kkz2.onrender.com/", "http": 200},
-    "blocks_live": {"url": "https://cerebrum-blocks-10ug.onrender.com/health", "http": 200},
-    "register": {"http": 201, "email_verified": false},
-    "session_create_with_unverified_token": {"http": 403, "detail": "email_not_verified"},
+    "accounts_database_url": {"present": true, "host_kind": "render_postgres"},
+    "smoke_gate_token": {"present": true},
     "smoke_api_cerebrum_dev_com": {
-      "exit": 1,
+      "exit": 0,
       "live": [
         "health endpoint",
+        "redis rate limiting configured",
         "version endpoint",
         "auth register",
         "unverified session denied",
@@ -90,19 +103,16 @@
         "billing status structured",
         "billing checkout honest"
       ],
-      "dead": ["redis rate limiting configured"],
-      "at": "2026-08-16T22:14:00Z"
+      "dead": [],
+      "at": "2026-08-16T23:51:00Z"
     }
   },
   "ci_master": {
-    "sha": "a9b0b5e61bb6c6e06e02936c14a399fe4b401d05",
-    "pr": "https://github.com/bopoadz-del/CerebrumDev.ai/pull/153",
+    "sha": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
+    "run_id": "31975976219",
     "conclusion": "success"
   },
   "blockers": [
-    "REDIS_URL unset: cerebrumdev-redis exists (red-da131ae1egvs739s8ihg, starter) but MCP does not return the connection string; paste Internal URL on cerebrumdev-backend",
-    "Backend Render plan free (spin-down) and no persistent disk — MCP cannot change plan",
-    "Accounts Postgres free, expires 2026-09-13 — MCP cannot upgrade",
-    "Sentry not configured (SENTRY_DSN / VITE_SENTRY_DSN unset; hooks no-op)"
+    "ACCOUNTS_DATABASE_URL is Render free Postgres dpg-d9vlh6c9v7es73b53l9g-a (expires 2026-09-13), not Neon; no Factory neon.tech URI in chat/transcripts; the-fork Neon project was not reused"
   ]
 }
