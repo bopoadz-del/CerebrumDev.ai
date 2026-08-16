@@ -6,7 +6,7 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
@@ -56,7 +56,7 @@ _cors_origins = [
     origin.strip()
     for origin in os.getenv(
         "CORS_ALLOW_ORIGINS",
-        f"{_frontend_url},https://cerebrumdev-frontend.onrender.com",
+        f"{_frontend_url},https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend-kkz2.onrender.com",
     ).split(",")
     if origin.strip()
 ]
@@ -121,6 +121,46 @@ app.include_router(
     workbench_router,
     dependencies=[Depends(require_api_key)],
 )
+
+
+def _probe_sentry() -> dict:
+    """Honest config probe — never claims live ingest without a DSN."""
+    return {"configured": bool(os.getenv("SENTRY_DSN", "").strip())}
+
+
+def _git_sha() -> str:
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
+        val = os.getenv(key, "").strip()
+        if val:
+            return val
+    return ""
+
+
+def _backup_details() -> dict:
+    """Surface the last backup honestly. Never invent ok: true."""
+    from .core import backup as backup_mod
+
+    last = backup_scheduler.last_status()
+    pg_url = bool(os.getenv("ACCOUNTS_DATABASE_URL", "").strip())
+    dump = backup_mod.pg_dump_probe()
+    probe = {
+        "pg_dump_needed": pg_url,
+        "pg_dump_available": bool(dump.get("available")),
+    }
+    if last is None:
+        return {
+            "ok": False,
+            "at": None,
+            "error": "no backup recorded",
+            **probe,
+        }
+    return {
+        "ok": bool(last.get("ok")),
+        "at": last.get("at"),
+        "error": last.get("error"),
+        "engine": last.get("engine"),
+        **probe,
+    }
 
 
 def _probe_redis() -> dict:
@@ -217,6 +257,7 @@ async def health():
         # flag is on AND the CLI actually answers.
         "kimi_workbench_enabled": bool(kimi["flag_enabled"] and kimi["cli_ok"]),
         "kimi_workbench": kimi,
+        "sentry": _probe_sentry(),
     }
 
 
@@ -244,22 +285,42 @@ async def ready():
     ready_ok = checks["storage"] and checks["api_key_configured"]
     # Informational, not gating: a failed backup must page someone, not take
     # the API out of rotation.
-    last_backup = backup_scheduler.last_status()
+    last_backup = _backup_details()
     body = {
         "status": "ready" if ready_ok else "not_ready",
         "checks": checks,
         "details": {
             "storage": storage,
             "cerebrum_blocks": blocks,
-            "last_backup": {
-                "ok": bool(last_backup.get("ok")),
-                "at": last_backup.get("at"),
-            }
-            if last_backup
-            else None,
+            "last_backup": last_backup,
+            "sentry": _probe_sentry(),
         },
     }
     # Answer with a status code the platform can act on. This endpoint is the
     # Render health check: returning 200 while reporting "not_ready" means an
     # unwritable disk reads as healthy and no restart or alert ever happens.
     return JSONResponse(status_code=200 if ready_ok else 503, content=body)
+
+
+@app.head("/ready")
+async def ready_head():
+    """Render and uptime probes sometimes HEAD the health path."""
+    resp = await ready()
+    return Response(status_code=resp.status_code)
+
+
+@app.get("/version")
+async def version():
+    """Fail-closed ops pin: git SHA when Render (or the image) provides it.
+
+    Missing SHA is reported as null rather than invented. Production smoke
+    treats an empty SHA as DEAD.
+    """
+    sha = _git_sha()
+    return {
+        "service": "cerebrumdev-factory",
+        "git_sha": sha or None,
+        "git_sha_short": sha[:7] if sha else None,
+        "env": os.getenv("ENV"),
+        "sentry_configured": _probe_sentry()["configured"],
+    }

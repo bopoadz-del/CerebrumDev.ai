@@ -10,9 +10,12 @@ The subscription plan decides how deep the factory builds.
 
 Live deployment (Render):
 
-- Frontend (Factory Floor): `https://cerebrumdev-frontend.onrender.com`
-- Backend API: `https://cerebrumdev-backend.onrender.com`
-- Block store: `https://cerebrum-blocks.onrender.com`
+- Frontend (Factory Floor): `https://cerebrum-dev.com` (`https://www.cerebrum-dev.com`)
+- Backend API: `https://api.cerebrum-dev.com`
+- Live Render slugs (fallbacks, not the canonical hosts):
+  `https://cerebrumdev-frontend-kkz2.onrender.com`,
+  `https://cerebrumdev-backend-goia.onrender.com`
+- Block store: `https://cerebrum-blocks-10ug.onrender.com`
 
 ## The flow (what a user experiences)
 

@@ -88,6 +88,25 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "health check must point at /ready; /health returns 200 even when degraded"
         )
 
+    def test_production_image_includes_pg_dump(self):
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "postgresql-client" in dockerfile, (
+            "nightly Postgres backups shell out to pg_dump; the slim image "
+            "does not ship it unless we install postgresql-client"
+        )
+
+    def test_smoke_and_docs_point_at_the_live_api_host(self):
+        """The AGENTS.md deploy gate must not advertise a 404 hostname."""
+        smoke = (REPO_ROOT / "scripts/post_deploy_smoke.py").read_text(encoding="utf-8")
+        agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+        dead = "cerebrumdev-backend.onrender.com"
+        live = "https://api.cerebrum-dev.com"
+        assert live in smoke and dead not in smoke
+        assert live in agents and dead not in agents
+        assert "https://cerebrum-dev.com" in readme
+        assert dead not in readme
+
     def test_backups_are_scheduled_in_process_not_as_a_cron(self):
         """The backup vehicle must be one that can actually reach the data.
 

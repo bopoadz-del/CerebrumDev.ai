@@ -28,6 +28,8 @@ def client(monkeypatch, tmp_path):
     monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
     monkeypatch.delenv("ACCOUNTS_DATABASE_URL", raising=False)
     monkeypatch.delenv("AUTH_RATE_LIMIT_MAX", raising=False)
+    monkeypatch.delenv("SMOKE_GATE_TOKEN", raising=False)
+    monkeypatch.delenv("SMOKE_ACCOUNT_PASSWORD", raising=False)
     monkeypatch.delenv("AUTH_RATE_LIMIT_WINDOW_S", raising=False)
 
     from app.core.rate_limit import reset_rate_limits
@@ -318,3 +320,51 @@ def test_unconfigured_mail_is_reported_honestly(client, monkeypatch):
     assert verification["email_sent"] is False
     assert "Request a new one" not in verification["note"]
     assert "not yet enabled" in verification["note"]
+
+
+def test_smoke_login_absent_without_gate(client):
+    res = client.post("/v1/auth/smoke-login")
+    assert res.status_code == 404
+
+
+def test_smoke_login_rejects_wrong_gate(client, monkeypatch):
+    monkeypatch.setenv("SMOKE_GATE_TOKEN", "correct-gate-token")
+    res = client.post("/v1/auth/smoke-login", headers={"X-Smoke-Gate": "wrong"})
+    assert res.status_code == 401
+
+
+def test_smoke_login_verified_principal_bypasses_public_unverified(client, monkeypatch):
+    """Public register stays unverified; smoke-login is the only ops shortcut."""
+    monkeypatch.setenv("SMOKE_GATE_TOKEN", "correct-gate-token")
+    monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")
+
+    public = _register(client, "public@example.com")
+    denied = client.post(
+        "/v1/sessions/",
+        headers={"Authorization": f"Bearer {public['login_token']}"},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "email_not_verified"
+
+    smoke = client.post(
+        "/v1/auth/smoke-login", headers={"X-Smoke-Gate": "correct-gate-token"}
+    )
+    assert smoke.status_code == 200, smoke.text
+    body = smoke.json()
+    assert body["email_verified"] is True
+    assert body["login_token"].startswith("cdt_")
+    assert body["login_token_b"].startswith("cdt_")
+    assert body["login_token"] != body["login_token_b"]
+
+    created = client.post(
+        "/v1/sessions/",
+        headers={"Authorization": f"Bearer {body['login_token']}"},
+    )
+    assert created.status_code == 200, created.text
+    sid = created.json()["session_id"]
+
+    other = client.get(
+        f"/v1/sessions/{sid}",
+        headers={"Authorization": f"Bearer {body['login_token_b']}"},
+    )
+    assert other.status_code == 404

@@ -1,5 +1,11 @@
 # Registered-but-Dead Kernel Audit
 
+> **Stale as of 2026-08-16.** This July 24 table was taken against
+> `https://cerebrumdev-backend.onrender.com`, which now 404s. Canonical live
+> hosts are `https://api.cerebrum-dev.com` and `https://cerebrum-dev.com`.
+> Re-verify against [`CEREBRUMDEV_PRODUCTION_READINESS.md`](CEREBRUMDEV_PRODUCTION_READINESS.md)
+> before any LIVE claim.
+
 **Repository:** `bopoadz-del/CerebrumDev.ai`  
 **Branch:** `master`  
 **Audit date:** 2026-07-24  
@@ -55,7 +61,7 @@
 - Full backend suite: `cd backend && ENV=test ./venv/bin/python -m pytest -q`
 - Post-deploy smoke (requires live deployment + real LLM key):
   ```bash
-  python3 scripts/post_deploy_smoke.py https://cerebrumdev-backend.onrender.com
+  python3 scripts/post_deploy_smoke.py https://api.cerebrum-dev.com
   ```
   All checks must print `[LIVE]`.
 - Phase-4 full platform sweep:

@@ -204,6 +204,52 @@ def _row_to_account(row: Any) -> Dict[str, Any]:
     }
 
 
+def get_account_by_email(email: str) -> Optional[Dict[str, Any]]:
+    email_norm = email.strip().lower()
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts).where(_t_accounts.c.email == email_norm)
+        ).first()
+    return _row_to_account(row) if row else None
+
+
+def ensure_verified_account(email: str, password: str) -> Dict[str, Any]:
+    """Create or update an ops-only account and mark it email-verified.
+
+    Public register never calls this. The production smoke gate uses it so a
+    verified test principal can exist without turning off verification for
+    real users.
+    """
+    email_norm = email.strip().lower()
+    existing = get_account_by_email(email_norm)
+    if existing is None:
+        account = create_account(email_norm, password)
+        account_id = account["account_id"]
+    else:
+        account_id = existing["account_id"]
+        salt = secrets.token_hex(16)
+        with _LOCK, _engine().begin() as conn:
+            conn.execute(
+                sa.update(_t_accounts)
+                .where(_t_accounts.c.id == account_id)
+                .values(password_hash=_hash_password(password, salt))
+            )
+    with _LOCK, _engine().begin() as conn:
+        conn.execute(
+            sa.update(_t_accounts)
+            .where(_t_accounts.c.id == account_id)
+            .values(
+                email_verified=True,
+                verify_token_hash=None,
+                verify_expires_at=None,
+            )
+        )
+    account = get_account(account_id)
+    if account is None:
+        raise RuntimeError("ensure_verified_account lost the account it just wrote")
+    return account
+
+
 def create_account(email: str, password: str) -> Dict[str, Any]:
     """Create an account; raises ValueError('email_registered') on duplicate.
 

@@ -112,9 +112,17 @@ def snapshot_sqlite(source: Path, dest: Path) -> None:
         src_conn.close()
 
 
+def pg_dump_probe() -> Dict[str, Any]:
+    """Whether pg_dump is on PATH. Used by /ready — never claimed present if missing."""
+    path = shutil.which("pg_dump")
+    return {"available": path is not None, "path": path}
+
+
 def snapshot_postgres(url: str, dest: Path) -> None:
     """Dump a Postgres accounts database with pg_dump."""
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if shutil.which("pg_dump") is None:
+        raise RuntimeError("pg_dump is not installed in this image")
     proc = subprocess.run(
         ["pg_dump", "--no-owner", "--no-privileges", "--format=custom", "--file", str(dest), url],
         capture_output=True,

@@ -2,9 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install build dependencies for chromadb/hnswlib
+# Build deps for chromadb/hnswlib, plus postgresql-client so nightly accounts
+# backups can actually run pg_dump (python:3.11-slim does not ship it).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ cmake git \
+    build-essential gcc g++ cmake git postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt backend/requirements-marker.txt ./

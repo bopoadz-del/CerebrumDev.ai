@@ -88,6 +88,7 @@ REQUIRED_PREFIXES = {
     "/v1/change-requests",
     "/health",
     "/ready",
+    "/version",
 }
 
 

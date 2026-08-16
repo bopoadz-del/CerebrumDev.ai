@@ -570,7 +570,7 @@ def markdown_report(base_url: str, results: List[ProbeResult]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="CerebrumDev.ai live platform sweep")
-    parser.add_argument("--base-url", default="https://cerebrumdev-backend.onrender.com")
+    parser.add_argument("--base-url", default="https://api.cerebrum-dev.com")
     parser.add_argument("--out", default="-", help="Output file (- for stdout)")
     args = parser.parse_args()
 

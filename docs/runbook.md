@@ -9,6 +9,9 @@ One-page operations guide for CerebrumDev.ai factory and Automotive Safety Intel
    - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key (`sync: false`)
    - `KIMI_API_KEY` (or `CEREBRUM_LLM_API_KEY`) — Kimi/Moonshot is the only LLM provider
    - `VITE_API_KEY` on the static site — must match backend `CEREBRUM_DEV_API_KEY`
+   - `REDIS_URL` — Internal URL from Key Value `cerebrumdev-redis` (MCP cannot read the connection string)
+   - `SMOKE_GATE_TOKEN` — production smoke verified-principal gate; public email verification stays on
+   - `SENTRY_DSN` / frontend `VITE_SENTRY_DSN` — optional; observability is inert without them
 3. Deploy backend first, copy generated `CEREBRUM_DEV_API_KEY`, set frontend `VITE_API_KEY`, redeploy frontend.
 4. Confirm `GET /health` and `GET /ready` return healthy.
 

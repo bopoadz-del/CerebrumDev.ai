@@ -14,6 +14,7 @@ os.environ.setdefault("ALLOW_ANONYMOUS_DEV", "1")
 # nightly backup scheduler and take a bootstrap snapshot into ./storage.
 # Scheduler tests opt back in explicitly with monkeypatch.
 os.environ.setdefault("BACKUP_SCHEDULE_ENABLED", "0")
+os.environ.pop("SMOKE_GATE_TOKEN", None)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

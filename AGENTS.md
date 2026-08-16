@@ -80,8 +80,10 @@ Before any market-ready claim, release tag, or public demo:
 
 1. Run the live post-deploy smoke against the deployed backend:
    ```bash
-   python3 scripts/post_deploy_smoke.py https://cerebrumdev-backend.onrender.com
+   python3 scripts/post_deploy_smoke.py https://api.cerebrum-dev.com
    ```
+   Production requires `SMOKE_GATE_TOKEN` (Render secret) or a verified
+   `SMOKE_EMAIL`/`SMOKE_PASSWORD`. Public email verification stays on.
 2. Every kernel must print `[LIVE]`.
 3. Deterministic or fallback success is **not** accepted as evidence.
 4. Do not merge to `main` or tag a release until the smoke script exits 0.

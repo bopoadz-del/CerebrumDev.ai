@@ -26,11 +26,11 @@ if not RENDER_API_KEY:
 BACKEND_VARS = [
     {"key": "ENV", "value": "production"},
     {"key": "CEREBRUM_DEV_API_KEY", "generateValue": True},
-    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks.onrender.com"},
+    {"key": "CEREBRUM_API_URL", "value": "https://cerebrum-blocks-10ug.onrender.com"},
     # Must be provisioned manually to match Cerebrum-Blocks — do not generate.
     {"key": "CEREBRUM_API_KEY", "value": os.getenv("CEREBRUM_API_KEY", "")},
-    {"key": "FRONTEND_URL", "value": "https://cerebrumdev-frontend.onrender.com"},
-    {"key": "CORS_ALLOW_ORIGINS", "value": "https://cerebrumdev-frontend.onrender.com"},
+    {"key": "FRONTEND_URL", "value": "https://cerebrum-dev.com"},
+    {"key": "CORS_ALLOW_ORIGINS", "value": "https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend-kkz2.onrender.com"},
     {"key": "LLM_PROVIDER", "value": "ollama"},
     {"key": "OLLAMA_URL", "value": os.getenv("OLLAMA_URL", "https://ollama.com")},
     {"key": "OLLAMA_MODEL", "value": os.getenv("OLLAMA_MODEL", "kimi-k2.7-code:cloud")},
@@ -100,7 +100,7 @@ frontend_payload = {
         "routes": [{"type": "rewrite", "source": "/*", "destination": "/index.html"}],
     },
     "envVars": [
-        {"key": "VITE_API_URL", "value": "https://cerebrumdev-backend.onrender.com"},
+        {"key": "VITE_API_URL", "value": "https://api.cerebrum-dev.com"},
         # Set manually to match backend CEREBRUM_DEV_API_KEY after first deploy.
         {"key": "VITE_API_KEY", "value": os.getenv("VITE_API_KEY", "")},
     ],
