@@ -1,0 +1,52 @@
+{
+  "repo": "bopoadz-del/CerebrumDev.ai",
+  "audited_at_utc": "2026-08-16T21:40:00Z",
+  "git_sha": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+  "verdicts": {
+    "production": "NO-GO",
+    "unattended_public_demo": "NO-GO"
+  },
+  "live_deploy": {
+    "backend_service_id": "srv-d9ta2pad0e5s738lllpg",
+    "backend_slug": "cerebrumdev-backend-goia",
+    "backend_plan": "free",
+    "deploy_id": "dep-d9vmms6417fc73a2qiig",
+    "commit": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+    "matches_origin_master": true
+  },
+  "domains": [
+    {"id": 1, "name": "identity_deploy_pin", "status": "PASS"},
+    {"id": 2, "name": "live_smoke_kernels", "status": "FAIL"},
+    {"id": 3, "name": "readiness_ops", "status": "FAIL"},
+    {"id": 4, "name": "auth_security", "status": "PASS"},
+    {"id": 5, "name": "ci_quality", "status": "PASS"},
+    {"id": 6, "name": "data", "status": "FAIL"},
+    {"id": 7, "name": "factory_vs_product", "status": "PASS"},
+    {"id": 8, "name": "frontend_production", "status": "PASS"},
+    {"id": 9, "name": "observability", "status": "NOT VERIFIED"},
+    {"id": 10, "name": "docs_vs_reality", "status": "FAIL"}
+  ],
+  "probes": {
+    "documented_backend": "https://cerebrumdev-backend.onrender.com/health",
+    "documented_backend_status": 404,
+    "live_backend": "https://api.cerebrum-dev.com",
+    "health": {"http": 200, "status": "ok", "redis_configured": false},
+    "ready": {"http": 200, "status": "ready", "last_backup_ok": false, "last_backup_at": "2026-08-16T03:00:00.001627+00:00"},
+    "version": {"http": 404},
+    "frontend": {"url": "https://cerebrum-dev.com", "http": 200},
+    "legacy_frontend": {"url": "https://cerebrumdev-frontend.onrender.com", "http": 404},
+    "smoke_documented_url": "FAIL",
+    "smoke_custom_domain": "FAIL",
+    "register": {"http": 201, "email_verified": false, "verification_mode": "smtp"},
+    "session_create": {"http": 403, "detail": "email_not_verified"},
+    "unauth_sessions": {"http": 401}
+  },
+  "blockers": [
+    "Deploy-gate smoke fails on documented URL (404) and on live API (redis + email_not_verified session)",
+    "Redis not configured; cerebrumdev-redis absent from workspace",
+    "Backend Render plan is free (spin-down)",
+    "Accounts Postgres free, expires 2026-09-13",
+    "Nightly backup reported ok=false",
+    "README/AGENTS.md/smoke default still advertise 404 hosts"
+  ]
+}
