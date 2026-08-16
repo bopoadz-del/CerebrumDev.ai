@@ -155,3 +155,10 @@ class TestRetention:
 
     def test_prune_on_an_empty_root_is_a_noop(self, storage):
         assert bk.prune_backups(keep=3) == []
+
+
+class TestPostgresDumpHonesty:
+    def test_postgres_dump_fails_honestly_without_pg_dump(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(bk.shutil, "which", lambda _name: None)
+        with pytest.raises(RuntimeError, match="pg_dump is not installed"):
+            bk.snapshot_postgres("postgresql://example", tmp_path / "x.dump")

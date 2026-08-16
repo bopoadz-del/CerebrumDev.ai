@@ -29,7 +29,7 @@ CHECK_RE = re.compile(r"^\[(LIVE|DEAD)\]\s*(.+)$")
 
 
 def main() -> int:
-    base_url = (sys.argv[1] if len(sys.argv) > 1 else "https://cerebrumdev-backend.onrender.com").rstrip("/")
+    base_url = (sys.argv[1] if len(sys.argv) > 1 else "https://api.cerebrum-dev.com").rstrip("/")
     if not SMOKE_SCRIPT.is_file():
         print(f"SMOKE script not found: {SMOKE_SCRIPT}", file=sys.stderr)
         return 2

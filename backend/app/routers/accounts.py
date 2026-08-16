@@ -3,6 +3,8 @@ plus the data-rights endpoints (export and erasure)."""
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import re
 
@@ -18,6 +20,10 @@ router = APIRouter()
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 MIN_PASSWORD_LEN = 8
+# Ops-only principals for production smoke. The .invalid TLD cannot receive
+# mail; public register never uses these addresses.
+_SMOKE_EMAIL_A = "factory-smoke-a@cerebrum-dev.invalid"
+_SMOKE_EMAIL_B = "factory-smoke-b@cerebrum-dev.invalid"
 
 
 class RegisterBody(BaseModel):
@@ -51,6 +57,27 @@ class DeleteAccountBody(BaseModel):
 class ResetBody(BaseModel):
     token: str
     new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
+
+
+def _smoke_gate_token() -> str:
+    return os.getenv("SMOKE_GATE_TOKEN", "").strip()
+
+
+def _smoke_gate_matches(provided: str, expected: str) -> bool:
+    if not provided or not expected:
+        return False
+    left = hashlib.sha256(provided.encode("utf-8")).digest()
+    right = hashlib.sha256(expected.encode("utf-8")).digest()
+    return hmac.compare_digest(left, right)
+
+
+def _smoke_account_password(gate: str) -> str:
+    explicit = os.getenv("SMOKE_ACCOUNT_PASSWORD", "").strip()
+    if explicit:
+        return explicit
+    return "smk_" + hmac.new(
+        b"cerebrumdev-smoke-account", gate.encode("utf-8"), hashlib.sha256
+    ).hexdigest()[:32]
 
 
 def _dev_tokens_exposed() -> bool:
@@ -184,6 +211,34 @@ async def me(principal: Principal = Depends(require_api_key)):
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     return {"ok": True, **account, "auth_kind": principal.kind}
+
+
+@router.post("/smoke-login")
+async def smoke_login(request: Request):
+    """Issue verified smoke principals. Fail-closed without SMOKE_GATE_TOKEN.
+
+    Public email verification is unchanged. This path exists so the deploy
+    gate can create a session with a verified test principal (or two, for
+    isolation) without disabling ``ACCOUNTS_REQUIRE_VERIFIED_EMAIL``.
+    """
+    expected = _smoke_gate_token()
+    if not expected:
+        raise HTTPException(status_code=404, detail="Not Found")
+    provided = (request.headers.get("X-Smoke-Gate") or "").strip()
+    if not _smoke_gate_matches(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing smoke gate token")
+    _rate_limit(request, "smoke-login")
+    password = _smoke_account_password(expected)
+    account_a = accounts_store.ensure_verified_account(_SMOKE_EMAIL_A, password)
+    account_b = accounts_store.ensure_verified_account(_SMOKE_EMAIL_B, password)
+    return {
+        "ok": True,
+        "email_verified": True,
+        "login_token": accounts_store.issue_login_token(account_a["account_id"]),
+        "login_token_b": accounts_store.issue_login_token(account_b["account_id"]),
+        "account_id": account_a["account_id"],
+        "account_id_b": account_b["account_id"],
+    }
 
 
 @router.post("/verify-email")

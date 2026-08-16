@@ -17,7 +17,7 @@ services:
         generateValue: true
         sync: false
       - key: CEREBRUM_API_URL
-        value: https://cerebrum-blocks.onrender.com
+        value: https://cerebrum-blocks-10ug.onrender.com
       - key: CEREBRUM_API_KEY
         sync: false
       - key: FRONTEND_URL
@@ -25,7 +25,7 @@ services:
       # Custom domain (2026-08-05) + the legacy onrender origin kept during
       # transition. Live values are dashboard-managed; keep this in sync.
       - key: CORS_ALLOW_ORIGINS
-        value: https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend.onrender.com
+        value: https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend-kkz2.onrender.com
       - key: PLATFORM_CHAT_FLOW_ENABLED
         value: "true"
       - key: ARCHITECT_LLM_DRAFTING_ENABLED
@@ -99,6 +99,11 @@ services:
       # Observability: paste the Sentry project DSN (python/fastapi) here.
       # Inert when unset. Release is tagged from RENDER_GIT_COMMIT.
       - key: SENTRY_DSN
+        sync: false
+      # Production smoke gate. Unset → POST /v1/auth/smoke-login 404s.
+      # Public email verification is unchanged. Paste a long random token
+      # in the dashboard; the smoke script reads SMOKE_GATE_TOKEN from env.
+      - key: SMOKE_GATE_TOKEN
         sync: false
       # Render Key Value (Redis-compatible). Provisions automatically below.
       # Shared auth rate limits, Drive OAuth pending states, session fan-out.
