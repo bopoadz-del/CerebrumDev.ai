@@ -1,0 +1,115 @@
+{
+  "repo": "bopoadz-del/CerebrumDev.ai",
+  "scope": "Factory, not Cerebrum-Steward",
+  "audited_at_utc": "2026-08-16T21:41:00Z",
+  "verdicts": {
+    "production": "NO-GO",
+    "unattended_public_demo": "NO-GO"
+  },
+  "shas": {
+    "local_head": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+    "origin_master": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+    "live_backend": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+    "live_frontend": "442b62f5d9a14b9247722320aadbd21ff6be0638"
+  },
+  "render": {
+    "workspace_id_cited_by_operators": "tea-d2gv3pf5r7bs73fh82eg",
+    "workspace_id_cited_status": "404",
+    "workspace_id_live": "tea-d9rteq2jnfac738dnc70",
+    "workspace_name": "My Workspace",
+    "backend": {
+      "id": "srv-d9ta2pad0e5s738lllpg",
+      "slug": "cerebrumdev-backend-goia",
+      "plan": "free",
+      "disk": null,
+      "health_check_path": "/ready",
+      "url": "https://cerebrumdev-backend-goia.onrender.com",
+      "live_deploy_id": "dep-d9vmms6417fc73a2qiig",
+      "live_deploy_finished_at": "2026-08-14T19:25:11.599162Z"
+    },
+    "frontend": {
+      "id": "srv-d9ta36v40ujc73dsmhkg",
+      "slug": "cerebrumdev-frontend-kkz2",
+      "url": "https://cerebrumdev-frontend-kkz2.onrender.com",
+      "live_deploy_id": "dep-d9vmms6417fc73a2qj3g",
+      "live_deploy_finished_at": "2026-08-14T19:24:50.027274Z"
+    },
+    "postgres": {
+      "id": "dpg-d9vlh6c9v7es73b53l9g-a",
+      "name": "cerebrumdev-accounts",
+      "plan": "free",
+      "expires_at": "2026-09-13T18:04:09.374913Z"
+    },
+    "factory_redis": "absent"
+  },
+  "domains": [
+    {"id": 1, "name": "deploy_pin", "status": "PASS"},
+    {"id": 2, "name": "live_smoke_kernels", "status": "FAIL"},
+    {"id": 3, "name": "readiness_ops", "status": "FAIL"},
+    {"id": 4, "name": "auth_security", "status": "PASS"},
+    {"id": 5, "name": "ci_latest_master", "status": "PASS"},
+    {"id": 6, "name": "data_migrations", "status": "FAIL"},
+    {"id": 7, "name": "factory_vs_product", "status": "PASS"},
+    {"id": 8, "name": "frontend_production", "status": "PASS"},
+    {"id": 9, "name": "observability_safe_errors", "status": "FAIL"},
+    {"id": 10, "name": "docs_vs_reality", "status": "FAIL"}
+  ],
+  "probes": {
+    "documented_backend_health": {"url": "https://cerebrumdev-backend.onrender.com/health", "http": 404, "at": "2026-08-16T21:38:13Z"},
+    "live_api": "https://api.cerebrum-dev.com",
+    "health": {"http": 200, "status": "ok", "redis_configured": false, "at": "2026-08-16T21:38:13Z"},
+    "ready": {"http": 200, "status": "ready", "last_backup_ok": false, "last_backup_at": "2026-08-16T03:00:00.001627+00:00"},
+    "version": {"http": 404},
+    "frontend_custom_domain": {"url": "https://cerebrum-dev.com/", "http": 200},
+    "frontend_www": {"url": "https://www.cerebrum-dev.com/", "http": 200},
+    "frontend_documented": {"url": "https://cerebrumdev-frontend.onrender.com/", "http": 404},
+    "frontend_live_slug": {"url": "https://cerebrumdev-frontend-kkz2.onrender.com/", "http": 200},
+    "frontend_bundle_api_base": "https://cerebrumdev-backend-goia.onrender.com",
+    "frontend_bundle_sentry_strings": 0,
+    "blocks_documented": {"url": "https://cerebrum-blocks.onrender.com/health", "http": 404},
+    "blocks_live": {"url": "https://cerebrum-blocks-10ug.onrender.com/health", "http": 200},
+    "unauth": {
+      "auth_me": 401,
+      "sessions_create": 401,
+      "factory_draft": 401,
+      "billing_status": 401,
+      "domains_virgin": 401
+    },
+    "register": {"http": 201, "email_verified": false, "verification_mode": "smtp", "email_sent": true, "dev_verification_token": false},
+    "session_create_with_unverified_token": {"http": 403, "detail": "email_not_verified"},
+    "cors_allow_origin_cerebrum_dev_com": true,
+    "cors_allow_origin_evil_example": false,
+    "smoke_documented_host": "FAIL_host_404",
+    "smoke_api_cerebrum_dev_com": {
+      "exit": 1,
+      "live": ["health endpoint", "auth register"],
+      "dead": ["redis rate limiting configured", "session create"],
+      "at": "2026-08-16T21:39:06Z"
+    },
+    "backup_log": {
+      "at": "2026-08-16T03:00:00.015759747Z",
+      "message": "nightly backup FAILED: accounts dump failed: [Errno 2] No such file or directory: 'pg_dump'"
+    },
+    "boot": {
+      "alembic": "PostgresqlImpl",
+      "at": "2026-08-14T19:24:57.382502046Z",
+      "uvicorn": "http://0.0.0.0:10000",
+      "sentry_initialized_log": false
+    }
+  },
+  "ci_master": {
+    "sha": "442b62f5d9a14b9247722320aadbd21ff6be0638",
+    "run": "https://github.com/bopoadz-del/CerebrumDev.ai/actions/runs/31833110957",
+    "conclusion": "success"
+  },
+  "blockers": [
+    "AGENTS.md smoke gate fails: documented host 404; live API DEAD redis + email_not_verified session",
+    "cerebrumdev-redis absent; /health redis.configured false",
+    "Backend Render plan free (spin-down) and no persistent disk",
+    "Accounts Postgres free, expires 2026-09-13",
+    "Nightly backup failed: pg_dump missing from image",
+    "Docs advertise dead onrender hostnames",
+    "GET /version 404",
+    "Sentry not present in frontend bundle or backend boot logs"
+  ]
+}
