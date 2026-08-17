@@ -45,7 +45,12 @@ def test_generator_emits_hats_and_workflows(tmp_path):
     assert (out / "frontend" / "src" / "modules").exists()
 
 
-def test_architect_brief_uses_steward_golden(tmp_path):
+def test_architect_brief_uses_steward_golden(tmp_path, monkeypatch):
+    # Agent manifests / hats are a TEMPLATE-path artifact; production now
+    # builds through the role runner, which does not emit them (registered
+    # in KNOWN_INCOMPLETE). Pin the engine so this keeps guarding the
+    # template contract it was written for.
+    monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
     bp = draft_blueprint_from_brief("Build Cerebrum Steward for private estate ops")
     assert bp.product_id == "cerebrum-steward"
     result = architect_pipeline(

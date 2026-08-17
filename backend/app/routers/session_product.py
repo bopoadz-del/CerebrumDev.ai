@@ -132,6 +132,33 @@ def download_product_package(
             status_code=404,
             detail="generated product not found on disk — generate again",
         )
+
+    # A runner build is a background job. Zipping mid-build would hand the
+    # customer a splice of two writer passes, and zipping a FAILED build
+    # would ship an artifact its own gates rejected. Only a succeeded build
+    # is downloadable; the template engine has no build ledger and is
+    # unaffected.
+    from app.factory.build_jobs import build_status
+
+    status = build_status(out)
+    if status["state"] == "building":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the platform is still being built "
+                f"({status.get('phases_done', 0)}/{status.get('phases_total', 5)} "
+                "phases complete) — poll /product/build-status"
+            ),
+        )
+    if status["state"] == "failed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the build did not pass its gates and will not be shipped: "
+                + str(status.get("detail"))
+            ),
+        )
+
     archive_base = out.parent / f"{out.name}-export"
     archive = shutil.make_archive(str(archive_base), "zip", root_dir=out)
     product_id = gen.get("product_id") or out.name
@@ -140,6 +167,29 @@ def download_product_package(
         filename=f"cerebrumdev-{product_id}.zip",
         media_type="application/zip",
     )
+
+
+@router.get("/{session_id}/product/build-status")
+def get_build_status(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    """Progress of the background build. Read off the build ledger.
+
+    Cheap and quota-free on purpose: the client polls this while the agent
+    writes the platform, and metering a progress read would charge the
+    customer for waiting.
+    """
+    from app.factory.build_jobs import build_status
+
+    state = _require_session(session_id, principal)
+    gen = state.product_design.generation
+    if not gen or not gen.get("output_dir"):
+        return {"ok": True, "build": {"state": "not_started"}}
+    return {
+        "ok": True,
+        "product_id": gen.get("product_id"),
+        "build": build_status(Path(gen["output_dir"])),
+    }
 
 
 @router.post("/{session_id}/product/mode")

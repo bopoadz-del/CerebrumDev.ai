@@ -119,6 +119,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, ".env.example"),
             (LaneRoot.WORKSPACE, ".dockerignore"),
             (LaneRoot.WORKSPACE, "render.yaml"),
+            # The clone-and-test contract the customer runs, and the build
+            # provenance it audits. Named, not a wildcard, for the same
+            # reason as the files above.
+            (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
+            (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that
         # judge it has no gate at all. Also not vendor/** or blocks.lock.json:

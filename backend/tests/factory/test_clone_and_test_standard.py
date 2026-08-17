@@ -1,11 +1,16 @@
 """Clone-and-test standard: every generated pilot is self-verifying.
 
 A client clones the repo, runs scripts/release_gate.py, and watches the
-pilot prove itself. These tests lock the generator to that contract.
+pilot prove itself. These tests lock the TEMPLATE generator to that
+contract; it is no longer the production default (see
+``test_production_uses_the_runner.py``) but remains the documented revert
+path, so its contract still has to hold. The runner artifact's equivalent
+promise is asserted in the cutover tests.
 """
 
 from __future__ import annotations
 
+import os
 import py_compile
 
 import pytest
@@ -15,12 +20,19 @@ from app.factory import product_architect
 
 @pytest.fixture(scope="module")
 def generated(tmp_path_factory):
+    # Pin the engine: generate_product now routes to the role runner by
+    # default, which is a background job with a different artifact shape.
+    # These assertions are about the template path specifically.
+    os.environ["FACTORY_BUILD_ENGINE"] = "template"
     out = tmp_path_factory.mktemp("clone-test-product")
     bp = product_architect.draft_blueprint_from_brief(
         "platform for private estate operations with staff and vehicles",
         use_llm=False,
     )
-    result = product_architect.generate_product(bp, out / bp.product_id)
+    try:
+        result = product_architect.generate_product(bp, out / bp.product_id)
+    finally:
+        os.environ.pop("FACTORY_BUILD_ENGINE", None)
     return out / result["product_id"]
 
 
