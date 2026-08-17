@@ -49,6 +49,30 @@ def test_version_endpoint_reports_render_sha(client, monkeypatch):
     assert body["git_sha_short"] == "abcdef1"
 
 
+def test_ready_backup_reports_live_host_mismatch(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    monkeypatch.setenv(
+        "ACCOUNTS_DATABASE_URL",
+        "postgresql://u:p@ep-new.aws.neon.tech/accounts",
+    )
+    from app.core import backup_scheduler as sched
+
+    sched.status_path().parent.mkdir(parents=True, exist_ok=True)
+    sched.status_path().write_text(
+        '{"ok": true, "at": "2026-08-16T23:49:44+00:00", "engine": "postgres",'
+        ' "accounts_host": "dpg-old.oregon-postgres.render.com"}',
+        encoding="utf-8",
+    )
+    res = client.get("/ready")
+    assert res.status_code == 200
+    backup = res.json()["details"]["last_backup"]
+    assert backup["accounts_host"] == "dpg-old.oregon-postgres.render.com"
+    assert backup["live_accounts_host"] == "ep-new.aws.neon.tech"
+    assert backup["matches_live_engine"] is False
+
+
 def test_ready_head_matches_get_status(client, tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
     monkeypatch.setenv("ENV", "test")

@@ -62,6 +62,16 @@ def accounts_database_url() -> str:
     return raw
 
 
+def accounts_host_fingerprint(url: Optional[str] = None) -> Optional[str]:
+    """Hostname only — never credentials — so /ready can detect a cutover."""
+    from urllib.parse import urlparse
+
+    raw = accounts_database_url() if url is None else (url or "").strip()
+    if not raw:
+        return None
+    return urlparse(raw).hostname
+
+
 def accounts_sqlite_path() -> Path:
     """Resolve the SQLite accounts DB the same way accounts_store does."""
     override = os.getenv("ACCOUNTS_DB_PATH", "").strip()

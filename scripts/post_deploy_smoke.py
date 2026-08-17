@@ -21,6 +21,7 @@ import io
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -28,29 +29,44 @@ import zipfile
 
 BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://api.cerebrum-dev.com").rstrip("/")
 FAILURES = []
+TRANSIENT = {502, 503, 504}
 
 
-def req(method, path, body=None, token=None, raw=False, extra_headers=None):
+def req(method, path, body=None, token=None, raw=False, extra_headers=None, retries=4):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if extra_headers:
         headers.update(extra_headers)
-    r = urllib.request.Request(
-        BASE + path, method=method,
-        data=json.dumps(body).encode() if body is not None else None,
-        headers=headers,
-    )
-    try:
-        with urllib.request.urlopen(r, timeout=300) as resp:
-            data = resp.read()
-            return resp.status, (data if raw else json.loads(data or b"null"))
-    except urllib.error.HTTPError as e:
-        b = e.read()
+    last_status, last_body = None, None
+    for attempt in range(retries + 1):
+        r = urllib.request.Request(
+            BASE + path, method=method,
+            data=json.dumps(body).encode() if body is not None else None,
+            headers=headers,
+        )
         try:
-            return e.code, json.loads(b or b"null")
-        except Exception:
-            return e.code, {"raw": b[:300].decode(errors="replace")}
+            with urllib.request.urlopen(r, timeout=300) as resp:
+                data = resp.read()
+                return resp.status, (data if raw else json.loads(data or b"null"))
+        except urllib.error.HTTPError as e:
+            b = e.read()
+            try:
+                parsed = json.loads(b or b"null")
+            except Exception:
+                parsed = {"raw": b[:300].decode(errors="replace")}
+            last_status, last_body = e.code, (b if raw else parsed)
+            if e.code in TRANSIENT and attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return last_status, last_body
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_status, last_body = 0, {"raw": str(e)[:300]}
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return last_status, last_body
+    return last_status, last_body
 
 
 def check(name, ok, evidence=""):
@@ -60,13 +76,29 @@ def check(name, ok, evidence=""):
         FAILURES.append(name)
 
 
-def chat(sid, tok, msg):
-    rq = urllib.request.Request(
-        BASE + f"/v1/sessions/{sid}/chat", method="POST",
-        data=json.dumps({"message": msg}).encode(),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"},
-    )
-    return urllib.request.urlopen(rq, timeout=300).read().decode(errors="replace")
+def chat(sid, tok, msg, retries=4):
+    last_err = None
+    for attempt in range(retries + 1):
+        rq = urllib.request.Request(
+            BASE + f"/v1/sessions/{sid}/chat", method="POST",
+            data=json.dumps({"message": msg}).encode(),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {tok}"},
+        )
+        try:
+            return urllib.request.urlopen(rq, timeout=300).read().decode(errors="replace")
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in TRANSIENT and attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return f"event: error\ndata: {e.code} {e.reason}\n\n"
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < retries:
+                time.sleep(2 * (attempt + 1))
+                continue
+            return f"event: error\ndata: {type(e).__name__}\n\n"
+    return f"event: error\ndata: {last_err}\n\n"
 
 
 def verified_tokens():
@@ -151,12 +183,22 @@ def main():
                          "harvest scheduling by sugar readings, and club member shipments.")
     check("chat blueprint event", "blueprint" in raw, f"sse_bytes={len(raw)}")
     s, d = req("GET", f"/v1/sessions/{sid}/product", token=tok)
+    if not isinstance(d, dict):
+        d = {}
     bp = d.get("blueprint") or {}
     caps = bp.get("capabilities") or []
     populated = [c for c in caps if c.get("block_ids")]
-    check("LLM drafting (not fallback)", len(caps) >= 3 and len(populated) >= 2,
-          f"caps={len(caps)} populated={len(populated)} "
+    drafting_ok = (
+        s == 200
+        and (bp.get("drafting_mode") == "architect_llm")
+        and len(caps) >= 3
+        and len(populated) >= 2
+    )
+    check("LLM drafting (not fallback)", drafting_ok,
+          f"http={s} mode={bp.get('drafting_mode')} caps={len(caps)} populated={len(populated)} "
           f"(fallback fingerprint: caps=2 populated=0)")
+    if not drafting_ok:
+        return finish()
 
     raw2 = chat(sid, tok, "approve")
     check("approve -> generation event", "generation" in raw2)

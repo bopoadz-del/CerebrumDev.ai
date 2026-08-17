@@ -147,18 +147,28 @@ def _backup_details() -> dict:
         "pg_dump_needed": pg_url,
         "pg_dump_available": bool(dump.get("available")),
     }
+    live_host = backup_mod.accounts_host_fingerprint()
     if last is None:
         return {
             "ok": False,
             "at": None,
             "error": "no backup recorded",
+            "accounts_host": None,
+            "live_accounts_host": live_host,
+            "matches_live_engine": False if live_host else None,
             **probe,
         }
+    recorded_host = last.get("accounts_host")
     return {
         "ok": bool(last.get("ok")),
         "at": last.get("at"),
         "error": last.get("error"),
         "engine": last.get("engine"),
+        "accounts_host": recorded_host,
+        "live_accounts_host": live_host,
+        "matches_live_engine": (
+            recorded_host == live_host if live_host else None
+        ),
         **probe,
     }
 

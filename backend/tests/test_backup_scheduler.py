@@ -169,3 +169,101 @@ class TestArming:
         asyncio.run(boot())
         assert sched.has_any_archive() is True
         assert sched.last_status()["ok"] is True
+
+
+class TestEngineCutoverBackup:
+    def test_host_fingerprint_is_hostname_only(self):
+        url = "postgresql://user:secret@ep-example.c-5.us-east-2.aws.neon.tech/db?sslmode=require"
+        assert bk.accounts_host_fingerprint(url) == "ep-example.c-5.us-east-2.aws.neon.tech"
+        assert bk.accounts_host_fingerprint("") is None
+
+    def test_engine_changed_when_last_backup_points_at_old_host(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        monkeypatch.setenv(
+            "ACCOUNTS_DATABASE_URL",
+            "postgresql://u:p@ep-new.aws.neon.tech/accounts",
+        )
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        sched.status_path().write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "at": "2026-08-16T23:49:44+00:00",
+                    "engine": "postgres",
+                    "accounts_host": "dpg-old.oregon-postgres.render.com",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert sched.engine_changed_since_last_backup() is True
+
+    def test_engine_unchanged_when_host_matches(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        monkeypatch.setenv(
+            "ACCOUNTS_DATABASE_URL",
+            "postgresql://u:p@ep-new.aws.neon.tech/accounts",
+        )
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        sched.status_path().write_text(
+            json.dumps(
+                {
+                    "ok": True,
+                    "engine": "postgres",
+                    "accounts_host": "ep-new.aws.neon.tech",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert sched.engine_changed_since_last_backup() is False
+
+    def test_run_backup_once_records_accounts_host(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
+        monkeypatch.setenv(
+            "ACCOUNTS_DATABASE_URL",
+            "postgresql://u:p@ep-new.aws.neon.tech/accounts",
+        )
+        monkeypatch.setattr(
+            bk,
+            "create_backup",
+            lambda **_kwargs: bk.BackupResult(ok=True, engine="postgres", bytes_written=1),
+        )
+        report = sched.run_backup_once()
+        assert report["ok"] is True
+        assert report["accounts_host"] == "ep-new.aws.neon.tech"
+        assert sched.last_status()["accounts_host"] == "ep-new.aws.neon.tech"
+
+    def test_scheduler_reruns_when_engine_host_changes_even_if_archives_exist(
+        self, monkeypatch, tmp_path
+    ):
+        """A Neon cutover must not keep a pre-cutover last_backup.json forever."""
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "cerebrumdev-backup-20260816T234944Z.tar.gz").write_bytes(b"old")
+        assert sched.has_any_archive() is True
+        monkeypatch.setattr(sched, "engine_changed_since_last_backup", lambda: True)
+
+        ran = asyncio.Event()
+
+        def tracked_run():
+            ran.set()
+            return {"ok": True, "accounts_host": "ep-new.aws.neon.tech"}
+
+        monkeypatch.setattr(sched, "run_backup_once", tracked_run)
+
+        async def boot():
+            task = asyncio.get_running_loop().create_task(sched.scheduler_loop())
+            await asyncio.wait_for(ran.wait(), timeout=30)
+            task.cancel()
+
+        asyncio.run(boot())
+        assert ran.is_set()

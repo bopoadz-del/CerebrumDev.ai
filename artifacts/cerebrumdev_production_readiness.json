@@ -1,15 +1,14 @@
 {
   "repo": "bopoadz-del/CerebrumDev.ai",
   "scope": "Factory, not Cerebrum-Steward",
-  "audited_at_utc": "2026-08-16T23:51:00Z",
+  "audited_at_utc": "2026-08-17T00:33:03Z",
   "verdicts": {
     "production": "NO-GO",
     "unattended_public_demo": "NO-GO"
   },
   "shas": {
-    "local_head": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
-    "origin_master": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
-    "live_backend": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
+    "origin_master_at_audit": "71593c2bcc09e0882656d1ea2617e686a9084cc9",
+    "live_backend": "71593c2bcc09e0882656d1ea2617e686a9084cc9",
     "live_frontend": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867"
   },
   "render": {
@@ -28,8 +27,8 @@
       },
       "health_check_path": "/ready",
       "url": "https://cerebrumdev-backend-goia.onrender.com",
-      "live_deploy_id": "dep-da14ofojo6nc73froil0",
-      "live_deploy_finished_at": "2026-08-16T23:49:51.42656Z"
+      "live_deploy_id": "dep-da14vsm7bikc738c8brg",
+      "live_deploy_finished_at": "2026-08-17T00:04:36.718547Z"
     },
     "frontend": {
       "id": "srv-d9ta36v40ujc73dsmhkg",
@@ -43,7 +42,9 @@
       "name": "cerebrumdev-accounts",
       "plan": "free",
       "expires_at": "2026-09-13T18:04:09.374913Z",
-      "is_live_accounts_engine": true
+      "is_live_accounts_engine": false,
+      "dropped": false,
+      "external_ssl_connect": "FAIL"
     },
     "factory_redis": {
       "id": "red-da131ae1egvs739s8ihg",
@@ -54,20 +55,31 @@
     }
   },
   "neon": {
-    "wired_as_accounts_database_url": false,
-    "uri_found_in_chat_or_transcripts": false,
-    "accounts_host_kind": "render_postgres",
+    "wired_as_accounts_database_url": true,
+    "accounts_host_kind": "neon",
     "mcp_org": "CHADi",
-    "mcp_projects": ["the-fork"],
-    "the_fork_reused_for_factory": false
+    "project_id": "shy-glade-57354706",
+    "project_name": "cerebrumdev",
+    "database": "cerebrumdev-accounts",
+    "alembic": "0002",
+    "main_branch_id": "br-round-frog-ayvfw6nu",
+    "backup_branch": "backup-post-cutover-20260817",
+    "backup_branch_id": "br-cool-voice-ayosx4yy",
+    "the_fork_reused_for_factory": false,
+    "cutover_alembic": "empty -> 0001 -> 0002",
+    "account_rows_after_smoke": 10
+  },
+  "stripe": {
+    "keys_present_on_backend": false,
+    "checkout_honesty": "503 stripe_not_configured"
   },
   "domains": [
-    {"id": 1, "name": "deploy_pin", "status": "PASS"},
+    {"id": 1, "name": "deploy_pin", "status": "FAIL", "note": "backend PASS 71593c2; frontend still bffeeae"},
     {"id": 2, "name": "live_smoke_kernels", "status": "PASS"},
-    {"id": 3, "name": "readiness_ops", "status": "PASS"},
+    {"id": 3, "name": "readiness_ops", "status": "FAIL", "note": "last_backup still 2026-08-16T23:49:44Z pre-cutover"},
     {"id": 4, "name": "auth_security", "status": "PASS"},
     {"id": 5, "name": "ci_latest_master", "status": "PASS"},
-    {"id": 6, "name": "data_migrations", "status": "FAIL"},
+    {"id": 6, "name": "data_migrations", "status": "FAIL", "note": "Neon live; Render PG not migrated; SSL connect FAIL; not dropped"},
     {"id": 7, "name": "factory_vs_product", "status": "PASS"},
     {"id": 8, "name": "frontend_production", "status": "PASS"},
     {"id": 9, "name": "observability_safe_errors", "status": "PASS"},
@@ -75,15 +87,15 @@
   ],
   "probes": {
     "live_api": "https://api.cerebrum-dev.com",
-    "health": {"http": 200, "status": "ok", "redis_configured": true, "redis_ok": true, "sentry_configured": true, "at": "2026-08-16T23:50:00Z"},
+    "health": {"http": 200, "status": "ok", "redis_configured": true, "redis_ok": true, "sentry_configured": true, "at": "2026-08-17T00:33:03Z"},
     "ready": {"http": 200, "status": "ready", "last_backup_ok": true, "last_backup_at": "2026-08-16T23:49:44.989472+00:00", "pg_dump_available": true, "engine": "postgres"},
     "ready_head": {"http": 200},
-    "version": {"http": 200, "git_sha": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867", "sentry_configured": true},
+    "version": {"http": 200, "git_sha": "71593c2bcc09e0882656d1ea2617e686a9084cc9", "sentry_configured": true},
     "frontend_custom_domain": {"url": "https://cerebrum-dev.com/", "http": 200, "follow_redirects": true},
     "frontend_www": {"url": "https://www.cerebrum-dev.com/", "http": 200},
     "frontend_live_slug": {"url": "https://cerebrumdev-frontend-kkz2.onrender.com/", "http": 200},
-    "accounts_database_url": {"present": true, "host_kind": "render_postgres"},
-    "smoke_gate_token": {"present": true},
+    "accounts_database_url": {"present": true, "host_kind": "neon"},
+    "smoke_gate_token": {"present_on_render": true, "printed": false, "committed": false},
     "smoke_api_cerebrum_dev_com": {
       "exit": 0,
       "live": [
@@ -104,15 +116,15 @@
         "billing checkout honest"
       ],
       "dead": [],
-      "at": "2026-08-16T23:51:00Z"
+      "at": "2026-08-17T00:32:48Z",
+      "drafting_mode": "architect_llm",
+      "caps": 6,
+      "populated": 6
     }
   },
-  "ci_master": {
-    "sha": "bffeeaeb06fa0dc6f2cb3e0b66387bf70c2a5867",
-    "run_id": "31975976219",
-    "conclusion": "success"
-  },
   "blockers": [
-    "ACCOUNTS_DATABASE_URL is Render free Postgres dpg-d9vlh6c9v7es73b53l9g-a (expires 2026-09-13), not Neon; no Factory neon.tech URI in chat/transcripts; the-fork Neon project was not reused"
+    "last_backup.at is still 2026-08-16T23:49:44Z (pre-Neon cutover); this PR re-snapshots on accounts host change",
+    "Render Postgres dpg-d9vlh6c9v7es73b53l9g-a still exists; external SSL connect FAIL; empty Neon alembic at cutover so prior rows were not copied; not dropped",
+    "Stripe keys absent on backend; checkout remains honest 503 stripe_not_configured"
   ]
 }
