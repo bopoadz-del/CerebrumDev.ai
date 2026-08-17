@@ -486,12 +486,32 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         vendored.append(bid)
         # A shim that reaches for the Store's runtime cannot import offline
         # on its own -- the slice it stands on must be vendored with it.
-        if ctx.blocks_root and _shim_needs_runtime(source):
+        #
+        # Keyed on what the SOURCE NEEDS, never on where it came from. This
+        # was gated on ``ctx.blocks_root`` and the factory's own vendor
+        # mirror turned out to contain real Store shims (audit/, capture/),
+        # so a build with no Store checkout vendored a shim that imports
+        # app.blocks and shipped no runtime for it: the CLONER gate failed
+        # with "No module named 'app'" on the production default path.
+        if _shim_needs_runtime(source):
             runtime_blocks.append(bid)
 
     if missing:
         raise RoleError(
             "no source found for block(s): " + ", ".join(sorted(missing))
+        )
+
+    if runtime_blocks and not ctx.blocks_root:
+        # The slice can only be taken from a Store checkout. Vendoring the
+        # shim without it would pass this role and fail the gate with an
+        # opaque import error, so refuse here and name the fix.
+        raise RoleError(
+            "block(s) "
+            + ", ".join(sorted(runtime_blocks))
+            + " are Store shims that need the app.blocks/app.core runtime, but "
+            "no Store checkout is available to vendor it from. Set "
+            "CEREBRUM_BLOCKS_ROOT (or make CEREBRUM_BLOCKS_REPO cloneable) so "
+            "the platform can carry the runtime it depends on."
         )
 
     if runtime_blocks:

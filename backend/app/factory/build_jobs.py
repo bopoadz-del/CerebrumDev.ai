@@ -72,6 +72,40 @@ def _ledger_path(output_dir: Path | str) -> Path:
     return Path(output_dir) / "build_ledger.jsonl"
 
 
+def _authorship(output_dir: Path | str) -> Dict[str, Any]:
+    """Who wrote the finished artifact, and what the agent could not write.
+
+    The template path disclosed this in the chat message at generation time
+    ("N capability(ies) shipped as honest stubs — the coder could not write
+    them"). A background build cannot: nothing is stubbed yet when it
+    starts. Moving the disclosure to the completion status is what keeps it
+    truthful -- degraded output is acceptable, invisible degradation is not.
+    """
+    import json
+
+    manifest = Path(output_dir) / "docs" / "build_provenance.json"
+    if not manifest.is_file():
+        return {}
+    try:
+        prov = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    sources = prov.get("artifact_sources") or {}
+    agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+    failures = prov.get("coder_failures") or {}
+    return {
+        "authorship": {
+            "artifacts": len(sources),
+            "agent_written": len(agent),
+            "templated": len(sources) - len(agent),
+            "agent_artifacts": agent,
+            # Named, not counted: "3 stubs" tells the customer nothing about
+            # which parts of their platform are degraded.
+            "coder_failures": {k: str(v)[:300] for k, v in failures.items()},
+        }
+    }
+
+
 def build_status(output_dir: Path | str) -> Dict[str, Any]:
     """Read the build's state off disk.
 
@@ -103,7 +137,12 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     }
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
-        return {"state": "succeeded", "detail": terminal.detail, **progress}
+        return {
+            "state": "succeeded",
+            "detail": terminal.detail,
+            **progress,
+            **_authorship(output_dir),
+        }
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         return {
             "state": "failed",

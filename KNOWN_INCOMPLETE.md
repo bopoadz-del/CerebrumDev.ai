@@ -107,6 +107,26 @@ carry real value (Resident Engineer, Product DNA) to the runner is the next
 piece of work; nothing about them is lost, but a runner-built product does
 not carry them today.
 
+### 1h. A runner build REQUIRES a coder key — MEASURED
+With `FACTORY_CODER_ENABLED=0` (or no LLM key) the WRITER falls back to the
+deterministic contract template, and a build against the **real Store** then
+fails its own TESTER gate: the template calls each block with its declared
+default action and a bare payload, and real blocks reject that
+("Input validation failed", "channels required", "No steps defined"). Only
+the agent writes handlers that construct each block's required input from the
+capability's own fields.
+
+Consequences, stated plainly:
+- **Production must have a coder key.** `CEREBRUM_LLM_API_KEY` is set on the
+  live service, so this holds today — but a keyless deploy will not produce a
+  downloadable product; it will produce honest gate failures.
+- **CI passes keyless** because it builds against the vendor mirror, whose
+  stubs accept any payload. That is a weaker exercise than production and is
+  the reason `test_d3_runner_is_the_production_artifact` deliberately does not
+  pin an engine.
+- The failure is loud and specific (status `failed` with findings), never a
+  silently degraded artifact — and the download refuses it.
+
 ### 1c. Agent output quality is model-bound — MEASURED, and the first reading was wrong
 `kimi-k2.7-code` builds the smoke blueprint end to end: **SUCCESS, rework 0,
 7 of 10 artifacts agent-written, no coder failures**, passing the strict route

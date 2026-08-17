@@ -36,7 +36,15 @@ def test_d2_health():
 
 
 # ── D3: generate a platform -> runnable artifact ────────────────────────────
-def test_d3_generate_platform_artifact(tmp_path):
+def test_d3_generate_platform_artifact(tmp_path, monkeypatch):
+    """The TEMPLATE path's artifact shape (universal console, action routes).
+
+    Pinned to that engine: production now defaults to the role runner, whose
+    artifact is asserted in test_d3_runner_is_the_production_artifact below.
+    The console and /v1/actions/ routes are template-only output, registered
+    in KNOWN_INCOMPLETE 1b as not yet ported.
+    """
+    monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
     from app.factory.product_architect import draft_blueprint_from_brief, generate_product
 
     blueprint = draft_blueprint_from_brief("Build a warehouse operations platform")
@@ -72,3 +80,46 @@ def test_d4_protected_route_rejects_unauthenticated(monkeypatch):
         assert resp.status_code == 401, resp.text
         # The public status route still answers.
         assert c.get("/v1/resident/status").status_code == 200
+
+# ── D3b: the PRODUCTION default -> a platform that runs standalone ──────────
+def test_d3_runner_is_the_production_artifact(tmp_path, monkeypatch):
+    """What a customer downloads today, end to end through the real door.
+
+    Deliberately does NOT set FACTORY_BUILD_ENGINE: this must exercise
+    whatever production defaults to, so the day the default changes this test
+    changes with it. Coder disabled -- the deterministic writer path is what
+    CI can run without a key or a network.
+    """
+    import time
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    from app.factory.build_jobs import build_status
+    from app.factory.product_architect import draft_blueprint_from_brief, generate_product
+
+    blueprint = draft_blueprint_from_brief("Build a warehouse operations platform")
+    out = tmp_path / "warehouse-runner"
+    result = generate_product(blueprint, out)
+    assert isinstance(result, dict)
+
+    # The build is a background job; wait for its verdict off the ledger.
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        status = build_status(out)
+        if status["state"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.5)
+    else:
+        raise AssertionError(f"build never finished: {build_status(out)}")
+    assert status["state"] == "succeeded", status
+
+    # Shaped like a platform that runs on its own, not a parts list.
+    for required in ("app/main.py", "app/routes.py", "app/store.py",
+                     "app/dispatch.py", "blocks.lock.json", "tests/test_smoke.py",
+                     "scripts/release_gate.py"):
+        assert (out / required).is_file(), f"missing {required}"
+
+    # The failure the physical download exposed: capability handlers that
+    # call the operator's store over HTTP instead of running blocks locally.
+    for handler in (out / "app" / "actions").glob("*.py"):
+        src = handler.read_text(encoding="utf-8")
+        assert "httpx" not in src and "/v1/execute" not in src, handler.name

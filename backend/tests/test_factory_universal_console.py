@@ -11,6 +11,20 @@ a missing UI is not.
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _template_engine(monkeypatch):
+    """The universal console is a TEMPLATE-path artifact.
+
+    Production now builds through the role runner, which does not emit it
+    (registered in KNOWN_INCOMPLETE 1b as not-yet-ported). These tests keep
+    guarding the template contract they were written for, which is still the
+    documented revert path.
+    """
+    monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
+
 import os
 import re
 from pathlib import Path
