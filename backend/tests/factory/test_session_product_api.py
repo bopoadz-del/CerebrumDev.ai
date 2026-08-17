@@ -143,9 +143,21 @@ def test_runner_build_reports_progress_and_gates_the_download(client, monkeypatc
     assert build["phases_total"] == 5
 
     # While building, the download must be refused rather than shipping a
-    # splice of two writer passes.
-    if build["state"] == "building":
-        pkg = client.get("/v1/sessions/sess_runner_1/product/package")
-        assert pkg.status_code == 409, pkg.status_code
-        assert "still being built" in pkg.json()["detail"]
+    # splice of two writer passes. Re-read the state alongside the call
+    # instead of trusting the earlier read: the build runs on a background
+    # thread and can finish between the two, which made an earlier version
+    # of this assertion flaky (it demanded 409 from an already-finished
+    # build). The invariant is the PAIRING, not a fixed status code.
+    pkg = client.get("/v1/sessions/sess_runner_1/product/package")
+    state_now = client.get("/v1/sessions/sess_runner_1/product/build-status").json()[
+        "build"
+    ]["state"]
+    if pkg.status_code == 409:
+        detail = pkg.json()["detail"]
+        assert ("still being built" in detail) or ("did not pass its gates" in detail)
+        assert state_now in ("building", "failed", "stalled"), state_now
+    else:
+        # The only way a download may succeed is a build that passed.
+        assert pkg.status_code == 200, pkg.text
+        assert state_now == "succeeded", state_now
 

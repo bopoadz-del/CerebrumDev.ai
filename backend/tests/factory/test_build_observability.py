@@ -174,3 +174,81 @@ def test_application_logs_reach_stdout():
     assert len(
         [h for h in logging.getLogger().handlers if getattr(h, "_cerebrum_stdout", False)]
     ) == 1
+
+
+def test_the_coder_yields_when_the_build_budget_is_nearly_spent(tmp_path):
+    """The wall clock is only checked BETWEEN phases, so a slow model can run
+    the WRITER unbounded -- a production build sat in it for 39 minutes.
+
+    With little budget left the coder must not start another call: it hands
+    the artifact to the deterministic template and RECORDS the skip, so the
+    build finishes honestly instead of hanging.
+    """
+    import time as _time
+
+    from app.factory.build.roles import _budget_too_low
+
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=None,
+        blueprint=None,
+        plan=None,
+        deadline=_time.monotonic() + 5,  # 5s left: no call can finish
+    )
+    assert _budget_too_low(ctx, "handler") is True
+    failures = ctx.state["coder_failures"]
+    assert "handler" in failures
+    assert "budget" in failures["handler"]
+
+    # Plenty of budget: the coder runs normally.
+    roomy = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=None,
+        blueprint=None,
+        plan=None,
+        deadline=_time.monotonic() + 3600,
+    )
+    assert _budget_too_low(roomy, "handler") is False
+    assert not roomy.state.get("coder_failures")
+
+    # No deadline configured means unbounded, as before.
+    unbounded = RoleContext(
+        role=BuildRole.WRITER, workspace=None, blueprint=None, plan=None
+    )
+    assert _budget_too_low(unbounded, "handler") is False
+
+
+def test_a_read_timeout_is_not_retried(monkeypatch):
+    """Retrying a read timeout cost the same wait again for the same likely
+    outcome: 3 attempts x 2 model legs x 180s = up to 18 minutes for ONE
+    artifact, which is what stalled the first production build. Connection
+    failures stay retryable."""
+    import httpx
+
+    from app.factory import coder
+
+    calls = []
+
+    def _timeout(url, json=None, headers=None, timeout=None):
+        calls.append(timeout)
+        raise httpx.ReadTimeout("model did not answer")
+
+    monkeypatch.setattr(coder.httpx, "post", _timeout)
+    monkeypatch.setattr(
+        "app.factory.product_architect.get_factory_llm_config",
+        lambda: {
+            "provider": "kimi",
+            "model": "primary",
+            "fallback_model": "fallback",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "test-key-not-real",
+        },
+    )
+
+    with pytest.raises(coder.CoderError):
+        coder._llm_code_call([{"role": "user", "content": "u"}])
+
+    # One attempt per model leg, not three.
+    assert len(calls) == 2, calls
+    # And the per-call wait is bounded and configurable.
+    assert all(t <= 180 for t in calls), calls
