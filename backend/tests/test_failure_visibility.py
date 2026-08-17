@@ -103,6 +103,9 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         dead = "cerebrumdev-backend.onrender.com"
         live = "https://api.cerebrum-dev.com"
         assert live in smoke and dead not in smoke
+        assert "TRANSIENT" in smoke and "502" in smoke, (
+            "live GET /product 502s immediately after LLM draft; smoke must retry"
+        )
         assert live in agents and dead not in agents
         assert "https://cerebrum-dev.com" in readme
         assert dead not in readme

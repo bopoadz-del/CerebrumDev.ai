@@ -108,6 +108,19 @@ def has_any_archive() -> bool:
     return any(root.glob("cerebrumdev-backup-*.tar.gz"))
 
 
+def engine_changed_since_last_backup() -> bool:
+    """True when live ACCOUNTS_DATABASE_URL host != last_backup.json host.
+
+    Pre-cutover status files omit accounts_host, so a Neon switch is detected
+    even when archives already exist on disk.
+    """
+    current = backup.accounts_host_fingerprint()
+    if not current:
+        return False
+    last = last_status() or {}
+    return last.get("accounts_host") != current
+
+
 def run_backup_once() -> Dict[str, Any]:
     """One backup + prune. Blocking; never raises.
 
@@ -116,14 +129,24 @@ def run_backup_once() -> Dict[str, Any]:
     scheduler loop and silently end all future backups.
     """
     started = datetime.now(timezone.utc).isoformat()
+    host = backup.accounts_host_fingerprint()
     try:
         result = backup.create_backup()
-        report: Dict[str, Any] = {"at": started, **result.to_dict()}
+        report: Dict[str, Any] = {
+            "at": started,
+            **result.to_dict(),
+            "accounts_host": host,
+        }
         if result.ok:
             removed = backup.prune_backups(keep=keep_count())
             report["pruned"] = [p.name for p in removed]
     except Exception as exc:  # noqa: BLE001 — the loop must survive anything
-        report = {"at": started, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        report = {
+            "at": started,
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "accounts_host": host,
+        }
 
     try:
         path = status_path()
@@ -149,6 +172,11 @@ def run_backup_once() -> Dict[str, Any]:
 async def scheduler_loop() -> None:
     if not has_any_archive():
         logger.info("no existing backup archive — taking a bootstrap snapshot now")
+        await asyncio.to_thread(run_backup_once)
+    elif engine_changed_since_last_backup():
+        logger.info(
+            "accounts engine host changed since last_backup.json — taking a cutover snapshot now"
+        )
         await asyncio.to_thread(run_backup_once)
     while True:
         delay = seconds_until_next_run(scheduled_hour())
