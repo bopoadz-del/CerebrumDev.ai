@@ -41,6 +41,35 @@ class RoleContext:
     work_list: Sequence[str] = ()
     #: Carried forward between phases (gaps from COLLECTOR, blocks from CLONER).
     state: Dict[str, Any] = field(default_factory=dict)
+    #: Monotonic deadline for the whole build, set by the runner. The coder
+    #: yields to the deterministic template once too little remains for a
+    #: call to finish -- the wall-clock budget is only checked BETWEEN
+    #: phases, so without this a slow model runs the WRITER unbounded (a
+    #: production build sat in it for 39 minutes).
+    deadline: Optional[float] = None
+    #: Optional progress sink, wired by the runner to a ledger NOTE. Roles
+    #: stay ledger-unaware; without it ``note()`` is a no-op, so a role is
+    #: testable without a ledger. Exists because a WRITER pass that takes
+    #: twenty minutes of agent calls otherwise reports nothing at all: the
+    #: ledger only records phase boundaries, so a customer watching a live
+    #: build saw a frozen "2/5" and could not tell work from a hang.
+    progress: Optional[Any] = None
+
+    def coder_time_left(self) -> Optional[float]:
+        """Seconds of build budget remaining, or None when unbounded."""
+        if self.deadline is None:
+            return None
+        import time as _time
+
+        return self.deadline - _time.monotonic()
+
+    def note(self, detail: str, **payload: Any) -> None:
+        if self.progress is None:
+            return
+        try:
+            self.progress(detail, payload)
+        except Exception:  # noqa: BLE001 -- telemetry must never fail a build
+            pass
 
 
 @dataclass
@@ -1258,6 +1287,31 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
     return contract
 
 
+def _budget_too_low(ctx: RoleContext, what: str) -> bool:
+    """True when too little build budget remains for another coder call.
+
+    Records the skip so the artifact's provenance says the agent was not
+    used and why -- an artifact quietly templated because time ran out is
+    exactly the invisible degradation the factory refuses.
+    """
+    left = ctx.coder_time_left()
+    if left is None:
+        return False
+    from app.factory.coder import _call_timeout_s
+
+    # Two model legs plus a repair retry have to fit, or the call cannot
+    # finish inside the build.
+    needed = _call_timeout_s() * 2 + 30
+    if left > needed:
+        return False
+    ctx.state.setdefault("coder_failures", {})[what] = (
+        f"skipped: {int(max(left, 0))}s of build budget left, a {what} call "
+        f"needs up to {int(needed)}s"
+    )
+    ctx.note(f"coder skipped for {what} — build budget nearly spent", stage="budget")
+    return True
+
+
 def _coder_body(
     ctx: RoleContext,
     cap: Any,
@@ -1279,6 +1333,8 @@ def _coder_body(
     from app.factory.coder import CoderError, coder_enabled, generate_platform_handler
 
     if not coder_enabled():
+        return None
+    if _budget_too_low(ctx, "handler"):
         return None
     try:
         result = generate_platform_handler(
@@ -1310,6 +1366,8 @@ def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
 
     if not coder_enabled():
         return None
+    if _budget_too_low(ctx, "model spec"):
+        return None
     try:
         return generate_model_spec(
             capability_id=cap.capability_id,
@@ -1331,6 +1389,8 @@ def _coder_route_body(
     from app.factory.coder import CoderError, coder_enabled, generate_route_body
 
     if not coder_enabled():
+        return None
+    if _budget_too_low(ctx, "route"):
         return None
     try:
         result = generate_route_body(
@@ -1465,6 +1525,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         sources[f"model:{cid}"] = (
             f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
         )
+    ctx.note(
+        f"designed {len(specs)} data model(s)",
+        stage="models",
+        done=len(specs),
+        total=len(cap_ids),
+    )
     ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
 
     # Persistence is rendered from the same specs, so the schema cannot drift
@@ -1512,6 +1578,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             _handler_module(cid, usable, body, source, default_actions),
         )
         sources[cid] = source
+        ctx.note(
+            f"wrote handler {cid} ({source})",
+            stage="handlers",
+            capability=cid,
+            source=source,
+            done=len([k for k in sources if k in set(cap_ids)]),
+            total=len(cap_ids),
+        )
 
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
@@ -1550,6 +1624,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             }
         )
         sources[f"route:{cid}"] = route_source
+        ctx.note(
+            f"wrote route {cid} ({route_source})",
+            stage="routes",
+            capability=cid,
+            source=route_source,
+            done=len(entries),
+            total=len(cap_ids),
+        )
     ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
 
     # --- run scaffold ------------------------------------------------------

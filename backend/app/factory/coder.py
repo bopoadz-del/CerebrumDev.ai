@@ -170,6 +170,19 @@ ANTHROPIC_VERSION = "2023-06-01"
 #: CoderError and silently dropped that artifact to the template path
 #: (observed once per five routes on a live kimi-k2.7-code build).
 #: Override with FACTORY_CODER_MAX_TOKENS.
+def _call_timeout_s() -> float:
+    """Per-call ceiling for one coder request.
+
+    Reasoning models legitimately take a minute or more, but an unbounded
+    wait multiplied by retries and two model legs is how a build hangs.
+    Override with FACTORY_CODER_TIMEOUT_S.
+    """
+    try:
+        return max(30.0, float(os.getenv("FACTORY_CODER_TIMEOUT_S", "120")))
+    except ValueError:
+        return 120.0
+
+
 def code_max_tokens() -> int:
     try:
         return max(256, int(os.getenv("FACTORY_CODER_MAX_TOKENS", "8192")))
@@ -276,7 +289,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         temperature = cfg.get("temperature")
         if temperature is not None:
             payload["temperature"] = temperature
-        resp = httpx.post(url, json=payload, headers=headers, timeout=180.0)
+        resp = httpx.post(url, json=payload, headers=headers, timeout=_call_timeout_s())
         resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]
@@ -315,7 +328,14 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         for attempt in range(3):
             try:
                 return _try(model)
-            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
+            # ReadTimeout is deliberately NOT retried. It means the model did
+            # not answer within the call timeout; a retry costs the same wait
+            # again for the same likely outcome. Retrying it turned one slow
+            # artifact into up to 18 minutes (3 attempts x 2 model legs x
+            # 180s) and left a production build stuck in the WRITER for 39
+            # minutes with no way to see why. Connection failures are the
+            # genuinely transient case.
+            except (httpx.ConnectError, httpx.ConnectTimeout,
                     httpx.RemoteProtocolError) as exc:
                 last = exc
                 if attempt < 2:

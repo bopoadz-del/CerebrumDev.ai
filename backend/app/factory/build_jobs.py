@@ -44,6 +44,11 @@ TEMPLATE = "template"
 BUILD_WALL_CLOCK_ENV = "FACTORY_BUILD_WALL_CLOCK_S"
 BUILD_REWORK_ENV = "FACTORY_BUILD_MAX_REWORK"
 
+#: A build with no ledger event for this long has no process behind it. The
+#: longest legitimate gap is one coder call (up to ~3 min on a reasoning
+#: model, x2 legs x retries), so this is set well above that.
+_STALL_AFTER_S = 1800.0
+
 
 def build_engine() -> str:
     """Which engine production builds with. Runner unless told otherwise."""
@@ -150,7 +155,45 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
             "findings": list((terminal.payload or {}).get("findings") or [])[:10],
             **progress,
         }
-    return {"state": "building", "detail": "build in progress", **progress}
+    # Intra-phase activity. Without this a WRITER pass of ~16 agent calls
+    # reports a frozen "2/5" for twenty minutes and a customer cannot tell
+    # work from a hang.
+    activity: Dict[str, Any] = {}
+    try:
+        notes = [e for e in ledger.events() if e.kind is EventKind.NOTE]
+    except Exception:  # noqa: BLE001
+        notes = []
+    if notes:
+        last = notes[-1]
+        activity = {
+            "activity": last.detail,
+            "activity_stage": (last.payload or {}).get("stage"),
+            "activity_done": (last.payload or {}).get("done"),
+            "activity_total": (last.payload or {}).get("total"),
+        }
+
+    # A build whose thread died (worker restart, OOM, redeploy) leaves the
+    # ledger's last event as PHASE_STARTED forever, which read as "building"
+    # for eternity. Age the file: no event for this long means nothing is
+    # working on it, and saying so is the honest answer.
+    try:
+        import time
+
+        idle_s = time.time() - path.stat().st_mtime
+    except OSError:
+        idle_s = 0.0
+    if idle_s > _STALL_AFTER_S:
+        return {
+            "state": "stalled",
+            "detail": (
+                f"no build activity for {int(idle_s // 60)} min — the build "
+                "process is gone (restart or redeploy); generate again"
+            ),
+            **progress,
+            **activity,
+        }
+
+    return {"state": "building", "detail": "build in progress", **progress, **activity}
 
 
 def is_build_complete(output_dir: Path | str) -> bool:
