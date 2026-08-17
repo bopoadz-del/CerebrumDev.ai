@@ -211,6 +211,15 @@ class RoleRunner:
         ws = RoleWorkspace(
             role, self.workspace, store_root=self.store_root, staging=staging
         )
+        def _progress(detail: str, payload: Dict[str, Any]) -> None:
+            """Record intra-phase progress as a ledger NOTE.
+
+            NOTE deliberately: it is not a verdict, so completed_roles(),
+            resume_point() and the terminal-event readers are untouched -- a
+            progress line can never be mistaken for a gate result.
+            """
+            self.ledger.append(EventKind.NOTE, role=role, detail=detail, payload=payload)
+
         ctx = RoleContext(
             role=role,
             workspace=ws,
@@ -219,6 +228,7 @@ class RoleRunner:
             blocks_root=self.blocks_root,
             work_list=tuple(work_list),
             state=self.state,
+            progress=_progress,
         )
         result = self.roles[role](ctx)
         if not result.ok:

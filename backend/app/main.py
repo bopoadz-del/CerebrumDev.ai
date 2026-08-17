@@ -1,5 +1,33 @@
+import logging
 import os
+import sys
+
 from dotenv import load_dotenv
+
+
+def _configure_logging() -> None:
+    """Send this application's logs to stdout.
+
+    Nothing configured logging, so uvicorn's own loggers printed access lines
+    while every ``logging.getLogger("cerebrumdev...")`` call went nowhere --
+    the root logger had no handler and defaulted to WARNING. A twenty-minute
+    background build was therefore completely unobservable in production: no
+    coder calls, no phase transitions, no failures, only access logs. Level
+    is LOG_LEVEL (default INFO); uvicorn keeps its own handlers.
+    """
+    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    root = logging.getLogger()
+    if not any(getattr(h, "_cerebrum_stdout", False) for h in root.handlers):
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(
+            logging.Formatter("%(levelname)s %(name)s: %(message)s")
+        )
+        handler._cerebrum_stdout = True  # type: ignore[attr-defined]
+        root.addHandler(handler)
+    root.setLevel(getattr(logging, level, logging.INFO))
+
+
+_configure_logging()
 
 # Load .env before any module reads environment variables
 load_dotenv()

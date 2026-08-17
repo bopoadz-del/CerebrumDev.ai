@@ -41,6 +41,21 @@ class RoleContext:
     work_list: Sequence[str] = ()
     #: Carried forward between phases (gaps from COLLECTOR, blocks from CLONER).
     state: Dict[str, Any] = field(default_factory=dict)
+    #: Optional progress sink, wired by the runner to a ledger NOTE. Roles
+    #: stay ledger-unaware; without it ``note()`` is a no-op, so a role is
+    #: testable without a ledger. Exists because a WRITER pass that takes
+    #: twenty minutes of agent calls otherwise reports nothing at all: the
+    #: ledger only records phase boundaries, so a customer watching a live
+    #: build saw a frozen "2/5" and could not tell work from a hang.
+    progress: Optional[Any] = None
+
+    def note(self, detail: str, **payload: Any) -> None:
+        if self.progress is None:
+            return
+        try:
+            self.progress(detail, payload)
+        except Exception:  # noqa: BLE001 -- telemetry must never fail a build
+            pass
 
 
 @dataclass
@@ -1465,6 +1480,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         sources[f"model:{cid}"] = (
             f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
         )
+    ctx.note(
+        f"designed {len(specs)} data model(s)",
+        stage="models",
+        done=len(specs),
+        total=len(cap_ids),
+    )
     ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
 
     # Persistence is rendered from the same specs, so the schema cannot drift
@@ -1512,6 +1533,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             _handler_module(cid, usable, body, source, default_actions),
         )
         sources[cid] = source
+        ctx.note(
+            f"wrote handler {cid} ({source})",
+            stage="handlers",
+            capability=cid,
+            source=source,
+            done=len([k for k in sources if k in set(cap_ids)]),
+            total=len(cap_ids),
+        )
 
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
@@ -1550,6 +1579,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             }
         )
         sources[f"route:{cid}"] = route_source
+        ctx.note(
+            f"wrote route {cid} ({route_source})",
+            stage="routes",
+            capability=cid,
+            source=route_source,
+            done=len(entries),
+            total=len(cap_ids),
+        )
     ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
 
     # --- run scaffold ------------------------------------------------------
