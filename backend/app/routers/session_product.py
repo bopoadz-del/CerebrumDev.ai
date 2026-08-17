@@ -321,6 +321,11 @@ def generate_approved_product(
             "inputs_hash": result["inputs_hash"],
             "product_id": result["product_id"],
             "canonical_output": result.get("canonical_output"),
+            # Without these the client cannot tell a finished template
+            # product from a runner build that has only just started, and
+            # would go straight to a 409 on download.
+            "engine": result.get("engine"),
+            "build": result.get("build"),
         }
         state.product_design.last_error = None
         update_session(session_id, state)
