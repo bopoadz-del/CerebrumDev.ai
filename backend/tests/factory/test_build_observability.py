@@ -252,3 +252,103 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
     assert len(calls) == 2, calls
     # And the per-call wait is bounded and configurable.
     assert all(t <= 180 for t in calls), calls
+
+
+def test_a_missing_test_runner_is_not_reported_as_failing_tests(tmp_path):
+    """THE defect that made every production build fail at 3/5.
+
+    pytest lived only in requirements-dev.txt while the production image
+    installs requirements.txt, so the TESTER gate's subprocess died with
+    "No module named pytest". Its stderr starts with none of FAILED/ERROR/E,
+    so the gate reported detail "suite is red" with ZERO findings -- and the
+    rework loop sent the agent back three times to rewrite handlers that
+    were never the problem. A build-environment fault must say so.
+    """
+    import subprocess
+
+    from app.factory.build.gates import GateContext, gate_suite_green
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_probe.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
+
+    def _no_pytest(argv, cwd=None, timeout=None):
+        return subprocess.CompletedProcess(
+            argv, 1, "", "C:\python.exe: No module named pytest\n"
+        )
+
+    result = gate_suite_green(
+        GateContext(workspace=tmp_path, role=BuildRole.TESTER, runner=_no_pytest)
+    )
+    assert result.ok is False
+    assert "could not be RUN" in result.detail, result.detail
+    assert result.payload.get("infrastructure") is True
+    # And it must never be actionless: the agent cannot fix an empty finding.
+    assert result.findings
+    assert any("No module named pytest" in f for f in result.findings)
+
+
+def test_a_genuinely_red_suite_still_reports_red_with_findings(tmp_path):
+    """The infrastructure branch must not swallow real test failures."""
+    import subprocess
+
+    from app.factory.build.gates import GateContext, gate_suite_green
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_probe.py").write_text("def test_x():\n    assert 0\n", encoding="utf-8")
+
+    def _red(argv, cwd=None, timeout=None):
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            "FAILED tests/test_probe.py::test_x - assert 0\n1 failed in 0.1s\n",
+            "",
+        )
+
+    result = gate_suite_green(
+        GateContext(workspace=tmp_path, role=BuildRole.TESTER, runner=_red)
+    )
+    assert result.ok is False
+    assert result.detail == "suite is red"
+    assert not result.payload.get("infrastructure")
+    assert any("FAILED" in f for f in result.findings)
+
+
+def test_a_red_suite_never_reports_zero_findings(tmp_path):
+    """A failure with nothing to act on burned three rework rounds. Even
+    unparseable output must yield something concrete."""
+    import subprocess
+
+    from app.factory.build.gates import GateContext, gate_suite_green
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_probe.py").write_text("def test_x():\n    pass\n", encoding="utf-8")
+
+    def _weird(argv, cwd=None, timeout=None):
+        return subprocess.CompletedProcess(argv, 2, "collected 1 item\nsomething odd\n", "")
+
+    result = gate_suite_green(
+        GateContext(workspace=tmp_path, role=BuildRole.TESTER, runner=_weird)
+    )
+    assert result.ok is False
+    assert result.findings, "a failing gate must always give the writer something"
+
+
+def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
+    """The delivered platform ships scripts/release_gate.py but never declared
+    pytest, so a customer running the clone-and-test gate hit the same
+    ModuleNotFoundError. It now ships requirements-dev.txt and the gate says
+    what to install instead of dying."""
+    out = tmp_path / "build"
+    runner = RoleRunner(load_blueprint(SMOKE), out)
+    assert runner.run().ok
+
+    dev = out / "requirements-dev.txt"
+    assert dev.is_file(), "artifact has no requirements-dev.txt"
+    assert "pytest" in dev.read_text(encoding="utf-8")
+
+    gate = (out / "scripts" / "release_gate.py").read_text(encoding="utf-8")
+    assert "requirements-dev.txt" in gate
+    assert "CANNOT RUN" in gate
