@@ -43,6 +43,13 @@ fastembed==0.8.0
 # Heavier embedding / parsing backends are grouped in
 # requirements-embeddings-full.txt and installed only when needed.
 
+# The factory's TESTER gate certifies a generated product by running that
+# product's own suite in a subprocess. pytest therefore belongs in the
+# PRODUCTION image, not only in requirements-dev.txt: without it every
+# production build failed its TESTER gate with "suite is red" and zero
+# findings -- a missing test runner masquerading as bad generated code.
+pytest==9.1.1
+
 anyio==4.14.2
 click==8.4.2
 numpy==2.4.6
