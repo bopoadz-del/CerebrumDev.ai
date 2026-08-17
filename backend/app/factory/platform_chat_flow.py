@@ -385,8 +385,28 @@ def approve_and_generate(
         "inputs_hash": result["inputs_hash"],
         "product_id": result["product_id"],
         "coder": result.get("coder"),
+        "engine": result.get("engine"),
+        "build": result.get("build"),
     }
     pd.last_error = None
+
+    # A runner build has STARTED, not finished. Saying "product generated —
+    # download it" here would be a lie the customer discovers as a 409 on the
+    # download, so the runner engine gets its own honest message.
+    if result.get("engine") == "runner":
+        caps = len((pd.plan or {}).get("capabilities", []) or [])
+        return {
+            "ok": True,
+            "generation": pd.generation,
+            "plan": pd.plan,
+            "summary": (
+                f"Build started for {result['product_id']}: the coding agent is "
+                f"writing {caps} capability(ies) against the real block contracts, "
+                "then a test phase has to pass before anything ships. This takes "
+                "minutes, not seconds. Watch it on Your Platforms — the download "
+                "unlocks only when the build passes its gates."
+            ),
+        }
 
     # Say what generation actually is: deterministic composition of prebuilt
     # blocks (plus LLM-written handlers for GENERATE capabilities when the

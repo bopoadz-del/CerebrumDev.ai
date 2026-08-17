@@ -6,6 +6,7 @@ import {
   chatEventText,
   chatStream,
   clearSession,
+  awaitBuild,
   downloadProductPackage,
   getEmail,
   getToken,
@@ -623,6 +624,7 @@ function Platforms({ sessionId }: { sessionId: string }) {
   const [design, setDesign] = useState<ProductDesign | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [buildNote, setBuildNote] = useState<string | null>(null)
 
   const refresh = useCallback(() => {
     product
@@ -636,9 +638,31 @@ function Platforms({ sessionId }: { sessionId: string }) {
   async function download() {
     setDownloading(true)
     setError(null)
+    setBuildNote(null)
     try {
+      // A runner build is a background job -- the coding agent writes the
+      // platform, which takes minutes. Wait for it (reporting phase
+      // progress) instead of hitting the package endpoint and getting a 409,
+      // and never present a failed build as a download.
+      const status = await awaitBuild(sessionId, (s) => {
+        if (s.state === 'building') {
+          const done = s.phases_done ?? 0
+          const total = s.phases_total ?? 5
+          const phase = s.completed?.length ? s.completed[s.completed.length - 1] : 'starting'
+          setBuildNote(`Building your platform — ${done}/${total} phases (last: ${phase})`)
+        }
+      })
+      if (status.state === 'failed') {
+        setBuildNote(null)
+        setError(
+          `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
+        )
+        return
+      }
+      setBuildNote(null)
       await downloadProductPackage(sessionId)
     } catch (e) {
+      setBuildNote(null)
       setError(e instanceof Error ? e.message : 'export failed')
     } finally {
       setDownloading(false)
@@ -655,6 +679,7 @@ function Platforms({ sessionId }: { sessionId: string }) {
         <p className="dim">What the factory built for you. Download the export and launch it anywhere.</p>
       </header>
       {error && <div className="error-box">{error}</div>}
+      {buildNote && <div className="panel dim">{buildNote}</div>}
       {!gen ? (
         <div className="panel empty-state">
           <h3>No platform built yet</h3>

@@ -488,12 +488,31 @@ def generate_product(
     *,
     blocks_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    factory_root = _repo_root()
+    """Build a product. The role runner is the default engine.
+
+    Every production door funnels through here, which is why the cutover
+    lives here rather than in four routers. With the runner engine the build
+    is a background job (minutes, agent-written) and the return carries a
+    ``build`` status the caller polls; with the template engine it is the
+    old synchronous composition. ``FACTORY_BUILD_ENGINE=template`` reverts.
+    """
     blocks = Path(blocks_root) if blocks_root else None
     if blocks is None:
-        env = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-        if env:
-            blocks = Path(env)
+        # The SAME resolver every router uses: explicit path, then a Store
+        # clone. Reading only the env vars here meant a caller that passed no
+        # blocks_root (the CLI, the demo flows) silently vendored the factory's
+        # own mirror -- which contains real Store shims and therefore cannot
+        # produce a standalone platform.
+        from app.factory.blocks_source import resolve_blocks_root
+
+        blocks = resolve_blocks_root()
+
+    from app.factory.build_jobs import RUNNER, build_engine, start_runner_build
+
+    if build_engine() == RUNNER:
+        return start_runner_build(blueprint, output_dir, blocks_root=blocks)
+
+    factory_root = _repo_root()
     gen = ProductGenerator(
         blueprint,
         blocks_root=blocks,

@@ -28,6 +28,17 @@ def client(monkeypatch):
 
 
 def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path):
+    """The TEMPLATE path's golden flow (provenance.json, kernel ActionOutcome
+    actions, command_center.tsx) -- all template-only artifacts.
+
+    Pinned to that engine. Note for the next reader: before pinning, this
+    test PASSED locally and failed in CI, because a stale output directory
+    from an earlier template-era run still satisfied the assertions on a
+    developer machine while a fresh CI container told the truth. The runner
+    path's session contract is covered by test_production_uses_the_runner.py
+    and the build-status endpoint test below.
+    """
+    monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
     create_session("sess_product_1", "tester")
     out = tmp_path / "gen"
     # draft
@@ -92,3 +103,49 @@ def test_generate_requires_approval(client):
     )
     r = client.post("/v1/sessions/sess_product_2/product/generate", json={})
     assert r.status_code == 400
+
+def test_runner_build_reports_progress_and_gates_the_download(client, monkeypatch):
+    """The production HTTP contract for a runner build.
+
+    The UI depends on exactly this: generate returns immediately with a
+    building state, build-status reports progress off the ledger, and the
+    package endpoint refuses (409) until the build has passed its gates --
+    never handing over a half-written tree.
+    """
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    monkeypatch.delenv("FACTORY_BUILD_ENGINE", raising=False)
+    create_session("sess_runner_1", "tester")
+
+    r = client.post(
+        "/v1/sessions/sess_runner_1/product/draft",
+        json={"brief": "Build a warehouse operations platform"},
+    )
+    assert r.status_code == 200, r.text
+    assert client.post("/v1/sessions/sess_runner_1/product/plan").status_code == 200
+    assert (
+        client.post(
+            "/v1/sessions/sess_runner_1/product/approve", json={"approve": True}
+        ).status_code
+        == 200
+    )
+
+    r = client.post("/v1/sessions/sess_runner_1/product/generate", json={})
+    assert r.status_code == 200, r.text
+    gen = r.json()["generation"]
+    # The client must be able to tell "started" from "finished".
+    assert gen["engine"] == "runner"
+    assert gen["build"]["state"] in ("building", "succeeded", "failed")
+
+    status_res = client.get("/v1/sessions/sess_runner_1/product/build-status")
+    assert status_res.status_code == 200, status_res.text
+    build = status_res.json()["build"]
+    assert build["state"] in ("building", "succeeded", "failed")
+    assert build["phases_total"] == 5
+
+    # While building, the download must be refused rather than shipping a
+    # splice of two writer passes.
+    if build["state"] == "building":
+        pkg = client.get("/v1/sessions/sess_runner_1/product/package")
+        assert pkg.status_code == 409, pkg.status_code
+        assert "still being built" in pkg.json()["detail"]
+

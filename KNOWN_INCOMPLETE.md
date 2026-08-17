@@ -44,18 +44,15 @@ locally instead of calling the store over HTTP.
 
 Three things are genuinely still open:
 
-**(a) Cutover has not happened — this is the next milestone.** The runner is
-opt-in behind `FACTORY_RUNNER_ENABLED` and nothing in the HTTP or chat
-generation path calls it. `ProductGenerator` remains the default and still
-emits `httpx.post(store_url + "/v1/execute")` handlers. Both paths exist side
-by side on purpose; retiring the template path is a separate piece of work.
+**(a) Cutover — DONE 2026-08-17.** The runner is the production default; see
+1b for what it trades. The template path survives behind
+`FACTORY_BUILD_ENGINE=template` as the documented revert.
 
-**(b) The WRITER does not call the LLM coder yet.** It composes handler
-bodies from the block contract deterministically. The seam is a single
-function (`roles._templated_body`) and the module records which path produced
-each handler, so nothing claims LLM authorship that did not have it. This is
-the difference between "the runner manufactures" and "the agent manufactures"
-— the harness is real, the coder is not yet plugged into it.
+**(b) The WRITER calls the LLM coder — DONE.** Kimi writes each handler,
+model spec and route against the block's harvested contract; the
+deterministic body remains the recorded fallback when no key is configured
+(which is how CI exercises this path). Measured: `field_ops` build 16,
+RUN_SUCCEEDED with all five handlers agent-written and zero coder failures.
 
 **(c) STORE_MANAGER is half built.** The **read-only registrar is
 implemented** (`app/factory/build/registrar.py`, `cli.py store registry`): it
@@ -70,18 +67,65 @@ a human-approval path for MAJOR and DELETE. That is its own milestone, and a par
 implementation that writes to the Store without the approval path is worse
 than none.
 
-The factory rebuild is **in progress, not concluded**.
+The factory rebuild is **cut over and live**; the remaining open piece is
+the STORE_MANAGER write half (c) and the artifact-parity port in 1b.
 
-### 1b. Cutover is the next milestone
-The runner is opt-in (`FACTORY_RUNNER_ENABLED`, or the `cli.py build`
-subcommand) and nothing in the HTTP or chat generation path calls it.
-`ProductGenerator` remains the default and still emits
-`httpx.post(store_url + "/v1/execute")` handlers. The runner's artifact is now
-~23 files (models, sqlite persistence, FastAPI routes, entrypoint, README,
-requirements, a real test suite) against `ProductGenerator`'s ~93, so parity
-is closer but not reached — the runner does not yet emit hats, workflows, the
-universal console, connectors, edge profile, certification scaffold, Product
-DNA or the Resident Engineer. Decide cutover on what the live test shows.
+### 1b. Cutover — DONE 2026-08-17, and what it traded
+**The live test decided it.** A product downloaded from the running platform
+was audited: six capability handlers that were ONE template differing only in
+a `BLOCK_IDS` list, each `httpx.post(store_url + "/v1/execute")` back to the
+operator's store, `vendor/blocks/` present but unreachable (no dispatch
+runtime, no lockfile, no Store runtime slice), and zero coding-agent
+authorship anywhere in the manifest. Everything the factory campaign fixed
+lived behind a door production never opened.
+
+`product_architect.generate_product` — the single door all four production
+callers use (session generate, chat flow, `/v1/factory/generate`, workbench
+promote) — now routes to the role runner. `FACTORY_BUILD_ENGINE=template`
+reverts to the old path, which keeps its own contract tests.
+
+Because a real build is minutes rather than the template's seconds, it runs
+on a background thread and **the build ledger is the job record**: status is
+a read of the artifact (`GET /v1/sessions/{id}/product/build-status`), so it
+survives a worker restart. The download refuses a build that is still running
+(409) or that failed its gates (409) — shipping either would hand the
+customer a torn or gate-rejected artifact.
+
+**What the runner artifact gains:** agent-written handlers/models/routes
+against each block's real contract, in-process dispatch over blocks vendored
+WITH the Store runtime slice they need, sqlite persistence, its own suite that
+runs with the network blocked, deploy scaffold, `blocks.lock.json` provenance,
+`scripts/release_gate.py` (clone-and-test) and `docs/build_provenance.json`
+recording which artifacts the agent wrote.
+
+**What it still does not emit (the honest trade):** hats/agent manifests,
+workflows.json, the universal console, connectors, edge profile,
+certification scaffold, Product DNA and the Resident Engineer — roughly the
+template path's other ~60 files. Their contract tests are pinned to
+`FACTORY_BUILD_ENGINE=template` rather than deleted. Porting the ones that
+carry real value (Resident Engineer, Product DNA) to the runner is the next
+piece of work; nothing about them is lost, but a runner-built product does
+not carry them today.
+
+### 1h. A runner build REQUIRES a coder key — MEASURED
+With `FACTORY_CODER_ENABLED=0` (or no LLM key) the WRITER falls back to the
+deterministic contract template, and a build against the **real Store** then
+fails its own TESTER gate: the template calls each block with its declared
+default action and a bare payload, and real blocks reject that
+("Input validation failed", "channels required", "No steps defined"). Only
+the agent writes handlers that construct each block's required input from the
+capability's own fields.
+
+Consequences, stated plainly:
+- **Production must have a coder key.** `CEREBRUM_LLM_API_KEY` is set on the
+  live service, so this holds today — but a keyless deploy will not produce a
+  downloadable product; it will produce honest gate failures.
+- **CI passes keyless** because it builds against the vendor mirror, whose
+  stubs accept any payload. That is a weaker exercise than production and is
+  the reason `test_d3_runner_is_the_production_artifact` deliberately does not
+  pin an engine.
+- The failure is loud and specific (status `failed` with findings), never a
+  silently degraded artifact — and the download refuses it.
 
 ### 1c. Agent output quality is model-bound — MEASURED, and the first reading was wrong
 `kimi-k2.7-code` builds the smoke blueprint end to end: **SUCCESS, rework 0,

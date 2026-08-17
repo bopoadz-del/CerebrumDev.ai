@@ -220,6 +220,48 @@ export const product = {
     }),
   generate: (sid: string) =>
     req<ProductDesign & { ok: boolean }>('POST', `/v1/sessions/${sid}/product/generate`, {}),
+  buildStatus: (sid: string) =>
+    req<{ ok: boolean; product_id?: string; build: BuildStatus }>(
+      'GET',
+      `/v1/sessions/${sid}/product/build-status`,
+    ),
+}
+
+/** Progress of a background build, read off the artifact's own ledger. */
+export type BuildStatus = {
+  state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed'
+  detail?: string
+  findings?: string[]
+  phases?: string[]
+  completed?: string[]
+  phases_done?: number
+  phases_total?: number
+}
+
+/**
+ * Wait for a background build to finish, reporting progress as it goes.
+ *
+ * The runner engine manufactures the platform with the coding agent, which
+ * takes minutes rather than the old template path's seconds; the button
+ * that used to return a finished product now starts a job. Polling the
+ * ledger is what makes that honest to the user instead of a spinner that
+ * silently downloads a half-built tree.
+ */
+export async function awaitBuild(
+  sid: string,
+  onProgress?: (s: BuildStatus) => void,
+  { intervalMs = 4000, timeoutMs = 45 * 60 * 1000 } = {},
+): Promise<BuildStatus> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const { build } = await product.buildStatus(sid)
+    onProgress?.(build)
+    if (build.state === 'succeeded' || build.state === 'failed') return build
+    if (Date.now() > deadline) {
+      return { ...build, state: 'failed', detail: 'build timed out client-side' }
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
 }
 
 export async function downloadProductPackage(sid: string): Promise<void> {

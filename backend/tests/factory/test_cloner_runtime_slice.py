@@ -310,3 +310,44 @@ def test_an_unresolvable_runtime_import_fails_the_clone_loudly(tmp_path):
 
     with pytest.raises(RoleError, match="does_not_exist"):
         _clone(tmp_path, store)
+
+def test_the_slice_follows_what_the_block_needs_not_where_it_came_from(tmp_path):
+    """The runtime-slice decision was gated on blocks_root being set, and the
+    factory's OWN vendor mirror contains real Store shims (audit/, capture/).
+    So a build with no Store checkout vendored a shim importing app.blocks,
+    shipped no runtime for it, and failed the CLONER gate with "No module
+    named 'app'" -- on the production default path.
+
+    With no Store checkout the clone must now REFUSE and name the fix, rather
+    than produce an artifact that cannot import.
+    """
+    store = _faux_store(tmp_path)
+    mirror_style = store / "block_registry" / "needs_runtime"
+    mirror_style.mkdir(parents=True)
+    (mirror_style / "block.json").write_text(
+        json.dumps({"id": "needs_runtime"}), encoding="utf-8"
+    )
+    (mirror_style / "block.py").write_text(_SHIM, encoding="utf-8")
+
+    ws = RoleWorkspace(BuildRole.CLONER, tmp_path / "no-store-build")
+    ctx = RoleContext(
+        role=BuildRole.CLONER,
+        workspace=ws,
+        blueprint=None,
+        plan=None,
+        blocks_root=None,  # no Store checkout available
+        state={"resolved_blocks": ("needs_runtime",)},
+    )
+
+    # Point the mirror lookup at our shim so the source resolves without a
+    # blocks_root, exactly as the real vendor mirror does.
+    import app.factory.build.roles as roles_mod
+
+    original = roles_mod._block_source_dir
+    roles_mod._block_source_dir = lambda bid, root: mirror_style
+    try:
+        with pytest.raises(RoleError, match="CEREBRUM_BLOCKS_ROOT"):
+            run_cloner(ctx)
+    finally:
+        roles_mod._block_source_dir = original
+

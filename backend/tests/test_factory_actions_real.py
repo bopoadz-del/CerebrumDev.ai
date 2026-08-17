@@ -16,6 +16,9 @@ New-shape tests for the 2026-08-02 field findings (live hotel/retail runs):
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+
 import os
 import subprocess
 import sys
@@ -48,6 +51,16 @@ def _draft(monkeypatch):
 
 
 class TestGeneratedActionsAreWired:
+    """The TEMPLATE export's action wiring (/v1/actions/ routes, its smoke
+    suite). Production builds through the role runner, whose equivalent
+    guarantees are asserted in tests/factory/test_production_uses_the_runner.py
+    and tests/e2e/test_demo_flows.py::test_d3_runner_is_the_production_artifact.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _template_engine(self, monkeypatch):
+        monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
+
     def test_generated_main_exposes_action_routes(self, tmp_path, monkeypatch):
         bp = _draft(monkeypatch)
         out = tmp_path / "export"
@@ -155,6 +168,9 @@ class TestCoder:
             _validate_body("return {unclosed", "cap")
 
     def test_coder_written_module_ships_and_runs(self, tmp_path, monkeypatch):
+        # Template-path coder provenance (generate_handler_body / result["coder"]).
+        # Production defaults to the runner; pin the engine this contract belongs to.
+        monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
         bp = draft_blueprint_from_brief(BRIEF, use_llm=False)
         gen_caps = [
             c.id for c in bp.capabilities if (c.strategy_hint or "") == "GENERATE"
@@ -181,6 +197,9 @@ class TestCoder:
         compile(text, str(mod_path), "exec")
 
     def test_coder_failure_ships_honest_stub_with_reason(self, tmp_path, monkeypatch):
+        # Template-path coder provenance (generate_handler_body / result["coder"]).
+        # Production defaults to the runner; pin the engine this contract belongs to.
+        monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
         bp = draft_blueprint_from_brief(BRIEF, use_llm=False)
         monkeypatch.setenv(coder_mod.CODER_ENABLED_ENV, "1")
 
@@ -203,6 +222,9 @@ class TestCoder:
         )
 
     def test_coder_disabled_is_recorded_not_silent(self, tmp_path, monkeypatch):
+        # Template-path coder provenance (generate_handler_body / result["coder"]).
+        # Production defaults to the runner; pin the engine this contract belongs to.
+        monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
         bp = draft_blueprint_from_brief(BRIEF, use_llm=False)
         monkeypatch.setenv(coder_mod.CODER_ENABLED_ENV, "0")
         out = tmp_path / "export"
@@ -220,4 +242,39 @@ class TestCoder:
         result = platform_chat_flow.approve_and_generate(
             state, output_root=tmp_path / "gen"
         )
-        assert "honest stubs" in result["summary"], result["summary"]
+
+        # A background build cannot disclose stubs at START -- nothing is
+        # stubbed yet. The disclosure moved to the completion status, where it
+        # can be truthful AND name which capabilities are degraded. The start
+        # message must therefore not claim the product is finished either.
+        summary = result["summary"]
+        assert "Build started" in summary, summary
+        assert "download" in summary.lower(), "the start message must set expectations"
+
+        from app.factory.build_jobs import build_status
+
+        out = Path(result["generation"]["output_dir"])
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            status = build_status(out)
+            if status["state"] in ("succeeded", "failed"):
+                break
+            time.sleep(0.5)
+        else:
+            raise AssertionError(f"build never finished: {build_status(out)}")
+
+        # The invariant is DISCLOSURE, not a particular outcome: this test
+        # runs with the coder disabled, and the deterministic fallback cannot
+        # satisfy every real Store block contract (that is what the agent is
+        # for -- see KNOWN_INCOMPLETE 1h). Either way the status must be
+        # explicit; what is forbidden is invisible degradation.
+        if status["state"] == "succeeded":
+            authorship = status["authorship"]
+            assert authorship["artifacts"] > 0
+            # Coder disabled, so nothing may claim agent authorship.
+            assert authorship["agent_written"] == 0
+            assert authorship["templated"] == authorship["artifacts"]
+        else:
+            assert status["state"] == "failed"
+            assert status["findings"], "a failed build must say what failed"
+            assert status["detail"], "a failed build must carry a reason"

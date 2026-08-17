@@ -486,12 +486,32 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         vendored.append(bid)
         # A shim that reaches for the Store's runtime cannot import offline
         # on its own -- the slice it stands on must be vendored with it.
-        if ctx.blocks_root and _shim_needs_runtime(source):
+        #
+        # Keyed on what the SOURCE NEEDS, never on where it came from. This
+        # was gated on ``ctx.blocks_root`` and the factory's own vendor
+        # mirror turned out to contain real Store shims (audit/, capture/),
+        # so a build with no Store checkout vendored a shim that imports
+        # app.blocks and shipped no runtime for it: the CLONER gate failed
+        # with "No module named 'app'" on the production default path.
+        if _shim_needs_runtime(source):
             runtime_blocks.append(bid)
 
     if missing:
         raise RoleError(
             "no source found for block(s): " + ", ".join(sorted(missing))
+        )
+
+    if runtime_blocks and not ctx.blocks_root:
+        # The slice can only be taken from a Store checkout. Vendoring the
+        # shim without it would pass this role and fail the gate with an
+        # opaque import error, so refuse here and name the fix.
+        raise RoleError(
+            "block(s) "
+            + ", ".join(sorted(runtime_blocks))
+            + " are Store shims that need the app.blocks/app.core runtime, but "
+            "no Store checkout is available to vendor it from. Set "
+            "CEREBRUM_BLOCKS_ROOT (or make CEREBRUM_BLOCKS_REPO cloneable) so "
+            "the platform can carry the runtime it depends on."
         )
 
     if runtime_blocks:
@@ -1009,6 +1029,72 @@ def _render_dockerignore() -> str:
     )
 
 
+def _render_release_gate(product_name: str) -> str:
+    """The clone-and-test contract, ported from the template path.
+
+    A customer clones the delivered repository, runs one script, and watches
+    the platform prove itself. The template generator has always shipped
+    this; the runner's artifact must too, or the cutover would quietly drop
+    a customer-facing promise. It additionally reports which artifacts the
+    coding agent wrote, so provenance is auditable without the factory.
+    """
+    return f'''#!/usr/bin/env python3
+"""Release gate for {product_name}.
+
+Runs the platform's own suite and prints a PASS/FAIL verdict. The suite
+exercises every capability through local block dispatch with the network
+blocked, so a PASS means this platform genuinely works standalone.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def main() -> int:
+    print("== {product_name} — release gate ==")
+    result = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"], cwd=ROOT)
+    ok = result.returncode == 0
+
+    lock = ROOT / "blocks.lock.json"
+    if lock.is_file():
+        data = json.loads(lock.read_text(encoding="utf-8"))
+        blocks = data.get("blocks", {{}})
+        print(f"vendored blocks: {{len(blocks)}}")
+        for bid, meta in sorted(blocks.items()):
+            print(f"  {{bid}} @ {{str(meta.get('commit'))[:16]}} ({{meta.get('source')}})")
+        runtime = data.get("runtime")
+        if runtime:
+            print(f"store runtime slice: {{len(runtime.get('files', []))}} file(s) "
+                  f"@ {{str(runtime.get('commit'))[:16]}}")
+    else:
+        print("blocks.lock.json: MISSING — provenance of vendored blocks is unknown")
+        ok = False
+
+    manifest = ROOT / "docs" / "build_provenance.json"
+    if manifest.is_file():
+        prov = json.loads(manifest.read_text(encoding="utf-8"))
+        sources = prov.get("artifact_sources", {{}})
+        agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+        print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
+    else:
+        print("docs/build_provenance.json: MISSING")
+        ok = False
+
+    print("VERDICT:", "PASS" if ok else "FAIL")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
 def _render_procfile() -> str:
     return "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
 
@@ -1491,6 +1577,29 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text("Dockerfile", _render_dockerfile())
     ctx.workspace.write_text(".dockerignore", _render_dockerignore())
     ctx.workspace.write_text("Procfile", _render_procfile())
+    # The clone-and-test contract, plus the provenance it audits. Written
+    # here rather than by the STORE_MANAGER so the artifact is complete the
+    # moment the WRITER's gate passes.
+    ctx.workspace.write_text(
+        Path("scripts") / "release_gate.py", _render_release_gate(product_name)
+    )
+    ctx.workspace.write_text(
+        Path("docs") / "build_provenance.json",
+        json.dumps(
+            {
+                "schema_version": "build_provenance.v1",
+                "product_id": getattr(ctx.blueprint, "product_id", "unknown"),
+                "product_name": product_name,
+                "engine": "role_runner",
+                "artifact_sources": sources,
+                "coder_failures": dict(ctx.state.get("coder_failures", {})),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+    )
+    sources["release_gate"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
     sources["deploy_scaffold"] = fallback_source
