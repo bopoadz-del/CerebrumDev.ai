@@ -127,6 +127,33 @@ Consequences, stated plainly:
 - The failure is loud and specific (status `failed` with findings), never a
   silently degraded artifact — and the download refuses it.
 
+### 1i. The factory model and the coder timeout are load-bearing config — MEASURED
+The first production build after cutover sat in the WRITER for **51 minutes**
+against a 45-minute wall clock and never finished. Three compounding causes,
+all now fixed in code, but the operational lesson is the config one:
+
+1. **Production was configured with a model nobody had validated.**
+   `CEREBRUM_FACTORY_LLM_MODEL` was `kimi-k2.7-code`; every measured build in
+   the campaign used `kimi-k2.7-code-highspeed`. After the swap, handlers were
+   written in ~30-45s each and progress was continuous. **Check the live env
+   against the model the evidence covers — a code default does not change a
+   service that already has the variable set.**
+2. `ReadTimeout` was retried (3 attempts x 2 model legs x 180s = up to 18
+   minutes for ONE artifact). Only connection failures retry now, and the
+   per-call ceiling is `FACTORY_CODER_TIMEOUT_S` (default 120, production
+   150).
+3. The wall clock is only checked BETWEEN phases, so nothing bounded a slow
+   WRITER. Roles now carry the build deadline and the coder yields to the
+   deterministic template when a call cannot finish inside it, recording the
+   skip by name.
+
+Also fixed, and the reason this took an hour to diagnose: **nothing configured
+logging**, so every application log line was dropped in production while
+uvicorn's access logs printed, and the ledger recorded only phase boundaries —
+a 51-minute WRITER reported a frozen "2/5". Builds now emit per-artifact
+progress (`build_status.activity`) and app logs reach stdout. A build whose
+thread dies reports `stalled` instead of `building` forever.
+
 ### 1c. Agent output quality is model-bound — MEASURED, and the first reading was wrong
 `kimi-k2.7-code` builds the smoke blueprint end to end: **SUCCESS, rework 0,
 7 of 10 artifacts agent-written, no coder failures**, passing the strict route

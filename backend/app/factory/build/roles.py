@@ -1058,6 +1058,23 @@ def _render_dockerignore() -> str:
     )
 
 
+def _render_dev_requirements() -> str:
+    """What scripts/release_gate.py needs in order to run.
+
+    Kept out of requirements.txt so the delivered runtime stays lean, but it
+    must EXIST: the artifact ships a clone-and-test gate and never declared
+    the test runner that gate depends on. The identical omission in the
+    factory's own production image made every live build fail its TESTER
+    gate with "suite is red" and zero findings.
+    """
+    return (
+        "# Needed by scripts/release_gate.py and tests/.\n"
+        "#   pip install -r requirements-dev.txt\n"
+        "pytest>=8\n"
+        "httpx>=0.27\n"
+    )
+
+
 def _render_release_gate(product_name: str) -> str:
     """The clone-and-test contract, ported from the template path.
 
@@ -1087,6 +1104,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main() -> int:
     print("== {product_name} — release gate ==")
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        print("pytest is not installed, so the suite cannot be run.")
+        print("  pip install -r requirements-dev.txt")
+        print("VERDICT: CANNOT RUN")
+        return 2
     result = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"], cwd=ROOT)
     ok = result.returncode == 0
 
@@ -1638,6 +1662,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
     ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
     ctx.workspace.write_text("requirements.txt", _render_requirements())
+    ctx.workspace.write_text(
+        "requirements-dev.txt", _render_dev_requirements()
+    )
     if ctx.work_list and ctx.workspace.exists("README.md"):
         # The README does not fail tests; regenerating it on rework spends
         # coder budget for churn.

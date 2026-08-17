@@ -113,6 +113,7 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # these and must not be able to drop anything else at the root.
             (LaneRoot.WORKSPACE, "README.md"),
             (LaneRoot.WORKSPACE, "requirements.txt"),
+            (LaneRoot.WORKSPACE, "requirements-dev.txt"),
             (LaneRoot.WORKSPACE, "pyproject.toml"),
             (LaneRoot.WORKSPACE, "Dockerfile"),
             (LaneRoot.WORKSPACE, "Procfile"),

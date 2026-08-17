@@ -229,13 +229,42 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         )
 
     proc = ctx.run([sys.executable, "-m", "pytest", "tests", "-q", "--no-header"])
-    output = ((proc.stdout or "") + (proc.stderr or "")).splitlines()
+    raw = (proc.stdout or "") + (proc.stderr or "")
+    output = raw.splitlines()
     if proc.returncode != 0:
+        findings = [
+            ln for ln in output if ln.startswith(("FAILED", "ERROR", "E "))
+        ][:20]
+        # "The suite could not run" is NOT "the suite failed". Production
+        # builds failed three rework rounds with detail "suite is red" and
+        # ZERO findings because the image had no pytest: a missing test
+        # runner masquerading as bad generated code, which sent the agent
+        # back to rewrite working handlers. Name the real cause instead.
+        cannot_run = (
+            "No module named pytest" in raw
+            or "No module named 'pytest'" in raw
+            or (not findings and "error" in raw.lower() and "collected" not in raw)
+        )
+        if cannot_run:
+            return GateResult(
+                ok=False,
+                gate="suite_green",
+                detail=(
+                    "the suite could not be RUN (test runner unavailable or "
+                    "collection failed) — this is a build-environment fault, "
+                    "not a failing test"
+                ),
+                findings=[ln for ln in output if ln.strip()][-8:]
+                or ["pytest produced no output"],
+                payload={"returncode": proc.returncode, "infrastructure": True},
+            )
         return GateResult(
             ok=False,
             gate="suite_green",
             detail="suite is red",
-            findings=[ln for ln in output if ln.startswith(("FAILED", "ERROR", "E "))][:20],
+            # Never report a failure with nothing to act on: fall back to the
+            # output tail so a rework round has something concrete.
+            findings=findings or [ln for ln in output if ln.strip()][-8:],
             payload={"returncode": proc.returncode},
         )
     return GateResult(
