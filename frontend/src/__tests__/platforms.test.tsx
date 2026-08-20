@@ -1,0 +1,124 @@
+/**
+ * Your Platforms contract: a runner build is a background coding-agent job.
+ * The page must show that work, name who wrote the artifacts, and refuse
+ * to download a failed or in-flight tree.
+ */
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { Platforms } from '../App'
+
+const getMock = vi.fn()
+const awaitBuildMock = vi.fn()
+const downloadMock = vi.fn()
+
+vi.mock('../api/factory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/factory')>()
+  return {
+    ...actual,
+    product: {
+      ...actual.product,
+      get: (...args: unknown[]) => getMock(...args),
+    },
+    awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
+    downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
+  }
+})
+
+const GENERATION = {
+  product_id: 'vineyard',
+  engine: 'runner',
+  inputs_hash: 'abc123',
+  output_dir: '/tmp/vineyard',
+}
+
+describe('Your Platforms — coding-agent build', () => {
+  beforeEach(() => {
+    getMock.mockReset()
+    awaitBuildMock.mockReset()
+    downloadMock.mockReset()
+  })
+
+  it('empty state when nothing has been generated', async () => {
+    getMock.mockResolvedValue({ blueprint: { product_name: 'Draft', vertical: 'winery' } })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText('No platform built yet')).toBeInTheDocument()
+    expect(awaitBuildMock).not.toHaveBeenCalled()
+  })
+
+  it('auto-polls and shows the coding agent at work', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const building = {
+        state: 'building',
+        phases_done: 2,
+        phases_total: 5,
+        activity: 'WRITER handler 2/4',
+        completed: ['cloner'],
+      }
+      onProgress?.(building)
+      return building
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText('vineyard')).toBeInTheDocument()
+    expect(screen.getByText('runner')).toBeInTheDocument()
+    expect(await screen.findByText(/Coding agent at work — 2\/5 phases/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
+  })
+
+  it('names how many artifacts the coding agent wrote', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const done = {
+        state: 'succeeded',
+        authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+      }
+      onProgress?.(done)
+      return done
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText('Coding agent wrote 6 of 10 artifacts.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+  })
+
+  it('says so when the coding agent wrote nothing', async () => {
+    getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
+    awaitBuildMock.mockResolvedValue({
+      state: 'succeeded',
+      authorship: { artifacts: 8, agent_written: 0, templated: 8 },
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(
+      await screen.findByText(/Coding agent wrote 0 artifacts — this platform is templated/),
+    ).toBeInTheDocument()
+  })
+
+  it('downloads only after the build succeeds', async () => {
+    getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
+    awaitBuildMock.mockResolvedValue({
+      state: 'succeeded',
+      authorship: { artifacts: 3, agent_written: 3, templated: 0 },
+    })
+    downloadMock.mockResolvedValue(undefined)
+    render(<Platforms sessionId="sess_ui" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_ui'))
+  })
+
+  it('does not download a failed coding-agent build', async () => {
+    getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
+    awaitBuildMock.mockResolvedValue({
+      state: 'failed',
+      detail: 'TESTER gate red',
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    expect(await screen.findByText(/will not be shipped: TESTER gate red/)).toBeInTheDocument()
+    expect(downloadMock).not.toHaveBeenCalled()
+  })
+})

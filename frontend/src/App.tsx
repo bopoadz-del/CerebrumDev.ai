@@ -14,6 +14,7 @@ import {
   sessions,
   setSession,
   type BillingStatus,
+  type BuildStatus,
   type ChatEvent,
   type ProductDesign,
 } from './api/factory'
@@ -31,6 +32,7 @@ interface ChatMsg {
   role: 'user' | 'factory' | 'system'
   text: string
   card?: 'blueprint' | 'generation' | 'error' | 'info'
+  engine?: string
   blueprint?: {
     product_name?: string
     vertical?: string
@@ -441,7 +443,7 @@ export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
 
 /* ---------------------------------- Floor ---------------------------------- */
 
-function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
+export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
       role: 'factory',
@@ -453,7 +455,7 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView?.({ behavior: 'smooth' })
   }, [msgs])
 
   // Core send without the busy guard — reused by `send` (single message)
@@ -494,11 +496,13 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
             // the bubble shows the summary, not the raw JSON blob.
             const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
               summary?: string
+              generation?: { engine?: string }
             } | null
             const summary = d?.summary ?? 'Platform generated.'
+            const engine = d?.generation?.engine
             setMsgs((m) => [
               ...m.slice(0, -1),
-              { role: 'factory', text: summary, card: 'generation' },
+              { role: 'factory', text: summary, card: 'generation', engine },
             ])
           } else if (ev.event === 'error') {
             setMsgs((m) => [
@@ -589,6 +593,14 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
               )}
               {m.card === 'generation' && (
                 <div className="card-actions">
+                  {m.engine === 'runner' && (
+                    <span
+                      className="bp-drafting-mode architect_llm"
+                      title="The role runner asked the coding agent to write this platform"
+                    >
+                      coding agent
+                    </span>
+                  )}
                   <button onClick={goPlatforms}>Open Your Platforms</button>
                 </div>
               )}
@@ -620,11 +632,11 @@ function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () 
 
 /* -------------------------------- Platforms -------------------------------- */
 
-function Platforms({ sessionId }: { sessionId: string }) {
+export function Platforms({ sessionId }: { sessionId: string }) {
   const [design, setDesign] = useState<ProductDesign | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
-  const [buildNote, setBuildNote] = useState<string | null>(null)
+  const [build, setBuild] = useState<BuildStatus | null>(null)
 
   const refresh = useCallback(() => {
     product
@@ -635,34 +647,44 @@ function Platforms({ sessionId }: { sessionId: string }) {
 
   useEffect(refresh, [refresh])
 
+  // Poll the ledger as soon as a generation exists so "Your Platforms"
+  // shows the coding agent at work instead of a Download button that
+  // only starts telling the truth after a click.
+  useEffect(() => {
+    if (!design?.generation) return
+    let cancelled = false
+    void awaitBuild(sessionId, (s) => {
+      if (!cancelled) setBuild(s)
+    }).then((s) => {
+      if (!cancelled) setBuild(s)
+    }).catch((e) => {
+      if (!cancelled) setError(e instanceof Error ? e.message : 'build status failed')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [design?.generation, sessionId])
+
   async function download() {
     setDownloading(true)
     setError(null)
-    setBuildNote(null)
     try {
       // A runner build is a background job -- the coding agent writes the
       // platform, which takes minutes. Wait for it (reporting phase
       // progress) instead of hitting the package endpoint and getting a 409,
       // and never present a failed build as a download.
-      const status = await awaitBuild(sessionId, (s) => {
-        if (s.state === 'building') {
-          const done = s.phases_done ?? 0
-          const total = s.phases_total ?? 5
-          const phase = s.completed?.length ? s.completed[s.completed.length - 1] : 'starting'
-          setBuildNote(`Building your platform — ${done}/${total} phases (last: ${phase})`)
-        }
-      })
-      if (status.state === 'failed') {
-        setBuildNote(null)
+      const status =
+        build?.state === 'succeeded'
+          ? build
+          : await awaitBuild(sessionId, setBuild)
+      if (status.state === 'failed' || status.state === 'stalled') {
         setError(
           `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
         )
         return
       }
-      setBuildNote(null)
       await downloadProductPackage(sessionId)
     } catch (e) {
-      setBuildNote(null)
       setError(e instanceof Error ? e.message : 'export failed')
     } finally {
       setDownloading(false)
@@ -671,6 +693,18 @@ function Platforms({ sessionId }: { sessionId: string }) {
 
   const bp = design?.blueprint as { product_name?: string; vertical?: string; capabilities?: unknown[] } | null | undefined
   const gen = design?.generation
+  const authorship = build?.authorship
+  const building = build?.state === 'building'
+  const buildNote = (() => {
+    if (!build || build.state !== 'building') return null
+    const done = build.phases_done ?? 0
+    const total = build.phases_total ?? 5
+    if (build.activity) {
+      return `Coding agent at work — ${done}/${total} phases (${build.activity})`
+    }
+    const phase = build.completed?.length ? build.completed[build.completed.length - 1] : 'starting'
+    return `Building your platform — ${done}/${total} phases (last: ${phase})`
+  })()
 
   return (
     <div className="page">
@@ -699,13 +733,22 @@ function Platforms({ sessionId }: { sessionId: string }) {
           <dl className="kv">
             <dt>Blueprint</dt>
             <dd>{bp?.product_name ?? '—'}</dd>
+            <dt>Engine</dt>
+            <dd>{typeof gen.engine === 'string' ? gen.engine : (build?.state === 'succeeded' ? 'runner' : '—')}</dd>
             <dt>Inputs hash</dt>
             <dd className="mono">{gen.inputs_hash ?? '—'}</dd>
             <dt>Output</dt>
             <dd className="mono">{gen.output_dir ?? '—'}</dd>
           </dl>
-          <button onClick={download} disabled={downloading}>
-            {downloading ? 'Packing…' : 'Download platform export (.zip)'}
+          {build?.state === 'succeeded' && authorship && (
+            <p className="bp-summary">
+              {typeof authorship.agent_written === 'number' && authorship.agent_written > 0
+                ? `Coding agent wrote ${authorship.agent_written} of ${authorship.artifacts ?? '?'} artifacts.`
+                : 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'}
+            </p>
+          )}
+          <button onClick={download} disabled={downloading || building}>
+            {building ? 'Building…' : downloading ? 'Packing…' : 'Download platform export (.zip)'}
           </button>
           <button className="ghost" onClick={refresh}>
             Refresh

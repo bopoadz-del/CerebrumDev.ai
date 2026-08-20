@@ -158,6 +158,14 @@ def download_product_package(
                 + str(status.get("detail"))
             ),
         )
+    if status["state"] == "stalled":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "the build process is gone and will not be shipped: "
+                + str(status.get("detail"))
+            ),
+        )
 
     archive_base = out.parent / f"{out.name}-export"
     archive = shutil.make_archive(str(archive_base), "zip", root_dir=out)

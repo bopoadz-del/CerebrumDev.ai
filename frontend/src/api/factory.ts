@@ -202,6 +202,8 @@ export interface ProductDesign {
     inputs_hash?: string
     product_id?: string
     canonical_output?: string
+    engine?: string
+    build?: BuildStatus
   } | null
   last_error?: string | null
 }
@@ -228,14 +230,27 @@ export const product = {
 }
 
 /** Progress of a background build, read off the artifact's own ledger. */
+export type BuildAuthorship = {
+  artifacts?: number
+  agent_written?: number
+  templated?: number
+  agent_artifacts?: string[]
+  coder_failures?: Record<string, string>
+}
+
 export type BuildStatus = {
-  state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed'
+  state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled'
   detail?: string
   findings?: string[]
   phases?: string[]
   completed?: string[]
   phases_done?: number
   phases_total?: number
+  activity?: string
+  activity_stage?: string
+  activity_done?: number
+  activity_total?: number
+  authorship?: BuildAuthorship
 }
 
 /**
@@ -256,7 +271,19 @@ export async function awaitBuild(
   for (;;) {
     const { build } = await product.buildStatus(sid)
     onProgress?.(build)
-    if (build.state === 'succeeded' || build.state === 'failed') return build
+    if (build.state === 'succeeded') return build
+    if (build.state === 'failed' || build.state === 'stalled') {
+      return {
+        ...build,
+        state: 'failed',
+        detail: build.detail ?? 'build stalled',
+      }
+    }
+    // Template engine writes no ledger, so status is "unknown". That product
+    // is already finished — waiting would spin until the client timeout.
+    if (build.state === 'unknown') {
+      return { ...build, state: 'succeeded' }
+    }
     if (Date.now() > deadline) {
       return { ...build, state: 'failed', detail: 'build timed out client-side' }
     }
