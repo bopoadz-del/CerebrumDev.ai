@@ -90,12 +90,18 @@ describe('Your Platforms — coding-agent build', () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     awaitBuildMock.mockResolvedValue({
       state: 'succeeded',
-      authorship: { artifacts: 8, agent_written: 0, templated: 8 },
+      authorship: {
+        artifacts: 8,
+        agent_written: 0,
+        templated: 8,
+        coder_failures: { audit: 'Factory architect requires KIMI_API_KEY' },
+      },
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(
       await screen.findByText(/Coding agent wrote 0 artifacts — this platform is templated/),
     ).toBeInTheDocument()
+    expect(screen.getByText(/Coder skip: Factory architect requires KIMI_API_KEY/)).toBeInTheDocument()
   })
 
   it('downloads only after the build succeeds', async () => {

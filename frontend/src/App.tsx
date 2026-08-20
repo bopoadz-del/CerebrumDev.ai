@@ -741,11 +741,19 @@ export function Platforms({ sessionId }: { sessionId: string }) {
             <dd className="mono">{gen.output_dir ?? '—'}</dd>
           </dl>
           {build?.state === 'succeeded' && authorship && (
-            <p className="bp-summary">
-              {typeof authorship.agent_written === 'number' && authorship.agent_written > 0
-                ? `Coding agent wrote ${authorship.agent_written} of ${authorship.artifacts ?? '?'} artifacts.`
-                : 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'}
-            </p>
+            <>
+              <p className="bp-summary">
+                {typeof authorship.agent_written === 'number' && authorship.agent_written > 0
+                  ? `Coding agent wrote ${authorship.agent_written} of ${authorship.artifacts ?? '?'} artifacts.`
+                  : 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'}
+              </p>
+              {authorship.coder_failures &&
+                Object.keys(authorship.coder_failures).length > 0 && (
+                  <p className="dim">
+                    Coder skip: {Object.values(authorship.coder_failures)[0]}
+                  </p>
+                )}
+            </>
           )}
           <button onClick={download} disabled={downloading || building}>
             {building ? 'Building…' : downloading ? 'Packing…' : 'Download platform export (.zip)'}
