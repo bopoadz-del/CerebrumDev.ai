@@ -1,7 +1,8 @@
 """Tests for LLM-powered brief drafting in the product architect.
 
 Contract:
-- gated by ARCHITECT_LLM_DRAFTING_ENABLED (default OFF — house flag pattern)
+- gated by ARCHITECT_LLM_DRAFTING_ENABLED when set; when unset, a factory
+  API key turns drafting on (a keyed deployment must not silently template)
 - golden steward is the deterministic fallback for explicit steward intent
   when LLM drafting is disabled or the LLM call fails
 - fail-SAFE: LLM errors / malformed payloads / empty capabilities fall back
@@ -71,10 +72,36 @@ def fake_llm(monkeypatch):
 
 def test_gate_off_by_default_uses_keyword_path(monkeypatch, fake_dual_registry, fake_llm):
     monkeypatch.delenv(product_architect.LLM_DRAFTING_ENV, raising=False)
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
     bp = product_architect.draft_blueprint_from_brief(_BRIEF)
-    assert fake_llm == [], "LLM must not be called when the gate is off"
+    assert fake_llm == [], "LLM must not be called when no key and the gate is unset"
     # keyword path: vertical extracted from the brief, deterministic
     assert bp.vertical == "fleet_operations"
+
+
+def test_key_present_flag_unset_drafts_with_llm(monkeypatch, fake_dual_registry, fake_llm):
+    """A configured factory key is enough — no second flag required."""
+    monkeypatch.delenv(product_architect.LLM_DRAFTING_ENV, raising=False)
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-not-used")
+    bp = product_architect.draft_blueprint_from_brief(_BRIEF)
+    assert len(fake_llm) == 1, "LLM must be called when a factory key is configured"
+    assert bp.drafting_mode == "architect_llm"
+    assert bp.product_name == "FleetOps Live"
+
+
+def test_explicit_off_wins_even_with_key(monkeypatch, fake_dual_registry, fake_llm):
+    monkeypatch.setenv(product_architect.LLM_DRAFTING_ENV, "0")
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-not-used")
+    bp = product_architect.draft_blueprint_from_brief(_BRIEF)
+    assert fake_llm == [], "explicit off must not call the LLM"
+    assert bp.drafting_mode == "keyword_fallback"
 
 
 def test_gate_on_drafts_with_llm(monkeypatch, fake_dual_registry, fake_llm):
@@ -165,6 +192,22 @@ def test_keyword_fallback_builds_core_generate_plus_audit(monkeypatch, fake_dual
     the fail-closed planner unchanged.
     """
     monkeypatch.delenv(product_architect.LLM_DRAFTING_ENV, raising=False)
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
     bp = product_architect.draft_blueprint_from_brief(_BRIEF)
     caps = {c.id: c for c in bp.capabilities}
     assert "fleet_operations_core" in caps
