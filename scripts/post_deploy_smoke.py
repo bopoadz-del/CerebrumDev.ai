@@ -207,10 +207,55 @@ def main():
     gen = d.get("generation") or {}
     check("generation recorded", bool(gen.get("product_id")), f"product_id={gen.get('product_id')}")
 
-    s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
-    ok = s == 200 and blob[:2] == b"PK"
+    # The coding-agent runner builds in the background. A 409 here means
+    # "still writing", not a dead kernel — poll until the ledger is terminal.
+    # build-status nests the ledger under "build".
+    s, blob = 0, b""
+    build = {}
+    deadline = time.time() + 900
+    last_print = 0.0
+    while time.time() < deadline:
+        s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
+        st, status_body = req(
+            "GET", f"/v1/sessions/{sid}/product/build-status", token=tok
+        )
+        payload = status_body if isinstance(status_body, dict) else {}
+        nested = payload.get("build")
+        build = nested if isinstance(nested, dict) else payload
+        state = build.get("state")
+        if s == 200:
+            break
+        if state in {"failed", "stalled"}:
+            break
+        if s != 409:
+            break
+        now = time.time()
+        if now - last_print >= 30:
+            print(
+                f"  waiting for zip: http={s} build={state} "
+                f"{build.get('phases_done')}/{build.get('phases_total')} "
+                f"{(build.get('activity') or '')[:80]}"
+            )
+            last_print = now
+        time.sleep(5)
+    ok = s == 200 and isinstance(blob, (bytes, bytearray)) and blob[:2] == b"PK"
     names = zipfile.ZipFile(io.BytesIO(blob)).namelist() if ok else []
-    check("export zip", ok and len(names) > 5, f"http={s} files={len(names)}")
+    evidence = f"http={s} files={len(names)}"
+    if build.get("state"):
+        evidence += (
+            f" build={build.get('state')} "
+            f"{build.get('phases_done')}/{build.get('phases_total')}"
+        )
+    if s == 409:
+        err = blob
+        if isinstance(err, (bytes, bytearray)):
+            try:
+                err = json.loads(err)
+            except Exception:
+                err = {"raw": err[:200].decode(errors="replace")}
+        if isinstance(err, dict) and err.get("detail"):
+            evidence += f" detail={str(err.get('detail'))[:180]}"
+    check("export zip", ok and len(names) > 5, evidence)
 
     raw3 = chat(sid, tok, "did you deploy my platform already? give me the URL")
     grounded = (("onrender.com" not in raw3 and "http" not in raw3.lower())
