@@ -9,14 +9,20 @@ difference is the point of the rebuild -- a delivered platform that runs
 without the operator's store being up.
 
 LLM use is optional by design. When a coder key is configured:
-- the WRITER asks it for handler / model / route / README bodies
-- the COLLECTOR asks it to *review* capability↔block bindings (report-only)
-- the TESTER asks it for *additional* domain cases (mutations of kernel
+- the WRITER (Platform manufacturer) asks it for handler / model / route / README bodies
+- the COLLECTOR (Binding surveyor) asks it to *review* capability↔block bindings (report-only)
+- the TESTER (Acceptance inspector) asks it for *additional* domain cases (mutations of kernel
   payloads; they cannot replace the kernel suite)
-When it is not, every kernel stays deterministic. CLONER and STORE_MANAGER
-never call the agent. Both paths write the same *shape*, so CI exercises
-the real manufacturing route with no API key. Which path ran is recorded,
-never implied.
+When it is not, every kernel stays deterministic. CLONER (Block stocker) and
+STORE_MANAGER (Store registrar) never call the agent. Both paths write the same
+*shape*, so CI exercises the real manufacturing route with no API key. Which path
+ran is recorded, never implied.
+
+Each kernel publishes its job on the delivered platform:
+``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
+(CLONER), ``GET /v1/capabilities`` plus per-capability CRUD (WRITER),
+``GET /v1/gates`` (TESTER, description only), ``GET /v1/provenance``
+(STORE_MANAGER).
 """
 
 from __future__ import annotations
@@ -27,7 +33,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from app.factory.build.authority import BuildRole
+from app.factory.build.authority import (
+    KERNEL_ROUTE_NAMES,
+    BuildRole,
+    jobs_manifest,
+    role_contract,
+)
 from app.factory.build.workspace import RoleWorkspace
 
 
@@ -94,12 +105,13 @@ class RoleError(RuntimeError):
 
 
 def run_collector(ctx: RoleContext) -> RoleResult:
-    """Resolve planned capabilities into concrete parts, and name every gap.
+    """Binding surveyor: resolve planned capabilities into parts, name every gap.
 
     Read-only by contract: this writes nothing. A capability the plan could
     not back with a block is reported as a gap so the WRITER knows it must
     author that logic -- silently dropping it is the failure mode the
-    COLLECTOR gate exists to catch.
+    COLLECTOR gate exists to catch. The coding agent may review bindings;
+    it may not change them. Published on the product as ``GET /v1/catalog``.
     """
     resolved: List[str] = []
     gaps: List[str] = []
@@ -569,11 +581,12 @@ def _runtime_pin(blocks_root: Path) -> str:
 
 
 def run_cloner(ctx: RoleContext) -> RoleResult:
-    """Vendor each resolved block's real source into the workspace.
+    """Block stocker: vendor each resolved block's real source into the workspace.
 
     Writes only under ``vendor/`` plus the lockfile -- its whole lane. The
     lockfile records where each block came from so the Store registrar can
-    later tell a Store-sourced clone from a mirror stub.
+    later tell a Store-sourced clone from a mirror stub. No agent. Published
+    on the product as ``GET /v1/inventory``.
     """
     block_ids = tuple(ctx.state.get("resolved_blocks", ()))
     if not block_ids:
@@ -1018,24 +1031,127 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_jobs_module(
+    *,
+    catalog: Dict[str, Any],
+    capabilities: List[Dict[str, Any]],
+    gates: Dict[str, Any],
+) -> str:
+    """Frozen kernel JDs plus live readers for lock/provenance files."""
+    jobs = jobs_manifest()
+    return (
+        '"""Kernel job descriptions shipped with this platform.\n'
+        "\n"
+        "Frozen at manufacture time from Factory RoleContract. HTTP routes\n"
+        "publish each kernel's job; they never re-run that job. Inventory and\n"
+        "provenance read lock/provenance files live so the register stays true\n"
+        "to the checkout.\n"
+        '"""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "import json\n"
+        "from pathlib import Path\n"
+        "from typing import Any, Dict, Optional\n"
+        "\n"
+        f"JOBS = {jobs!r}\n"
+        f"CATALOG = {catalog!r}\n"
+        f"CAPABILITIES = {capabilities!r}\n"
+        f"GATES = {gates!r}\n"
+        "\n"
+        "\n"
+        "def _read_workspace_json(relative: str) -> Optional[Dict[str, Any]]:\n"
+        "    path = Path(__file__).resolve().parents[1] / relative\n"
+        "    if not path.is_file():\n"
+        "        return None\n"
+        "    try:\n"
+        "        data = json.loads(path.read_text(encoding='utf-8'))\n"
+        "    except (OSError, ValueError):\n"
+        "        return None\n"
+        "    return data if isinstance(data, dict) else None\n"
+        "\n"
+        "\n"
+        "def _job(kernel: str) -> Dict[str, Any]:\n"
+        "    for item in JOBS:\n"
+        "        if item['kernel'] == kernel:\n"
+        "            return dict(item)\n"
+        "    return {'kernel': kernel}\n"
+        "\n"
+        "\n"
+        "def inventory() -> Dict[str, Any]:\n"
+        "    payload = _job('CLONER')\n"
+        "    payload['lock'] = _read_workspace_json('blocks.lock.json') or {\n"
+        "        'schema': 'blocks.lock.v1',\n"
+        "        'blocks': {},\n"
+        "    }\n"
+        "    return payload\n"
+        "\n"
+        "\n"
+        "def provenance() -> Dict[str, Any]:\n"
+        "    payload = _job('STORE_MANAGER')\n"
+        "    payload['build'] = _read_workspace_json('docs/build_provenance.json') or {}\n"
+        "    lock = _read_workspace_json('blocks.lock.json') or {}\n"
+        "    payload['clones'] = lock.get('blocks') or {}\n"
+        "    payload['store_ops'] = []\n"
+        "    return payload\n"
+    )
+
+
 def _render_routes(entries: List[Dict[str, Any]]) -> str:
-    """FastAPI router: one POST and one GET per capability."""
+    """FastAPI router: kernel job routes, then one POST/GET/GET-id per capability."""
     out = [
-        '"""HTTP surface for the platform\'s capabilities.',
+        '"""HTTP surface for the platform\'s kernels and capabilities.',
         "",
-        "Every route runs entirely in-process: the handler dispatches to a",
-        "vendored block and the result is persisted locally. No outbound call.",
+        "Kernel routes publish each build role's job. Capability routes run",
+        "entirely in-process: the handler dispatches to a vendored block and",
+        "the result is persisted locally. No outbound call.",
         '"""',
         "",
         "from __future__ import annotations",
         "",
         "from typing import Any, Dict",
         "",
-        "from fastapi import APIRouter",
+        "from fastapi import APIRouter, HTTPException",
         "",
-        "from app import store",
+        "from app import jobs, store",
         "",
         "router = APIRouter()",
+        "",
+        "",
+        '@router.get("/jobs")',
+        "def list_jobs() -> Dict[str, Any]:",
+        '    """Roster of every kernel job description."""',
+        '    return {"jobs": jobs.JOBS}',
+        "",
+        "",
+        '@router.get("/catalog")',
+        "def catalog() -> Dict[str, Any]:",
+        '    """COLLECTOR — Binding surveyor."""',
+        "    return jobs.CATALOG",
+        "",
+        "",
+        '@router.get("/inventory")',
+        "def inventory() -> Dict[str, Any]:",
+        '    """CLONER — Block stocker. Pinned vendor lock, read live."""',
+        "    return jobs.inventory()",
+        "",
+        "",
+        '@router.get("/capabilities")',
+        "def capabilities() -> Dict[str, Any]:",
+        '    """WRITER — Platform manufacturer. Capability HTTP surface."""',
+        '    return {"items": jobs.CAPABILITIES}',
+        "",
+        "",
+        '@router.get("/gates")',
+        "def gates() -> Dict[str, Any]:",
+        '    """TESTER — Acceptance inspector. Coverage only; does not run tests."""',
+        "    return jobs.GATES",
+        "",
+        "",
+        '@router.get("/provenance")',
+        "def provenance() -> Dict[str, Any]:",
+        '    """STORE_MANAGER — Store registrar. Clone register and provenance."""',
+        "    return jobs.provenance()",
         "",
         "",
     ]
@@ -1064,6 +1180,14 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f'    return {{"items": store.list_all("{entity}")}}',
             "",
             "",
+            f'@router.get("/{name}/{{item_id}}")',
+            f"def {name}_get(item_id: int) -> Dict[str, Any]:",
+            f'    record = store.get("{entity}", item_id)',
+            "    if record is None:",
+            '        raise HTTPException(status_code=404, detail="not found")',
+            "    return record",
+            "",
+            "",
         ]
     return "\n".join(out)
 
@@ -1073,7 +1197,7 @@ def _render_main(product_name: str) -> str:
         '"""Entrypoint for the generated platform.\n'
         "\n"
         "Runs standalone: uvicorn app.main:app. No factory, no block store, no\n"
-        "outbound dependency at runtime.\n"
+        "outbound dependency at runtime. Kernel jobs are at GET /v1/jobs.\n"
         '"""\n'
         "\n"
         "from __future__ import annotations\n"
@@ -1282,6 +1406,29 @@ def _render_render_yaml(product_id: str) -> str:
     )
 
 
+def _kernel_http_readme_section() -> str:
+    rows = []
+    for job in jobs_manifest():
+        routes = ", ".join(f"`{r}`" for r in job["http_routes"])
+        rows.append(
+            f"| `{job['kernel']}` | {job['title']} | {job['agent']} | {routes} |"
+        )
+    table = "\n".join(rows)
+    return f"""
+
+## Kernel jobs and HTTP
+
+`GET /v1/jobs` lists every kernel's job description. Distinctive surfaces:
+
+| Kernel | Job | Agent | Routes |
+|---|---|---|---|
+{table}
+
+These routes inspect the manufactured platform. They do not re-run the factory
+and they do not execute the test suite (`GET /v1/gates` describes coverage only).
+"""
+
+
 def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
     cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
     block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
@@ -1308,7 +1455,7 @@ platform runs with the factory switched off.
 
 ```bash
 pip install -r requirements.txt
-uvicorn app.main:app --reload      # GET /health -> 200
+uvicorn app.main:app --reload      # GET /health -> 200; GET /v1/jobs -> kernel JDs
 python -m pytest tests             # the platform's own suite
 ```
 
@@ -1318,6 +1465,7 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 
 | Path | Purpose |
 |---|---|
+| `app/jobs.py` | kernel job descriptions (`GET /v1/jobs` and friends) |
 | `app/models.py` | domain dataclasses |
 | `app/store.py` | sqlite persistence |
 | `app/routes.py` | HTTP surface |
@@ -1540,9 +1688,11 @@ def _coder_readme(
                         "Write a concise README.md for a generated business platform. "
                         "Markdown only, no code fences around the whole document. "
                         "Cover: what it does, its capabilities, how to run it "
-                        "(pip install -r requirements.txt; uvicorn app.main:app), "
+                        "(pip install -r requirements.txt; uvicorn app.main:app; "
+                        "GET /health and GET /v1/jobs), "
                         "and that it runs fully offline with blocks vendored into "
-                        "vendor/blocks/ and no call back to any store."
+                        "vendor/blocks/ and no call back to any store. Do not invent "
+                        "an HTTP table — a kernel-jobs section is appended for you."
                     ),
                 },
                 {
@@ -1592,13 +1742,14 @@ def _failing_capability_ids(work_list: Sequence[str], cap_ids: Sequence[str]) ->
 
 
 def run_writer(ctx: RoleContext) -> RoleResult:
-    """Manufacture the platform: dispatch runtime plus one handler per capability.
+    """Platform manufacturer: dispatch runtime plus one handler per capability.
 
     The coding agent writes each body when one is configured; otherwise the
     body is composed from the block contract deterministically. Which path ran
     is stamped into every module header and reported in the result -- CI has
     no key and must still exercise this route, so the fallback is a first-class
-    path rather than an error.
+    path rather than an error. Also publishes every kernel's job over HTTP
+    (``app/jobs.py``, kernel routes in ``app/routes.py``).
 
     On a rework pass ``ctx.work_list`` carries the TESTER's findings. Only the
     capabilities those findings implicate are regenerated; everything else is
@@ -1724,10 +1875,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 fallback_source,
             )
         route_bodies[cid] = body
+        name = cid.replace("-", "_")
+        if name in KERNEL_ROUTE_NAMES:
+            raise RoleError(
+                f"capability {cid} collides with kernel HTTP route /v1/{name}"
+            )
         entries.append(
             {
                 "capability_id": cid,
-                "name": cid.replace("-", "_"),
+                "name": name,
                 "entity": spec["entity"],
                 "body": body,
                 "source": route_source,
@@ -1742,6 +1898,74 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             done=len(entries),
             total=len(cap_ids),
         )
+    gaps = {str(g) for g in (ctx.state.get("gaps") or ())}
+    catalog = {
+        "kernel": "COLLECTOR",
+        "title": role_contract(BuildRole.COLLECTOR).title,
+        "mandate": role_contract(BuildRole.COLLECTOR).mandate,
+        "agent": role_contract(BuildRole.COLLECTOR).agent.value,
+        "resolved_blocks": list(
+            ctx.state.get("resolved_blocks") or ctx.state.get("vendored_blocks") or []
+        ),
+        "gaps": list(ctx.state.get("gaps") or []),
+        "bindings": [
+            {
+                "capability_id": cap.capability_id,
+                "block_ids": list(cap.block_ids or []),
+                "gap": cap.capability_id in gaps or not cap.block_ids,
+            }
+            for cap in ctx.plan.capabilities
+        ],
+        "agent_reviews": list(ctx.state.get("agent_binding_reviews") or []),
+        "agent_model": ctx.state.get("agent_binding_model") or "",
+    }
+    capabilities = [
+        {
+            "id": e["capability_id"],
+            "entity": e["entity"],
+            "source": e["source"],
+            "http": {
+                "create": f"POST /v1/{e['name']}",
+                "list": f"GET /v1/{e['name']}",
+                "get": f"GET /v1/{e['name']}/{{id}}",
+            },
+        }
+        for e in entries
+    ]
+    tester = role_contract(BuildRole.TESTER)
+    gates = {
+        "kernel": tester.role.value,
+        "title": tester.title,
+        "mandate": tester.mandate,
+        "agent": tester.agent.value,
+        "runs_over_http": False,
+        "suite": [
+            {
+                "file": "tests/test_smoke.py",
+                "covers": "import, offline dispatch, end-to-end handle()",
+            },
+            {
+                "file": "tests/test_models.py",
+                "covers": "sqlite round-trip via store.save / store.get",
+            },
+            {
+                "file": "tests/test_routes.py",
+                "covers": "HTTP shape of /health, kernel jobs, and each capability",
+            },
+            {
+                "file": "tests/test_agent_domain.py",
+                "covers": "optional coding-agent domain mutations of spec payloads",
+                "optional": True,
+            },
+        ],
+    }
+    ctx.workspace.write_text(
+        Path("app") / "jobs.py",
+        _render_jobs_module(
+            catalog=catalog, capabilities=capabilities, gates=gates
+        ),
+    )
+    sources["jobs"] = fallback_source
     ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
 
     # --- run scaffold ------------------------------------------------------
@@ -1757,12 +1981,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         sources["readme"] = previous_sources.get("readme", "unchanged from previous round")
     else:
         readme = _coder_readme(ctx, product_name, written, sorted(vendored))
-        ctx.workspace.write_text(
-            "README.md",
+        body = (
             readme[0]
             if readme
-            else _templated_readme(product_name, written, sorted(vendored)),
+            else _templated_readme(product_name, written, sorted(vendored))
         )
+        ctx.workspace.write_text("README.md", body + _kernel_http_readme_section())
         sources["readme"] = readme[1] if readme else fallback_source
     sources["entrypoint"] = fallback_source
     sources["requirements"] = fallback_source
@@ -1926,16 +2150,19 @@ socket.socket.connect = _offline_connect
 
 
 def run_tester(ctx: RoleContext) -> RoleResult:
-    """Write tests that EXERCISE the platform. Writes only under tests/.
+    """Acceptance inspector: write tests that EXERCISE the platform. tests/ only.
 
     Import-only tests are worthless here: they pass on a platform whose
     persistence is broken, whose routes 500, and whose blocks never run.
     These drive the real surface -- a model round-trips through sqlite, each
-    route returns its documented shape, and every capability executes end to
-    end through local dispatch with the store environment stripped.
+    route returns its documented shape, kernel job routes answer, and every
+    capability executes end to end through local dispatch with the store
+    environment stripped.
 
     That last one is the assertion the old generated platforms shipped but
     could not honour, because their handlers called the store over HTTP.
+    Extra coding-agent cases are mutations of spec payloads. GET /v1/gates
+    describes this coverage; it does not run the suite.
     """
     caps = [c.capability_id.replace("-", "_") for c in ctx.plan.capabilities]
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
@@ -2092,6 +2319,41 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '    assert resp.json()["status"] == "ok"',
         "",
         "",
+        "def test_kernel_jobs_roster():",
+        '    """GET /v1/jobs publishes every kernel JD; distinctive routes answer."""',
+        '    resp = client.get("/v1/jobs")',
+        "    assert resp.status_code == 200",
+        '    jobs = resp.json()["jobs"]',
+        '    by_kernel = {j["kernel"]: j for j in jobs}',
+        '    assert set(by_kernel) == {',
+        '        "COLLECTOR", "CLONER", "WRITER", "TESTER", "STORE_MANAGER"',
+        "    }",
+        '    assert by_kernel["COLLECTOR"]["title"] == "Binding surveyor"',
+        '    assert by_kernel["CLONER"]["title"] == "Block stocker"',
+        '    assert by_kernel["WRITER"]["title"] == "Platform manufacturer"',
+        '    assert by_kernel["TESTER"]["title"] == "Acceptance inspector"',
+        '    assert by_kernel["STORE_MANAGER"]["title"] == "Store registrar"',
+        "    for job in jobs:",
+        '        assert job["mandate"] and job["http_routes"] and job["agent"]',
+        '    catalog = client.get("/v1/catalog")',
+        "    assert catalog.status_code == 200",
+        '    assert catalog.json()["kernel"] == "COLLECTOR"',
+        '    inventory = client.get("/v1/inventory")',
+        "    assert inventory.status_code == 200",
+        '    assert inventory.json()["kernel"] == "CLONER"',
+        '    assert "lock" in inventory.json()',
+        '    caps_resp = client.get("/v1/capabilities")',
+        "    assert caps_resp.status_code == 200",
+        '    assert isinstance(caps_resp.json()["items"], list)',
+        '    gates = client.get("/v1/gates")',
+        "    assert gates.status_code == 200",
+        '    assert gates.json()["kernel"] == "TESTER"',
+        '    assert gates.json()["runs_over_http"] is False',
+        '    prov = client.get("/v1/provenance")',
+        "    assert prov.status_code == 200",
+        '    assert prov.json()["kernel"] == "STORE_MANAGER"',
+        "",
+        "",
         "def test_every_capability_route_answers():",
     ]
     if caps:
@@ -2123,6 +2385,16 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 '        elif not listed.json()["items"]:',
                 f"            failures.append('{name} accepted a record but "
                 "persisted nothing')",
+                "        else:",
+                '            item_id = listed.json()["items"][0]["id"]',
+                f'            got = client.get(f"/v1/{name}/{{item_id}}")',
+                "            if got.status_code != 200:",
+                f"                failures.append('{name} get: HTTP '"
+                " + str(got.status_code))",
+                f'            missing = client.get("/v1/{name}/999999")',
+                "            if missing.status_code != 404:",
+                f"                failures.append('{name} missing id: HTTP '"
+                " + str(missing.status_code) + ' (expected 404)')",
                 "",
             ]
         route_lines.append('    assert not failures, "; ".join(failures)')
@@ -2269,12 +2541,13 @@ def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
 
 
 def run_store_manager(ctx: RoleContext) -> RoleResult:
-    """Register what this build took from the Store.
+    """Store registrar: register what this build took from the Store.
 
     MINIMAL. This records the clone manifest for the registrar and applies no
     Store op. Harvesting improvements back upstream and admitting client-driven
     net-new capability into inventory are the unbuilt parts of this role --
-    registered in KNOWN_INCOMPLETE.md rather than faked here.
+    registered in KNOWN_INCOMPLETE.md rather than faked here. No agent.
+    Published on the product as ``GET /v1/provenance``.
     """
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
     return RoleResult(

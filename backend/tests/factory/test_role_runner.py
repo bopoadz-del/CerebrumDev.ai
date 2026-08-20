@@ -175,6 +175,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         "app/models.py",
         "app/store.py",
         "app/routes.py",
+        "app/jobs.py",
         "app/main.py",
         "app/dispatch.py",
         "README.md",
@@ -198,6 +199,22 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
     routes_src = (out / "app" / "routes.py").read_text(encoding="utf-8")
     assert '@router.post("/analytics_surface")' in routes_src
     assert '@router.get("/analytics_surface")' in routes_src
+    assert '@router.get("/analytics_surface/{item_id}")' in routes_src
+    for path in (
+        "/jobs",
+        "/catalog",
+        "/inventory",
+        "/capabilities",
+        "/gates",
+        "/provenance",
+    ):
+        assert f'@router.get("{path}")' in routes_src
+    jobs_src = (out / "app" / "jobs.py").read_text(encoding="utf-8")
+    assert "Binding surveyor" in jobs_src
+    assert "runs_over_http" in jobs_src
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "GET /v1/jobs" in readme
+    assert "Binding surveyor" in readme
 
 
 def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
@@ -214,6 +231,9 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     routes_test = (out / "tests" / "test_routes.py").read_text(encoding="utf-8")
     assert "TestClient" in routes_test
     assert "client.post(" in routes_test
+    assert "/v1/jobs" in routes_test
+    assert "/v1/gates" in routes_test
+    assert "runs_over_http" in routes_test
     # A route that rejects everything answers 200 with ok:false; the suite must
     # not accept that as success.
     # The collector form: an ok=False answer is recorded as a failure, so a

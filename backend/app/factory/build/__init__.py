@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from app.factory.build.authority import (
     BUILD_PHASES,
+    KERNEL_ROUTE_NAMES,
     ROLE_CONTRACTS,
+    AgentSeat,
     AuthorityError,
     BuildRole,
     LaneRoot,
@@ -18,6 +20,8 @@ from app.factory.build.authority import (
     assert_phase_order,
     assert_write_allowed,
     authority_manifest,
+    jobs_manifest,
+    kernel_seat_brief,
     role_contract,
 )
 from app.factory.build.runner import (
@@ -32,7 +36,9 @@ from app.factory.build.workspace import RoleWorkspace
 
 __all__ = [
     "BUILD_PHASES",
+    "KERNEL_ROUTE_NAMES",
     "ROLE_CONTRACTS",
+    "AgentSeat",
     "AuthorityError",
     "BuildBudget",
     "BuildOutcome",
@@ -46,6 +52,8 @@ __all__ = [
     "assert_write_allowed",
     "authority_manifest",
     "blueprint_hash",
+    "jobs_manifest",
+    "kernel_seat_brief",
     "role_contract",
     "runner_enabled",
 ]

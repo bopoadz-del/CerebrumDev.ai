@@ -113,7 +113,7 @@ def test_d3_runner_is_the_production_artifact(tmp_path, monkeypatch):
     assert status["state"] == "succeeded", status
 
     # Shaped like a platform that runs on its own, not a parts list.
-    for required in ("app/main.py", "app/routes.py", "app/store.py",
+    for required in ("app/main.py", "app/routes.py", "app/store.py", "app/jobs.py",
                      "app/dispatch.py", "blocks.lock.json", "tests/test_smoke.py",
                      "scripts/release_gate.py"):
         assert (out / required).is_file(), f"missing {required}"
