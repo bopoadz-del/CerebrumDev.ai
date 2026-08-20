@@ -154,6 +154,40 @@ a 51-minute WRITER reported a frozen "2/5". Builds now emit per-artifact
 progress (`build_status.activity`) and app logs reach stdout. A build whose
 thread dies reports `stalled` instead of `building` forever.
 
+### 1j. Trial generations are consumed by OUR failures — product decision needed
+Measured 2026-08-17: the test account hit
+`trial_limit_reached (counter=generation, limit=3, scope=lifetime)` after
+three builds, **all three of which failed for build-environment reasons we
+caused** (unvalidated model, retry amplification, no pytest in the image).
+
+Server-side metering is working correctly; the question is what it should
+count. As it stands a customer whose builds fail because of a factory defect
+exhausts their free trial and receives nothing — the worst possible first
+impression, and invisible to us because the counter looks healthy.
+
+Recommendation: decrement on a build that reaches `RUN_SUCCEEDED`, not on
+`generate` being called. A gate-failed or stalled build should be free.
+Deliberately NOT changed here: it is a commercial policy decision, not a bug.
+
+### 1k. The chat config also drives code generation
+`get_llm_config()` (the "chat" config, `CEREBRUM_CHAT_LLM_MODEL`, currently
+`moonshot-v1-8k`) is consumed by `chain_generator.py`, `rule_parser.py`,
+`packager.py` and `platform_packager.py` — not only conversation.
+`moonshot-v1-8k` is the model this campaign measured as unable to write
+working code (routes returning `None`, no convergence in three rework
+rounds). For conversation it is a fine, cheap choice; for chain and rule
+generation it is the same trap the factory coder was in before cutover.
+Not changed mid-verification: it affects cost and conversational behaviour
+and deserves its own measured comparison.
+
+### 1l. First build after any deploy pays for a Store clone
+The service has no persistent disk, so `resolve_blocks_root()` re-clones
+Cerebrum-Blocks after every deploy. Measured: a `product/plan` call that
+triggered the clone exceeded a 10-minute client timeout, while the same call
+took 0.8s once the checkout existed. Not a defect, but it means the first
+build after a deploy is slow and a client with a short timeout will appear to
+hang. A persistent disk or a warm-up call at boot would remove it.
+
 ### 1c. Agent output quality is model-bound — MEASURED, and the first reading was wrong
 `kimi-k2.7-code` builds the smoke blueprint end to end: **SUCCESS, rework 0,
 7 of 10 artifacts agent-written, no coder failures**, passing the strict route
