@@ -33,6 +33,7 @@ interface ChatMsg {
   text: string
   card?: 'blueprint' | 'generation' | 'error' | 'info'
   engine?: string
+  triggeredBy?: string
   blueprint?: {
     product_name?: string
     vertical?: string
@@ -441,22 +442,79 @@ export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
   )
 }
 
+function KernelStrip({ build }: { build: BuildStatus | null }) {
+  const phases = build?.phases?.length
+    ? build.phases
+    : ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER']
+  const done = new Set(build?.completed ?? [])
+  const agentKernels = new Set(['COLLECTOR', 'WRITER', 'TESTER'])
+  return (
+    <ol className="kernel-strip">
+      {phases.map((phase) => (
+        <li key={phase} className={done.has(phase) ? 'done' : undefined}>
+          <span>{phase}</span>
+          {agentKernels.has(phase) ? <span className="kernel-agent">agent</span> : null}
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function coderTakeoverNote(build: BuildStatus | null): string | null {
+  if (!build) return null
+  if (build.state === 'succeeded') {
+    const n = build.authorship?.agent_written
+    return n != null
+      ? `Coding agent finished — ${n} agent-written artifact(s). Download it from Your Platforms.`
+      : 'Coding agent finished. Download it from Your Platforms.'
+  }
+  if (build.state === 'failed' || build.state === 'stalled') {
+    return `The coding agent stopped: ${build.detail ?? 'build did not pass its gates'}.`
+  }
+  const done = build.phases_done ?? 0
+  const total = build.phases_total ?? 5
+  if (build.activity) {
+    return `Writing your platform — ${done}/${total} phases (${build.activity})`
+  }
+  const phase = build.completed?.length ? build.completed[build.completed.length - 1] : 'starting'
+  return `Writing your platform — ${done}/${total} phases (last: ${phase})`
+}
+
 /* ---------------------------------- Floor ---------------------------------- */
 
 export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
       role: 'factory',
-      text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and on your word the factory builds it.',
+      text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and when you approve the feature list the coding agent takes over and writes it.',
     },
   ])
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
+  const [coderActive, setCoderActive] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView?.({ behavior: 'smooth' })
-  }, [msgs])
+  }, [msgs, coderBuild])
+
+  useEffect(() => {
+    if (!coderActive) return
+    let cancelled = false
+    void awaitBuild(sessionId, (s) => {
+      if (!cancelled) setCoderBuild(s)
+    })
+      .then((s) => {
+        if (!cancelled) setCoderBuild(s)
+      })
+      .catch(() => {
+        /* buildStatus 404/unknown is shown on Your Platforms; keep the takeover panel. */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [coderActive, sessionId])
 
   // Core send without the busy guard — reused by `send` (single message)
   // and `approveWithSelection` (sequential remove-capability commands +
@@ -496,13 +554,16 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
             // the bubble shows the summary, not the raw JSON blob.
             const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
               summary?: string
-              generation?: { engine?: string }
+              triggered_by?: string
+              generation?: { engine?: string; triggered_by?: string }
             } | null
             const summary = d?.summary ?? 'Platform generated.'
             const engine = d?.generation?.engine
+            const triggeredBy = d?.triggered_by ?? d?.generation?.triggered_by
+            if (engine === 'runner') setCoderActive(true)
             setMsgs((m) => [
               ...m.slice(0, -1),
-              { role: 'factory', text: summary, card: 'generation', engine },
+              { role: 'factory', text: summary, card: 'generation', engine, triggeredBy },
             ])
           } else if (ev.event === 'error') {
             setMsgs((m) => [
@@ -563,11 +624,17 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
     [busy, sendCore],
   )
 
+  const coderBuilding =
+    coderActive &&
+    coderBuild?.state !== 'succeeded' &&
+    coderBuild?.state !== 'failed' &&
+    coderBuild?.state !== 'stalled'
+
   return (
     <div className="floor">
       <header className="page-head">
         <h2>Factory Floor</h2>
-        <p className="dim">Tell the factory what to build. The architect drafts, you approve, the generator ships.</p>
+        <p className="dim">Describe the platform. Approve the feature list. The coding agent takes over and writes it.</p>
         <p className="dim notice-not-yet">
           What this is not yet: the factory generates a working prototype — real code,
           tests and deploy files — not a finished production system. Third-party
@@ -586,7 +653,7 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
               {m.card === 'blueprint' && m.blueprint && (
                 <BlueprintCard
                   blueprint={m.blueprint}
-                  busy={busy}
+                  busy={busy || coderActive}
                   onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
                   onRefine={(text) => send(text)}
                 />
@@ -596,9 +663,17 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
                   {m.engine === 'runner' && (
                     <span
                       className="bp-drafting-mode architect_llm"
-                      title="The role runner asked the coding agent to write this platform"
+                      title="The coding agent took over after you approved the feature list"
                     >
                       coding agent
+                    </span>
+                  )}
+                  {m.triggeredBy === 'chat_llm' && (
+                    <span
+                      className="bp-drafting-mode architect_llm"
+                      title="The Floor chat LLM called start_coder"
+                    >
+                      chat LLM
                     </span>
                   )}
                   <button onClick={goPlatforms}>Open Your Platforms</button>
@@ -609,6 +684,16 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
         ))}
         <div ref={bottomRef} />
       </div>
+      {coderActive && (
+        <div className="coder-takeover" role="status">
+          <h3>Coding agent has taken over</h3>
+          <KernelStrip build={coderBuild} />
+          <p>
+            {coderTakeoverNote(coderBuild) ??
+              'The feature list is approved. The coding agent is starting WRITER now.'}
+          </p>
+        </div>
+      )}
       <form
         className="composer"
         onSubmit={(e) => {
@@ -619,10 +704,14 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder='Try: "Build me a secure multi-user platform for my team…"'
-          disabled={busy}
+          placeholder={
+            coderBuilding
+              ? 'The coding agent has taken over this floor…'
+              : 'Try: "Build me a secure multi-user platform for my team…"'
+          }
+          disabled={busy || coderBuilding}
         />
-        <button type="submit" disabled={busy || !input.trim()}>
+        <button type="submit" disabled={busy || coderBuilding || !input.trim()}>
           Send
         </button>
       </form>

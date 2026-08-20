@@ -25,7 +25,7 @@ from ..core.rule_injector import inject_rules
 from ..core.llm_throttle import require_llm_rate
 from ..core.trial_limits import TrialLimitExceeded, require_within_limit
 from ..core.block_taxonomy import list_optional_blocks
-from ..factory import platform_chat_flow
+from ..factory import platform_chat_flow, platform_chat_llm
 from ..models.session import SessionState
 
 logger = logging.getLogger(__name__)
@@ -217,7 +217,8 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
     # --- Platform-creation flow: chat bridges to the product state machine ---
     # Routing contract lives in platform_chat_flow.should_handle_platform_message:
     # explicit commands always enter; free-text intent only when the env gate
-    # is on; approvals only when a blueprint is actually pending.
+    # is on; approvals start the coding agent (chat LLM when keyed, regex
+    # fallback otherwise). Kit-configurator vocabulary never enters.
     try:
         # NOTE on emission: card events (blueprint/generation) already carry
         # the full summary and the frontend renders it from the card. Do NOT
@@ -225,8 +226,61 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         # deltas to the card bubble, which doubled every blueprint text
         # ("Blueprint drafted... Blueprint drafted..."). `info` has no card
         # renderer, so info replies stream as deltas only.
+
+        # Feature-list edits stay deterministic (checkbox exclusions send
+        # "remove capability X") so the Approve button cannot depend on the
+        # model understanding a refinement command.
+        if platform_chat_flow.has_pending_blueprint(state):
+            refined = platform_chat_flow.refine_from_chat(state, user_message)
+            if refined:
+                state.chat_history.append({"role": "assistant", "content": refined["summary"]})
+                state.updated_at = datetime.utcnow()
+                update_session(session_id, state)
+                async for ev in _yield_platform_result(refined):
+                    yield ev
+                return
+
+        # Once the feature list is approved, the coding agent owns the floor.
+        # Do not re-draft or leak into the kit-chain generator mid-build.
+        if platform_chat_flow.has_running_build(state):
+            result = platform_chat_flow.running_build_reply(state)
+            state.chat_history.append({"role": "assistant", "content": result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+
+        llm_result = None
+        if platform_chat_llm.should_orchestrate(state, user_message):
+            try:
+                decision = platform_chat_llm.decide(state, user_message)
+                decision = platform_chat_llm.coerce_explicit_approval(
+                    decision, state, user_message
+                )
+            except Exception:
+                logger.exception("Floor chat LLM failed; falling back to regex routing")
+                decision = None
+            if decision:
+                if decision.get("action") == "start_coder":
+                    try:
+                        require_within_limit(getattr(state, "user_id", None), "generation")
+                    except TrialLimitExceeded as exc:
+                        yield _sse_event("error", exc.detail["message"])
+                        yield _sse_event("done", "")
+                        return
+                llm_result = platform_chat_llm.apply_decision(state, user_message, decision)
+
+        if llm_result is not None:
+            state.chat_history.append({"role": "assistant", "content": llm_result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            async for ev in _yield_platform_result(llm_result):
+                yield ev
+            return
+
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
-            # Server-side trial boundary: generations are metered per account.
+            # Offline / LLM-down fallback: the Approve button still starts WRITER.
             try:
                 require_within_limit(getattr(state, "user_id", None), "generation")
             except TrialLimitExceeded as exc:
@@ -242,19 +296,6 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             return
 
         if platform_chat_flow.has_pending_blueprint(state):
-            refined = platform_chat_flow.refine_from_chat(state, user_message)
-            if refined:
-                state.chat_history.append({"role": "assistant", "content": refined["summary"]})
-                state.updated_at = datetime.utcnow()
-                update_session(session_id, state)
-                if refined.get("refined"):
-                    yield _sse_event("blueprint", json.dumps(refined))
-                else:
-                    yield _sse_event("info", json.dumps(refined))
-                    for word in refined["summary"].split(" "):
-                        yield _sse_event("delta", word + " ")
-                yield _sse_event("done", "")
-                return
             if not platform_chat_flow.should_handle_platform_message(user_message):
                 # A blueprint is pending and the message is neither an
                 # approval, a refinement command, nor a new platform brief.
@@ -264,9 +305,9 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 # block ids the registry rejects; the refusal is correct, the
                 # routing was not).
                 guidance = (
-                    "A blueprint is drafted and waiting. Say 'approve' to "
-                    "generate it, refine it ('add capability X', 'remove "
-                    "capability X', 'rename product to Y'), or describe a "
+                    "A blueprint is drafted and waiting. Approve the feature "
+                    "list to start the coding agent, refine it ('add capability X', "
+                    "'remove capability X', 'rename product to Y'), or describe a "
                     "different platform to start over."
                 )
                 state.chat_history.append({"role": "assistant", "content": guidance})
@@ -397,6 +438,33 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
 
 def _sse_event(event: str, data: str) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _yield_platform_result(result: dict) -> AsyncGenerator[str, None]:
+    """Emit one platform-flow result as SSE, then done.
+
+    Blueprint/generation cards carry the summary; info replies also stream
+    as deltas so they appear in the bubble without a card renderer.
+    """
+    sse = result.get("sse")
+    if not sse:
+        if result.get("generation"):
+            sse = "generation"
+        elif result.get("blueprint") and result.get("refined") is not False:
+            sse = "blueprint"
+        else:
+            sse = "info"
+    summary = result.get("summary") or ""
+    if sse in {"blueprint", "generation"}:
+        yield _sse_event(sse, json.dumps(result))
+    elif sse == "error":
+        yield _sse_event("error", summary)
+    else:
+        yield _sse_event("info", json.dumps(result))
+        if result.get("stream_delta", True):
+            for word in summary.split(" "):
+                yield _sse_event("delta", word + " ")
+    yield _sse_event("done", "")
 
 
 @router.post("/{session_id}/chat")

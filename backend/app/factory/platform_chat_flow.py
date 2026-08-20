@@ -13,11 +13,14 @@ Routing contract (this is law, the smoke tests enforce it):
      platform flow by DEFAULT — factory doctrine: the chat's purpose is
      building platforms. Set PLATFORM_CHAT_FLOW_ENABLED=off to keep the
      legacy kit-configurator routing for unauthenticated deployments.
-  3. Approval ("approve", "go ahead") is only intercepted when a blueprint
-     is actually pending on the session.
-  4. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
+  3. When a factory LLM key is configured, the chat LLM decides the action
+     (draft / start_coder / reply). start_coder is the only chat door that
+     launches the WRITER coding agent. Regex approval ("approve") is the
+     offline fallback when the LLM is unset or the call fails.
+  4. Approval is only acted on when a blueprint is actually pending.
+  5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
-  5. Anything else falls through to the normal kit-configurator chat.
+  6. Anything else falls through to the normal kit-configurator chat.
 """
 
 from __future__ import annotations
@@ -71,10 +74,15 @@ _APPROVAL_RE = re.compile(
 )
 
 
+def is_kit_config_vocabulary(message: str) -> bool:
+    """True when the message is about chains/blocks/kits, not a product brief."""
+    return bool(_KIT_CONFIG_RE.search(message or ""))
+
+
 def is_platform_intent(message: str) -> bool:
     """True when the message asks the factory to create a platform/product."""
     text = message or ""
-    if _KIT_CONFIG_RE.search(text):
+    if is_kit_config_vocabulary(text):
         return False
     return bool(_PLATFORM_INTENT_RE.search(text))
 
@@ -210,6 +218,8 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
     """
     pd = getattr(state, "product_design", None)
     if not pd or not pd.blueprint:
+        return None
+    if pd.blueprint_approved:
         return None
 
     action, args = parse_refinement_command(message)
@@ -363,11 +373,16 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
 def approve_and_generate(
     state: Any,
     output_root: Optional[Path] = None,
+    triggered_by: str = "regex_approve",
 ) -> Dict[str, Any]:
     """Approve the pending blueprint, plan it, and generate the product.
 
     Mutates state.product_design exactly like POST /product/approve +
     /product/generate. Returns the generation payload.
+
+    ``triggered_by`` is provenance for the chat door: ``chat_llm`` when the
+    Floor LLM called start_coder, ``regex_approve`` when the offline keyword
+    path ran. The coding agent still lives only in WRITER.
     """
     pd = state.product_design
     if not pd.blueprint:
@@ -387,8 +402,15 @@ def approve_and_generate(
         "coder": result.get("coder"),
         "engine": result.get("engine"),
         "build": result.get("build"),
+        "triggered_by": triggered_by,
     }
     pd.last_error = None
+
+    trigger_line = (
+        "The chat LLM started the coding agent. "
+        if triggered_by == "chat_llm"
+        else ""
+    )
 
     # A runner build has STARTED, not finished. Saying "product generated —
     # download it" here would be a lie the customer discovers as a 409 on the
@@ -399,11 +421,13 @@ def approve_and_generate(
             "ok": True,
             "generation": pd.generation,
             "plan": pd.plan,
+            "triggered_by": triggered_by,
             "summary": (
-                f"Build started for {result['product_id']}: the coding agent is "
+                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
+                "has taken over the floor and is "
                 f"writing {caps} capability(ies) against the real block contracts, "
                 "then a test phase has to pass before anything ships. This takes "
-                "minutes, not seconds. Watch it on Your Platforms — the download "
+                "minutes, not seconds. Watch it here — the download "
                 "unlocks only when the build passes its gates."
             ),
         }
@@ -434,5 +458,44 @@ def approve_and_generate(
         "ok": True,
         "generation": pd.generation,
         "plan": pd.plan,
+        "triggered_by": triggered_by,
+        "summary": trigger_line + summary,
+    }
+
+
+def has_running_build(state: Any) -> bool:
+    """True while the coding agent is manufacturing the approved feature list."""
+    pd = getattr(state, "product_design", None)
+    gen = getattr(pd, "generation", None) if pd else None
+    if not gen or gen.get("engine") != "runner":
+        return False
+    out = gen.get("output_dir")
+    if not out:
+        return False
+    from app.factory.build_jobs import build_status
+
+    return build_status(out).get("state") == "building"
+
+
+def running_build_reply(state: Any) -> Dict[str, Any]:
+    """Grounded status while the coding agent owns the floor."""
+    pd = state.product_design
+    gen = pd.generation or {}
+    from app.factory.build_jobs import build_status
+
+    st = build_status(gen.get("output_dir") or "")
+    activity = st.get("activity") or "writing the platform"
+    done = st.get("phases_done") or 0
+    total = st.get("phases_total") or 5
+    summary = (
+        f"The coding agent has taken over. It is writing {gen.get('product_id')} "
+        f"— {done}/{total} phases ({activity}). Confirmations are already in: "
+        "wait for the gates, or watch progress on Your Platforms."
+    )
+    return {
+        "ok": True,
+        "sse": "info",
         "summary": summary,
+        "stream_delta": True,
+        "build": st,
     }
