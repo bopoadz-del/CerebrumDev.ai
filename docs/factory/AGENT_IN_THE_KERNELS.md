@@ -8,25 +8,29 @@ instead of re-deriving or accidentally reversing it.
 
 ## The decision as built
 
-Five roles, one agent. COLLECTOR, CLONER, TESTER and STORE_MANAGER are
-deterministic kernels; the coding agent lives only inside the WRITER, called
-once per artifact (model spec, handler, route, README), inside lanes and gates
-it cannot touch (`build/authority.py`, `build/gates.py`).
+Five roles, one agent. CLONER and STORE_MANAGER stay deterministic kernels
+(exact answers, provenance). The coding agent is consulted from three kernels:
 
-Why not "one agent doing every role, constrained by kernels":
+- **COLLECTOR** — report-only binding review. The kernel still resolves
+  `block_ids` verbatim; the agent endorses or flags a mismatch. Mismatches
+  are notes, never a plan mutation and never a weaker gate.
+- **WRITER** — manufactures handlers, model specs, routes, README, inside
+  lanes it cannot escape (`build/authority.py`, `build/gates.py`).
+- **TESTER** — extra domain cases under TESTER authority (`tests/**` only).
+  Cases are admitted only as mutations of spec-derived payloads; they cannot
+  replace the kernel suite. The WRITER still cannot see or edit `tests/`.
+
+Why the mechanical roles stay agent-free:
 
 - **The mechanical roles have exact answers.** Vendoring six blocks plus the
   runtime slice takes ~2 s and is byte-identical every run. Provenance
   (commit pins, lockfile, ledger) must be exact or the Store Manager's
   staleness question becomes unanswerable. An agent adds latency, token cost
   and new failure modes to work that needs no judgment.
-- **The inspector must not be the builder.** Measured repeatedly in this
-  campaign: the agent's characteristic failure is code that *looks* right —
-  a handler reporting ok around a failed block call, a route returning None.
-  Every fake green was caught by deterministic test machinery the agent
-  cannot edit (its lane excludes `tests/`; the TESTER's lane excludes
-  `app/`). An agent that writes the tests judging its own code will
-  eventually weaken the test — that is the cheapest path to green.
+- **The inspector must not be the builder.** The TESTER may *add* cases; it
+  must not let the WRITER write the tests that judge it. Every fake green in
+  the campaign was caught by deterministic test machinery the agent cannot
+  edit (WRITER lane excludes `tests/`; TESTER lane excludes `app/`).
 - **"Defined jobs" as executable code beats defined jobs as prompt text.**
   A prompt instruction is advice; `assert_write_allowed` is a wall.
 
@@ -53,31 +57,22 @@ convergence stack, in `build/roles.py` and `factory/coder.py`:
 
 ## Future work: more agent, inside fixed kernels
 
-Two places where agent judgment would add real value, both safe because the
-kernel's own checks keep running and the agent can only add scrutiny, never
-remove it:
+The COLLECTOR review and TESTER extra-cases expansions below shipped. What
+remains is tightening them from live campaigns, not re-deriving the split.
 
-### 1. A judging COLLECTOR (semantic block choice)
-Today the COLLECTOR trusts the blueprint's `block_ids` verbatim. The
-campaign showed the cost: `field_ops` binds site inspections to the
-`validation` block, which is a Store-certification pipeline — a strained fit
-an experienced engineer would flag at tender review. Extension: the agent
-reviews capability↔block bindings against the harvested block contracts and
-either endorses each binding or reports a mismatch as a named gap **before**
-any build spend. Lane: report-only (the COLLECTOR stays read-only); the
-human or blueprint author decides. No gate weakens.
+### 1. A judging COLLECTOR (semantic block choice) — shipped
+The COLLECTOR still trusts the blueprint's `block_ids` for the plan. The
+coding agent now reviews each binding against harvested `block.json`
+contracts and records endorse/mismatch notes. Lane: report-only (the
+COLLECTOR stays read-only); mismatches do not invent gaps and do not
+weaken the gate.
 
-### 2. An augmenting TESTER (agent-written domain cases)
-Today the TESTER's suite is fully templated from the spec. It proves shape,
-persistence and genuine block execution — it cannot know that a defect
-raised as `severity=critical` should reject `close-out` without a
-`resolution_date`. Extension: the agent proposes *additional* domain test
-cases from the capability description; the kernel accepts them only if they
-(a) pass on the current build, and (b) are mutations of spec-derived
-payloads, never replacements of kernel tests. The kernel suite remains the
-floor; agent cases can only raise it. The WRITER's lane still excludes
-`tests/`, so the proposing agent call must run under the TESTER's authority,
-not the WRITER's.
+### 2. An augmenting TESTER (agent-written domain cases) — shipped
+The TESTER's kernel suite is still templated from the spec. The coding
+agent may propose *additional* domain cases; the kernel admits them only
+as mutations of spec-derived payloads (same keys, at least one value
+changed, no new keys). They land in `tests/test_agent_domain.py` under
+TESTER authority. The kernel suite remains the floor.
 
 ### Explicitly rejected (and why)
 - Agent-driven CLONER/collector file operations: no judgment content, exact

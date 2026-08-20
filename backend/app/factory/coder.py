@@ -872,3 +872,153 @@ def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> D
     model = get_factory_llm_config().get("model", "unknown")
     logger.info("coder wrote %s (%d lines) via %s", cap.id, body.count("\n") + 1, model)
     return {"body": body, "model": model}
+
+
+# -- Kernel-side agent (COLLECTOR review, TESTER extra cases) --------------
+#
+# The coding agent lives in WRITER for manufacturing. COLLECTOR and TESTER
+# may *consult* it under their own authority: report-only binding review
+# (COLLECTOR writes nothing) and extra domain cases that cannot replace
+# kernel tests (TESTER writes only tests/). CLONER and STORE_MANAGER stay
+# mechanical. See docs/factory/AGENT_IN_THE_KERNELS.md.
+
+_COLLECTOR_REVIEW_SYSTEM = """You are the Factory coding agent sitting with the COLLECTOR kernel.
+The COLLECTOR already resolved block ids. You do NOT pick blocks and you do \
+NOT change the plan. Review each capability↔block binding against the block \
+contracts and return JSON only:
+
+{"reviews": [{"capability_id": "...", "block_ids": ["..."], "verdict": "endorse" or "mismatch", "reason": "short"}]}
+
+endorse = the blocks can plausibly serve the capability.
+mismatch = strained fit an engineer would flag at tender review.
+Never invent block ids. Never omit a capability you were given.
+"""
+
+_TESTER_CASES_SYSTEM = """You are the Factory coding agent sitting with the TESTER kernel.
+The kernel already wrote shape/persistence/dispatch tests. Propose ADDITIONAL \
+domain cases as mutations of the sample payloads you are given — same keys, \
+at least one value changed, no new keys. Return JSON only:
+
+{"cases": [{"capability_id": "...", "payload": {}, "expect": "accept" or "reject", "reason": "short"}]}
+
+expect=reject means the mutated payload should be refused.
+expect=accept means it should still succeed.
+Do not replace kernel tests. Do not invent capability ids or payload keys.
+"""
+
+
+def _llm_json_object(messages: List[Dict[str, str]], what: str) -> Dict[str, Any]:
+    raw = _llm_code_call(messages)
+    text = _strip_fences(raw).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end == -1:
+        raise CoderError(f"{what} is not JSON")
+    try:
+        data = json.loads(text[start : end + 1])
+    except ValueError as exc:
+        raise CoderError(f"{what} is not valid JSON: {exc}") from exc
+    if not isinstance(data, dict):
+        raise CoderError(f"{what} is not a JSON object")
+    return data
+
+
+def review_capability_bindings(
+    *,
+    product_name: str,
+    vertical: str,
+    capabilities: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """COLLECTOR consults the coding agent. Report-only; raises CoderError."""
+    user = (
+        f"Platform: {product_name} (vertical: {vertical})\n"
+        "Capability bindings and harvested contracts:\n"
+        + json.dumps(capabilities, indent=2, sort_keys=True)
+        + "\n\nReturn the reviews JSON now."
+    )
+    data = _llm_json_object(
+        [
+            {"role": "system", "content": _COLLECTOR_REVIEW_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "collector binding review",
+    )
+    reviews: List[Dict[str, Any]] = []
+    known = {str(c.get("id") or "") for c in capabilities}
+    for item in data.get("reviews") or []:
+        if not isinstance(item, dict):
+            continue
+        cap_id = str(item.get("capability_id") or "").strip()
+        if cap_id not in known:
+            continue
+        verdict = str(item.get("verdict") or "").strip().lower()
+        if verdict not in {"endorse", "mismatch"}:
+            continue
+        reviews.append(
+            {
+                "capability_id": cap_id,
+                "block_ids": [
+                    str(b) for b in (item.get("block_ids") or []) if str(b).strip()
+                ],
+                "verdict": verdict,
+                "reason": str(item.get("reason") or "")[:300],
+            }
+        )
+    if not reviews:
+        raise CoderError("collector binding review named no known capabilities")
+    model = get_factory_llm_config_model()
+    logger.info(
+        "coder reviewed %d/%d collector bindings via %s",
+        len(reviews),
+        len(known),
+        model,
+    )
+    return {"reviews": reviews, "model": model}
+
+
+def propose_domain_test_cases(
+    *,
+    product_name: str,
+    vertical: str,
+    capabilities: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """TESTER consults the coding agent for extra domain cases. Raises CoderError."""
+    user = (
+        f"Platform: {product_name} (vertical: {vertical})\n"
+        "Kernel sample payloads (mutate these, do not replace them):\n"
+        + json.dumps(capabilities, indent=2, sort_keys=True)
+        + "\n\nReturn the extra cases JSON now."
+    )
+    data = _llm_json_object(
+        [
+            {"role": "system", "content": _TESTER_CASES_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "tester domain cases",
+    )
+    known = {str(c.get("id") or "") for c in capabilities}
+    cases: List[Dict[str, Any]] = []
+    for item in data.get("cases") or []:
+        if not isinstance(item, dict):
+            continue
+        cap_id = str(item.get("capability_id") or "").strip()
+        if cap_id not in known:
+            continue
+        payload = item.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        expect = str(item.get("expect") or "").strip().lower()
+        if expect not in {"accept", "reject"}:
+            continue
+        cases.append(
+            {
+                "capability_id": cap_id,
+                "payload": payload,
+                "expect": expect,
+                "reason": str(item.get("reason") or "")[:300],
+            }
+        )
+    if not cases:
+        raise CoderError("tester proposed no usable domain cases")
+    model = get_factory_llm_config_model()
+    logger.info("coder proposed %d tester domain case(s) via %s", len(cases), model)
+    return {"cases": cases, "model": model}

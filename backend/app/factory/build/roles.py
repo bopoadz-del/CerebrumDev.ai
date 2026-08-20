@@ -8,11 +8,15 @@ source locally**, rather than emitting the ``httpx.post(store_url +
 difference is the point of the rebuild -- a delivered platform that runs
 without the operator's store being up.
 
-LLM use is optional by design. When a coder key is configured the WRITER asks
-it for the handler body; when it is not, the WRITER composes the body from the
-block's declared contract. Both paths write the same *shape*, so CI exercises
-the real manufacturing route with no API key and no non-deterministic output.
-Which path ran is recorded, never implied.
+LLM use is optional by design. When a coder key is configured:
+- the WRITER asks it for handler / model / route / README bodies
+- the COLLECTOR asks it to *review* capability↔block bindings (report-only)
+- the TESTER asks it for *additional* domain cases (mutations of kernel
+  payloads; they cannot replace the kernel suite)
+When it is not, every kernel stays deterministic. CLONER and STORE_MANAGER
+never call the agent. Both paths write the same *shape*, so CI exercises
+the real manufacturing route with no API key. Which path ran is recorded,
+never implied.
 """
 
 from __future__ import annotations
@@ -114,13 +118,95 @@ def run_collector(ctx: RoleContext) -> RoleResult:
     for bid in resolved:
         seen.setdefault(bid, None)
 
+    reviews: List[Dict[str, Any]] = []
+    review_model = ""
+    try:
+        reviews, review_model = _collector_agent_review(ctx)
+    except Exception as exc:  # noqa: BLE001 -- review is advisory
+        ctx.state.setdefault("coder_failures", {})["COLLECTOR.review"] = str(exc)
+        ctx.note(f"coding agent skipped collector review: {exc}", stage="collector")
+
+    mismatch_n = sum(1 for r in reviews if r.get("verdict") == "mismatch")
+    detail = f"{len(seen)} block(s) resolved, {len(gaps)} gap(s)"
+    if reviews:
+        detail += (
+            f"; coding agent reviewed {len(reviews)} binding(s)"
+            f" ({mismatch_n} mismatch(es))"
+        )
+        ctx.note(
+            f"coding agent reviewed collector bindings ({mismatch_n} mismatch(es))",
+            stage="collector",
+            reviews=len(reviews),
+            mismatches=mismatch_n,
+        )
+
     return RoleResult(
         ok=True,
-        detail=f"{len(seen)} block(s) resolved, {len(gaps)} gap(s)",
+        detail=detail,
         gaps=tuple(gaps),
         vendored_blocks=tuple(seen),
-        notes={"resolved_blocks": list(seen), "gaps": gaps},
+        notes={
+            "resolved_blocks": list(seen),
+            "gaps": gaps,
+            "agent_binding_reviews": reviews,
+            "agent_binding_model": review_model,
+        },
     )
+
+
+def _collector_block_meta(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
+    """Harvest a block.json the COLLECTOR can read (no vendor/ yet)."""
+    meta: Dict[str, Any] = {"block_id": block_id}
+    source = _block_source_dir(block_id, ctx.blocks_root)
+    if source is None:
+        return meta
+    path = source / "block.json"
+    if not path.is_file():
+        return meta
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return meta
+    if isinstance(data, dict):
+        if data.get("description"):
+            meta["description"] = str(data["description"])[:400]
+        actions = []
+        for item in data.get("inputs") or []:
+            if isinstance(item, dict) and item.get("name") == "action":
+                if item.get("options"):
+                    actions = list(item["options"])
+                elif item.get("default") is not None:
+                    actions = [item["default"]]
+        if actions:
+            meta["actions"] = actions
+    return meta
+
+
+def _collector_agent_review(ctx: RoleContext) -> tuple:
+    """Ask the coding agent to judge bindings. Empty if unavailable."""
+    from app.factory.coder import coder_enabled, review_capability_bindings
+
+    if not coder_enabled():
+        return [], ""
+    if _budget_too_low(ctx, "collector review"):
+        return [], ""
+    caps = []
+    for cap in ctx.plan.capabilities:
+        bids = list(cap.block_ids or [])
+        caps.append(
+            {
+                "id": cap.capability_id,
+                "block_ids": bids,
+                "description": getattr(cap, "notes", "") or cap.capability_id,
+                "contracts": [_collector_block_meta(ctx, b) for b in bids],
+            }
+        )
+    result = review_capability_bindings(
+        product_name=getattr(ctx.blueprint, "product_name", "platform"),
+        vertical=getattr(ctx.blueprint, "vertical", "product"),
+        capabilities=caps,
+    )
+    return list(result.get("reviews") or []), str(result.get("model") or "")
 
 
 # -- CLONER --------------------------------------------------------------
@@ -1686,12 +1772,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text("Dockerfile", _render_dockerfile())
     ctx.workspace.write_text(".dockerignore", _render_dockerignore())
     ctx.workspace.write_text("Procfile", _render_procfile())
-    # The clone-and-test contract, plus the provenance it audits. Written
-    # here rather than by the STORE_MANAGER so the artifact is complete the
-    # moment the WRITER's gate passes.
     ctx.workspace.write_text(
         Path("scripts") / "release_gate.py", _render_release_gate(product_name)
     )
+    sources["release_gate"] = fallback_source
+    ctx.workspace.write_text(".env.example", _render_platform_env_example())
+    ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
+    sources["deploy_scaffold"] = fallback_source
+
+    by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(
@@ -1702,18 +1791,22 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "engine": "role_runner",
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
+                "kernel_agents": {
+                    "COLLECTOR": {
+                        "reviews": list(ctx.state.get("agent_binding_reviews") or []),
+                        "model": ctx.state.get("agent_binding_model") or "",
+                    },
+                    "WRITER": {"artifacts": by_coder},
+                    "TESTER": "consults the coding agent after this file is written",
+                    "CLONER": "deterministic — no agent",
+                    "STORE_MANAGER": "deterministic — no agent",
+                },
             },
             indent=2,
             sort_keys=True,
         )
         + "\n",
     )
-    sources["release_gate"] = fallback_source
-    ctx.workspace.write_text(".env.example", _render_platform_env_example())
-    ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
-    sources["deploy_scaffold"] = fallback_source
-
-    by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     detail = (
         f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
         f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
@@ -2039,14 +2132,137 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         Path("tests") / "test_routes.py", "\n".join(route_lines) + "\n"
     )
 
+    admitted, case_model = _tester_agent_cases(ctx, specs)
+    if admitted:
+        ctx.workspace.write_text(
+            Path("tests") / "test_agent_domain.py",
+            _render_agent_domain_tests(admitted),
+        )
+        ctx.note(
+            f"coding agent added {len(admitted)} tester domain case(s)",
+            stage="tester",
+            cases=len(admitted),
+        )
+
+    detail = (
+        f"suite written for {len(caps)} capability(ies): dispatch, "
+        "persistence round-trip, and route shape"
+    )
+    if admitted:
+        detail += f"; coding agent added {len(admitted)} domain case(s)"
     return RoleResult(
         ok=True,
-        detail=(
-            f"suite written for {len(caps)} capability(ies): dispatch, "
-            "persistence round-trip, and route shape"
-        ),
-        notes={"capabilities": caps, "vendored": vendored, "entities": entities},
+        detail=detail,
+        notes={
+            "capabilities": caps,
+            "vendored": vendored,
+            "entities": entities,
+            "agent_domain_cases": admitted,
+            "agent_domain_model": case_model,
+        },
     )
+
+
+def _is_payload_mutation(sample: Dict[str, Any], proposed: Dict[str, Any]) -> bool:
+    """True when proposed is a mutation of the spec-derived sample, not a replacement."""
+    if not isinstance(proposed, dict) or not sample:
+        return False
+    extra = set(proposed) - set(sample)
+    if extra:
+        return False
+    if not proposed:
+        return False
+    return proposed != sample
+
+
+def _tester_agent_cases(
+    ctx: RoleContext, specs: Dict[str, Any]
+) -> tuple:
+    """Ask the coding agent for extra domain cases; admit only valid mutations."""
+    from app.factory.coder import CoderError, coder_enabled, propose_domain_test_cases
+
+    if not coder_enabled():
+        return [], ""
+    if _budget_too_low(ctx, "tester domain cases"):
+        return [], ""
+    samples = []
+    sample_by_id: Dict[str, Dict[str, Any]] = {}
+    for cap in ctx.plan.capabilities:
+        spec = specs.get(cap.capability_id, {})
+        sample = _sample_payload(spec)
+        sample_by_id[cap.capability_id] = sample
+        samples.append(
+            {
+                "id": cap.capability_id,
+                "description": getattr(cap, "notes", "") or cap.capability_id,
+                "sample_payload": sample,
+            }
+        )
+    try:
+        result = propose_domain_test_cases(
+            product_name=getattr(ctx.blueprint, "product_name", "platform"),
+            vertical=getattr(ctx.blueprint, "vertical", "product"),
+            capabilities=samples,
+        )
+    except (CoderError, Exception) as exc:  # noqa: BLE001 -- extras are optional
+        ctx.state.setdefault("coder_failures", {})["TESTER.domain_cases"] = str(exc)
+        ctx.note(f"coding agent skipped tester domain cases: {exc}", stage="tester")
+        return [], ""
+
+    admitted: List[Dict[str, Any]] = []
+    for case in result.get("cases") or []:
+        cap_id = case.get("capability_id")
+        sample = sample_by_id.get(cap_id) or {}
+        payload = case.get("payload") or {}
+        if not _is_payload_mutation(sample, payload):
+            continue
+        admitted.append(case)
+    return admitted, str(result.get("model") or "")
+
+
+def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
+    """Kernel-owned file of agent-proposed cases. TESTER writes this, not WRITER."""
+    lines = [
+        '"""Additional domain cases proposed by the coding agent under TESTER.',
+        "",
+        "These are mutations of spec-derived payloads. They cannot replace the",
+        "kernel suite in test_routes.py / test_models.py.",
+        '"""',
+        "",
+        "from fastapi.testclient import TestClient",
+        "",
+        "from app.main import app",
+        "",
+        "client = TestClient(app)",
+        "",
+        "",
+        "def test_agent_domain_cases():",
+        "    failures = []",
+    ]
+    for i, case in enumerate(cases):
+        name = str(case["capability_id"]).replace("-", "_")
+        payload = case["payload"]
+        expect = case["expect"]
+        reason = (case.get("reason") or "").replace("\\", "\\\\").replace("'", "\\'")
+        lines += [
+            f"    payload_{i} = {payload!r}",
+            f'    resp_{i} = client.post("/v1/{name}", json=payload_{i})',
+        ]
+        if expect == "reject":
+            lines += [
+                f"    if resp_{i}.status_code == 200 and resp_{i}.json().get('ok') is not False:",
+                f"        failures.append({reason!r} or 'case {i} should have been rejected')",
+            ]
+        else:
+            lines += [
+                f"    if resp_{i}.status_code != 200 or resp_{i}.json().get('ok') is False:",
+                f"        failures.append({reason!r} or 'case {i} should have been accepted')",
+            ]
+    lines += [
+        "    assert not failures, '; '.join(failures)",
+        "",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 # -- STORE_MANAGER -------------------------------------------------------
