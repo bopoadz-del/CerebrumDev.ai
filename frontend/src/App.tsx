@@ -442,20 +442,31 @@ export function AuthGate({ onAuthed }: { onAuthed: () => void }) {
   )
 }
 
+const KERNEL_JOBS: Record<string, { title: string; agent: boolean }> = {
+  COLLECTOR: { title: 'Binding surveyor', agent: true },
+  CLONER: { title: 'Block stocker', agent: false },
+  WRITER: { title: 'Platform manufacturer', agent: true },
+  TESTER: { title: 'Acceptance inspector', agent: true },
+  STORE_MANAGER: { title: 'Store registrar', agent: false },
+}
+
 function KernelStrip({ build }: { build: BuildStatus | null }) {
   const phases = build?.phases?.length
     ? build.phases
     : ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER']
   const done = new Set(build?.completed ?? [])
-  const agentKernels = new Set(['COLLECTOR', 'WRITER', 'TESTER'])
   return (
     <ol className="kernel-strip">
-      {phases.map((phase) => (
-        <li key={phase} className={done.has(phase) ? 'done' : undefined}>
-          <span>{phase}</span>
-          {agentKernels.has(phase) ? <span className="kernel-agent">agent</span> : null}
-        </li>
-      ))}
+      {phases.map((phase) => {
+        const job = KERNEL_JOBS[phase]
+        return (
+          <li key={phase} className={done.has(phase) ? 'done' : undefined}>
+            <span className="kernel-id">{phase}</span>
+            {job ? <span className="kernel-title">{job.title}</span> : null}
+            {job?.agent ? <span className="kernel-agent">agent</span> : null}
+          </li>
+        )
+      })}
     </ol>
   )
 }

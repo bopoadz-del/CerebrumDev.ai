@@ -25,7 +25,7 @@ import fnmatch
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 
 class BuildRole(str, Enum):
@@ -41,6 +41,31 @@ class LaneRoot(str, Enum):
 
     WORKSPACE = "WORKSPACE"
     STORE = "STORE"
+
+
+class AgentSeat(str, Enum):
+    """How the coding agent sits with this kernel, if at all.
+
+    ``none`` — mechanical; exact answers, no LLM.
+    ``consult`` — kernel decides; agent reviews or proposes extras.
+    ``manufacture`` — agent writes artifacts inside this kernel's lanes.
+    """
+
+    NONE = "none"
+    CONSULT = "consult"
+    MANUFACTURE = "manufacture"
+
+
+# Path segments on the generated platform's ``/v1`` router that kernels
+# publish. Capability ids may not collide with these.
+KERNEL_ROUTE_NAMES: Tuple[str, ...] = (
+    "jobs",
+    "catalog",
+    "inventory",
+    "capabilities",
+    "gates",
+    "provenance",
+)
 
 
 # Order is the build order. Phases run front to back; a role may never run
@@ -63,7 +88,14 @@ class AuthorityError(PermissionError):
 @dataclass(frozen=True)
 class RoleContract:
     role: BuildRole
+    #: Short job title shown on the Floor and on ``GET /v1/jobs``.
+    title: str
     mandate: str
+    #: How the coding agent sits with this kernel.
+    agent: AgentSeat
+    #: Distinctive HTTP this kernel publishes on a delivered platform.
+    #: ``GET /v1/jobs`` is the shared roster and is not repeated here.
+    http_routes: Tuple[str, ...]
     #: (root, glob) pairs, POSIX-style, relative to that root.
     write_lanes: Tuple[Tuple[LaneRoot, str], ...]
     #: Human-readable name of the gate that must pass before handoff.
@@ -76,22 +108,32 @@ class RoleContract:
 ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
     BuildRole.COLLECTOR: RoleContract(
         role=BuildRole.COLLECTOR,
+        title="Binding surveyor",
         mandate=(
-            "Resolve the blueprint's chosen block ids into contracts, source and "
-            "dependencies. Report every capability with no adequate block as an "
-            "explicit gap rather than silently planning around it."
+            "Resolve each capability's declared block ids into harvestable "
+            "contracts. Name every capability with no block as an explicit gap "
+            "so the WRITER authors that logic — never drop it from the plan. "
+            "Consult the coding agent for a report-only endorse/mismatch review "
+            "of each binding. Do not invent block ids, do not mutate the plan, "
+            "and write nothing."
         ),
+        agent=AgentSeat.CONSULT,
+        http_routes=("GET /v1/catalog",),
         # Read-only by design: the collector reports, it does not materialise.
         write_lanes=(),
         gate="every referenced block id is dual-registered; gaps enumerated",
     ),
     BuildRole.CLONER: RoleContract(
         role=BuildRole.CLONER,
+        title="Block stocker",
         mandate=(
-            "Materialise the collected parts into the workspace at pinned commits, "
-            "with a local dispatch runtime so handlers import blocks instead of "
-            "calling the store over HTTP."
+            "Vendor each resolved block's source at a pinned commit, plus the "
+            "local dispatch runtime those shims stand on, so handlers import "
+            "blocks instead of calling the store over HTTP. Write only "
+            "vendor/** and blocks.lock.json. Exact answers — no agent."
         ),
+        agent=AgentSeat.NONE,
+        http_routes=("GET /v1/inventory",),
         write_lanes=(
             (LaneRoot.WORKSPACE, "vendor/**"),
             (LaneRoot.WORKSPACE, "blocks.lock.json"),
@@ -100,10 +142,20 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
     ),
     BuildRole.WRITER: RoleContract(
         role=BuildRole.WRITER,
+        title="Platform manufacturer",
         mandate=(
-            "Manufacture the platform: capability handlers over the vendored "
-            "blocks, domain models, persistence, API surface, UI wiring, and "
-            "net-new logic for the gaps the collector reported."
+            "Manufacture the platform over the vendored stock: capability "
+            "handlers, domain models, persistence, the HTTP surface (including "
+            "each kernel's job routes), UI wiring, and GENERATE logic for the "
+            "gaps the collector reported. The coding agent writes those "
+            "artifacts inside WRITER lanes. Do not touch tests/ or vendor/."
+        ),
+        agent=AgentSeat.MANUFACTURE,
+        http_routes=(
+            "GET /v1/capabilities",
+            "POST /v1/{capability}",
+            "GET /v1/{capability}",
+            "GET /v1/{capability}/{id}",
         ),
         write_lanes=(
             (LaneRoot.WORKSPACE, "app/**"),
@@ -134,22 +186,31 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
     ),
     BuildRole.TESTER: RoleContract(
         role=BuildRole.TESTER,
+        title="Acceptance inspector",
         mandate=(
-            "Write and run tests against what the writer produced, and report "
-            "failures back for another writer pass. Never patch the code under "
-            "test to make a test pass."
+            "Write and run the kernel suite against what the WRITER produced, "
+            "and bounce failures for another writer pass. Consult the coding "
+            "agent for extra domain cases; admit them only as mutations of "
+            "spec-derived payloads. Never patch app/. Never run the suite over "
+            "HTTP — GET /v1/gates describes coverage only."
         ),
+        agent=AgentSeat.CONSULT,
+        http_routes=("GET /v1/gates",),
         write_lanes=((LaneRoot.WORKSPACE, "tests/**"),),
         gate="suite green and the smoke test exercises a capability offline",
     ),
     BuildRole.STORE_MANAGER: RoleContract(
         role=BuildRole.STORE_MANAGER,
+        title="Store registrar",
         mandate=(
-            "Keep the store's books and its stock: register what each platform "
-            "cloned and at which commit, flag clones gone stale against store "
-            "head, harvest proven improvements out of mature platforms, and "
-            "admit client-driven net-new capability into inventory."
+            "Keep the store's books: register what this platform cloned and at "
+            "which commit. This minimal form records the clone register and "
+            "applies no store op. Harvesting improvements back upstream and "
+            "admitting client-driven net-new capability remain unbuilt. Exact "
+            "answers — no agent."
         ),
+        agent=AgentSeat.NONE,
+        http_routes=("GET /v1/provenance",),
         write_lanes=(
             (LaneRoot.STORE, "block_registry/**"),
             (LaneRoot.STORE, "registry.json"),
@@ -165,6 +226,37 @@ FORBIDDEN_SEGMENTS = frozenset({".git", ".hg", ".svn"})
 
 def role_contract(role: BuildRole | str) -> RoleContract:
     return ROLE_CONTRACTS[BuildRole(role)]
+
+
+def jobs_manifest() -> List[Dict[str, Any]]:
+    """Job descriptions shipped on the generated platform as ``GET /v1/jobs``.
+
+    One entry per kernel, in build order. Distinctive HTTP only — the shared
+    roster lives at ``GET /v1/jobs`` itself.
+    """
+    return [
+        {
+            "kernel": role.value,
+            "title": contract.title,
+            "mandate": contract.mandate,
+            "agent": contract.agent.value,
+            "http_routes": list(contract.http_routes),
+            "gate": contract.gate,
+            "read_only": not contract.write_lanes,
+        }
+        for role, contract in ROLE_CONTRACTS.items()
+    ]
+
+
+def kernel_seat_brief(role: BuildRole | str) -> str:
+    """One-paragraph JD for coder system prompts, derived from the contract."""
+    contract = role_contract(role)
+    routes = ", ".join(contract.http_routes)
+    return (
+        f"You are the Factory coding agent sitting with the {contract.role.value} "
+        f"kernel ({contract.title}). Agent seat: {contract.agent.value}. "
+        f"Mandate: {contract.mandate} Published HTTP: {routes}."
+    )
 
 
 def _resolved_within(path: Path, root: Path) -> Optional[Path]:
@@ -268,7 +360,10 @@ def authority_manifest() -> Dict[str, Any]:
         "phases": [p.value for p in BUILD_PHASES],
         "roles": {
             role.value: {
+                "title": contract.title,
                 "mandate": contract.mandate,
+                "agent": contract.agent.value,
+                "http_routes": list(contract.http_routes),
                 "gate": contract.gate,
                 "write_lanes": [
                     {"root": r.value, "glob": g} for r, g in contract.write_lanes

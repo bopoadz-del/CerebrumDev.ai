@@ -33,6 +33,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 from .blueprint import CapabilitySpec, ProductBlueprint
+from .build.authority import kernel_seat_brief
 
 logger = logging.getLogger("cerebrumdev.factory.coder")
 
@@ -465,7 +466,9 @@ def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> 
         return _validate_body(_strip_fences(raw), capability_id)
 
 
-_PLATFORM_SYSTEM = """You write ONE Python function body for a generated business platform.
+_PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """
+
+You write ONE Python function body for a generated business platform.
 
 Contract:
 - Emit ONLY the body of:  def handle(payload: dict) -> dict
@@ -510,7 +513,9 @@ Contract:
 """
 
 
-_SPEC_SYSTEM = """You design the data model for one capability of a business platform.
+_SPEC_SYSTEM = kernel_seat_brief("WRITER") + """
+
+You design the data model for one capability of a business platform.
 
 Return ONLY a JSON object, no prose and no markdown fences:
 {
@@ -666,7 +671,13 @@ def get_factory_llm_config_model() -> str:
     return get_factory_llm_config().get("model", "unknown")
 
 
-_ROUTE_SYSTEM = """You write ONE Python function body for an API route in a generated platform.
+_ROUTE_SYSTEM = kernel_seat_brief("WRITER") + """
+
+You write ONE Python function body for an API route in a generated platform.
+
+The kernel already templates GET list and GET-by-id, plus the job routes
+(GET /v1/jobs, /catalog, /inventory, /capabilities, /gates, /provenance).
+You only write the POST create body.
 
 Contract:
 - Emit ONLY the body of:  def endpoint(payload: dict) -> dict
@@ -882,8 +893,9 @@ def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> D
 # kernel tests (TESTER writes only tests/). CLONER and STORE_MANAGER stay
 # mechanical. See docs/factory/AGENT_IN_THE_KERNELS.md.
 
-_COLLECTOR_REVIEW_SYSTEM = """You are the Factory coding agent sitting with the COLLECTOR kernel.
-The COLLECTOR already resolved block ids. You do NOT pick blocks and you do \
+_COLLECTOR_REVIEW_SYSTEM = kernel_seat_brief("COLLECTOR") + """
+
+The collector kernel already resolved block ids. You do NOT pick blocks and you do \
 NOT change the plan. Review each capability↔block binding against the block \
 contracts and return JSON only:
 
@@ -894,8 +906,9 @@ mismatch = strained fit an engineer would flag at tender review.
 Never invent block ids. Never omit a capability you were given.
 """
 
-_TESTER_CASES_SYSTEM = """You are the Factory coding agent sitting with the TESTER kernel.
-The kernel already wrote shape/persistence/dispatch tests. Propose ADDITIONAL \
+_TESTER_CASES_SYSTEM = kernel_seat_brief("TESTER") + """
+
+The tester kernel already wrote shape/persistence/dispatch tests. Propose ADDITIONAL \
 domain cases as mutations of the sample payloads you are given — same keys, \
 at least one value changed, no new keys. Return JSON only:
 
@@ -904,6 +917,7 @@ at least one value changed, no new keys. Return JSON only:
 expect=reject means the mutated payload should be refused.
 expect=accept means it should still succeed.
 Do not replace kernel tests. Do not invent capability ids or payload keys.
+Do not ask to run tests over HTTP; GET /v1/gates describes coverage only.
 """
 
 

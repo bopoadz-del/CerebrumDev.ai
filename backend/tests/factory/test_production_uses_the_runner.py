@@ -115,6 +115,7 @@ def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
         "app/models.py",
         "app/store.py",
         "app/routes.py",
+        "app/jobs.py",
         "blocks.lock.json",
         "tests/test_smoke.py",
         "Dockerfile",

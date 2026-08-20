@@ -8,8 +8,18 @@ instead of re-deriving or accidentally reversing it.
 
 ## The decision as built
 
-Five roles, one agent. CLONER and STORE_MANAGER stay deterministic kernels
-(exact answers, provenance). The coding agent is consulted from three kernels:
+Five roles, one agent. Each kernel has a job title, an agent seat, and a
+distinctive HTTP surface on the delivered platform (`GET /v1/jobs` is the
+roster). CLONER and STORE_MANAGER stay deterministic kernels (exact answers,
+provenance). The coding agent is consulted from three kernels:
+
+| Kernel | Job | Agent | HTTP |
+|---|---|---|---|
+| **COLLECTOR** | Binding surveyor | consult | `GET /v1/catalog` |
+| **CLONER** | Block stocker | none | `GET /v1/inventory` |
+| **WRITER** | Platform manufacturer | manufacture | `GET /v1/capabilities`, `POST/GET /v1/{capability}`, `GET /v1/{capability}/{id}` |
+| **TESTER** | Acceptance inspector | consult | `GET /v1/gates` (describes coverage; does not run tests) |
+| **STORE_MANAGER** | Store registrar | none | `GET /v1/provenance` |
 
 - **COLLECTOR** — report-only binding review. The kernel still resolves
   `block_ids` verbatim; the agent endorses or flags a mismatch. Mismatches

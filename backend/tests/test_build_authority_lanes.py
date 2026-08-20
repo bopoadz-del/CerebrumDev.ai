@@ -17,12 +17,15 @@ import pytest
 
 from app.factory.build.authority import (
     BUILD_PHASES,
+    KERNEL_ROUTE_NAMES,
+    AgentSeat,
     AuthorityError,
     BuildRole,
     LaneRoot,
     assert_phase_order,
     assert_write_allowed,
     authority_manifest,
+    jobs_manifest,
     role_contract,
 )
 
@@ -176,6 +179,9 @@ def test_manifest_covers_every_phase_and_marks_the_read_only_role():
     assert manifest["roles"]["WRITER"]["read_only"] is False
     # Every role states a gate — a phase with no gate is a phase that cannot fail.
     assert all(r["gate"] for r in manifest["roles"].values())
+    assert manifest["roles"]["COLLECTOR"]["title"] == "Binding surveyor"
+    assert manifest["roles"]["COLLECTOR"]["agent"] == AgentSeat.CONSULT.value
+    assert manifest["roles"]["WRITER"]["http_routes"]
 
 
 def test_every_phase_has_a_contract():
@@ -183,4 +189,29 @@ def test_every_phase_has_a_contract():
         contract = role_contract(phase)
         assert contract.mandate
         assert contract.gate
+        assert contract.title
+        assert contract.agent in AgentSeat
+        assert contract.http_routes
     assert role_contract("STORE_MANAGER").write_lanes[0][0] is LaneRoot.STORE
+
+
+def test_each_kernel_has_a_distinct_job_title_and_http_surface():
+    titles = [role_contract(p).title for p in BUILD_PHASES]
+    assert len(titles) == len(set(titles))
+    assert role_contract(BuildRole.COLLECTOR).agent is AgentSeat.CONSULT
+    assert role_contract(BuildRole.CLONER).agent is AgentSeat.NONE
+    assert role_contract(BuildRole.WRITER).agent is AgentSeat.MANUFACTURE
+    assert role_contract(BuildRole.TESTER).agent is AgentSeat.CONSULT
+    assert role_contract(BuildRole.STORE_MANAGER).agent is AgentSeat.NONE
+    roster = jobs_manifest()
+    assert [j["kernel"] for j in roster] == [p.value for p in BUILD_PHASES]
+    assert {j["agent"] for j in roster} == {"consult", "manufacture", "none"}
+    # Distinctive routes do not steal /v1/jobs — that is the shared roster.
+    for job in roster:
+        assert all(r.startswith(("GET ", "POST ")) for r in job["http_routes"])
+        assert "GET /v1/jobs" not in job["http_routes"]
+    assert "jobs" in KERNEL_ROUTE_NAMES
+    assert role_contract(BuildRole.COLLECTOR).http_routes == ("GET /v1/catalog",)
+    assert role_contract(BuildRole.CLONER).http_routes == ("GET /v1/inventory",)
+    assert "GET /v1/gates" in role_contract(BuildRole.TESTER).http_routes
+    assert "GET /v1/provenance" in role_contract(BuildRole.STORE_MANAGER).http_routes

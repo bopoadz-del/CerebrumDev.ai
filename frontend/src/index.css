@@ -289,8 +289,6 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 }
 .kernel-strip li {
   font-size: 11px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 2px 8px;
@@ -302,6 +300,16 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .kernel-strip li.done {
   color: #7dd3a0;
   border-color: #2f5c43;
+}
+.kernel-id {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.kernel-title {
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.85;
 }
 .kernel-agent {
   color: #7dd3a0;
