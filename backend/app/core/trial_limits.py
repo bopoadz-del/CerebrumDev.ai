@@ -7,8 +7,10 @@ Counters (env-overridable):
 - ``draft``         blueprint drafts/plans per day (TRIAL_DRAFT_LIMIT, 20)
 
 Applies to real user accounts without an active subscription. Active
-subscribers, admin/master-key and local-dev principals are exempt. Enforced
-here, server-side — never in the UI.
+subscribers, admin/master-key, local-dev principals, and the ops smoke
+accounts (``factory-smoke-*@cerebrum-dev.invalid``) are exempt. Enforced
+here, server-side — never in the UI. The deploy-gate principals must not
+burn the public trial cap or the live smoke cannot be re-run.
 """
 
 from __future__ import annotations
@@ -20,6 +22,14 @@ from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
 from . import accounts_store
+
+# Must match backend/app/routers/accounts.py smoke-login principals.
+OPS_SMOKE_EMAILS = frozenset(
+    {
+        "factory-smoke-a@cerebrum-dev.invalid",
+        "factory-smoke-b@cerebrum-dev.invalid",
+    }
+)
 
 # counter -> (env var, default limit, scope)
 TRIAL_COUNTERS: Dict[str, tuple] = {
@@ -71,6 +81,9 @@ def _is_limited_account(account_id: Optional[str]) -> bool:
         return False
     fields = accounts_store.subscription_fields(account_id)
     if fields is None:
+        return False
+    email = str(fields.get("email") or "").strip().lower()
+    if email in OPS_SMOKE_EMAILS:
         return False
     return (fields.get("subscription_status") or "none").strip().lower() != "active"
 

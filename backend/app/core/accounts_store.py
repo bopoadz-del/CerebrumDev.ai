@@ -312,6 +312,7 @@ def subscription_fields(account_id: str) -> Optional[Dict[str, Any]]:
     m = row._mapping
     return {
         "account_id": m["id"],
+        "email": m["email"],
         "subscription_status": m["subscription_status"],
         "trial_ends_at": m["trial_ends_at"],
         "stripe_customer_id": m["stripe_customer_id"],

@@ -67,6 +67,14 @@ class TestGuard:
         accounts_store.set_subscription(account_id, status="active")
         require_within_limit(account_id, "generation")  # must not raise
 
+    def test_ops_smoke_account_is_exempt(self, monkeypatch):
+        monkeypatch.setenv("TRIAL_GENERATION_LIMIT", "0")
+        acct = accounts_store.ensure_verified_account(
+            "factory-smoke-a@cerebrum-dev.invalid", "not-used-in-this-test"
+        )
+        account_id = acct.get("account_id") or acct.get("id")
+        require_within_limit(account_id, "generation")  # must not raise
+
     def test_non_account_principal_is_exempt(self, monkeypatch):
         monkeypatch.setenv("TRIAL_GENERATION_LIMIT", "0")
         require_within_limit(None, "generation")  # admin / local-dev: no raise
