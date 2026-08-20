@@ -2,7 +2,8 @@
 
 Today Steward may be predefined (golden YAML). The architect can:
 - load a checked-in blueprint (deterministic / mock / golden path)
-- draft from a brief using the LLM when ARCHITECT_LLM_DRAFTING_ENABLED is on
+- draft from a brief using the LLM when a factory API key is configured
+  (or when ARCHITECT_LLM_DRAFTING_ENABLED is explicitly on)
 - fall back to deterministic keyword drafting (always available, no keys)
 
 Architecture is always a validated ProductBlueprint; generation stays fail-closed
@@ -63,13 +64,23 @@ BRIEF_TRUNCATION_MARKER = (
 
 
 def llm_drafting_enabled() -> bool:
-    """Env gate for LLM-powered brief drafting. Default OFF (house pattern)."""
-    return os.getenv(LLM_DRAFTING_ENV, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    """Use the architect LLM when factory credentials exist, unless explicitly off.
+
+    A second flag that defaulted off meant a keyed deployment still shipped
+    keyword templates if someone forgot ``ARCHITECT_LLM_DRAFTING_ENABLED``.
+    Explicit ``0``/``false``/``off`` still wins. Explicit ``1``/``true`` still
+    forces the LLM path (and fail-safes to templates if the call dies).
+    Unset means: draft with the LLM whenever a factory API key is configured.
+    """
+    raw = os.getenv(LLM_DRAFTING_ENV, "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    cfg = get_factory_llm_config()
+    if cfg.get("error") or cfg.get("mock"):
+        return False
+    return bool(cfg.get("api_key"))
 
 
 def _positive_int_env(name: str, default: int) -> int:
@@ -182,6 +193,8 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
+    if cfg.get("error"):
+        raise RuntimeError(cfg["error"])
     provider = cfg.get("provider")
     headers = {"Content-Type": "application/json"}
     if cfg.get("api_key"):
@@ -392,8 +405,9 @@ def draft_blueprint_from_brief(
     """Draft a ProductBlueprint from a user brief.
 
     Order of preference:
-    1. LLM drafting when enabled (ARCHITECT_LLM_DRAFTING_ENABLED or
-       ``use_llm=True``) — fail-safe: any error falls through to (2).
+    1. LLM drafting when a factory API key is configured, or when
+       ARCHITECT_LLM_DRAFTING_ENABLED / ``use_llm=True`` forces it —
+       fail-safe: any error falls through to (2).
     2. Golden steward blueprint for explicit steward intent ("steward",
        "private estate", "property readiness", or vertical_hint == "estate")
        — deterministic fallback after LLM failure.

@@ -8,7 +8,7 @@
   "terminals": [
     {
       "name": "backend",
-      "command": "cd backend && ENV=dev ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      "command": "cd backend && ALLOW_ANONYMOUS_DEV=1 ENV=dev ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000",
       "description": "FastAPI configurator + Factory API on :8000 (Vite proxies /v1 here)"
     },
     {

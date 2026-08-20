@@ -56,6 +56,25 @@ def _coder_on(monkeypatch):
     monkeypatch.setattr(
         "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
     )
+    monkeypatch.setattr(
+        "app.factory.coder.review_capability_bindings",
+        lambda **kw: {
+            "reviews": [
+                {
+                    "capability_id": c.get("id"),
+                    "block_ids": c.get("block_ids") or [],
+                    "verdict": "endorse",
+                    "reason": "stub",
+                }
+                for c in kw.get("capabilities") or []
+            ],
+            "model": "stub-collector",
+        },
+    )
+    monkeypatch.setattr(
+        "app.factory.coder.propose_domain_test_cases",
+        lambda **kw: {"cases": [], "model": "stub-tester"},
+    )
 
 
 _STUB_ROUTE = (

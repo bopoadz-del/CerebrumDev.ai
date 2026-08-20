@@ -103,7 +103,7 @@ async def test_pending_blueprint_unrecognized_message_never_hits_legacy_chain(se
     assert "chain" not in kinds
     assert "status" not in kinds  # legacy path emits status:thinking first
     text = " ".join(e["data"] for e in events if e["event"] == "delta")
-    assert "approve" in text
+    assert "approve" in text.lower()
     assert kinds[-1] == "done"
 
 

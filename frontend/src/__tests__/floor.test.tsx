@@ -1,20 +1,20 @@
 /**
- * Factory Floor contract: the architect LLM drafts, the user approves,
- * the coding agent manufactures the platform. Pin the SSE cards the
- * live client actually renders — a template fallback must not look like
- * a working architect, and a runner build must name the coding agent.
+ * Factory Floor contract: the architect LLM drafts, the user approves
+ * the feature list, the coding agent takes over and manufactures it.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Floor } from '../App'
 
 const chatStreamMock = vi.fn()
+const awaitBuildMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
   return {
     ...actual,
     chatStream: (...args: unknown[]) => chatStreamMock(...args),
+    awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
   }
 })
 
@@ -32,6 +32,17 @@ const LLM_BLUEPRINT = {
 describe('Factory Floor — architect LLM then coding agent', () => {
   beforeEach(() => {
     chatStreamMock.mockReset()
+    awaitBuildMock.mockReset()
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const status = {
+        state: 'building',
+        activity: 'writing handlers',
+        phases_done: 2,
+        phases_total: 5,
+      }
+      onProgress?.(status)
+      return status
+    })
   })
 
   it('drafts with the architect LLM and labels the blueprint', async () => {
@@ -67,8 +78,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
           event: 'generation',
           data: {
             summary:
-              'Build started for vineyard: the coding agent is writing 2 capability(ies) against the real block contracts.',
-            generation: { engine: 'runner', product_id: 'vineyard' },
+              'The chat LLM started the coding agent. Build started for vineyard: the coding agent has taken over the floor and is writing 2 capability(ies).',
+            triggered_by: 'chat_llm',
+            generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
           },
         })
         return
@@ -88,10 +100,17 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
     expect(await screen.findByText('coding agent')).toBeInTheDocument()
-    expect(screen.getByText(/coding agent is writing/)).toBeInTheDocument()
+    expect(screen.getByText('chat LLM')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
+    expect(await screen.findByText('COLLECTOR')).toBeInTheDocument()
+    expect(screen.getByText('WRITER')).toBeInTheDocument()
+    expect(screen.getByText('TESTER')).toBeInTheDocument()
+    expect(await screen.findByText(/Writing your platform/)).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/coding agent has taken over/i)).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Open Your Platforms' }))
     expect(goPlatforms).toHaveBeenCalled()
     expect(chatStreamMock).toHaveBeenCalledWith('sess_ui', 'approve', expect.any(Function))
+    expect(awaitBuildMock).toHaveBeenCalled()
   })
 
   it('labels keyword fallback when the architect LLM did not draft', async () => {
