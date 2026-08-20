@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.session_store import create_session
+from app.core.session_store import create_session, get_session, update_session
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -160,4 +162,45 @@ def test_runner_build_reports_progress_and_gates_the_download(client, monkeypatc
         # The only way a download may succeed is a build that passed.
         assert pkg.status_code == 200, pkg.text
         assert state_now == "succeeded", state_now
+
+
+def test_stalled_build_cannot_be_downloaded(client, tmp_path):
+    """A dead runner thread must not ship a torn tree.
+
+    build_status reports "stalled" after the ledger goes quiet; the package
+    endpoint used to only refuse building/failed, so a stalled artifact
+    zipped as if it were a finished product.
+    """
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build_jobs import _STALL_AFTER_S
+
+    create_session("sess_stalled_dl", "tester")
+    out = tmp_path / "stalled-product"
+    out.mkdir()
+    (out / "README.md").write_text("torn", encoding="utf-8")
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="stalled-product", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    old = time.time() - (_STALL_AFTER_S + 120)
+    os.utime(out / "build_ledger.jsonl", (old, old))
+
+    state = get_session("sess_stalled_dl")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "stalled-product",
+        "inputs_hash": "abc",
+        "engine": "runner",
+    }
+    update_session("sess_stalled_dl", state)
+
+    status = client.get("/v1/sessions/sess_stalled_dl/product/build-status")
+    assert status.status_code == 200, status.text
+    assert status.json()["build"]["state"] == "stalled"
+
+    pkg = client.get("/v1/sessions/sess_stalled_dl/product/package")
+    assert pkg.status_code == 409, pkg.text
+    detail = pkg.json()["detail"]
+    assert "gone" in detail or "stalled" in detail.lower() or "will not be shipped" in detail
 
