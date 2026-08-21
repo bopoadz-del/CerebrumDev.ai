@@ -103,6 +103,13 @@ def test_generated_conftest_blocks_outbound_network(tmp_path):
     assert "OFFLINE-GUARD-OK" in proc.stdout
 
 
+def test_generated_conftest_registers_the_pilot_marker():
+    """TESTER cannot write a repo-root pytest.ini; the marker lives here
+    or ``pytest -m 'not pilot'`` warns and (with --strict-markers) fails."""
+    assert "pytest_configure" in _CONFTEST
+    assert "pilot:" in _CONFTEST
+
+
 def test_gate_subprocesses_run_utf8(tmp_path):
     """A vendored block printing one checkmark died with a charmap
     UnicodeEncodeError under the Windows console codepage -- looking exactly

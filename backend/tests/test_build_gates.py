@@ -202,6 +202,44 @@ def test_green_suite_passes(tmp_path):
     result = gate_suite_green(ctx)
     assert result.ok
     assert "1 passed" in result.detail
+    argv = ctx._calls[0]["argv"]
+    assert "not pilot" in argv
+    marker_at = len(argv) - 1 - argv[::-1].index("-m")
+    assert argv[marker_at + 1] == "not pilot"
+
+
+def test_factory_gate_ignores_a_red_pilot_test(tmp_path):
+    """Store-backed execute-all is not the factory code-phase gate.
+
+    A failing @pytest.mark.pilot test must not fail gate_suite_green, or
+    TESTER rework burns 20–30 min of coder time on Store channels.
+    """
+    from app.factory.build.gates import GateContext
+
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "conftest.py").write_text(
+        "def pytest_configure(config):\n"
+        "    config.addinivalue_line(\n"
+        "        'markers',\n"
+        "        'pilot: Store-backed; excluded from the factory gate',\n"
+        "    )\n",
+        encoding="utf-8",
+    )
+    (tests / "test_code.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8"
+    )
+    (tests / "test_pilot.py").write_text(
+        "import pytest\n"
+        "@pytest.mark.pilot\n"
+        "def test_store_must_accept():\n"
+        "    assert False, 'pilot must be deselected'\n",
+        encoding="utf-8",
+    )
+    result = gate_suite_green(
+        GateContext(workspace=tmp_path, role=BuildRole.TESTER)
+    )
+    assert result.ok, result.detail
 
 
 # -- wiring --------------------------------------------------------------

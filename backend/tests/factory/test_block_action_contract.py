@@ -316,8 +316,14 @@ def test_the_smoke_scans_nested_results_for_block_errors(tmp_path):
     assert run_tester(tester_ctx).ok
 
     smoke = (tmp_path / "build" / "tests" / "test_smoke.py").read_text(encoding="utf-8")
+    assert "@pytest.mark.pilot" in smoke
+    assert "def test_every_capability_executes_end_to_end():" in smoke
     assert "reported ok around a failed block call" in smoke
     assert '\\"status\\": \\"error\\"' in smoke
+    # Nested scan is pilot coverage, not the factory code-phase gate.
+    marker_at = smoke.index("@pytest.mark.pilot")
+    scan_at = smoke.index("reported ok around a failed block call")
+    assert marker_at < scan_at
 
 
 def _workspace_with_contract(tmp_path: Path) -> RoleContext:
@@ -553,6 +559,10 @@ def test_the_tester_smoke_speaks_the_contract(tmp_path):
     assert "load_block" in smoke, "import failures are no longer hard-asserted"
     assert "'crew'" in smoke, "handler payload is not built from the spec"
     assert "'reference': 'probe'" not in smoke, "canned junk payload is back"
+    assert "def test_every_capability_handle_returns_mapping():" in smoke
+    conftest = (tmp_path / "build" / "tests" / "conftest.py").read_text(encoding="utf-8")
+    assert "pilot:" in conftest
+    assert "pytest_configure" in conftest
 
 
 def test_the_coder_prompt_carries_the_block_contract(monkeypatch):

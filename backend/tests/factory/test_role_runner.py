@@ -234,15 +234,24 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     assert "/v1/jobs" in routes_test
     assert "/v1/gates" in routes_test
     assert "runs_over_http" in routes_test
-    # A route that rejects everything answers 200 with ok:false; the suite must
-    # not accept that as success.
-    # The collector form: an ok=False answer is recorded as a failure, so a
-    # route that rejects everything cannot pass on shape alone.
+    # Code-phase: the route answers JSON. Store acceptance is @pytest.mark.pilot.
+    assert "def test_every_capability_route_answers():" in routes_test
+    assert "@pytest.mark.pilot" in routes_test
+    assert "def test_every_capability_route_accepts_payload():" in routes_test
     assert '.get("ok") is False' in routes_test
     assert "rejected a payload built from its own schema" in routes_test
+    marker_at = routes_test.index("@pytest.mark.pilot")
+    reject_at = routes_test.index("rejected a payload built from its own schema")
+    assert marker_at < reject_at
 
     smoke = (out / "tests" / "test_smoke.py").read_text(encoding="utf-8")
     assert ".handle(" in smoke, "capabilities must be executed, not imported"
+    assert "def test_every_capability_handle_returns_mapping():" in smoke
+    assert "@pytest.mark.pilot" in smoke
+
+    jobs_src = (out / "app" / "jobs.py").read_text(encoding="utf-8")
+    assert '"gated": False' in jobs_src or "'gated': False" in jobs_src
+    assert "pilot" in jobs_src
 
 
 def test_the_writer_still_cannot_write_the_tests_after_the_lane_widened(

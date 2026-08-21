@@ -28,6 +28,11 @@ from app.factory.build.authority import BuildRole
 #: silently consume the whole build budget.
 DEFAULT_GATE_TIMEOUT_S = 600.0
 
+#: Factory TESTER runs the code-phase suite only. Store-backed execute-all
+#: lives on ``@pytest.mark.pilot`` and is not this gate: a complete platform
+#: as designed is a later phase, not a 20–30 minute coder pass.
+FACTORY_SUITE_MARKER_EXPR = "not pilot"
+
 
 @dataclass(frozen=True)
 class GateResult:
@@ -213,7 +218,12 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
 
 
 def gate_suite_green(ctx: GateContext) -> GateResult:
-    """TESTER: the suite runs and passes.
+    """TESTER: the code-phase suite runs and passes.
+
+    This gate judges the coder's 20–30 minute pass: imports, dispatch load,
+    model round-trip, routes that answer HTTP 200 JSON, handle() returning a
+    mapping. Store-backed ``ok: True`` / nested-error scans are
+    ``@pytest.mark.pilot`` and are *not* this gate.
 
     An empty or missing suite fails. "No tests ran" is the single most
     dangerous green in a generated platform -- it looks identical to success
@@ -228,7 +238,18 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             findings=["tester produced no test files"],
         )
 
-    proc = ctx.run([sys.executable, "-m", "pytest", "tests", "-q", "--no-header"])
+    proc = ctx.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests",
+            "-q",
+            "--no-header",
+            "-m",
+            FACTORY_SUITE_MARKER_EXPR,
+        ]
+    )
     raw = (proc.stdout or "") + (proc.stderr or "")
     output = raw.splitlines()
     if proc.returncode != 0:
