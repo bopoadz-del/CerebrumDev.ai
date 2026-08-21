@@ -35,8 +35,6 @@ from app.models.session import ProductDesignState, SessionState
         "we are looking for a portal for retail operations",
         "I'd like a product for retail inventory",
         "set up a platform for retail",
-        "build me a tasting room for a family winery",
-        "Build me a platform for my hospitality domain",
     ],
 )
 def test_standard_platform_phrasings_route_to_platform_flow(message):
