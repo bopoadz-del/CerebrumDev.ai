@@ -224,16 +224,20 @@ def _collector_agent_review(ctx: RoleContext) -> tuple:
 # -- CLONER --------------------------------------------------------------
 
 
+def _vendor_mirror_dir(block_id: str) -> Optional[Path]:
+    mirror = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror" / block_id
+    if (mirror / "block.py").is_file():
+        return mirror
+    return None
+
+
 def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Path]:
     """Real Store checkout first, factory vendor mirror second."""
     if blocks_root:
         candidate = Path(blocks_root) / "block_registry" / block_id
         if (candidate / "block.py").is_file():
             return candidate
-    mirror = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror" / block_id
-    if (mirror / "block.py").is_file():
-        return mirror
-    return None
+    return _vendor_mirror_dir(block_id)
 
 
 def _content_digest(source: Path) -> str:
@@ -316,10 +320,14 @@ _REGISTRY_API_NAMES = frozenset(
     }
 )
 #: One entry of the Store registry's literal defs:
-#: ``"name": ("app.blocks.module", "ClassName")``.
+#: ``"name": ("app.blocks.module", "ClassName")``. Single or double quotes.
 _BLOCK_DEF_RE = re.compile(
-    r'"(?P<name>[\w-]+)"\s*:\s*\(\s*"app\.blocks\.(?P<mod>[\w.]+)"\s*,\s*"(?P<cls>\w+)"\s*\)'
+    r'''["'](?P<name>[\w-]+)["']\s*:\s*\(\s*["']app\.blocks\.(?P<mod>[\w.]+)["']\s*,\s*["'](?P<cls>\w+)["']\s*\)'''
 )
+#: ``get_block("formula_executor")`` inside a kit-shelf shim.
+_GET_BLOCK_RE = re.compile(r"""get_block\(\s*['"]([\w-]+)['"]""")
+#: ``class FormulaExecutorV2(`` in a Store block module.
+_BLOCK_CLASS_RE = re.compile(r"^class\s+(\w+)\s*\(", re.MULTILINE)
 
 
 def _rewrite_runtime_imports(text: str) -> str:
@@ -339,6 +347,91 @@ def _store_block_defs(blocks_root: Path) -> Dict[str, tuple]:
         m.group("name"): (m.group("mod"), m.group("cls"))
         for m in _BLOCK_DEF_RE.finditer(text)
     }
+
+
+def _candidate_store_ids(block_id: str) -> tuple:
+    """Kit-shelf ids and the Store's ``_v2`` runtime names.
+
+    Dual-registration uses ``formula_executor``; the Store registry ships
+    ``formula_executor_v2``. A live tasting-room Approve died in CLONER
+    because the shim was found and the kit id was not in ``_EXTENDED_BLOCK_DEFS``.
+    """
+    ids = [block_id]
+    if block_id.endswith("_v2") and len(block_id) > 3:
+        ids.append(block_id[:-3])
+    else:
+        ids.append(f"{block_id}_v2")
+    seen: Dict[str, None] = {}
+    for item in ids:
+        if item:
+            seen.setdefault(item, None)
+    return tuple(seen)
+
+
+def _class_name_from_block_module(path: Path) -> Optional[str]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    names = _BLOCK_CLASS_RE.findall(text)
+    if not names:
+        return None
+    for name in names:
+        if name.endswith("Block") or name.endswith("V2"):
+            return name
+    return names[0]
+
+
+def _resolve_store_def(
+    block_id: str, defs: Dict[str, tuple], blocks_root: Path
+) -> Optional[tuple]:
+    """``(store_key, (module, class))`` for a kit-shelf id, or None."""
+    for key in _candidate_store_ids(block_id):
+        if key in defs:
+            return key, defs[key]
+    blocks_dir = Path(blocks_root) / "app" / "blocks"
+    for key in _candidate_store_ids(block_id):
+        path = blocks_dir / f"{key}.py"
+        if not path.is_file():
+            continue
+        cls = _class_name_from_block_module(path)
+        if cls:
+            return key, (key, cls)
+    return None
+
+
+def _runtime_defs_for_blocks(
+    block_ids: Sequence[str],
+    defs: Dict[str, tuple],
+    blocks_root: Path,
+    *,
+    shim_texts: Optional[Dict[str, str]] = None,
+) -> Dict[str, tuple]:
+    """Vendored registry entries keyed by every name a shim may ``get_block``.
+
+    The Store's native id (often ``*_v2``) and the kit-shelf id both point at
+    the same module so ``get_block("formula_executor")`` resolves after clone.
+    """
+    registry: Dict[str, tuple] = {}
+    init = Path(blocks_root) / "app" / "blocks" / "__init__.py"
+    for bid in block_ids:
+        resolved = _resolve_store_def(bid, defs, blocks_root)
+        if resolved is None:
+            tried = ", ".join(
+                key for key in _candidate_store_ids(bid) if key != bid
+            )
+            extra = f" (also tried {tried})" if tried else ""
+            raise RoleError(
+                f"{bid}: shim imports the Store runtime but the Store registry "
+                f"({init}) has no entry for it{extra}"
+            )
+        store_key, pair = resolved
+        registry[bid] = pair
+        registry[store_key] = pair
+        if shim_texts and bid in shim_texts:
+            for name in _GET_BLOCK_RE.findall(shim_texts[bid]):
+                registry.setdefault(name, pair)
+    return registry
 
 
 def _shim_needs_runtime(source: Path) -> bool:
@@ -368,12 +461,18 @@ def _closure_over_runtime(
     todo: List[str] = []
 
     for bid in block_ids:
-        if bid not in defs:
+        resolved = _resolve_store_def(bid, defs, blocks_root)
+        if resolved is None:
+            tried = ", ".join(
+                key for key in _candidate_store_ids(bid) if key != bid
+            )
+            extra = f" (also tried {tried})" if tried else ""
             raise RoleError(
                 f"{bid}: shim imports the Store runtime but the Store registry "
-                f"({blocks_dir / '__init__.py'}) has no entry for it"
+                f"({blocks_dir / '__init__.py'}) has no entry for it{extra}"
             )
-        todo.append(defs[bid][0])
+        _store_key, (mod, _cls) = resolved
+        todo.append(mod)
 
     while todo:
         mod = todo.pop()
@@ -544,9 +643,14 @@ def _vendor_runtime_slice(
         )
         _write(base / "core" / f"{name}.py", _rewrite_runtime_imports(source))
 
-    registry = {
-        bid: defs[bid] for bid in runtime_block_ids
-    }
+    shim_texts: Dict[str, str] = {}
+    for bid in runtime_block_ids:
+        shim = ctx.workspace.workspace / "vendor" / "blocks" / bid / "block.py"
+        if shim.is_file():
+            shim_texts[bid] = shim.read_text(encoding="utf-8", errors="replace")
+    registry = _runtime_defs_for_blocks(
+        runtime_block_ids, defs, blocks_root, shim_texts=shim_texts
+    )
     _write(base / "blocks" / "__init__.py", _render_vendored_registry(registry))
     for mod in sorted(block_mods):
         source = (blocks_root / "app" / "blocks" / f"{mod}.py").read_text(
@@ -598,12 +702,23 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     vendored: List[str] = []
     missing: List[str] = []
     runtime_blocks: List[str] = []
+    defs = _store_block_defs(Path(ctx.blocks_root)) if ctx.blocks_root else {}
 
     for bid in block_ids:
         source = _block_source_dir(bid, ctx.blocks_root)
         if source is None:
             missing.append(bid)
             continue
+        needs_rt = _shim_needs_runtime(source)
+        if needs_rt and ctx.blocks_root:
+            if _resolve_store_def(bid, defs, Path(ctx.blocks_root)) is None:
+                mirror = _vendor_mirror_dir(bid)
+                if mirror is not None and not _shim_needs_runtime(mirror):
+                    # Kit-shelf shim exists in Blocks but the Store runtime
+                    # never registered it (and no ``_v2`` alias). Shipping
+                    # that shim fails CLONER; the factory stub runs offline.
+                    source = mirror
+                    needs_rt = False
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
         origin, revision = _pin_source(source, ctx.blocks_root)
         lock["blocks"][bid] = {
@@ -621,7 +736,7 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         # so a build with no Store checkout vendored a shim that imports
         # app.blocks and shipped no runtime for it: the CLONER gate failed
         # with "No module named 'app'" on the production default path.
-        if _shim_needs_runtime(source):
+        if needs_rt:
             runtime_blocks.append(bid)
 
     if missing:
