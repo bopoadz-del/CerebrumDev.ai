@@ -65,7 +65,6 @@ class TestRoundTrip:
         assert counts["accounts"] == 7
         assert counts["api_keys"] == 7
 
-        # And the actual values, not merely the cardinality.
         conn = sqlite3.connect(str(tmp_path / "restored" / "accounts.db"))
         try:
             emails = {r[0] for r in conn.execute("SELECT email FROM accounts")}
@@ -91,7 +90,6 @@ class TestRoundTrip:
         _seed_accounts_db(storage / "accounts.db", rows=1)
         result = bk.create_backup()
         assert result.ok
-        # No uploads/sessions/chroma dirs exist -- that must be visible.
         assert set(result.skipped) >= {"uploads", "sessions", "chroma"}
 
 
@@ -107,7 +105,6 @@ class TestCorruptionIsCaught:
             writer.execute(
                 "INSERT INTO accounts VALUES ('acc_99','pending@example.com','x')"
             )
-            # Uncommitted. The snapshot must be a valid database either way.
             dest = tmp_path / "snap.db"
             bk.snapshot_sqlite(db, dest)
             counts = bk.verify_sqlite_snapshot(dest)
@@ -150,7 +147,7 @@ class TestRetention:
 
         remaining = sorted(p.name for p in root.glob("cerebrumdev-backup-*.tar.gz"))
         assert len(remaining) == 3
-        assert remaining == sorted(names[-3:])  # newest three by timestamp
+        assert remaining == sorted(names[-3:])
         assert len(removed) == 4
 
     def test_prune_on_an_empty_root_is_a_noop(self, storage):
@@ -160,5 +157,37 @@ class TestRetention:
 class TestPostgresDumpHonesty:
     def test_postgres_dump_fails_honestly_without_pg_dump(self, tmp_path, monkeypatch):
         monkeypatch.setattr(bk.shutil, "which", lambda _name: None)
+
+        def boom(*_a, **_k):
+            raise RuntimeError("could not connect")
+
+        monkeypatch.setattr(bk, "snapshot_postgres_via_sqlalchemy", boom)
         with pytest.raises(RuntimeError, match="pg_dump is not installed"):
             bk.snapshot_postgres("postgresql://example", tmp_path / "x.dump")
+
+    def test_sqlalchemy_fallback_when_pg_dump_exits_nonzero(self, tmp_path, monkeypatch):
+        """Neon PG18 + slim-image pg_dump 15/16 exits 1 (version mismatch)."""
+        db = tmp_path / "acc.db"
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("CREATE TABLE accounts (id TEXT, email TEXT)")
+            conn.execute("INSERT INTO accounts VALUES ('a1', 'a@b.com')")
+            conn.commit()
+        finally:
+            conn.close()
+
+        monkeypatch.setattr(bk.shutil, "which", lambda _name: "/usr/bin/pg_dump")
+
+        class _Proc:
+            returncode = 1
+            stderr = "pg_dump: error: aborting because of server version mismatch"
+            stdout = ""
+
+        monkeypatch.setattr(bk.subprocess, "run", lambda *_a, **_k: _Proc())
+        dest = tmp_path / "accounts.dump"
+        written = bk.snapshot_postgres(f"sqlite:///{db}", dest)
+        assert written.suffix == ".sql"
+        text = written.read_text(encoding="utf-8")
+        assert "a@b.com" in text
+        assert "INSERT INTO" in text
+        assert dest.exists() is False or dest.stat().st_size == 0

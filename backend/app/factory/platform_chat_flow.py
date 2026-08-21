@@ -7,20 +7,20 @@ the same ProductDesignState on the session. The chat is simply a second
 front door onto the same house.
 
 Routing contract (this is law, the smoke tests enforce it):
-  1. Explicit commands ALWAYS enter the platform flow:
+    1. Explicit commands ALWAYS enter the platform flow:
      "/platform <brief>", "new platform <brief>", "platform: <brief>".
-  2. Free-text NLP intent ("build me a platform for hotels") enters the
+    2. Free-text NLP intent ("build me a platform for hotels") enters the
      platform flow by DEFAULT — factory doctrine: the chat's purpose is
      building platforms. Set PLATFORM_CHAT_FLOW_ENABLED=off to keep the
      legacy kit-configurator routing for unauthenticated deployments.
-  3. When a factory LLM key is configured, the chat LLM decides the action
+    3. When a factory LLM key is configured, the chat LLM decides the action
      (draft / start_coder / reply). start_coder is the only chat door that
      launches the WRITER coding agent. Regex approval ("approve") is the
      offline fallback when the LLM is unset or the call fails.
-  4. Approval is only acted on when a blueprint is actually pending.
-  5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
+    4. Approval is only acted on when a blueprint is actually pending.
+    5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
-  6. Anything else falls through to the normal kit-configurator chat.
+    6. Anything else falls through to the normal kit-configurator chat.
 """
 
 from __future__ import annotations
@@ -49,15 +49,36 @@ from .product_architect import (
 _PLATFORM_INTENT_RE = re.compile(
     r"\b(build|create|make|generate|assemble|design|spin\s*up|ship|"
     r"want|need|give\s*me|get\s*me|set\s*up|looking\s+for|i'?d\s+like)\b"
-    r"[\w\s,.'\-/:]{0,100}?"
+    r"[\w\s,.'\-/: ]{0,100}?"
     r"\b(platform|product|system|portal)\b",
     re.IGNORECASE,
 )
 
-# Kit-configurator vocabulary: messages about chains/blocks/kits/domains stay
-# in the legacy chat flow even if they also mention a platform noun.
+# Live Floor testers describe a business ("build me a tasting room for a
+# winery") without saying "platform". That is still a product brief.
+_BUSINESS_BRIEF_RE = re.compile(
+    r"\b(build|create|make|generate|assemble|design|spin\s*up|set\s*up|"
+    r"i\s+(?:want|need)|give\s*me|get\s*me)\b"
+    r".{0,100}\bfor\b.{2,80}",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Kit-configurator vocabulary: only the configurator dialect, not ordinary
+# English ("my hospitality domain", "reservation blocks"). Bare \bdomain\b /
+# \bblock\b used to dump product briefs into the legacy chain generator,
+# and the Floor then overwrote the reply with "kit configuration".
 _KIT_CONFIG_RE = re.compile(
-    r"\b(chain|block|blocks|kit|kits|domain|lora|learning\s*rate|vector\s*db|hnsw)\b",
+    r"("
+    r"\b(lora|learning\s*rate|vector\s*db|hnsw)\b"
+    r"|\b(add|remove|show|list|use)\s+(?:the\s+)?(block|blocks|kit|kits|domain|chain)\b"
+    r"|\b(chain|kit)\s+(with|blocks|block)\b"
+    r"|\bproduct\s+chain\b"
+    r"|\bwhat blocks\b"
+    r"|\bblocks are available\b"
+    r"|\buse domain\b"
+    r"|\bthe retail domain\b"
+    r"|\bretail kit\b"
+    r")",
     re.IGNORECASE,
 )
 
@@ -84,7 +105,9 @@ def is_platform_intent(message: str) -> bool:
     text = message or ""
     if is_kit_config_vocabulary(text):
         return False
-    return bool(_PLATFORM_INTENT_RE.search(text))
+    if _PLATFORM_INTENT_RE.search(text):
+        return True
+    return bool(_BUSINESS_BRIEF_RE.search(text))
 
 
 def is_explicit_platform_command(message: str) -> bool:

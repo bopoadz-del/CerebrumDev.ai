@@ -83,11 +83,14 @@ def should_orchestrate(state: Any, message: str) -> bool:
     """True when this message should be decided by the Floor chat LLM."""
     if not chat_llm_enabled():
         return False
+    if not (message or "").strip():
+        return False
     if platform_chat_flow.is_kit_config_vocabulary(message):
         return False
-    if platform_chat_flow.has_pending_blueprint(state):
-        return True
-    return platform_chat_flow.should_handle_platform_message(message)
+    # The Floor is a product factory. When the LLM is keyed, let it classify
+    # business briefs that never say "platform" — regex intent is the offline
+    # fallback, not the live door.
+    return True
 
 
 def _session_facts(state: Any) -> str:

@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, isDomainStoreUnreachable, isEmailNotVerifiedError } from '../api/factory'
 import App from '../App'
 
-const { meMock, verifyEmailMock, resendMock, listMock, createMock, domainsListMock } = vi.hoisted(
+const { meMock, verifyEmailMock, resendMock, listMock, createMock, domainsListMock, productGetMock } = vi.hoisted(
   () => ({
     meMock: vi.fn(),
     verifyEmailMock: vi.fn(),
@@ -14,6 +14,7 @@ const { meMock, verifyEmailMock, resendMock, listMock, createMock, domainsListMo
     listMock: vi.fn(),
     createMock: vi.fn(),
     domainsListMock: vi.fn(),
+    productGetMock: vi.fn(),
   }),
 )
 
@@ -35,6 +36,10 @@ vi.mock('../api/factory', async (importOriginal) => {
     },
     domains: {
       list: (...args: unknown[]) => domainsListMock(...args),
+    },
+    product: {
+      ...actual.product,
+      get: (...args: unknown[]) => productGetMock(...args),
     },
   }
 })
@@ -64,6 +69,8 @@ describe('App boot', () => {
     createMock.mockReset()
     domainsListMock.mockReset()
     domainsListMock.mockResolvedValue({ domains: [] })
+    productGetMock.mockReset()
+    productGetMock.mockResolvedValue({})
   })
 
   it('shows verify-email — not Factory unreachable — when boot is 403 email_not_verified', async () => {
