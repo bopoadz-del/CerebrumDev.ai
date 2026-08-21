@@ -89,6 +89,9 @@ _EXPORT_SKIP_DIR_NAMES = {
     ".git",
 }
 _EXPORT_SKIP_SUFFIXES = {".pyc", ".pyo"}
+# ZIP spec rejects DOS timestamps before 1980. Copied kit/kernel files in
+# this environment (and some git checkouts) have mtime 0.
+_ZIP_MIN_EPOCH = 315532800  # 1980-01-01 UTC
 
 
 def zip_generated_product(out: Path, archive_base: Path) -> Path:
@@ -99,6 +102,8 @@ def zip_generated_product(out: Path, archive_base: Path) -> Path:
     not the product; the live winery-hospitality export shipped 146 files
     of which a large slice was bytecode.
     """
+    import time as _time
+
     zip_path = Path(str(archive_base) + ".zip")
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(out.rglob("*")):
@@ -107,8 +112,12 @@ def zip_generated_product(out: Path, archive_base: Path) -> Path:
                 continue
             if path.suffix in _EXPORT_SKIP_SUFFIXES:
                 continue
-            if path.is_file():
-                zf.write(path, arcname=rel.as_posix())
+            if not path.is_file():
+                continue
+            mtime = max(path.stat().st_mtime, _ZIP_MIN_EPOCH)
+            info = zipfile.ZipInfo(rel.as_posix(), date_time=_time.localtime(mtime)[:6])
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, path.read_bytes())
     return zip_path
 
 

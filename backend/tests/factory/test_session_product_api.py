@@ -230,6 +230,23 @@ def test_product_export_omits_tester_caches(tmp_path):
     assert not any(n.endswith(".pyc") for n in names)
 
 
+def test_product_export_zips_epoch_zero_files(tmp_path):
+    """Kit/kernel copies in this environment have mtime 0; ZIP forbids that."""
+    import os
+    import zipfile
+
+    from app.routers.session_product import zip_generated_product
+
+    out = tmp_path / "product"
+    (out / "kits" / "platform").mkdir(parents=True)
+    target = out / "kits" / "platform" / "manifest.json"
+    target.write_text("{}\n", encoding="utf-8")
+    os.utime(target, (0, 0))
+    zpath = zip_generated_product(out, tmp_path / "epoch-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    assert "kits/platform/manifest.json" in names
+
+
 def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
     """The Floor download must look like a Factory product tree.
 
