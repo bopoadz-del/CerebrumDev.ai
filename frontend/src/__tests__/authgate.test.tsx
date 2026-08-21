@@ -48,8 +48,9 @@ describe('AuthGate', () => {
     expect(screen.getByRole('button', { name: 'Send reset token' })).toBeInTheDocument()
   })
 
-  it('register with unconfigured SMTP surfaces the dev verification token', async () => {
-    render(<AuthGate onAuthed={() => {}} />)
+  it('register with unconfigured SMTP hands the dev token to the app', async () => {
+    const onAuthed = vi.fn()
+    render(<AuthGate onAuthed={onAuthed} />)
     fireEvent.click(screen.getByRole('button', { name: 'Create an account' }))
     fireEvent.change(screen.getByPlaceholderText('you@company.com'), {
       target: { value: 'new@factory.dev' },
@@ -59,16 +60,32 @@ describe('AuthGate', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Create your account' }))
     await waitFor(() =>
-      expect(screen.getByPlaceholderText('verification token')).toHaveValue('vtk_test_123'),
+      expect(onAuthed).toHaveBeenCalledWith({ devVerificationToken: 'vtk_test_123' }),
     )
+  })
+
+  it('SMTP register enters the app so boot can show verify-email (not a dead Factory)', async () => {
+    const { auth } = await import('../api/factory')
+    ;(auth.register as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      login_token: 'cdt_smtp',
+      email_verified: false,
+      verification: { mode: 'smtp', email_sent: true },
+    })
+    const onAuthed = vi.fn()
+    render(<AuthGate onAuthed={onAuthed} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Create an account' }))
+    fireEvent.change(screen.getByPlaceholderText('you@company.com'), {
+      target: { value: 'smtp@factory.dev' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('password (8+ characters)'), {
+      target: { value: 'supersecret1' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Create your account' }))
+    await waitFor(() => expect(onAuthed).toHaveBeenCalled())
   })
 })
 
 describe('email deep links', () => {
-  // New-shape tests for the 2026-08-15 finding: the verification email links
-  // to /verify-email?token=… , the SPA rewrite served the app, and nothing
-  // read the URL — clicking the email link landed on the login screen with
-  // the token silently ignored.
   it('completes verification when opened from the email link', async () => {
     const { auth } = await import('../api/factory')
     ;(auth.verifyEmail as ReturnType<typeof vi.fn>) = vi
