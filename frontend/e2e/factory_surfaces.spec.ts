@@ -98,7 +98,7 @@ test('Floor drafts a feature list and Approve & build starts the coding agent', 
     }
     await route.fulfill({
       status: 200,
-      contentType: 'text/event-stream',
+      contentType: 'application/json',
       body,
     })
   })
@@ -221,5 +221,5 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
   await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sign out' }).toBeVisible())
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
 })
