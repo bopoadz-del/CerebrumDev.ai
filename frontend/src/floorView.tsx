@@ -179,6 +179,16 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   return 'Writing your platform — ' + done + '/' + total + ' phases (last: ' + phase + ')'
 }
 
+function latestProductCard(msgs: ChatMsg[]): ChatMsg | undefined {
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    const card = msgs[i].card
+    if (card === 'blueprint' || (card === 'generation' && msgs[i].engine === 'runner')) {
+      return msgs[i]
+    }
+  }
+  return undefined
+}
+
 function hydrateFromDesign(design: ProductDesign): {
   msgs: ChatMsg[]
   coderActive: boolean
@@ -191,13 +201,17 @@ function hydrateFromDesign(design: ProductDesign): {
   ]
   const bp = design.blueprint as ChatMsg['blueprint'] | null | undefined
   const gen = design.generation
-  if (bp && !design.blueprint_approved && !gen) {
+  const pendingDraft = Boolean(bp && !design.blueprint_approved)
+  if (pendingDraft && bp) {
     msgs.push({
       role: 'factory',
       text: 'Blueprint drafted: ' + (bp.product_name ?? 'platform') + ' (' + (bp.vertical ?? '—') + '). Approve the feature list to start the coding agent.',
       card: 'blueprint',
       blueprint: bp,
     })
+    // A leftover generation from a prior runner must not paint takeover
+    // over a newly drafted, still-pending feature list.
+    return { msgs, coderActive: false }
   }
   if (gen?.engine === 'runner') {
     msgs.push({
@@ -245,7 +259,13 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
   }, [msgs, coderBuild])
 
   useEffect(() => {
-    if (msgs.some((m) => m.card === 'generation' && m.engine === 'runner')) {
+    const latest = latestProductCard(msgs)
+    if (latest?.card === 'blueprint') {
+      setCoderActive(false)
+      setCoderBuild(null)
+      return
+    }
+    if (latest?.card === 'generation' && latest.engine === 'runner') {
       setCoderActive(true)
     }
   }, [msgs])
@@ -286,6 +306,8 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
               blueprint?: ChatMsg['blueprint']
             }
             const summary = d?.summary ?? 'Blueprint drafted.'
+            setCoderActive(false)
+            setCoderBuild(null)
             setMsgs((m) => [
               ...m.slice(0, -1),
               {

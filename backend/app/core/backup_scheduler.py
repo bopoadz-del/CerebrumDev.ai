@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -45,6 +46,7 @@ KEEP_ENV = "BACKUP_KEEP"
 DEFAULT_HOUR = 3
 
 STATUS_FILENAME = "last_backup.json"
+_ARCHIVE_STAMP_RE = re.compile(r"cerebrumdev-backup-(\d{8}T\d{6}Z)\.tar\.gz$")
 
 
 def scheduler_enabled() -> bool:
@@ -106,6 +108,75 @@ def has_any_archive() -> bool:
     if not root.is_dir():
         return False
     return any(root.glob("cerebrumdev-backup-*.tar.gz"))
+
+
+def newest_archive() -> Optional[Path]:
+    root = backup.backup_root()
+    if not root.is_dir():
+        return None
+    archives = sorted(
+        (p for p in root.glob("cerebrumdev-backup-*.tar.gz") if p.is_file()),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    return archives[0] if archives else None
+
+
+def last_run_failed() -> bool:
+    last = last_status() or {}
+    return last.get("ok") is False
+
+
+def _archive_stamp(path: Path) -> Optional[datetime]:
+    match = _ARCHIVE_STAMP_RE.search(path.name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def _status_at(last: Dict[str, Any]) -> Optional[datetime]:
+    raw = last.get("at")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def last_status_for_ready() -> Optional[Dict[str, Any]]:
+    """Status for /ready. A newer successful archive beats a stale fail record.
+
+    Shipping fallback code does not rewrite last_backup.json. If a later
+    archive exists on disk, reporting the old pg_dump fail would be a lie.
+    """
+    last = last_status()
+    newest = newest_archive()
+    if last is None:
+        return None
+    if last.get("ok"):
+        return last
+    if newest is None:
+        return last
+    arch_at = _archive_stamp(newest)
+    fail_at = _status_at(last)
+    if arch_at is None or fail_at is None or arch_at <= fail_at:
+        return last
+    return {
+        **last,
+        "ok": True,
+        "error": None,
+        "archive": str(newest),
+        "bytes_written": newest.stat().st_size,
+        "reconciled_from": "newer_archive",
+        "prior_error": last.get("error"),
+        "at": arch_at.isoformat(),
+    }
 
 
 def engine_changed_since_last_backup() -> bool:
@@ -176,6 +247,11 @@ async def scheduler_loop() -> None:
     elif engine_changed_since_last_backup():
         logger.info(
             "accounts engine host changed since last_backup.json — taking a cutover snapshot now"
+        )
+        await asyncio.to_thread(run_backup_once)
+    elif last_run_failed():
+        logger.info(
+            "last backup failed — retrying now so /ready is not stuck on a stale fail"
         )
         await asyncio.to_thread(run_backup_once)
     while True:

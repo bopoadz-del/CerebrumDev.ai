@@ -267,3 +267,94 @@ class TestEngineCutoverBackup:
 
         asyncio.run(boot())
         assert ran.is_set()
+
+    def test_scheduler_retries_when_last_backup_failed_even_if_archives_exist(
+        self, monkeypatch, tmp_path
+    ):
+        """A shipped dump fallback must not leave /ready stuck on last night's fail."""
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "cerebrumdev-backup-20260821T030000Z.tar.gz").write_bytes(b"old")
+        sched.status_path().write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "at": "2026-08-21T03:00:00.002002+00:00",
+                    "error": "accounts dump failed: pg_dump failed with exit code 1",
+                    "engine": "postgres",
+                    "accounts_host": "ep-sweet-hill-ay5e13we.c-5.us-east-2.aws.neon.tech",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert sched.has_any_archive() is True
+        assert sched.last_run_failed() is True
+        monkeypatch.setattr(sched, "engine_changed_since_last_backup", lambda: False)
+
+        ran = asyncio.Event()
+
+        def tracked_run():
+            ran.set()
+            return {"ok": True}
+
+        monkeypatch.setattr(sched, "run_backup_once", tracked_run)
+
+        async def boot():
+            task = asyncio.get_running_loop().create_task(sched.scheduler_loop())
+            await asyncio.wait_for(ran.wait(), timeout=30)
+            task.cancel()
+
+        asyncio.run(boot())
+        assert ran.is_set()
+
+    def test_ready_status_prefers_newer_archive_over_stale_fail(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        newer = root / "cerebrumdev-backup-20260821T091500Z.tar.gz"
+        newer.write_bytes(b"success-archive")
+        sched.status_path().write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "at": "2026-08-21T03:00:00.002002+00:00",
+                    "error": "accounts dump failed: pg_dump failed with exit code 1",
+                    "engine": "postgres",
+                    "accounts_host": "ep-example.aws.neon.tech",
+                }
+            ),
+            encoding="utf-8",
+        )
+        ready = sched.last_status_for_ready()
+        assert ready is not None
+        assert ready["ok"] is True
+        assert ready["reconciled_from"] == "newer_archive"
+        assert ready["prior_error"] and "pg_dump" in ready["prior_error"]
+        assert ready["archive"].endswith("cerebrumdev-backup-20260821T091500Z.tar.gz")
+
+    def test_ready_status_keeps_fail_when_archive_is_older(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.delenv("BACKUP_DIR", raising=False)
+        root = bk.backup_root()
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "cerebrumdev-backup-20260820T030000Z.tar.gz").write_bytes(b"old-ok")
+        sched.status_path().write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "at": "2026-08-21T03:00:00.002002+00:00",
+                    "error": "accounts dump failed: pg_dump failed with exit code 1",
+                    "engine": "postgres",
+                }
+            ),
+            encoding="utf-8",
+        )
+        ready = sched.last_status_for_ready()
+        assert ready is not None
+        assert ready["ok"] is False
+        assert "pg_dump" in ready["error"]

@@ -24,6 +24,7 @@ password-reset endpoints stay public so users can always complete the flow.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 from dataclasses import dataclass
@@ -121,6 +122,26 @@ def _enforce_verification(principal: Principal) -> Principal:
     if _verification_required() and principal.email_verified is False:
         raise HTTPException(status_code=403, detail="email_not_verified")
     return principal
+
+
+def require_master_key(
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> Principal:
+    """Admin-only. User tokens and anonymous dev cannot trigger ops actions.
+
+    Fail-closed when ``CEREBRUM_DEV_API_KEY`` is unset (404) so the route
+    does not exist as an unauthenticated backup trigger.
+    """
+    master = _master_key()
+    if not master:
+        raise HTTPException(status_code=404, detail="Not Found")
+    provided = _provided_token(authorization, x_api_key)
+    left = hashlib.sha256(provided.encode("utf-8")).digest()
+    right = hashlib.sha256(master.encode("utf-8")).digest()
+    if not hmac.compare_digest(left, right):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    return Principal(kind="admin")
 
 
 def require_api_key(

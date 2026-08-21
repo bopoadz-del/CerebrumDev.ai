@@ -49,17 +49,26 @@ Render disk is ephemeral across service deletion but persists across deploys whi
 
 - Snapshot: copy `/app/storage` via one-off job or `render disk` backup before destructive changes.
 - Restore: stop service, restore files to mount path, restart.
-- Pilot Postgres: use managed DB backups / `pg_dump` before pack rebuilds.
+- Pilot Postgres: use managed `pg_dump` before pack rebuilds.
 
 ### Automated backups
 
 An in-process scheduler inside the web service (03:00 UTC nightly, plus a
-bootstrap snapshot on first boot when no archive exists) snapshots the accounts
+bootstrap snapshot on first boot when no archive exists, plus an immediate
+retry when `last_backup.json` records a failure) snapshots the accounts
 database plus `uploads/`, `sessions/` and `chroma/` into `$BACKUP_DIR`
 (default `$STORAGE_PATH/backups`), keeping 14 archives. It is deliberately not
 a Render cron job: cron jobs cannot mount the persistent disk, so only the
 service that owns the disk can back it up. Status surfaces non-gating at
 `/ready` under `details.last_backup`.
+
+If `/ready` is stuck on a stale fail after a dump-path fix, trigger one run
+inside the web service (master API key, not a user token):
+
+```bash
+curl -X POST https://api.cerebrum-dev.com/v1/ops/backup \
+  -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY"
+```
 
 The accounts snapshot uses SQLite's online backup API rather than a file copy —
 copying a live database can capture a torn write, producing an archive that

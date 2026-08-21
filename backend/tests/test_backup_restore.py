@@ -191,3 +191,29 @@ class TestPostgresDumpHonesty:
         assert "a@b.com" in text
         assert "INSERT INTO" in text
         assert dest.exists() is False or dest.stat().st_size == 0
+
+    def test_sqlalchemy_fallback_is_used_by_create_backup(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "backups"))
+        db = tmp_path / "acc.db"
+        conn = sqlite3.connect(str(db))
+        try:
+            conn.execute("CREATE TABLE accounts (id TEXT, email TEXT)")
+            conn.execute("INSERT INTO accounts VALUES ('a1', 'ops@example.com')")
+            conn.commit()
+        finally:
+            conn.close()
+        monkeypatch.setenv("ACCOUNTS_DATABASE_URL", f"sqlite:///{db}")
+        monkeypatch.setattr(bk.shutil, "which", lambda _name: "/usr/bin/pg_dump")
+
+        class _Proc:
+            returncode = 1
+            stderr = "pg_dump: error: aborting because of server version mismatch"
+            stdout = ""
+
+        monkeypatch.setattr(bk.subprocess, "run", lambda *_a, **_k: _Proc())
+        result = bk.create_backup(include_content=False)
+        assert result.ok is True
+        assert result.dump_method == "sqlalchemy"
+        assert "accounts.sql" in result.included
+        assert result.archive is not None and result.archive.is_file()

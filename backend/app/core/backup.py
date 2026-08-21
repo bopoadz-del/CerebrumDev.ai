@@ -90,6 +90,7 @@ class BackupResult:
     included: List[str] = field(default_factory=list)
     skipped: Dict[str, str] = field(default_factory=dict)
     error: Optional[str] = None
+    dump_method: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -100,6 +101,7 @@ class BackupResult:
             "included": list(self.included),
             "skipped": dict(self.skipped),
             "error": self.error,
+            "dump_method": self.dump_method,
         }
 
 
@@ -126,7 +128,19 @@ def snapshot_sqlite(source: Path, dest: Path) -> None:
 def pg_dump_probe() -> Dict[str, Any]:
     """Whether pg_dump is on PATH. Used by /ready — never claimed present if missing."""
     path = shutil.which("pg_dump")
-    return {"available": path is not None, "path": path}
+    probe: Dict[str, Any] = {"available": path is not None, "path": path}
+    if path:
+        try:
+            proc = subprocess.run(
+                [path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            probe["version"] = " ".join((proc.stdout or proc.stderr or "").split())[:80]
+        except (OSError, subprocess.TimeoutExpired):
+            probe["version"] = None
+    return probe
 
 
 def _sqlalchemy_accounts_url(url: str) -> str:
@@ -277,6 +291,7 @@ def create_backup(
             try:
                 dumped = snapshot_postgres(pg_url, staging / "accounts.dump")
                 result.included.append(dumped.name)
+                result.dump_method = "sqlalchemy" if dumped.suffix == ".sql" else "pg_dump"
             except Exception as exc:  # noqa: BLE001
                 result.error = f"accounts dump failed: {exc}"
                 return result
