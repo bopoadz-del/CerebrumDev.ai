@@ -204,3 +204,28 @@ def test_stalled_build_cannot_be_downloaded(client, tmp_path):
     detail = pkg.json()["detail"]
     assert "gone" in detail or "stalled" in detail.lower() or "will not be shipped" in detail
 
+
+def test_product_export_omits_tester_caches(tmp_path):
+    """shutil.make_archive shipped the TESTER's __pycache__ and .pytest_cache
+    in the live winery-hospitality zip (146 files, lots of bytecode)."""
+    import zipfile
+
+    from app.routers.session_product import zip_generated_product
+
+    out = tmp_path / "winery-hospitality"
+    (out / "app").mkdir(parents=True)
+    (out / "app" / "main.py").write_text("ok\n", encoding="utf-8")
+    (out / "app" / "__pycache__").mkdir()
+    (out / "app" / "__pycache__" / "main.cpython-311.pyc").write_bytes(b"\x00")
+    (out / ".pytest_cache").mkdir()
+    (out / ".pytest_cache" / "CACHEDIR.TAG").write_text("tag\n", encoding="utf-8")
+    (out / "README.md").write_text("hi\n", encoding="utf-8")
+
+    zpath = zip_generated_product(out, tmp_path / "winery-hospitality-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    assert "README.md" in names
+    assert "app/main.py" in names
+    assert not any("__pycache__" in n for n in names)
+    assert not any(".pytest_cache" in n for n in names)
+    assert not any(n.endswith(".pyc") for n in names)
+

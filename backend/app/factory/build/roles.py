@@ -1729,8 +1729,10 @@ def main() -> int:
         print("  pip install -r requirements-dev.txt")
         print("VERDICT: CANNOT RUN")
         return 2
+    # Literal sys.executable. Extra braces make {{sys.executable}} a set,
+    # which compiles then TypeError's in Popen (py_compile cannot catch it).
     result = subprocess.run(
-        [{{sys.executable}}, "-m", "pytest", "tests", "-q", "-m", "not pilot"],
+        [sys.executable, "-m", "pytest", "tests", "-q", "-m", "not pilot"],
         cwd=ROOT,
     )
     ok = result.returncode == 0
@@ -2492,6 +2494,22 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 _SAMPLE_VALUES = {"str": "sample", "int": 1, "float": 1.5, "bool": True}
 
 
+def _looks_like_email_field(field: Dict[str, Any]) -> bool:
+    """Field name or format implies an address, not the word 'sample'.
+
+    The live winery-hospitality export failed its own pilot suite because
+    TESTER sent guest_email='sample' and WRITER (correctly) required '@'.
+    Vocabulary/min/max cannot express that; the name is the constraint.
+    """
+    if str(field.get("type") or "str") != "str":
+        return False
+    fmt = str(field.get("format") or "").lower().replace("-", "")
+    if fmt == "email":
+        return True
+    name = str(field.get("name") or "").lower()
+    return name == "email" or name.endswith("_email") or name.startswith("email_")
+
+
 def _sample_value(field: Dict[str, Any]) -> Any:
     """A value that satisfies every constraint the field declares.
 
@@ -2503,6 +2521,8 @@ def _sample_value(field: Dict[str, Any]) -> Any:
     """
     if field.get("allowed_values"):
         return field["allowed_values"][0]
+    if _looks_like_email_field(field):
+        return "guest@example.com"
     ftype = field["type"]
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")

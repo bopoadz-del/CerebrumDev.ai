@@ -353,6 +353,20 @@ def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
     assert "requirements-dev.txt" in gate
     assert "CANNOT RUN" in gate
     assert "-m" in gate and "not pilot" in gate
+    # `{sys.executable}` is a one-element set; py_compile cannot catch it.
+    assert "[sys.executable," in gate
+    assert "[{sys.executable}" not in gate
+
+
+def test_release_gate_template_passes_this_interpreter_not_a_set():
+    """The live winery-hospitality export crashed `scripts/release_gate.py`
+    with TypeError: expected str, ... not set."""
+    from app.factory.build.roles import _render_release_gate
+
+    src = _render_release_gate("Cask & Guest Tasting Room")
+    assert "[sys.executable," in src
+    assert "[{sys.executable}" not in src
+    compile(src, "release_gate.py", "exec")
 
 
 def test_phase_wall_clock_caps_the_writer_deadline(tmp_path):
