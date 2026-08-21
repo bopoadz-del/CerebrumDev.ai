@@ -178,6 +178,33 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
 })
 
+test('Floor hydrate of a pending draft does not flash a leftover coder-takeover banner', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: false,
+        generation: {
+          engine: 'runner',
+          product_id: 'old-winery',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Vineyard Platform')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
+  await expect(page.getByRole('status')).toHaveCount(0)
+  await expect(page.getByPlaceholder(/Try:/)).toBeEnabled()
+})
+
 test('Subscription and Account render plan and verified email', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.goto('/')
@@ -194,5 +221,5 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
   await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out' }).toBeVisible())
 })
