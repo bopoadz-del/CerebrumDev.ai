@@ -79,3 +79,54 @@ def test_ready_head_matches_get_status(client, tmp_path, monkeypatch):
     get_res = client.get("/ready")
     head_res = client.head("/ready")
     assert head_res.status_code == get_res.status_code
+
+
+def test_ops_backup_requires_master_key(client, monkeypatch):
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    res = client.post("/v1/ops/backup")
+    assert res.status_code == 404
+
+
+def test_ops_backup_rejects_wrong_key(client, monkeypatch):
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-secret")
+    res = client.post("/v1/ops/backup", headers={"Authorization": "Bearer nope"})
+    assert res.status_code == 401
+
+
+def test_ops_backup_runs_and_overwrites_stale_fail(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-secret")
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.delenv("BACKUP_DIR", raising=False)
+    monkeypatch.delenv("ACCOUNTS_DATABASE_URL", raising=False)
+    monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
+    from app.core import backup as bk
+    from app.core import backup_scheduler as sched
+
+    root = bk.backup_root()
+    root.mkdir(parents=True, exist_ok=True)
+    sched.status_path().write_text(
+        '{"ok": false, "at": "2026-08-21T03:00:00+00:00",'
+        ' "error": "accounts dump failed: pg_dump failed with exit code 1"}',
+        encoding="utf-8",
+    )
+    db = tmp_path / "storage" / "accounts.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    import sqlite3
+
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute("CREATE TABLE accounts (id TEXT PRIMARY KEY, email TEXT)")
+        conn.execute("INSERT INTO accounts VALUES ('a1', 'ops@example.com')")
+        conn.commit()
+    finally:
+        conn.close()
+
+    res = client.post(
+        "/v1/ops/backup", headers={"Authorization": "Bearer master-secret"}
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert sched.last_status()["ok"] is True
+    ready = client.get("/ready").json()["details"]["last_backup"]
+    assert ready["ok"] is True
