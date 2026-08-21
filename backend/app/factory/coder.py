@@ -490,11 +490,10 @@ Contract:
   it inside the handler from the domain data the capability does have.
   Validate only the capability's own fields.
 - The platform runs OFFLINE and its suite BLOCKS outbound network. Never
-  choose a block action or channel that reaches an external service
-  (webhook URLs, SMTP/email, Slack, MCP): it will fail the suite. Always
-  use in-process choices. For notification, set channel to "in_process"
-  — never "mcp" (MCP requires a remote block/tool name and fails the
-  offline gate).
+  choose webhook URLs, SMTP/email, or Slack. For notification, the Store
+  only accepts known channels: set channel to "mcp" and pass block=<a
+  vendored block id from the roster> (tool with the same id). Do NOT set
+  channel to "in_process" — the Store answers "Unknown channel: in_process".
 - execute() never raises for a block-level failure; it returns an envelope.
   Treat result.get("status") == "error" (or an "error" key in the result)
   as a failure: surface it in your return value as {"ok": False,

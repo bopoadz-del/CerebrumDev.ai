@@ -934,15 +934,20 @@ def _default_block_field(block_id: str, field: str, payload: Dict[str, Any]):
     ``topic``, and the suite went red. Construct those fields here so a
     valid capability payload still reaches a validating block.
 
-    Never default notification ``channel`` to ``mcp``: the offline suite
-    cannot reach MCP, and the Store then raises
-    ``block or tool name required for MCP channel``.
+    Notification ``channel`` must be a Store-known value. ``in_process`` is
+    not one — live TESTER answered ``Unknown channel: in_process``. ``mcp``
+    is known; it requires ``block`` or ``tool`` (filled below), not a network
+    hop.
     """
-    if field in payload and payload[field] not in (None, ""):
-        if field == "channel" and str(payload[field]).strip().lower() in {
-            "mcp", "http", "webhook", "email", "smtp", "slack",
+    if field == "channel":
+        ch = str(payload.get(field) or "mcp").strip().lower()
+        if ch in {
+            "in_process", "in-process", "http", "webhook", "email", "smtp",
+            "slack", "",
         }:
-            return "in_process"
+            return "mcp"
+        return ch
+    if field in payload and payload[field] not in (None, ""):
         return payload[field]
     wrapping = {
         "data",
@@ -979,7 +984,7 @@ def _default_block_field(block_id: str, field: str, payload: Dict[str, Any]):
         "table": "records",
         "entity": "records",
         "collection": "records",
-        "channel": "in_process",
+        "channel": "mcp",
         "message": "update",
         "body": "update",
         "content": "update",
@@ -1003,7 +1008,7 @@ def _default_block_field(block_id: str, field: str, payload: Dict[str, Any]):
 _ALWAYS_FILL = {
     "event_bus": ("topic", "event", "payload"),
     "analytics": ("metric", "value"),
-    "notification": ("channel", "message", "recipient", "name"),
+    "notification": ("channel", "message", "recipient", "name", "block", "tool"),
     "workflow": ("steps", "result", "name"),
     "team": ("name", "role", "members"),
     "database": ("query", "table", "data"),
@@ -1016,18 +1021,32 @@ def _ensure_offline_block_input(
     """Fill Store fields even when contract harvest missed them.
 
     Live TESTER after shipping Store blocks: event_bus raised ``topic required``
-    because the harvested required-fields list was empty; notification defaulted
-    to MCP; team called ``.lower()`` on None; workflow KeyError'd ``result``.
+    because the harvested required-fields list was empty; notification MCP
+    needed a block/tool name; ``in_process`` was rejected as unknown; team
+    called ``.lower()`` on None; workflow KeyError'd ``result``.
     """
     for field in _ALWAYS_FILL.get(block_id, ()):
         if field not in data or data[field] in (None, ""):
             data[field] = _default_block_field(block_id, field, original)
     if block_id == "notification":
-        channel = str(data.get("channel") or "in_process").strip().lower()
-        if channel in {"mcp", "http", "webhook", "email", "smtp", "slack", ""}:
-            data["channel"] = "in_process"
-        else:
-            data["channel"] = channel
+        channel = str(data.get("channel") or "mcp").strip().lower()
+        if channel in {
+            "in_process", "in-process", "http", "webhook", "email", "smtp",
+            "slack", "",
+        }:
+            channel = "mcp"
+        data["channel"] = channel
+        if channel == "mcp":
+            roster = [k for k in BLOCK_CONTRACTS if k not in {"notification", "workflow"}]
+            target = (
+                "validation" if "validation" in roster
+                else "database" if "database" in roster
+                else (roster[0] if roster else "database")
+            )
+            if not data.get("block"):
+                data["block"] = target
+            if not data.get("tool"):
+                data["tool"] = data.get("block") or target
         data.setdefault("message", "notification")
         data.setdefault("recipient", "operator")
     if block_id == "event_bus" and not data.get("topic"):
