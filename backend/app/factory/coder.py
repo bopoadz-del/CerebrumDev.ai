@@ -491,9 +491,10 @@ Contract:
   Validate only the capability's own fields.
 - The platform runs OFFLINE and its suite BLOCKS outbound network. Never
   choose a block action or channel that reaches an external service
-  (webhook URLs, SMTP/email, Slack): it will fail the suite. Prefer
-  in-process choices (e.g. a notification block's "mcp" channel targeting
-  another vendored block).
+  (webhook URLs, SMTP/email, Slack, MCP): it will fail the suite. Always
+  use in-process choices. For notification, set channel to "in_process"
+  — never "mcp" (MCP requires a remote block/tool name and fails the
+  offline gate).
 - execute() never raises for a block-level failure; it returns an envelope.
   Treat result.get("status") == "error" (or an "error" key in the result)
   as a failure: surface it in your return value as {"ok": False,

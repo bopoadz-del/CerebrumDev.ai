@@ -151,6 +151,65 @@ def test_dispatch_fills_required_block_fields_from_contract(tmp_path):
     assert bus["input"]["topic"] == "event_bus.event"
 
 
+def test_dispatch_injects_offline_fields_without_a_harvested_contract(tmp_path):
+    """Live TESTER: event_bus required topic even though harvest listed none."""
+    from app.factory.build.roles import _render_dispatch
+
+    root = tmp_path / "platform"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "dispatch.py").write_text(
+        _render_dispatch({}),
+        encoding="utf-8",
+    )
+    for bid in ("event_bus", "notification", "team", "workflow"):
+        block = root / "vendor" / "blocks" / bid
+        block.mkdir(parents=True)
+        (block / "block.py").write_text(
+            "SEEN = []\n"
+            "def run(**kwargs):\n"
+            "    SEEN.append(kwargs.get('input'))\n"
+            "    return {'status': 'ok', 'input': kwargs.get('input')}\n",
+            encoding="utf-8",
+        )
+    dispatch = _load("dispatch_always_fill_probe", root / "app" / "dispatch.py")
+    bus = dispatch.execute("event_bus", {"party_size": 4})
+    assert bus["status"] == "ok"
+    assert bus["input"]["topic"] == "event_bus.event"
+    note = dispatch.execute("notification", {"party_size": 4})
+    assert note["input"]["channel"] == "in_process"
+    assert note["input"]["channel"] != "mcp"
+    team = dispatch.execute("team", {"party_size": 4})
+    assert isinstance(team["input"]["name"], str) and team["input"]["name"]
+    assert isinstance(team["input"]["role"], str) and team["input"]["role"]
+    flow = dispatch.execute("workflow", {"party_size": 4})
+    assert isinstance(flow["input"]["steps"], list) and flow["input"]["steps"]
+    assert flow["input"]["result"]["ok"] is True
+
+
+def test_dispatch_rewrites_an_explicit_mcp_notification_channel(tmp_path):
+    """WRITER used to pass channel=mcp; rewrite so the offline suite can run."""
+    from app.factory.build.roles import _render_dispatch
+
+    root = tmp_path / "platform"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "dispatch.py").write_text(
+        _render_dispatch({}),
+        encoding="utf-8",
+    )
+    block = root / "vendor" / "blocks" / "notification"
+    block.mkdir(parents=True)
+    (block / "block.py").write_text(
+        "def run(**kwargs):\n"
+        "    return {'status': 'ok', 'input': kwargs.get('input')}\n",
+        encoding="utf-8",
+    )
+    dispatch = _load("dispatch_mcp_rewrite_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute("notification", {"channel": "mcp", "message": "hi"})
+    assert out["status"] == "ok"
+    assert out["input"]["channel"] == "in_process"
+    assert out["input"]["message"] == "hi"
+
+
 def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):
     """The deterministic path must at least reach a real action -- the
     block.json default -- instead of the guaranteed 'Unknown action: None'."""
