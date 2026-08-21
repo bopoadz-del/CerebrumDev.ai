@@ -1,16 +1,20 @@
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # Build deps for chromadb/hnswlib. Neon is Postgres 18; Debian bookworm's
-# postgresql-client is 15/16 and pg_dump then exits 1 (version mismatch).
-# Install the PGDG 18 client so nightly dumps match the server. SQLAlchemy
-# fallback in app.core.backup still covers a mismatch if apt pins drift.
+# postgresql-client is 15 and pg_dump then exits 1 (version mismatch).
+# Install the PGDG 18 client so nightly dumps match the server.
+# Write the PGDG ASCII key and point apt signed-by at it. Slim images often
+# omit the gpg binary even when gnupg is listed, which failed CI in ~20s.
+# SQLAlchemy fallback in app.core.backup still covers a mismatch if apt pins drift.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ cmake git ca-certificates curl gnupg \
+    build-essential gcc g++ cmake git ca-certificates curl \
+    && mkdir -p /usr/share/keyrings \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-      | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      -o /usr/share/keyrings/pgdg.asc \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends postgresql-client-18 \

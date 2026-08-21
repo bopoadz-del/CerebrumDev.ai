@@ -94,6 +94,13 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "nightly Postgres backups shell out to pg_dump; Neon is PG18 and "
             "Debian slim's default client is older (version mismatch, exit 1)"
         )
+        assert "pgdg.asc" in dockerfile and "signed-by=" in dockerfile, (
+            "python slim often has no gpg binary; write the PGDG ASCII key and "
+            "let apt signed-by consume it"
+        )
+        assert "VERSION_CODENAME" in dockerfile, (
+            "PGDG suite must match the image (bookworm vs trixie), not a hardcoded distro"
+        )
 
     def test_smoke_and_docs_point_at_the_live_api_host(self):
         """The AGENTS.md deploy gate must not advertise a 404 hostname."""
