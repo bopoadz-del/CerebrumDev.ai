@@ -1,13 +1,15 @@
 name: CI
 
+# One GitHub Actions run per change: the pull request into master.
+# Do not also run on push to master — that retested the same squash-merge
+# a second time. Feature branches never run CI until a PR exists.
+# Production deploy (Render auto-deploy on master) is the main-branch build.
 on:
-  push:
-    branches: [master]
   pull_request:
     branches: [master]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
