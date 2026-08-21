@@ -27,6 +27,10 @@ from app.models.session import SessionState
     "design a platform for private estates",
     "generate a system for warehouse operations",
     "assemble a portal for suppliers",
+    "build me a tasting room for a family winery",
+    "I need vineyard management for our cellar",
+    "Build me a platform for my hospitality domain",
+    "create a reservation platform with seating blocks",
 ])
 def test_platform_intent_positive(message):
     assert platform_chat_flow.is_platform_intent(message)
