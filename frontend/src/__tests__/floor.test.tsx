@@ -171,6 +171,52 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
   })
 
+  it('does not show coder takeover when hydrating a pending draft over leftover generation', async () => {
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: false,
+      generation: { engine: 'runner', product_id: 'old-winery', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_stale_runner" goPlatforms={() => {}} />)
+    expect(await screen.findByText('Vineyard Platform')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('clears coder takeover when a new blueprint is drafted after a runner', async () => {
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const status = {
+        state: 'succeeded',
+        authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+      }
+      onProgress?.(status)
+      return status
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'blueprint',
+        data: { summary: 'Blueprint drafted: new tasting room.', blueprint: LLM_BLUEPRINT },
+      })
+    })
+    render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'build me a tasting room for a family winery' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText('Vineyard Platform')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
   it('does not wipe a streamed Floor reply when a leftover chain event arrives', async () => {
     chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
       onEvent({ event: 'delta', data: 'Drafting a tasting-room platform for the winery. ' })

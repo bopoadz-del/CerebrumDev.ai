@@ -90,9 +90,9 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
 
     def test_production_image_includes_pg_dump(self):
         dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-        assert "postgresql-client" in dockerfile, (
-            "nightly Postgres backups shell out to pg_dump; the slim image "
-            "does not ship it unless we install postgresql-client"
+        assert "postgresql-client-18" in dockerfile, (
+            "nightly Postgres backups shell out to pg_dump; Neon is PG18 and "
+            "Debian slim's default client is older (version mismatch, exit 1)"
         )
 
     def test_smoke_and_docs_point_at_the_live_api_host(self):
