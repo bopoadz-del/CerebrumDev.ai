@@ -166,8 +166,8 @@ def snapshot_postgres_via_sqlalchemy(url: str, dest: Path) -> None:
                 cols = [c["name"] for c in insp.get_columns(table)]
                 if not cols:
                     continue
-                col_list = ", ".join(f'"{c}"' for c in cols)
-                rows = conn.execute(sa.text(f'SELECT {col_list} FROM "{table}"'))
+                col_list = ", ".join('"' + c + '"' for c in cols)
+                rows = conn.execute(sa.text('SELECT ' + col_list + ' FROM "' + table + '"'))
                 for row in rows:
                     vals: List[str] = []
                     for v in row:
@@ -179,7 +179,7 @@ def snapshot_postgres_via_sqlalchemy(url: str, dest: Path) -> None:
                             vals.append(str(v))
                         else:
                             vals.append("'" + str(v).replace("'", "''") + "'")
-                    out.write(f'INSERT INTO "{table}" ({col_list}) VALUES ({{", ".join(vals)}});\n')
+                    out.write('INSERT INTO "' + table + '" (' + col_list + ') VALUES (' + ', '.join(vals) + ');\n')
             out.write("COMMIT;\n")
     finally:
         engine.dispose()
@@ -251,7 +251,7 @@ def verify_sqlite_snapshot(path: Path) -> Dict[str, int]:
         ]
         counts: Dict[str, int] = {}
         for t in tables:
-            counts[t] = conn.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
+            counts[t] = conn.execute('SELECT COUNT(*) FROM "' + t + '"').fetchone()[0]
         return counts
     finally:
         conn.close()
@@ -289,10 +289,8 @@ def create_backup(
                     counts = verify_sqlite_snapshot(staging / "accounts.db")
                     result.included.append("accounts.db")
                     result.skipped.pop("accounts.db", None)
-                    # Row counts go in the manifest so a restore can be checked
-                    # against what was actually captured.
                     (staging / "MANIFEST.txt").write_text(
-                        "\n".join(f"{t}={n}" for t, n in sorted(counts.items())),
+                        "\n".join(t + "=" + str(n) for t, n in sorted(counts.items())),
                         encoding="utf-8",
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -303,9 +301,6 @@ def create_backup(
 
         if include_content:
             root = storage_root()
-            # factory_outputs: generated platforms are the deliverable; they
-            # live under STORAGE_PATH in production (factory/paths.py) and
-            # must be part of the snapshot.
             for name in ("uploads", "sessions", "chroma", "factory_outputs"):
                 src_dir = root / name
                 if src_dir.is_dir():
@@ -339,7 +334,6 @@ def restore_backup(archive: Path, target_root: Path) -> Dict[str, Any]:
 
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar.getmembers():
-            # Refuse absolute paths and traversal in archive members.
             name = member.name
             if name.startswith("/") or ".." in Path(name).parts:
                 raise RuntimeError(f"refusing unsafe archive member: {name}")
