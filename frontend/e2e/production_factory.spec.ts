@@ -3,9 +3,15 @@ import { expect, test, type Page } from '@playwright/test'
 /**
  * Live Factory UI against PLAYWRIGHT_BASE_URL / BASE_URL (production:
  * https://www.cerebrum-dev.com). These are browser tests, not API smoke.
+ * Skip unless pointed at a remote host — local Vite has no production SMTP.
  */
 
+const baseURL =
+  process.env.PLAYWRIGHT_BASE_URL || process.env.BASE_URL || 'http://127.0.0.1:5173'
+const isLive = /^(https?:\/\/)(?!127\.0\.0\.1|localhost)/i.test(baseURL)
+
 test.describe.configure({ mode: 'serial' })
+test.skip(!isLive, 'live Factory UI only (set PLAYWRIGHT_BASE_URL)')
 
 async function assertAuthGate(page: Page) {
   await expect(page.getByRole('heading', { name: 'CerebrumDev.ai' })).toBeVisible()
@@ -58,23 +64,15 @@ test('register a throwaway account and land on verify-email', async ({ page }) =
   await page.getByRole('button', { name: 'Create your account' }).click()
 
   const verifyHeading = page.getByRole('heading', { name: 'Verify your email' })
-  const inboxNotice = page.getByText(/Check your inbox/i)
-  const floorHeading = page.getByRole('heading', { name: 'Factory Floor' })
   const factoryUnreachable = page.getByRole('heading', { name: 'Factory unreachable' })
+  const floorHeading = page.getByRole('heading', { name: 'Factory Floor' })
 
-  await expect(verifyHeading.or(inboxNotice).or(floorHeading)).toBeVisible({
-    timeout: 45_000,
-  })
+  await expect(verifyHeading).toBeVisible({ timeout: 45_000 })
   await expect(factoryUnreachable).toHaveCount(0)
-
-  if (await floorHeading.isVisible().catch(() => false)) {
-    await expect(page.getByText(/This is the factory floor/i)).toBeVisible()
-    return
-  }
-
-  await expect(verifyHeading).toBeVisible()
+  await expect(floorHeading).toHaveCount(0)
   await expect(page.getByPlaceholder('verification token')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Verify email' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Resend verification email' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
   await expect(page.getByText(/check your inbox|verification link|paste the token/i)).toBeVisible()
 })
