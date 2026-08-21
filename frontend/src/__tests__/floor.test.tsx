@@ -8,6 +8,7 @@ import { Floor } from '../App'
 
 const chatStreamMock = vi.fn()
 const awaitBuildMock = vi.fn()
+const getMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -15,6 +16,10 @@ vi.mock('../api/factory', async (importOriginal) => {
     ...actual,
     chatStream: (...args: unknown[]) => chatStreamMock(...args),
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
+    product: {
+      ...actual.product,
+      get: (...args: unknown[]) => getMock(...args),
+    },
   }
 })
 
@@ -33,6 +38,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
   beforeEach(() => {
     chatStreamMock.mockReset()
     awaitBuildMock.mockReset()
+    getMock.mockReset()
+    getMock.mockResolvedValue({})
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const status = {
         state: 'building',
@@ -139,5 +146,42 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText(/template fallback — no LLM/)).toBeInTheDocument()
     expect(screen.getByText(/The architect LLM did not draft this blueprint/)).toBeInTheDocument()
+  })
+
+  it('restores the feature list and coder takeover from the session product', async () => {
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_hydrate" goPlatforms={() => {}} />)
+    expect(await screen.findByText('coding agent')).toBeInTheDocument()
+    expect(screen.getByText('chat LLM')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
+    expect(screen.getByPlaceholderText(/coding agent has taken over/i)).toBeDisabled()
+  })
+
+  it('restores a pending blueprint after remount so Approve & build is still there', async () => {
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: false,
+    })
+    render(<Floor sessionId="sess_pending" goPlatforms={() => {}} />)
+    expect(await screen.findByText('architect LLM')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
+  })
+
+  it('does not wipe a streamed Floor reply when a leftover chain event arrives', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({ event: 'delta', data: 'Drafting a tasting-room platform for the winery. ' })
+      onEvent({ event: 'chain', data: { chain: ['audit'] } })
+    })
+    render(<Floor sessionId="sess_ui" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'build me a tasting room for a family winery' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText(/Drafting a tasting-room platform/)).toBeInTheDocument()
+    expect(screen.queryByText(/That sounds like kit configuration/)).not.toBeInTheDocument()
   })
 })
