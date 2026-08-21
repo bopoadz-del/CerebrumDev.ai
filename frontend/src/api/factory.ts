@@ -310,7 +310,7 @@ export async function downloadProductPackage(sid: string): Promise<void> {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   const cd = res.headers.get('content-disposition') || ''
-  const m = cd.match(/filename="?([^\";]+)"?/)
+  const m = cd.match(/filename="?([^"";]+)"?/)
   a.href = url
   a.download = m ? m[1] : 'cerebrumdev-product.zip'
   document.body.appendChild(a)
