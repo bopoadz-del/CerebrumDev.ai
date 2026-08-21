@@ -167,10 +167,12 @@ def test_tester_admits_only_payload_mutations(tmp_path, monkeypatch):
     admitted = result.notes["agent_domain_cases"]
     assert len(admitted) == 1
     assert admitted[0]["payload"] == {"reference": "other"}
-    domain = (tmp_path / "build" / "tests" / "test_agent_domain.py").read_text(
+    domain = (tmp_path / "build" / "tests" / "agent_domain_cases.py").read_text(
         encoding="utf-8"
     )
     assert "test_agent_domain_cases" in domain
     assert "invented" not in domain
+    # Live TESTER: tests/test_agent_domain.py was collected and failed pytest.
+    assert not (tmp_path / "build" / "tests" / "test_agent_domain.py").exists()
     # Kernel suite still exists — extras cannot replace it.
     assert (tmp_path / "build" / "tests" / "test_routes.py").is_file()

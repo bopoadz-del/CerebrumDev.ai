@@ -67,6 +67,8 @@ def test_coder_prompts_carry_each_kernel_jd():
     assert collector.title in _COLLECTOR_REVIEW_SYSTEM
     assert "collector kernel" in _COLLECTOR_REVIEW_SYSTEM
     assert writer.title in _PLATFORM_SYSTEM
+    assert "in_process" in _PLATFORM_SYSTEM
+    assert 'never "mcp"' in _PLATFORM_SYSTEM
     assert writer.title in _ROUTE_SYSTEM
     assert "GET /v1/jobs" in _ROUTE_SYSTEM
     assert tester.title in _TESTER_CASES_SYSTEM

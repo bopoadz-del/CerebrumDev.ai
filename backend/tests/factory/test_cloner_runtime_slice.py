@@ -517,6 +517,8 @@ def test_cloner_rewrites_zero_arg_store_constructors(tmp_path):
     )
     assert "_instantiate_store_block" in shim
     assert "instance = block_cls()" not in shim
+    assert "_OfflineHal" in shim
+    assert "block_cls(None, {})" not in shim
 
     probe = textwrap.dedent(
         """
@@ -539,4 +541,53 @@ def test_cloner_rewrites_zero_arg_store_constructors(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip()) == {"greeting": "hello"}
+
+
+def test_cloner_instantiates_store_blocks_with_offline_hal_cursor(tmp_path):
+    """Live TESTER: DatabaseBlock died on ``hal_block.cursor()`` because
+    instantiate passed None after construct succeeded."""
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        textwrap.dedent(
+            """
+            class GreetingBlock:
+                def __init__(self, hal_block, config):
+                    self.hal_block = hal_block
+                    self.config = config
+
+                async def execute(self, input_data, params):
+                    cur = self.hal_block.cursor()
+                    cur.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER)")
+                    cur.execute("INSERT INTO t (id) VALUES (1)")
+                    self.hal_block.commit()
+                    row = self.hal_block.execute("SELECT COUNT(*) AS n FROM t").fetchone()
+                    return {"status": "ok", "result": {"greeting": "hello", "rows": row[0]}}
+            """
+        ),
+        encoding="utf-8",
+    )
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+    probe = textwrap.dedent(
+        """
+        import importlib.util, json, os, pathlib, tempfile
+        os.environ["STORAGE_PATH"] = tempfile.mkdtemp()
+        for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+            os.environ.pop(var, None)
+        path = pathlib.Path("vendor/blocks/greeting/block.py")
+        spec = importlib.util.spec_from_file_location("vendored_greeting_hal", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(json.dumps(module.run(input={"name": "site"})))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert json.loads(proc.stdout.strip()) == {"greeting": "hello", "rows": 1}
 
