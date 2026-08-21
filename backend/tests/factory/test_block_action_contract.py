@@ -176,8 +176,9 @@ def test_dispatch_injects_offline_fields_without_a_harvested_contract(tmp_path):
     assert bus["status"] == "ok"
     assert bus["input"]["topic"] == "event_bus.event"
     note = dispatch.execute("notification", {"party_size": 4})
-    assert note["input"]["channel"] == "in_process"
-    assert note["input"]["channel"] != "mcp"
+    assert note["input"]["channel"] == "mcp"
+    assert note["input"]["block"]
+    assert note["input"]["tool"]
     team = dispatch.execute("team", {"party_size": 4})
     assert isinstance(team["input"]["name"], str) and team["input"]["name"]
     assert isinstance(team["input"]["role"], str) and team["input"]["role"]
@@ -186,14 +187,14 @@ def test_dispatch_injects_offline_fields_without_a_harvested_contract(tmp_path):
     assert flow["input"]["result"]["ok"] is True
 
 
-def test_dispatch_rewrites_an_explicit_mcp_notification_channel(tmp_path):
-    """WRITER used to pass channel=mcp; rewrite so the offline suite can run."""
+def test_dispatch_fills_mcp_block_and_tool_for_notification(tmp_path):
+    """Live TESTER: ``in_process`` is Unknown channel; MCP needs block/tool."""
     from app.factory.build.roles import _render_dispatch
 
     root = tmp_path / "platform"
     (root / "app").mkdir(parents=True)
     (root / "app" / "dispatch.py").write_text(
-        _render_dispatch({}),
+        _render_dispatch({"database": {"input_required_fields": ["query"]}}),
         encoding="utf-8",
     )
     block = root / "vendor" / "blocks" / "notification"
@@ -203,11 +204,16 @@ def test_dispatch_rewrites_an_explicit_mcp_notification_channel(tmp_path):
         "    return {'status': 'ok', 'input': kwargs.get('input')}\n",
         encoding="utf-8",
     )
-    dispatch = _load("dispatch_mcp_rewrite_probe", root / "app" / "dispatch.py")
-    out = dispatch.execute("notification", {"channel": "mcp", "message": "hi"})
+    dispatch = _load("dispatch_mcp_target_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute("notification", {"channel": "in_process", "message": "hi"})
     assert out["status"] == "ok"
-    assert out["input"]["channel"] == "in_process"
+    assert out["input"]["channel"] == "mcp"
+    assert out["input"]["block"] == "database"
+    assert out["input"]["tool"] == "database"
     assert out["input"]["message"] == "hi"
+    kept = dispatch.execute("notification", {"channel": "mcp", "message": "hi"})
+    assert kept["input"]["channel"] == "mcp"
+    assert kept["input"]["block"] == "database"
 
 
 def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):
