@@ -31,7 +31,7 @@ def test_limit_is_relative_to_the_parent_not_absolute():
     """The ceiling must exceed what the child already inherits."""
     parent = isolation._parent_virtual_bytes()
     if parent is None:
-        pytest.skip("/proc/self/status unavailable (non-Linux)")
+        pytest.skip(reason="/proc/self/status unavailable (non-Linux)")
 
     budget = 1536 * 1024 * 1024
     limit = isolation.child_address_space_limit(budget)
@@ -79,7 +79,7 @@ def test_parent_virtual_size_is_plausible():
     """If VmSize ever reads as tiny, the budget maths is meaningless."""
     parent = isolation._parent_virtual_bytes()
     if parent is None:
-        pytest.skip("/proc/self/status unavailable")
+        pytest.skip(reason="/proc/self/status unavailable")
     assert parent > 16 * 1024 * 1024, f"implausible VmSize: {parent}"
 
 
