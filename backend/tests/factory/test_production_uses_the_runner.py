@@ -62,6 +62,19 @@ def test_the_runner_is_the_default_engine():
     assert build_engine() == RUNNER
 
 
+def test_production_floor_budget_is_a_code_phase(monkeypatch):
+    """Floor Approve gates a 20–30 min coder pass, not a 2-hour Store-green
+    platform. Three WRITER reworks of 20 min each is the path this refuses."""
+    from app.factory import build_jobs
+
+    monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
+    monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
+    monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
+    assert build_jobs._wall_clock_s() == 1800.0
+    assert build_jobs._max_rework() == 1
+    assert build_jobs._phase_wall_clock_s() == 1500.0
+
+
 def test_template_engine_is_still_reachable_as_a_revert(monkeypatch):
     """A build regression in production must be revertible by env alone."""
     monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")

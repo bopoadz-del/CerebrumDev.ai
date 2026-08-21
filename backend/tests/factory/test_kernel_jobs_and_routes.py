@@ -58,6 +58,7 @@ def test_rendered_router_registers_kernel_routes_before_capabilities():
         assert f'@router.get("/{name}")' in src
     assert "HTTPException" in src
     assert "from app import jobs, store" in src
+    assert "except Exception as exc" in src
 
 
 def test_coder_prompts_carry_each_kernel_jd():

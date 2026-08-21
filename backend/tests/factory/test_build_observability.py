@@ -352,3 +352,40 @@ def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
     gate = (out / "scripts" / "release_gate.py").read_text(encoding="utf-8")
     assert "requirements-dev.txt" in gate
     assert "CANNOT RUN" in gate
+    assert "-m" in gate and "not pilot" in gate
+
+
+def test_phase_wall_clock_caps_the_writer_deadline(tmp_path):
+    """A 2-hour build wall must not let WRITER sit in the model for 2 hours.
+
+    The per-phase cap is the code-phase gate (20–30 min). RoleContext.deadline
+    is the earlier of the remaining build wall and that phase cap.
+    """
+    import time as _time
+
+    from app.factory.build.roles import ROLE_IMPLEMENTATIONS
+    from app.factory.build.runner import BuildBudget
+
+    seen = {}
+    real = ROLE_IMPLEMENTATIONS[BuildRole.WRITER]
+
+    def wrapping(ctx):
+        seen["deadline"] = ctx.deadline
+        seen["now"] = _time.monotonic()
+        return real(ctx)
+
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = wrapping
+    started = _time.monotonic()
+    runner = RoleRunner(
+        load_blueprint(SMOKE),
+        tmp_path / "build",
+        roles=roles,
+        budget=BuildBudget(wall_clock_s=7200.0, phase_wall_clock_s=30.0),
+    )
+    outcome = runner.run()
+    assert outcome.ok, outcome.detail
+    assert seen["deadline"] is not None
+    # 30s phase cap, not the 7200s build wall.
+    assert seen["deadline"] - started < 600
+    assert seen["deadline"] - seen["now"] <= 30.0 + 2.0

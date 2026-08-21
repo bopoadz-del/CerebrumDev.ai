@@ -95,10 +95,17 @@ class Outcome(str, Enum):
 
 @dataclass(frozen=True)
 class BuildBudget:
-    """Bounds on a run. Exhausting either one ends the build as a failure."""
+    """Bounds on a run. Exhausting a bound ends the build as a failure.
+
+    ``wall_clock_s`` is the whole build. ``phase_wall_clock_s`` caps *each*
+    role (especially WRITER coder calls) so a code phase cannot sit in the
+    model for the two hours a Store-green platform would take. ``0``
+    disables that bound.
+    """
 
     max_rework: int = 3
     wall_clock_s: float = 7200.0
+    phase_wall_clock_s: float = 1500.0
 
     def deadline_from(self, started: float) -> Optional[float]:
         return (started + self.wall_clock_s) if self.wall_clock_s > 0 else None
@@ -223,6 +230,15 @@ class RoleRunner:
             """
             self.ledger.append(EventKind.NOTE, role=role, detail=detail, payload=payload)
 
+        deadline = self._deadline
+        phase_cap = self.budget.phase_wall_clock_s
+        if phase_cap and phase_cap > 0:
+            phase_deadline = self.clock() + float(phase_cap)
+            deadline = (
+                phase_deadline
+                if deadline is None
+                else min(deadline, phase_deadline)
+            )
         ctx = RoleContext(
             role=role,
             workspace=ws,
@@ -232,7 +248,7 @@ class RoleRunner:
             work_list=tuple(work_list),
             state=self.state,
             progress=_progress,
-            deadline=self._deadline,
+            deadline=deadline,
         )
         result = self.roles[role](ctx)
         if not result.ok:

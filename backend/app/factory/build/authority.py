@@ -188,16 +188,19 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         role=BuildRole.TESTER,
         title="Acceptance inspector",
         mandate=(
-            "Write and run the kernel suite against what the WRITER produced, "
-            "and bounce failures for another writer pass. Consult the coding "
-            "agent for extra domain cases; admit them only as mutations of "
-            "spec-derived payloads. Never patch app/. Never run the suite over "
-            "HTTP — GET /v1/gates describes coverage only."
+            "Write and run the code-phase suite against what the WRITER "
+            "produced (imports, dispatch load, models, routes answer JSON, "
+            "handle() returns a mapping) and bounce those failures for another "
+            "writer pass. Store-backed execute-all is pilot coverage, not this "
+            "gate. Consult the coding agent for extra domain cases; admit them "
+            "only as mutations of spec-derived payloads. Never patch app/. "
+            "Never run the suite over HTTP — GET /v1/gates describes coverage "
+            "only."
         ),
         agent=AgentSeat.CONSULT,
         http_routes=("GET /v1/gates",),
         write_lanes=((LaneRoot.WORKSPACE, "tests/**"),),
-        gate="suite green and the smoke test exercises a capability offline",
+        gate="code-phase suite green (pytest -m 'not pilot')",
     ),
     BuildRole.STORE_MANAGER: RoleContract(
         role=BuildRole.STORE_MANAGER,

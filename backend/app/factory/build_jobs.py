@@ -39,10 +39,17 @@ BUILD_ENGINE_ENV = "FACTORY_BUILD_ENGINE"
 RUNNER = "runner"
 TEMPLATE = "template"
 
-#: Wall-clock ceiling for a production build. Past this the runner reports
-#: FAILED_BUDGET_SPENT rather than holding a thread forever.
+#: Wall-clock ceiling for a production Floor build. The factory gates the
+#: coder's *code phase* (20–30 min), not a Store-green platform (hours).
 BUILD_WALL_CLOCK_ENV = "FACTORY_BUILD_WALL_CLOCK_S"
 BUILD_REWORK_ENV = "FACTORY_BUILD_MAX_REWORK"
+BUILD_PHASE_WALL_ENV = "FACTORY_PHASE_WALL_CLOCK_S"
+
+#: Defaults: one WRITER pass (~25 min phase cap) inside a 30 min Floor run.
+#: Three 20-minute rework rounds is the two-hour path this gate refuses.
+_DEFAULT_WALL_CLOCK_S = 1800.0
+_DEFAULT_MAX_REWORK = 1
+_DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
 
 #: A build with no ledger event for this long has no process behind it. The
 #: longest legitimate gap is one coder call (up to ~3 min on a reasoning
@@ -58,16 +65,25 @@ def build_engine() -> str:
 
 def _wall_clock_s() -> float:
     try:
-        return float(os.getenv(BUILD_WALL_CLOCK_ENV, "2700"))
+        return float(os.getenv(BUILD_WALL_CLOCK_ENV, str(int(_DEFAULT_WALL_CLOCK_S))))
     except ValueError:
-        return 2700.0
+        return _DEFAULT_WALL_CLOCK_S
 
 
 def _max_rework() -> int:
     try:
-        return max(0, int(os.getenv(BUILD_REWORK_ENV, "3")))
+        return max(0, int(os.getenv(BUILD_REWORK_ENV, str(_DEFAULT_MAX_REWORK))))
     except ValueError:
-        return 3
+        return _DEFAULT_MAX_REWORK
+
+
+def _phase_wall_clock_s() -> float:
+    try:
+        return float(
+            os.getenv(BUILD_PHASE_WALL_ENV, str(int(_DEFAULT_PHASE_WALL_CLOCK_S)))
+        )
+    except ValueError:
+        return _DEFAULT_PHASE_WALL_CLOCK_S
 
 
 # -- status ---------------------------------------------------------------
@@ -218,7 +234,9 @@ def _run(blueprint: Any, output_dir: Path, blocks_root: Optional[Path]) -> None:
             output_dir,
             blocks_root=blocks_root,
             budget=BuildBudget(
-                max_rework=_max_rework(), wall_clock_s=_wall_clock_s()
+                max_rework=_max_rework(),
+                wall_clock_s=_wall_clock_s(),
+                phase_wall_clock_s=_phase_wall_clock_s(),
             ),
         )
         outcome = runner.run()

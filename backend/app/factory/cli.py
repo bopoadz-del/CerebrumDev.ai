@@ -80,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
         default=7200.0,
         help="seconds before the run fails on budget (0 disables)",
     )
+    p_build.add_argument(
+        "--phase-wall-clock",
+        type=float,
+        default=1500.0,
+        help="seconds each role may spend (0 disables; Floor default 25 min)",
+    )
 
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
@@ -187,7 +193,11 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
         blueprint,
         args.out,
         blocks_root=blocks_root,
-        budget=BuildBudget(max_rework=args.max_rework, wall_clock_s=args.wall_clock),
+        budget=BuildBudget(
+            max_rework=args.max_rework,
+            wall_clock_s=args.wall_clock,
+            phase_wall_clock_s=args.phase_wall_clock,
+        ),
     )
     outcome = runner.run()
     sources = runner.state.get("artifact_sources", {})
