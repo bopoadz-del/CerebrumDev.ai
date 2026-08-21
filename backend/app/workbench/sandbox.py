@@ -4,6 +4,13 @@ Filesystem confined to the session workspace. No shell outside the workspace.
 No Store write credentials. Every command logged. Timeout + resource caps;
 runaway sessions die loudly.
 
+Child processes get an address-space BUDGET (parent VmSize + configured MB)
+via ``RLIMIT_AS``, not an absolute ceiling — an absolute 1536 MB cap is
+already below a torch/embedding parent and kills the child on first
+allocation. If parent size cannot be read, no rlimit is set; the child is
+still the largest process, so the OOM killer takes it rather than the
+Factory worker.
+
 Network is NOT restricted: subprocesses inherit the host's network access.
 Real egress control would require a network namespace, an egress proxy, or
 firewall rules — none of which this sandbox provides.
@@ -20,6 +27,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from app.cerebrum_product_kernel.isolation import (
+    budget_bytes_from_env,
+    subprocess_preexec,
+)
 from app.workbench.envelope import path_allowed
 
 # Env vars that must NEVER be present inside a sandbox process.
@@ -194,17 +205,25 @@ class WorkbenchSandbox:
                         raise SandboxViolation(f"command path escapes workspace: {arg}")
         t_lim = timeout or min(60, self.timeout_seconds)
         self.log("command_start", argv=list(argv), cwd=cwd_relative)
-        try:
-            proc = subprocess.run(
-                list(argv),
-                cwd=str(cwd),
-                env=self.scrubbed_env(),
-                capture_output=True,
-                text=True,
-                timeout=t_lim,
-                shell=False,
-                check=False,
+        run_kwargs: Dict[str, Any] = {
+            "cwd": str(cwd),
+            "env": self.scrubbed_env(),
+            "capture_output": True,
+            "text": True,
+            "timeout": t_lim,
+            "shell": False,
+            "check": False,
+        }
+        # POSIX only: preexec_fn is not available on Windows.
+        if os.name == "posix":
+            run_kwargs["preexec_fn"] = subprocess_preexec(
+                budget_bytes_from_env(
+                    "WORKBENCH_CHILD_MEM_MB",
+                    "CEREBRUM_CHILD_MEM_MB",
+                )
             )
+        try:
+            proc = subprocess.run(list(argv), **run_kwargs)
         except subprocess.TimeoutExpired as exc:
             self.log("command_timeout", argv=list(argv))
             raise SandboxTimeout(f"command timed out: {argv[0]}") from exc
@@ -230,6 +249,10 @@ class WorkbenchSandbox:
             "workspace": str(self.workspace),
             "timeout_seconds": self.timeout_seconds,
             "network_isolation": "none — subprocesses inherit host network access",
+            "memory_isolation": (
+                "RLIMIT_AS budget = parent VmSize + WORKBENCH_CHILD_MEM_MB "
+                "(no limit if parent size unknown; rlimit refusal logs and continues)"
+            ),
             "command_count": self._command_count,
             "deploy_credentials": False,
             "store_write": "impossible",
