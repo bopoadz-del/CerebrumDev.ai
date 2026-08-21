@@ -157,3 +157,26 @@ def require_api_key(
     if _anonymous_dev_allowed():
         return Principal(kind="dev")
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def require_account_allow_unverified(
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+) -> Principal:
+    """Authenticate a user credential without requiring a verified email.
+
+    ``require_api_key`` 403s unverified callers when
+    ``ACCOUNTS_REQUIRE_VERIFIED_EMAIL`` is on. Resend-verification has to
+    keep working in that state so the user can finish the flow instead of
+    seeing a dead Factory.
+    """
+    provided = _provided_token(authorization, x_api_key)
+    if not provided:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    principal = _resolve_user_principal(provided)
+    if principal is None or principal.kind != "user" or not principal.account_id:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key",
+        )
+    return principal
