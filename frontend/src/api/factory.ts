@@ -17,6 +17,18 @@ export class ApiError extends Error {
   }
 }
 
+/** 403 from credential-gated routes when ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1. */
+export function isEmailNotVerifiedError(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 403) return false
+  return err.message === 'email_not_verified' || err.message.includes('email_not_verified')
+}
+
+/** Optional Cerebrum-Blocks store: 503 must not look like a dead Factory. */
+export function isDomainStoreUnreachable(err: unknown): boolean {
+  if (!(err instanceof ApiError) || err.status !== 503) return false
+  return /domain store unreachable/i.test(err.message)
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
@@ -58,18 +70,27 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 // --- Auth ------------------------------------------------------------------
 
+export interface VerificationInfo {
+  mode?: string
+  email_sent?: boolean
+  note?: string
+  dev_verification_token?: string
+}
 export interface LoginResponse {
   login_token: string
+  email_verified?: boolean
 }
 export interface RegisterResponse extends LoginResponse {
   account_id?: string
   email_verified?: boolean
-  verification?: {
-    mode?: string
-    email_sent?: boolean
-    note?: string
-    dev_verification_token?: string
-  }
+  verification?: VerificationInfo
+}
+export interface ResendVerificationResponse {
+  ok?: boolean
+  already_verified?: boolean
+  email?: string
+  email_verified?: boolean
+  verification?: VerificationInfo
 }
 export interface ForgotResponse {
   ok?: boolean
@@ -100,6 +121,8 @@ export const auth = {
     }),
   verifyEmail: (token: string) =>
     req<{ ok?: boolean; email_verified?: boolean }>('POST', '/v1/auth/verify-email', { token }),
+  resendVerification: () =>
+    req<ResendVerificationResponse>('POST', '/v1/auth/resend-verification', {}),
 }
 
 // --- Sessions ---------------------------------------------------------------
@@ -113,8 +136,6 @@ export const sessions = {
   create: () => req<SessionInfo>('POST', '/v1/sessions/', {}),
   list: () => req<SessionInfo[] | { sessions?: SessionInfo[] }>('GET', '/v1/sessions/'),
 }
-
-// --- Chat (SSE) --------------------------------------------------------------
 
 export interface ChatEvent {
   event: string
@@ -173,7 +194,6 @@ export async function chatStream(
   }
 }
 
-/** Extract display text from a streaming chat event, if it carries any. */
 export function chatEventText(ev: ChatEvent): string | null {
   const textEvents = ['message', 'token', 'delta', 'text', 'chunk', 'content']
   if (!textEvents.includes(ev.event)) return null
@@ -186,8 +206,6 @@ export function chatEventText(ev: ChatEvent): string | null {
   }
   return null
 }
-
-// --- Product -----------------------------------------------------------------
 
 export interface ProductDesign {
   session_id?: string
@@ -229,7 +247,6 @@ export const product = {
     ),
 }
 
-/** Progress of a background build, read off the artifact's own ledger. */
 export type BuildAuthorship = {
   artifacts?: number
   agent_written?: number
@@ -253,15 +270,6 @@ export type BuildStatus = {
   authorship?: BuildAuthorship
 }
 
-/**
- * Wait for a background build to finish, reporting progress as it goes.
- *
- * The runner engine manufactures the platform with the coding agent, which
- * takes minutes rather than the old template path's seconds; the button
- * that used to return a finished product now starts a job. Polling the
- * ledger is what makes that honest to the user instead of a spinner that
- * silently downloads a half-built tree.
- */
 export async function awaitBuild(
   sid: string,
   onProgress?: (s: BuildStatus) => void,
@@ -279,8 +287,6 @@ export async function awaitBuild(
         detail: build.detail ?? 'build stalled',
       }
     }
-    // Template engine writes no ledger, so status is "unknown". That product
-    // is already finished — waiting would spin until the client timeout.
     if (build.state === 'unknown') {
       return { ...build, state: 'succeeded' }
     }
@@ -304,7 +310,7 @@ export async function downloadProductPackage(sid: string): Promise<void> {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   const cd = res.headers.get('content-disposition') || ''
-  const m = cd.match(/filename="?([^";]+)"?/)
+  const m = cd.match(/filename="?([^"";]+)"?/)
   a.href = url
   a.download = m ? m[1] : 'cerebrumdev-product.zip'
   document.body.appendChild(a)
@@ -312,8 +318,6 @@ export async function downloadProductPackage(sid: string): Promise<void> {
   a.remove()
   URL.revokeObjectURL(url)
 }
-
-// --- Billing ------------------------------------------------------------------
 
 export interface BillingStatus {
   plan?: string
@@ -331,4 +335,8 @@ export const billing = {
   checkout: () =>
     req<{ url?: string; checkout_url?: string }>('POST', '/v1/billing/checkout', {}),
   portal: () => req<{ url?: string; portal_url?: string }>('POST', '/v1/billing/portal', {}),
+}
+
+export const domains = {
+  list: () => req<{ domains?: unknown[] }>('GET', '/v1/domains/'),
 }

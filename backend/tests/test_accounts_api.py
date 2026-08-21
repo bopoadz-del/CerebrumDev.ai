@@ -15,14 +15,8 @@ def client(monkeypatch, tmp_path):
 
     monkeypatch.setattr(session_persistence, "STORAGE_PATH", storage_path)
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
-    # No master key now means "refuse", not "let everyone in", so an
-    # unauthenticated fixture has to ask for the dev principal.
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("SMTP_HOST", raising=False)
-    # These tests drive the verify/reset flows end to end, so they need the
-    # tokens in the response. That is now opt-in: returning them by default
-    # made POST /v1/auth/forgot-password an account-takeover endpoint whenever
-    # mail delivery failed.
     monkeypatch.setenv("ACCOUNTS_EXPOSE_DEV_TOKENS", "1")
     monkeypatch.delenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", raising=False)
     monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
@@ -36,10 +30,11 @@ def client(monkeypatch, tmp_path):
 
     reset_rate_limits()
 
-    from app.routers import accounts, sessions
+    from app.routers import accounts, resend_verification, sessions
 
     app = FastAPI()
     app.include_router(accounts.router, prefix="/v1/auth")
+    app.include_router(resend_verification.router, prefix="/v1/auth")
     app.include_router(sessions.router, prefix="/v1/sessions")
     return TestClient(app)
 
@@ -54,7 +49,6 @@ def test_register_login_verify_and_me(client):
     body = _register(client)
     assert body["account_id"].startswith("acct_")
     assert body["email_verified"] is False
-    # Dev mode: no SMTP configured → verification token surfaced honestly.
     token = body["verification"]["dev_verification_token"]
     assert token.startswith("cdv_")
 
@@ -94,7 +88,7 @@ def test_short_password_rejected(client):
     res = client.post(
         "/v1/auth/register", json={"email": "a@b.co", "password": "short"}
     )
-    assert res.status_code == 422  # pydantic min_length
+    assert res.status_code == 422
 
 
 def test_api_keys_and_session_ownership(client):
@@ -110,13 +104,11 @@ def test_api_keys_and_session_ownership(client):
     api_key = key.json()["api_key"]
     assert api_key.startswith("cdk_")
 
-    # A creates a session with the API key — owned by A's account.
     created = client.post("/v1/sessions/", headers={"X-API-Key": api_key})
     assert created.status_code == 200, created.text
     sess = created.json()
     assert sess["user_id"] == a["account_id"]
 
-    # A can read it; B gets 404 (existence is not leaked).
     ok = client.get(
         f"/v1/sessions/{sess['session_id']}",
         headers={"Authorization": f"Bearer {a['login_token']}"},
@@ -128,7 +120,6 @@ def test_api_keys_and_session_ownership(client):
     )
     assert denied.status_code == 404
 
-    # Listing: A sees the session; B's list is empty.
     mine = client.get(
         "/v1/sessions/", headers={"Authorization": f"Bearer {a['login_token']}"}
     )
@@ -138,7 +129,6 @@ def test_api_keys_and_session_ownership(client):
     )
     assert other.json() == []
 
-    # Revoke the key → it stops resolving (dev mode falls back to dev principal).
     key_id = key.json()["key_id"]
     res = client.delete(
         f"/v1/auth/keys/{key_id}",
@@ -157,19 +147,16 @@ def test_master_key_admin_access(client, monkeypatch):
     )
     sess = created.json()
 
-    # Master key reads any session.
     res = client.get(
         f"/v1/sessions/{sess['session_id']}",
         headers={"Authorization": "Bearer master-secret"},
     )
     assert res.status_code == 200
-    # User credential still resolves alongside the master key.
     res = client.get(
         f"/v1/sessions/{sess['session_id']}",
         headers={"Authorization": f"Bearer {a['login_token']}"},
     )
     assert res.status_code == 200
-    # Garbage credential → 401.
     res = client.get(
         f"/v1/sessions/{sess['session_id']}",
         headers={"Authorization": "Bearer garbage"},
@@ -197,7 +184,6 @@ def test_password_reset_flow(client):
     )
     assert res.status_code == 200
 
-    # Old password fails; new password works.
     assert (
         client.post(
             "/v1/auth/login",
@@ -210,11 +196,9 @@ def test_password_reset_flow(client):
     )
     assert ok.status_code == 200
 
-    # The reset signed out every previous session (old login token is dead).
     res = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
     assert res.status_code == 403
 
-    # Token is single-use.
     res = client.post(
         "/v1/auth/reset-password",
         json={"token": token, "new_password": "another-pass-789"},
@@ -229,25 +213,56 @@ def test_forgot_password_unknown_email_no_token(client):
 
 
 def test_verified_email_enforcement(client, monkeypatch):
-    body = _register(client)  # starts unverified
+    body = _register(client)
     monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")
 
-    # Unverified user is blocked from credential-gated routes.
     res = client.post(
         "/v1/sessions/", headers={"Authorization": f"Bearer {body['login_token']}"}
     )
     assert res.status_code == 403
     assert res.json()["detail"] == "email_not_verified"
 
-    # Verification endpoint stays public so the flow can complete.
     token = body["verification"]["dev_verification_token"]
     assert client.post("/v1/auth/verify-email", json={"token": token}).status_code == 200
 
-    # Verified → access restored.
     res = client.post(
         "/v1/sessions/", headers={"Authorization": f"Bearer {body['login_token']}"}
     )
     assert res.status_code == 200
+
+
+def test_resend_verification_works_while_unverified(client, monkeypatch):
+    """Unverified login tokens must still be able to request a new mail."""
+    body = _register(client, "resend@example.com")
+    monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")
+    headers = {"Authorization": f"Bearer {body['login_token']}"}
+
+    denied = client.get("/v1/auth/me", headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "email_not_verified"
+
+    res = client.post("/v1/auth/resend-verification", headers=headers)
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["ok"] is True
+    assert payload["already_verified"] is False
+    token = payload["verification"]["dev_verification_token"]
+    assert token.startswith("cdv_")
+    assert token != body["verification"]["dev_verification_token"]
+
+    assert client.post("/v1/auth/verify-email", json={"token": token}).status_code == 200
+    me = client.get("/v1/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["email_verified"] is True
+
+    again = client.post("/v1/auth/resend-verification", headers=headers)
+    assert again.status_code == 200
+    assert again.json()["already_verified"] is True
+
+
+def test_resend_verification_requires_account_credential(client):
+    res = client.post("/v1/auth/resend-verification")
+    assert res.status_code == 401
 
 
 def test_auth_rate_limit_register(client, monkeypatch):
@@ -288,8 +303,6 @@ def test_database_url_normalizes_postgres(monkeypatch):
 
 
 def test_create_session_honors_requested_domain(client):
-    """A stranger asking for a retail platform must not silently get a
-    construction-flavored session (2.5.3 walk finding)."""
     a = _register(client)
     resp = client.post(
         "/v1/sessions/",
@@ -301,11 +314,6 @@ def test_create_session_honors_requested_domain(client):
 
 
 def test_unconfigured_mail_is_reported_honestly(client, monkeypatch):
-    """New-shape test for the live finding (2026-08-14): with no mail
-    provider configured at all, registration answered "Request a new one
-    shortly" -- a retry that can never succeed until an operator sets
-    RESEND_API_KEY or SMTP_*. The response must say verification is not
-    enabled, not imply a transient failure."""
     monkeypatch.delenv("ACCOUNTS_EXPOSE_DEV_TOKENS", raising=False)
     monkeypatch.delenv("RESEND_API_KEY", raising=False)
     monkeypatch.delenv("SMTP_HOST", raising=False)
@@ -334,7 +342,6 @@ def test_smoke_login_rejects_wrong_gate(client, monkeypatch):
 
 
 def test_smoke_login_verified_principal_bypasses_public_unverified(client, monkeypatch):
-    """Public register stays unverified; smoke-login is the only ops shortcut."""
     monkeypatch.setenv("SMOKE_GATE_TOKEN", "correct-gate-token")
     monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")
 

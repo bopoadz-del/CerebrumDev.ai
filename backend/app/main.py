@@ -53,6 +53,7 @@ from .routers import (
     product_factory,
     session_product,
     delivery_standard,
+    resend_verification,
 )
 from .resident_engineer.router import router as resident_engineer_router
 from .change_requests.router import router as change_requests_router
@@ -106,6 +107,7 @@ app.add_middleware(
 # Public account endpoints (register/login/verify carry no credential; me/keys
 # enforce their own account principal).
 app.include_router(accounts.router, prefix="/v1/auth", tags=["auth"])
+app.include_router(resend_verification.router, prefix="/v1/auth", tags=["auth"])
 # Billing status self-enforces an account credential; checkout/webhook join here.
 app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
 app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_api_key)])

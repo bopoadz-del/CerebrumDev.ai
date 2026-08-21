@@ -65,6 +65,7 @@ h3 { margin: 0 0 10px; }
 }
 .panel.narrow { width: 380px; }
 .auth-panel { display: flex; flex-direction: column; gap: 12px; }
+.auth-panel button.ghost { margin-left: 0; }
 .error-box {
   background: rgba(229, 72, 77, 0.12);
   border: 1px solid var(--danger);
@@ -179,6 +180,21 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   padding: 0.6rem 0.75rem;
   font-size: 0.85rem;
   margin: 0.5rem 0;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 40;
+  background: var(--panel);
+  border: 1px solid var(--gold-2);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  max-width: 320px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .plan-cards {
