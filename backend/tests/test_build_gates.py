@@ -203,8 +203,9 @@ def test_green_suite_passes(tmp_path):
     assert result.ok
     assert "1 passed" in result.detail
     argv = ctx._calls[0]["argv"]
-    assert "-m" in argv
-    assert argv[argv.index("-m") + 1] == "not pilot"
+    assert "not pilot" in argv
+    marker_at = len(argv) - 1 - argv[::-1].index("-m")
+    assert argv[marker_at + 1] == "not pilot"
 
 
 def test_factory_gate_ignores_a_red_pilot_test(tmp_path):

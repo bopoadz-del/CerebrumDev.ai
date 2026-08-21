@@ -2680,7 +2680,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "    try:",
             f"        out = {name}.handle({sample!r})",
             "    except Exception as exc:",
-            f"        out = {{'ok': False, 'error': type(exc).__name__ + ': ' + str(exc)}}",
+            "        out = {'ok': False, 'error': type(exc).__name__ + ': ' + str(exc)}",
             "    if not isinstance(out, dict):",
             f"        failures.append('{name} handle() must return a dict, got '"
             " + type(out).__name__)",
