@@ -351,3 +351,142 @@ def test_the_slice_follows_what_the_block_needs_not_where_it_came_from(tmp_path)
     finally:
         roles_mod._block_source_dir = original
 
+
+_FORMULA_SHIM = '''\
+"""Auto-generated adapter for Cerebrum block: formula_executor."""
+
+import asyncio
+from app.blocks import get_block
+
+
+def run(**kwargs):
+    block_cls = get_block("formula_executor")
+    instance = block_cls()
+    input_data = kwargs.get("input", kwargs)
+    envelope = asyncio.run(instance.execute(input_data, {}))
+    return envelope.get("result", envelope)
+'''
+
+_FORMULA_V2 = '''\
+from app.core.universal_base import UniversalBlock
+
+
+class FormulaExecutorV2(UniversalBlock):
+    async def execute(self, input_data, params):
+        expr = (input_data or {}).get("expr", "ok")
+        return {"status": "ok", "result": {"value": expr}}
+'''
+
+
+def test_cloner_aliases_kit_id_to_store_v2_registry(tmp_path):
+    """Live tasting-room Approve: kit id ``formula_executor``, Store registry
+    only lists ``formula_executor_v2``. CLONER used to fail with "has no
+    entry for it" instead of vendoring the v2 module under the kit name."""
+    store = _faux_store(tmp_path)
+    reg = store / "block_registry" / "formula_executor"
+    reg.mkdir(parents=True)
+    (reg / "block.json").write_text(
+        json.dumps({"id": "formula_executor"}), encoding="utf-8"
+    )
+    (reg / "block.py").write_text(_FORMULA_SHIM, encoding="utf-8")
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        textwrap.dedent(
+            '''
+            import importlib
+
+            _EXTENDED_BLOCK_DEFS = {
+                "formula_executor_v2": ("app.blocks.formula_executor_v2", "FormulaExecutorV2"),
+            }
+
+            def get_block(name):
+                module_path, class_name = _EXTENDED_BLOCK_DEFS[name]
+                return getattr(importlib.import_module(module_path), class_name)
+            '''
+        ),
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "formula_executor_v2.py").write_text(
+        _FORMULA_V2, encoding="utf-8"
+    )
+
+    ws, result = _clone(tmp_path, store, block_ids=("formula_executor",))
+    assert result.ok, result.detail
+
+    registry = (ws.destination / "vendor" / "cerebrum" / "blocks" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "formula_executor" in registry
+    assert "formula_executor_v2" in registry
+
+    probe = textwrap.dedent(
+        """
+        import importlib.util, json, os, pathlib, sys
+        for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+            os.environ.pop(var, None)
+        path = pathlib.Path("vendor/blocks/formula_executor/block.py")
+        spec = importlib.util.spec_from_file_location("vendored_formula", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.run(input={"expr": 42})
+        print(json.dumps(out))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == {"value": 42}
+
+
+def test_unregistered_store_shim_falls_back_to_factory_mirror(tmp_path):
+    """If the Store has a kit-shelf shim, no registry entry, and no ``_v2``
+    module, CLONER must vendor the factory stub instead of dying."""
+    store = _faux_store(tmp_path)
+    reg = store / "block_registry" / "formula_executor"
+    reg.mkdir(parents=True)
+    (reg / "block.json").write_text(
+        json.dumps({"id": "formula_executor"}), encoding="utf-8"
+    )
+    (reg / "block.py").write_text(_FORMULA_SHIM, encoding="utf-8")
+
+    ws, result = _clone(tmp_path, store, block_ids=("formula_executor",))
+    assert result.ok, result.detail
+    vendored = (ws.destination / "vendor" / "blocks" / "formula_executor" / "block.py").read_text(
+        encoding="utf-8"
+    )
+    assert "factory-vendor-mirror stub" in vendored
+    assert "get_block" not in vendored
+    lock = json.loads((ws.destination / "blocks.lock.json").read_text(encoding="utf-8"))
+    assert lock["blocks"]["formula_executor"]["source"] == "factory-vendor-mirror"
+    assert "runtime" not in lock
+
+
+def test_store_registry_single_quotes_still_parse(tmp_path):
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        textwrap.dedent(
+            """
+            import importlib
+
+            _EXTENDED_BLOCK_DEFS = {
+                'greeting': ('app.blocks.greeting', 'GreetingBlock'),
+            }
+
+            def get_block(name):
+                module_path, class_name = _EXTENDED_BLOCK_DEFS[name]
+                return getattr(importlib.import_module(module_path), class_name)
+            """
+        ),
+        encoding="utf-8",
+    )
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+    registry = (ws.destination / "vendor" / "cerebrum" / "blocks" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "greeting" in registry
+
