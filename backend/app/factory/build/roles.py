@@ -1433,6 +1433,23 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _ensure_route_persists_payload(body: str) -> str:
+    """Coder routes often persist handle()'s envelope, not the request.
+
+    The live winery-hospitality zip saved ``result`` / ``handled``
+    (``{ok, data: {...}}``) into sqlite, so every column was NULL even
+    though POST returned ``ok: true``. The record is the payload.
+    """
+    rewritten = re.sub(
+        r"\bsave\(\s*(?!payload\s*\))([A-Za-z_][\w]*)\s*\)",
+        "save(payload)",
+        body,
+    )
+    if "save(payload)" not in rewritten:
+        rewritten = rewritten.rstrip() + "\n    stored = save(payload)\n"
+    return rewritten
+
+
 def _render_jobs_module(
     *,
     catalog: Dict[str, Any],
@@ -2294,6 +2311,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 # Coder bodies skip field constraints; the tasting-room
                 # TESTER then failed agent "reject" cases the route accepted.
                 body = _constraint_guard(spec) + "\n" + body
+        body = _ensure_route_persists_payload(body)
         route_bodies[cid] = body
         name = cid.replace("-", "_")
         if name in KERNEL_ROUTE_NAMES:
