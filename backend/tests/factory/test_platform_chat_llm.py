@@ -78,6 +78,18 @@ def test_kit_config_never_orchestrates(monkeypatch, session):
     )
 
 
+def test_business_brief_orchestrates_without_saying_platform(monkeypatch):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    state = SessionState(session_id="sess-brief", user_id="user-1", account_id="acct-1")
+    state.product_design = ProductDesignState()
+    assert (
+        platform_chat_llm.should_orchestrate(
+            state, "build me a tasting room for a family winery"
+        )
+        is True
+    )
+
+
 def test_start_coder_apply_marks_chat_llm_trigger(session, monkeypatch):
     captured = {}
 
