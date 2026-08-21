@@ -152,7 +152,11 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
   await expect(takeover.or(approve).or(composer)).toBeVisible({ timeout: 45_000 })
   await page.waitForTimeout(1500)
 
-  if (await takeover.isVisible().catch(() => false)) {
+  const composerLocked =
+    (await composer.isVisible().catch(() => false)) &&
+    !(await composer.isEnabled().catch(() => true))
+
+  if (composerLocked || (await takeover.isVisible().catch(() => false))) {
     await expect(page.getByText('COLLECTOR')).toBeVisible()
     await expect(page.getByText('STORE_MANAGER')).toBeVisible()
     await expect(page.getByText('TESTER')).toBeVisible()
