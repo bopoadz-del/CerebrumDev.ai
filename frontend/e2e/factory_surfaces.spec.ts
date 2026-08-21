@@ -98,7 +98,7 @@ test('Floor drafts a feature list and Approve & build starts the coding agent', 
     }
     await route.fulfill({
       status: 200,
-      contentType: 'application/json',
+      contentType: 'text/event-stream',
       body,
     })
   })
