@@ -16,6 +16,7 @@ from app.factory.build.authority import BuildRole
 from app.factory.build.roles import (
     RoleContext,
     _is_payload_mutation,
+    _payload_constraint_violations,
     run_collector,
     run_tester,
 )
@@ -110,6 +111,17 @@ def test_payload_mutation_rejects_replacements_and_new_keys():
     assert not _is_payload_mutation(sample, {"status": "open", "title": "x", "extra": 1})
     assert not _is_payload_mutation(sample, {})
 
+
+def test_payload_constraint_violations_match_the_spec():
+    spec = {
+        "fields": [
+            {"name": "status", "type": "str", "allowed_values": ["open", "closed"]},
+            {"name": "qty", "type": "int", "min": 0, "max": 10},
+        ]
+    }
+    assert _payload_constraint_violations({"status": "open", "qty": 1}, spec) == []
+    assert "status" in _payload_constraint_violations({"status": "nope", "qty": 1}, spec)
+    assert "qty" in _payload_constraint_violations({"status": "open", "qty": -1}, spec)
 
 def test_tester_admits_only_payload_mutations(tmp_path, monkeypatch):
     monkeypatch.setattr(

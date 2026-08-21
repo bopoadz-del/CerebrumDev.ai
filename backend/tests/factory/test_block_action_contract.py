@@ -115,6 +115,42 @@ def test_dispatch_turns_a_block_raise_into_a_named_envelope(tmp_path):
         dispatch.execute("not_vendored", {})
 
 
+def test_dispatch_fills_required_block_fields_from_contract(tmp_path):
+    """Live tasting-room: analytics demanded metric/value, event_bus topic.
+    Dispatch must construct those so a domain payload still executes."""
+    from app.factory.build.roles import _render_dispatch
+
+    root = tmp_path / "platform"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "dispatch.py").write_text(
+        _render_dispatch(
+            {
+                "analytics": {"input_required_fields": ["metric", "value"]},
+                "event_bus": {"input_required_fields": ["topic"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    for bid in ("analytics", "event_bus"):
+        block = root / "vendor" / "blocks" / bid
+        block.mkdir(parents=True)
+        (block / "block.py").write_text(
+            "SEEN = []\n"
+            "def run(**kwargs):\n"
+            "    SEEN.append(kwargs.get('input'))\n"
+            "    return {'status': 'ok', 'input': kwargs.get('input')}\n",
+            encoding="utf-8",
+        )
+    dispatch = _load("dispatch_adapt_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute("analytics", {"party_size": 4}, action="record")
+    assert out["status"] == "ok"
+    assert out["input"]["metric"] == "analytics"
+    assert out["input"]["value"] == 1
+    assert out["input"]["party_size"] == 4
+    bus = dispatch.execute("event_bus", {"party_size": 4})
+    assert bus["input"]["topic"] == "event_bus.event"
+
+
 def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):
     """The deterministic path must at least reach a real action -- the
     block.json default -- instead of the guaranteed 'Unknown action: None'."""

@@ -200,6 +200,7 @@ def test_the_vendored_registry_lists_only_what_was_cloned(tmp_path):
     assert "farewell" not in registry, "registry names a block that was never vendored"
 
 
+
 def test_a_standalone_block_vendors_no_runtime_slice(tmp_path):
     """Mirror-style blocks import nothing from the Store runtime; vendoring a
     slice they do not use would ship dead code into every platform."""
@@ -489,4 +490,53 @@ def test_store_registry_single_quotes_still_parse(tmp_path):
         encoding="utf-8"
     )
     assert "greeting" in registry
+
+
+def test_cloner_rewrites_zero_arg_store_constructors(tmp_path):
+    """Live TESTER: DatabaseBlock.__init__ required hal_block and config,
+    kit shims called block_cls(), and every capability died on construct."""
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        textwrap.dedent(
+            """
+            class GreetingBlock:
+                def __init__(self, hal_block, config):
+                    self.hal_block = hal_block
+                    self.config = config
+
+                async def execute(self, input_data, params):
+                    return {"status": "ok", "result": {"greeting": "hello"}}
+            """
+        ),
+        encoding="utf-8",
+    )
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+    shim = (ws.destination / "vendor" / "blocks" / "greeting" / "block.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_instantiate_store_block" in shim
+    assert "instance = block_cls()" not in shim
+
+    probe = textwrap.dedent(
+        """
+        import importlib.util, json, os, pathlib
+        for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+            os.environ.pop(var, None)
+        path = pathlib.Path("vendor/blocks/greeting/block.py")
+        spec = importlib.util.spec_from_file_location("vendored_greeting", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        print(json.dumps(module.run(input={"name": "site"})))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == {"greeting": "hello"}
 
