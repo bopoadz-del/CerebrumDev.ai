@@ -229,3 +229,30 @@ def test_product_export_omits_tester_caches(tmp_path):
     assert not any(".pytest_cache" in n for n in names)
     assert not any(n.endswith(".pyc") for n in names)
 
+
+def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
+    """The Floor download must look like a Factory product tree.
+
+    The live winery-hospitality zip had app/ + vendor/ and no kits/. A
+    cache-free zipper is not enough — generation must stock kit packs
+    (and vendor/blocks) so the next export is a platform, not a runner.
+    """
+    import zipfile
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.generator import ProductGenerator
+    from app.routers.session_product import zip_generated_product
+
+    bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
+    out = tmp_path / "winery-shaped"
+    ProductGenerator(
+        bp, blocks_root=None, factory_commit="t", blocks_commit="t"
+    ).generate(out)
+    zpath = zip_generated_product(out, tmp_path / "winery-hospitality-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    tops = {n.split("/")[0] for n in names}
+    assert "app" in tops
+    assert any(n.startswith("vendor/blocks/") for n in names) or "blocks" in tops
+    assert any(n.startswith("kits/") for n in names)
+    assert any(n.endswith("manifest.json") and n.startswith("kits/") for n in names)
+

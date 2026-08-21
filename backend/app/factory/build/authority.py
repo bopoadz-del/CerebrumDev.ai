@@ -128,14 +128,16 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         title="Block stocker",
         mandate=(
             "Vendor each resolved block's source at a pinned commit, plus the "
-            "local dispatch runtime those shims stand on, so handlers import "
+            "local dispatch runtime those shims stand on, plus the kit packs "
+            "the Factory shelf assigns those blocks to, so handlers import "
             "blocks instead of calling the store over HTTP. Write only "
-            "vendor/** and blocks.lock.json. Exact answers — no agent."
+            "vendor/**, kits/**, and blocks.lock.json. Exact answers — no agent."
         ),
         agent=AgentSeat.NONE,
         http_routes=("GET /v1/inventory",),
         write_lanes=(
             (LaneRoot.WORKSPACE, "vendor/**"),
+            (LaneRoot.WORKSPACE, "kits/**"),
             (LaneRoot.WORKSPACE, "blocks.lock.json"),
         ),
         gate="every vendored block imports with no network configured",

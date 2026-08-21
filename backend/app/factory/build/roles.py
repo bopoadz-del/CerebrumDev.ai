@@ -781,10 +781,10 @@ def _runtime_pin(blocks_root: Path) -> str:
 def run_cloner(ctx: RoleContext) -> RoleResult:
     """Block stocker: vendor each resolved block's real source into the workspace.
 
-    Writes only under ``vendor/`` plus the lockfile -- its whole lane. The
-    lockfile records where each block came from so the Store registrar can
-    later tell a Store-sourced clone from a mirror stub. No agent. Published
-    on the product as ``GET /v1/inventory``.
+    Writes under ``vendor/``, ``kits/``, and the lockfile -- its whole lane.
+    The lockfile records where each block (and kit pack) came from so the
+    Store registrar can later tell a Store-sourced clone from a mirror stub.
+    No agent. Published on the product as ``GET /v1/inventory``.
     """
     block_ids = tuple(ctx.state.get("resolved_blocks", ()))
     if not block_ids:
@@ -876,9 +876,21 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         Path("vendor") / "blocks" / "__init__.py",
         '"""Blocks vendored at build time, pinned by blocks.lock.json."""\n',
     )
+
+    from app.factory.kit_pack import stock_kits_via_workspace
+
+    kit_lock = stock_kits_via_workspace(
+        ctx.workspace, vendored, blocks_root=ctx.blocks_root
+    )
+    if kit_lock:
+        lock["kits"] = kit_lock
+        ctx.workspace.write_text(
+            "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
+        )
+
     return RoleResult(
         ok=True,
-        detail=f"vendored {len(vendored)} block(s)",
+        detail=f"vendored {len(vendored)} block(s), {len(kit_lock)} kit(s)",
         vendored_blocks=tuple(vendored),
         notes={"lock": lock},
     )
@@ -1903,6 +1915,7 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 | `app/actions/` | capability handlers |
 | `app/dispatch.py` | local block dispatch |
 | `vendor/blocks/` | vendored block source, pinned by `blocks.lock.json` |
+| `kits/` | kit packs for the capabilities (Factory shelf / Blocks kits) |
 """
 
 
@@ -2701,6 +2714,19 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '            assert "cannot import" not in str(exc), (block_id, exc)',
         "        else:",
         "            assert isinstance(result, dict), block_id",
+    ]
+    if vendored:
+        smoke += [
+            "",
+            "",
+            "def test_kit_packs_present():",
+            '    """The download is a product tree: kits/ next to vendor/blocks."""',
+            "    from pathlib import Path as _Path",
+            '    kits = _Path(__file__).resolve().parents[1] / "kits"',
+            '    assert kits.is_dir(), "kits/ missing from the delivered platform"',
+            '    assert list(kits.glob("*/manifest.json")), "no kit pack manifests"',
+        ]
+    smoke += [
         "",
         "",
         "def test_every_capability_handle_returns_mapping():",
