@@ -201,7 +201,6 @@ def test_workbench_sandbox_uses_budget_preexec(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sp, "run", _fake_run)
     sandbox = WorkbenchSandbox("mem-budget")
-    sandbox.write_text("probe.txt", "x")
     result = sandbox.run_command(["/bin/true"])
     assert result["returncode"] == 0
     if os.name == "posix":
