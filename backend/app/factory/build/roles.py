@@ -1041,7 +1041,12 @@ def _ensure_offline_block_input(
             if value is None:
                 data[key] = key
     if block_id == "workflow":
-        data.setdefault("result", {"status": "ok", "ok": True})
+        existing = data.get("result")
+        if not isinstance(existing, dict):
+            data["result"] = {"status": "ok", "ok": True, "value": existing}
+        else:
+            existing.setdefault("status", "ok")
+            existing.setdefault("ok", True)
         if not isinstance(data.get("steps"), list) or not data.get("steps"):
             data["steps"] = _default_block_field(block_id, "steps", original)
     if block_id == "database":
