@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
+import './verifyGate.css'
 
 // Observability: Sentry activates only when the deployment provides a DSN.
 // The dynamic import keeps it out of the bundle when unconfigured.
