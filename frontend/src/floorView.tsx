@@ -3,8 +3,10 @@ import {
   awaitBuild,
   chatEventText,
   chatStream,
+  product,
   type BuildStatus,
   type ChatEvent,
+  type ProductDesign,
 } from './api/factory'
 
 interface Capability {
@@ -29,8 +31,6 @@ interface ChatMsg {
     drafting_note?: string
   }
 }
-
-/* ------------------------------ Blueprint card ----------------------------- */
 
 function humanize(id: string): string {
   return id
@@ -62,7 +62,7 @@ export function BlueprintCard({
         <span className="bp-vertical">{blueprint.vertical ?? '—'}</span>
         {blueprint.drafting_mode && (
           <span
-            className={`bp-drafting-mode ${blueprint.drafting_mode}`}
+            className={'bp-drafting-mode ' + blueprint.drafting_mode}
             title={blueprint.drafting_note ?? undefined}
           >
             {blueprint.drafting_mode === 'architect_llm'
@@ -76,7 +76,7 @@ export function BlueprintCard({
       {blueprint.drafting_mode === 'keyword_fallback' && (
         <p className="bp-summary dim">
           The architect LLM did not draft this blueprint
-          {blueprint.drafting_note ? ` (${blueprint.drafting_note})` : ''} — it was
+          {blueprint.drafting_note ? ' (' + blueprint.drafting_note + ')' : ''} — it was
           assembled from deterministic templates.
         </p>
       )}
@@ -96,7 +96,7 @@ export function BlueprintCard({
                 }
               />
               <span className="bp-cap-id">{humanize(c.id)}</span>
-              <span className={`bp-strategy ${c.strategy_hint ?? 'REUSE'}`}>{c.strategy_hint ?? 'REUSE'}</span>
+              <span className={'bp-strategy ' + (c.strategy_hint ?? 'REUSE')}>{c.strategy_hint ?? 'REUSE'}</span>
             </label>
             {c.description && <p className="bp-cap-desc">{c.description}</p>}
             {c.block_ids && c.block_ids.length > 0 && (
@@ -108,7 +108,7 @@ export function BlueprintCard({
       <div className="card-actions">
         <button disabled={busy || selectedCount === 0} onClick={() => onApprove(excluded)}>
           {excluded.length > 0
-            ? `Approve & build (${selectedCount} of ${caps.length})`
+            ? 'Approve & build (' + selectedCount + ' of ' + caps.length + ')'
             : 'Approve & build'}
         </button>
       </div>
@@ -164,19 +164,52 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (build.state === 'succeeded') {
     const n = build.authorship?.agent_written
     return n != null
-      ? `Coding agent finished — ${n} agent-written artifact(s). Download it from Your Platforms.`
+      ? 'Coding agent finished — ' + n + ' agent-written artifact(s). Download it from Your Platforms.'
       : 'Coding agent finished. Download it from Your Platforms.'
   }
   if (build.state === 'failed' || build.state === 'stalled') {
-    return `The coding agent stopped: ${build.detail ?? 'build did not pass its gates'}.`
+    return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
   }
   const done = build.phases_done ?? 0
   const total = build.phases_total ?? 5
   if (build.activity) {
-    return `Writing your platform — ${done}/${total} phases (${build.activity})`
+    return 'Writing your platform — ' + done + '/' + total + ' phases (' + build.activity + ')'
   }
   const phase = build.completed?.length ? build.completed[build.completed.length - 1] : 'starting'
-  return `Writing your platform — ${done}/${total} phases (last: ${phase})`
+  return 'Writing your platform — ' + done + '/' + total + ' phases (last: ' + phase + ')'
+}
+
+function hydrateFromDesign(design: ProductDesign): {
+  msgs: ChatMsg[]
+  coderActive: boolean
+} {
+  const msgs: ChatMsg[] = [
+    {
+      role: 'factory',
+      text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and when you approve the feature list the coding agent takes over and writes it.',
+    },
+  ]
+  const bp = design.blueprint as ChatMsg['blueprint'] | null | undefined
+  const gen = design.generation
+  if (bp && !design.blueprint_approved && !gen) {
+    msgs.push({
+      role: 'factory',
+      text: 'Blueprint drafted: ' + (bp.product_name ?? 'platform') + ' (' + (bp.vertical ?? '—') + '). Approve the feature list to start the coding agent.',
+      card: 'blueprint',
+      blueprint: bp,
+    })
+  }
+  if (gen?.engine === 'runner') {
+    msgs.push({
+      role: 'factory',
+      text: 'The coding agent has taken over the floor.',
+      card: 'generation',
+      engine: 'runner',
+      triggeredBy: gen.triggered_by,
+    })
+    return { msgs, coderActive: true }
+  }
+  return { msgs, coderActive: false }
 }
 
 export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
@@ -193,8 +226,29 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    let cancelled = false
+    product
+      .get(sessionId)
+      .then((design) => {
+        if (cancelled || !design) return
+        const hydrated = hydrateFromDesign(design)
+        setMsgs((current) => (current.length > 1 ? current : hydrated.msgs))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [sessionId])
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView?.({ behavior: 'smooth' })
   }, [msgs, coderBuild])
+
+  useEffect(() => {
+    if (msgs.some((m) => m.card === 'generation' && m.engine === 'runner')) {
+      setCoderActive(true)
+    }
+  }, [msgs])
 
   useEffect(() => {
     if (!coderActive) return
@@ -261,14 +315,17 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
               { role: 'factory', text: String(ev.data ?? 'Something went wrong.'), card: 'error' },
             ])
           } else if (ev.event === 'chain' || ev.event === 'rules') {
-            setMsgs((m) => [
-              ...m.slice(0, -1),
-              {
-                role: 'factory',
+            setMsgs((m) => {
+              const copy = [...m]
+              const last = copy[copy.length - 1]
+              if (last?.text?.trim()) return copy
+              copy[copy.length - 1] = {
+                ...last,
                 text: 'That sounds like kit configuration. The floor builds whole platforms — describe the platform you want instead.',
                 card: 'info',
-              },
-            ])
+              }
+              return copy
+            })
           }
         })
       } catch (e) {
@@ -302,7 +359,7 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
       setBusy(true)
       try {
         for (const id of excludedIds) {
-          await sendCore(`remove capability ${id}`)
+          await sendCore('remove capability ' + id)
         }
         await sendCore('approve')
       } finally {
@@ -335,8 +392,8 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
       </header>
       <div className="chat-scroll">
         {msgs.map((m, i) => (
-          <div key={i} className={`bubble-row ${m.role}`}>
-            <div className={`bubble ${m.role} ${m.card ?? ''}`}>
+          <div key={i} className={'bubble-row ' + m.role}>
+            <div className={'bubble ' + m.role + ' ' + (m.card ?? '')}>
               {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
               {m.card === 'blueprint' && m.blueprint && (
                 <BlueprintCard
