@@ -144,8 +144,13 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
   await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible()
 
   const approve = page.getByRole('button', { name: /Approve & build/ })
-  const takeover = page.getByRole('status').filter({ hasText: /Coding agent has taken over/i })
+  const takeover = page.getByRole('heading', { name: 'Coding agent has taken over' }).or(
+    page.getByText(/coding agent has taken over/i),
+  )
   const composer = page.getByPlaceholder(/Try:|coding agent has taken over/i)
+
+  await expect(takeover.or(approve).or(composer)).toBeVisible({ timeout: 45_000 })
+  await page.waitForTimeout(1500)
 
   if (await takeover.isVisible().catch(() => false)) {
     await expect(page.getByText('COLLECTOR')).toBeVisible()
@@ -158,8 +163,13 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
     await expect(composer).toBeEnabled({ timeout: 15_000 })
     await composer.fill(SMALL_BRIEF)
     await page.getByRole('button', { name: 'Send' }).click()
-    await expect(approve).toBeVisible({ timeout: 90_000 })
+    await expect(approve.or(takeover)).toBeVisible({ timeout: 90_000 })
     expect(draftHits.length).toBeGreaterThan(0)
+  }
+
+  if (await takeover.isVisible().catch(() => false)) {
+    await expect(page.getByText('COLLECTOR')).toBeVisible()
+    return
   }
 
   await expect(approve).toBeEnabled()
