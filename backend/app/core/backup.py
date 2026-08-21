@@ -28,6 +28,7 @@ managed Postgres with point-in-time recovery, if disk loss is in scope.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -128,20 +129,105 @@ def pg_dump_probe() -> Dict[str, Any]:
     return {"available": path is not None, "path": path}
 
 
-def snapshot_postgres(url: str, dest: Path) -> None:
-    """Dump a Postgres accounts database with pg_dump."""
+def _sqlalchemy_accounts_url(url: str) -> str:
+    """Same driver rewrite accounts_store uses — postgres:// → postgresql+psycopg."""
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://") :]
+    if url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return url
+
+
+def _sanitize_dump_err(text: str, url: str) -> str:
+    """stderr can echo the connection string; never put that in /ready."""
+    redacted = (text or "").replace(url, "[redacted]")
+    redacted = re.sub(r"://[^@\s/]+@", "://[redacted]@", redacted)
+    return " ".join(redacted.split())[:240]
+
+
+def snapshot_postgres_via_sqlalchemy(url: str, dest: Path) -> None:
+    """Logical SQL dump that does not depend on pg_dump matching server version.
+
+    Neon is Postgres 18; python:3.11-slim's postgresql-client is older. pg_dump
+    then exits 1 ('server version mismatch') and /ready reported last_backup
+    failed even though the accounts DB was reachable. SQLAlchemy already talks
+    to that DB for auth.
+    """
+    import sqlalchemy as sa
+
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if shutil.which("pg_dump") is None:
-        raise RuntimeError("pg_dump is not installed in this image")
-    proc = subprocess.run(
-        ["pg_dump", "--no-owner", "--no-privileges", "--format=custom", "--file", str(dest), url],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if proc.returncode != 0:
-        # stderr can carry the connection string; report the code, not the text.
-        raise RuntimeError(f"pg_dump failed with exit code {proc.returncode}")
+    engine = sa.create_engine(_sqlalchemy_accounts_url(url), pool_pre_ping=True)
+    try:
+        insp = sa.inspect(engine)
+        tables = insp.get_table_names()
+        with dest.open("w", encoding="utf-8") as out, engine.connect() as conn:
+            out.write("-- cerebrumdev accounts dump (sqlalchemy fallback)\nBEGIN;\n")
+            for table in tables:
+                cols = [c["name"] for c in insp.get_columns(table)]
+                if not cols:
+                    continue
+                col_list = ", ".join(f'"{c}"' for c in cols)
+                rows = conn.execute(sa.text(f'SELECT {col_list} FROM "{table}"'))
+                for row in rows:
+                    vals: List[str] = []
+                    for v in row:
+                        if v is None:
+                            vals.append("NULL")
+                        elif isinstance(v, bool):
+                            vals.append("TRUE" if v else "FALSE")
+                        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                            vals.append(str(v))
+                        else:
+                            vals.append("'" + str(v).replace("'", "''") + "'")
+                    out.write(f'INSERT INTO "{table}" ({col_list}) VALUES ({{", ".join(vals)}});\n')
+            out.write("COMMIT;\n")
+    finally:
+        engine.dispose()
+
+
+def snapshot_postgres(url: str, dest: Path) -> Path:
+    """Dump accounts. Prefer pg_dump custom format; SQL fallback on mismatch.
+
+    Returns the path actually written (``dest`` or ``dest.with_suffix('.sql')``).
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dump_err = "pg_dump is not installed in this image"
+    if shutil.which("pg_dump") is not None:
+        env = os.environ.copy()
+        env.setdefault("PGSSLMODE", "require")
+        proc = subprocess.run(
+            [
+                "pg_dump",
+                "--no-owner",
+                "--no-privileges",
+                "--format=custom",
+                "--file",
+                str(dest),
+                url,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env=env,
+        )
+        if proc.returncode == 0 and dest.is_file() and dest.stat().st_size > 0:
+            return dest
+        dump_err = (
+            f"pg_dump failed with exit code {proc.returncode}"
+            f": {_sanitize_dump_err(proc.stderr or proc.stdout or '', url)}"
+        ).rstrip(": ")
+        try:
+            dest.unlink(missing_ok=True)
+        except OSError:
+            pass
+    sql_dest = dest.with_suffix(".sql")
+    try:
+        snapshot_postgres_via_sqlalchemy(url, sql_dest)
+    except Exception as exc:  # noqa: BLE001 — surface both failures
+        raise RuntimeError(f"{dump_err}; sqlalchemy fallback failed: {exc}") from exc
+    if not sql_dest.is_file() or sql_dest.stat().st_size == 0:
+        raise RuntimeError(f"{dump_err}; sqlalchemy fallback wrote an empty dump")
+    return sql_dest
 
 
 def verify_sqlite_snapshot(path: Path) -> Dict[str, int]:
@@ -189,8 +275,8 @@ def create_backup(
         if pg_url:
             result.engine = "postgres"
             try:
-                snapshot_postgres(pg_url, staging / "accounts.dump")
-                result.included.append("accounts.dump")
+                dumped = snapshot_postgres(pg_url, staging / "accounts.dump")
+                result.included.append(dumped.name)
             except Exception as exc:  # noqa: BLE001
                 result.error = f"accounts dump failed: {exc}"
                 return result
