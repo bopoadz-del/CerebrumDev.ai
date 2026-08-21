@@ -250,6 +250,13 @@ export function Subscription() {
                 Manage billing
               </button>
             )}
+            {status.checkout_available === false && (
+              <p className="dim note">
+                Payments are not connected on this deployment yet — the factory owner
+                links the Stripe account. Upgrade still says so instead of opening a
+                blank checkout. Your current access is unaffected.
+              </p>
+            )}
           </>
         ) : (
           <p className="dim">Loading…</p>
