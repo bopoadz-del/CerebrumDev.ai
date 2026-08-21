@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+import asyncio
 
 from dotenv import load_dotenv
 
@@ -38,7 +39,7 @@ from fastapi.responses import JSONResponse, Response
 
 from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
-from .core.auth import require_api_key, verify_production_auth
+from .core.auth import require_api_key, require_master_key, verify_production_auth
 from .core.billing import require_entitled
 from .routers import (
     accounts,
@@ -170,12 +171,13 @@ def _backup_details() -> dict:
     """Surface the last backup honestly. Never invent ok: true."""
     from .core import backup as backup_mod
 
-    last = backup_scheduler.last_status()
+    last = backup_scheduler.last_status_for_ready()
     pg_url = bool(os.getenv("ACCOUNTS_DATABASE_URL", "").strip())
     dump = backup_mod.pg_dump_probe()
     probe = {
         "pg_dump_needed": pg_url,
         "pg_dump_available": bool(dump.get("available")),
+        "pg_dump_version": dump.get("version"),
     }
     live_host = backup_mod.accounts_host_fingerprint()
     if last is None:
@@ -189,11 +191,12 @@ def _backup_details() -> dict:
             **probe,
         }
     recorded_host = last.get("accounts_host")
-    return {
+    details = {
         "ok": bool(last.get("ok")),
         "at": last.get("at"),
         "error": last.get("error"),
         "engine": last.get("engine"),
+        "dump_method": last.get("dump_method"),
         "accounts_host": recorded_host,
         "live_accounts_host": live_host,
         "matches_live_engine": (
@@ -201,6 +204,11 @@ def _backup_details() -> dict:
         ),
         **probe,
     }
+    if last.get("reconciled_from"):
+        details["reconciled_from"] = last.get("reconciled_from")
+        details["prior_error"] = last.get("prior_error")
+        details["archive"] = last.get("archive")
+    return details
 
 
 def _probe_redis() -> dict:
@@ -364,3 +372,15 @@ async def version():
         "env": os.getenv("ENV"),
         "sentry_configured": _probe_sentry()["configured"],
     }
+
+
+@app.post("/v1/ops/backup")
+async def trigger_backup(_admin=Depends(require_master_key)):
+    """Run one backup now and overwrite last_backup.json.
+
+    Nightly 03:00 UTC still runs in-process. This exists so a stale pg_dump
+    fail does not sit on /ready until tomorrow after a dump-path fix ships.
+    Master API key only — not a user login token.
+    """
+    report = await asyncio.to_thread(backup_scheduler.run_backup_once)
+    return report
