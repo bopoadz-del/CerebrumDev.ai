@@ -42,6 +42,9 @@ describe('Subscription', () => {
     expect(screen.getByText('trialing')).toBeInTheDocument()
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Upgrade' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Payments are not connected on this deployment yet/i),
+    ).toBeInTheDocument()
   })
 
   it('never uses hand-waving "being connected" copy', async () => {

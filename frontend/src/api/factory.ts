@@ -332,7 +332,16 @@ export interface BillingStatus {
 }
 
 export const billing = {
-  status: () => req<BillingStatus>('GET', '/v1/billing/status'),
+  status: async () => {
+    const raw = await req<BillingStatus & { billing?: BillingStatus; ok?: boolean }>(
+      'GET',
+      '/v1/billing/status',
+    )
+    if (raw.billing && typeof raw.billing === 'object') {
+      return { ...raw.billing, ok: raw.ok }
+    }
+    return raw
+  },
   checkout: () =>
     req<{ url?: string; checkout_url?: string }>('POST', '/v1/billing/checkout', {}),
   portal: () => req<{ url?: string; portal_url?: string }>('POST', '/v1/billing/portal', {}),

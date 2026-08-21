@@ -61,11 +61,14 @@ async function mockVerifiedFactory(page: Page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        plan: 'trial',
-        subscription_status: 'trialing',
-        trial_days_left: 3,
-        entitled: true,
-        checkout_available: false,
+        ok: true,
+        billing: {
+          plan: 'trial',
+          subscription_status: 'trialing',
+          trial_days_left: 3,
+          entitled: true,
+          checkout_available: false,
+        },
       }),
     })
   })
@@ -214,8 +217,9 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible()
   await expect(page.getByText('Trial days left')).toBeVisible()
   await expect(page.getByText('trialing')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
   await expect(page.getByText(/being connected/i)).toHaveCount(0)
+  await expect(page.getByText(/Payments are not connected on this deployment yet/i)).toBeVisible()
 
   await page.getByRole('button', { name: 'Account' }).click()
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
