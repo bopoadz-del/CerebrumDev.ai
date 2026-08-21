@@ -83,6 +83,7 @@ class ProductGenerator:
         self._write_universal_console(out)
         self._write_connectors(out)
         self._copy_referenced_blocks(out)
+        self._copy_referenced_kits(out)
         self._write_blueprint_copy(out)
         self._write_edge_profile(out)
         self._write_certification_scaffold(out)
@@ -233,6 +234,7 @@ class ProductGenerator:
             + "  cerebrum_product_kernel/ Vendored kernel contract\n"
             + "  connectors/              Honest stub connectors (not_implemented)\n"
             + "vendor/blocks/             Versioned Store block snapshot (offline-verifiable)\n"
+            + "kits/                      Kit packs for the product's capabilities\n"
             + "product-dna/               Entity model, rule overlay, test catalog, block lockfile\n"
             + "docs/\n"
             + "  blueprint/               The blueprint this repo was generated from\n"
@@ -415,6 +417,15 @@ def test_console_ui_is_served_at_root():
         smoke = smoke.replace("__PRODUCT_NAME__", bp.product_name)
         smoke = smoke.replace("__PRODUCT_ID__", bp.product_id)
         smoke = smoke.replace("__CAP_IDS__", repr(cap_ids))
+        if self.plan.dual_registered_blocks:
+            smoke += '''
+
+def test_kit_packs_present():
+    kits = ROOT / "kits"
+    assert kits.is_dir(), "kits/ missing — export is a runner, not a product tree"
+    manifests = list(kits.glob("*/manifest.json"))
+    assert manifests, "kits/ has no kit pack manifests"
+'''
         (tests_dir / "test_smoke.py").write_text(smoke, encoding="utf-8")
 
         scripts_dir = out / "scripts"
@@ -1375,6 +1386,17 @@ export default function {component}() {{
             mirror_src = mirror / bid
             if mirror_src.exists():
                 shutil.copytree(mirror_src, dest / bid, dirs_exist_ok=True)
+
+    def _copy_referenced_kits(self, out: Path) -> None:
+        from app.factory.kit_pack import stock_kits
+
+        if not self.plan.dual_registered_blocks:
+            return
+        stock_kits(
+            out,
+            self.plan.dual_registered_blocks,
+            blocks_root=self.blocks_root,
+        )
 
     def _write_blueprint_copy(self, out: Path) -> None:
         docs = out / "docs" / "blueprint"

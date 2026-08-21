@@ -781,10 +781,10 @@ def _runtime_pin(blocks_root: Path) -> str:
 def run_cloner(ctx: RoleContext) -> RoleResult:
     """Block stocker: vendor each resolved block's real source into the workspace.
 
-    Writes only under ``vendor/`` plus the lockfile -- its whole lane. The
-    lockfile records where each block came from so the Store registrar can
-    later tell a Store-sourced clone from a mirror stub. No agent. Published
-    on the product as ``GET /v1/inventory``.
+    Writes under ``vendor/``, ``kits/``, and the lockfile -- its whole lane.
+    The lockfile records where each block (and kit pack) came from so the
+    Store registrar can later tell a Store-sourced clone from a mirror stub.
+    No agent. Published on the product as ``GET /v1/inventory``.
     """
     block_ids = tuple(ctx.state.get("resolved_blocks", ()))
     if not block_ids:
@@ -876,9 +876,21 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         Path("vendor") / "blocks" / "__init__.py",
         '"""Blocks vendored at build time, pinned by blocks.lock.json."""\n',
     )
+
+    from app.factory.kit_pack import stock_kits_via_workspace
+
+    kit_lock = stock_kits_via_workspace(
+        ctx.workspace, vendored, blocks_root=ctx.blocks_root
+    )
+    if kit_lock:
+        lock["kits"] = kit_lock
+        ctx.workspace.write_text(
+            "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
+        )
+
     return RoleResult(
         ok=True,
-        detail=f"vendored {len(vendored)} block(s)",
+        detail=f"vendored {len(vendored)} block(s), {len(kit_lock)} kit(s)",
         vendored_blocks=tuple(vendored),
         notes={"lock": lock},
     )
@@ -1433,6 +1445,23 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _ensure_route_persists_payload(body: str) -> str:
+    """Coder routes often persist handle()'s envelope, not the request.
+
+    The live winery-hospitality zip saved ``result`` / ``handled``
+    (``{ok, data: {...}}``) into sqlite, so every column was NULL even
+    though POST returned ``ok: true``. The record is the payload.
+    """
+    rewritten = re.sub(
+        r"\bsave\(\s*(?!payload\s*\))([A-Za-z_][\w]*)\s*\)",
+        "save(payload)",
+        body,
+    )
+    if "save(payload)" not in rewritten:
+        rewritten = rewritten.rstrip() + "\n    stored = save(payload)\n"
+    return rewritten
+
+
 def _render_jobs_module(
     *,
     catalog: Dict[str, Any],
@@ -1729,8 +1758,10 @@ def main() -> int:
         print("  pip install -r requirements-dev.txt")
         print("VERDICT: CANNOT RUN")
         return 2
+    # Literal sys.executable. Extra braces make {{sys.executable}} a set,
+    # which compiles then TypeError's in Popen (py_compile cannot catch it).
     result = subprocess.run(
-        [{{sys.executable}}, "-m", "pytest", "tests", "-q", "-m", "not pilot"],
+        [sys.executable, "-m", "pytest", "tests", "-q", "-m", "not pilot"],
         cwd=ROOT,
     )
     ok = result.returncode == 0
@@ -1884,6 +1915,7 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 | `app/actions/` | capability handlers |
 | `app/dispatch.py` | local block dispatch |
 | `vendor/blocks/` | vendored block source, pinned by `blocks.lock.json` |
+| `kits/` | kit packs for the capabilities (Factory shelf / Blocks kits) |
 """
 
 
@@ -2292,6 +2324,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 # Coder bodies skip field constraints; the tasting-room
                 # TESTER then failed agent "reject" cases the route accepted.
                 body = _constraint_guard(spec) + "\n" + body
+        body = _ensure_route_persists_payload(body)
         route_bodies[cid] = body
         name = cid.replace("-", "_")
         if name in KERNEL_ROUTE_NAMES:
@@ -2492,6 +2525,22 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 _SAMPLE_VALUES = {"str": "sample", "int": 1, "float": 1.5, "bool": True}
 
 
+def _looks_like_email_field(field: Dict[str, Any]) -> bool:
+    """Field name or format implies an address, not the word 'sample'.
+
+    The live winery-hospitality export failed its own pilot suite because
+    TESTER sent guest_email='sample' and WRITER (correctly) required '@'.
+    Vocabulary/min/max cannot express that; the name is the constraint.
+    """
+    if str(field.get("type") or "str") != "str":
+        return False
+    fmt = str(field.get("format") or "").lower().replace("-", "")
+    if fmt == "email":
+        return True
+    name = str(field.get("name") or "").lower()
+    return name == "email" or name.endswith("_email") or name.startswith("email_")
+
+
 def _sample_value(field: Dict[str, Any]) -> Any:
     """A value that satisfies every constraint the field declares.
 
@@ -2503,6 +2552,8 @@ def _sample_value(field: Dict[str, Any]) -> Any:
     """
     if field.get("allowed_values"):
         return field["allowed_values"][0]
+    if _looks_like_email_field(field):
+        return "guest@example.com"
     ftype = field["type"]
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
@@ -2663,6 +2714,19 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         '            assert "cannot import" not in str(exc), (block_id, exc)',
         "        else:",
         "            assert isinstance(result, dict), block_id",
+    ]
+    if vendored:
+        smoke += [
+            "",
+            "",
+            "def test_kit_packs_present():",
+            '    """The download is a product tree: kits/ next to vendor/blocks."""',
+            "    from pathlib import Path as _Path",
+            '    kits = _Path(__file__).resolve().parents[1] / "kits"',
+            '    assert kits.is_dir(), "kits/ missing from the delivered platform"',
+            '    assert list(kits.glob("*/manifest.json")), "no kit pack manifests"',
+        ]
+    smoke += [
         "",
         "",
         "def test_every_capability_handle_returns_mapping():",

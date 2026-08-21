@@ -117,6 +117,9 @@ def test_d3_runner_is_the_production_artifact(tmp_path, monkeypatch):
                      "app/dispatch.py", "blocks.lock.json", "tests/test_smoke.py",
                      "scripts/release_gate.py"):
         assert (out / required).is_file(), f"missing {required}"
+    assert (out / "vendor" / "blocks").is_dir(), "missing vendor/blocks"
+    kit_manifests = list((out / "kits").glob("*/manifest.json"))
+    assert kit_manifests, "missing kits/*/manifest.json — export has no kit packs"
 
     # The failure the physical download exposed: capability handlers that
     # call the operator's store over HTTP instead of running blocks locally.

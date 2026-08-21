@@ -48,6 +48,30 @@ def test_a_vocabulary_field_samples_from_its_own_vocabulary():
     assert _sample_value(field) in field["allowed_values"]
 
 
+def test_an_email_field_samples_an_address_not_the_word_sample():
+    """Live winery-hospitality zip: club_waitlist.guest_email='sample'
+    failed the writer's 'must be a valid email' check. The field name is
+    the constraint vocabulary cannot express."""
+    assert "@" in _sample_value({"name": "guest_email", "type": "str"})
+    assert "@" in _sample_value({"name": "email", "type": "str", "format": "email"})
+    assert _sample_value({"name": "tasting_note", "type": "str"}) == "sample"
+
+
+def test_coder_route_that_saves_the_handle_envelope_is_rewritten_to_payload():
+    """Live zip POSTed ok:true then stored all-null rows because the coder
+    persisted handle()'s {ok, data} envelope instead of the request."""
+    from app.factory.build.roles import _ensure_route_persists_payload
+
+    guest = "    result = handle(payload)\n    record = save(result)\n"
+    assert "save(payload)" in _ensure_route_persists_payload(guest)
+    assert "save(result)" not in _ensure_route_persists_payload(guest)
+    waitlist = "    handled = handle(payload)\n    saved = save(handled)\n"
+    assert "save(payload)" in _ensure_route_persists_payload(waitlist)
+    assert "save(handled)" not in _ensure_route_persists_payload(waitlist)
+    already = "    stored = save(payload)\n"
+    assert _ensure_route_persists_payload(already) == already
+
+
 def test_a_bounded_number_samples_inside_its_bounds():
     assert _sample_value({"name": "n", "type": "int", "min": 5, "max": 9}) == 5
     assert _sample_value({"name": "n", "type": "int", "max": 0}) == 0

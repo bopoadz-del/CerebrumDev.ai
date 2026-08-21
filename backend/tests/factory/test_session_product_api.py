@@ -204,3 +204,72 @@ def test_stalled_build_cannot_be_downloaded(client, tmp_path):
     detail = pkg.json()["detail"]
     assert "gone" in detail or "stalled" in detail.lower() or "will not be shipped" in detail
 
+
+def test_product_export_omits_tester_caches(tmp_path):
+    """shutil.make_archive shipped the TESTER's __pycache__ and .pytest_cache
+    in the live winery-hospitality zip (146 files, lots of bytecode)."""
+    import zipfile
+
+    from app.routers.session_product import zip_generated_product
+
+    out = tmp_path / "winery-hospitality"
+    (out / "app").mkdir(parents=True)
+    (out / "app" / "main.py").write_text("ok\n", encoding="utf-8")
+    (out / "app" / "__pycache__").mkdir()
+    (out / "app" / "__pycache__" / "main.cpython-311.pyc").write_bytes(b"\x00")
+    (out / ".pytest_cache").mkdir()
+    (out / ".pytest_cache" / "CACHEDIR.TAG").write_text("tag\n", encoding="utf-8")
+    (out / "README.md").write_text("hi\n", encoding="utf-8")
+
+    zpath = zip_generated_product(out, tmp_path / "winery-hospitality-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    assert "README.md" in names
+    assert "app/main.py" in names
+    assert not any("__pycache__" in n for n in names)
+    assert not any(".pytest_cache" in n for n in names)
+    assert not any(n.endswith(".pyc") for n in names)
+
+
+def test_product_export_zips_epoch_zero_files(tmp_path):
+    """Kit/kernel copies in this environment have mtime 0; ZIP forbids that."""
+    import os
+    import zipfile
+
+    from app.routers.session_product import zip_generated_product
+
+    out = tmp_path / "product"
+    (out / "kits" / "platform").mkdir(parents=True)
+    target = out / "kits" / "platform" / "manifest.json"
+    target.write_text("{}\n", encoding="utf-8")
+    os.utime(target, (0, 0))
+    zpath = zip_generated_product(out, tmp_path / "epoch-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    assert "kits/platform/manifest.json" in names
+
+
+def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
+    """The Floor download must look like a Factory product tree.
+
+    The live winery-hospitality zip had app/ + vendor/ and no kits/. A
+    cache-free zipper is not enough — generation must stock kit packs
+    (and vendor/blocks) so the next export is a platform, not a runner.
+    """
+    import zipfile
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.generator import ProductGenerator
+    from app.routers.session_product import zip_generated_product
+
+    bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
+    out = tmp_path / "winery-shaped"
+    ProductGenerator(
+        bp, blocks_root=None, factory_commit="t", blocks_commit="t"
+    ).generate(out)
+    zpath = zip_generated_product(out, tmp_path / "winery-hospitality-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    tops = {n.split("/")[0] for n in names}
+    assert "app" in tops
+    assert any(n.startswith("vendor/blocks/") for n in names) or "blocks" in tops
+    assert any(n.startswith("kits/") for n in names)
+    assert any(n.endswith("manifest.json") and n.startswith("kits/") for n in names)
+

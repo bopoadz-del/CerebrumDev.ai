@@ -11,7 +11,7 @@ POST /v1/sessions/{id}/product/mode
 
 from __future__ import annotations
 
-import shutil
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
@@ -77,6 +77,48 @@ def _enforce_export_quota(account_id: Optional[str]) -> None:
 def _enforce_generation_quota(account_id: Optional[str]) -> None:
     """Server-side trial boundary: generations are metered per account."""
     require_within_limit(account_id, "generation")
+
+
+_EXPORT_SKIP_DIR_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    ".git",
+}
+_EXPORT_SKIP_SUFFIXES = {".pyc", ".pyo"}
+# ZIP spec rejects DOS timestamps before 1980. Copied kit/kernel files in
+# this environment (and some git checkouts) have mtime 0.
+_ZIP_MIN_EPOCH = 315532800  # 1980-01-01 UTC
+
+
+def zip_generated_product(out: Path, archive_base: Path) -> Path:
+    """Zip ``out`` to ``{archive_base}.zip``, omitting TESTER caches.
+
+    ``shutil.make_archive`` copies the whole tree, including ``__pycache__``
+    and ``.pytest_cache`` left by the factory's own pytest run. Those are
+    not the product; the live winery-hospitality export shipped 146 files
+    of which a large slice was bytecode.
+    """
+    import time as _time
+
+    zip_path = Path(str(archive_base) + ".zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(out.rglob("*")):
+            rel = path.relative_to(out)
+            if any(part in _EXPORT_SKIP_DIR_NAMES for part in rel.parts):
+                continue
+            if path.suffix in _EXPORT_SKIP_SUFFIXES:
+                continue
+            if not path.is_file():
+                continue
+            mtime = max(path.stat().st_mtime, _ZIP_MIN_EPOCH)
+            info = zipfile.ZipInfo(rel.as_posix(), date_time=_time.localtime(mtime)[:6])
+            info.compress_type = zipfile.ZIP_DEFLATED
+            zf.writestr(info, path.read_bytes())
+    return zip_path
 
 
 def _enforce_draft_quota(account_id: Optional[str]) -> None:
@@ -168,7 +210,7 @@ def download_product_package(
         )
 
     archive_base = out.parent / f"{out.name}-export"
-    archive = shutil.make_archive(str(archive_base), "zip", root_dir=out)
+    archive = zip_generated_product(out, archive_base)
     product_id = gen.get("product_id") or out.name
     return FileResponse(
         archive,

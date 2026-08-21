@@ -56,6 +56,7 @@ def test_collector_is_read_only(workspace):
     ("role", "allowed", "denied"),
     (
         (BuildRole.CLONER, "vendor/blocks/web/block.py", "app/actions/orders.py"),
+        (BuildRole.CLONER, "kits/platform/manifest.json", "app/actions/orders.py"),
         (BuildRole.WRITER, "app/actions/orders.py", "vendor/blocks/web/block.py"),
         (BuildRole.TESTER, "tests/test_orders.py", "app/actions/orders.py"),
     ),
