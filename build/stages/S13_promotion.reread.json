@@ -1,0 +1,41 @@
+{
+  "stage": "S13",
+  "name": "promotion",
+  "verdict": "PASS",
+  "PILOT_READY": false,
+  "reread_of": "build/stages/S13_promotion.json",
+  "reread_at": "2026-08-23T10:47:26Z",
+  "independent": true,
+  "reader": "cloud-agent-s13-promotion",
+  "emitter": "app.factory.build.promotion.evaluate_promotion",
+  "checked": [
+    "evaluate_promotion re-ran against build/stages; PILOT_READY still false",
+    "first_failing_criterion still S4_ship_kernel.json:reread_mismatch (S9_test.json also mismatches)",
+    "S10/S11/S12 records ok=true with matching reread twins and performed drills",
+    "reject_lotdesk_promotion: PILOT_READY false; F1+F5+F6+F24 present; fixture not patched",
+    "roles._coder_route_body still returns None; prepare_pilot_workspace absent",
+    "evaluate_harvest verdict BLOCKED; copied_count=0; authorized_write_path=false",
+    "full tests/factory: 397 passed, 1 skipped; test_promotion.py 14 passed",
+    "no PILOT_READY true in S13_promotion.json (in-tree gates do not all pass)"
+  ],
+  "disagreements": [],
+  "first_failing_criterion": "S4_ship_kernel.json:reread_mismatch",
+  "harvest_verdict": "BLOCKED",
+  "kernel_ownership": {
+    "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
+    "execute_action_callable": true,
+    "_coder_route_body_is_None": true,
+    "prepare_pilot_workspace": "absent",
+    "prepare_pilot_workspace_in_runner": false,
+    "prepare_pilot_workspace_in_pilot": false,
+    "ok": true
+  },
+  "not_claimed": [
+    "in-tree PILOT_READY true",
+    "Cerebrum-Blocks write",
+    "STORE_MANAGER harvest",
+    "LotDesk patched to pass",
+    "LLM-authored route bodies"
+  ],
+    "stop": "S13 independently re-read PASS. Emitter fail-closed on S4+S9 reread mismatch. Not in-tree PILOT_READY. Harvest remains BLOCKED."
+}
