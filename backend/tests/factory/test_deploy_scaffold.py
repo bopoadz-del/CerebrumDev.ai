@@ -112,7 +112,9 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "render.yaml",
         "alembic.ini",
         "scripts/entrypoint.sh",
+        "scripts/rollback.sh",
         "docs/data_lifecycle.json",
+        "docs/deploy.json",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
     assert assert_write_allowed(

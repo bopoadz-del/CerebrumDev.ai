@@ -65,7 +65,10 @@ DECLARED_GENERATOR_EXTRAS: Tuple[str, ...] = (
 DECLARED_RUNNER_EXTRAS: Tuple[str, ...] = (
     "app/dispatch.py",
     "app/kernel_bridge.py",
+    "app/domain_ops.py",
+    "app/work_queue.py",
     "docs/build_provenance.json",
+    "docs/domain_acceptance.json",
 )
 
 

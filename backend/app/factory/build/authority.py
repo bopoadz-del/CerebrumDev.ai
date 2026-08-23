@@ -65,6 +65,7 @@ KERNEL_ROUTE_NAMES: Tuple[str, ...] = (
     "capabilities",
     "gates",
     "provenance",
+    "work_queue",
 )
 
 
@@ -158,6 +159,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             "POST /v1/{capability}",
             "GET /v1/{capability}",
             "GET /v1/{capability}/{id}",
+            "PUT /v1/{capability}/{id}",
+            "DELETE /v1/{capability}/{id}",
+            "POST /v1/work_queue",
+            "POST /v1/work_queue/{id}/process",
+            "GET /v1/work_queue",
         ),
         write_lanes=(
             (LaneRoot.WORKSPACE, "app/**"),
@@ -179,10 +185,13 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
             (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
+            (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
             (LaneRoot.WORKSPACE, "alembic.ini"),
             (LaneRoot.WORKSPACE, "alembic/**"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
             (LaneRoot.WORKSPACE, "docs/data_lifecycle.json"),
+            (LaneRoot.WORKSPACE, "docs/deploy.json"),
+            (LaneRoot.WORKSPACE, "docs/domain_acceptance.json"),
             # 14-class contract surfaces ProductGenerator already emits.
             # Named prefixes, not a root or docs/** wildcard.
             (LaneRoot.WORKSPACE, "product-dna/**"),

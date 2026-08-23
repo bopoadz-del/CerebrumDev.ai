@@ -176,6 +176,9 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         "app/store.py",
         "app/migrations.py",
         "app/backup.py",
+        "app/health.py",
+        "app/observe.py",
+        "app/revision.py",
         "app/routes.py",
         "app/jobs.py",
         "app/main.py",
@@ -185,12 +188,19 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         "alembic/versions/0001_baseline.py",
         "alembic/versions/0002_lifecycle_audit.py",
         "scripts/entrypoint.sh",
+        "scripts/rollback.sh",
         "docs/data_lifecycle.json",
+        "docs/deploy.json",
+        "docs/domain_acceptance.json",
+        "app/domain_ops.py",
+        "app/work_queue.py",
         "README.md",
         "requirements.txt",
         "tests/conftest.py",
         "tests/test_models.py",
         "tests/test_data_lifecycle.py",
+        "tests/test_deploy.py",
+        "tests/test_domain_acceptance.py",
         "tests/test_routes.py",
         "tests/test_smoke.py",
         "blocks.lock.json",
@@ -215,6 +225,9 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
     assert '@router.post("/analytics_surface")' in routes_src
     assert '@router.get("/analytics_surface")' in routes_src
     assert '@router.get("/analytics_surface/{item_id}")' in routes_src
+    assert '@router.put("/analytics_surface/{item_id}")' in routes_src
+    assert '@router.delete("/analytics_surface/{item_id}")' in routes_src
+    assert '@router.post("/work_queue")' in routes_src
     for path in (
         "/jobs",
         "/catalog",
@@ -246,6 +259,13 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     assert "test_restore_drill_backup_wipe_restore_rows" in lifecycle
     assert "test_schema_change_applies_to_populated_v1_and_rolls_back" in lifecycle
     assert "test_parallel_writes_match_fastapi_threadpool" in lifecycle
+    domain = (out / "tests" / "test_domain_acceptance.py").read_text(encoding="utf-8")
+    assert "perform_all" in domain
+    assert "@pytest.mark.pilot" in domain
+    assert "execute_action" in (out / "app" / "domain_ops.py").read_text(encoding="utf-8")
+    store_src = (out / "app" / "store.py").read_text(encoding="utf-8")
+    assert "def update(" in store_src
+    assert "def delete(" in store_src
 
     routes_test = (out / "tests" / "test_routes.py").read_text(encoding="utf-8")
     assert "TestClient" in routes_test

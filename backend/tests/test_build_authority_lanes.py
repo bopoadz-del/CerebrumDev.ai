@@ -210,7 +210,10 @@ def test_each_kernel_has_a_distinct_job_title_and_http_surface():
     assert {j["agent"] for j in roster} == {"consult", "manufacture", "none"}
     # Distinctive routes do not steal /v1/jobs — that is the shared roster.
     for job in roster:
-        assert all(r.startswith(("GET ", "POST ")) for r in job["http_routes"])
+        assert all(
+            r.startswith(("GET ", "POST ", "PUT ", "DELETE "))
+            for r in job["http_routes"]
+        )
         assert "GET /v1/jobs" not in job["http_routes"]
     assert "jobs" in KERNEL_ROUTE_NAMES
     assert role_contract(BuildRole.COLLECTOR).http_routes == ("GET /v1/catalog",)

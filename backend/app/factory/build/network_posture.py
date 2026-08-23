@@ -81,6 +81,10 @@ ENV=production
 # Where the sqlite file lives. Mount a volume at this path to persist.
 STORAGE_PATH=./data
 
+# Deploy identity for /health and scripts/rollback.sh (optional).
+# APP_REVISION=rev-n
+# APP_MARK=baseline
+
 # P1: offline strict. Local/scripted OCR only. No LLM provider. No Ollama.
 # No store URL. No store key. Vendored blocks, in-process dispatch.
 # tests/conftest.py refuses non-loopback sockets. That blocker is unchanged.

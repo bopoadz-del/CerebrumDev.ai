@@ -26,6 +26,7 @@ and `HashEmbedder` / FastEmbed provide the real bodies. These entries are the
 ## Deliberate no-op by policy
 - backend/alembic/versions/0001_baseline.py :: downgrade  — the baseline migration's reverse would be `DROP TABLE` on every accounts table; destroying user/account data is never an acceptable automated rollback. Schema rollback below the baseline is a manual, operator-decided act (restore from backup).
 - backend/app/factory/build/roles.py :: _coder_route_body  — U12/U5: returning None keeps capability HTTP on kernel execute_action; an LLM-authored body would displace the kernel.
+- backend/app/factory/build/harvest.py :: _store_write_authorized  — U6: harvest write is unauthorized; fail-closed so STORE_MANAGER cannot pretend to push Factory fixes to Cerebrum-Blocks.
 
 ---
 
@@ -77,6 +78,12 @@ CLONER now emits Store-unwired adapter contracts (`offline_adapters`) into
 those Factory-owned corrections unless harvest lands upstream. This does not
 pretend Blocks was fixed. No Blocks write was performed; none is authorized
 from this repo. `prepare_pilot_workspace` is gone from the shipping runner.
+
+**S13 harvest (2026-08-23):** `app.factory.build.harvest.evaluate_harvest` is
+the policy no-op. It records BLOCKED, copies nothing, and states the
+consequence (products will not receive Factory pipeline fixes from
+Cerebrum-Blocks until an authorized harvest exists). A green S13 suite is not
+a harvest.
 
 ### 1b. Cutover — DONE 2026-08-17, and what it traded
 **The live test decided it.** A product downloaded from the running platform

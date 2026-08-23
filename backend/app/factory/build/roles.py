@@ -1484,6 +1484,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "from fastapi import APIRouter, HTTPException",
         "",
         "from app import jobs, store",
+        "from app.domain_ops import perform as perform_domain",
         "from app.kernel_bridge import run_capability",
         "",
         "router = APIRouter()",
@@ -1565,47 +1566,68 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             "    return record",
             "",
             "",
+            f'@router.put("/{name}/{{item_id}}")',
+            f"async def {name}_update(item_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:",
+            f'    result = await perform_domain("update", "{e["capability_id"]}", '
+            "{**(payload or {}), 'id': item_id})",
+            "    if result.get('status') != 'success':",
+            "        return {'ok': False,",
+            "                'error': result.get('error_message') or result.get('status'),",
+            "                'result': result}",
+            "    return {'ok': True, 'capability': "
+            f'"{e["capability_id"]}", \'result\': result}}',
+            "",
+            "",
+            f'@router.delete("/{name}/{{item_id}}")',
+            f"async def {name}_delete(item_id: int) -> Dict[str, Any]:",
+            f'    result = await perform_domain("delete", "{e["capability_id"]}", '
+            "{'id': item_id})",
+            "    if result.get('status') != 'success':",
+            "        return {'ok': False,",
+            "                'error': result.get('error_message') or result.get('status'),",
+            "                'result': result}",
+            "    return {'ok': True, 'capability': "
+            f'"{e["capability_id"]}", \'result\': result}}',
+            "",
+            "",
         ]
+    out += [
+        "@router.post(\"/work_queue\")",
+        "async def work_queue_enqueue(payload: Dict[str, Any]) -> Dict[str, Any]:",
+        "    result = await perform_domain(",
+        '        "enqueue", str((payload or {}).get("capability_id") or ""), payload or {}',
+        "    )",
+        "    if result.get('status') != 'success':",
+        "        return {'ok': False,",
+        "                'error': result.get('error_message') or result.get('status'),",
+        "                'result': result}",
+        "    return {'ok': True, 'result': result}",
+        "",
+        "",
+        '@router.post("/work_queue/{item_id}/process")',
+        "async def work_queue_process(item_id: int) -> Dict[str, Any]:",
+        '    result = await perform_domain("process", "", {"id": item_id})',
+        "    if result.get('status') != 'success':",
+        "        return {'ok': False,",
+        "                'error': result.get('error_message') or result.get('status'),",
+        "                'result': result}",
+        "    return {'ok': True, 'result': result}",
+        "",
+        "",
+        '@router.get("/work_queue")',
+        "def work_queue_list() -> Dict[str, Any]:",
+        "    from app import work_queue as _work_queue",
+        '    return {"items": _work_queue.list_all()}',
+        "",
+        "",
+    ]
     return "\n".join(out)
 
 
 def _render_main(product_name: str) -> str:
-    from app.factory.build.network_posture import NETWORK_POSTURE, NETWORK_POSTURE_REASON
+    from app.factory.build.deploy import render_main
 
-    return (
-        '"""Entrypoint for the generated platform.\n'
-        "\n"
-        "Runs standalone: uvicorn app.main:app. No factory, no block store, no\n"
-        f"outbound dependency at runtime ({NETWORK_POSTURE}: {NETWORK_POSTURE_REASON}).\n"
-        "Kernel jobs are at GET /v1/jobs.\n"
-        '"""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "from contextlib import asynccontextmanager\n"
-        "\n"
-        "from fastapi import FastAPI\n"
-        "\n"
-        "from app.routes import router\n"
-        "\n"
-        "\n"
-        "@asynccontextmanager\n"
-        "async def lifespan(_app: FastAPI):\n"
-        "    # Fail-closed: a revision behind head refuses boot.\n"
-        "    from app.migrations import upgrade_head\n"
-        "\n"
-        "    upgrade_head()\n"
-        "    yield\n"
-        "\n"
-        "\n"
-        f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
-        'app.include_router(router, prefix="/v1")\n'
-        "\n"
-        "\n"
-        '@app.get("/health")\n'
-        "def health() -> dict:\n"
-        '    return {"status": "ok"}\n'
-    )
+    return render_main(product_name)
 
 
 def _render_requirements() -> str:
@@ -2323,14 +2345,24 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     # Persistence + versioned Alembic from the same specs. connect() does
     # not CREATE TABLE — deploy applies revisions against STORAGE_PATH.
     from app.factory.build.data_lifecycle import emit_writer_artifacts
+    from app.factory.build.deploy import emit_writer_artifacts as emit_deploy_artifacts
+    from app.factory.build.domain_acceptance import (
+        emit_writer_artifacts as emit_domain_artifacts,
+    )
 
     emit_writer_artifacts(ctx.workspace, specs)
+    emit_deploy_artifacts(ctx.workspace)
+    emit_domain_artifacts(ctx.workspace, specs)
     sources["persistence"] = (
         "derived from coder-designed models"
         if any(s.get("model") for s in specs.values())
         else fallback_source
     )
     sources["migrations"] = "alembic revisions emitted from unused-kit pattern"
+    sources["deploy_observe"] = "S11 fail-closed health, rollback drill, JSON request logs"
+    sources["domain_acceptance"] = (
+        "S12 ten outcomes through execute_action; LotDesk-class fixtures fail"
+    )
 
     # --- capability handlers ------------------------------------------------
     actions_init = ['"""Capability handlers."""', ""]
@@ -2462,6 +2494,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "create": f"POST /v1/{e['name']}",
                 "list": f"GET /v1/{e['name']}",
                 "get": f"GET /v1/{e['name']}/{{id}}",
+                "update": f"PUT /v1/{e['name']}/{{id}}",
+                "delete": f"DELETE /v1/{e['name']}/{{id}}",
             },
         }
         for e in entries
@@ -2494,6 +2528,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "file": "tests/test_data_lifecycle.py",
                 "covers": "Alembic up/down on populated v1, restore drill, parallel writes",
                 "gated": True,
+            },
+            {
+                "file": "tests/test_deploy.py",
+                "covers": "Fail-closed /health, correlation logs, revision rollback identity",
+                "gated": True,
+            },
+            {
+                "file": "tests/test_domain_acceptance.py",
+                "covers": "Ten business outcomes through execute_action",
+                "marker": "pilot",
+                "gated": False,
             },
             {
                 "file": "tests/test_routes.py",
@@ -2986,6 +3031,17 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("tests") / "test_data_lifecycle.py", render_product_tests(specs)
     )
+    from app.factory.build.deploy import render_product_tests as render_deploy_tests
+    from app.factory.build.domain_acceptance import (
+        render_product_tests as render_domain_tests,
+    )
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_deploy.py", render_deploy_tests(specs)
+    )
+    ctx.workspace.write_text(
+        Path("tests") / "test_domain_acceptance.py", render_domain_tests(specs)
+    )
 
     # -- routes return their documented shape ------------------------------
     route_lines = [
@@ -3002,7 +3058,12 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "def test_health():",
         '    resp = client.get("/health")',
         "    assert resp.status_code == 200",
-        '    assert resp.json()["status"] == "ok"',
+        "    body = resp.json()",
+        '    assert body["status"] == "ok"',
+        '    assert body["ok"] is True',
+        '    names = {item["name"] for item in body["checks"]}',
+        '    assert {"process", "persistent_disk", "database", "migrations"} <= names',
+        "    assert all(item[\"ok\"] for item in body[\"checks\"])",
         "",
         "",
         "def test_kernel_jobs_roster():",
