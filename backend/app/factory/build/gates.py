@@ -23,6 +23,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from app.factory.build.authority import BuildRole
+from app.factory.build.pilot_durability import gate_pilot_outcome_survives_restart
+from app.factory.build.ui_surface import gate_ui_surface
+from app.factory.build.vendored_integrity import gate_vendored_integrity
 from app.factory.build.writer_behaviour import gate_writer_behaviour
 
 #: Wall-clock ceiling for a single gate subprocess. A gate that hangs would
@@ -346,6 +349,28 @@ def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
     )
 
 
+def gate_cloner_contract(ctx: GateContext) -> GateResult:
+    """CLONER: blocks import offline *and* match their published digests.
+
+    Import proves the clone runs; integrity proves it is the clone it claims
+    to be. A vendored tree that imports cleanly but no longer matches the
+    block's own manifest is a stale mirror or a tampered copy, and neither
+    is visible from an import check.
+    """
+    imported = gate_blocks_import_offline(ctx)
+    if not imported.ok:
+        return imported
+    integrity = gate_vendored_integrity(ctx)
+    if not integrity.ok:
+        return integrity
+    return GateResult(
+        ok=True,
+        gate="cloner_contract",
+        detail=f"{imported.detail}; {integrity.detail}",
+        payload=dict(integrity.payload),
+    )
+
+
 def gate_writer_contract(ctx: GateContext) -> GateResult:
     """WRITER: the workspace parses *and* fails closed when a block fails.
 
@@ -360,19 +385,43 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     behaviour = gate_writer_behaviour(ctx)
     if not behaviour.ok:
         return behaviour
+    surface = gate_ui_surface(ctx)
+    if not surface.ok:
+        return surface
     return GateResult(
         ok=True,
         gate="writer_contract",
-        detail=f"{compiled.detail}; {behaviour.detail}",
+        detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}",
+    )
+
+
+def gate_store_manager_contract(ctx: GateContext) -> GateResult:
+    """STORE_MANAGER: store ops authorised, and on pilot, data that survives.
+
+    This is the phase whose SUCCESS makes ``pilot_ready`` true, so it is the
+    last place a durability claim can be checked before the flag is emitted.
+    On the code cycle the durability gate is a no-op.
+    """
+    authorised = gate_store_ops_authorised(ctx)
+    if not authorised.ok:
+        return authorised
+    durable = gate_pilot_outcome_survives_restart(ctx)
+    if not durable.ok:
+        return durable
+    return GateResult(
+        ok=True,
+        gate="store_manager_contract",
+        detail=f"{authorised.detail}; {durable.detail}",
+        payload=dict(authorised.payload),
     )
 
 
 GATES: Mapping[BuildRole, Gate] = {
     BuildRole.COLLECTOR: gate_gaps_enumerated,
-    BuildRole.CLONER: gate_blocks_import_offline,
+    BuildRole.CLONER: gate_cloner_contract,
     BuildRole.WRITER: gate_writer_contract,
     BuildRole.TESTER: gate_suite_green,
-    BuildRole.STORE_MANAGER: gate_store_ops_authorised,
+    BuildRole.STORE_MANAGER: gate_store_manager_contract,
 }
 
 
