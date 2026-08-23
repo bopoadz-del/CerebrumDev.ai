@@ -790,6 +790,7 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     if not block_ids:
         # A plan of pure-GENERATE capabilities is legitimate; there is simply
         # nothing to vendor. Say so rather than inventing an empty lockfile.
+        ctx.note("no blocks to vendor", stage="blocks", done=0, total=0)
         return RoleResult(ok=True, detail="no blocks to vendor", vendored_blocks=())
 
     lock: Dict[str, Any] = {"schema": "blocks.lock.v1", "blocks": {}}
@@ -797,6 +798,12 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     missing: List[str] = []
     runtime_blocks: List[str] = []
     defs = _store_block_defs(Path(ctx.blocks_root)) if ctx.blocks_root else {}
+    ctx.note(
+        f"cloning {len(block_ids)} block(s)",
+        stage="blocks",
+        done=0,
+        total=len(block_ids),
+    )
 
     for bid in block_ids:
         source = _block_source_dir(bid, ctx.blocks_root)
@@ -821,6 +828,13 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "path": f"vendor/blocks/{bid}",
         }
         vendored.append(bid)
+        ctx.note(
+            f"cloned {bid}",
+            stage="blocks",
+            done=len(vendored),
+            total=len(block_ids),
+            block_id=bid,
+        )
         # A shim that reaches for the Store's runtime cannot import offline
         # on its own -- the slice it stands on must be vendored with it.
         #

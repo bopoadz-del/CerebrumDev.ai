@@ -256,6 +256,18 @@ export type BuildAuthorship = {
   coder_failures?: Record<string, string>
 }
 
+export type BuildPhaseRef = {
+  id: string
+  label?: string
+}
+
+export type BuildPhaseProgress = {
+  done: number
+  total: number
+  fraction?: number
+  stage?: string
+}
+
 export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled'
   detail?: string
@@ -264,6 +276,15 @@ export type BuildStatus = {
   completed?: string[]
   phases_done?: number
   phases_total?: number
+  current_phase?: BuildPhaseRef | null
+  phase_index?: number
+  phase_total?: number
+  phase_progress?: BuildPhaseProgress
+  last_event?: string | null
+  last_event_at?: string | null
+  last_event_age_s?: number
+  next_phase?: BuildPhaseRef | null
+  stale?: boolean
   activity?: string
   activity_stage?: string
   activity_done?: number

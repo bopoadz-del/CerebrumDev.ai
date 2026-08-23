@@ -56,6 +56,11 @@ _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
 #: model, x2 legs x retries), so this is set well above that.
 _STALL_AFTER_S = 1800.0
 
+#: Quieter than a dead process: one coder call can sit in the model for
+#: ~2–3 min with no NOTE. Past this the UI says "quiet" so a customer can
+#: tell a long model call from a frozen 2/5 with no name.
+_STALE_AFTER_S = 180.0
+
 
 def build_engine() -> str:
     """Which engine production builds with. Runner unless told otherwise."""
@@ -84,6 +89,30 @@ def _phase_wall_clock_s() -> float:
         )
     except ValueError:
         return _DEFAULT_PHASE_WALL_CLOCK_S
+
+
+def _phase_ref(role: Any) -> Dict[str, str]:
+    """Named phase for the Floor: id plus the job title, not just 2/5."""
+    from app.factory.build.authority import BuildRole, role_contract
+
+    resolved = role if hasattr(role, "value") else BuildRole(role)
+    return {"id": resolved.value, "label": role_contract(resolved).title}
+
+
+def _event_age_s(ts: str, fallback_s: float) -> float:
+    if not ts:
+        return fallback_s
+    try:
+        from datetime import datetime, timezone
+
+        parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        import time
+
+        return max(0.0, time.time() - parsed.timestamp())
+    except ValueError:
+        return fallback_s
 
 
 # -- status ---------------------------------------------------------------
@@ -143,18 +172,68 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
 
     ledger = BuildLedger(path)
     try:
+        events = ledger.events()
         completed = {r.value for r in ledger.completed_roles()}
         terminal = ledger.terminal_event()
+        interrupted = ledger.interrupted_role()
+        resume = ledger.resume_point()
     except Exception as exc:  # noqa: BLE001 -- a torn ledger must not 500
         logger.warning("unreadable build ledger at %s: %s", path, exc)
         return {"state": "unknown", "detail": f"ledger unreadable: {exc}"}
 
     phases = [p.value for p in BUILD_PHASES]
+    current_role = interrupted or resume
+    if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
+        current_role = BUILD_PHASES[-1]
+    if current_role is not None:
+        phase_index = phases.index(current_role.value) + 1
+        nxt = (
+            BUILD_PHASES[phase_index]
+            if phase_index < len(BUILD_PHASES)
+            else None
+        )
+    else:
+        phase_index = min(len(phases), sum(1 for p in phases if p in completed) + 1)
+        nxt = None
+
+    last_any = events[-1] if events else None
+    notes = [e for e in events if e.kind is EventKind.NOTE]
+    last_note = notes[-1] if notes else None
+    try:
+        import time
+
+        file_idle_s = time.time() - path.stat().st_mtime
+    except OSError:
+        file_idle_s = 0.0
+    idle_s = _event_age_s(last_any.ts if last_any else "", file_idle_s)
+
+    monitor: Dict[str, Any] = {
+        "current_phase": _phase_ref(current_role) if current_role else None,
+        "phase_index": phase_index,
+        "phase_total": len(phases),
+        "next_phase": _phase_ref(nxt) if nxt else None,
+        "last_event": (last_note or last_any).detail if (last_note or last_any) else None,
+        "last_event_at": last_any.ts if last_any else None,
+        "last_event_age_s": round(idle_s, 1),
+        "stale": idle_s > _STALE_AFTER_S,
+    }
+    if last_note is not None:
+        payload = last_note.payload or {}
+        done, total = payload.get("done"), payload.get("total")
+        if isinstance(done, int) and isinstance(total, int) and total > 0:
+            monitor["phase_progress"] = {
+                "done": done,
+                "total": total,
+                "fraction": round(done / total, 3),
+                "stage": payload.get("stage"),
+            }
+
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
         "phases_total": len(phases),
         "phases_done": sum(1 for p in phases if p in completed),
+        **monitor,
     }
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
@@ -163,6 +242,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
             "detail": terminal.detail,
             **progress,
             **_authorship(output_dir),
+            "stale": False,
         }
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         return {
@@ -170,34 +250,24 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
             "detail": terminal.detail,
             "findings": list((terminal.payload or {}).get("findings") or [])[:10],
             **progress,
+            "stale": False,
         }
     # Intra-phase activity. Without this a WRITER pass of ~16 agent calls
     # reports a frozen "2/5" for twenty minutes and a customer cannot tell
     # work from a hang.
     activity: Dict[str, Any] = {}
-    try:
-        notes = [e for e in ledger.events() if e.kind is EventKind.NOTE]
-    except Exception:  # noqa: BLE001
-        notes = []
-    if notes:
-        last = notes[-1]
+    if last_note is not None:
         activity = {
-            "activity": last.detail,
-            "activity_stage": (last.payload or {}).get("stage"),
-            "activity_done": (last.payload or {}).get("done"),
-            "activity_total": (last.payload or {}).get("total"),
+            "activity": last_note.detail,
+            "activity_stage": (last_note.payload or {}).get("stage"),
+            "activity_done": (last_note.payload or {}).get("done"),
+            "activity_total": (last_note.payload or {}).get("total"),
         }
 
     # A build whose thread died (worker restart, OOM, redeploy) leaves the
     # ledger's last event as PHASE_STARTED forever, which read as "building"
     # for eternity. Age the file: no event for this long means nothing is
     # working on it, and saying so is the honest answer.
-    try:
-        import time
-
-        idle_s = time.time() - path.stat().st_mtime
-    except OSError:
-        idle_s = 0.0
     if idle_s > _STALL_AFTER_S:
         return {
             "state": "stalled",
