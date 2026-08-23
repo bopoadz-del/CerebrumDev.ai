@@ -53,8 +53,14 @@ def prepare_pilot_workspace(workspace: Path | str) -> list[str]:
     if notification.is_file() and _patch_notification_mcp(notification):
         touched.append(str(notification.relative_to(root)))
     database = root / "vendor" / "cerebrum" / "blocks" / "database.py"
-    if database.is_file() and _patch_database_insert(database):
-        touched.append(str(database.relative_to(root)))
+    if database.is_file():
+        db_changed = False
+        if _patch_database_insert(database):
+            db_changed = True
+        if _patch_database_query(database):
+            db_changed = True
+        if db_changed:
+            touched.append(str(database.relative_to(root)))
     storage = root / "vendor" / "cerebrum" / "blocks" / "storage.py"
     if storage.is_file() and _patch_storage_aiofiles(storage):
         touched.append(str(storage.relative_to(root)))
@@ -147,6 +153,60 @@ def _patch_database_insert(path: Path) -> bool:
         "                except Exception as retry_exc:\n"
         '                    return {"error": f"Insert failed: {str(retry_exc)}"}\n'
         '            return {"error": f"Insert failed: {str(e)}"}\n'
+    )
+    if old not in text:
+        return False
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
+    return True
+
+
+_QUERY_UNWIRED_MARKER = "Store-unwired query"
+
+
+def _patch_database_query(path: Path) -> bool:
+    """Build SELECT SQL from table/filters when the coder omitted ``sql``.
+
+    SpokeLane pilot died on ``Query failed: execute() argument 1 must be
+    str, not None`` after three rework rounds: Kimi handlers call
+    ``database`` with ``{action: query, table, filters}`` and the vendored
+    block passes ``data.get("sql")`` straight to sqlite3.
+    """
+    text = path.read_text(encoding="utf-8")
+    if _QUERY_UNWIRED_MARKER in text:
+        return False
+    old = (
+        "        \"\"\"Execute SELECT query\"\"\"\n"
+        "        sql = data.get(\"sql\")\n"
+        "        params = data.get(\"params\", ())\n"
+        "        \n"
+        "        try:\n"
+        "            cursor = self._connection.cursor()\n"
+        "            cursor.execute(sql, params)\n"
+    )
+    new = (
+        "        \"\"\"Execute SELECT query\"\"\"\n"
+        "        sql = data.get(\"sql\")\n"
+        "        params = data.get(\"params\", ())\n"
+        "        # Store-unwired query: handlers often pass table/filters\n"
+        "        # without a SQL string. sqlite3.execute(None) raises\n"
+        "        # \"argument 1 must be str, not None\" and the pilot suite\n"
+        "        # treats that as a red capability.\n"
+        "        if not sql:\n"
+        "            table = data.get(\"table\") or data.get(\"table_name\")\n"
+        "            filters = data.get(\"filters\") or data.get(\"where\") or {}\n"
+        "            if table and isinstance(filters, dict) and filters:\n"
+        "                cols = \" AND \".join(f\"{k} = ?\" for k in filters)\n"
+        "                sql = f\"SELECT * FROM {table} WHERE {cols}\"\n"
+        "                params = tuple(filters.values())\n"
+        "            elif table:\n"
+        "                sql = f\"SELECT * FROM {table}\"\n"
+        "                params = ()\n"
+        "            else:\n"
+        "                return {\"error\": \"Query failed: missing sql or table\", \"sql\": None}\n"
+        "        \n"
+        "        try:\n"
+        "            cursor = self._connection.cursor()\n"
+        "            cursor.execute(sql, params)\n"
     )
     if old not in text:
         return False
