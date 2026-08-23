@@ -21,9 +21,10 @@ trusted:
   would refuse every resume of an unchanged blueprint. :func:`blueprint_hash`
   hashes the inputs instead, which is stable by construction.
 
-The old ``ProductGenerator`` template path is untouched and still the default;
-this runs only when explicitly invoked or when ``FACTORY_RUNNER_ENABLED`` is
-set.
+The role runner is the production default (``FACTORY_BUILD_ENGINE=runner``).
+``ProductGenerator`` remains the template emitter and the source of the
+14-class surfaces RoleRunner now converges onto. ``FACTORY_BUILD_ENGINE=template``
+is the documented revert.
 """
 
 from __future__ import annotations

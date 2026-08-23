@@ -14,13 +14,13 @@ LLM use is optional by design. When a coder key is configured:
 - the TESTER (Acceptance inspector) asks it for *additional* domain cases (mutations of kernel
   payloads; they cannot replace the kernel suite)
 When it is not, every kernel stays deterministic. CLONER (Block stocker) and
-STORE_MANAGER (Store registrar) never call the agent. RoleRunner and
-ProductGenerator share the 14-class contract (``test_emitter_parity``);
-ProductGenerator extras (resident-engineer, ``factory_plan.json``,
-``product-agent/``) are declared differences, not a silent third drop.
-CI exercises the manufacturing route with no API key, and a dedicated
-keyed-path job (FACTORY_CODER_ENABLED=1, stub keys) so the production
-coder path is not template-only. Which path ran is recorded, never implied.
+STORE_MANAGER (Store registrar) never call the agent. The 14-class contract is
+shared: RoleRunner manufactures handlers/kernel locally and invokes
+ProductGenerator class emitters (not ``generate()``) for the remaining
+classes. Declared extras stay extra. CI exercises the manufacturing route
+with no API key, and a dedicated keyed-path job (FACTORY_CODER_ENABLED=1,
+stub keys) so the production coder path is not template-only. Which path
+ran is recorded, never implied.
 
 Each kernel publishes its job on the delivered platform:
 ``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
@@ -2615,6 +2615,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(Path("docs") / "network_posture.json", declaration_json())
     sources["deploy_scaffold"] = fallback_source
     sources["network_posture"] = POSTURE_ID
+
+    from app.factory.build.converge import converge_writer_emitters
+
+    converged = converge_writer_emitters(ctx)
+    if converged.get("ok"):
+        sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
     from app.factory.build.converge import converge_writer_emitters
 
