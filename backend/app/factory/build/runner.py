@@ -21,9 +21,10 @@ trusted:
   would refuse every resume of an unchanged blueprint. :func:`blueprint_hash`
   hashes the inputs instead, which is stable by construction.
 
-The old ``ProductGenerator`` template path is untouched and still the default;
-this runs only when explicitly invoked or when ``FACTORY_RUNNER_ENABLED`` is
-set.
+The role runner is the production default (``FACTORY_BUILD_ENGINE=runner``).
+``ProductGenerator`` remains the template emitter and the source of the
+14-class surfaces RoleRunner now converges onto. ``FACTORY_BUILD_ENGINE=template``
+is the documented revert.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 from app.factory.build.authority import (
     BUILD_PHASES,
+    SEALED_AFTER_CLONER,
     AuthorityError,
     BuildRole,
     assert_phase_order,
@@ -259,8 +261,18 @@ class RoleRunner:
         )
         if staging is not None and staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
+        sealed = (
+            SEALED_AFTER_CLONER
+            if role is not BuildRole.CLONER
+            and BuildRole.CLONER in self.ledger.completed_roles()
+            else ()
+        )
         ws = RoleWorkspace(
-            role, self.workspace, store_root=self.store_root, staging=staging
+            role,
+            self.workspace,
+            store_root=self.store_root,
+            staging=staging,
+            sealed=sealed,
         )
         def _progress(detail: str, payload: Dict[str, Any]) -> None:
             """Record intra-phase progress as a ledger NOTE.
@@ -393,16 +405,6 @@ class RoleRunner:
                 and not self.ledger.pilot_cycle_open()
             ):
                 self.ledger.open_pilot_cycle()
-            from app.factory.build.pilot import prepare_pilot_workspace
-
-            patched = prepare_pilot_workspace(self.workspace)
-            if patched:
-                self.ledger.append(
-                    EventKind.NOTE,
-                    role=BuildRole.CLONER,
-                    detail=f"pilot adapters patched ({len(patched)} file(s))",
-                    payload={"patched": patched, "stage": "pilot"},
-                )
 
         done = self.ledger.completed_roles()
         rework_used = 0

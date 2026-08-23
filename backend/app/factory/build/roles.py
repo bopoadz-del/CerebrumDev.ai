@@ -14,9 +14,10 @@ LLM use is optional by design. When a coder key is configured:
 - the TESTER (Acceptance inspector) asks it for *additional* domain cases (mutations of kernel
   payloads; they cannot replace the kernel suite)
 When it is not, every kernel stays deterministic. CLONER (Block stocker) and
-STORE_MANAGER (Store registrar) never call the agent. Both paths write the same
-*shape*, so CI exercises the real manufacturing route with no API key. Which path
-ran is recorded, never implied.
+STORE_MANAGER (Store registrar) never call the agent. The 14-class contract is
+shared: RoleRunner manufactures handlers/kernel locally and invokes
+ProductGenerator class emitters (not ``generate()``) for the remaining
+classes. Declared extras stay extra. Which path ran is recorded, never implied.
 
 Each kernel publishes its job on the delivered platform:
 ``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
@@ -38,6 +39,10 @@ from app.factory.build.authority import (
     BuildRole,
     jobs_manifest,
     role_contract,
+)
+from app.factory.build.offline_adapters import (
+    emit_instantiate_ready,
+    emit_runtime_module,
 )
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
@@ -776,7 +781,10 @@ def _vendor_runtime_slice(
         source = (blocks_root / "app" / "blocks" / f"{mod}.py").read_text(
             encoding="utf-8", errors="replace"
         )
-        _write(base / "blocks" / f"{mod}.py", _rewrite_runtime_imports(source))
+        _write(
+            base / "blocks" / f"{mod}.py",
+            emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+        )
 
     # The shims themselves still say ``from app.blocks import get_block`` --
     # rewrite them in place to point at the vendored runtime.
@@ -789,7 +797,7 @@ def _vendor_runtime_slice(
                 continue
             rel = shim_dir / py.relative_to(ctx.workspace.workspace / shim_dir)
             text = _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
-            text = _rewrite_shim_constructors(text)
+            text = emit_instantiate_ready(_rewrite_shim_constructors(text))
             lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
             ctx.workspace.write_text(rel, text)
 
@@ -2630,6 +2638,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
     sources["deploy_scaffold"] = fallback_source
+
+    from app.factory.build.converge import converge_writer_emitters
+
+    converged = converge_writer_emitters(ctx)
+    if converged.get("ok"):
+        sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
     by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     ctx.workspace.write_text(

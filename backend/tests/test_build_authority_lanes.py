@@ -181,6 +181,7 @@ def test_manifest_covers_every_phase_and_marks_the_read_only_role():
     # Every role states a gate — a phase with no gate is a phase that cannot fail.
     assert all(r["gate"] for r in manifest["roles"].values())
     assert manifest["roles"]["COLLECTOR"]["title"] == "Binding surveyor"
+    assert manifest["sealed_after_cloner"] == ["vendor/**"]
     assert manifest["roles"]["COLLECTOR"]["agent"] == AgentSeat.CONSULT.value
     assert manifest["roles"]["WRITER"]["http_routes"]
 

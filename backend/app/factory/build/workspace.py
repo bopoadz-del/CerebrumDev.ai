@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from app.factory.build.authority import (
     AuthorityError,
@@ -36,6 +36,7 @@ class RoleWorkspace:
         *,
         store_root: Optional[Path | str] = None,
         staging: Optional[Path | str] = None,
+        sealed: Sequence[str] = (),
     ) -> None:
         self.role = BuildRole(role)
         #: Where the artifact really lives.
@@ -44,6 +45,8 @@ class RoleWorkspace:
         self.workspace = Path(staging).resolve() if staging else self.destination
         self.staged = staging is not None
         self.store_root = Path(store_root).resolve() if store_root else None
+        #: Globs sealed after an earlier gate (vendor/** after CLONER).
+        self.sealed = tuple(sealed)
         #: Every path this role wrote, workspace-relative, in order.
         self.written: List[str] = []
         if self.staged:
@@ -76,7 +79,11 @@ class RoleWorkspace:
         if not target.is_absolute():
             target = self.workspace / target
         return assert_write_allowed(
-            self.role, target, workspace=self.workspace, store_root=self.store_root
+            self.role,
+            target,
+            workspace=self.workspace,
+            store_root=self.store_root,
+            sealed=self.sealed,
         )
 
     def _record(self, resolved: Path) -> None:

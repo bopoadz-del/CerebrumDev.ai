@@ -71,6 +71,13 @@ than none.
 The factory rebuild is **cut over and live**; the remaining open piece is
 the STORE_MANAGER write half (c) and the artifact-parity port in 1b.
 
+**S5 residual (2026-08-23):** Cerebrum-Blocks harvest remains unbuilt. Factory
+CLONER now emits Store-unwired adapter contracts (`offline_adapters`) into
+`vendor/**` and seals that tree after CLONER. The next product will re-ship
+those Factory-owned corrections unless harvest lands upstream. This does not
+pretend Blocks was fixed. No Blocks write was performed; none is authorized
+from this repo. `prepare_pilot_workspace` is gone from the shipping runner.
+
 ### 1b. Cutover — DONE 2026-08-17, and what it traded
 **The live test decided it.** A product downloaded from the running platform
 was audited: six capability handlers that were ONE template differing only in

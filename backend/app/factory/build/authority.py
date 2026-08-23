@@ -25,7 +25,7 @@ import fnmatch
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
 class BuildRole(str, Enum):
@@ -179,6 +179,14 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
+            # 14-class contract surfaces ProductGenerator already emits.
+            # Named prefixes, not a root or docs/** wildcard.
+            (LaneRoot.WORKSPACE, "product-dna/**"),
+            (LaneRoot.WORKSPACE, "docs/blueprint/**"),
+            (LaneRoot.WORKSPACE, "docs/provenance/**"),
+            (LaneRoot.WORKSPACE, "docs/certification/**"),
+            (LaneRoot.WORKSPACE, "docs/edge_profile.json"),
+            (LaneRoot.WORKSPACE, "frontend/**"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that
         # judge it has no gate at all. Also not vendor/** or blocks.lock.json:
@@ -227,6 +235,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
 # Paths no role may write under any root. ``.git`` would let a role rewrite
 # the provenance the whole build is audited against.
 FORBIDDEN_SEGMENTS = frozenset({".git", ".hg", ".svn"})
+
+#: After CLONER's gate passes, ``vendor/**`` is sealed. A later write there
+#: (the old prepare_pilot_workspace patch-until-green) is FAILED_AUTHORITY,
+#: not a NOTE. CLONER itself is not sealed while it is still running.
+SEALED_AFTER_CLONER = ("vendor/**",)
 
 
 def role_contract(role: BuildRole | str) -> RoleContract:
@@ -301,11 +314,13 @@ def assert_write_allowed(
     *,
     workspace: Path | str,
     store_root: Optional[Path | str] = None,
+    sealed: Sequence[str] = (),
 ) -> Path:
     """Authorise one write by *role* and return the resolved target.
 
     Raises ``AuthorityError`` when the target escapes both roots, lands on a
-    VCS directory, or falls outside every lane the role owns.
+    VCS directory, falls outside every lane the role owns, or hits a path
+    sealed after an earlier gate (vendor/** after CLONER).
     """
     role = BuildRole(role)
     contract = ROLE_CONTRACTS[role]
@@ -332,6 +347,13 @@ def assert_write_allowed(
             raise AuthorityError(
                 f"{role.value} may not write inside a version-control directory: {path}"
             )
+        if sealed and lane_root is LaneRoot.WORKSPACE:
+            for sealed_glob in sealed:
+                if _matches_lane(relative, sealed_glob):
+                    raise AuthorityError(
+                        f"{role.value} may not write {path} — {sealed_glob} is "
+                        "sealed after CLONER (patch-until-green is FAILED_AUTHORITY)"
+                    )
         if _matches_lane(relative, glob):
             return Path(path).resolve()
 
@@ -378,4 +400,5 @@ def authority_manifest() -> Dict[str, Any]:
             for role, contract in ROLE_CONTRACTS.items()
         },
         "forbidden_segments": sorted(FORBIDDEN_SEGMENTS),
+        "sealed_after_cloner": list(SEALED_AFTER_CLONER),
     }
