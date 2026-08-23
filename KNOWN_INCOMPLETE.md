@@ -78,6 +78,12 @@ those Factory-owned corrections unless harvest lands upstream. This does not
 pretend Blocks was fixed. No Blocks write was performed; none is authorized
 from this repo. `prepare_pilot_workspace` is gone from the shipping runner.
 
+**S13 harvest (2026-08-23):** `app.factory.build.harvest.evaluate_harvest` is
+the policy no-op. It records BLOCKED, copies nothing, and states the
+consequence (products will not receive Factory pipeline fixes from
+Cerebrum-Blocks until an authorized harvest exists). A green S13 suite is not
+a harvest.
+
 ### 1b. Cutover — DONE 2026-08-17, and what it traded
 **The live test decided it.** A product downloaded from the running platform
 was audited: six capability handlers that were ONE template differing only in
