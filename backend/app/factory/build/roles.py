@@ -39,6 +39,10 @@ from app.factory.build.authority import (
     jobs_manifest,
     role_contract,
 )
+from app.factory.build.offline_adapters import (
+    emit_instantiate_ready,
+    emit_runtime_module,
+)
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
     assert_generated_dockerfile,
@@ -776,7 +780,10 @@ def _vendor_runtime_slice(
         source = (blocks_root / "app" / "blocks" / f"{mod}.py").read_text(
             encoding="utf-8", errors="replace"
         )
-        _write(base / "blocks" / f"{mod}.py", _rewrite_runtime_imports(source))
+        _write(
+            base / "blocks" / f"{mod}.py",
+            emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+        )
 
     # The shims themselves still say ``from app.blocks import get_block`` --
     # rewrite them in place to point at the vendored runtime.
@@ -789,7 +796,7 @@ def _vendor_runtime_slice(
                 continue
             rel = shim_dir / py.relative_to(ctx.workspace.workspace / shim_dir)
             text = _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
-            text = _rewrite_shim_constructors(text)
+            text = emit_instantiate_ready(_rewrite_shim_constructors(text))
             lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
             ctx.workspace.write_text(rel, text)
 
