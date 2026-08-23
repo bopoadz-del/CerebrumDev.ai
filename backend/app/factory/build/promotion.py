@@ -30,6 +30,7 @@ from app.cerebrum_product_kernel.contract.runtime import execute_action
 from app.factory.build.domain_acceptance import inspect_lotdesk_domain
 from app.factory.build.harvest import evaluate_harvest
 from app.factory.build.lotdesk_gate import inspect_path, reject_lotdesk_as_shipped
+from app.factory.build.pilot_cycle_proof import inspect_pilot_cycle
 from app.factory.build.network_posture import NETWORK_POSTURE, NETWORK_POSTURE_REASON
 from app.factory.build.roles import _coder_route_body
 from app.factory.generator import git_head
@@ -299,6 +300,7 @@ def evaluate_promotion(
     stages_dir: Optional[Path] = None,
     *,
     include_harvest: bool = True,
+    pilot_workspace: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Machine-emit PILOT_READY. False unless every required stage gates."""
     root = Path(stages_dir) if stages_dir is not None else default_stages_dir()
@@ -344,7 +346,20 @@ def evaluate_promotion(
     if not kernel["ok"] and first is None:
         first = "kernel_ownership"
         failed.append("kernel_ownership")
-    pilot_ready = first is None and not missing and not failed and kernel["ok"]
+    # U7: evidence documents alone must not flip the flag. A pilot cycle has
+    # to have run and succeeded, which only a build ledger can show.
+    pilot_cycle = inspect_pilot_cycle(pilot_workspace)
+    if not pilot_cycle["ok"]:
+        failed.append("pilot_cycle")
+        if first is None:
+            first = f"pilot_cycle:{pilot_cycle.get('reason') or 'unproven'}"
+    pilot_ready = (
+        first is None
+        and not missing
+        and not failed
+        and kernel["ok"]
+        and pilot_cycle["ok"]
+    )
     harvest = evaluate_harvest() if include_harvest else None
     result: Dict[str, Any] = {
         "stage": STAGE,
@@ -356,6 +371,7 @@ def evaluate_promotion(
         "first_failing_criterion": first,
         "required_stages": list(required),
         "minimum_required": list(MINIMUM_REQUIRED),
+        "pilot_cycle": pilot_cycle,
         "records": records,
         "missing": missing,
         "failed": failed,
