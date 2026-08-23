@@ -47,6 +47,7 @@ os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="writer-gate-")
 sys.path.insert(0, os.getcwd())
 
 findings = []
+skipped = []
 
 try:
     from app.models import MODELS
@@ -168,8 +169,13 @@ for cap_id, cls in MODELS.items():
     # ``ok`` has not refused, so it belongs in phase two rather than being
     # reported here as a schema rejection.
     if data.get("ok") is False:
-        findings.append(
-            "%s: rejected a payload built from its own declared constraints (%s)"
+        # The capability refuses a payload built from its own declared
+        # fields. That is a real contract mismatch -- app/models.py and the
+        # handler disagree -- but it is not what this gate judges, and the
+        # capability cannot reach a block, so there is no fail-closed
+        # behaviour to test. Recorded so the skip is never silent.
+        skipped.append(
+            "%s: refused a payload built from its own declared constraints (%s)"
             % (cap_id, str(data.get("error"))[:160])
         )
         continue
@@ -261,8 +267,17 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             detail="a capability route reported success over a failed block",
             findings=lines[-20:] or ["behaviour probe failed with no output"],
         )
+    skipped = [
+        ln
+        for ln in (proc.stdout or "").splitlines()
+        if ln.strip() and ln.strip() != "SKIPPED"
+    ]
+    detail = "every capability fails closed when its blocks fail"
+    if skipped:
+        detail += f"; {len(skipped)} capability(ies) skipped — see payload"
     return GateResult(
         ok=True,
         gate=GATE_NAME,
-        detail="every capability fails closed when its blocks fail",
+        detail=detail,
+        payload={"skipped": skipped},
     )

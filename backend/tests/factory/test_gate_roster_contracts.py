@@ -24,7 +24,9 @@ from app.factory.build.ui_surface import (
 )
 from app.factory.build.vendored_integrity import (
     GATE_NAME as INTEGRITY_GATE,
+    LOCK_KEY,
     gate_vendored_integrity,
+    lock_record,
     sha256_file,
 )
 
@@ -43,14 +45,30 @@ def _ctx(workspace: Path, role: BuildRole, **kw) -> GateContext:
 
 
 def _block(root: Path, name: str, body: str, *, digest_for_body: str | None = None):
+    """A vendored block plus the clone-time integrity record the gate reads.
+
+    The record is computed from the SOURCE, mirroring run_cloner: the gate
+    checks the recorded verdict, never the vendored bytes, because the
+    CLONER rewrites imports on the way in.
+    """
+    src = root / "_source" / name
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "block.py").write_text(body, encoding="utf-8")
+    digest = digest_for_body or sha256_file(src / "block.py")
+    (src / "block.json").write_text(
+        json.dumps({"id": name, "digests": {"block.py": digest}}), encoding="utf-8"
+    )
+
     d = root / "vendor" / "blocks" / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "block.py").write_text(body, encoding="utf-8")
-    digest = digest_for_body or sha256_file(d / "block.py")
-    (d / "block.json").write_text(
-        json.dumps({"id": name, "digests": {"block.py": digest}}), encoding="utf-8"
-    )
-    return d
+    (d / "block.json").write_text((src / "block.json").read_text(encoding="utf-8"), encoding="utf-8")
+
+    lock = root / "blocks.lock.json"
+    data = json.loads(lock.read_text(encoding="utf-8")) if lock.is_file() else {"blocks": {}}
+    data.setdefault("blocks", {})[name] = {LOCK_KEY: lock_record(src)}
+    lock.write_text(json.dumps(data), encoding="utf-8")
+    return src
 
 
 def test_integrity_gate_passes_when_bytes_match_the_manifest(tmp_path):
@@ -60,22 +78,49 @@ def test_integrity_gate_passes_when_bytes_match_the_manifest(tmp_path):
     assert result.payload["files_hashed"] == 1
 
 
-def test_integrity_gate_fails_on_a_tampered_or_stale_vendored_file(tmp_path):
-    d = _block(tmp_path, "alpha", "def run(**kw):\n    return {}\n")
-    # The manifest now describes bytes that are no longer on disk.
-    (d / "block.py").write_text("def run(**kw):\n    return {'evil': True}\n", encoding="utf-8")
-
+def test_integrity_gate_fails_when_source_did_not_match_its_manifest(tmp_path):
+    # A stale mirror or a tampered source: the digest describes other bytes.
+    _block(
+        tmp_path,
+        "alpha",
+        "def run(**kw):\n    return {'evil': True}\n",
+        digest_for_body="0" * 64,
+    )
     result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
     assert result.ok is False
     assert result.gate == INTEGRITY_GATE
-    assert any("vendored bytes hash to" in f for f in result.findings), result.findings
+    assert any("hash to" in f for f in result.findings), result.findings
+
+
+def test_integrity_gate_fails_a_block_vendored_with_no_record(tmp_path):
+    """Skipping verification must fail exactly like failing it."""
+    d = tmp_path / "vendor" / "blocks" / "ghost"
+    d.mkdir(parents=True)
+    (d / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
+    (tmp_path / "blocks.lock.json").write_text(
+        json.dumps({"blocks": {}}), encoding="utf-8"
+    )
+
+    result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
+    assert result.ok is False
+    assert any(
+        "no clone-time integrity record" in f for f in result.findings
+    ), result.findings
 
 
 def test_integrity_gate_reports_rather_than_fails_a_block_with_no_digests(tmp_path):
+    src = tmp_path / "_source" / "legacy"
+    src.mkdir(parents=True)
+    (src / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
+    (src / "block.json").write_text(json.dumps({"id": "legacy"}), encoding="utf-8")
+
     d = tmp_path / "vendor" / "blocks" / "legacy"
     d.mkdir(parents=True)
     (d / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
-    (d / "block.json").write_text(json.dumps({"id": "legacy"}), encoding="utf-8")
+    (tmp_path / "blocks.lock.json").write_text(
+        json.dumps({"blocks": {"legacy": {LOCK_KEY: lock_record(src)}}}),
+        encoding="utf-8",
+    )
 
     result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
     assert result.ok is True

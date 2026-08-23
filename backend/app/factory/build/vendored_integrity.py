@@ -7,8 +7,17 @@ worse than an absent one: it reads as provenance while guaranteeing nothing,
 and ``blocks.lock.json`` pins a commit that is equally unverified once the
 files are copied out of their repository.
 
-This gate re-hashes what was actually vendored and compares it with what the
-block claims about itself. It is deliberately narrow:
+Verification happens at clone time, against the **source** tree, because the
+CLONER deliberately rewrites what it vendors: ``_rewrite_runtime_imports``
+turns ``app.blocks`` into ``vendor.cerebrum.blocks``, shim constructors are
+rewritten, and offline adapters are applied. Vendored bytes therefore cannot
+match an upstream digest, and hashing them would fail every honest build --
+as it did, on the warehouse-operations e2e, the first time this gate ran.
+
+So :func:`verify_block` runs in ``run_cloner`` before the copy, its verdict
+is recorded into ``blocks.lock.json``, and the gate asserts that the record
+exists and passed. Emission does the check where it is meaningful; the gate
+enforces that it happened. It is deliberately narrow:
 
 * only files the manifest names are checked -- a block may legitimately ship
   files it does not digest;
@@ -89,8 +98,24 @@ def verify_block(block_dir: Path) -> Dict[str, object]:
     return out
 
 
+LOCK_KEY = "integrity"
+
+
+def lock_record(source_dir: Path) -> Dict[str, object]:
+    """Clone-time verdict for one block, for blocks.lock.json."""
+    report = verify_block(source_dir)
+    return {
+        "verified": not report["mismatched"] and not report["missing"],
+        "files_hashed": report["digested"],
+        "has_digests": report["has_digests"],
+        "signed_unverified": report["signed"],
+        "findings": [str(m) for m in report["mismatched"]]
+        + [f"{n}: named in digests but absent from source" for n in report["missing"]],
+    }
+
+
 def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
-    """Vendored block bytes match the digests those blocks publish."""
+    """Every vendored block carries a passing clone-time integrity record."""
     from app.factory.build.gates import GateResult
 
     vendor = ctx.workspace / "vendor" / "blocks"
@@ -101,30 +126,56 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             detail="no vendored blocks to verify",
         )
 
+    lock_path = ctx.workspace / "blocks.lock.json"
+    if not lock_path.is_file():
+        return GateResult(
+            ok=False,
+            gate=GATE_NAME,
+            detail="blocks.lock.json is missing — no integrity record to check",
+            findings=["cloner wrote no lockfile"],
+        )
+    try:
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return GateResult(
+            ok=False,
+            gate=GATE_NAME,
+            detail=f"blocks.lock.json is unreadable: {exc}",
+            findings=[str(exc)],
+        )
+
+    entries = lock.get("blocks") or {}
     findings: List[str] = []
     checked = 0
     files = 0
     undigested: List[str] = []
     signed = 0
+    unrecorded: List[str] = []
 
     for block_dir in sorted(p for p in vendor.iterdir() if p.is_dir()):
-        report = verify_block(block_dir)
         checked += 1
-        files += int(report["digested"])
-        if report["signed"]:
+        record = (entries.get(block_dir.name) or {}).get(LOCK_KEY)
+        if not isinstance(record, dict):
+            unrecorded.append(block_dir.name)
+            continue
+        files += int(record.get("files_hashed") or 0)
+        if record.get("signed_unverified"):
             signed += 1
-        if not report["has_digests"]:
+        if not record.get("has_digests"):
             undigested.append(block_dir.name)
-        findings.extend(str(m) for m in report["mismatched"])
+        if not record.get("verified"):
+            findings.extend(str(f) for f in (record.get("findings") or []))
+
+    if unrecorded:
         findings.extend(
-            f"{name}: named in digests but not vendored" for name in report["missing"]
+            f"{name}: vendored with no clone-time integrity record" for name in unrecorded
         )
 
     if findings:
         return GateResult(
             ok=False,
             gate=GATE_NAME,
-            detail="vendored bytes do not match the digests the block publishes",
+            detail="a vendored block failed or skipped clone-time integrity verification",
             findings=findings[:20],
             payload={"blocks_checked": checked, "files_hashed": files},
         )
