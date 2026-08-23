@@ -1,4 +1,23 @@
-import type { BuildStatus } from './api/factory'
+import type { BuildAuthorship, BuildStatus } from './api/factory'
+
+/** SUCCESS copy: never "22 of 28" — that reads as a hang. */
+export function formatFinishedAuthorship(
+  authorship: BuildAuthorship | null | undefined,
+): string | null {
+  if (!authorship) return null
+  const written = authorship.agent_written
+  const templated = authorship.templated
+  if (written === 0) {
+    return 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'
+  }
+  if (typeof written === 'number' && typeof templated === 'number') {
+    return `Finished — ${written} artifacts; ${templated} templated`
+  }
+  if (typeof written === 'number') {
+    return `Finished — ${written} artifacts`
+  }
+  return null
+}
 
 /** Named current phase plus 1-based index: "WRITER 3/5", not a bare "2/5". */
 export function formatPhaseHeadline(build: BuildStatus): string {
