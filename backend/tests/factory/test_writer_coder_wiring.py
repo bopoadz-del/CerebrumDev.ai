@@ -153,7 +153,8 @@ def test_a_coder_failure_ships_the_template_and_records_why(
     for cap_id in ("analytics_surface", "dashboard_surface"):
         assert sources[cap_id] == "deterministic contract template", cap_id
         assert sources[f"model:{cap_id}"].startswith("coder LLM")
-        assert sources[f"route:{cap_id}"].startswith("coder LLM")
+        # Routes are kernel-owned (U12). An LLM body would bypass execute_action.
+        assert sources[f"route:{cap_id}"] == "kernel execute_action template"
 
 
 def test_the_coder_is_not_called_when_disabled(blueprint, tmp_path, monkeypatch):

@@ -1,0 +1,21 @@
+{
+  "stage": "S2",
+  "name": "supply_chain",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S2_supply_chain.json",
+  "reread_at": "2026-08-23T07:06:00Z",
+  "independent": true,
+  "checked": [
+    "supply_chain.py PYTHON_312_SLIM_DIGEST matches Hub tag digest fetched this session",
+    "_render_dockerfile calls assert_generated_dockerfile",
+    "test_latest_is_not_a_pin and test_unpinned_tag_is_not_a_pin exist",
+    "known_factory_block_ids() does not include chat",
+    "CLONER missing-source error includes do not invent",
+    "Did not invent a GHCR digest for Store execution.image"
+  ],
+  "disagreements": [],
+  "still_true": [
+    "Vendor mirror source files may still contain :latest; they are not the product FROM pin",
+    "Signatures are not verified because none exist"
+  ]
+}

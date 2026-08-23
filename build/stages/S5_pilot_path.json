@@ -1,0 +1,24 @@
+{
+  "stage": "S5",
+  "name": "PILOT_PATH",
+  "evaluated_at": "2026-08-23T07:09:00Z",
+  "verdict": "FAIL",
+  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
+  "reason": "F29 patch-until-green is still the shipping pilot path. Existing factory tests encode that behaviour. Did not invent a contradicting gate.",
+  "evidence": [
+    "backend/app/factory/build/pilot.py::prepare_pilot_workspace still patches vendored adapters",
+    "backend/app/factory/build/runner.py:396 treats patched files as NOTE success",
+    "backend/tests/factory/test_pilot_cycle.py::test_prepare_pilot_workspace_patches_adapters_not_handlers asserts the patcher works"
+  ],
+  "looked_before_building": [
+    "test_pilot_cycle.py documents prepare_pilot_workspace as required",
+    "test_isolation_memory_budget.py vendors kernel via ProductGenerator, not a new S5 gate",
+    "No new WRITER gate was added (U1 compileall remains)"
+  ],
+  "not_done": [
+    "Did not ban prepare_pilot_workspace",
+    "Did not move pilot onto an unpatched primary path",
+    "Did not invent a new S5 gate that would fail the existing suite by construction"
+  ],
+  "consequence": "STOP. Later stages S6–S13 not evaluated. VERDICT remains BLOCKED."
+}

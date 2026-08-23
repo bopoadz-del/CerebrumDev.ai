@@ -1,0 +1,40 @@
+{
+  "stage": "S3",
+  "name": "DOMAIN_PACK",
+  "evaluated_at": "2026-08-23T06:50:00Z",
+  "verdict": "PASS",
+  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
+  "pass_criteria": {
+    "no_new_kit_domain_format_invented": true,
+    "delivery_standard_is_the_pack": true,
+    "field_count_15": true,
+    "generate_path_does_not_require_a_parallel_schema": true
+  },
+  "contract": {
+    "module": "backend/app/factory/delivery_standard.py",
+    "fields": [
+      "domain_purpose",
+      "primary_users",
+      "required_roles",
+      "required_product_modules",
+      "core_business_workflows",
+      "authoritative_calculations",
+      "domain_rules",
+      "high_impact_actions",
+      "prohibited_autonomous_actions",
+      "data_sources",
+      "required_connectors",
+      "required_exports",
+      "security_regulatory_rules",
+      "demo_data_requirements",
+      "domain_acceptance_conditions"
+    ],
+    "field_count": 15,
+    "render_fail_closed": "render() raises ValueError naming every missing key"
+  },
+  "honest_gap": "The role_runner generate path does not consume a Domain Pack. S3 forbids inventing a second format; it does not require wiring generate-from-pack in this stage. Workbench/router already use delivery_standard.render().",
+  "not_done": [
+    "Did not author a kit-local domain schema",
+    "Did not treat LotDesk as a Domain Pack source"
+  ]
+}

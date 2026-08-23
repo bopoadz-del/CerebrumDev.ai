@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional
 
 from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, write_provenance
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
+from app.factory.build.supply_chain import PYTHON_312_SLIM_FROM
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.paths import (
     UnsafeOutputDir,
@@ -904,7 +905,7 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
     def _write_runtime_packaging(self, out: Path) -> None:
         """Emit Dockerfile + Procfile so generated products are Render-deployable."""
         docker_lines = [
-            "FROM python:3.12-slim",
+            f"FROM {PYTHON_312_SLIM_FROM}",
             "WORKDIR /app",
             "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1",
             "COPY requirements.txt .",

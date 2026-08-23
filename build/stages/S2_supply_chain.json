@@ -1,0 +1,45 @@
+{
+  "stage": "S2",
+  "name": "SUPPLY_CHAIN",
+  "evaluated_at": "2026-08-23T07:05:00Z",
+  "verdict": "PASS",
+  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
+  "pass_criteria": {
+    "generated_dockerfile_digest_pinned": true,
+    "latest_fails": true,
+    "floating_tag_fails": true,
+    "digest_fetched_not_invented": true,
+    "chat_block_not_invented": true,
+    "missing_block_source_refused": true
+  },
+  "python_base_image": {
+    "from": "python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a",
+    "source": "https://hub.docker.com/v2/repositories/library/python/tags/3.12-slim",
+    "fetched_at": "2026-08-23T06:45:00Z",
+    "hub_last_updated": "2026-08-16T20:07:22.56572Z",
+    "kind": "manifest_list_digest"
+  },
+  "implementation": {
+    "module": "backend/app/factory/build/supply_chain.py",
+    "dockerfile_emitters": [
+      "backend/app/factory/build/roles.py::_render_dockerfile",
+      "backend/app/factory/generator.py::_write_runtime_packaging"
+    ],
+    "cloner": "redacts cloned block.json :latest image fields; records image_pin=refused_unverified; does not invent a replacement digest",
+    "missing_source": "RoleError: no source found for block(s) — do not invent"
+  },
+  "tests": {
+    "file": "backend/tests/factory/test_supply_chain.py",
+    "factory_suite_after": "327 passed"
+  },
+  "residuals": [
+    "F20: factory vendor_blocks_mirror audit/capture source files still contain execution.image :latest. CLONER refuses those strings as pins on copy. Product image is the generated Dockerfile, not those Store metadata images.",
+    "F21: no signature verification exists; fail-closed means we do not claim signed.",
+    "F23: no SBOM emitted.",
+    "CI ubuntu-latest is the GitHub-hosted runner OS, not a product image."
+  ],
+  "not_invented": [
+    "chat block id (exists upstream in Cerebrum-Blocks / gate1_store; absent from factory vendor mirror)",
+    "GHCR cerebrum-blocks image digests"
+  ]
+}
