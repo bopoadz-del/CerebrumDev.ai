@@ -88,6 +88,20 @@ def _write_stage(
     )
 
 
+def _pilot_workspace(tmp_path: Path) -> Path:
+    """A ledger showing a pilot cycle actually succeeded (U7).
+
+    Stage evidence alone no longer promotes: evaluate_promotion requires a
+    build ledger with RUN_SUCCEEDED at cycle=pilot, because a document can
+    be written by hand and a pilot cycle cannot.
+    """
+    ws = tmp_path / "pilot-ws"
+    ws.mkdir(parents=True, exist_ok=True)
+    event = json.dumps({"kind": "RUN_SUCCEEDED", "payload": {"cycle": "pilot"}})
+    (ws / "build_ledger.jsonl").write_text(event + "\n", encoding="utf-8")
+    return ws
+
+
 def _complete_s10_s12(stages: Path) -> None:
     _write_stage(
         stages,
@@ -114,7 +128,7 @@ def test_complete_s10_s11_s12_emits_pilot_ready_true(tmp_path):
     stages = tmp_path / "stages"
     stages.mkdir()
     _complete_s10_s12(stages)
-    result = evaluate_promotion(stages)
+    result = evaluate_promotion(stages, pilot_workspace=_pilot_workspace(tmp_path))
     assert result["PILOT_READY"] is True, result
     assert result["verdict"] == "PASS"
     assert result["first_failing_criterion"] is None
@@ -277,7 +291,7 @@ def test_write_evidence_is_the_only_true_pilot_ready_sink(tmp_path):
     stages = tmp_path / "stages"
     stages.mkdir()
     _complete_s10_s12(stages)
-    result = evaluate_promotion(stages)
+    result = evaluate_promotion(stages, pilot_workspace=_pilot_workspace(tmp_path))
     dest = tmp_path / "S13_promotion.json"
     write_evidence(dest, result)
     twin = write_reread_twin(dest, result)
@@ -298,11 +312,11 @@ def test_in_tree_lotdesk_stays_false_and_reread_mismatches_block_full_tree():
     assert (stages / "S11_deploy.json").is_file()
     assert (stages / "S12_domain.json").is_file()
     result = evaluate_promotion(stages)
-    s9 = json.loads((stages / "S9_test.json").read_text(encoding="utf-8"))
-    s9_twin = json.loads((stages / "S9_test.reread.json").read_text(encoding="utf-8"))
     s4_twin = json.loads((stages / "S4_ship_kernel.reread.json").read_text(encoding="utf-8"))
-    assert s9.get("verdict") != s9_twin.get("verdict")
+    # S9's twin was stale, not disagreeing: it was written 30 minutes before
+    # the primary and denied a CI job that had since been added. It was
+    # re-read against current ci.yml and now agrees. S4 still records real
+    # remaining emitter work (F7, F24), so the tree still must not promote.
     assert s4_twin.get("disagreements")
     assert result["PILOT_READY"] is False
     assert "S4_ship_kernel.json" in result["failed"]
-    assert "S9_test.json" in result["failed"]
