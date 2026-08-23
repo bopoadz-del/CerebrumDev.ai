@@ -40,7 +40,16 @@ def test_prepare_pilot_workspace_patches_adapters_not_handlers(tmp_path: Path):
     )
     (notify / "database.py").write_text(
         "        except Exception as e:\n"
-        '            return {"error": f"Insert failed: {str(e)}"}\n',
+        '            return {"error": f"Insert failed: {str(e)}"}\n'
+        "\n"
+        "    async def _query(self, data: Dict) -> Dict:\n"
+        '        """Execute SELECT query"""\n'
+        '        sql = data.get("sql")\n'
+        '        params = data.get("params", ())\n'
+        "        \n"
+        "        try:\n"
+        "            cursor = self._connection.cursor()\n"
+        "            cursor.execute(sql, params)\n",
         encoding="utf-8",
     )
     (notify / "storage.py").write_text("import aiofiles\n", encoding="utf-8")
@@ -60,6 +69,8 @@ def test_prepare_pilot_workspace_patches_adapters_not_handlers(tmp_path: Path):
     assert "offline" in mcp
     db = (notify / "database.py").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS" in db
+    assert "Store-unwired query" in db
+    assert "SELECT * FROM {table}" in db
     storage = (notify / "storage.py").read_text(encoding="utf-8")
     assert "Store-unwired aiofiles" in storage
     assert (actions / "vehicle_inventory.py").read_text(encoding="utf-8") == (
