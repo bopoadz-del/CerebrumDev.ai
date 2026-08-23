@@ -44,11 +44,14 @@ block ids. You pick exactly one JSON action.
 Actions:
 - draft_platform: the user wants a new platform / product. Set "brief" to the \
 user's description (or a cleaned restatement). This drafts a blueprint; it \
-does NOT start the coding agent yet.
-- start_coder: the user confirmed the pending blueprint (approve, go ahead, \
-looks good, build it, ship it, yes). This is the ONLY action that launches \
-the coding agent (WRITER). Call it when a blueprint is pending AND the user \
-confirms. Never call it without a pending blueprint.
+does NOT start the coding agent yet. Never draft_platform on continue/resume \
+— that would wipe an in-flight run.
+- start_coder: launch or resume the coding agent (WRITER). Call it when \
+(1) a blueprint is pending AND the user confirms (approve, go ahead, looks \
+good, build it, ship it, yes), OR (2) a coding run is in-flight, stalled, \
+or interrupted and the user says continue / resume / keep going. Do not \
+require a pending unapproved blueprint to resume. If the last run already \
+succeeded, do NOT call start_coder — reply that it finished.
 - refine_blueprint: the user wants to change the pending blueprint. Set \
 "refine_message" to a command the factory already understands, e.g. \
 "add capability inventory", "remove capability audit", \
@@ -107,11 +110,33 @@ def _session_facts(state: Any) -> str:
         f"Capabilities: {cap_ids or '(none)'}.",
     ]
     if getattr(pd, "generation", None):
-        lines.append(f"Last generation: {pd.generation.get('product_id')}.")
-    if pending:
+        gen = pd.generation or {}
+        lines.append(f"Last generation: {gen.get('product_id')}.")
+        if gen.get("inputs_hash"):
+            lines.append(f"Blueprint hash: {str(gen.get('inputs_hash'))[:12]}.")
+        if gen.get("output_dir"):
+            lines.append(f"Output dir: {gen.get('output_dir')}.")
+        if gen.get("phases_done") is not None:
+            lines.append(f"Phases done: {gen.get('phases_done')}.")
+    if platform_chat_flow.is_generation_complete(state):
+        lines.append(
+            "Last coding run SUCCEEDED. start_coder is forbidden — tell the "
+            "user it already finished; do not start a new product."
+        )
+    elif platform_chat_flow.is_generation_resumable(state):
+        point = platform_chat_flow._ledger_resume_point(state) or "the last phase"
+        lines.append(
+            f"Coding run is incomplete (resume at {point}). "
+            "continue/resume MUST call start_coder — that resumes the same "
+            "hash. Do not draft a new platform. A pending blueprint is not required."
+        )
+    elif pending:
         lines.append("The user must confirm before you call start_coder.")
     else:
-        lines.append("start_coder is forbidden — nothing is pending.")
+        lines.append(
+            "No pending blueprint and no interrupted coding run. "
+            "start_coder is forbidden."
+        )
     return " ".join(lines)
 
 
@@ -155,6 +180,18 @@ def coerce_explicit_approval(decision: Dict[str, Any], state: Any, message: str)
             "message": "",
             "coerced": True,
         }
+    if platform_chat_flow.is_resume_request(message) and (
+        platform_chat_flow.has_pending_blueprint(state)
+        or platform_chat_flow.is_generation_resumable(state)
+        or platform_chat_flow.is_generation_complete(state)
+    ):
+        return {
+            "action": "start_coder",
+            "brief": "",
+            "refine_message": "",
+            "message": "",
+            "coerced": True,
+        }
     return decision
 
 
@@ -163,19 +200,12 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
     action = decision.get("action")
 
     if action == "start_coder":
-        if not platform_chat_flow.has_pending_blueprint(state):
-            return {
-                "sse": "info",
-                "ok": False,
-                "summary": (
-                    "There is no pending blueprint to build. Describe the "
-                    "platform you want first."
-                ),
-                "stream_delta": True,
-            }
-        result = platform_chat_flow.approve_and_generate(state, triggered_by="chat_llm")
-        result["sse"] = "generation"
-        result["stream_delta"] = False
+        result = platform_chat_flow.start_or_resume_coder(
+            state, triggered_by="chat_llm"
+        )
+        if result.get("generation") and not result.get("already_complete"):
+            result["sse"] = result.get("sse") or "generation"
+            result["stream_delta"] = False
         return result
 
     if action == "draft_platform":

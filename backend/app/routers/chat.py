@@ -68,6 +68,16 @@ def _session_state_summary(state) -> str:
         lines.append(
             f"Generated product: {gen.get('product_id')} — available under Your Platforms."
         )
+        if gen.get("inputs_hash"):
+            lines.append(f"Blueprint hash: {str(gen.get('inputs_hash'))[:12]}.")
+        if gen.get("output_dir"):
+            lines.append(f"Output dir: {gen.get('output_dir')}.")
+        if platform_chat_flow.is_generation_complete(state):
+            lines.append("Last coding run finished successfully.")
+        elif platform_chat_flow.is_generation_resumable(state):
+            lines.append(
+                "Coding run is incomplete and can be resumed with continue/resume."
+            )
     else:
         lines.append("No product has been generated yet.")
     if getattr(pd, "last_error", None):
@@ -240,8 +250,37 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                     yield ev
                 return
 
+        # continue / resume is a resume door, not a new draft. Handle it
+        # before the running-build swallow and before the LLM — after
+        # takeover the blueprint is approved, so the model used to refuse
+        # start_coder ("no blueprint pending") while 22/28 artifacts sat
+        # on disk.
+        if platform_chat_flow.is_resume_request(user_message) and (
+            platform_chat_flow.has_pending_blueprint(state)
+            or platform_chat_flow.is_generation_resumable(state)
+            or platform_chat_flow.is_generation_complete(state)
+        ):
+            if (
+                platform_chat_flow.has_pending_blueprint(state)
+                or platform_chat_flow.is_generation_resumable(state)
+            ):
+                try:
+                    require_within_limit(getattr(state, "user_id", None), "generation")
+                except TrialLimitExceeded as exc:
+                    yield _sse_event("error", exc.detail["message"])
+                    yield _sse_event("done", "")
+                    return
+            result = platform_chat_flow.start_or_resume_coder(state)
+            state.chat_history.append({"role": "assistant", "content": result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+
         # Once the feature list is approved, the coding agent owns the floor.
         # Do not re-draft or leak into the kit-chain generator mid-build.
+        # continue/resume is handled above so a dead worker thread can restart.
         if platform_chat_flow.has_running_build(state):
             result = platform_chat_flow.running_build_reply(state)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
