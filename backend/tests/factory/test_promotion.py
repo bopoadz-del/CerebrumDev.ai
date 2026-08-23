@@ -303,20 +303,31 @@ def test_write_evidence_is_the_only_true_pilot_ready_sink(tmp_path):
     assert reread["verdict"] == written["verdict"]
 
 
-def test_in_tree_lotdesk_stays_false_and_reread_mismatches_block_full_tree():
-    """In-tree S4 disagreements and S9 verdict drift — emitter must not promote."""
+def test_in_tree_stage_evidence_is_clean_but_still_needs_a_pilot_cycle():
+    """Every in-tree stage now agrees; the U7 guard is what holds the line.
+
+    S9's twin was stale rather than disagreeing — written thirty minutes
+    before the primary, denying a CI job that had since been added. S4's
+    recorded its remaining emitter work, which #190 closed. Both were
+    re-read against the tree they describe and now agree.
+
+    That leaves nothing in the documents to block promotion, which is
+    exactly why the pilot-cycle requirement matters: evidence alone must
+    not be sufficient. Without a proven pilot cycle this tree is still not
+    PILOT_READY, and that is the only thing stopping it.
+    """
     lotdesk = reject_lotdesk_promotion()
     assert lotdesk["PILOT_READY"] is False
+
     stages = ROOT / "build" / "stages"
-    assert (stages / "S10_data.json").is_file()
-    assert (stages / "S11_deploy.json").is_file()
-    assert (stages / "S12_domain.json").is_file()
+    for required in ("S10_data.json", "S11_deploy.json", "S12_domain.json"):
+        assert (stages / required).is_file()
+
     result = evaluate_promotion(stages)
-    s4_twin = json.loads((stages / "S4_ship_kernel.reread.json").read_text(encoding="utf-8"))
-    # S9's twin was stale, not disagreeing: it was written 30 minutes before
-    # the primary and denied a CI job that had since been added. It was
-    # re-read against current ci.yml and now agrees. S4 still records real
-    # remaining emitter work (F7, F24), so the tree still must not promote.
-    assert s4_twin.get("disagreements")
+
+    # No stage record objects any more.
+    assert [r for r in result["records"] if not r["ok"]] == []
+    # And promotion is still refused, on the pilot cycle alone.
     assert result["PILOT_READY"] is False
-    assert "S4_ship_kernel.json" in result["failed"]
+    assert "pilot_cycle" in str(result["first_failing_criterion"])
+    assert result["pilot_cycle"]["ok"] is False
