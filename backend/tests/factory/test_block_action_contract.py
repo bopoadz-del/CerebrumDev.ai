@@ -115,9 +115,8 @@ def test_dispatch_turns_a_block_raise_into_a_named_envelope(tmp_path):
         dispatch.execute("not_vendored", {})
 
 
-def test_dispatch_fills_required_block_fields_from_contract(tmp_path):
-    """Live tasting-room: analytics demanded metric/value, event_bus topic.
-    Dispatch must construct those so a domain payload still executes."""
+def test_dispatch_refuses_missing_required_fields_instead_of_fabricating(tmp_path):
+    """F18 inverted: missing metric/value/topic is an error envelope, not invented."""
     from app.factory.build.roles import _render_dispatch
 
     root = tmp_path / "platform"
@@ -143,16 +142,19 @@ def test_dispatch_fills_required_block_fields_from_contract(tmp_path):
         )
     dispatch = _load("dispatch_adapt_probe", root / "app" / "dispatch.py")
     out = dispatch.execute("analytics", {"party_size": 4}, action="record")
-    assert out["status"] == "ok"
-    assert out["input"]["metric"] == "analytics"
-    assert out["input"]["value"] == 1
-    assert out["input"]["party_size"] == 4
+    assert out["status"] == "error"
+    assert out["ok"] is False
+    assert out["block"] == "analytics"
+    assert "metric" in out["error"]
+    assert dispatch.load_block("analytics").SEEN == [], "block must not run on a fabricated payload"
     bus = dispatch.execute("event_bus", {"party_size": 4})
-    assert bus["input"]["topic"] == "event_bus.event"
+    assert bus["status"] == "error"
+    assert "topic" in bus["error"]
+    assert "topic" not in (bus.get("input") or {})
 
 
-def test_dispatch_injects_offline_fields_without_a_harvested_contract(tmp_path):
-    """Live TESTER: event_bus required topic even though harvest listed none."""
+def test_dispatch_does_not_invent_offline_fields_without_a_harvested_contract(tmp_path):
+    """F18 inverted: empty harvest must not invent topic/channel/block/steps."""
     from app.factory.build.roles import _render_dispatch
 
     root = tmp_path / "platform"
@@ -174,21 +176,20 @@ def test_dispatch_injects_offline_fields_without_a_harvested_contract(tmp_path):
     dispatch = _load("dispatch_always_fill_probe", root / "app" / "dispatch.py")
     bus = dispatch.execute("event_bus", {"party_size": 4})
     assert bus["status"] == "ok"
-    assert bus["input"]["topic"] == "event_bus.event"
+    assert "topic" not in bus["input"]
     note = dispatch.execute("notification", {"party_size": 4})
-    assert note["input"]["channel"] == "mcp"
-    assert note["input"]["block"]
-    assert note["input"]["tool"]
+    assert note["input"] == {"party_size": 4}
+    assert "channel" not in note["input"]
+    assert "block" not in note["input"]
     team = dispatch.execute("team", {"party_size": 4})
-    assert isinstance(team["input"]["name"], str) and team["input"]["name"]
-    assert isinstance(team["input"]["role"], str) and team["input"]["role"]
+    assert team["input"] == {"party_size": 4}
     flow = dispatch.execute("workflow", {"party_size": 4})
-    assert isinstance(flow["input"]["steps"], list) and flow["input"]["steps"]
-    assert flow["input"]["result"]["ok"] is True
+    assert "steps" not in flow["input"]
+    assert "result" not in flow["input"]
 
 
-def test_dispatch_fills_mcp_block_and_tool_for_notification(tmp_path):
-    """Live TESTER: ``in_process`` is Unknown channel; MCP needs block/tool."""
+def test_dispatch_does_not_rewrite_notification_channel_or_invent_mcp_targets(tmp_path):
+    """F18 inverted: in_process stays in_process; block/tool are not invented."""
     from app.factory.build.roles import _render_dispatch
 
     root = tmp_path / "platform"
@@ -207,13 +208,88 @@ def test_dispatch_fills_mcp_block_and_tool_for_notification(tmp_path):
     dispatch = _load("dispatch_mcp_target_probe", root / "app" / "dispatch.py")
     out = dispatch.execute("notification", {"channel": "in_process", "message": "hi"})
     assert out["status"] == "ok"
-    assert out["input"]["channel"] == "mcp"
-    assert out["input"]["block"] == "database"
-    assert out["input"]["tool"] == "database"
+    assert out["input"]["channel"] == "in_process"
+    assert "block" not in out["input"]
+    assert "tool" not in out["input"]
     assert out["input"]["message"] == "hi"
     kept = dispatch.execute("notification", {"channel": "mcp", "message": "hi"})
     assert kept["input"]["channel"] == "mcp"
-    assert kept["input"]["block"] == "database"
+    assert "block" not in kept["input"]
+
+
+def test_dispatch_rejects_unknown_fields_when_the_contract_names_them(tmp_path):
+    """Negative space: a harvested field list is a closed set, not a hint."""
+    from app.factory.build.roles import _render_dispatch
+
+    root = tmp_path / "platform"
+    (root / "app").mkdir(parents=True)
+    (root / "app" / "dispatch.py").write_text(
+        _render_dispatch({"analytics": {"input_required_fields": ["metric", "value"]}}),
+        encoding="utf-8",
+    )
+    block = root / "vendor" / "blocks" / "analytics"
+    block.mkdir(parents=True)
+    (block / "block.py").write_text(
+        "SEEN = []\n"
+        "def run(**kwargs):\n"
+        "    SEEN.append(kwargs.get('input'))\n"
+        "    return {'status': 'ok', 'input': kwargs.get('input')}\n",
+        encoding="utf-8",
+    )
+    dispatch = _load("dispatch_unknown_field_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute(
+        "analytics", {"metric": "visits", "value": 1, "party_size": 4}
+    )
+    assert out["status"] == "error"
+    assert out["ok"] is False
+    assert "party_size" in out["error"]
+    assert dispatch.load_block("analytics").SEEN == []
+
+
+def test_dispatch_rejects_unknown_params_when_the_contract_declares_inputs(tmp_path):
+    """Negative space: params not in declared_inputs are not forwarded."""
+    from app.factory.build.roles import _render_dispatch
+
+    root = _platform_with_recording_block(tmp_path)
+    (root / "app" / "dispatch.py").write_text(
+        _render_dispatch(
+            {
+                "recorder": {
+                    "declared_inputs": [
+                        {"name": "input", "type": "json", "required": False},
+                        {"name": "action", "type": "string"},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    dispatch = _load("dispatch_unknown_param_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute(
+        "recorder", {"name": "x"}, action="create_team", params={"limit": 3}
+    )
+    assert out["status"] == "error"
+    assert out["ok"] is False
+    assert "limit" in out["error"]
+    assert dispatch.load_block("recorder").CALLS == []
+
+
+def test_dispatch_does_not_pass_on_a_block_refusal(tmp_path):
+    """A block status=error must stay an error envelope, never ok: True."""
+    root = _platform_with_recording_block(tmp_path)
+    refuser = root / "vendor" / "blocks" / "refuser"
+    refuser.mkdir(parents=True)
+    (refuser / "block.py").write_text(
+        "def run(**kwargs):\n"
+        "    return {'status': 'error', 'error': 'metric and value required'}\n",
+        encoding="utf-8",
+    )
+    dispatch = _load("dispatch_refusal_probe", root / "app" / "dispatch.py")
+    out = dispatch.execute("refuser", {"party_size": 4}, action="track")
+    assert out["status"] == "error"
+    assert out["ok"] is False
+    assert out["block"] == "refuser"
+    assert "metric and value required" in out["error"]
 
 
 def test_the_templated_handler_sends_each_blocks_default_action(tmp_path):

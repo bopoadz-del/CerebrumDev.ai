@@ -175,9 +175,13 @@ def test_the_committed_build_is_self_consistent(blueprint, tmp_path):
     out = tmp_path / "build"
     assert RoleRunner(blueprint, out).run().ok
 
-    store_src = (out / "app" / "store.py").read_text(encoding="utf-8")
+    mig_src = (out / "alembic" / "versions" / "0001_baseline.py").read_text(
+        encoding="utf-8"
+    )
     routes_src = (out / "app" / "routes.py").read_text(encoding="utf-8")
-    tables = set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", store_src))
+    from app.factory.build.data_lifecycle import migration_table_names
+
+    tables = migration_table_names(mig_src)
     referenced = set(re.findall(r'store\.(?:save|list_all)\("(\w+)"', routes_src))
 
     assert referenced, "routes reference no tables"

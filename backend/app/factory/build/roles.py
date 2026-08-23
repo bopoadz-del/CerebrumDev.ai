@@ -17,7 +17,10 @@ When it is not, every kernel stays deterministic. CLONER (Block stocker) and
 STORE_MANAGER (Store registrar) never call the agent. The 14-class contract is
 shared: RoleRunner manufactures handlers/kernel locally and invokes
 ProductGenerator class emitters (not ``generate()``) for the remaining
-classes. Declared extras stay extra. Which path ran is recorded, never implied.
+classes. Declared extras stay extra. CI exercises the manufacturing route
+with no API key, and a dedicated keyed-path job (FACTORY_CODER_ENABLED=1,
+stub keys) so the production coder path is not template-only. Which path
+ran is recorded, never implied.
 
 Each kernel publishes its job on the delivered platform:
 ``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
@@ -856,6 +859,13 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
                     source = mirror
                     needs_rt = False
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
+        from app.factory.build.network_posture import apply_p1_cloned_block
+
+        if apply_p1_cloned_block(ctx.workspace, bid):
+            # P1 capture adapter has no Store shim; do not demand Blocks runtime.
+            needs_rt = _shim_needs_runtime(
+                ctx.workspace.workspace / "vendor" / "blocks" / bid
+            )
         origin, revision = _pin_source(source, ctx.blocks_root)
         cloned_meta = ctx.workspace.workspace / "vendor" / "blocks" / bid / "block.json"
         image_pin = "none"
@@ -993,172 +1003,89 @@ def load_block(block_id: str):
 BLOCK_CONTRACTS: Dict[str, Any] = {}
 
 
-def _default_block_field(block_id: str, field: str, payload: Dict[str, Any]):
-    """Fill a Store-required input the caller never heard of.
-
-    Live tasting-room handlers sent the domain dict straight through.
-    Analytics then demanded ``metric``/``value``, event_bus demanded
-    ``topic``, and the suite went red. Construct those fields here so a
-    valid capability payload still reaches a validating block.
-
-    Notification ``channel`` must be a Store-known value. ``in_process`` is
-    not one — live TESTER answered ``Unknown channel: in_process``. ``mcp``
-    is known; it requires ``block`` or ``tool`` (filled below), not a network
-    hop.
-    """
-    if field == "channel":
-        ch = str(payload.get(field) or "mcp").strip().lower()
-        if ch in {
-            "in_process", "in-process", "http", "webhook", "email", "smtp",
-            "slack", "",
-        }:
-            return "mcp"
-        return ch
-    if field in payload and payload[field] not in (None, ""):
-        return payload[field]
-    wrapping = {
-        "data",
-        "record",
-        "payload",
-        "input",
-        "document",
-        "event",
-        "item",
-        "body_data",
-        "result",
-    }
-    if field in wrapping:
-        return payload
-    if field == "steps":
-        roster = [k for k in BLOCK_CONTRACTS if k not in {"workflow"}]
-        target = "validation" if "validation" in roster else (
-            roster[0] if roster else "database"
-        )
-        return [{
-            "id": "ok",
-            "block": target,
-            "input": payload,
-            "result": {"status": "ok", "ok": True},
-        }]
-    if field in ("items", "records"):
-        return [payload]
-    if field == "members":
-        return []
-    defaults = {
-        "topic": f"{block_id}.event",
-        "metric": block_id,
-        "value": 1,
-        "table": "records",
-        "entity": "records",
-        "collection": "records",
-        "channel": "mcp",
-        "message": "update",
-        "body": "update",
-        "content": "update",
-        "text": "update",
-        "recipient": "operator",
-        "to": "operator",
-        "user_id": "operator",
-        "role": "member",
-        "name": block_id,
-        "formula": "1",
-        "expression": "1",
-        "expr": "1",
-        "query": "SELECT 1",
-        "id": 1,
-        "block": "database",
-        "tool": "database",
-    }
-    return defaults.get(field, payload.get(field))
+class DispatchContractError(ValueError):
+    """Caller payload failed the harvested contract. Do not invent fields."""
 
 
-_ALWAYS_FILL = {
-    "event_bus": ("topic", "event", "payload"),
-    "analytics": ("metric", "value"),
-    "notification": ("channel", "message", "recipient", "name", "block", "tool"),
-    "workflow": ("steps", "result", "name"),
-    "team": ("name", "role", "members"),
-    "database": ("query", "table", "data"),
-}
-
-
-def _ensure_offline_block_input(
-    block_id: str, data: Dict[str, Any], original: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Fill Store fields even when contract harvest missed them.
-
-    Live TESTER after shipping Store blocks: event_bus raised ``topic required``
-    because the harvested required-fields list was empty; notification MCP
-    needed a block/tool name; ``in_process`` was rejected as unknown; team
-    called ``.lower()`` on None; workflow KeyError'd ``result``.
-    """
-    for field in _ALWAYS_FILL.get(block_id, ()):
-        if field not in data or data[field] in (None, ""):
-            data[field] = _default_block_field(block_id, field, original)
-    if block_id == "notification":
-        channel = str(data.get("channel") or "mcp").strip().lower()
-        if channel in {
-            "in_process", "in-process", "http", "webhook", "email", "smtp",
-            "slack", "",
-        }:
-            channel = "mcp"
-        data["channel"] = channel
-        if channel == "mcp":
-            roster = [k for k in BLOCK_CONTRACTS if k not in {"notification", "workflow"}]
-            target = (
-                "validation" if "validation" in roster
-                else "database" if "database" in roster
-                else (roster[0] if roster else "database")
-            )
-            if not data.get("block"):
-                data["block"] = target
-            if not data.get("tool"):
-                data["tool"] = data.get("block") or target
-        data.setdefault("message", "notification")
-        data.setdefault("recipient", "operator")
-    if block_id == "event_bus" and not data.get("topic"):
-        data["topic"] = "event_bus.event"
-    if block_id == "team":
-        if not data.get("name"):
-            data["name"] = original.get("name") or "ops"
-        if not isinstance(data.get("role"), str) or not data.get("role"):
-            data["role"] = "member"
-        for key, value in list(data.items()):
-            if value is None:
-                data[key] = key
-    if block_id == "workflow":
-        existing = data.get("result")
-        if not isinstance(existing, dict):
-            data["result"] = {"status": "ok", "ok": True, "value": existing}
-        else:
-            existing.setdefault("status", "ok")
-            existing.setdefault("ok", True)
-        if not isinstance(data.get("steps"), list) or not data.get("steps"):
-            data["steps"] = _default_block_field(block_id, "steps", original)
-    if block_id == "database":
-        if not data.get("query"):
-            data["query"] = "SELECT 1"
-        if not isinstance(data.get("table"), str) or not data.get("table"):
-            data["table"] = "records"
-        data.setdefault("data", original)
-    return data
-
-
-def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
-    original = dict(payload) if isinstance(payload, dict) else {"value": payload}
-    data = dict(original)
+def _required_fields(block_id: str) -> list:
     contract = BLOCK_CONTRACTS.get(block_id) or {}
     required = list(contract.get("input_required_fields") or [])
     for item in contract.get("declared_inputs") or []:
         name = item.get("name") if isinstance(item, dict) else None
         if name and item.get("required") and name not in required:
             required.append(name)
-    for field in required:
-        if field in ("action",):
+    return [field for field in required if field != "action"]
+
+
+def _known_fields(block_id: str) -> set:
+    """Closed field set from the harvested contract. Empty = no allow-list."""
+    contract = BLOCK_CONTRACTS.get(block_id) or {}
+    names: set = set()
+    for item in contract.get("declared_inputs") or []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name and name != "action":
+            names.add(name)
+    for field in contract.get("input_required_fields") or []:
+        if field != "action":
+            names.add(field)
+    return names
+
+
+def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
+    """Pass the caller payload through. Never invent Store fields (F18)."""
+    data = dict(payload) if isinstance(payload, dict) else {"value": payload}
+    missing = [
+        field for field in _required_fields(block_id)
+        if field not in data or data[field] in (None, "")
+    ]
+    if missing:
+        raise DispatchContractError(
+            f"{block_id} missing required field(s): {', '.join(missing)}"
+        )
+    known = _known_fields(block_id)
+    if known:
+        unknown = sorted(str(key) for key in data if key not in known)
+        if unknown:
+            raise DispatchContractError(
+                f"{block_id} unknown field(s): {', '.join(unknown)}"
+            )
+    return data
+
+
+def _error_envelope(block_id: str, action: str | None, error: str) -> Dict[str, Any]:
+    return {
+        "status": "error",
+        "block": block_id,
+        "action": action,
+        "error": error,
+        "ok": False,
+    }
+
+
+def _force_utf8_stdio() -> None:
+    """F13: a checkmark/emoji print must not become a charmap crash.
+
+    Windows cp1252 consoles encode print() with the console codepage. A
+    vendored block that prints one checkmark used to raise UnicodeEncodeError;
+    execute() then swallowed that into a generic error envelope that looked
+    like a domain refusal. Force UTF-8 on this process before the block runs.
+    """
+    import os
+    import sys
+
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    os.environ["PYTHONUTF8"] = "1"
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
             continue
-        if field not in data or data[field] in (None, ""):
-            data[field] = _default_block_field(block_id, field, original)
-    return _ensure_offline_block_input(block_id, data, original)
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            continue
+
+
+_force_utf8_stdio()
 
 
 def execute(
@@ -1173,31 +1100,68 @@ def execute(
     ``input`` and the operation name as ``action`` (each block declares a
     default in its block.json). A call with no action reaches blocks that
     answer "Unknown action" -- pass the one the capability needs.
+
+    Missing required fields and unknown fields/params become an error
+    envelope. A block refusal (status=error) is returned as-is — never
+    rewritten to ok.
     """
     module = load_block(block_id)
     run = getattr(module, "run", None)
     if run is None:
         raise BlockNotVendored(f"{block_id} exposes no run() entry point")
+    contract = BLOCK_CONTRACTS.get(block_id) or {}
+    declared = set()
+    for item in contract.get("declared_inputs") or []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name:
+            declared.add(name)
+    if (
+        params
+        and (contract.get("declared_inputs") or contract.get("input_required_fields"))
+    ):
+        extra = sorted(
+            str(key) for key in params if key not in declared and key != "action"
+        )
+        if extra:
+            return _error_envelope(
+                block_id, action, f"unknown param(s): {', '.join(extra)}"
+            )
     kwargs = dict(params or {})
     if action is not None:
         kwargs["action"] = action
-    adapted = _adapt_input(block_id, payload, action)
+    try:
+        adapted = _adapt_input(block_id, payload, action)
+    except DispatchContractError as exc:
+        return _error_envelope(block_id, action, str(exc))
     # A block-level failure comes back as data, not as an exception. The
     # Store's shim raises RuntimeError on an error envelope, which destroys
     # the diagnosis: a handler (and a failing test) sees "Input validation
     # failed" with no block name and no field list. Structural failures --
     # a block that is not vendored -- still raise above.
+    _force_utf8_stdio()
     try:
-        return run(input=adapted, **kwargs)
+        result = run(input=adapted, **kwargs)
     except BlockNotVendored:
         raise
+    except UnicodeEncodeError as exc:
+        return _error_envelope(
+            block_id,
+            action,
+            f"UnicodeEncodeError on block stdout (encoding, not domain): {exc}",
+        )
     except Exception as exc:
-        return {
-            "status": "error",
-            "block": block_id,
-            "action": action,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+        return _error_envelope(
+            block_id, action, f"{type(exc).__name__}: {exc}"
+        )
+    if isinstance(result, dict) and (
+        result.get("status") == "error" or result.get("ok") is False
+    ):
+        refused = dict(result)
+        refused.setdefault("status", "error")
+        refused.setdefault("block", block_id)
+        refused["ok"] = False
+        return refused
+    return result
 '''
 
 
@@ -1275,7 +1239,6 @@ def _templated_body(block_ids: Sequence[str]) -> str:
 
 
 _PY_DEFAULTS = {"str": '""', "int": "0", "float": "0.0", "bool": "False"}
-_SQL_TYPES = {"str": "TEXT", "int": "INTEGER", "float": "REAL", "bool": "INTEGER"}
 
 
 def _fallback_spec(cap: Any) -> Dict[str, Any]:
@@ -1366,92 +1329,11 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
 def _render_store(specs: Dict[str, Dict[str, Any]]) -> str:
     """sqlite3 persistence derived from the same specs the models came from.
 
-    stdlib sqlite3, file-backed, no server. One table per entity, columns
-    generated from the spec so the schema cannot drift from the dataclass.
+    Schema is versioned Alembic (S10). connect() does not CREATE TABLE.
     """
-    tables = []
-    for spec in sorted(specs.values(), key=lambda s: s["entity"]):
-        cols = ", ".join(
-            f"{f['name']} {_SQL_TYPES[f['type']]}" for f in spec["fields"]
-        )
-        tables.append(
-            f'    "{spec["entity"]}": "CREATE TABLE IF NOT EXISTS {spec["entity"]} '
-            f'(id INTEGER PRIMARY KEY AUTOINCREMENT, {cols})",'
-        )
-    columns = {
-        spec["entity"]: [f["name"] for f in spec["fields"]]
-        for spec in specs.values()
-    }
-    return (
-        '"""SQLite persistence for the domain models.\n'
-        "\n"
-        "stdlib sqlite3 and a local file: the platform stores data with no\n"
-        "database server and no network. STORAGE_PATH relocates the file.\n"
-        '"""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "import os\n"
-        "import sqlite3\n"
-        "from pathlib import Path\n"
-        "from typing import Any, Dict, List\n"
-        "\n"
-        "SCHEMA = {\n" + "\n".join(tables) + "\n}\n"
-        "\n"
-        f"COLUMNS: Dict[str, List[str]] = {columns!r}\n"
-        "\n"
-        "\n"
-        "def db_path() -> Path:\n"
-        '    root = Path(os.getenv("STORAGE_PATH", "./data"))\n'
-        "    root.mkdir(parents=True, exist_ok=True)\n"
-        '    return root / "platform.db"\n'
-        "\n"
-        "\n"
-        "def connect() -> sqlite3.Connection:\n"
-        "    conn = sqlite3.connect(db_path())\n"
-        "    conn.row_factory = sqlite3.Row\n"
-        "    for ddl in SCHEMA.values():\n"
-        "        conn.execute(ddl)\n"
-        "    conn.commit()\n"
-        "    return conn\n"
-        "\n"
-        "\n"
-        "def save(entity: str, record: Dict[str, Any]) -> Dict[str, Any]:\n"
-        '    """Insert a record and return it with its assigned id."""\n'
-        "    cols = COLUMNS[entity]\n"
-        "    values = [record.get(c) for c in cols]\n"
-        '    placeholders = ", ".join("?" for _ in cols)\n'
-        "    conn = connect()\n"
-        "    try:\n"
-        "        cur = conn.execute(\n"
-        '            f"INSERT INTO {entity} ({\', \'.join(cols)}) VALUES ({placeholders})",\n'
-        "            values,\n"
-        "        )\n"
-        "        conn.commit()\n"
-        '        return {"id": cur.lastrowid, **{c: record.get(c) for c in cols}}\n'
-        "    finally:\n"
-        "        conn.close()\n"
-        "\n"
-        "\n"
-        "def list_all(entity: str) -> List[Dict[str, Any]]:\n"
-        "    conn = connect()\n"
-        "    try:\n"
-        '        rows = conn.execute(f"SELECT * FROM {entity} ORDER BY id").fetchall()\n'
-        "        return [dict(r) for r in rows]\n"
-        "    finally:\n"
-        "        conn.close()\n"
-        "\n"
-        "\n"
-        "def get(entity: str, record_id: int) -> Dict[str, Any] | None:\n"
-        "    conn = connect()\n"
-        "    try:\n"
-        "        row = conn.execute(\n"
-        '            f"SELECT * FROM {entity} WHERE id = ?", (record_id,)\n'
-        "        ).fetchone()\n"
-        "        return dict(row) if row else None\n"
-        "    finally:\n"
-        "        conn.close()\n"
-    )
+    from app.factory.build.data_lifecycle import render_store
+
+    return render_store(specs)
 
 
 def _constraint_guard(spec: Dict[str, Any]) -> str:
@@ -1688,20 +1570,35 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
 
 
 def _render_main(product_name: str) -> str:
+    from app.factory.build.network_posture import NETWORK_POSTURE, NETWORK_POSTURE_REASON
+
     return (
         '"""Entrypoint for the generated platform.\n'
         "\n"
         "Runs standalone: uvicorn app.main:app. No factory, no block store, no\n"
-        "outbound dependency at runtime. Kernel jobs are at GET /v1/jobs.\n"
+        f"outbound dependency at runtime ({NETWORK_POSTURE}: {NETWORK_POSTURE_REASON}).\n"
+        "Kernel jobs are at GET /v1/jobs.\n"
         '"""\n'
         "\n"
         "from __future__ import annotations\n"
+        "\n"
+        "from contextlib import asynccontextmanager\n"
         "\n"
         "from fastapi import FastAPI\n"
         "\n"
         "from app.routes import router\n"
         "\n"
-        f'app = FastAPI(title="{product_name}")\n'
+        "\n"
+        "@asynccontextmanager\n"
+        "async def lifespan(_app: FastAPI):\n"
+        "    # Fail-closed: a revision behind head refuses boot.\n"
+        "    from app.migrations import upgrade_head\n"
+        "\n"
+        "    upgrade_head()\n"
+        "    yield\n"
+        "\n"
+        "\n"
+        f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
         'app.include_router(router, prefix="/v1")\n'
         "\n"
         "\n"
@@ -1712,13 +1609,18 @@ def _render_main(product_name: str) -> str:
 
 
 def _render_requirements() -> str:
+    from app.factory.build.network_posture import POSTURE_ID
+
     return (
         "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
-        "# the platform runs with no database server and no network.\n"
+        f"# the platform runs with no database server and no network ({POSTURE_ID}).\n"
         "# pydantic is required by the vendored cerebrum_product_kernel contract.\n"
+        "# Alembic applies versioned schema at deploy against STORAGE_PATH.\n"
         "fastapi>=0.110\n"
         "uvicorn>=0.29\n"
         "pydantic>=2.0\n"
+        "alembic>=1.13\n"
+        "sqlalchemy>=2.0\n"
     )
 
 
@@ -1732,10 +1634,11 @@ def _render_requirements() -> str:
 
 
 def _render_dockerfile() -> str:
+    from app.factory.build.network_posture import NETWORK_POSTURE
+
     text = (
         "# Standalone image. Blocks are vendored into the repository at build\n"
-        "# time, so the container needs no block store and no outbound network\n"
-        "# at runtime.\n"
+        f"# time. Network posture: {NETWORK_POSTURE} — no outbound at runtime.\n"
         f"# Base image pin: Docker Hub library/python:3.12-slim (2026-08-23).\n"
         f"FROM {PYTHON_312_SLIM_FROM}\n"
         "WORKDIR /app\n"
@@ -1743,15 +1646,22 @@ def _render_dockerfile() -> str:
         "\n"
         "COPY requirements.txt .\n"
         "RUN pip install --no-cache-dir -r requirements.txt\n"
+        "COPY requirements-dev.txt .\n"
+        "RUN pip install --no-cache-dir -r requirements-dev.txt\n"
         "\n"
         "COPY . .\n"
         "ENV PYTHONPATH=/app\n"
-        "# Persistence is a sqlite file; mount a volume here to keep it.\n"
+        "# Persistence is a sqlite file on the mounted disk (F23).\n"
         "ENV STORAGE_PATH=/app/data\n"
         "RUN mkdir -p /app/data\n"
         "\n"
+        "# F19: a red suite must not produce a deployable image.\n"
+        "RUN python3 scripts/release_gate.py\n"
+        "\n"
         "EXPOSE 8000\n"
-        'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n'
+        "# S10: migrate against the persistent disk, then serve. Failure refuses boot.\n"
+        "# scripts/entrypoint.sh: alembic upgrade head && uvicorn app.main:app\n"
+        'ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]\n'
     )
     assert_generated_dockerfile(text)
     return text
@@ -1864,37 +1774,32 @@ if __name__ == "__main__":
 
 
 def _render_procfile() -> str:
-    return "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
-
-
-def _render_platform_env_example() -> str:
-    """Note what is absent: there is no store URL and no store key.
-
-    The template generator's .env.example documents CEREBRUM_API_URL because
-    its handlers POST to the block store. This platform's handlers import the
-    blocks vendored beside them, so a store variable here would be a lie about
-    how it runs.
-    """
     return (
-        "# Copy to .env and fill in. Never commit real values.\n"
-        "ENV=production\n"
-        "\n"
-        "# Where the sqlite file lives. Mount a volume at this path to persist.\n"
-        "STORAGE_PATH=./data\n"
-        "\n"
-        "# Deliberately absent: there is no block-store URL and no store key\n"
-        "# to set. Blocks are vendored under vendor/blocks/ and invoked\n"
-        "# in-process via app/dispatch.py, so this platform makes no outbound\n"
-        "# call at runtime and needs neither the factory nor the store to be\n"
-        "# reachable. The omission is the design, not an oversight.\n"
+        "web: python -m alembic upgrade head && "
+        "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
     )
 
 
+def _render_platform_env_example() -> str:
+    """P1_OFFLINE_STRICT: no store URL, no LLM keys, no Ollama.
+
+    The template generator's .env.example documents CEREBRUM_API_URL because
+    its handlers POST to the block store (S6 declared leftover). This
+    platform's handlers import vendored blocks, so a store or cloud-LLM
+    variable here would be a lie about how it runs.
+    """
+    from app.factory.build.network_posture import P1_ENV_EXAMPLE
+
+    return P1_ENV_EXAMPLE
+
+
 def _render_render_yaml(product_id: str) -> str:
+    from app.factory.build.network_posture import NETWORK_POSTURE
+
     slug = re.sub(r"[^a-z0-9-]+", "-", str(product_id).lower()).strip("-") or "platform"
     return (
         "# Render blueprint. One web service, no database and no key-value\n"
-        "# store: persistence is a sqlite file on the mounted disk.\n"
+        f"# store: persistence is a sqlite file on the mounted disk ({NETWORK_POSTURE}).\n"
         "services:\n"
         "  - type: web\n"
         f"    name: {slug}\n"
@@ -1935,6 +1840,8 @@ and they do not execute the test suite (`GET /v1/gates` describes coverage only)
 
 
 def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
+    from app.factory.build.network_posture import NETWORK_POSTURE
+
     cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
     block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
     return f"""# {product_name}
@@ -1946,7 +1853,7 @@ Generated by the CerebrumDev factory role runner.
 A standalone platform. Every capability runs in-process: handlers invoke
 blocks that were vendored into `vendor/blocks/` at build time, through
 `app/dispatch.py`. There is **no call back to a block store at runtime** — the
-platform runs with the factory switched off.
+platform runs with the factory switched off (`{NETWORK_POSTURE}`).
 
 ## Capabilities
 
@@ -1966,6 +1873,8 @@ python -m pytest tests                   # includes Store-backed @pytest.mark.pi
 ```
 
 Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
+Schema is Alembic (`alembic upgrade head` at deploy). `app/store.py` does not
+`CREATE TABLE`.
 
 ## Layout
 
@@ -1973,7 +1882,10 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 |---|---|
 | `app/jobs.py` | kernel job descriptions (`GET /v1/jobs` and friends) |
 | `app/models.py` | domain dataclasses |
-| `app/store.py` | sqlite persistence |
+| `app/store.py` | sqlite persistence (WAL; no DDL) |
+| `app/migrations.py` | Alembic upgrade / downgrade |
+| `app/backup.py` | backup / restore / retention |
+| `alembic/` | versioned up and down revisions |
 | `app/routes.py` | HTTP surface |
 | `app/actions/` | capability handlers |
 | `app/dispatch.py` | local block dispatch |
@@ -2408,14 +2320,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
     ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
 
-    # Persistence is rendered from the same specs, so the schema cannot drift
-    # from the dataclasses it stores.
-    ctx.workspace.write_text(Path("app") / "store.py", _render_store(specs))
+    # Persistence + versioned Alembic from the same specs. connect() does
+    # not CREATE TABLE — deploy applies revisions against STORAGE_PATH.
+    from app.factory.build.data_lifecycle import emit_writer_artifacts
+
+    emit_writer_artifacts(ctx.workspace, specs)
     sources["persistence"] = (
         "derived from coder-designed models"
         if any(s.get("model") for s in specs.values())
         else fallback_source
     )
+    sources["migrations"] = "alembic revisions emitted from unused-kit pattern"
 
     # --- capability handlers ------------------------------------------------
     actions_init = ['"""Capability handlers."""', ""]
@@ -2576,6 +2491,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "gated": True,
             },
             {
+                "file": "tests/test_data_lifecycle.py",
+                "covers": "Alembic up/down on populated v1, restore drill, parallel writes",
+                "gated": True,
+            },
+            {
                 "file": "tests/test_routes.py",
                 "covers": "HTTP 200 JSON for /health, kernel jobs, and each capability POST",
                 "gated": True,
@@ -2621,7 +2541,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             if readme
             else _templated_readme(product_name, written, sorted(vendored))
         )
-        ctx.workspace.write_text("README.md", body + _kernel_http_readme_section())
+        from app.factory.build.network_posture import readme_section
+
+        ctx.workspace.write_text(
+            "README.md", body + _kernel_http_readme_section() + readme_section()
+        )
         sources["readme"] = readme[1] if readme else fallback_source
     sources["entrypoint"] = fallback_source
     sources["requirements"] = fallback_source
@@ -2637,7 +2561,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     sources["release_gate"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
+    from app.factory.build.network_posture import POSTURE_ID, declaration_json
+
+    ctx.workspace.write_text(Path("docs") / "network_posture.json", declaration_json())
     sources["deploy_scaffold"] = fallback_source
+    sources["network_posture"] = POSTURE_ID
+
+    from app.factory.build.converge import converge_writer_emitters
+
+    converged = converge_writer_emitters(ctx)
+    if converged.get("ok"):
+        sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
     from app.factory.build.converge import converge_writer_emitters
 
@@ -2654,6 +2588,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "product_id": getattr(ctx.blueprint, "product_id", "unknown"),
                 "product_name": product_name,
                 "engine": "role_runner",
+                "network_posture": POSTURE_ID,
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
                 "kernel_agents": {
@@ -2672,6 +2607,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
         + "\n",
     )
+    from app.factory.build.network_posture import PostureError, assert_workspace_posture
+
+    try:
+        assert_workspace_posture(
+            ctx.workspace.workspace,
+            fallback=(
+                ctx.workspace.destination if ctx.workspace.staged else None
+            ),
+        )
+    except PostureError as exc:
+        raise RoleError(str(exc)) from exc
     detail = (
         f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
         f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
@@ -2777,6 +2723,7 @@ env only proves the platform does not call the store; a handler that posts
 to an arbitrary public URL still passed, and one did -- "sent" a webhook to
 the open internet from a platform whose whole claim is running offline.
 Loopback stays open so TestClient-style local servers keep working.
+P1: this blocker is unchanged. Do not add local-inference or cloud hosts.
 """
 
 import os
@@ -2787,6 +2734,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
+
+# Schema is versioned. connect() does not CREATE TABLE. Apply head so
+# model/route tests have tables; a missing revision fails the suite.
+# ImportError is only for isolation probes that exec this file without app/.
+try:
+    from app.migrations import upgrade_head  # noqa: E402
+
+    upgrade_head()
+except ImportError:
+    pass
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _real_connect = socket.socket.connect
@@ -3023,6 +2980,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         model_lines.append("    pass")
     ctx.workspace.write_text(
         Path("tests") / "test_models.py", "\n".join(model_lines) + "\n"
+    )
+    from app.factory.build.data_lifecycle import render_product_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_data_lifecycle.py", render_product_tests(specs)
     )
 
     # -- routes return their documented shape ------------------------------

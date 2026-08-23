@@ -14,6 +14,21 @@ from __future__ import annotations
 from app.factory.build.roles import _CONFTEST
 
 
+def _write_generated_conftest_tree(tmp_path):
+    """The generated conftest imports app.migrations; isolation probes
+    only write tests/conftest.py. Stub the product module so STORAGE_PATH
+    forcing and the offline socket guard can still be judged alone."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "__init__.py").write_text("", encoding="utf-8")
+    (app / "migrations.py").write_text(
+        "def upgrade_head():\n    return None\n",
+        encoding="utf-8",
+    )
+
+
 def test_generated_conftest_forces_storage_isolation(tmp_path):
     """Run the conftest with STORAGE_PATH already set, the way the tester
     subprocess actually runs it. The inherited value must lose.
@@ -27,8 +42,7 @@ def test_generated_conftest_forces_storage_isolation(tmp_path):
     import sys
     import textwrap
 
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
+    _write_generated_conftest_tree(tmp_path)
 
     probe = textwrap.dedent(
         """
@@ -62,10 +76,7 @@ def test_generated_conftest_blocks_outbound_network(tmp_path):
     import sys
     import textwrap
 
-    from app.factory.build.roles import _CONFTEST
-
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
+    _write_generated_conftest_tree(tmp_path)
 
     probe = textwrap.dedent(
         """

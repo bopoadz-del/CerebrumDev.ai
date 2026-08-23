@@ -287,9 +287,9 @@ class ProductGenerator:
             "PYTHONPATH=.",
             "RESIDENT_ENGINEER_ENABLED=false",
             "",
-            "# Cerebrum-Blocks store — REUSE actions invoke blocks via POST {URL}/v1/execute.",
-            "# Without this the generated actions degrade to DEPENDENCY_REQUIRED (honest),",
-            "# never a fake success.",
+            "# NETWORK_POSTURE: RoleRunner products are P1 (offline strict, no store URL).",
+            "# This ProductGenerator emitter still POSTs REUSE actions to the store",
+            "# (S6 declared leftover). Optional here; unset → DEPENDENCY_REQUIRED, not a fake success.",
             "# CEREBRUM_API_URL=https://cerebrum-blocks.onrender.com",
             "# CEREBRUM_API_KEY=",
         ]
@@ -922,6 +922,8 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
             [
                 "COPY . .",
                 "ENV PYTHONPATH=/app",
+                "# F19: a red suite must not produce a deployable image.",
+                "RUN python3 scripts/release_gate.py",
                 "EXPOSE 8000",
                 'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]',
             ]

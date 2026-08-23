@@ -1,6 +1,6 @@
 {
   "author": "Cerebrum Team",
-  "description": "Receive images from any client, OCR extract, AI structure, vector store",
+  "description": "P1_OFFLINE_STRICT: local/scripted OCR and scripted structure. Cloud LLM keys and Ollama are unused. Receive images from any client, OCR extract, AI structure, vector store",
   "digests": {
     "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
     "block.json": "c9c02cee1f2fa7e677f7a48081bd207dc48682a41da8f2212e11850dcd1193a1",
@@ -33,21 +33,21 @@
       "type": "string"
     },
     {
-      "default": "deepseek",
+      "default": "none",
       "description": "Configuration parameter: llm_provider",
       "name": "llm_provider",
       "required": false,
       "type": "string"
     },
     {
-      "default": "http://localhost:11434",
+      "default": "",
       "description": "Configuration parameter: ollama_base_url",
       "name": "ollama_base_url",
       "required": false,
       "type": "string"
     },
     {
-      "default": "llama3.2:3b",
+      "default": "",
       "description": "Configuration parameter: ollama_model",
       "name": "ollama_model",
       "required": false,
@@ -68,14 +68,14 @@
       "type": "string"
     },
     {
-      "default": "deepseek-chat",
+      "default": "",
       "description": "Configuration parameter: deepseek_model",
       "name": "deepseek_model",
       "required": false,
       "type": "string"
     },
     {
-      "default": "anthropic/claude-3.5-sonnet",
+      "default": "",
       "description": "Configuration parameter: openrouter_model",
       "name": "openrouter_model",
       "required": false,
@@ -89,21 +89,21 @@
       "type": "string"
     },
     {
-      "default": "claude-3-5-sonnet-20241022",
+      "default": "",
       "description": "Configuration parameter: anthropic_model",
       "name": "anthropic_model",
       "required": false,
       "type": "string"
     },
     {
-      "default": "http://localhost:8001",
+      "default": "",
       "description": "Configuration parameter: vector_db_url",
       "name": "vector_db_url",
       "required": false,
       "type": "string"
     },
     {
-      "default": true,
+      "default": false,
       "description": "Configuration parameter: store_captures",
       "name": "store_captures",
       "required": false,

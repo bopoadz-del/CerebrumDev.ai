@@ -45,11 +45,19 @@ def test_the_deploy_scaffold_is_present(built):
 
 def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
     text = (built / "Dockerfile").read_text(encoding="utf-8")
-    assert "uvicorn" in text and "app.main:app" in text
     assert "requirements.txt" in text
     # sqlite needs its directory to exist; the container must create it.
     assert "STORAGE_PATH" in text
     assert "mkdir -p" in text
+    # F19: a red suite must not produce a deployable image.
+    assert "scripts/release_gate.py" in text
+    assert "requirements-dev.txt" in text
+    # S10: migrate against the mounted disk, then serve. uvicorn lives in
+    # the entrypoint so a failed revision refuses boot.
+    assert "scripts/entrypoint.sh" in text
+    entry = (built / "scripts" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "alembic upgrade head" in entry
+    assert "uvicorn" in entry and "app.main:app" in entry
 
 
 def test_the_render_blueprint_declares_no_database(built):
@@ -80,8 +88,9 @@ def test_the_env_example_offers_no_store_wiring(built):
     beside them, so offering a store variable would misdescribe how it runs."""
     text = (built / ".env.example").read_text(encoding="utf-8")
     assert "STORAGE_PATH" in text
+    assert "P1" in text
     for token in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "/v1/execute"):
-        assert token not in text, f"{token} offered in a platform that never calls a store"
+        assert f"{token}=" not in text, f"{token} offered in a P1 platform"
 
 
 def test_the_dockerignore_excludes_build_and_runtime_artefacts(built):
@@ -95,7 +104,29 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
     arbitrary files at the workspace root."""
     ws = tmp_path / "w"
     ws.mkdir()
-    for allowed in ("Dockerfile", "Procfile", ".env.example", ".dockerignore", "render.yaml"):
+    for allowed in (
+        "Dockerfile",
+        "Procfile",
+        ".env.example",
+        ".dockerignore",
+        "render.yaml",
+        "alembic.ini",
+        "scripts/entrypoint.sh",
+        "docs/data_lifecycle.json",
+    ):
+        assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
+    assert assert_write_allowed(
+        BuildRole.WRITER, ws / "alembic" / "versions" / "0001_baseline.py", workspace=ws
+    )
+    for allowed in (
+        "product-dna/entity_model.json",
+        "docs/blueprint/product_blueprint.json",
+        "docs/provenance/provenance.json",
+        "docs/certification/dual_certification.json",
+        "docs/edge_profile.json",
+        "docs/network_posture.json",
+        "frontend/src/App.tsx",
+    ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
     for denied in ("docker-compose.yml", "Makefile", ".github/workflows/ci.yml", "setup.py"):
         with pytest.raises(AuthorityError):

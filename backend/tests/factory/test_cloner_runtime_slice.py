@@ -516,6 +516,8 @@ def test_cloner_rewrites_zero_arg_store_constructors(tmp_path):
         encoding="utf-8"
     )
     assert "_instantiate_store_block" in shim
+    assert "_ensure_store_block_ready" in shim
+    assert "return _ensure_store_block_ready(call())" in shim
     assert "instance = block_cls()" not in shim
     assert "_OfflineHal" in shim
     assert "block_cls(None, {})" not in shim
@@ -658,3 +660,4 @@ def test_cloner_emits_store_unwired_adapter_contracts(tmp_path):
     assert "Store-unwired query" in db
     storage = (cerebrum / "storage.py").read_text(encoding="utf-8")
     assert "Store-unwired aiofiles" in storage
+

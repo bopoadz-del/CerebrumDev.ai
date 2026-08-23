@@ -1,0 +1,14 @@
+{
+  "topic": "Cerebrum-Blocks harvest",
+  "verdict": "BLOCKED",
+  "evaluated_at": "2026-08-23T07:54:55Z",
+  "authorized_write_path_in_this_repo": false,
+  "evidence": [
+    "STORE_MANAGER write_lanes are LaneRoot.STORE block_registry/** — local store root, not the sibling GitHub repo",
+    "backend/app/factory/build/registrar.py is read-only by construction; publish/version/deprecate deferred",
+    "authority.py STORE_MANAGER mandate: harvesting improvements back upstream remains unbuilt",
+    "No git remote or workflow in this repo writes to bopoadz-del/Cerebrum-Blocks"
+  ],
+  "consequence": "The next product will re-ship Store-unwired adapters unless Factory CLONER emission (offline_adapters + P1 capture) stays applied. This does not pretend Blocks was fixed.",
+  "factory_side_in_scope": "S4/S5/S7 emission stays in CerebrumDev.ai"
+}
