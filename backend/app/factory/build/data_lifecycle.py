@@ -574,9 +574,9 @@ def lifecycle_declaration() -> Dict[str, Any]:
         },
         "sqlite_on_mounted_disk": True,
         "spof": (
-            "Render persistent disk is single-instance and the live SQLite "
-            "file lives on it. One writer. Losing the disk loses the live "
-            "database. Same-disk backups do not survive disk loss; set "
+            "SPOF: Render persistent disk is single-instance and the live "
+            "SQLite file lives on it. One writer. Losing the disk loses the "
+            "live database. Same-disk backups do not survive disk loss; set "
             "BACKUP_DIR onto another volume if disk loss is in scope."
         ),
         "capacity": {
