@@ -201,7 +201,14 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
 
     proc = ctx.run([sys.executable, "-c", DURABILITY_PROBE])
     if proc.returncode != 0:
-        lines = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
+        raw = (proc.stderr or "").splitlines()
+        # Filter to marked findings: alembic and uvicorn also log to stderr,
+        # so a tail of raw lines reported their INFO noise as the gate reason.
+        lines = [
+            ln.split("GATE-FINDING: ", 1)[1] for ln in raw if "GATE-FINDING: " in ln
+        ]
+        if not lines:
+            lines = [ln for ln in raw if ln.strip()][-8:]
         return GateResult(
             ok=False,
             gate=GATE_NAME,

@@ -20,6 +20,7 @@ import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.build.runner import RoleRunner
+from tests.factory.coder_stub_bodies import invoking_handler_body
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
@@ -96,8 +97,12 @@ def test_writer_takes_the_coder_entry_point_when_keyed(tmp_path, monkeypatch):
 
     def fake_coder(**kwargs):
         calls.append(kwargs)
+        # The stub stands in for coder output, so it must invoke the blocks
+        # the WRITER bound to this capability. A body that returns a canned
+        # dict while BLOCK_IDS is non-empty is F11 — a declared block that is
+        # never called — and the WRITER gate refuses it, correctly.
         return {
-            "body": '    return {"capability": CAPABILITY_ID, "agent": True}',
+            "body": invoking_handler_body({"agent": True}),
             "model": "ci-keyed-stub",
         }
 

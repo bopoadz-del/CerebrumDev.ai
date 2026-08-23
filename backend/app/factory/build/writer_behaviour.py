@@ -55,11 +55,16 @@ try:
     from app.main import app
     from fastapi.testclient import TestClient
 except Exception as exc:
-    sys.stderr.write("workspace does not import: %s: %s\n" % (type(exc).__name__, exc))
+    sys.stderr.write(
+        "GATE-FINDING: workspace does not import: %s: %s\n"
+        % (type(exc).__name__, exc)
+    )
     raise SystemExit(1)
 
 if not MODELS:
-    sys.stderr.write("no capabilities to probe (app.models.MODELS is empty)\n")
+    sys.stderr.write(
+        "GATE-FINDING: no capabilities to probe (app.models.MODELS is empty)\n"
+    )
     raise SystemExit(1)
 
 
@@ -149,6 +154,28 @@ try:
 except Exception:
     pass
 
+# F11: record which blocks each capability actually reaches while its
+# handler runs normally. A declared BLOCK_IDS entry that is never invoked is
+# a build error, not a comment -- and the baseline phase is where a handler
+# runs to completion, so it is the only phase that can observe the full set.
+import app.dispatch as _dispatch
+
+_real_execute = _dispatch.execute
+_seen = {"cap": None, "blocks": {}}
+
+
+def _recording_execute(block_id, *a, **kw):
+    cap = _seen["cap"]
+    if cap is not None:
+        _seen["blocks"].setdefault(cap, set()).add(str(block_id))
+    return _real_execute(block_id, *a, **kw)
+
+
+_dispatch.execute = _recording_execute
+for _name, _mod in list(sys.modules.items()):
+    if _name.startswith("app.actions") and hasattr(_mod, "execute"):
+        _mod.execute = _recording_execute
+
 client_cm = TestClient(app)
 client = client_cm.__enter__()
 targets = []
@@ -156,6 +183,7 @@ targets = []
 # -- phase 1: baseline -----------------------------------------------------
 for cap_id, cls in MODELS.items():
     body = _payload(cls)
+    _seen["cap"] = cap_id
     try:
         resp = client.post("/v1/" + cap_id, json=body)
     except Exception as exc:
@@ -181,8 +209,30 @@ for cap_id, cls in MODELS.items():
         continue
     targets.append((cap_id, cls))
 
+_seen["cap"] = None
+
+# F11: a declared BLOCK_IDS entry that never gets invoked is a build error,
+# not a comment. Checked after the baseline because that is the phase where
+# a handler runs to completion -- under forced failure it may short-circuit
+# on the first block and never reach the rest.
+for _cap_id, _cls in targets:
+    _mod = sys.modules.get("app.actions." + _cap_id.replace("-", "_"))
+    _declared = [str(b) for b in (getattr(_mod, "BLOCK_IDS", None) or [])]
+    if not _declared:
+        continue
+    _invoked = _seen["blocks"].get(_cap_id, set())
+    _never = sorted(b for b in _declared if b not in _invoked)
+    if _never:
+        findings.append(
+            "%s: declares block(s) it never invokes: %s (F11)"
+            % (_cap_id, ", ".join(_never))
+        )
+
 if not targets:
-    sys.stderr.write("\n".join(findings) or "no capability accepted its own schema\n")
+    sys.stderr.write(
+        "".join("GATE-FINDING: %s\n" % f for f in findings)
+        or "GATE-FINDING: no capability accepted its own schema\n"
+    )
     raise SystemExit(1)
 
 # -- phase 2: every block call fails --------------------------------------
@@ -241,7 +291,7 @@ for cap_id, cls in targets:
         )
 
 if findings:
-    sys.stderr.write("\n".join(findings) + "\n")
+    sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in findings))
     raise SystemExit(1)
 '''
 
@@ -260,7 +310,14 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
 
     proc = ctx.run([sys.executable, "-c", BEHAVIOUR_PROBE])
     if proc.returncode != 0:
-        lines = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
+        raw = (proc.stderr or "").splitlines()
+        # Filter to marked findings: alembic and uvicorn also log to stderr,
+        # so a tail of raw lines reported their INFO noise as the gate reason.
+        lines = [
+            ln.split("GATE-FINDING: ", 1)[1] for ln in raw if "GATE-FINDING: " in ln
+        ]
+        if not lines:
+            lines = [ln for ln in raw if ln.strip()][-8:]
         return GateResult(
             ok=False,
             gate=GATE_NAME,
