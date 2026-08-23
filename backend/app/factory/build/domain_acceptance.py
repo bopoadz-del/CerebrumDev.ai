@@ -628,7 +628,7 @@ async def perform(
     context: Optional[ActionContext] = None,
 ) -> Dict[str, Any]:
     payload = dict(arguments or {{}})
-    if op != "process" and op != "refuse" and "capability_id" not in payload:
+    if op != "process" and op != "refuse":
         payload["capability_id"] = capability_id or DEFAULT_CAPABILITY
     result = await execute_action(
         spec_for_op(op, capability_id or DEFAULT_CAPABILITY),
