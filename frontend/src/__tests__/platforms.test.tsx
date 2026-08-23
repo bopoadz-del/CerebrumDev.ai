@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Platforms } from '../App'
 
 const getMock = vi.fn()
+const buildStatusMock = vi.fn()
+const generateMock = vi.fn()
 const awaitBuildMock = vi.fn()
 const downloadMock = vi.fn()
 
@@ -18,6 +20,8 @@ vi.mock('../api/factory', async (importOriginal) => {
     product: {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
+      buildStatus: (...args: unknown[]) => buildStatusMock(...args),
+      generate: (...args: unknown[]) => generateMock(...args),
     },
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
     downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
@@ -34,8 +38,11 @@ const GENERATION = {
 describe('Your Platforms — coding-agent build', () => {
   beforeEach(() => {
     getMock.mockReset()
+    buildStatusMock.mockReset()
+    generateMock.mockReset()
     awaitBuildMock.mockReset()
     downloadMock.mockReset()
+    buildStatusMock.mockResolvedValue({ ok: true, build: { state: 'not_started' } })
   })
 
   it('empty state when nothing has been generated', async () => {
@@ -74,6 +81,55 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByText(/Coding agent at work — WRITER 3\/5/)).toBeInTheDocument()
     expect(screen.getByText(/2\/4 handlers/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
+  })
+
+  it('refresh re-fetches product + build-status while the runner is at 2/5', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Dealership Platform', vertical: 'auto' },
+    })
+    const atTwo = {
+      state: 'building',
+      phases_done: 2,
+      phases_total: 5,
+      activity: 'WRITER handler 2/4',
+      completed: ['cloner'],
+    }
+    const atThree = {
+      state: 'building',
+      phases_done: 3,
+      phases_total: 5,
+      activity: 'TESTER gate',
+      completed: ['cloner', 'writer'],
+    }
+    buildStatusMock
+      .mockResolvedValueOnce({ ok: true, build: atTwo })
+      .mockResolvedValueOnce({ ok: true, build: atThree })
+    // Background poll stays in-flight; Refresh must not wait on it.
+    awaitBuildMock.mockImplementation(() => new Promise(() => {}))
+
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText('runner')).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Coding agent at work — 3\/5 · last: WRITER handler 2\/4 · still working/),
+    ).toBeInTheDocument()
+    expect(getMock).toHaveBeenCalledTimes(1)
+    expect(buildStatusMock).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    await waitFor(() => {
+      expect(getMock).toHaveBeenCalledTimes(2)
+      expect(buildStatusMock).toHaveBeenCalledTimes(2)
+    })
+    expect(getMock).toHaveBeenNthCalledWith(2, 'sess_ui')
+    expect(buildStatusMock).toHaveBeenNthCalledWith(2, 'sess_ui')
+    expect(
+      await screen.findByText(/Coding agent at work — 4\/5 · last: TESTER gate · still working/),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
+    expect(generateMock).not.toHaveBeenCalled()
   })
 
   it('names how many artifacts the coding agent wrote', async () => {

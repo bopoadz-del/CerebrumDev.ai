@@ -21,16 +21,28 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   const [build, setBuild] = useState<BuildStatus | null>(null)
 
   const refresh = useCallback(() => {
+    setError(null)
     product
       .get(sessionId)
-      .then(setDesign)
+      .then(async (next) => {
+        setDesign(next)
+        // product GET does not carry live runner progress (phases / last event).
+        // Always re-fetch build-status when a generation exists — including while
+        // state === 'building'. Never POST generate from this button.
+        if (!next.generation) return
+        const { build } = await product.buildStatus(sessionId)
+        setBuild(build)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
   }, [sessionId])
 
   useEffect(refresh, [refresh])
 
+  // Poll once a generation exists. Depend on a primitive so Refresh (new
+  // generation object identity) does not tear down the in-flight poll.
+  const watchingBuild = Boolean(design?.generation)
   useEffect(() => {
-    if (!design?.generation) return
+    if (!watchingBuild) return
     let cancelled = false
     void awaitBuild(sessionId, (s) => {
       if (!cancelled) setBuild(s)
@@ -42,7 +54,7 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     return () => {
       cancelled = true
     }
-  }, [design?.generation, sessionId])
+  }, [watchingBuild, sessionId])
 
   async function download() {
     setDownloading(true)
