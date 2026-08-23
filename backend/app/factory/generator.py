@@ -287,9 +287,9 @@ class ProductGenerator:
             "PYTHONPATH=.",
             "RESIDENT_ENGINEER_ENABLED=false",
             "",
-            "# Cerebrum-Blocks store — REUSE actions invoke blocks via POST {URL}/v1/execute.",
-            "# Without this the generated actions degrade to DEPENDENCY_REQUIRED (honest),",
-            "# never a fake success.",
+            "# NETWORK_POSTURE: RoleRunner products are P1_OFFLINE_STRICT (no store URL).",
+            "# This ProductGenerator emitter still POSTs REUSE actions to the store",
+            "# (S6 declared leftover). Optional here; unset → DEPENDENCY_REQUIRED, not a fake success.",
             "# CEREBRUM_API_URL=https://cerebrum-blocks.onrender.com",
             "# CEREBRUM_API_KEY=",
         ]

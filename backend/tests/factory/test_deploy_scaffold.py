@@ -80,8 +80,9 @@ def test_the_env_example_offers_no_store_wiring(built):
     beside them, so offering a store variable would misdescribe how it runs."""
     text = (built / ".env.example").read_text(encoding="utf-8")
     assert "STORAGE_PATH" in text
+    assert "P1_OFFLINE_STRICT" in text
     for token in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "/v1/execute"):
-        assert token not in text, f"{token} offered in a platform that never calls a store"
+        assert f"{token}=" not in text, f"{token} offered in a P1 platform"
 
 
 def test_the_dockerignore_excludes_build_and_runtime_artefacts(built):

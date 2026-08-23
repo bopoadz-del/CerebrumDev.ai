@@ -219,4 +219,9 @@ def emit_runtime_module(module_name: str, text: str) -> str:
         return emit_database_query(emit_database_insert(text))
     if name == "storage":
         return emit_storage_aiofiles(text)
+    if name == "capture":
+        from app.factory.build.network_posture import P1_CAPTURE_ADAPTER
+
+        # P1 replaces a Store capture module that would default to deepseek.
+        return P1_CAPTURE_ADAPTER
     return text
