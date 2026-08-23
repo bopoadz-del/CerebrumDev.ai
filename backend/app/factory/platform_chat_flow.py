@@ -17,7 +17,9 @@ Routing contract (this is law, the smoke tests enforce it):
      (draft / start_coder / reply). start_coder is the only chat door that
      launches the WRITER coding agent. Regex approval ("approve") is the
      offline fallback when the LLM is unset or the call fails.
-    4. Approval is only acted on when a blueprint is actually pending.
+    4. Approval starts WRITER when a blueprint is pending. continue/resume
+     resumes an in-flight or interrupted run even after the blueprint is
+     already approved — a pending unapproved blueprint is not required.
     5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
     6. Anything else falls through to the normal kit-configurator chat.
@@ -94,6 +96,18 @@ _APPROVAL_RE = re.compile(
     re.IGNORECASE,
 )
 
+# "continue" / "resume" after takeover. Must NOT require a pending
+# (unapproved) blueprint — that is the live Floor hole: after start_coder
+# the blueprint is approved and generation is mid-flight or interrupted,
+# and the chat LLM was told start_coder is forbidden.
+_RESUME_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(continue|resume|keep\s+going|pick\s+up(?:\s+where\s+you\s+left\s+off)?"
+    r"|start\s+the\s+coder|resume\s+the\s+coder)"
+    r"(?:\s+please)?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
 
 def is_kit_config_vocabulary(message: str) -> bool:
     """True when the message is about chains/blocks/kits, not a product brief."""
@@ -148,6 +162,11 @@ def should_handle_platform_message(message: str) -> bool:
 def is_approval(message: str) -> bool:
     """True when the message is a short approval of a pending blueprint."""
     return bool(_APPROVAL_RE.search(message or ""))
+
+
+def is_resume_request(message: str) -> bool:
+    """True when the user asked to continue/resume an existing coding run."""
+    return bool(_RESUME_RE.match((message or "").strip()))
 
 
 # --- State helpers ----------------------------------------------------------
@@ -418,15 +437,7 @@ def approve_and_generate(
 
     out = _session_output(state.session_id, bp.product_id, output_root)
     result = generate_product(bp, out, blocks_root=_blocks_root())
-    pd.generation = {
-        "output_dir": result["output_dir"],
-        "inputs_hash": result["inputs_hash"],
-        "product_id": result["product_id"],
-        "coder": result.get("coder"),
-        "engine": result.get("engine"),
-        "build": result.get("build"),
-        "triggered_by": triggered_by,
-    }
+    _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
     pd.last_error = None
 
     trigger_line = (
@@ -521,4 +532,321 @@ def running_build_reply(state: Any) -> Dict[str, Any]:
         "summary": summary,
         "stream_delta": True,
         "build": st,
+    }
+
+
+# --- Resume an in-flight or interrupted coding run --------------------------
+
+
+def _generation_output_dir(state: Any, output_root: Optional[Path] = None) -> Optional[Path]:
+    """Where this session's coding run writes. Survives a worker restart."""
+    pd = getattr(state, "product_design", None)
+    if not pd:
+        return None
+    gen = getattr(pd, "generation", None) or {}
+    out = gen.get("output_dir")
+    if out:
+        return Path(out)
+    bp = pd.blueprint or {}
+    product_id = gen.get("product_id") or bp.get("product_id")
+    session_id = getattr(state, "session_id", None)
+    if product_id and session_id:
+        return _session_output(session_id, product_id, output_root)
+    return None
+
+
+def _ledger_for(output_dir: Path):
+    from app.factory.build.ledger import BuildLedger
+
+    return BuildLedger(Path(output_dir) / "build_ledger.jsonl")
+
+
+def _live_build_thread(product_id: str):
+    """The in-process runner thread for this product, if this worker still has it.
+
+    After a deploy / disconnect the thread is gone even while the ledger
+    still reads "building". That is the case continue must restart.
+    """
+    import threading
+
+    name = f"build-{product_id}"
+    for thread in threading.enumerate():
+        if thread.name == name and thread.is_alive():
+            return thread
+    return None
+
+
+def _generation_status(state: Any, output_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Live ledger status, falling back to the persisted generation snapshot."""
+    pd = getattr(state, "product_design", None)
+    gen = getattr(pd, "generation", None) if pd else None
+    if not gen:
+        return {}
+    out = _generation_output_dir(state, output_root)
+    if out:
+        from app.factory.build_jobs import build_status
+
+        st = build_status(out)
+        if st.get("state") != "unknown":
+            return st
+    persisted = gen.get("build")
+    return dict(persisted) if isinstance(persisted, dict) else {}
+
+
+def _ledger_resume_point(state: Any, output_root: Optional[Path] = None) -> Optional[str]:
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return None
+    try:
+        ledger = _ledger_for(out)
+        if not ledger.exists():
+            return None
+        point = ledger.resume_point()
+        return point.value if point else None
+    except Exception:  # noqa: BLE001 — a torn ledger must not block chat
+        return None
+
+
+def _artifacts_remain(status: Dict[str, Any]) -> bool:
+    """True when WRITER progress is incomplete (the live 22/28 case)."""
+    done = status.get("activity_done")
+    total = status.get("activity_total")
+    try:
+        if total is not None and done is not None and int(done) < int(total):
+            return True
+    except (TypeError, ValueError):
+        pass
+    auth = status.get("authorship") or {}
+    artifacts = auth.get("artifacts") or 0
+    written = auth.get("agent_written") or 0
+    return bool(artifacts) and written < artifacts
+
+
+def is_generation_complete(state: Any) -> bool:
+    """True only when the last coding run recorded SUCCESS."""
+    st = _generation_status(state)
+    if st.get("state") == "succeeded":
+        return True
+    pd = getattr(state, "product_design", None)
+    gen = getattr(pd, "generation", None) if pd else None
+    if not gen:
+        return False
+    out = _generation_output_dir(state)
+    if not out:
+        return False
+    try:
+        return bool(_ledger_for(out).succeeded())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def is_generation_resumable(state: Any) -> bool:
+    """True when a coding run exists that is not finished SUCCESS.
+
+    Does not require a pending (unapproved) blueprint. After takeover the
+    blueprint is approved and the runner workspace / ledger is the resume
+    source — the same-hash path ``POST .../product/generate`` already uses.
+    """
+    pd = getattr(state, "product_design", None)
+    if not pd or not getattr(pd, "blueprint", None):
+        return False
+    if is_generation_complete(state):
+        return False
+    gen = getattr(pd, "generation", None) or {}
+    if not gen:
+        return False
+    out = _generation_output_dir(state)
+    if out:
+        try:
+            ledger = _ledger_for(out)
+            if ledger.exists() and not ledger.succeeded():
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        if (Path(out) / "build_ledger.jsonl").is_file():
+            return True
+        if Path(out).is_dir() and any(Path(out).iterdir()):
+            return True
+    st = _generation_status(state)
+    if st.get("state") in {"building", "stalled", "failed"}:
+        return True
+    if _artifacts_remain(st):
+        return True
+    return bool(gen.get("output_dir") or gen.get("inputs_hash"))
+
+
+def _record_generation(
+    pd: Any,
+    result: Dict[str, Any],
+    *,
+    triggered_by: str,
+    resumed: bool,
+) -> None:
+    """Persist enough for a new uvicorn worker to resume the same run."""
+    from app.factory.build_jobs import build_status
+
+    out = result.get("output_dir") or ""
+    st = result.get("build") if isinstance(result.get("build"), dict) else None
+    if out and (st is None or st.get("state") == "unknown"):
+        st = build_status(out)
+    st = st or {}
+    resume_point = None
+    if out:
+        try:
+            point = _ledger_for(Path(out)).resume_point()
+            resume_point = point.value if point else None
+        except Exception:  # noqa: BLE001
+            resume_point = None
+    pd.generation = {
+        "output_dir": result.get("output_dir"),
+        "inputs_hash": result.get("inputs_hash"),
+        "product_id": result.get("product_id"),
+        "coder": result.get("coder"),
+        "engine": result.get("engine"),
+        "build": st,
+        "phases_done": st.get("phases_done"),
+        "resume_point": resume_point,
+        "triggered_by": triggered_by,
+        "resumed": resumed,
+    }
+
+
+def already_complete_reply(state: Any) -> Dict[str, Any]:
+    """Honest answer when continue is typed after a successful run."""
+    pd = state.product_design
+    gen = pd.generation or {}
+    product = gen.get("product_id") or (pd.blueprint or {}).get("product_name") or "this product"
+    st = _generation_status(state)
+    done = st.get("phases_done")
+    total = st.get("phases_total")
+    phase = f" ({done}/{total} phases)" if done is not None and total is not None else ""
+    summary = (
+        f"{product} already finished successfully{phase}. "
+        "I did not start a new coding run. Download it from Your Platforms, "
+        "or describe a different platform to draft a new blueprint."
+    )
+    return {
+        "ok": True,
+        "sse": "info",
+        "summary": summary,
+        "stream_delta": True,
+        "already_complete": True,
+        "generation": gen,
+        "build": st,
+    }
+
+
+def resume_generation(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "regex_resume",
+) -> Dict[str, Any]:
+    """Resume the session's coding run on the same blueprint hash.
+
+    Calls ``generate_product`` into the existing output dir. The runner
+    sees the ledger, skips completed phases, and does not re-CLONER from
+    zero when WRITER/TESTER already progressed.
+    """
+    pd = state.product_design
+    if not pd.blueprint:
+        raise ValueError("no blueprint drafted — describe the platform first")
+    if is_generation_complete(state):
+        return already_complete_reply(state)
+
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    pd.blueprint_approved = True
+    if not pd.plan:
+        pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
+
+    out = _generation_output_dir(state, output_root)
+    if out is None:
+        out = _session_output(state.session_id, bp.product_id, output_root)
+
+    live = _live_build_thread(bp.product_id)
+    if live is not None:
+        st = _generation_status(state, output_root)
+        activity = st.get("activity") or "writing the platform"
+        done = st.get("phases_done") or 0
+        total = st.get("phases_total") or 5
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"The coding agent is still writing {bp.product_id} — "
+                f"{done}/{total} phases ({activity}). I did not start a second run."
+            ),
+            "stream_delta": True,
+            "already_running": True,
+            "generation": pd.generation,
+            "build": st,
+        }
+
+    prior_hash = (pd.generation or {}).get("inputs_hash")
+    result = generate_product(bp, out, blocks_root=_blocks_root())
+    _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
+    if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
+        logger.warning(
+            "resume hash changed for %s: was %s now %s",
+            bp.product_id,
+            prior_hash[:12],
+            str(result["inputs_hash"])[:12],
+        )
+    pd.last_error = None
+
+    st = (pd.generation or {}).get("build") or {}
+    resume_at = (pd.generation or {}).get("resume_point") or st.get("activity") or "the last phase"
+    done = st.get("phases_done") or 0
+    total = st.get("phases_total") or 5
+    written = st.get("activity_done")
+    of = st.get("activity_total")
+    artifact_bit = ""
+    if written is not None and of is not None:
+        artifact_bit = f", {written}/{of} artifacts"
+    summary = (
+        f"Resuming the coding agent for {result['product_id']} from {resume_at} "
+        f"({done}/{total} phases{artifact_bit}). Same blueprint hash — not starting over."
+    )
+    return {
+        "ok": True,
+        "sse": "generation",
+        "generation": pd.generation,
+        "plan": pd.plan,
+        "triggered_by": triggered_by,
+        "resumed": True,
+        "stream_delta": False,
+        "summary": summary,
+    }
+
+
+def start_or_resume_coder(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "regex_approve",
+) -> Dict[str, Any]:
+    """Start WRITER on a pending blueprint, or resume an interrupted run.
+
+    Never requires a pending unapproved blueprint to resume. Never starts a
+    new product when the last run already succeeded.
+    """
+    if has_pending_blueprint(state):
+        return approve_and_generate(
+            state, output_root=output_root, triggered_by=triggered_by
+        )
+    if is_generation_complete(state):
+        return already_complete_reply(state)
+    if is_generation_resumable(state):
+        resume_by = (
+            "chat_llm" if triggered_by == "chat_llm" else "regex_resume"
+        )
+        return resume_generation(
+            state, output_root=output_root, triggered_by=resume_by
+        )
+    return {
+        "ok": False,
+        "sse": "info",
+        "summary": (
+            "There is no pending blueprint to build and no interrupted "
+            "coding run to resume. Describe the platform you want first."
+        ),
+        "stream_delta": True,
     }
