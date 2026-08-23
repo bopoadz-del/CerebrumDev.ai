@@ -767,7 +767,14 @@ def generate_route_body(
         ],
         f"{capability_id}:route",
     )
-    return {"body": body, "model": get_factory_llm_config_model()}
+    model = get_factory_llm_config_model()
+    logger.info(
+        "coder wrote platform route %s (%d lines) via %s",
+        capability_id,
+        body.count("\n") + 1,
+        model,
+    )
+    return {"body": body, "model": model}
 
 
 def generate_platform_handler(

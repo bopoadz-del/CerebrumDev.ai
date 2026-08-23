@@ -8,6 +8,12 @@ import {
   type ChatEvent,
   type ProductDesign,
 } from './api/factory'
+import {
+  formatHeartbeat,
+  formatPhaseCounts,
+  formatPhaseHeadline,
+  phaseBarFraction,
+} from './buildProgress'
 
 interface Capability {
   id: string
@@ -143,12 +149,14 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
     ? build.phases
     : ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER']
   const done = new Set(build?.completed ?? [])
+  const current = build?.current_phase?.id
   return (
     <ol className="kernel-strip">
       {phases.map((phase) => {
         const job = KERNEL_JOBS[phase]
+        const cls = done.has(phase) ? 'done' : phase === current ? 'current' : undefined
         return (
-          <li key={phase} className={done.has(phase) ? 'done' : undefined}>
+          <li key={phase} className={cls}>
             <span className="kernel-id">{phase}</span>
             {job ? <span className="kernel-title">{job.title}</span> : null}
             {job?.agent ? <span className="kernel-agent">agent</span> : null}
@@ -156,6 +164,41 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
         )
       })}
     </ol>
+  )
+}
+
+function CoderProgress({ build }: { build: BuildStatus }) {
+  const headline = formatPhaseHeadline(build)
+  const counts = formatPhaseCounts(build)
+  const heartbeat = formatHeartbeat(build)
+  const last = build.last_event || build.activity
+  const next = build.next_phase?.id
+  const fraction = phaseBarFraction(build)
+  return (
+    <div className="coder-progress">
+      <p className="coder-phase">
+        Writing your platform — <strong>{headline}</strong>
+        {build.current_phase?.label ? (
+          <span className="coder-phase-label"> — {build.current_phase.label}</span>
+        ) : null}
+        {next ? <span className="coder-next"> then {next}</span> : null}
+      </p>
+      {fraction != null && (
+        <div
+          className="coder-bar"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(fraction * 100)}
+          aria-label={counts ?? headline}
+        >
+          <span style={{ width: `${Math.round(fraction * 100)}%` }} />
+        </div>
+      )}
+      {counts && <p className="coder-counts">{counts}</p>}
+      {last && <p className="coder-last">Last: {last}</p>}
+      {heartbeat && <p className="coder-heartbeat">{heartbeat}</p>}
+    </div>
   )
 }
 
@@ -170,13 +213,12 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
   }
-  const done = build.phases_done ?? 0
-  const total = build.phases_total ?? 5
-  if (build.activity) {
-    return 'Writing your platform — ' + done + '/' + total + ' phases (' + build.activity + ')'
+  const headline = formatPhaseHeadline(build)
+  const last = build.last_event || build.activity
+  if (last) {
+    return 'Writing your platform — ' + headline + ' (last: ' + last + ')'
   }
-  const phase = build.completed?.length ? build.completed[build.completed.length - 1] : 'starting'
-  return 'Writing your platform — ' + done + '/' + total + ' phases (last: ' + phase + ')'
+  return 'Writing your platform — ' + headline
 }
 
 function latestProductCard(msgs: ChatMsg[]): ChatMsg | undefined {
@@ -452,13 +494,17 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
         <div ref={bottomRef} />
       </div>
       {coderActive && (
-        <div className="coder-takeover" role="status">
+        <div className={'coder-takeover' + (coderBuild?.stale ? ' stale' : '')} role="status">
           <h3>Coding agent has taken over</h3>
           <KernelStrip build={coderBuild} />
-          <p>
-            {coderTakeoverNote(coderBuild) ??
-              'The feature list is approved. The coding agent is starting WRITER now.'}
-          </p>
+          {coderBuild && coderBuild.state === 'building' ? (
+            <CoderProgress build={coderBuild} />
+          ) : (
+            <p>
+              {coderTakeoverNote(coderBuild) ??
+                'The feature list is approved. The coding agent is starting WRITER now.'}
+            </p>
+          )}
         </div>
       )}
       <form

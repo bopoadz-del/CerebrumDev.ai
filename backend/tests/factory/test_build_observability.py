@@ -20,9 +20,11 @@ readers: a progress line can never be mistaken for a gate result.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -115,6 +117,72 @@ def test_status_surfaces_the_current_activity(tmp_path):
     assert status["activity_stage"] == "handlers"
     assert status["activity_done"] == 2
     assert status["activity_total"] == 5
+    assert status["current_phase"] == {
+        "id": "WRITER",
+        "label": "Platform manufacturer",
+    }
+    assert status["phase_index"] == 3
+    assert status["phase_total"] == 5
+    assert status["phases_done"] == 0
+    assert status["next_phase"] == {"id": "TESTER", "label": "Acceptance inspector"}
+    assert status["phase_progress"] == {
+        "done": 2,
+        "total": 5,
+        "fraction": 0.4,
+        "stage": "handlers",
+    }
+    assert "defect_register" in status["last_event"]
+    assert status["last_event_at"]
+    assert status["stale"] is False
+
+
+def test_status_names_cloner_and_marks_a_quiet_build_stale(tmp_path):
+    """2/5 on the Floor is completed phases. The customer needs the current
+    name (CLONER) plus whether the last event is recent or the job went quiet.
+    """
+    out = tmp_path / "build"
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    out.mkdir(parents=True, exist_ok=True)
+    ledger.start_run(product_id="probe", inputs_hash="abc")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.COLLECTOR, detail="COLLECTOR")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.CLONER, detail="CLONER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.CLONER,
+        detail="cloned audit",
+        payload={"stage": "blocks", "done": 3, "total": 7},
+    )
+
+    status = build_status(out)
+    assert status["state"] == "building"
+    assert status["current_phase"]["id"] == "CLONER"
+    assert status["phase_index"] == 2
+    assert status["phases_done"] == 1
+    assert status["next_phase"]["id"] == "WRITER"
+    assert status["phase_progress"]["done"] == 3
+    assert status["phase_progress"]["total"] == 7
+    assert status["last_event"] == "cloned audit"
+    assert status["stale"] is False
+
+    from app.factory.build_jobs import _STALE_AFTER_S
+
+    stale_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=_STALE_AFTER_S + 20)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = stale_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+    quiet = build_status(out)
+    assert quiet["state"] == "building", quiet
+    assert quiet["stale"] is True
+    assert quiet["current_phase"]["id"] == "CLONER"
+    assert quiet["last_event_age_s"] >= _STALE_AFTER_S
 
 
 def test_a_build_with_no_process_behind_it_reports_stalled(tmp_path):

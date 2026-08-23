@@ -43,9 +43,17 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const status = {
         state: 'building',
-        activity: 'writing handlers',
+        activity: 'wrote handler payments',
+        last_event: 'wrote handler payments',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
         phases_done: 2,
         phases_total: 5,
+        next_phase: { id: 'TESTER', label: 'Acceptance inspector' },
+        phase_progress: { done: 7, total: 7, fraction: 1, stage: 'handlers' },
+        last_event_age_s: 8,
+        stale: false,
       }
       onProgress?.(status)
       return status
@@ -118,6 +126,11 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText('Block stocker')).toBeInTheDocument()
     expect(screen.getByText('Store registrar')).toBeInTheDocument()
     expect(await screen.findByText(/Writing your platform/)).toBeInTheDocument()
+    expect(screen.getByText('WRITER 3/5')).toBeInTheDocument()
+    expect(screen.getByText(/then TESTER/)).toBeInTheDocument()
+    expect(screen.getByText('7/7 handlers')).toBeInTheDocument()
+    expect(screen.getByText(/Last: wrote handler payments/)).toBeInTheDocument()
+    expect(screen.getByText(/still working/)).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/coding agent has taken over/i)).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: 'Open Your Platforms' }))
     expect(goPlatforms).toHaveBeenCalled()

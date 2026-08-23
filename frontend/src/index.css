@@ -317,6 +317,48 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   color: #7dd3a0;
   border-color: #2f5c43;
 }
+.kernel-strip li.current {
+  color: #f0d080;
+  border-color: #8a7030;
+  background: #1c1a10;
+}
+.coder-takeover.stale {
+  border-color: #8a7030;
+}
+.coder-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.coder-phase {
+  margin: 0;
+  color: var(--text, #e8efe9);
+  font-size: 13px;
+}
+.coder-phase-label,
+.coder-next,
+.coder-counts,
+.coder-last,
+.coder-heartbeat {
+  margin: 0;
+  color: var(--dim);
+  font-size: 13px;
+}
+.coder-next {
+  margin-left: 8px;
+}
+.coder-bar {
+  height: 6px;
+  background: #1a2a20;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 4px 0 2px;
+}
+.coder-bar > span {
+  display: block;
+  height: 100%;
+  background: #7dd3a0;
+}
 .kernel-id {
   letter-spacing: 0.04em;
   text-transform: uppercase;

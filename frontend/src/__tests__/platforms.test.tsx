@@ -62,8 +62,15 @@ describe('Your Platforms — coding-agent build', () => {
         state: 'building',
         phases_done: 2,
         phases_total: 5,
-        activity: 'WRITER handler 2/4',
-        completed: ['cloner'],
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        activity: 'wrote handler inventory_management',
+        last_event: 'wrote handler inventory_management',
+        phase_progress: { done: 2, total: 4, fraction: 0.5, stage: 'handlers' },
+        last_event_age_s: 20,
+        stale: false,
+        completed: ['COLLECTOR', 'CLONER'],
       }
       onProgress?.(building)
       return building
@@ -71,7 +78,8 @@ describe('Your Platforms — coding-agent build', () => {
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('vineyard')).toBeInTheDocument()
     expect(screen.getByText('runner')).toBeInTheDocument()
-    expect(await screen.findByText(/Coding agent at work — 2\/5 phases \(last: WRITER handler 2\/4\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/Coding agent at work — WRITER 3\/5/)).toBeInTheDocument()
+    expect(screen.getByText(/2\/4 handlers/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
   })
 
