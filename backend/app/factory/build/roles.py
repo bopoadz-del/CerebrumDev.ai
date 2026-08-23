@@ -14,9 +14,12 @@ LLM use is optional by design. When a coder key is configured:
 - the TESTER (Acceptance inspector) asks it for *additional* domain cases (mutations of kernel
   payloads; they cannot replace the kernel suite)
 When it is not, every kernel stays deterministic. CLONER (Block stocker) and
-STORE_MANAGER (Store registrar) never call the agent. Both paths write the same
-*shape*, so CI exercises the real manufacturing route with no API key. Which path
-ran is recorded, never implied.
+STORE_MANAGER (Store registrar) never call the agent. RoleRunner and
+ProductGenerator share the 14-class contract (``test_emitter_parity``);
+ProductGenerator extras (resident-engineer, ``factory_plan.json``,
+``product-agent/``) are declared differences, not a silent third drop.
+CI exercises the manufacturing route with no API key. Which path ran is
+recorded, never implied.
 
 Each kernel publishes its job on the delivered platform:
 ``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
@@ -2637,6 +2640,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
     sources["deploy_scaffold"] = fallback_source
+
+    from app.factory.build.converge import converge_writer_emitters
+
+    converged = converge_writer_emitters(ctx)
+    if converged.get("ok"):
+        sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
     by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
     ctx.workspace.write_text(

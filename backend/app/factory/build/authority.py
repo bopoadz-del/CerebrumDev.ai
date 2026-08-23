@@ -179,6 +179,14 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
+            # 14-class contract surfaces ProductGenerator already emits.
+            # Named prefixes, not a root or docs/** wildcard.
+            (LaneRoot.WORKSPACE, "product-dna/**"),
+            (LaneRoot.WORKSPACE, "docs/blueprint/**"),
+            (LaneRoot.WORKSPACE, "docs/provenance/**"),
+            (LaneRoot.WORKSPACE, "docs/certification/**"),
+            (LaneRoot.WORKSPACE, "docs/edge_profile.json"),
+            (LaneRoot.WORKSPACE, "frontend/**"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that
         # judge it has no gate at all. Also not vendor/** or blocks.lock.json:
