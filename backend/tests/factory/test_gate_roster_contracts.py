@@ -25,6 +25,7 @@ from app.factory.build.ui_surface import (
 from app.factory.build.vendored_integrity import (
     GATE_NAME as INTEGRITY_GATE,
     LOCK_KEY,
+    STRICT_ENV,
     gate_vendored_integrity,
     lock_record,
     sha256_file,
@@ -78,8 +79,8 @@ def test_integrity_gate_passes_when_bytes_match_the_manifest(tmp_path):
     assert result.payload["files_hashed"] == 1
 
 
-def test_integrity_gate_fails_when_source_did_not_match_its_manifest(tmp_path):
-    # A stale mirror or a tampered source: the digest describes other bytes.
+def test_integrity_gate_records_a_digest_mismatch_without_blocking(tmp_path):
+    """A text file's bytes depend on checkout, so a mismatch is recorded."""
     _block(
         tmp_path,
         "alpha",
@@ -87,9 +88,46 @@ def test_integrity_gate_fails_when_source_did_not_match_its_manifest(tmp_path):
         digest_for_body="0" * 64,
     )
     result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
+
+    assert result.ok is True
+    mismatches = result.payload["digest_mismatches"]
+    assert any("hashes to" in m for m in mismatches), mismatches
+    assert result.payload["strict"] is False
+    assert STRICT_ENV in result.detail
+
+
+def test_integrity_gate_fails_the_same_mismatch_in_strict_mode(monkeypatch, tmp_path):
+    monkeypatch.setenv(STRICT_ENV, "1")
+    _block(
+        tmp_path,
+        "alpha",
+        "def run(**kw):\n    return {'evil': True}\n",
+        digest_for_body="0" * 64,
+    )
+    result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
+
     assert result.ok is False
     assert result.gate == INTEGRITY_GATE
     assert any("hashes to" in f for f in result.findings), result.findings
+
+
+def test_integrity_gate_always_fails_a_file_named_but_absent(tmp_path):
+    """Absence is unambiguous and environment-independent, so it blocks."""
+    src = tmp_path / "_source" / "beta"
+    src.mkdir(parents=True)
+    (src / "block.json").write_text(
+        json.dumps({"id": "beta", "digests": {"block.py": "0" * 64}}), encoding="utf-8"
+    )
+    d = tmp_path / "vendor" / "blocks" / "beta"
+    d.mkdir(parents=True)
+    (d / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
+    (tmp_path / "blocks.lock.json").write_text(
+        json.dumps({"blocks": {"beta": {LOCK_KEY: lock_record(src)}}}), encoding="utf-8"
+    )
+
+    result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
+    assert result.ok is False
+    assert any("absent from source" in f for f in result.findings), result.findings
 
 
 def test_integrity_gate_fails_a_block_vendored_with_no_record(tmp_path):

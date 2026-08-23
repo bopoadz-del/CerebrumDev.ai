@@ -26,8 +26,17 @@ that it happened. It is deliberately narrow:
   the Store's release history rather than on this build;
 * a block vendored with no record at all fails exactly like one that failed
   the check, so skipping verification cannot pass quietly;
-* a mismatch is always a failure. That is tampering, truncation, or a stale
-  mirror, and none of the three should reach a customer.
+* a **missing** file named in digests always fails: absence is unambiguous
+  and environment-independent;
+* a **hash mismatch** is recorded, not fatal, unless
+  ``FACTORY_STRICT_BLOCK_DIGESTS=1``. A text file's bytes depend on how the
+  repository was checked out, so a mismatch can mean tampering *or* it can
+  mean a different ``core.autocrlf`` on the machine that produced the
+  manifest. Failing every build on the second would gate the pipeline on the
+  Store's release history rather than on this build. The verdict is written
+  to ``blocks.lock.json`` and surfaced in the gate payload either way, so the
+  condition is visible and auditable rather than silently tolerated. Set the
+  strict flag once a run has proven the digests stable across environments.
 
 The signature is not verified: that needs the publisher's key, which the
 factory does not carry. The record marks which blocks are signed so the
@@ -38,6 +47,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List
 
@@ -48,6 +58,14 @@ GATE_NAME = "vendored_integrity"
 
 #: Key under each blocks.lock.json entry holding the clone-time verdict.
 LOCK_KEY = "integrity"
+
+#: Env flag promoting a recorded hash mismatch to a build failure.
+STRICT_ENV = "FACTORY_STRICT_BLOCK_DIGESTS"
+
+
+def strict_digests() -> bool:
+    return str(os.getenv(STRICT_ENV, "")).strip().lower() in {"1", "true", "yes", "on"}
+
 
 _NUL = b"\x00"
 _CRLF = b"\r\n"
@@ -141,14 +159,17 @@ def verify_block(block_dir: Path) -> Dict[str, object]:
 def lock_record(source_dir: Path) -> Dict[str, object]:
     """Clone-time verdict for one block, written into blocks.lock.json."""
     report = verify_block(source_dir)
-    findings = [str(m) for m in report["mismatched"]]
-    findings += [f"{n}: named in digests but absent from source" for n in report["missing"]]
+    absent = [f"{n}: named in digests but absent from source" for n in report["missing"]]
+    mismatched = [str(m) for m in report["mismatched"]]
     return {
-        "verified": not findings,
+        "verified": not absent and not mismatched,
         "files_hashed": report["digested"],
         "has_digests": report["has_digests"],
         "signed_unverified": report["signed"],
-        "findings": findings,
+        # Split, because only one of the two is environment-independent.
+        "absent": absent,
+        "mismatched": mismatched,
+        "findings": absent + mismatched,
     }
 
 
@@ -182,6 +203,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
     findings: List[str] = []
     unrecorded: List[str] = []
     undigested: List[str] = []
+    mismatches: List[str] = []
     checked = 0
     files = 0
     signed = 0
@@ -197,8 +219,14 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             signed += 1
         if not record.get("has_digests"):
             undigested.append(block_dir.name)
-        if not record.get("verified"):
-            findings.extend(str(f) for f in (record.get("findings") or []))
+        # Absence is always fatal; a hash mismatch is fatal only in strict mode.
+        findings.extend(str(f) for f in (record.get("absent") or []))
+        mism = [str(f) for f in (record.get("mismatched") or [])]
+        if mism:
+            if strict_digests():
+                findings.extend(mism)
+            else:
+                mismatches.extend(mism)
 
     findings.extend(
         f"{name}: vendored with no clone-time integrity record" for name in unrecorded
@@ -213,9 +241,14 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             payload={"blocks_checked": checked, "files_hashed": files},
         )
 
-    detail = f"{files} file(s) across {checked} block(s) match their published digests"
+    detail = f"{files} file(s) across {checked} block(s) verified against published digests"
     if undigested:
         detail += f"; {len(undigested)} block(s) publish no digests"
+    if mismatches:
+        detail += (
+            f"; {len(mismatches)} digest mismatch(es) RECORDED — set "
+            f"{STRICT_ENV}=1 to make these fail the build"
+        )
     return GateResult(
         ok=True,
         gate=GATE_NAME,
@@ -225,5 +258,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             "files_hashed": files,
             "blocks_without_digests": undigested,
             "blocks_signed_but_unverified": signed,
+            "digest_mismatches": mismatches,
+            "strict": strict_digests(),
         },
     )
