@@ -205,7 +205,9 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         file_idle_s = time.time() - path.stat().st_mtime
     except OSError:
         file_idle_s = 0.0
-    idle_s = _event_age_s(last_any.ts if last_any else "", file_idle_s)
+    # Prefer the older of ledger ts vs file mtime. Tests (and a `touch`)
+    # can age one without the other; a dead process leaves both stale.
+    idle_s = max(_event_age_s(last_any.ts if last_any else "", file_idle_s), file_idle_s)
 
     monitor: Dict[str, Any] = {
         "current_phase": _phase_ref(current_role) if current_role else None,
