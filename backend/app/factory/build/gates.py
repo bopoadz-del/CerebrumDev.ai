@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from app.factory.build.authority import BuildRole
+from app.factory.build.writer_behaviour import gate_writer_behaviour
 
 #: Wall-clock ceiling for a single gate subprocess. A gate that hangs would
 #: silently consume the whole build budget.
@@ -345,10 +346,31 @@ def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
     )
 
 
+def gate_writer_contract(ctx: GateContext) -> GateResult:
+    """WRITER: the workspace parses *and* fails closed when a block fails.
+
+    Compilation alone was the whole WRITER gate, so a route that discarded
+    its handler's result and persisted anyway passed every phase and reached
+    the customer. Syntax first because it is cheap and its failure mode is
+    clearer; behaviour second because that is the claim worth checking.
+    """
+    compiled = gate_workspace_compiles(ctx)
+    if not compiled.ok:
+        return compiled
+    behaviour = gate_writer_behaviour(ctx)
+    if not behaviour.ok:
+        return behaviour
+    return GateResult(
+        ok=True,
+        gate="writer_contract",
+        detail=f"{compiled.detail}; {behaviour.detail}",
+    )
+
+
 GATES: Mapping[BuildRole, Gate] = {
     BuildRole.COLLECTOR: gate_gaps_enumerated,
     BuildRole.CLONER: gate_blocks_import_offline,
-    BuildRole.WRITER: gate_workspace_compiles,
+    BuildRole.WRITER: gate_writer_contract,
     BuildRole.TESTER: gate_suite_green,
     BuildRole.STORE_MANAGER: gate_store_ops_authorised,
 }
