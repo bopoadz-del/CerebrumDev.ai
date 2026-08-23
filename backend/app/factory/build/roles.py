@@ -47,6 +47,8 @@ from app.factory.build.offline_adapters import (
     emit_instantiate_ready,
     emit_runtime_module,
 )
+from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
+from app.factory.build.vendored_integrity import lock_record as _integrity_record
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
     assert_generated_dockerfile,
@@ -871,11 +873,16 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         image_pin = "none"
         if cloned_meta.is_file() and redact_unpinned_images(cloned_meta):
             image_pin = "refused_unverified"
+        # Verify against the SOURCE, before the runtime-import rewrites below
+        # change the bytes. Hashing the vendored copy would compare a
+        # transformed file with an upstream digest and fail every build.
+        integrity = _integrity_record(source)
         lock["blocks"][bid] = {
             "source": origin,
             "commit": revision,
             "path": f"vendor/blocks/{bid}",
             "image_pin": image_pin,
+            _INTEGRITY_KEY: integrity,
         }
         vendored.append(bid)
         ctx.note(
