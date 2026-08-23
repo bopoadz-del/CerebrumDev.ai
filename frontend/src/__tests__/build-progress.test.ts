@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { BuildStatus } from '../api/factory'
 import {
+  formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
@@ -37,6 +38,15 @@ describe('build progress copy', () => {
     }
     expect(formatHeartbeat(quiet)).toMatch(/quiet/)
     expect(formatHeartbeat(quiet)).toMatch(/4 min/)
+  })
+
+  it('SUCCESS copy is finished, not hang-looking 22 of 28', () => {
+    expect(
+      formatFinishedAuthorship({ artifacts: 28, agent_written: 22, templated: 6 }),
+    ).toBe('Finished — 22 artifacts; 6 templated')
+    expect(
+      formatFinishedAuthorship({ artifacts: 28, agent_written: 22, templated: 6 }),
+    ).not.toMatch(/22 of 28/)
   })
 
   it('falls back to completed+1 when the API has no current_phase yet', () => {

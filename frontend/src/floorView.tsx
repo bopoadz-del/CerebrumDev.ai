@@ -9,6 +9,7 @@ import {
   type ProductDesign,
 } from './api/factory'
 import {
+  formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
@@ -205,10 +206,9 @@ function CoderProgress({ build }: { build: BuildStatus }) {
 function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (!build) return null
   if (build.state === 'succeeded') {
-    const n = build.authorship?.agent_written
-    return n != null
-      ? 'Coding agent finished — ' + n + ' agent-written artifact(s). Download it from Your Platforms.'
-      : 'Coding agent finished. Download it from Your Platforms.'
+    const finished = formatFinishedAuthorship(build.authorship)
+    if (finished?.startsWith('Finished')) return finished + '. Download ready.'
+    return finished ?? 'Coding agent finished. Download it from Your Platforms.'
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -495,7 +495,9 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
       </div>
       {coderActive && (
         <div className={'coder-takeover' + (coderBuild?.stale ? ' stale' : '')} role="status">
-          <h3>Coding agent has taken over</h3>
+          <h3>
+            {coderBuild?.state === 'succeeded' ? 'Coding agent finished' : 'Coding agent has taken over'}
+          </h3>
           <KernelStrip build={coderBuild} />
           {coderBuild && coderBuild.state === 'building' ? (
             <CoderProgress build={coderBuild} />

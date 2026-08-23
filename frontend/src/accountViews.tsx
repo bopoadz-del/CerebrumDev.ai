@@ -10,7 +10,12 @@ import {
   type BuildStatus,
   type ProductDesign,
 } from './api/factory'
-import { formatHeartbeat, formatPhaseCounts, formatPhaseHeadline } from './buildProgress'
+import {
+  formatFinishedAuthorship,
+  formatHeartbeat,
+  formatPhaseCounts,
+  formatPhaseHeadline,
+} from './buildProgress'
 
 /* -------------------------------- Platforms -------------------------------- */
 
@@ -132,9 +137,8 @@ export function Platforms({ sessionId }: { sessionId: string }) {
           {build?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
-                {typeof authorship.agent_written === 'number' && authorship.agent_written > 0
-                  ? `Coding agent wrote ${authorship.agent_written} of ${authorship.artifacts ?? '?'} artifacts.`
-                  : 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'}
+                {formatFinishedAuthorship(authorship) ??
+                  'Coding agent finished. Download it from Your Platforms.'}
               </p>
               {authorship.coder_failures &&
                 Object.keys(authorship.coder_failures).length > 0 && (

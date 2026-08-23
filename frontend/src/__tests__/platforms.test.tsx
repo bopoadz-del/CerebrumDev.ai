@@ -146,7 +146,8 @@ describe('Your Platforms — coding-agent build', () => {
       return done
     })
     render(<Platforms sessionId="sess_ui" />)
-    expect(await screen.findByText('Coding agent wrote 6 of 10 artifacts.')).toBeInTheDocument()
+    expect(await screen.findByText('Finished — 6 artifacts; 4 templated')).toBeInTheDocument()
+    expect(screen.queryByText(/6 of 10/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
   })
 

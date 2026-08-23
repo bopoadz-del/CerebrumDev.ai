@@ -197,6 +197,28 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
+  it('SUCCESS takeover heading is finished, not hang-looking 22 of 28', async () => {
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const status = {
+        state: 'succeeded',
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+      }
+      onProgress?.(status)
+      return status
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'automotive-retail', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_done" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.getByText('Finished — 22 artifacts; 6 templated. Download ready.')).toBeInTheDocument()
+    expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
   it('clears coder takeover when a new blueprint is drafted after a runner', async () => {
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const status = {
@@ -218,7 +240,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
+    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent finished/)
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: 'build me a tasting room for a family winery' },
