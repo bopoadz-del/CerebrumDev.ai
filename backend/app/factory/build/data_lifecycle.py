@@ -26,6 +26,8 @@ DISK_SIZE_GB = 1
 REVISION_0001 = "0001_baseline"
 REVISION_0002 = "0002_lifecycle_audit"
 AUDIT_TABLE = "lifecycle_audit"
+WORK_QUEUE_TABLE = "work_queue"
+IDEMPOTENCY_TABLE = "idempotency"
 
 _SA_TYPES = {
     "str": "sa.Text()",
@@ -158,6 +160,38 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         '            f"SELECT * FROM {entity} WHERE id = ?", (record_id,)\n'
         "        ).fetchone()\n"
         "        return dict(row) if row else None\n"
+        "    finally:\n"
+        "        conn.close()\n"
+        "\n"
+        "\n"
+        "def update(entity: str, record_id: int, record: Dict[str, Any]) -> Dict[str, Any] | None:\n"
+        '    """Overwrite a persisted row. Returns None when the id does not exist."""\n'
+        "    cols = COLUMNS[entity]\n"
+        '    assignments = ", ".join(f"{c} = ?" for c in cols)\n'
+        "    values = [record.get(c) for c in cols]\n"
+        "    conn = connect()\n"
+        "    try:\n"
+        "        cur = conn.execute(\n"
+        '            f"UPDATE {entity} SET {assignments} WHERE id = ?",\n'
+        "            [*values, record_id],\n"
+        "        )\n"
+        "        conn.commit()\n"
+        "        if cur.rowcount == 0:\n"
+        "            return None\n"
+        "    finally:\n"
+        "        conn.close()\n"
+        "    return get(entity, record_id)\n"
+        "\n"
+        "\n"
+        "def delete(entity: str, record_id: int) -> bool:\n"
+        '    """Delete a persisted row. True when a row was removed."""\n'
+        "    conn = connect()\n"
+        "    try:\n"
+        "        cur = conn.execute(\n"
+        '            f"DELETE FROM {entity} WHERE id = ?", (record_id,)\n'
+        "        )\n"
+        "        conn.commit()\n"
+        "        return cur.rowcount > 0\n"
         "    finally:\n"
         "        conn.close()\n"
     )
@@ -468,11 +502,24 @@ def render_revision_0001(specs: Dict[str, Dict[str, Any]]) -> str:
         upgrade_lines.extend(cols)
         upgrade_lines.append("    )")
         downgrade_lines.append(f'    op.drop_table("{spec["entity"]}")')
-    if not upgrade_lines:
-        upgrade_lines = ["    pass"]
-        downgrade_lines = ["    pass"]
-    else:
-        downgrade_lines = list(reversed(downgrade_lines))
+    upgrade_lines.append(f'    op.create_table(\n        "{WORK_QUEUE_TABLE}",')
+    upgrade_lines.append(
+        '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),'
+    )
+    upgrade_lines.append('        sa.Column("capability_id", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("payload", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("status", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("result", sa.Text(), nullable=True),')
+    upgrade_lines.append('        sa.Column("idempotency_key", sa.Text(), nullable=True),')
+    upgrade_lines.append("    )")
+    upgrade_lines.append(f'    op.create_table(\n        "{IDEMPOTENCY_TABLE}",')
+    upgrade_lines.append('        sa.Column("key", sa.Text(), primary_key=True),')
+    upgrade_lines.append('        sa.Column("entity", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("record_id", sa.Integer(), nullable=False),')
+    upgrade_lines.append("    )")
+    downgrade_lines.append(f'    op.drop_table("{WORK_QUEUE_TABLE}")')
+    downgrade_lines.append(f'    op.drop_table("{IDEMPOTENCY_TABLE}")')
+    downgrade_lines = list(reversed(downgrade_lines))
     return (
         '"""v1 domain tables from the capability specs.\n'
         "\n"
