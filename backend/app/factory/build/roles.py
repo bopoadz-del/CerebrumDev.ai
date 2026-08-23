@@ -41,9 +41,7 @@ from app.factory.build.authority import (
 )
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
-    SupplyChainError,
     assert_generated_dockerfile,
-    assert_known_block_ids,
     redact_unpinned_images,
 )
 from app.factory.build.workspace import RoleWorkspace
@@ -821,10 +819,6 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         # nothing to vendor. Say so rather than inventing an empty lockfile.
         ctx.note("no blocks to vendor", stage="blocks", done=0, total=0)
         return RoleResult(ok=True, detail="no blocks to vendor", vendored_blocks=())
-    try:
-        assert_known_block_ids(block_ids, extra_roots=(ctx.blocks_root,))
-    except SupplyChainError as exc:
-        raise RoleError(str(exc)) from exc
 
     lock: Dict[str, Any] = {"schema": "blocks.lock.v1", "blocks": {}}
     vendored: List[str] = []
@@ -887,7 +881,8 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
 
     if missing:
         raise RoleError(
-            "no source found for block(s): " + ", ".join(sorted(missing))
+            "no source found for block(s) — do not invent: "
+            + ", ".join(sorted(missing))
         )
 
     if runtime_blocks and not ctx.blocks_root:
