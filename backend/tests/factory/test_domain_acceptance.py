@@ -144,3 +144,21 @@ def test_lotdesk_fails_all_ten_outcomes_and_is_not_patched():
     assert result["performed"] == []
     for name in OUTCOMES:
         assert result["outcomes"][name]["status"] == "failed", name
+
+
+def test_unknown_capability_is_rejected(built, tmp_path):
+    result = _probe(
+        built,
+        tmp_path,
+        "\n".join(
+            [
+                "import asyncio",
+                "from app.migrations import upgrade_head",
+                "from app.domain_ops import perform",
+                "upgrade_head()",
+                "result = asyncio.run(perform('create', 'typo', {'reference': 'x'}))",
+            ]
+        ),
+    )
+    assert result["status"] == "validation_error"
+    assert result["error_code"] == "unknown_capability"

@@ -347,12 +347,18 @@ READ_OPS = frozenset({{"read", "list"}})
 
 
 def entity_of(capability_id: str) -> str:
-    spec = SPECS.get(capability_id) or SPECS.get(DEFAULT_CAPABILITY) or {{}}
-    return str(spec.get("entity") or capability_id.replace("-", "_"))
+    resolved = str(capability_id or DEFAULT_CAPABILITY)
+    spec = SPECS.get(resolved)
+    if spec is None:
+        raise ValueError(f"unknown capability_id: {{resolved}}")
+    return str(spec.get("entity") or resolved.replace("-", "_"))
 
 
 def fields_of(capability_id: str) -> List[Dict[str, Any]]:
-    spec = SPECS.get(capability_id) or SPECS.get(DEFAULT_CAPABILITY) or {{}}
+    resolved = str(capability_id or DEFAULT_CAPABILITY)
+    spec = SPECS.get(resolved)
+    if spec is None:
+        raise ValueError(f"unknown capability_id: {{resolved}}")
     return list(spec.get("fields") or [])
 
 
@@ -627,11 +633,18 @@ async def perform(
     *,
     context: Optional[ActionContext] = None,
 ) -> Dict[str, Any]:
+    resolved = capability_id or DEFAULT_CAPABILITY
+    if resolved not in SPECS:
+        return ActionOutcome(
+            status=ActionStatus.VALIDATION_ERROR,
+            error_code="unknown_capability",
+            error_message=f"unknown capability_id: {{resolved}}",
+        ).to_dict()
     payload = dict(arguments or {{}})
     if op != "process" and op != "refuse":
-        payload["capability_id"] = capability_id or DEFAULT_CAPABILITY
+        payload["capability_id"] = resolved
     result = await execute_action(
-        spec_for_op(op, capability_id or DEFAULT_CAPABILITY),
+        spec_for_op(op, resolved),
         context or authorized_context(),
         payload,
     )
