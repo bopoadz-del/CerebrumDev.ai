@@ -45,7 +45,12 @@ from app.factory.build.authority import (
     assert_phase_order,
     authority_manifest,
 )
-from app.factory.build.gates import GateContext, GateResult, gate_for
+from app.factory.build.gates import (
+    FACTORY_SUITE_MARKER_EXPR,
+    GateContext,
+    GateResult,
+    gate_for,
+)
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.roles import (
     ROLE_IMPLEMENTATIONS,
@@ -155,6 +160,7 @@ class RoleRunner:
         gate_timeout_s: Optional[float] = None,
         subprocess_runner: Optional[Callable[..., Any]] = None,
         clock: Callable[[], float] = time.monotonic,
+        cycle: str = "code",
     ) -> None:
         from app.factory.planner import CapabilityPlanner
 
@@ -176,6 +182,8 @@ class RoleRunner:
         #: Set by run(); roles read it to stop starting coder calls
         #: that cannot finish inside the build's wall clock.
         self._deadline: Optional[float] = None
+        resolved = (cycle or "code").strip().lower()
+        self.cycle = "pilot" if resolved == "pilot" else "code"
 
     # -- gate plumbing ---------------------------------------------------
 
@@ -190,6 +198,12 @@ class RoleRunner:
             kwargs["timeout_s"] = self.gate_timeout_s
         if self.subprocess_runner is not None:
             kwargs["runner"] = self.subprocess_runner
+        kwargs["suite_marker"] = (
+            "pilot" if self.state.get("build_cycle") == "pilot" else FACTORY_SUITE_MARKER_EXPR
+        )
+        kwargs["cycle"] = str(self.state.get("build_cycle") or self.cycle or "code")
+        kwargs["store_ops"] = tuple(self.state.get("store_ops") or ())
+        kwargs["store_unwired"] = bool(self.state.get("store_unwired"))
         return GateContext(**kwargs)
 
     def _absorb(self, result: RoleResult) -> None:
@@ -199,6 +213,33 @@ class RoleRunner:
             self.state["vendored_blocks"] = tuple(result.vendored_blocks)
         for key, value in (result.notes or {}).items():
             self.state[key] = value
+
+    def _restore_workspace_state(self) -> None:
+        """Rehydrate CLONER notes after a worker restart / pilot reopen.
+
+        The runner's in-memory state dies with the process. A resume that
+        skips CLONER would otherwise hand TESTER an empty vendored_blocks
+        list and rewrite the suite against nothing.
+        """
+        vendor = self.workspace / "vendor" / "blocks"
+        if vendor.is_dir():
+            blocks = tuple(
+                sorted(
+                    p.name
+                    for p in vendor.iterdir()
+                    if (p / "block.py").is_file()
+                )
+            )
+            if blocks:
+                self.state.setdefault("vendored_blocks", blocks)
+        lock_path = self.workspace / "blocks.lock.json"
+        if lock_path.is_file() and "lock" not in self.state:
+            try:
+                self.state["lock"] = json.loads(
+                    lock_path.read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                pass
 
     # -- one phase -------------------------------------------------------
 
@@ -310,6 +351,9 @@ class RoleRunner:
                 "outcome": outcome.value,
                 "rework_used": rework,
                 "findings": list(findings),
+                "cycle": getattr(self, "cycle", "code"),
+                "pilot_ready": getattr(self, "cycle", "code") == "pilot"
+                and outcome is Outcome.SUCCESS,
             },
         )
         return BuildOutcome(
@@ -338,6 +382,27 @@ class RoleRunner:
                 product_id=getattr(self.blueprint, "product_id", "unknown"),
                 inputs_hash=inputs_hash,
             )
+
+        self._restore_workspace_state()
+        if self.cycle == "pilot":
+            self.state["build_cycle"] = "pilot"
+            if (
+                self.ledger.exists()
+                and self.ledger.code_phase_succeeded()
+                and not self.ledger.pilot_ready()
+                and not self.ledger.pilot_cycle_open()
+            ):
+                self.ledger.open_pilot_cycle()
+            from app.factory.build.pilot import prepare_pilot_workspace
+
+            patched = prepare_pilot_workspace(self.workspace)
+            if patched:
+                self.ledger.append(
+                    EventKind.NOTE,
+                    role=BuildRole.CLONER,
+                    detail=f"pilot adapters patched ({len(patched)} file(s))",
+                    payload={"patched": patched, "stage": "pilot"},
+                )
 
         done = self.ledger.completed_roles()
         rework_used = 0

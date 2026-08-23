@@ -4,6 +4,7 @@ POST /v1/sessions/{id}/product/draft
 POST /v1/sessions/{id}/product/plan
 POST /v1/sessions/{id}/product/approve
 POST /v1/sessions/{id}/product/generate
+POST /v1/sessions/{id}/product/pilot
 GET  /v1/sessions/{id}/product
 GET  /v1/sessions/{id}/product/package   (export the generated platform zip)
 POST /v1/sessions/{id}/product/mode
@@ -49,6 +50,8 @@ class ApproveBody(BaseModel):
 
 class GenerateBody(BaseModel):
     output_dir: Optional[str] = None
+    #: ``pilot`` reopens TESTER/STORE on the existing workspace (same hash).
+    cycle: Optional[Literal["code", "pilot"]] = None
 
 
 class ModeBody(BaseModel):
@@ -333,6 +336,40 @@ def approve_blueprint(
     }
 
 
+@router.post("/{session_id}/product/pilot")
+def run_pilot_cycle(
+    session_id: str,
+    principal: Principal = Depends(require_api_key),
+) -> Dict[str, Any]:
+    """Reopen TESTER/STORE on the existing workspace for Store-green.
+
+    Same session, hash, and output dir. Does not approve a new blueprint.
+    """
+    from app.factory.platform_chat_flow import resume_pilot_cycle
+
+    state = _require_session(session_id, principal)
+    _enforce_generation_quota(principal.account_id)
+    require_llm_rate(principal, "generate")
+    if not state.product_design.blueprint:
+        raise HTTPException(status_code=400, detail="no blueprint")
+    try:
+        result = resume_pilot_cycle(state, triggered_by="product_pilot")
+        update_session(session_id, state)
+        return {
+            "ok": True,
+            "cycle": "pilot",
+            "generation": state.product_design.generation,
+            "summary": result.get("summary"),
+            "already_complete": result.get("already_complete"),
+            "pilot_ready": result.get("pilot_ready"),
+            "resumed": result.get("resumed"),
+        }
+    except Exception as exc:  # noqa: BLE001
+        state.product_design.last_error = str(exc)
+        update_session(session_id, state)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/{session_id}/product/generate")
 def generate_approved_product(
     session_id: str,
@@ -361,7 +398,9 @@ def generate_approved_product(
         else:
             out = _session_output(session_id, bp.product_id)
         # Also mirror Steward golden to canonical factory_outputs path
-        result = generate_product(bp, out, blocks_root=blocks_root)
+        result = generate_product(
+            bp, out, blocks_root=blocks_root, cycle=body.cycle
+        )
         if bp.product_id == "cerebrum-steward":
             canonical = factory_outputs_root() / "Cerebrum-Steward"
             generate_product(bp, canonical, blocks_root=blocks_root)

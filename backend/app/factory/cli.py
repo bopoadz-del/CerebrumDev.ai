@@ -86,6 +86,12 @@ def main(argv: list[str] | None = None) -> int:
         default=1500.0,
         help="seconds each role may spend (0 disables; Floor default 25 min)",
     )
+    p_build.add_argument(
+        "--cycle",
+        choices=("code", "pilot"),
+        default="code",
+        help="code-phase 5/5 (default) or Store-green pytest -m pilot cycle",
+    )
 
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
@@ -198,6 +204,7 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
             wall_clock_s=args.wall_clock,
             phase_wall_clock_s=args.phase_wall_clock,
         ),
+        cycle=getattr(args, "cycle", "code"),
     )
     outcome = runner.run()
     sources = runner.state.get("artifact_sources", {})

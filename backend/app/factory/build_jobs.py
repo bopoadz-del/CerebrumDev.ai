@@ -75,11 +75,14 @@ def _wall_clock_s() -> float:
         return _DEFAULT_WALL_CLOCK_S
 
 
-def _max_rework() -> int:
-    try:
-        return max(0, int(os.getenv(BUILD_REWORK_ENV, str(_DEFAULT_MAX_REWORK))))
-    except ValueError:
-        return _DEFAULT_MAX_REWORK
+def _max_rework(cycle: str = "code") -> int:
+    raw = os.getenv(BUILD_REWORK_ENV)
+    if raw is not None:
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            pass
+    return 3 if cycle == "pilot" else _DEFAULT_MAX_REWORK
 
 
 def _phase_wall_clock_s() -> float:
@@ -297,7 +300,12 @@ def is_build_complete(output_dir: Path | str) -> bool:
 # -- starting a build -----------------------------------------------------
 
 
-def _run(blueprint: Any, output_dir: Path, blocks_root: Optional[Path]) -> None:
+def _run(
+    blueprint: Any,
+    output_dir: Path,
+    blocks_root: Optional[Path],
+    cycle: str = "code",
+) -> None:
     from app.factory.build.runner import BuildBudget, RoleRunner
 
     try:
@@ -306,10 +314,11 @@ def _run(blueprint: Any, output_dir: Path, blocks_root: Optional[Path]) -> None:
             output_dir,
             blocks_root=blocks_root,
             budget=BuildBudget(
-                max_rework=_max_rework(),
+                max_rework=_max_rework(cycle),
                 wall_clock_s=_wall_clock_s(),
                 phase_wall_clock_s=_phase_wall_clock_s(),
             ),
+            cycle=cycle,
         )
         outcome = runner.run()
         logger.info(
@@ -337,6 +346,7 @@ def start_runner_build(
     output_dir: Path | str,
     *,
     blocks_root: Optional[Path] = None,
+    cycle: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
 
@@ -349,6 +359,10 @@ def start_runner_build(
     """
     from app.factory.build.ledger import BuildLedger
     from app.factory.build.runner import blueprint_hash
+
+    resolved = (cycle or os.getenv("FACTORY_BUILD_SUITE") or "code").strip().lower()
+    if resolved not in {"code", "pilot"}:
+        resolved = "code"
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -368,7 +382,7 @@ def start_runner_build(
 
     thread = threading.Thread(
         target=_run,
-        args=(blueprint, out, Path(blocks_root) if blocks_root else None),
+        args=(blueprint, out, Path(blocks_root) if blocks_root else None, resolved),
         name=f"build-{getattr(blueprint, 'product_id', 'product')}",
         daemon=True,
     )
@@ -381,4 +395,5 @@ def start_runner_build(
         "product_id": getattr(blueprint, "product_id", "unknown"),
         "inputs_hash": inputs_hash,
         "build": build_status(out),
+        "cycle": resolved,
     }

@@ -118,10 +118,17 @@ def _session_facts(state: Any) -> str:
             lines.append(f"Output dir: {gen.get('output_dir')}.")
         if gen.get("phases_done") is not None:
             lines.append(f"Phases done: {gen.get('phases_done')}.")
-    if platform_chat_flow.is_generation_complete(state):
+    if platform_chat_flow.is_pilot_ready(state):
         lines.append(
-            "Last coding run SUCCEEDED. start_coder is forbidden — tell the "
-            "user it already finished; do not start a new product."
+            "Product is pilot-ready (Store-green). start_coder is forbidden — "
+            "tell the user it already finished; do not start a new product."
+        )
+    elif platform_chat_flow.is_generation_complete(state):
+        lines.append(
+            "Code-phase 5/5 SUCCEEDED but the platform is NOT pilot-ready "
+            "(pytest -m pilot / Store ops still open). continue/resume MUST "
+            "call start_coder — that opens a pilot cycle on the same hash. "
+            "Do not draft a new platform."
         )
     elif platform_chat_flow.is_generation_resumable(state):
         point = platform_chat_flow._ledger_resume_point(state) or "the last phase"
@@ -180,7 +187,10 @@ def coerce_explicit_approval(decision: Dict[str, Any], state: Any, message: str)
             "message": "",
             "coerced": True,
         }
-    if platform_chat_flow.is_resume_request(message) and (
+    if (
+        platform_chat_flow.is_resume_request(message)
+        or platform_chat_flow.is_pilot_request(message)
+    ) and (
         platform_chat_flow.has_pending_blueprint(state)
         or platform_chat_flow.is_generation_resumable(state)
         or platform_chat_flow.is_generation_complete(state)

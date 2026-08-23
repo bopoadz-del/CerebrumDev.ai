@@ -501,6 +501,7 @@ def generate_product(
     output_dir: Path | str,
     *,
     blocks_root: Optional[Path] = None,
+    cycle: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a product. The role runner is the default engine.
 
@@ -524,7 +525,9 @@ def generate_product(
     from app.factory.build_jobs import RUNNER, build_engine, start_runner_build
 
     if build_engine() == RUNNER:
-        return start_runner_build(blueprint, output_dir, blocks_root=blocks)
+        return start_runner_build(
+            blueprint, output_dir, blocks_root=blocks, cycle=cycle
+        )
 
     factory_root = _repo_root()
     gen = ProductGenerator(

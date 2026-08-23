@@ -172,3 +172,40 @@ def test_registrar_can_scan_every_platform_ledger(tmp_path):
 
 def test_scanning_a_missing_root_is_empty_not_an_error(tmp_path):
     assert list(iter_ledgers(tmp_path / "nope")) == []
+
+
+def test_pilot_cycle_reopens_tester_and_store_without_wiping_writer(ledger):
+    ledger.start_run(product_id="used-cars", inputs_hash="h")
+    _pass(
+        ledger,
+        BuildRole.COLLECTOR,
+        BuildRole.CLONER,
+        BuildRole.WRITER,
+        BuildRole.TESTER,
+        BuildRole.STORE_MANAGER,
+    )
+    ledger.append(EventKind.RUN_SUCCEEDED, detail="all phase gates passed")
+    assert ledger.succeeded() is True
+    assert ledger.pilot_ready() is False
+    assert ledger.resume_point() is None
+
+    ledger.open_pilot_cycle()
+    assert ledger.succeeded() is False
+    assert ledger.pilot_cycle_open() is True
+    assert ledger.code_phase_succeeded() is True
+    done = ledger.completed_roles()
+    assert BuildRole.WRITER in done
+    assert BuildRole.CLONER in done
+    assert BuildRole.TESTER not in done
+    assert BuildRole.STORE_MANAGER not in done
+    assert ledger.resume_point() is BuildRole.TESTER
+
+    _pass(ledger, BuildRole.TESTER, BuildRole.STORE_MANAGER)
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="all phase gates passed",
+        payload={"cycle": "pilot", "pilot_ready": True},
+    )
+    assert ledger.succeeded() is True
+    assert ledger.pilot_ready() is True
+    assert ledger.pilot_cycle_open() is False

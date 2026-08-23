@@ -115,7 +115,7 @@ def test_start_coder_on_approved_incomplete_resumes_not_pending_error(tmp_path, 
     state = _state_with_approved_run(tmp_path)
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
         captured["output_dir"] = str(output_dir)
         captured["product_id"] = bp.product_id
         assert (Path(output_dir) / "app" / "writer_progress.txt").read_text(
@@ -141,16 +141,59 @@ def test_start_coder_on_approved_incomplete_resumes_not_pending_error(tmp_path, 
     assert state.product_design.generation.get("resumed") is True
 
 
-def test_continue_after_success_does_not_start_a_new_product(tmp_path, monkeypatch):
+def test_continue_after_success_opens_pilot_on_same_workspace(tmp_path, monkeypatch):
     state = _state_with_approved_run(tmp_path, succeeded=True)
+    captured = {}
+
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+        captured["output_dir"] = str(output_dir)
+        captured["cycle"] = cycle
+        captured["product_id"] = bp.product_id
+        assert (Path(output_dir) / "app" / "writer_progress.txt").read_text(
+            encoding="utf-8"
+        ) == "22 of 28"
+        return {
+            "engine": "runner",
+            "output_dir": str(output_dir),
+            "inputs_hash": state.product_design.generation["inputs_hash"],
+            "product_id": bp.product_id,
+            "cycle": cycle,
+            "build": {"state": "building", "phases_done": 5, "phases_total": 5},
+        }
+
+    monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
+    result = platform_chat_flow.start_or_resume_coder(state)
+    assert result.get("already_complete") is not True
+    assert result.get("resumed") is True
+    assert result.get("cycle") == "pilot"
+    assert captured["cycle"] == "pilot"
+    assert captured["output_dir"] == state.product_design.generation["output_dir"]
+    assert "not a new product" in result["summary"].lower()
+
+
+def test_continue_after_pilot_ready_does_not_start_a_new_product(tmp_path, monkeypatch):
+    state = _state_with_approved_run(tmp_path, succeeded=True)
+    out = Path(state.product_design.generation["output_dir"])
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.open_pilot_cycle()
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.TESTER, detail="pilot green")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.STORE_MANAGER, detail="SM")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.STORE_MANAGER, detail="ops")
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="all phase gates passed",
+        payload={"cycle": "pilot", "pilot_ready": True},
+    )
 
     def boom(*a, **k):
-        raise AssertionError("generate_product must not run after SUCCESS")
+        raise AssertionError("generate_product must not run after pilot-ready")
 
     monkeypatch.setattr(platform_chat_flow, "generate_product", boom)
     result = platform_chat_flow.start_or_resume_coder(state)
     assert result.get("already_complete") is True
-    assert "already finished" in result["summary"].lower()
+    assert result.get("pilot_ready") is True
+    assert "pilot-ready" in result["summary"].lower()
     assert result.get("resumed") is not True
 
 
@@ -166,7 +209,7 @@ def test_resume_after_worker_restart_keeps_hash_and_workspace(tmp_path, monkeypa
         state.product_design.generation["product_id"]
     ) is None
 
-    def fake_generate(bp, output_dir, blocks_root=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
         # The generate door must be pointed at the existing tree.
         assert Path(output_dir) == out
         assert (out / "app" / "writer_progress.txt").exists()
@@ -205,7 +248,7 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
     session_store._session_store[state.session_id] = state
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
         captured["called"] = True
         captured["out"] = str(output_dir)
         return {
@@ -253,25 +296,37 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_chat_continue_after_success_is_honest(tmp_path, monkeypatch):
+async def test_chat_continue_after_success_opens_pilot(tmp_path, monkeypatch):
     from app.core import session_store
 
     state = _state_with_approved_run(tmp_path, succeeded=True)
     session_store._session_store[state.session_id] = state
+    captured = {}
 
-    def boom(*a, **k):
-        raise AssertionError("must not generate after SUCCESS")
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+        captured["cycle"] = cycle
+        captured["out"] = str(output_dir)
+        return {
+            "engine": "runner",
+            "output_dir": str(output_dir),
+            "inputs_hash": state.product_design.generation["inputs_hash"],
+            "product_id": bp.product_id,
+            "cycle": "pilot",
+            "build": {"state": "building", "phases_done": 5, "phases_total": 5},
+        }
 
-    monkeypatch.setattr(platform_chat_flow, "generate_product", boom)
+    monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     try:
         events = await _collect_events(state.session_id, "continue")
     finally:
         session_store._session_store.pop(state.session_id, None)
 
-    text = " ".join(str(e["data"]) for e in events if e["event"] == "delta").lower()
-    collapsed = " ".join(text.split())
-    assert "already finished" in collapsed
-    assert "generation" not in [e["event"] for e in events]
+    text = " ".join(
+        str(e["data"]) for e in events if e["event"] in {"delta", "generation", "info"}
+    ).lower()
+    assert captured.get("cycle") == "pilot"
+    assert "not a new product" in text
+    assert "generation" in [e["event"] for e in events]
 
 
 def test_session_facts_allow_start_coder_when_resumable(tmp_path):
@@ -282,8 +337,34 @@ def test_session_facts_allow_start_coder_when_resumable(tmp_path):
     assert "start_coder" in facts
 
 
-def test_session_facts_forbid_start_coder_after_success(tmp_path):
+def test_session_facts_allow_start_coder_for_pilot_after_code_phase(tmp_path):
     state = _state_with_approved_run(tmp_path, succeeded=True)
     facts = platform_chat_llm._session_facts(state)
-    assert "SUCCEEDED" in facts
-    assert "finished" in facts
+    assert "NOT pilot-ready" in facts
+    assert "start_coder" in facts
+    assert "forbidden" not in facts
+
+
+def test_session_facts_forbid_start_coder_after_pilot_ready(tmp_path):
+    state = _state_with_approved_run(tmp_path, succeeded=True)
+    out = Path(state.product_design.generation["output_dir"])
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.open_pilot_cycle()
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="T")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.TESTER, detail="ok")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.STORE_MANAGER, detail="S")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.STORE_MANAGER, detail="ok")
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="done",
+        payload={"cycle": "pilot", "pilot_ready": True},
+    )
+    facts = platform_chat_llm._session_facts(state)
+    assert "pilot-ready" in facts
+    assert "forbidden" in facts
+
+
+def test_pilot_request_positive():
+    assert platform_chat_flow.is_pilot_request("run the pilot")
+    assert platform_chat_flow.is_pilot_request("make it pilot-ready")
+    assert not platform_chat_flow.is_pilot_request("build me a hotel platform")

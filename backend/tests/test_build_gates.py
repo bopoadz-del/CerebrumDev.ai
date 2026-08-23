@@ -19,6 +19,7 @@ from app.factory.build.gates import (
     gate_blocks_import_offline,
     gate_for,
     gate_gaps_enumerated,
+    gate_store_ops_authorised,
     gate_suite_green,
     gate_workspace_compiles,
 )
@@ -243,6 +244,49 @@ def test_factory_gate_ignores_a_red_pilot_test(tmp_path):
 
 
 # -- wiring --------------------------------------------------------------
+
+
+def test_pilot_marker_runs_pytest_m_pilot(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    ctx = _ctx(
+        tmp_path,
+        BuildRole.TESTER,
+        result=_proc(0, stdout="2 passed in 0.01s"),
+        suite_marker="pilot",
+    )
+    result = gate_suite_green(ctx)
+    assert result.ok
+    assert result.gate == "pilot_green"
+    argv = ctx._calls[0]["argv"]
+    marker_at = len(argv) - 1 - argv[::-1].index("-m")
+    assert argv[marker_at + 1] == "pilot"
+
+
+def test_pilot_store_gate_requires_ops(tmp_path):
+    empty = GateContext(
+        workspace=tmp_path, role=BuildRole.STORE_MANAGER, cycle="pilot"
+    )
+    failed = gate_store_ops_authorised(empty)
+    assert not failed.ok
+    applied = GateContext(
+        workspace=tmp_path,
+        role=BuildRole.STORE_MANAGER,
+        cycle="pilot",
+        store_ops=({"op": "STORE_READ", "block_id": "database"},),
+        store_unwired=True,
+    )
+    ok = gate_store_ops_authorised(applied)
+    assert ok.ok
+    assert "applied 1 store op" in ok.detail
+    assert "store unwired" in ok.detail
+
+
+def test_code_phase_store_gate_still_accepts_empty(tmp_path):
+    ctx = GateContext(workspace=tmp_path, role=BuildRole.STORE_MANAGER)
+    result = gate_store_ops_authorised(ctx)
+    assert result.ok
+    assert result.detail == "no store ops applied"
 
 
 def test_every_role_has_a_gate():

@@ -75,6 +75,15 @@ class GateContext:
     timeout_s: float = DEFAULT_GATE_TIMEOUT_S
     #: Injected so tests drive the gates without spawning real subprocesses.
     runner: Optional[Callable[..., subprocess.CompletedProcess]] = None
+    #: pytest ``-m`` expression. Code-phase is ``not pilot``; the Store-green
+    #: cycle is ``pilot``.
+    suite_marker: str = FACTORY_SUITE_MARKER_EXPR
+    #: ``code`` (factory 5/5) or ``pilot`` (Store-green).
+    cycle: str = "code"
+    #: STORE_MANAGER decisions recorded for this cycle.
+    store_ops: tuple = ()
+    #: True when CEREBRUM_API_URL is unset — local clone-register reads only.
+    store_unwired: bool = False
 
     def run(self, argv: List[str], *, cwd: Optional[Path] = None) -> subprocess.CompletedProcess:
         run = self.runner or _real_run
@@ -238,6 +247,8 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             findings=["tester produced no test files"],
         )
 
+    marker = (ctx.suite_marker or FACTORY_SUITE_MARKER_EXPR).strip() or FACTORY_SUITE_MARKER_EXPR
+    gate_name = "pilot_green" if marker == "pilot" else "suite_green"
     proc = ctx.run(
         [
             sys.executable,
@@ -247,7 +258,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             "-q",
             "--no-header",
             "-m",
-            FACTORY_SUITE_MARKER_EXPR,
+            marker,
         ]
     )
     raw = (proc.stdout or "") + (proc.stderr or "")
@@ -269,7 +280,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         if cannot_run:
             return GateResult(
                 ok=False,
-                gate="suite_green",
+                gate=gate_name,
                 detail=(
                     "the suite could not be RUN (test runner unavailable or "
                     "collection failed) — this is a build-environment fault, "
@@ -281,7 +292,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             )
         return GateResult(
             ok=False,
-            gate="suite_green",
+            gate=gate_name,
             detail="suite is red",
             # Never report a failure with nothing to act on: fall back to the
             # output tail so a rework round has something concrete.
@@ -290,7 +301,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         )
     return GateResult(
         ok=True,
-        gate="suite_green",
+        gate=gate_name,
         detail=output[-1].strip() if output else "suite passed",
     )
 
@@ -301,11 +312,36 @@ def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
     The authority model lives in app.factory.store_manager; this gate only
     asserts the runner recorded a decision for every op, so an unrecorded
     publish cannot pass as an authorised one.
+
+    Code-phase 5/5 still accepts an empty register (historical: the role
+    applied no op). The pilot cycle requires at least one authorised op
+    (local ``STORE_READ`` of the clone register counts when the Store URL
+    is unset).
     """
+    if ctx.cycle != "pilot":
+        return GateResult(
+            ok=True,
+            gate="store_ops_authorised",
+            detail="no store ops applied",
+        )
+    if not ctx.store_ops:
+        return GateResult(
+            ok=False,
+            gate="store_ops_authorised",
+            detail="pilot cycle recorded no store ops",
+            findings=["STORE_MANAGER applied no store op"],
+        )
+    detail = f"applied {len(ctx.store_ops)} store op(s)"
+    if ctx.store_unwired:
+        detail += "; store unwired (CEREBRUM_API_URL unset) — local clone-register reads only"
     return GateResult(
         ok=True,
         gate="store_ops_authorised",
-        detail="no store ops applied",
+        detail=detail,
+        payload={
+            "store_ops": list(ctx.store_ops),
+            "store_unwired": ctx.store_unwired,
+        },
     )
 
 
