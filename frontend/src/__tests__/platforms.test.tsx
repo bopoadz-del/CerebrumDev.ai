@@ -110,7 +110,9 @@ describe('Your Platforms — coding-agent build', () => {
 
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('runner')).toBeInTheDocument()
-    expect(await screen.findByText(/Coding agent at work — 2\/5 phases \(last: WRITER handler 2\/4\)/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Coding agent at work — 3\/5 · last: WRITER handler 2\/4 · still working/),
+    ).toBeInTheDocument()
     expect(getMock).toHaveBeenCalledTimes(1)
     expect(buildStatusMock).toHaveBeenCalledTimes(1)
 
@@ -122,7 +124,9 @@ describe('Your Platforms — coding-agent build', () => {
     })
     expect(getMock).toHaveBeenNthCalledWith(2, 'sess_ui')
     expect(buildStatusMock).toHaveBeenNthCalledWith(2, 'sess_ui')
-    expect(await screen.findByText(/Coding agent at work — 3\/5 phases \(last: TESTER gate\)/)).toBeInTheDocument()
+    expect(
+      await screen.findByText(/Coding agent at work — 4\/5 · last: TESTER gate · still working/),
+    ).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled()
     expect(generateMock).not.toHaveBeenCalled()
