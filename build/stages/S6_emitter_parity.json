@@ -1,0 +1,75 @@
+{
+  "stage": "S6",
+  "name": "EMITTER_PARITY",
+  "evaluated_at": "2026-08-23T08:25:00Z",
+  "verdict": "PASS",
+  "approach": "Converge",
+  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
+  "one_sentence": "RoleRunner WRITER now invokes ProductGenerator class emitters through the lane-checked workspace; generate() is not called.",
+  "pass_criteria": {
+    "converge_not_third_path": true,
+    "generate_not_called": true,
+    "fourteen_classes_on_both_trees": true,
+    "differences_declared": true,
+    "factory_tests_green": true,
+    "chat_block_not_invented": true
+  },
+  "restored_classes": [
+    "app/agents/manifests",
+    "app/workflows",
+    "app/connectors",
+    "product-dna",
+    "docs/blueprint",
+    "docs/provenance",
+    "docs/certification",
+    "frontend"
+  ],
+  "already_present": [
+    "app/main.py",
+    "app/actions",
+    "app/cerebrum_product_kernel",
+    "vendor/blocks",
+    "kits",
+    "scripts/release_gate.py"
+  ],
+  "declared_generator_extras": [
+    "product-agent/",
+    "factory_plan.json",
+    "pyproject.toml",
+    "app/static/console.html",
+    "resident-engineer docs / inject_resident_runtime"
+  ],
+  "declared_runner_extras": [
+    "app/dispatch.py",
+    "app/kernel_bridge.py",
+    "docs/build_provenance.json"
+  ],
+  "declared_content_differences": [
+    "RoleRunner provenance generated_at is blueprint:<sha256>, not wall-clock, so identical builds byte-match",
+    "RoleRunner handlers import vendored blocks locally; ProductGenerator handlers still call the store",
+    "frontend/ is the ProductGenerator UI stub, not Cerebrum-Blocks ui_schema_builder (U11/F16 residual; Blocks not cloned)"
+  ],
+  "implementation": {
+    "module": "backend/app/factory/build/converge.py",
+    "writer_hook": "run_writer calls converge_writer_emitters after deploy scaffold",
+    "lanes": "product-dna/**, docs/blueprint/**, docs/provenance/**, docs/certification/**, docs/edge_profile.json, frontend/**",
+    "not_called": "ProductGenerator.generate"
+  },
+  "tests": {
+    "factory_suite": "338 passed",
+    "files": [
+      "backend/tests/factory/test_emitter_parity.py",
+      "backend/tests/factory/test_deploy_scaffold.py::test_the_writer_lane_admits_the_scaffold_but_stays_narrow"
+    ]
+  },
+  "not_claimed": [
+    "PILOT_READY",
+    "U7 — FACTORY_SUITE_MARKER_EXPR remains 'not pilot'",
+    "U6 STORE_MANAGER harvest remains unbuilt",
+    "U11/F16 ui_schema_builder unused (Blocks not cloned)",
+    "F18 _DISPATCH_RUNTIME fabrication still emitted",
+    "S7–S13"
+  ],
+  "lotdesk": "fixture only; not patched",
+  "blocks": "not written; chat block not invented"
+}

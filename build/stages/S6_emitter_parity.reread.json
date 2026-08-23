@@ -1,0 +1,23 @@
+{
+  "stage": "S6",
+  "name": "emitter_parity",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S6_emitter_parity.json",
+  "reread_at": "2026-08-23T08:26:00Z",
+  "independent": true,
+  "checked": [
+    "converge.py documents and does not call ProductGenerator.generate",
+    "run_writer calls converge_writer_emitters",
+    "test_role_runner_does_not_call_product_generator_generate monkeypatches generate to boom",
+    "test_role_runner_and_product_generator_share_fourteen_classes asserts both trees have all 14",
+    "WRITER lanes are named prefixes; Makefile / docker-compose.yml still denied",
+    "frontend/src/App.tsx is the ProductGenerator stub; no chat filename invented",
+    "factory suite 338 passed",
+    "LotDesk was not modified",
+    "No persist-wrapper was added"
+  ],
+  "disagreements": [],
+  "agrees_u7_not_closed": true,
+  "agrees_blocks_residual": true,
+  "agrees_f18_open": true
+}
