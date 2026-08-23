@@ -81,7 +81,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "\n"
         "stdlib sqlite3 and a local file. Schema is applied by Alembic\n"
         "(app/migrations.py + alembic/versions/), never by this module.\n"
-        "CREATE TABLE IF NOT EXISTS is forbidden here: a missing revision is\n"
+        "Connect-time table creation is forbidden here: a missing revision is\n"
         "a deploy failure, not a silent create.\n"
         "\n"
         "Durability: WAL + busy_timeout matched to the FastAPI sync\n"
