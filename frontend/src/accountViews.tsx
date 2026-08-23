@@ -10,6 +10,7 @@ import {
   type BuildStatus,
   type ProductDesign,
 } from './api/factory'
+import { formatHeartbeat, formatPhaseCounts, formatPhaseHeadline } from './buildProgress'
 
 /* -------------------------------- Platforms -------------------------------- */
 
@@ -20,16 +21,28 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   const [build, setBuild] = useState<BuildStatus | null>(null)
 
   const refresh = useCallback(() => {
+    setError(null)
     product
       .get(sessionId)
-      .then(setDesign)
+      .then(async (next) => {
+        setDesign(next)
+        // product GET does not carry live runner progress (phases / last event).
+        // Always re-fetch build-status when a generation exists — including while
+        // state === 'building'. Never POST generate from this button.
+        if (!next.generation) return
+        const { build } = await product.buildStatus(sessionId)
+        setBuild(build)
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
   }, [sessionId])
 
   useEffect(refresh, [refresh])
 
+  // Poll once a generation exists. Depend on a primitive so Refresh (new
+  // generation object identity) does not tear down the in-flight poll.
+  const watchingBuild = Boolean(design?.generation)
   useEffect(() => {
-    if (!design?.generation) return
+    if (!watchingBuild) return
     let cancelled = false
     void awaitBuild(sessionId, (s) => {
       if (!cancelled) setBuild(s)
@@ -41,7 +54,7 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     return () => {
       cancelled = true
     }
-  }, [design?.generation, sessionId])
+  }, [watchingBuild, sessionId])
 
   async function download() {
     setDownloading(true)
@@ -71,13 +84,15 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   const building = build?.state === 'building'
   const buildNote = (() => {
     if (!build || build.state !== 'building') return null
-    const done = build.phases_done ?? 0
-    const total = build.phases_total ?? 5
-    if (build.activity) {
-      return `Coding agent at work — ${done}/${total} phases (${build.activity})`
-    }
-    const phase = build.completed?.length ? build.completed[build.completed.length - 1] : 'starting'
-    return `Building your platform — ${done}/${total} phases (last: ${phase})`
+    const headline = formatPhaseHeadline(build)
+    const counts = formatPhaseCounts(build)
+    const last = build.last_event || build.activity
+    const heartbeat = formatHeartbeat(build)
+    const bits = [`Coding agent at work — ${headline}`]
+    if (counts) bits.push(counts)
+    if (last) bits.push(`last: ${last}`)
+    if (heartbeat) bits.push(heartbeat)
+    return bits.join(' · ')
   })()
 
   return (
