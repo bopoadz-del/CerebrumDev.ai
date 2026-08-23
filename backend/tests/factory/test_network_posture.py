@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.network_posture import (
@@ -143,3 +145,36 @@ def test_role_runner_tree_is_p1(tmp_path, monkeypatch):
     for token in P1_FORBIDDEN:
         assert token not in text
     assert_workspace_posture(out)
+
+
+def test_staged_writer_reads_destination_readme(tmp_path):
+    """Rework does not rewrite README; posture must see the previous stamp."""
+    stage = tmp_path / "stage"
+    dest = tmp_path / "dest"
+    stage.mkdir()
+    dest.mkdir()
+    (dest / "README.md").write_text("# LotDesk\nNETWORK_POSTURE: P1\n", encoding="utf-8")
+    for name in ("Dockerfile", "render.yaml", ".env.example", "requirements.txt"):
+        (stage / name).write_text("NETWORK_POSTURE=P1\n", encoding="utf-8")
+    (stage / "app").mkdir()
+    (stage / "app" / "main.py").write_text("NETWORK_POSTURE = 'P1'\n", encoding="utf-8")
+    (stage / "docs").mkdir()
+    (stage / "docs" / "network_posture.json").write_text(
+        '{"posture":"P1","reason":"Delivered platforms run in-process against vendored blocks; local/scripted OCR only; no Store URL, no cloud LLM, no Ollama, no outbound HTTP at runtime."}\n',
+        encoding="utf-8",
+    )
+    (stage / "docs" / "build_provenance.json").write_text(
+        '{"network_posture":"P1"}\n', encoding="utf-8"
+    )
+    assert_workspace_posture(stage, fallback=dest)
+
+
+def test_missing_artifact_is_fail_closed(tmp_path):
+    (tmp_path / "Dockerfile").write_text("NETWORK_POSTURE=P1\n", encoding="utf-8")
+    (tmp_path / ".env.example").write_text("NETWORK_POSTURE=P1\n", encoding="utf-8")
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "main.py").write_text("NETWORK_POSTURE = 'P1'\n", encoding="utf-8")
+    from app.factory.build.network_posture import PostureError
+
+    with pytest.raises(PostureError):
+        assert_workspace_posture(tmp_path)

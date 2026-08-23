@@ -92,7 +92,7 @@ Local OCR when tesseract is on PATH; otherwise scripted extraction from
 provided text. No cloud LLM. No Ollama. No outbound HTTP.
 
 Replaces the Store shim in the product workspace so a delivered platform
-cannot inherit deepseek defaults while block.json says network:false.
+cannot inherit cloud-LLM defaults while block.json says network:false.
 The Factory vendor-mirror Store-shim snapshot is unchanged. Blocks was not written.
 """
 
@@ -255,15 +255,31 @@ def apply_p1_cloned_block(workspace: Any, bid: str) -> bool:
     return True
 
 
-def assert_workspace_posture(root: Path) -> None:
-    """Fail closed if a RoleRunner tree does not declare exactly P1."""
+def _posture_file(root: Path, rel: str, fallback: Path | None) -> Path | None:
+    candidate = Path(root) / rel
+    if candidate.is_file():
+        return candidate
+    if fallback is not None:
+        alt = Path(fallback) / rel
+        if alt.is_file():
+            return alt
+    return None
+
+
+def assert_workspace_posture(root: Path, fallback: Path | None = None) -> None:
+    """Fail closed if a RoleRunner tree does not declare exactly P1.
+
+    *fallback* is the committed destination when WRITER is staged: a rework
+    pass does not rewrite README, so the check must see the previous stamp.
+    """
     base = Path(root)
     findings: List[str] = []
-    missing = [rel for rel in DELIVERY_ARTIFACTS if not (base / rel).is_file()]
+    missing = [rel for rel in DELIVERY_ARTIFACTS if _posture_file(base, rel, fallback) is None]
     if missing:
         raise PostureError("missing posture artifacts: " + ", ".join(missing))
 
-    doc = json.loads((base / POSTURE_DOC).read_text(encoding="utf-8"))
+    doc_path = _posture_file(base, str(POSTURE_DOC), fallback)
+    doc = json.loads(doc_path.read_text(encoding="utf-8"))
     if doc.get("posture") != NETWORK_POSTURE:
         findings.append(
             f"{POSTURE_DOC}: posture {doc.get('posture')!r} != {NETWORK_POSTURE!r}"
@@ -272,7 +288,7 @@ def assert_workspace_posture(root: Path) -> None:
         findings.append(f"{POSTURE_DOC}: reason does not match NETWORK_POSTURE_REASON")
 
     for rel in DELIVERY_ARTIFACTS:
-        text = (base / rel).read_text(encoding="utf-8")
+        text = _posture_file(base, rel, fallback).read_text(encoding="utf-8")
         if NETWORK_POSTURE not in text:
             findings.append(f"{rel}: does not name {NETWORK_POSTURE}")
         if rel == "render.yaml":

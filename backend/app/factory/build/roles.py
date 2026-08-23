@@ -2693,7 +2693,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.network_posture import PostureError, assert_workspace_posture
 
     try:
-        assert_workspace_posture(ctx.workspace.workspace)
+        assert_workspace_posture(
+            ctx.workspace.workspace,
+            fallback=(
+                ctx.workspace.destination if ctx.workspace.staged else None
+            ),
+        )
     except PostureError as exc:
         raise RoleError(str(exc)) from exc
     detail = (
@@ -2801,7 +2806,7 @@ env only proves the platform does not call the store; a handler that posts
 to an arbitrary public URL still passed, and one did -- "sent" a webhook to
 the open internet from a platform whose whole claim is running offline.
 Loopback stays open so TestClient-style local servers keep working.
-P1_OFFLINE_STRICT: this blocker is unchanged. Do not add :11434 or cloud hosts.
+P1: this blocker is unchanged. Do not add local-inference or cloud hosts.
 """
 
 import os
