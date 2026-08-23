@@ -171,6 +171,7 @@ from app.store import connect
 TABLE = {WORK_QUEUE_TABLE!r}
 IDEMPOTENCY = {IDEMPOTENCY_TABLE!r}
 PENDING = "pending"
+PROCESSING = "processing"
 PROCESSED = "processed"
 FAILED = "failed"
 
@@ -224,17 +225,49 @@ def list_all() -> List[Dict[str, Any]]:
         conn.close()
 
 
-def mark(item_id: int, status: str, result: Dict[str, Any] | None) -> Dict[str, Any] | None:
+def claim_pending(item_id: int) -> Dict[str, Any] | None:
     conn = connect()
     try:
         cur = conn.execute(
-            f"UPDATE {{TABLE}} SET status = ?, result = ? WHERE id = ?",
-            (
-                status,
-                json.dumps(result, sort_keys=True) if result is not None else None,
-                item_id,
-            ),
+            f"UPDATE {{TABLE}} SET status = ? WHERE id = ? AND status = ?",
+            (PROCESSING, item_id, PENDING),
         )
+        conn.commit()
+        if cur.rowcount == 0:
+            return None
+    finally:
+        conn.close()
+    return get(item_id)
+
+
+def mark(
+    item_id: int,
+    status: str,
+    result: Dict[str, Any] | None,
+    *,
+    from_status: str | None = None,
+) -> Dict[str, Any] | None:
+    conn = connect()
+    try:
+        if from_status is None:
+            cur = conn.execute(
+                f"UPDATE {{TABLE}} SET status = ?, result = ? WHERE id = ?",
+                (
+                    status,
+                    json.dumps(result, sort_keys=True) if result is not None else None,
+                    item_id,
+                ),
+            )
+        else:
+            cur = conn.execute(
+                f"UPDATE {{TABLE}} SET status = ?, result = ? WHERE id = ? AND status = ?",
+                (
+                    status,
+                    json.dumps(result, sort_keys=True) if result is not None else None,
+                    item_id,
+                    from_status,
+                ),
+            )
         conn.commit()
         if cur.rowcount == 0:
             return None
@@ -556,14 +589,16 @@ async def _handle_enqueue(_context: ActionContext, arguments: Dict[str, Any]) ->
 
 
 async def _handle_process(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
-    item = work_queue.get(int(arguments["id"]))
-    if item is None:
-        return ActionOutcome(
-            status=ActionStatus.VALIDATION_ERROR,
-            error_code="not_found",
-            error_message="queue item not found",
-        )
-    if item.get("status") != work_queue.PENDING:
+    item_id = int(arguments["id"])
+    claimed = work_queue.claim_pending(item_id)
+    if claimed is None:
+        item = work_queue.get(item_id)
+        if item is None:
+            return ActionOutcome(
+                status=ActionStatus.VALIDATION_ERROR,
+                error_code="not_found",
+                error_message="queue item not found",
+            )
         return ActionOutcome(
             status=ActionStatus.VALIDATION_ERROR,
             error_code="not_pending",
@@ -572,15 +607,24 @@ async def _handle_process(_context: ActionContext, arguments: Dict[str, Any]) ->
         )
     from app.kernel_bridge import product_context, spec_for
 
-    payload = item.get("payload") if isinstance(item.get("payload"), dict) else {{}}
-    result = await execute_action(spec_for(item["capability_id"]), product_context(), payload)
+    payload = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {{}}
+    result = await execute_action(
+        spec_for(claimed["capability_id"]),
+        product_context(),
+        payload,
+    )
     status = (
         work_queue.PROCESSED
         if result.status == ActionStatus.SUCCESS
         else work_queue.FAILED
     )
-    marked = work_queue.mark(int(item["id"]), status, result.to_dict())
-    if marked is None or marked.get("status") == work_queue.PENDING:
+    marked = work_queue.mark(
+        int(claimed["id"]),
+        status,
+        result.to_dict(),
+        from_status=work_queue.PROCESSING,
+    )
+    if marked is None or marked.get("status") in {{work_queue.PENDING, work_queue.PROCESSING}}:
         return ActionOutcome(
             status=ActionStatus.EXECUTION_ERROR,
             error_code="hollow_queue",
