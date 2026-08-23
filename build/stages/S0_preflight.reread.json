@@ -1,0 +1,11 @@
+{
+  "stage": "S0",
+  "independent_reread": true,
+  "reread_at": "2026-08-23T06:28:02.993487+00:00",
+  "source": "build/stages/S0_preflight.json",
+  "verdict": "PASS",
+  "rechecked_hashes": 13,
+  "kernel_mentions_in_build": [],
+  "errors": [],
+  "notes": "Re-hashed every factory_source path. Confirmed grep cerebrum_product_kernel over factory/build/*.py is empty (U12). Confirmed LotDesk zip identity and delivery_standard pin."
+}

@@ -1,0 +1,75 @@
+{
+  "stage": "S1",
+  "name": "ROOT_CAUSE",
+  "evaluated_at": "2026-08-23T06:28:00+00:00",
+  "verdict": "PASS",
+  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
+  "amended_from": "draft2 persist-wrapper (reverted; wrapper already exists as execute_action)",
+  "parent_defect": "U10",
+  "one_sentence": "The role_runner path reimplements, with an LLM and regex post-processing, a contract-driven execution kernel that already exists and is already correct — and ships neither the kernel nor the reimplementation's guarantees.",
+  "overturned": [
+    "Draft 1: fix _templated_route_body — already has the refusal guard at roles.py:1465-1479",
+    "Draft 2: build a persist wrapper — execute_action already owns trust-scope, I/O validation, ActionResult; ProductGenerator vendors the kernel (generator.py:490); role_runner ships none of it"
+  ],
+  "five_link_status": {
+    "links_1_to_5": "unnecessary IF U12 is closed (ship kernel + route through execute_action)",
+    "fallback_only_if_kernel_cannot_be_adopted": ["U5", "U4", "U3", "U2", "U1"]
+  },
+  "lane_authority_map": {
+    "source": "backend/app/factory/build/authority.py:108-224",
+    "COLLECTOR": {"write_lanes": [], "blocked": "cannot remove echo stubs or invent block ids"},
+    "CLONER": {"write_lanes": ["vendor/**", "kits/**", "blocks.lock.json"], "blocked": "cannot vendor kernel under app/; cannot rewrite factory/"},
+    "WRITER": {"write_lanes": ["app/**", "ui/**", "named scaffold"], "blocked": "cannot write tests/** or vendor/**; CAN write app/cerebrum_product_kernel/** and does not"},
+    "TESTER": {"write_lanes": ["tests/**"], "blocked": "Never patch app/; cannot ship kernel"},
+    "STORE_MANAGER": {"write_lanes": ["STORE block_registry/**"], "blocked": "harvest remain unbuilt"}
+  },
+  "factory_class": [
+    {"id": "U1", "title": "WRITER gate is compileall only", "evidence": "gates.py:201-226, GATES WRITER=gate_workspace_compiles", "lane": "no role writes gates.py"},
+    {"id": "U2", "title": "tested path ≠ shipped path (template in CI, kimi when keyed)", "evidence": "roles.py:1468-1470; _coder_route_body when coder_enabled; ci.yml has no keyed fixture", "lane": "TESTER cannot change emitters"},
+    {"id": "U3", "title": "coder gate is syntactic/security only", "evidence": "coder.py:377-436 AST + return + forbidden imports", "lane": "WRITER consumes coder output"},
+    {"id": "U4", "title": "_ensure_route_persists_payload force-injects save(payload) unre-validated", "evidence": "roles.py:1483-1499", "lane": "factory host, outside RoleContract"},
+    {"id": "U5", "title": "on keyed path the model owns persist/envelope", "evidence": "_coder_route_body + _ensure rewrite; not the kernel", "lane": "WRITER writes routes from coder"},
+    {"id": "U6", "title": "STORE_MANAGER harvest remain unbuilt", "evidence": "authority.py:213", "lane": "STORE_MANAGER mandate"},
+    {"id": "U7", "title": "TESTER judges shape not outcome", "evidence": "gate_suite_green; handle() returns a mapping", "lane": "TESTER tests/** only"},
+    {"id": "U8", "title": "roles.py claims both emitters write the same shape — false", "evidence": "roles.py:17-19 vs generator.py:229-247 vs runner artifact list", "lane": "no parity test"},
+    {"id": "U9", "title": "dispatch fabricates Store inputs (F18)", "evidence": "_DISPATCH_RUNTIME _default_block_field", "lane": "WRITER emits dispatch.py"},
+    {"id": "U10", "title": "PARENT: two emitters; runner docstring stale; 8/14 classes dropped", "evidence": "runner.py:24 vs product_architect.py:506; generator.py:229-247", "lane": "engine switch FACTORY_BUILD_ENGINE"},
+    {"id": "U11", "title": "chat/UI unused upstream", "evidence": "Cerebrum-Blocks block_registry/chat and ui_schema_builder exist; role_runner does not clone chat or emit ui/ from ui_schema", "lane": "WRITER ui/** unused; do not invent chat id"},
+    {"id": "U12", "title": "cerebrum_product_kernel not shipped by role_runner", "evidence": "grep factory/build/*.py empty; generator.py:490 copies kernel; execute_action unused on runner path", "lane": "WRITER app/** can vendor it and does not"}
+  ],
+  "pipeline_class": [
+    {"id": "F19", "title": "FAIL can still be a deployable image", "evidence": "ci.yml docker job is docker build only; product Dockerfile has no conformance"},
+    {"id": "F20", "title": "execution.image :latest", "evidence": "CLONER copies Store block.json verbatim"},
+    {"id": "F21", "title": "signatures/digests not verified", "evidence": "lock records commit/path only"},
+    {"id": "F22", "title": "permissions vs behaviour", "evidence": "copied, never compared"},
+    {"id": "F23", "title": "no SBOM", "evidence": "packager never emits"},
+    {"id": "F24", "title": "health always ok", "evidence": "_render_main constant ok"},
+    {"id": "F25", "title": "no versioned migrations", "evidence": "CREATE TABLE IF NOT EXISTS only"},
+    {"id": "F26", "title": "backup/restore not drilled", "evidence": "not generated"},
+    {"id": "F27", "title": "no rollback", "evidence": "not generated"},
+    {"id": "F28", "title": "no request-id / structured logs", "evidence": "routes template"},
+    {"id": "F29", "title": "patch-until-green", "evidence": "pilot.py prepare_pilot_workspace; runner.py:396 NOTE-success"}
+  ],
+  "product_class": [
+    {"id": "F1", "title": "echo/stub still succeeds — coder-displaced template OR unused kernel", "gate_that_should_have_caught": "execute_action / ActionStatus, not HTTP 200", "why_it_did_not": "role_runner never ships execute_action; TESTER accepts mapping"},
+    {"id": "F2", "title": "queue/workflow/notification in-process", "gate_that_should_have_caught": "CLONER durability", "why_it_did_not": "import-offline only"},
+    {"id": "F3", "title": "VIN sample accepted", "gate_that_should_have_caught": "kernel input_schema enum/format", "why_it_did_not": "kernel not shipped"},
+    {"id": "F4", "title": "missing required skipped", "gate_that_should_have_caught": "kernel validate required[]", "why_it_did_not": "_constraint_guard continues; kernel unused"},
+    {"id": "F5", "title": "HTTP 200 = acceptance", "gate_that_should_have_caught": "ActionResult.status", "why_it_did_not": "kernel not on path"},
+    {"id": "F6", "title": "agent_domain_cases uncollected", "gate_that_should_have_caught": "TESTER collection + kernel fixtures", "why_it_did_not": "named without test_ prefix"},
+    {"id": "F7", "title": "no status transition machine", "gate_that_should_have_caught": "domain_rules in Domain Pack + kernel", "why_it_did_not": "enum only"},
+    {"id": "F8", "title": "no restart-survival test", "gate_that_should_have_caught": "TESTER restart", "why_it_did_not": "one-process TestClient"},
+    {"id": "F9", "title": "multiple datastores", "gate_that_should_have_caught": "WRITER one DOR", "why_it_did_not": "HAL sqlite + platform.db"},
+    {"id": "F10", "title": "requirements vs vendor imports", "gate_that_should_have_caught": "reconcile", "why_it_did_not": "hardcoded fastapi+uvicorn"},
+    {"id": "F11", "title": "estate_registry echo / uninvoked BLOCK_IDS", "gate_that_should_have_caught": "COLLECTOR fail-closed + kernel dependency_required", "why_it_did_not": "echo returns ok"},
+    {"id": "F12", "title": "money as REAL/float", "gate_that_should_have_caught": "kernel schema type string/decimal", "why_it_did_not": "_SQL_TYPES float→REAL; kernel unused"},
+    {"id": "F13", "title": "dispatch swallows refusals", "gate_that_should_have_caught": "ActionOutcome not dict-ok", "why_it_did_not": "fabricator + shape tests"},
+    {"id": "F14", "title": "no ui/", "gate_that_should_have_caught": "S6 parity / ProductGenerator frontend", "why_it_did_not": "dropped class"},
+    {"id": "F15", "title": "no auth on capability routes", "gate_that_should_have_caught": "ActionContext trusted fields", "why_it_did_not": "kernel unused; open FastAPI"},
+    {"id": "F16", "title": "ui_schema unused", "gate_that_should_have_caught": "Blocks ui_schema_builder", "why_it_did_not": "U11"},
+    {"id": "F17", "title": "capture listed not executed", "gate_that_should_have_caught": "kernel handler must invoke BLOCK_IDS", "why_it_did_not": "load_block only"},
+    {"id": "F18", "title": "_default_block_field fabricates", "gate_that_should_have_caught": "delete fabrication layer", "why_it_did_not": "tasting-room green"}
+  ],
+  "counts": {"U": 12, "F_pipeline": 11, "F_product": 18, "total": 41},
+  "note_on_count": "Spec says 42. Catalog is U1–U12 (12) + F19–F29 (11) + F1–F18 (18) = 41. No U0. If F0 from draft1 (shape-not-outcome) is counted separately it duplicates U7. S1 treats F0 as U7."
+}
