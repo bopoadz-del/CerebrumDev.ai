@@ -3,19 +3,21 @@
   "name": "test",
   "verdict": "FAIL",
   "reread_of": "build/stages/S9_test.json",
-  "reread_at": "2026-08-23T08:08:00Z",
+  "reread_at": "2026-08-23T08:26:00Z",
   "independent": true,
-  "reader": "cloud-agent-s7-continue-after-s5-s6",
+  "reader": "cloud-agent-s9-linux-provable-close",
   "checked": [
     "uname is Linux x86_64; locale preferred encoding is UTF-8; this pod cannot run a Windows/cp1252 product suite",
-    ".github/workflows/ci.yml jobs are ubuntu-latest only (backend pytest, frontend, docker build); no windows-latest, no PYTHONIOENCODING=cp1252 job",
-    "ci.yml backend env is ENV=test only; no FACTORY_CODER_ENABLED and no KIMI/CEREBRUM_LLM fixture",
-    "ci.yml docker job is docker build -t cerebrumdev-backend:ci . with no LotDesk zip reject and no product conformance gate",
-    "roles.py still defines _DISPATCH_RUNTIME and _default_block_field (F18 open)",
-    "FACTORY_SUITE_MARKER_EXPR remains the code-phase 'not pilot' shape gate (U7 open)",
+    ".github/workflows/ci.yml jobs remain ubuntu-latest only; no windows-latest, no PYTHONIOENCODING=cp1252 job — F26 / windows_cp1252_parity stays FAIL",
+    "ci.yml backend now sets FACTORY_CODER_ENABLED=1 + stub KIMI/CEREBRUM_LLM keys and runs test_keyed_path_ci.py (U2 closed on Linux/CI)",
+    "ci.yml runs python -m app.factory.build.lotdesk_gate; committed zip sha256 8eec994d37f7068155152d1af486f705ff28d9674c587c0e4aa48217993f1554 matches S0",
+    "roles.py _DISPATCH_RUNTIME no longer contains _default_block_field or _ALWAYS_FILL (F18 closed)",
+    "_render_dockerfile and ProductGenerator Dockerfile contain RUN python3 scripts/release_gate.py (F19 closed for emitted product images)",
+    "FACTORY_SUITE_MARKER_EXPR remains the code-phase 'not pilot' shape gate (U7 still OPEN)",
+    "S9_test.json first_failing_criterion is still windows_cp1252_parity_not_run; not_claimed includes PILOT_READY and S10–S13",
     "No authorized write path from this repo to bopoadz-del/Cerebrum-Blocks"
   ],
   "disagreements": [],
   "agrees_first_fail": "windows_cp1252_parity_not_run",
-  "stop": "first FAIL after S7; S10–S13 not evaluated; VERDICT remains BLOCKED; not PILOT_READY"
+  "stop": "S9 still FAIL after Linux-provable items closed; S10–S13 not evaluated; not PILOT_READY"
 }

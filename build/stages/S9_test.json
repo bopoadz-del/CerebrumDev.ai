@@ -1,32 +1,53 @@
 {
   "stage": "S9",
   "name": "TEST",
-  "evaluated_at": "2026-08-23T07:54:40Z",
+  "evaluated_at": "2026-08-23T08:25:00Z",
   "verdict": "FAIL",
   "first_failing_criterion": "windows_cp1252_parity_not_run",
   "checked": {
     "windows_cp1252_parity": {
       "result": "FAIL",
-      "reason": "This environment is Linux only. Spec requires FAIL-closed when Windows cannot run. Do not fake it."
+      "reason": "This environment is Linux only (x86_64, UTF-8). Spec requires FAIL-closed when Windows/cp1252 cannot run. Do not fake it. F26 remains open."
     },
     "keyed_path_in_ci": {
-      "result": "FAIL",
-      "reason": ".github/workflows/ci.yml has no FACTORY_CODER_ENABLED / KIMI fixture. Tested path remains template; U2 remains open."
+      "result": "PASS",
+      "reason": ".github/workflows/ci.yml backend job now has 'Factory keyed-path fixtures (U2)': FACTORY_CODER_ENABLED=1, KEYED_PATH_CI=1, stub KIMI/CEREBRUM_LLM keys, pytest test_keyed_path_ci.py + writer/kernel coder wiring. LLM wire stubbed; no paid calls."
     },
     "lotdesk_fixture_rejection": {
-      "result": "NOT_PROVED",
-      "reason": "No CI / Docker conformance gate rejects artifacts/lotdesk_pilot_ready.zip at a named F-code. docker job is docker build only (F19)."
+      "result": "PASS",
+      "reason": "Named gate app.factory.build.lotdesk_gate rejects committed backend/tests/factory/fixtures/lotdesk_pilot_ready.zip (sha256 matches S0 8eec994d…). Required codes F18 and F19 present. Also recorded F20/F11/F24/F14. Fixture not patched. CI step: python -m app.factory.build.lotdesk_gate"
     },
     "f18_fabrication": {
-      "result": "FAIL",
-      "reason": "roles.py _DISPATCH_RUNTIME / _default_block_field still fabricates Store inputs. S6 declared F18 open."
+      "result": "PASS",
+      "reason": "_DISPATCH_RUNTIME no longer defines _default_block_field / _ALWAYS_FILL / _ensure_offline_block_input. Missing required fields and unknown fields/params return an error envelope. Fabrication tests inverted."
+    },
+    "f19_release_gate_in_image": {
+      "result": "PASS",
+      "reason": "RoleRunner _render_dockerfile and ProductGenerator _write_runtime_packaging RUN python3 scripts/release_gate.py. RoleRunner also installs requirements-dev.txt so the gate can run."
+    },
+    "negative_space": {
+      "result": "PASS",
+      "reason": "Dispatch rejects unknown fields/params when a contract names them. Block status=error stays ok=False. Kernel execute_action additionalProperties:false → VALIDATION_ERROR. Templated route does not persist or return ok on kernel refusal."
+    },
+    "linux_conformance": {
+      "result": "PASS",
+      "reason": "Fresh RoleRunner runner_smoke tree has no F18/F19. LotDesk fixture still has both. Executed on this Linux host."
     },
     "u7_shape_not_outcome": {
       "result": "OPEN",
-      "reason": "FACTORY_SUITE_MARKER_EXPR remains 'not pilot'; code-phase still judges shape."
+      "reason": "FACTORY_SUITE_MARKER_EXPR remains 'not pilot'; code-phase still judges shape. Not closed in this turn."
     }
   },
+  "factory_suite": {
+    "command": "cd backend && ENV=test ./venv/bin/python -m pytest tests/factory",
+    "passed": 363,
+    "skipped": 1,
+    "skipped_reason": "test_keyed_process_env_matches_production_when_ci_sets_it requires KEYED_PATH_CI=1 (dedicated CI step)",
+    "warnings": 89,
+    "seconds": 89.62
+  },
   "not_claimed": ["PILOT_READY", "S10–S13"],
+  "stop": "S9 still FAIL on windows_cp1252_parity_not_run. Do not start S10.",
   "lotdesk": "fixture only; not patched",
-  "blocks_harvest": "BLOCKED — no authorized write path to Cerebrum-Blocks in this repo. STORE_MANAGER harvest remains unbuilt (U6). Next product will re-ship Store-unwired adapters unless Factory CLONER emission stays applied."
+  "blocks_harvest": "BLOCKED — no authorized write path to Cerebrum-Blocks in this repo. STORE_MANAGER harvest remains unbuilt (U6)."
 }
