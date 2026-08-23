@@ -52,3 +52,35 @@ async def test_execute_action_success():
     result = await execute_action(spec, ctx, {"n": 3})
     assert result.status == ActionStatus.SUCCESS
     assert result.output["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_execute_action_rejects_unknown_fields():
+    """Negative space: additionalProperties:false is a refusal, not a pass."""
+    spec = ActionSpec(
+        action_id="product.ping",
+        domain="product",
+        name="ping",
+        description="ping",
+        input_schema={
+            "type": "object",
+            "properties": {"n": {"type": "integer"}},
+            "additionalProperties": False,
+        },
+        output_schema={"type": "object"},
+        handler=_handler,
+        required_context=["user_id", "tenant_id"],
+        permissions=["product.execute"],
+    )
+    ctx = ActionContext(
+        user_id="u1",
+        tenant_id="atlas",
+        organisation_id="atlas",
+        project_id="p1",
+        permissions=["product.execute"],
+        allowed_domains=["product"],
+    )
+    result = await execute_action(spec, ctx, {"n": 3, "nope": 1})
+    assert result.status == ActionStatus.VALIDATION_ERROR
+    assert result.status != ActionStatus.SUCCESS
+    assert "nope" in (result.error_message or "")

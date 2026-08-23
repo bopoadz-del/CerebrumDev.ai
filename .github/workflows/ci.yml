@@ -51,6 +51,21 @@ jobs:
         # providing. Reporting only; it cannot change a result.
         run: python -m pytest -rs
 
+      # U2: production enables the coder when a key is set. The job above
+      # is ENV=test only; this step is the keyed-path fixture — stub keys,
+      # no paid calls, same RoleRunner entry points production uses.
+      - name: Factory keyed-path fixtures (U2)
+        env:
+          FACTORY_CODER_ENABLED: "1"
+          KEYED_PATH_CI: "1"
+          KIMI_API_KEY: "ci-stub-not-a-real-key"
+          CEREBRUM_LLM_API_KEY: "ci-stub-not-a-real-key"
+          LLM_PROVIDER: kimi
+        run: python -m pytest tests/factory/test_keyed_path_ci.py tests/factory/test_writer_coder_wiring.py tests/factory/test_kernel_coder_wiring.py -rs
+
+      - name: Reject LotDesk-as-shipped fixture
+        run: python -m app.factory.build.lotdesk_gate
+
       # Repo-wide gates (run from repo root, not backend/): every hollow
       # function must be implemented or registered in KNOWN_INCOMPLETE.md,
       # and no secret-shaped literal may ship on a non-test path.
