@@ -287,7 +287,7 @@ class ProductGenerator:
             "PYTHONPATH=.",
             "RESIDENT_ENGINEER_ENABLED=false",
             "",
-            "# NETWORK_POSTURE: RoleRunner products are P1_OFFLINE_STRICT (no store URL).",
+            "# NETWORK_POSTURE: RoleRunner products are P1 (offline strict, no store URL).",
             "# This ProductGenerator emitter still POSTs REUSE actions to the store",
             "# (S6 declared leftover). Optional here; unset → DEPENDENCY_REQUIRED, not a fake success.",
             "# CEREBRUM_API_URL=https://cerebrum-blocks.onrender.com",

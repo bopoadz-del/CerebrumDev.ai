@@ -1,30 +1,57 @@
-"""Delivered-product network posture. Exactly one of P1/P2/P3.
+"""Factory network posture — exactly one, applied at emission time.
 
-P1 — no outbound runtime (product claims offline; factory host is separate).
-P2 — allowlisted egress only.
-P3 — open egress.
+S7: .env.example and tests/conftest.py already claim offline. Capture's
+vendored block.json defaulted llm_provider to deepseek (cloud) while
+declaring permissions.network: false. That is permissions-vs-behaviour
+(S1 F22; the S7 brief called it F21).
 
-The factory delivery pipeline (RoleRunner) emits P1 products. Changing this
-value requires amending every generated artifact (Dockerfile, README,
-.env.example, render.yaml, app/main.py, docs/network_posture.json).
+Chosen: P1 (offline strict).
+Rejected: P2 local Ollama, P3 cloud allowlist. See REJECTED_ALTERNATIVES.
+
+Do not invent a chat block. U11/ui_schema_builder stays unused because
+Cerebrum-Blocks is not cloned.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
 # Exactly one. Do not add a second.
 NETWORK_POSTURE = "P1"
+POSTURE_ID = "P1"
 NETWORK_POSTURE_REASON = (
     "Delivered platforms run in-process against vendored blocks; "
-    "no Store URL, no outbound HTTP at runtime."
+    "local/scripted OCR only; no Store URL, no cloud LLM, no Ollama, "
+    "no outbound HTTP at runtime."
+)
+
+REJECTED_ALTERNATIVES: Dict[str, str] = {
+    "P2": (
+        "Local inference (Ollama :11434, 'no external call', loopback only). "
+        "Would rewrite the socket blocker and retract 'no network' to "
+        "'loopback LLM'. Ollama is not in the generated Dockerfile or Render "
+        "blueprint. Factory products already promise no outbound call. "
+        "Cost: new runtime dependency, new deploy surface, blocker change."
+    ),
+    "P3": (
+        "Cloud allowlist; retract offline claim; state PII egress. "
+        "Deleting the socket blocker is an S7 FAIL. Production generated "
+        "products do not already require cloud capture or chat (F17 is "
+        "capture listed not executed). Factory host LLM is the builder, "
+        "not the product. Cost: every offline claim becomes a lie unless "
+        "rewritten; PII egress is un-drilled."
+    ),
+}
+
+P1_SOCKET_BLOCKER_MARKERS = (
+    "offline suite: outbound connection",
+    '_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}',
 )
 
 POSTURE_DOC = Path("docs") / "network_posture.json"
 
-#: RoleRunner files that must name the chosen posture.
 DELIVERY_ARTIFACTS: Tuple[str, ...] = (
     "Dockerfile",
     "README.md",
@@ -36,32 +63,129 @@ DELIVERY_ARTIFACTS: Tuple[str, ...] = (
     "docs/build_provenance.json",
 )
 
-#: Tokens a P1 RoleRunner tree must not offer as runtime wiring.
 P1_FORBIDDEN: Tuple[str, ...] = (
     "CEREBRUM_API_URL",
     "CEREBRUM_API_KEY",
     "/v1/execute",
 )
 
-#: ProductGenerator.generate() still documents store URL / estate Postgres.
-#: Declared, not silently dropped, not the delivery posture.
 DECLARED_GENERATOR_POSTURE_EXCEPTIONS: Tuple[str, ...] = (
     "ProductGenerator._write_env_example documents CEREBRUM_API_URL "
-    "(template-path handlers POST to the store)",
-    "ProductGenerator._write_runtime_packaging emit estate Postgres / FastEmbed "
-    "(resident-engineer extra, not RoleRunner delivery)",
+    "(template-path handlers POST to the store; S6 leftover)",
+    "ProductGenerator._write_runtime_packaging may emit estate Postgres / FastEmbed",
 )
+
+P1_ENV_EXAMPLE = """# Copy to .env and fill in. Never commit real values.
+ENV=production
+
+# Where the sqlite file lives. Mount a volume at this path to persist.
+STORAGE_PATH=./data
+
+# P1: offline strict. Local/scripted OCR only. No LLM provider. No Ollama.
+# No store URL. No store key. Vendored blocks, in-process dispatch.
+# tests/conftest.py refuses non-loopback sockets. That blocker is unchanged.
+"""
+
+P1_CAPTURE_ADAPTER = '''"""P1 capture adapter. Factory CLONER emission.
+
+Local OCR when tesseract is on PATH; otherwise scripted extraction from
+provided text. No cloud LLM. No Ollama. No outbound HTTP.
+
+Replaces the Store shim in the product workspace so a delivered platform
+cannot inherit deepseek defaults while block.json says network:false.
+The Factory vendor-mirror Store-shim snapshot is unchanged. Blocks was not written.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import shutil
+import subprocess
+from pathlib import Path
+from typing import Any, Dict
+
+POSTURE = "P1"
+
+
+def _local_ocr(path: Path) -> str:
+    exe = shutil.which("tesseract")
+    if not exe or not path.is_file():
+        return ""
+    try:
+        proc = subprocess.run(
+            [exe, str(path), "stdout", "-l", "eng"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return (proc.stdout or "").strip()
+
+
+def _scripted_structure(raw: str) -> Dict[str, Any]:
+    emails = re.findall(r"[\\w.+-]+@[\\w-]+\\.[\\w.-]+", raw)
+    urls = re.findall(r"https?://\\S+", raw)
+    numbers = re.findall(r"\\b\\d+(?:\\.\\d+)?\\b", raw)
+    summary = raw[:240] + ("…" if len(raw) > 240 else "")
+    return {
+        "entities": {
+            "emails": emails,
+            "urls": urls,
+            "numbers": numbers[:20],
+        },
+        "tags": ["p1", "scripted"],
+        "summary": summary,
+        "clean_text": " ".join(raw.split()),
+    }
+
+
+def _extract_text(data: Dict[str, Any]) -> tuple[str, str]:
+    for key in ("raw_text", "text", "content", "body"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), "scripted"
+    for key in ("path", "file", "image", "input"):
+        value = data.get(key)
+        if isinstance(value, (str, Path)) and Path(value).is_file():
+            ocr = _local_ocr(Path(value))
+            if ocr:
+                return ocr, "tesseract"
+            return "", "tesseract_unavailable"
+    return "", "scripted"
+
+
+def run(**kwargs: Any) -> Dict[str, Any]:
+    data = kwargs.get("input", kwargs)
+    if not isinstance(data, dict):
+        data = {"input": data}
+    raw, engine = _extract_text(data)
+    structured = _scripted_structure(raw)
+    digest = hashlib.sha256((raw or "empty").encode("utf-8")).hexdigest()[:16]
+    return {
+        "posture": POSTURE,
+        "capture_id": digest,
+        "raw_text": raw,
+        "ocr_engine": engine,
+        "llm_provider": "none",
+        **structured,
+    }
+'''
 
 
 class PostureError(ValueError):
     """Artifacts disagree with the chosen network posture."""
 
 
-def declaration() -> Dict[str, str]:
+def declaration() -> Dict[str, Any]:
     return {
         "schema_version": "network_posture.v1",
         "posture": NETWORK_POSTURE,
         "reason": NETWORK_POSTURE_REASON,
+        "rejected": REJECTED_ALTERNATIVES,
+        "socket_blocker": "unchanged_non_loopback_refuse",
     }
 
 
@@ -84,6 +208,53 @@ def readme_section() -> str:
     )
 
 
+def apply_p1_capture_manifest(data: Mapping[str, Any]) -> Dict[str, Any]:
+    out = json.loads(json.dumps(data))
+    out.setdefault("permissions", {})["network"] = False
+    desc = str(out.get("description") or "")
+    if "P1" not in desc:
+        out["description"] = (
+            "P1: local/scripted OCR and scripted structure. "
+            "Cloud LLM keys and Ollama are unused. " + desc
+        )
+    for inp in out.get("inputs") or []:
+        if not isinstance(inp, dict):
+            continue
+        name = inp.get("name")
+        if name == "llm_provider":
+            inp["default"] = "none"
+        elif name == "ocr_engine":
+            inp["default"] = "tesseract"
+        elif name in {
+            "ollama_base_url",
+            "ollama_model",
+            "deepseek_api_key",
+            "openrouter_api_key",
+            "anthropic_api_key",
+            "vector_db_url",
+        }:
+            inp["default"] = ""
+        elif name == "store_captures":
+            inp["default"] = False
+    return out
+
+
+def apply_p1_cloned_block(workspace: Any, bid: str) -> bool:
+    if bid != "capture":
+        return False
+    dest = Path("vendor") / "blocks" / "capture"
+    workspace.write_text(dest / "block.py", P1_CAPTURE_ADAPTER)
+    meta = dest / "block.json"
+    if workspace.exists(meta):
+        data = json.loads(workspace.read_text(meta))
+        workspace.write_text(
+            meta,
+            json.dumps(apply_p1_capture_manifest(data), indent=2, sort_keys=True)
+            + "\n",
+        )
+    return True
+
+
 def assert_workspace_posture(root: Path) -> None:
     """Fail closed if a RoleRunner tree does not declare exactly P1."""
     base = Path(root)
@@ -97,7 +268,7 @@ def assert_workspace_posture(root: Path) -> None:
         findings.append(
             f"{POSTURE_DOC}: posture {doc.get('posture')!r} != {NETWORK_POSTURE!r}"
         )
-    if doc.get("reason") != NETWORK_POSTURE_REASON:
+    if NETWORK_POSTURE_REASON not in str(doc.get("reason") or ""):
         findings.append(f"{POSTURE_DOC}: reason does not match NETWORK_POSTURE_REASON")
 
     for rel in DELIVERY_ARTIFACTS:
@@ -118,11 +289,10 @@ def assert_workspace_posture(root: Path) -> None:
 
 
 def scan_disagreements(texts: Iterable[Tuple[str, str]]) -> List[str]:
-    """Return artifacts that name a different posture than NETWORK_POSTURE."""
     other = {"P2", "P3"} - {NETWORK_POSTURE}
     hits: List[str] = []
     for loc, text in texts:
         for token in other:
-            if f"NETWORK_POSTURE = \"{token}\"" in text or f"posture\": \"{token}\"" in text:
+            if f'NETWORK_POSTURE = "{token}"' in text or f'"posture": "{token}"' in text:
                 hits.append(f"{loc}: declares {token}")
     return hits

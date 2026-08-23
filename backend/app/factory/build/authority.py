@@ -186,6 +186,7 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "docs/provenance/**"),
             (LaneRoot.WORKSPACE, "docs/certification/**"),
             (LaneRoot.WORKSPACE, "docs/edge_profile.json"),
+            (LaneRoot.WORKSPACE, "docs/network_posture.json"),
             (LaneRoot.WORKSPACE, "frontend/**"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that

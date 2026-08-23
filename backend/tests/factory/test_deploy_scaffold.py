@@ -80,7 +80,7 @@ def test_the_env_example_offers_no_store_wiring(built):
     beside them, so offering a store variable would misdescribe how it runs."""
     text = (built / ".env.example").read_text(encoding="utf-8")
     assert "STORAGE_PATH" in text
-    assert "P1_OFFLINE_STRICT" in text
+    assert "P1" in text
     for token in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "/v1/execute"):
         assert f"{token}=" not in text, f"{token} offered in a P1 platform"
 
@@ -104,6 +104,7 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "docs/provenance/provenance.json",
         "docs/certification/dual_certification.json",
         "docs/edge_profile.json",
+        "docs/network_posture.json",
         "frontend/src/App.tsx",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)

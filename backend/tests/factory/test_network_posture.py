@@ -1,21 +1,22 @@
-"""S7: exactly one network posture — P1_OFFLINE_STRICT."""
+"""S7: exactly one network posture — P1 offline strict."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-import pytest
-
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.network_posture import (
+    NETWORK_POSTURE,
     P1_CAPTURE_ADAPTER,
     P1_ENV_EXAMPLE,
+    P1_FORBIDDEN,
     P1_SOCKET_BLOCKER_MARKERS,
     POSTURE_ID,
     REJECTED_ALTERNATIVES,
     apply_p1_capture_manifest,
+    assert_workspace_posture,
 )
 from app.factory.build.roles import RoleContext, _CONFTEST, run_cloner
 from app.factory.build.runner import RoleRunner
@@ -30,19 +31,18 @@ MIRROR_CAPTURE_PY = ROOT / "backend/app/factory/vendor_blocks_mirror/capture/blo
 
 
 def test_chosen_posture_is_p1():
-    assert POSTURE_ID == "P1_OFFLINE_STRICT"
-    assert "P2_LOCAL_INFERENCE" in REJECTED_ALTERNATIVES
-    assert "P3_CLOUD" in REJECTED_ALTERNATIVES
-    assert "socket blocker" in REJECTED_ALTERNATIVES["P3_CLOUD"].lower() or (
-        "blocker" in REJECTED_ALTERNATIVES["P3_CLOUD"]
-    )
+    assert NETWORK_POSTURE == "P1"
+    assert POSTURE_ID == "P1"
+    assert "P2" in REJECTED_ALTERNATIVES
+    assert "P3" in REJECTED_ALTERNATIVES
+    assert "blocker" in REJECTED_ALTERNATIVES["P3"].lower()
 
 
 def test_socket_blocker_markers_unchanged():
     for marker in P1_SOCKET_BLOCKER_MARKERS:
         assert marker in _CONFTEST
     assert "11434" not in _CONFTEST
-    assert "P1_OFFLINE_STRICT" in _CONFTEST
+    assert "P1" in _CONFTEST
 
 
 def test_vendor_mirror_capture_json_defaults_are_p1():
@@ -57,13 +57,15 @@ def test_vendor_mirror_capture_json_defaults_are_p1():
     assert providers["ocr_engine"] == "tesseract"
     assert providers["ollama_base_url"] == ""
     assert providers["store_captures"] is False
-    # Mirror block.py stays the Store shim snapshot; emission replaces it.
     assert "get_block" in MIRROR_CAPTURE_PY.read_text(encoding="utf-8")
 
 
 def test_apply_p1_manifest_does_not_enable_network():
     rewritten = apply_p1_capture_manifest(
-        {"permissions": {"network": False}, "inputs": [{"name": "llm_provider", "default": "deepseek"}]}
+        {
+            "permissions": {"network": False},
+            "inputs": [{"name": "llm_provider", "default": "deepseek"}],
+        }
     )
     assert rewritten["permissions"]["network"] is False
     assert rewritten["inputs"][0]["default"] == "none"
@@ -75,7 +77,7 @@ def test_p1_capture_run_is_scripted_not_echo(tmp_path):
     ns: dict = {}
     exec(path.read_text(encoding="utf-8"), ns)
     out = ns["run"](text="Reach me at ops@example.com https://local.test 42")
-    assert out["posture"] == "P1_OFFLINE_STRICT"
+    assert out["posture"] == "P1"
     assert out["llm_provider"] == "none"
     assert out["raw_text"]
     assert "ops@example.com" in out["entities"]["emails"]
@@ -123,7 +125,7 @@ def test_cloner_emits_p1_capture_without_blocks_root(tmp_path):
         roles_mod._block_source_dir = original
     assert result.ok, result.detail
     shipped = ws.read_text(Path("vendor") / "blocks" / "capture" / "block.py")
-    assert "P1_OFFLINE_STRICT" in shipped
+    assert "P1" in shipped
     assert "get_block" not in shipped
     meta = json.loads(ws.read_text(Path("vendor") / "blocks" / "capture" / "block.json"))
     defaults = {i["name"]: i.get("default") for i in meta["inputs"]}
@@ -131,12 +133,13 @@ def test_cloner_emits_p1_capture_without_blocks_root(tmp_path):
     assert meta["permissions"]["network"] is False
 
 
-def test_role_runner_env_example_is_p1(tmp_path, monkeypatch):
+def test_role_runner_tree_is_p1(tmp_path, monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     out = tmp_path / "build"
     result = RoleRunner(load_blueprint(SMOKE), out).run()
     assert result.ok, result.to_dict()
     text = (out / ".env.example").read_text(encoding="utf-8")
     assert text == P1_ENV_EXAMPLE
-    assert "P1_OFFLINE_STRICT" in text
-    assert "CEREBRUM_API_URL=" not in text
+    for token in P1_FORBIDDEN:
+        assert token not in text
+    assert_workspace_posture(out)

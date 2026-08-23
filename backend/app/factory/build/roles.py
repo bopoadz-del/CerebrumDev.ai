@@ -1724,9 +1724,11 @@ def _render_main(product_name: str) -> str:
 
 
 def _render_requirements() -> str:
+    from app.factory.build.network_posture import POSTURE_ID
+
     return (
         "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
-        "# the platform runs with no database server and no network.\n"
+        f"# the platform runs with no database server and no network ({POSTURE_ID}).\n"
         "# pydantic is required by the vendored cerebrum_product_kernel contract.\n"
         "fastapi>=0.110\n"
         "uvicorn>=0.29\n"
@@ -1940,6 +1942,8 @@ and they do not execute the test suite (`GET /v1/gates` describes coverage only)
 
 
 def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
+    from app.factory.build.network_posture import POSTURE_ID as NETWORK_POSTURE
+
     cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
     block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
     return f"""# {product_name}
@@ -2626,7 +2630,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             if readme
             else _templated_readme(product_name, written, sorted(vendored))
         )
-        ctx.workspace.write_text("README.md", body + _kernel_http_readme_section())
+        from app.factory.build.network_posture import readme_section
+
+        ctx.workspace.write_text(
+            "README.md", body + _kernel_http_readme_section() + readme_section()
+        )
         sources["readme"] = readme[1] if readme else fallback_source
     sources["entrypoint"] = fallback_source
     sources["requirements"] = fallback_source
@@ -2642,7 +2650,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     sources["release_gate"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
+    from app.factory.build.network_posture import POSTURE_ID, declaration_json
+
+    ctx.workspace.write_text(Path("docs") / "network_posture.json", declaration_json())
     sources["deploy_scaffold"] = fallback_source
+    sources["network_posture"] = POSTURE_ID
 
     from app.factory.build.converge import converge_writer_emitters
 
@@ -2659,6 +2671,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "product_id": getattr(ctx.blueprint, "product_id", "unknown"),
                 "product_name": product_name,
                 "engine": "role_runner",
+                "network_posture": POSTURE_ID,
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
                 "kernel_agents": {
@@ -2677,6 +2690,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
         + "\n",
     )
+    from app.factory.build.network_posture import PostureError, assert_workspace_posture
+
+    try:
+        assert_workspace_posture(ctx.workspace.workspace)
+    except PostureError as exc:
+        raise RoleError(str(exc)) from exc
     detail = (
         f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
         f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
