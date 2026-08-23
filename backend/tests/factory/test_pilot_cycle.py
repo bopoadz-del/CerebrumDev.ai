@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.factory.build.authority import BuildRole
 from app.factory.build.pilot import prepare_pilot_workspace
+from app.factory.build.roles import RoleContext, run_tester, run_writer
+from app.factory.build.workspace import RoleWorkspace
 
 
 def test_prepare_pilot_workspace_patches_adapters_not_handlers(tmp_path: Path):
@@ -40,11 +43,13 @@ def test_prepare_pilot_workspace_patches_adapters_not_handlers(tmp_path: Path):
         '            return {"error": f"Insert failed: {str(e)}"}\n',
         encoding="utf-8",
     )
+    (notify / "storage.py").write_text("import aiofiles\n", encoding="utf-8")
 
     touched = prepare_pilot_workspace(tmp_path)
     assert "vendor/blocks/database/block.py" in touched
     assert "vendor/cerebrum/blocks/notification.py" in touched
     assert "vendor/cerebrum/blocks/database.py" in touched
+    assert "vendor/cerebrum/blocks/storage.py" in touched
     assert not any(p.startswith("app/") for p in touched)
 
     helper = (block / "block.py").read_text(encoding="utf-8")
@@ -55,8 +60,62 @@ def test_prepare_pilot_workspace_patches_adapters_not_handlers(tmp_path: Path):
     assert "offline" in mcp
     db = (notify / "database.py").read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS" in db
+    storage = (notify / "storage.py").read_text(encoding="utf-8")
+    assert "Store-unwired aiofiles" in storage
     assert (actions / "vehicle_inventory.py").read_text(encoding="utf-8") == (
         "CAPABILITY_ID = 'vehicle_inventory'\n"
     )
     # Idempotent.
     assert prepare_pilot_workspace(tmp_path) == []
+
+
+class _Cap:
+    def __init__(self, cid):
+        self.capability_id = cid
+        self.block_ids = ()
+
+
+class _Plan:
+    def __init__(self):
+        self.capabilities = (_Cap("vehicle_inventory"),)
+
+
+class _Blueprint:
+    product_name = "LotDesk"
+    product_id = "used-cars"
+    vertical = "used_cars"
+
+
+def test_pilot_writer_without_coder_keeps_existing_handlers(tmp_path, monkeypatch):
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    ws = RoleWorkspace(BuildRole.WRITER, tmp_path / "ws")
+    handler = Path("app") / "actions" / "vehicle_inventory.py"
+    ws.write_text(handler, "CAPABILITY_ID = 'vehicle_inventory'\n# kimi\n")
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=("vehicle_inventory rejected a payload",),
+        state={"build_cycle": "pilot", "vendored_blocks": ("database",)},
+    )
+    result = run_writer(ctx)
+    assert result.ok
+    assert "no coder key" in result.detail
+    assert ws.read_text(handler) == "CAPABILITY_ID = 'vehicle_inventory'\n# kimi\n"
+
+
+def test_pilot_tester_keeps_existing_suite(tmp_path):
+    ws = RoleWorkspace(BuildRole.TESTER, tmp_path / "ws")
+    ws.write_text(Path("tests") / "test_smoke.py", "def test_ok():\n    assert True\n")
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        state={"build_cycle": "pilot", "vendored_blocks": ()},
+    )
+    result = run_tester(ctx)
+    assert result.ok
+    assert "existing suite kept" in result.detail
+    assert "def test_ok" in ws.read_text(Path("tests") / "test_smoke.py")

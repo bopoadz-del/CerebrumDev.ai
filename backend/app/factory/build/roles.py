@@ -2236,7 +2236,26 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     reused from the previous round (specs from state, handler files from the
     committed destination, route bodies from state), so a green capability
     cannot regress while a red one is being fixed.
+
+    A pilot cycle without a coder key must not replace agent-written
+    handlers with the deterministic template. Adapter patches already ran.
     """
+    if (
+        str(ctx.state.get("build_cycle") or "") == "pilot"
+        and ctx.work_list
+    ):
+        from app.factory.coder import coder_enabled
+
+        if not coder_enabled():
+            vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
+            return RoleResult(
+                ok=True,
+                detail=(
+                    "pilot rework skipped — no coder key; keeping existing "
+                    f"{len(ctx.plan.capabilities)} handler(s)"
+                ),
+                vendored_blocks=tuple(vendored),
+            )
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     vendored_ids = [b for b in ctx.state.get("vendored_blocks", ()) if b]
     contracts = {b: _block_contract(ctx, b) for b in vendored_ids}
@@ -2691,7 +2710,21 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     Extra coding-agent cases are mutations of spec payloads. They are
     written as ``tests/agent_domain_cases.py`` so pytest does not collect
     them. GET /v1/gates describes this coverage; it does not run the suite.
+
+    On a pilot cycle the suite is already on disk. Rewriting it against an
+    empty in-memory spec (worker restart) would change payloads and hide
+    the agent's own cases. Keep the files; the gate runs ``pytest -m pilot``.
     """
+    if str(ctx.state.get("build_cycle") or "") == "pilot":
+        existing = Path("tests") / "test_smoke.py"
+        if ctx.workspace.exists(existing):
+            return RoleResult(
+                ok=True,
+                detail=(
+                    "pilot cycle: existing suite kept; gate will run pytest -m pilot"
+                ),
+                vendored_blocks=tuple(sorted(set(ctx.state.get("vendored_blocks", ())))),
+            )
     caps = [c.capability_id.replace("-", "_") for c in ctx.plan.capabilities]
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
     specs = ctx.state.get("model_specs") or {}

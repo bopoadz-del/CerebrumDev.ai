@@ -55,6 +55,9 @@ def prepare_pilot_workspace(workspace: Path | str) -> list[str]:
     database = root / "vendor" / "cerebrum" / "blocks" / "database.py"
     if database.is_file() and _patch_database_insert(database):
         touched.append(str(database.relative_to(root)))
+    storage = root / "vendor" / "cerebrum" / "blocks" / "storage.py"
+    if storage.is_file() and _patch_storage_aiofiles(storage):
+        touched.append(str(storage.relative_to(root)))
     return touched
 
 
@@ -149,3 +152,56 @@ def _patch_database_insert(path: Path) -> bool:
         return False
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
     return True
+
+
+_AIOFILES_MARKER = "Store-unwired aiofiles"
+
+
+def _patch_storage_aiofiles(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8")
+    changed = False
+    if _AIOFILES_MARKER not in text and "import aiofiles" in text:
+        fallback = (
+            "# Store-unwired aiofiles: delivered platforms do not ship aiofiles.\n"
+            "try:\n"
+            "    import aiofiles\n"
+            "except ImportError:\n"
+            "    class _StdAioFile:\n"
+            "        def __init__(self, path, mode):\n"
+            "            self._path = path\n"
+            "            self._mode = mode\n"
+            "            self._fh = None\n"
+            "        async def __aenter__(self):\n"
+            "            self._fh = open(self._path, self._mode)\n"
+            "            return self\n"
+            "        async def __aexit__(self, *exc):\n"
+            "            self._fh.close()\n"
+            "        async def write(self, data):\n"
+            "            return self._fh.write(data)\n"
+            "        async def read(self):\n"
+            "            return self._fh.read()\n"
+            "    class _StdAioFiles:\n"
+            "        @staticmethod\n"
+            "        def open(path, mode=\"r\"):\n"
+            "            return _StdAioFile(path, mode)\n"
+            "    aiofiles = _StdAioFiles()\n"
+        )
+        text = text.replace("import aiofiles\n", fallback, 1)
+        changed = True
+    needle = (
+        "        file_hash = hashlib.sha256(content if isinstance(content, bytes) "
+        "else content.encode()).hexdigest()[:16]\n"
+    )
+    if needle in text and "json.dumps(content" not in text:
+        text = text.replace(
+            needle,
+            "        if not isinstance(content, (bytes, str)):\n"
+            "            import json as _json\n"
+            "            content = _json.dumps(content, default=str)\n"
+            + needle,
+            1,
+        )
+        changed = True
+    if changed:
+        path.write_text(text, encoding="utf-8")
+    return changed
