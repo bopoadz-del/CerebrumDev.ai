@@ -18,8 +18,9 @@ STORE_MANAGER (Store registrar) never call the agent. RoleRunner and
 ProductGenerator share the 14-class contract (``test_emitter_parity``);
 ProductGenerator extras (resident-engineer, ``factory_plan.json``,
 ``product-agent/``) are declared differences, not a silent third drop.
-CI exercises the manufacturing route with no API key. Which path ran is
-recorded, never implied.
+CI exercises the manufacturing route with no API key, and a dedicated
+keyed-path job (FACTORY_CODER_ENABLED=1, stub keys) so the production
+coder path is not template-only. Which path ran is recorded, never implied.
 
 Each kernel publishes its job on the delivered platform:
 ``GET /v1/jobs`` (roster), ``GET /v1/catalog`` (COLLECTOR), ``GET /v1/inventory``
@@ -1002,172 +1003,63 @@ def load_block(block_id: str):
 BLOCK_CONTRACTS: Dict[str, Any] = {}
 
 
-def _default_block_field(block_id: str, field: str, payload: Dict[str, Any]):
-    """Fill a Store-required input the caller never heard of.
-
-    Live tasting-room handlers sent the domain dict straight through.
-    Analytics then demanded ``metric``/``value``, event_bus demanded
-    ``topic``, and the suite went red. Construct those fields here so a
-    valid capability payload still reaches a validating block.
-
-    Notification ``channel`` must be a Store-known value. ``in_process`` is
-    not one — live TESTER answered ``Unknown channel: in_process``. ``mcp``
-    is known; it requires ``block`` or ``tool`` (filled below), not a network
-    hop.
-    """
-    if field == "channel":
-        ch = str(payload.get(field) or "mcp").strip().lower()
-        if ch in {
-            "in_process", "in-process", "http", "webhook", "email", "smtp",
-            "slack", "",
-        }:
-            return "mcp"
-        return ch
-    if field in payload and payload[field] not in (None, ""):
-        return payload[field]
-    wrapping = {
-        "data",
-        "record",
-        "payload",
-        "input",
-        "document",
-        "event",
-        "item",
-        "body_data",
-        "result",
-    }
-    if field in wrapping:
-        return payload
-    if field == "steps":
-        roster = [k for k in BLOCK_CONTRACTS if k not in {"workflow"}]
-        target = "validation" if "validation" in roster else (
-            roster[0] if roster else "database"
-        )
-        return [{
-            "id": "ok",
-            "block": target,
-            "input": payload,
-            "result": {"status": "ok", "ok": True},
-        }]
-    if field in ("items", "records"):
-        return [payload]
-    if field == "members":
-        return []
-    defaults = {
-        "topic": f"{block_id}.event",
-        "metric": block_id,
-        "value": 1,
-        "table": "records",
-        "entity": "records",
-        "collection": "records",
-        "channel": "mcp",
-        "message": "update",
-        "body": "update",
-        "content": "update",
-        "text": "update",
-        "recipient": "operator",
-        "to": "operator",
-        "user_id": "operator",
-        "role": "member",
-        "name": block_id,
-        "formula": "1",
-        "expression": "1",
-        "expr": "1",
-        "query": "SELECT 1",
-        "id": 1,
-        "block": "database",
-        "tool": "database",
-    }
-    return defaults.get(field, payload.get(field))
+class DispatchContractError(ValueError):
+    """Caller payload failed the harvested contract. Do not invent fields."""
 
 
-_ALWAYS_FILL = {
-    "event_bus": ("topic", "event", "payload"),
-    "analytics": ("metric", "value"),
-    "notification": ("channel", "message", "recipient", "name", "block", "tool"),
-    "workflow": ("steps", "result", "name"),
-    "team": ("name", "role", "members"),
-    "database": ("query", "table", "data"),
-}
-
-
-def _ensure_offline_block_input(
-    block_id: str, data: Dict[str, Any], original: Dict[str, Any]
-) -> Dict[str, Any]:
-    """Fill Store fields even when contract harvest missed them.
-
-    Live TESTER after shipping Store blocks: event_bus raised ``topic required``
-    because the harvested required-fields list was empty; notification MCP
-    needed a block/tool name; ``in_process`` was rejected as unknown; team
-    called ``.lower()`` on None; workflow KeyError'd ``result``.
-    """
-    for field in _ALWAYS_FILL.get(block_id, ()):
-        if field not in data or data[field] in (None, ""):
-            data[field] = _default_block_field(block_id, field, original)
-    if block_id == "notification":
-        channel = str(data.get("channel") or "mcp").strip().lower()
-        if channel in {
-            "in_process", "in-process", "http", "webhook", "email", "smtp",
-            "slack", "",
-        }:
-            channel = "mcp"
-        data["channel"] = channel
-        if channel == "mcp":
-            roster = [k for k in BLOCK_CONTRACTS if k not in {"notification", "workflow"}]
-            target = (
-                "validation" if "validation" in roster
-                else "database" if "database" in roster
-                else (roster[0] if roster else "database")
-            )
-            if not data.get("block"):
-                data["block"] = target
-            if not data.get("tool"):
-                data["tool"] = data.get("block") or target
-        data.setdefault("message", "notification")
-        data.setdefault("recipient", "operator")
-    if block_id == "event_bus" and not data.get("topic"):
-        data["topic"] = "event_bus.event"
-    if block_id == "team":
-        if not data.get("name"):
-            data["name"] = original.get("name") or "ops"
-        if not isinstance(data.get("role"), str) or not data.get("role"):
-            data["role"] = "member"
-        for key, value in list(data.items()):
-            if value is None:
-                data[key] = key
-    if block_id == "workflow":
-        existing = data.get("result")
-        if not isinstance(existing, dict):
-            data["result"] = {"status": "ok", "ok": True, "value": existing}
-        else:
-            existing.setdefault("status", "ok")
-            existing.setdefault("ok", True)
-        if not isinstance(data.get("steps"), list) or not data.get("steps"):
-            data["steps"] = _default_block_field(block_id, "steps", original)
-    if block_id == "database":
-        if not data.get("query"):
-            data["query"] = "SELECT 1"
-        if not isinstance(data.get("table"), str) or not data.get("table"):
-            data["table"] = "records"
-        data.setdefault("data", original)
-    return data
-
-
-def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
-    original = dict(payload) if isinstance(payload, dict) else {"value": payload}
-    data = dict(original)
+def _required_fields(block_id: str) -> list:
     contract = BLOCK_CONTRACTS.get(block_id) or {}
     required = list(contract.get("input_required_fields") or [])
     for item in contract.get("declared_inputs") or []:
         name = item.get("name") if isinstance(item, dict) else None
         if name and item.get("required") and name not in required:
             required.append(name)
-    for field in required:
-        if field in ("action",):
-            continue
-        if field not in data or data[field] in (None, ""):
-            data[field] = _default_block_field(block_id, field, original)
-    return _ensure_offline_block_input(block_id, data, original)
+    return [field for field in required if field != "action"]
+
+
+def _known_fields(block_id: str) -> set:
+    """Closed field set from the harvested contract. Empty = no allow-list."""
+    contract = BLOCK_CONTRACTS.get(block_id) or {}
+    names: set = set()
+    for item in contract.get("declared_inputs") or []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name and name != "action":
+            names.add(name)
+    for field in contract.get("input_required_fields") or []:
+        if field != "action":
+            names.add(field)
+    return names
+
+
+def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
+    """Pass the caller payload through. Never invent Store fields (F18)."""
+    data = dict(payload) if isinstance(payload, dict) else {"value": payload}
+    missing = [
+        field for field in _required_fields(block_id)
+        if field not in data or data[field] in (None, "")
+    ]
+    if missing:
+        raise DispatchContractError(
+            f"{block_id} missing required field(s): {', '.join(missing)}"
+        )
+    known = _known_fields(block_id)
+    if known:
+        unknown = sorted(str(key) for key in data if key not in known)
+        if unknown:
+            raise DispatchContractError(
+                f"{block_id} unknown field(s): {', '.join(unknown)}"
+            )
+    return data
+
+
+def _error_envelope(block_id: str, action: str | None, error: str) -> Dict[str, Any]:
+    return {
+        "status": "error",
+        "block": block_id,
+        "action": action,
+        "error": error,
+        "ok": False,
+    }
 
 
 def execute(
@@ -1182,31 +1074,61 @@ def execute(
     ``input`` and the operation name as ``action`` (each block declares a
     default in its block.json). A call with no action reaches blocks that
     answer "Unknown action" -- pass the one the capability needs.
+
+    Missing required fields and unknown fields/params become an error
+    envelope. A block refusal (status=error) is returned as-is — never
+    rewritten to ok.
     """
     module = load_block(block_id)
     run = getattr(module, "run", None)
     if run is None:
         raise BlockNotVendored(f"{block_id} exposes no run() entry point")
+    contract = BLOCK_CONTRACTS.get(block_id) or {}
+    declared = set()
+    for item in contract.get("declared_inputs") or []:
+        name = item.get("name") if isinstance(item, dict) else None
+        if name:
+            declared.add(name)
+    if (
+        params
+        and (contract.get("declared_inputs") or contract.get("input_required_fields"))
+    ):
+        extra = sorted(
+            str(key) for key in params if key not in declared and key != "action"
+        )
+        if extra:
+            return _error_envelope(
+                block_id, action, f"unknown param(s): {', '.join(extra)}"
+            )
     kwargs = dict(params or {})
     if action is not None:
         kwargs["action"] = action
-    adapted = _adapt_input(block_id, payload, action)
+    try:
+        adapted = _adapt_input(block_id, payload, action)
+    except DispatchContractError as exc:
+        return _error_envelope(block_id, action, str(exc))
     # A block-level failure comes back as data, not as an exception. The
     # Store's shim raises RuntimeError on an error envelope, which destroys
     # the diagnosis: a handler (and a failing test) sees "Input validation
     # failed" with no block name and no field list. Structural failures --
     # a block that is not vendored -- still raise above.
     try:
-        return run(input=adapted, **kwargs)
+        result = run(input=adapted, **kwargs)
     except BlockNotVendored:
         raise
     except Exception as exc:
-        return {
-            "status": "error",
-            "block": block_id,
-            "action": action,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+        return _error_envelope(
+            block_id, action, f"{type(exc).__name__}: {exc}"
+        )
+    if isinstance(result, dict) and (
+        result.get("status") == "error" or result.get("ok") is False
+    ):
+        refused = dict(result)
+        refused.setdefault("status", "error")
+        refused.setdefault("block", block_id)
+        refused["ok"] = False
+        return refused
+    return result
 '''
 
 
@@ -1758,12 +1680,17 @@ def _render_dockerfile() -> str:
         "\n"
         "COPY requirements.txt .\n"
         "RUN pip install --no-cache-dir -r requirements.txt\n"
+        "COPY requirements-dev.txt .\n"
+        "RUN pip install --no-cache-dir -r requirements-dev.txt\n"
         "\n"
         "COPY . .\n"
         "ENV PYTHONPATH=/app\n"
         "# Persistence is a sqlite file; mount a volume here to keep it.\n"
         "ENV STORAGE_PATH=/app/data\n"
         "RUN mkdir -p /app/data\n"
+        "\n"
+        "# F19: a red suite must not produce a deployable image.\n"
+        "RUN python3 scripts/release_gate.py\n"
         "\n"
         "EXPOSE 8000\n"
         'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n'

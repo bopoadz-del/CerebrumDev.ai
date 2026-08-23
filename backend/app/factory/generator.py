@@ -922,6 +922,8 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
             [
                 "COPY . .",
                 "ENV PYTHONPATH=/app",
+                "# F19: a red suite must not produce a deployable image.",
+                "RUN python3 scripts/release_gate.py",
                 "EXPOSE 8000",
                 'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]',
             ]

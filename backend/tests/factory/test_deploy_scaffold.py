@@ -50,6 +50,9 @@ def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
     # sqlite needs its directory to exist; the container must create it.
     assert "STORAGE_PATH" in text
     assert "mkdir -p" in text
+    # F19: a red suite must not produce a deployable image.
+    assert "scripts/release_gate.py" in text
+    assert "requirements-dev.txt" in text
 
 
 def test_the_render_blueprint_declares_no_database(built):
