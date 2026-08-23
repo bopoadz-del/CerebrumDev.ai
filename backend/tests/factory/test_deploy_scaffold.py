@@ -45,7 +45,6 @@ def test_the_deploy_scaffold_is_present(built):
 
 def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
     text = (built / "Dockerfile").read_text(encoding="utf-8")
-    assert "uvicorn" in text and "app.main:app" in text
     assert "requirements.txt" in text
     # sqlite needs its directory to exist; the container must create it.
     assert "STORAGE_PATH" in text
@@ -53,11 +52,12 @@ def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
     # F19: a red suite must not produce a deployable image.
     assert "scripts/release_gate.py" in text
     assert "requirements-dev.txt" in text
-    # S10: versioned migrations run against the mounted disk before serve.
+    # S10: migrate against the mounted disk, then serve. uvicorn lives in
+    # the entrypoint so a failed revision refuses boot.
     assert "scripts/entrypoint.sh" in text
     entry = (built / "scripts" / "entrypoint.sh").read_text(encoding="utf-8")
     assert "alembic upgrade head" in entry
-    assert "uvicorn" in entry
+    assert "uvicorn" in entry and "app.main:app" in entry
 
 
 def test_the_render_blueprint_declares_no_database(built):
