@@ -81,7 +81,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "\n"
         "stdlib sqlite3 and a local file. Schema is applied by Alembic\n"
         "(app/migrations.py + alembic/versions/), never by this module.\n"
-        "CREATE TABLE IF NOT EXISTS is forbidden here: a missing revision is\n"
+        "Connect-time table creation is forbidden: a missing revision is\n"
         "a deploy failure, not a silent create.\n"
         "\n"
         "Durability: WAL + busy_timeout matched to the FastAPI sync\n"
@@ -330,6 +330,7 @@ def render_alembic_ini() -> str:
         "[alembic]\n"
         "script_location = alembic\n"
         "prepend_sys_path = .\n"
+        "path_separator = os\n"
         "\n"
         "[loggers]\n"
         "keys = root,sqlalchemy,alembic\n"
@@ -574,9 +575,9 @@ def lifecycle_declaration() -> Dict[str, Any]:
         },
         "sqlite_on_mounted_disk": True,
         "spof": (
-            "Render persistent disk is single-instance and the live SQLite "
-            "file lives on it. One writer. Losing the disk loses the live "
-            "database. Same-disk backups do not survive disk loss; set "
+            "SPOF: Render persistent disk is single-instance and the live "
+            "SQLite file lives on it. One writer. Losing the disk loses the "
+            "live database. Same-disk backups do not survive disk loss; set "
             "BACKUP_DIR onto another volume if disk loss is in scope."
         ),
         "capacity": {
@@ -644,7 +645,7 @@ def _tables() -> set[str]:
 def test_store_source_has_no_create_table_if_not_exists():
     src = Path(__file__).resolve().parents[1] / "app" / "store.py"
     text = src.read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS" not in text
+    assert "CREATE TABLE" not in text
     assert "PRAGMA journal_mode=WAL" in text
     assert "busy_timeout" in text
 
@@ -784,8 +785,8 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
 
 
 def assert_no_connect_time_ddl(store_source: str) -> None:
-    if "CREATE TABLE IF NOT EXISTS" in store_source:
-        raise ValueError("store.py still emits CREATE TABLE IF NOT EXISTS")
+    if "CREATE TABLE" in store_source:
+        raise ValueError("store.py still emits CREATE TABLE (schema belongs in Alembic)")
 
 
 def migration_table_names(revision_0001_source: str) -> set[str]:

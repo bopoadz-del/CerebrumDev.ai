@@ -201,7 +201,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
     # cannot drift apart. Schema is Alembic, not connect()-time DDL.
     store_src = (out / "app" / "store.py").read_text(encoding="utf-8")
     models_src = (out / "app" / "models.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS" not in store_src
+    assert "CREATE TABLE" not in store_src
     assert "PRAGMA journal_mode=WAL" in store_src
     mig = (out / "alembic" / "versions" / "0001_baseline.py").read_text(
         encoding="utf-8"

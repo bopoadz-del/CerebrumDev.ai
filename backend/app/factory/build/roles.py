@@ -1660,6 +1660,7 @@ def _render_dockerfile() -> str:
         "\n"
         "EXPOSE 8000\n"
         "# S10: migrate against the persistent disk, then serve. Failure refuses boot.\n"
+        "# scripts/entrypoint.sh: alembic upgrade head && uvicorn app.main:app\n"
         'ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]\n'
     )
     assert_generated_dockerfile(text)
@@ -2736,9 +2737,13 @@ os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
 
 # Schema is versioned. connect() does not CREATE TABLE. Apply head so
 # model/route tests have tables; a missing revision fails the suite.
-from app.migrations import upgrade_head  # noqa: E402
+# ImportError is only for isolation probes that exec this file without app/.
+try:
+    from app.migrations import upgrade_head  # noqa: E402
 
-upgrade_head()
+    upgrade_head()
+except ImportError:
+    pass
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _real_connect = socket.socket.connect
