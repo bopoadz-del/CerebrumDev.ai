@@ -39,6 +39,13 @@ from app.factory.build.authority import (
     jobs_manifest,
     role_contract,
 )
+from app.factory.build.supply_chain import (
+    PYTHON_312_SLIM_FROM,
+    SupplyChainError,
+    assert_generated_dockerfile,
+    assert_known_block_ids,
+    redact_unpinned_images,
+)
 from app.factory.build.workspace import RoleWorkspace
 
 
@@ -814,6 +821,10 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         # nothing to vendor. Say so rather than inventing an empty lockfile.
         ctx.note("no blocks to vendor", stage="blocks", done=0, total=0)
         return RoleResult(ok=True, detail="no blocks to vendor", vendored_blocks=())
+    try:
+        assert_known_block_ids(block_ids, extra_roots=(ctx.blocks_root,))
+    except SupplyChainError as exc:
+        raise RoleError(str(exc)) from exc
 
     lock: Dict[str, Any] = {"schema": "blocks.lock.v1", "blocks": {}}
     vendored: List[str] = []
@@ -844,10 +855,15 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
                     needs_rt = False
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
         origin, revision = _pin_source(source, ctx.blocks_root)
+        cloned_meta = ctx.workspace.workspace / "vendor" / "blocks" / bid / "block.json"
+        image_pin = "none"
+        if cloned_meta.is_file() and redact_unpinned_images(cloned_meta):
+            image_pin = "refused_unverified"
         lock["blocks"][bid] = {
             "source": origin,
             "commit": revision,
             "path": f"vendor/blocks/{bid}",
+            "image_pin": image_pin,
         }
         vendored.append(bid)
         ctx.note(
@@ -1463,17 +1479,19 @@ def _constraint_guard(spec: Dict[str, Any]) -> str:
 
 
 def _templated_route_body(spec: Dict[str, Any]) -> str:
-    """Deterministic endpoint that validates exactly the declared constraints.
+    """Capability POST routed through ``execute_action``. Persist stays here.
 
-    Enforcing them here too keeps the two paths honest against one contract:
-    CI has no LLM key, so without this the constraint mechanism would only
-    ever be exercised on a keyed run.
+    This is not a new persist-wrapper. The kernel already owns trust-scope,
+    input/output validation, and ActionResult. The route persists the request
+    payload only after ActionStatus.SUCCESS, using the existing store.
     """
     lines = [
         _constraint_guard(spec),
-        "    result = handle(payload)",
-        "    if isinstance(result, dict) and result.get('ok') is False:",
-        "        return result",
+        "    result = await run_capability(CAPABILITY_ID, payload)",
+        "    if isinstance(result, dict) and result.get('status') != 'success':",
+        "        return {'ok': False,",
+        "                'error': result.get('error_message') or result.get('status'),",
+        "                'result': result}",
         "    stored = save(payload)",
         '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,',
         '            "stored": stored}',
@@ -1581,6 +1599,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "from fastapi import APIRouter, HTTPException",
         "",
         "from app import jobs, store",
+        "from app.kernel_bridge import run_capability",
         "",
         "router = APIRouter()",
         "",
@@ -1640,7 +1659,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             "",
             "",
             f'@router.post("/{name}")',
-            f"def {name}_create(payload: Dict[str, Any]) -> Dict[str, Any]:",
+            f"async def {name}_create(payload: Dict[str, Any]) -> Dict[str, Any]:",
             f'    CAPABILITY_ID = "{e["capability_id"]}"',
             f"    handle = _{name}_handle",
             f'    save = lambda record: store.save("{entity}", record)',
@@ -1693,8 +1712,10 @@ def _render_requirements() -> str:
     return (
         "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
         "# the platform runs with no database server and no network.\n"
+        "# pydantic is required by the vendored cerebrum_product_kernel contract.\n"
         "fastapi>=0.110\n"
         "uvicorn>=0.29\n"
+        "pydantic>=2.0\n"
     )
 
 
@@ -1708,11 +1729,12 @@ def _render_requirements() -> str:
 
 
 def _render_dockerfile() -> str:
-    return (
+    text = (
         "# Standalone image. Blocks are vendored into the repository at build\n"
         "# time, so the container needs no block store and no outbound network\n"
         "# at runtime.\n"
-        "FROM python:3.12-slim\n"
+        f"# Base image pin: Docker Hub library/python:3.12-slim (2026-08-23).\n"
+        f"FROM {PYTHON_312_SLIM_FROM}\n"
         "WORKDIR /app\n"
         "ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1\n"
         "\n"
@@ -1728,6 +1750,8 @@ def _render_dockerfile() -> str:
         "EXPOSE 8000\n"
         'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n'
     )
+    assert_generated_dockerfile(text)
+    return text
 
 
 def _render_dockerignore() -> str:
@@ -2124,25 +2148,12 @@ def _coder_route_body(
     spec: Dict[str, Any],
     previous_attempt: Optional[str] = None,
 ) -> Optional[tuple]:
-    from app.factory.coder import CoderError, coder_enabled, generate_route_body
+    """Capability HTTP routes go through execute_action (U12).
 
-    if not coder_enabled():
-        return None
-    if _budget_too_low(ctx, "route"):
-        return None
-    try:
-        result = generate_route_body(
-            capability_id=cap.capability_id,
-            description=getattr(cap, "notes", "") or cap.capability_id,
-            entity=spec["entity"],
-            fields=list(spec["fields"]),
-            work_list=list(ctx.work_list),
-            previous_attempt=previous_attempt,
-        )
-    except CoderError as exc:
-        _record_failure(ctx, f"route:{cap.capability_id}", exc)
-        return None
-    return result["body"], f"coder LLM ({result['model']})"
+    An LLM-authored body would displace the kernel. Handlers and models may
+    still be coder-written; the route is not. This is not a persist-wrapper.
+    """
+    return None
 
 
 def _coder_readme(
@@ -2221,6 +2232,103 @@ def _failing_capability_ids(work_list: Sequence[str], cap_ids: Sequence[str]) ->
     return failing or set(cap_ids)
 
 
+def _vendor_product_kernel(ctx: RoleContext) -> None:
+    """Copy the host kernel into the generated product (U12).
+
+    Same source ProductGenerator vendors at generator.py. role_runner previously
+    shipped none of it. Imports already use ``app.cerebrum_product_kernel``.
+    """
+    kernel_src = Path(__file__).resolve().parents[2] / "cerebrum_product_kernel"
+    if not kernel_src.is_dir():
+        raise RoleError(
+            "cerebrum_product_kernel missing from factory host — cannot ship U12"
+        )
+    for item in sorted(kernel_src.rglob("*")):
+        if not item.is_file():
+            continue
+        if "__pycache__" in item.parts or item.suffix in {".pyc", ".pyo"}:
+            continue
+        rel = Path("app") / "cerebrum_product_kernel" / item.relative_to(kernel_src)
+        ctx.workspace.copy_file(item, rel)
+
+
+def _render_kernel_bridge() -> str:
+    """Adapt sync capability handle() to execute_action. Does not own persist."""
+    return '''"""Bridge capability handle() through the vendored product kernel.
+
+The kernel owns trust-scope, input/output validation, and ActionResult.
+Persistence stays in the HTTP route after ActionStatus.SUCCESS.
+"""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any, Dict
+
+from app.cerebrum_product_kernel.contract.models import (
+    ActionContext,
+    ActionOutcome,
+    ActionSpec,
+    ActionStatus,
+)
+from app.cerebrum_product_kernel.contract.runtime import execute_action
+
+
+def _wrap_handle(handle):
+    async def _handler(context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
+        out = handle(arguments)
+        if not isinstance(out, dict):
+            return ActionOutcome(
+                status=ActionStatus.EXECUTION_ERROR,
+                error_code="invalid_handler_result",
+                error_message="handle() returned a non-mapping",
+            )
+        if out.get("ok") is False:
+            return ActionOutcome(
+                status=ActionStatus.VALIDATION_ERROR,
+                error_code="refused",
+                error_message=str(out.get("error") or "refused"),
+                output=out,
+            )
+        return ActionOutcome.success(out)
+
+    return _handler
+
+
+def spec_for(capability_id: str) -> ActionSpec:
+    name = capability_id.replace("-", "_")
+    mod = importlib.import_module(f"app.actions.{name}")
+    return ActionSpec(
+        action_id=f"product.{name}",
+        domain="product",
+        name=name,
+        description=str(getattr(mod, "CAPABILITY_ID", name)),
+        input_schema={},
+        output_schema={},
+        required_context=[],
+        permissions=[],
+        read_only=False,
+        handler=_wrap_handle(mod.handle),
+    )
+
+
+def product_context() -> ActionContext:
+    return ActionContext(
+        user_id="anonymous",
+        tenant_id="local",
+        organisation_id="local",
+        project_id="local",
+        permissions=[],
+        allowed_domains=["product"],
+    )
+
+
+async def run_capability(capability_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    result = await execute_action(spec_for(capability_id), product_context(), payload or {})
+    return result.to_dict()
+'''
+
+
 def run_writer(ctx: RoleContext) -> RoleResult:
     """Platform manufacturer: dispatch runtime plus one handler per capability.
 
@@ -2257,6 +2365,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 vendored_blocks=tuple(vendored),
             )
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
+    _vendor_product_kernel(ctx)
+    ctx.workspace.write_text(Path("app") / "kernel_bridge.py", _render_kernel_bridge())
     vendored_ids = [b for b in ctx.state.get("vendored_blocks", ()) if b]
     contracts = {b: _block_contract(ctx, b) for b in vendored_ids}
     ctx.workspace.write_text(Path("app") / "dispatch.py", _render_dispatch(contracts))
@@ -2373,7 +2483,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             )
             body, route_source = authored or (
                 _templated_route_body(spec),
-                fallback_source,
+                "kernel execute_action template",
             )
             if authored:
                 # Coder bodies skip field constraints; the tasting-room
