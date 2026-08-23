@@ -1,0 +1,17 @@
+{
+  "stage": "S9",
+  "name": "test",
+  "verdict": "FAIL",
+  "reread_of": "build/stages/S9_test.json",
+  "reread_at": "2026-08-23T07:54:50Z",
+  "independent": true,
+  "checked": [
+    "uname is Linux; no Windows runner in ci.yml",
+    "ci.yml backend job is ENV=test pytest with no coder key",
+    "ci.yml docker job is docker build -t cerebrumdev-backend:ci . with no product conformance",
+    "_default_block_field still exists in roles.py",
+    "No harvest writer to bopoadz-del/Cerebrum-Blocks in this repository"
+  ],
+  "disagreements": [],
+  "agrees_first_fail": "windows_cp1252_parity_not_run"
+}

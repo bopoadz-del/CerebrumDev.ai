@@ -535,9 +535,14 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
     assert set(tree_a) == set(tree_b)
     drifted = {k for k in tree_a if tree_a[k] != tree_b[k]}
     assert drifted, "the stub varies per call; something must differ"
-    assert all(
-        k.startswith("app/actions/") for k in drifted
-    ), f"agent output escaped into {sorted(k for k in drifted if not k.startswith('app/actions/'))}"
+    # package_identity.json is a digest of the tree; it must move when
+    # handlers move. It is factory-stamped, not agent-authored.
+    escaped = {
+        k
+        for k in drifted
+        if not k.startswith("app/actions/") and k != "docs/package_identity.json"
+    }
+    assert not escaped, f"agent output escaped into {sorted(escaped)}"
 
 
 # -- flag ----------------------------------------------------------------

@@ -354,6 +354,21 @@ class RoleRunner:
             if outcome is Outcome.SUCCESS
             else EventKind.RUN_FAILED
         )
+        if outcome is Outcome.SUCCESS:
+            from app.factory.build.package import write_identity
+
+            sealed = (
+                SEALED_AFTER_CLONER
+                if BuildRole.CLONER in self.ledger.completed_roles()
+                else ()
+            )
+            ws = RoleWorkspace(
+                BuildRole.WRITER,
+                self.workspace,
+                store_root=self.store_root,
+                sealed=sealed,
+            )
+            write_identity(ws, extra={"engine": "role_runner"})
         self.ledger.append(
             kind,
             role=phase,

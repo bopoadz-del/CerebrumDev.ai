@@ -1,0 +1,32 @@
+{
+  "stage": "S9",
+  "name": "TEST",
+  "evaluated_at": "2026-08-23T07:54:40Z",
+  "verdict": "FAIL",
+  "first_failing_criterion": "windows_cp1252_parity_not_run",
+  "checked": {
+    "windows_cp1252_parity": {
+      "result": "FAIL",
+      "reason": "This environment is Linux only. Spec requires FAIL-closed when Windows cannot run. Do not fake it."
+    },
+    "keyed_path_in_ci": {
+      "result": "FAIL",
+      "reason": ".github/workflows/ci.yml has no FACTORY_CODER_ENABLED / KIMI fixture. Tested path remains template; U2 remains open."
+    },
+    "lotdesk_fixture_rejection": {
+      "result": "NOT_PROVED",
+      "reason": "No CI / Docker conformance gate rejects artifacts/lotdesk_pilot_ready.zip at a named F-code. docker job is docker build only (F19)."
+    },
+    "f18_fabrication": {
+      "result": "FAIL",
+      "reason": "roles.py _DISPATCH_RUNTIME / _default_block_field still fabricates Store inputs. S6 declared F18 open."
+    },
+    "u7_shape_not_outcome": {
+      "result": "OPEN",
+      "reason": "FACTORY_SUITE_MARKER_EXPR remains 'not pilot'; code-phase still judges shape."
+    }
+  },
+  "not_claimed": ["PILOT_READY", "S10–S13"],
+  "lotdesk": "fixture only; not patched",
+  "blocks_harvest": "BLOCKED — no authorized write path to Cerebrum-Blocks in this repo. STORE_MANAGER harvest remains unbuilt (U6). Next product will re-ship Store-unwired adapters unless Factory CLONER emission stays applied."
+}

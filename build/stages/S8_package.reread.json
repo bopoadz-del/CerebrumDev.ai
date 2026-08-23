@@ -1,0 +1,17 @@
+{
+  "stage": "S8",
+  "name": "package",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S8_package.json",
+  "reread_at": "2026-08-23T07:54:20Z",
+  "independent": true,
+  "checked": [
+    "package.py artifact_digest excludes build_ledger.jsonl and docs/package_identity.json",
+    "two RoleRunner builds of runner_smoke.yaml produce identical identity documents",
+    "identity digest equals factory-side artifact_digest of the finished tree",
+    "generated Dockerfile FROM is PYTHON_312_SLIM_FROM (digest-pinned)",
+    "WRITER lane names docs/package_identity.json; TESTER cannot write it",
+    "LotDesk was not modified"
+  ],
+  "disagreements": []
+}
