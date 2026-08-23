@@ -26,6 +26,7 @@ and `HashEmbedder` / FastEmbed provide the real bodies. These entries are the
 ## Deliberate no-op by policy
 - backend/alembic/versions/0001_baseline.py :: downgrade  — the baseline migration's reverse would be `DROP TABLE` on every accounts table; destroying user/account data is never an acceptable automated rollback. Schema rollback below the baseline is a manual, operator-decided act (restore from backup).
 - backend/app/factory/build/roles.py :: _coder_route_body  — U12/U5: returning None keeps capability HTTP on kernel execute_action; an LLM-authored body would displace the kernel.
+- backend/app/factory/build/harvest.py :: _store_write_authorized  — U6: harvest write is unauthorized; fail-closed so STORE_MANAGER cannot pretend to push Factory fixes to Cerebrum-Blocks.
 
 ---
 

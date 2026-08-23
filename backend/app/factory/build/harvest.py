@@ -10,6 +10,7 @@ what that means for the next product. It never writes to a Store checkout.
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,12 +43,28 @@ def _repo_root() -> Path:
 
 
 def _store_write_authorized() -> bool:
-    """A harvest write would require an explicit, committed authorization.
+    """Fail-closed harvest write gate.
 
-    None exists. Environment flags are not authorization — a secret in the
-    agent dashboard must not silently push to Cerebrum-Blocks.
+    A write would need a committed ``HARVEST_AUTHORIZED.json`` *and* a Store
+    write path. STORE_MANAGER's write half is unbuilt (U6). Environment
+    flags are not authorization — a dashboard secret must not push to
+    Cerebrum-Blocks. This is a policy no-op, not a stub that pretends to
+    authorize.
     """
-    return False
+    root = _repo_root()
+    marker = root / "build" / "stages" / "HARVEST_AUTHORIZED.json"
+    has_marker = False
+    if marker.is_file():
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        has_marker = (
+            data.get("authorized") is True and data.get("blocks_repo") == BLOCKS_REPO
+        )
+    # registrar.py is read-only; no workflow pushes to Cerebrum-Blocks.
+    store_write_exists = False
+    return bool(has_marker and store_write_exists)
 
 
 def _blocks_checkout(explicit: Optional[Path] = None) -> Optional[Path]:
