@@ -10,7 +10,6 @@ import {
   type BuildStatus,
   type ProductDesign,
 } from './api/factory'
-import { formatHeartbeat, formatPhaseCounts, formatPhaseHeadline } from './buildProgress'
 
 /* -------------------------------- Platforms -------------------------------- */
 
@@ -84,15 +83,12 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   const building = build?.state === 'building'
   const buildNote = (() => {
     if (!build || build.state !== 'building') return null
-    const headline = formatPhaseHeadline(build)
-    const counts = formatPhaseCounts(build)
-    const last = build.last_event || build.activity
-    const heartbeat = formatHeartbeat(build)
-    const bits = [`Coding agent at work — ${headline}`]
-    if (counts) bits.push(counts)
-    if (last) bits.push(`last: ${last}`)
-    if (heartbeat) bits.push(heartbeat)
-    return bits.join(' · ')
+    const done = build.phases_done ?? 0
+    const total = build.phases_total ?? 5
+    const last =
+      build.activity ||
+      (build.completed?.length ? build.completed[build.completed.length - 1] : 'starting')
+    return `Coding agent at work — ${done}/${total} phases (last: ${last})`
   })()
 
   return (
