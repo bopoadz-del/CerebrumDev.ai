@@ -1,34 +1,36 @@
-"""CLONER gate: vendored bytes match the digests the block itself publishes.
+"""CLONER gate: a block's source matched the digests it publishes about itself.
 
 Every ``block.json`` carries a ``digests`` map -- ``{"block.py": "<sha256>",
 ...}`` -- and, on Store-signed blocks, a ``signature``. Nothing in the
-pipeline has ever checked either. A published digest that no one verifies is
+pipeline had ever checked either. A published digest that no one verifies is
 worse than an absent one: it reads as provenance while guaranteeing nothing,
 and ``blocks.lock.json`` pins a commit that is equally unverified once the
 files are copied out of their repository.
 
-Verification happens at clone time, against the **source** tree, because the
+Verification runs at clone time against the **source** tree, because the
 CLONER deliberately rewrites what it vendors: ``_rewrite_runtime_imports``
 turns ``app.blocks`` into ``vendor.cerebrum.blocks``, shim constructors are
 rewritten, and offline adapters are applied. Vendored bytes therefore cannot
-match an upstream digest, and hashing them would fail every honest build --
-as it did, on the warehouse-operations e2e, the first time this gate ran.
+match an upstream digest, and hashing them failed every honest build the
+first time this gate ran (warehouse-operations, e2e).
 
 So :func:`verify_block` runs in ``run_cloner`` before the copy, its verdict
-is recorded into ``blocks.lock.json``, and the gate asserts that the record
-exists and passed. Emission does the check where it is meaningful; the gate
-enforces that it happened. It is deliberately narrow:
+is recorded into ``blocks.lock.json``, and the gate asserts the record exists
+and passed. Emission does the check where it is meaningful; the gate enforces
+that it happened. It is deliberately narrow:
 
 * only files the manifest names are checked -- a block may legitimately ship
   files it does not digest;
 * a block that publishes no ``digests`` is reported, not failed, because the
   Store's older manifests predate the field and failing them would gate on
   the Store's release history rather than on this build;
+* a block vendored with no record at all fails exactly like one that failed
+  the check, so skipping verification cannot pass quietly;
 * a mismatch is always a failure. That is tampering, truncation, or a stale
-  vendor mirror, and none of the three should reach a customer.
+  mirror, and none of the three should reach a customer.
 
-The signature is not verified here: that needs the publisher's key, which
-the factory does not carry. The gate records which blocks are signed so the
+The signature is not verified: that needs the publisher's key, which the
+factory does not carry. The record marks which blocks are signed so the
 absence is visible instead of implied.
 """
 
@@ -44,8 +46,16 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 GATE_NAME = "vendored_integrity"
 
+#: Key under each blocks.lock.json entry holding the clone-time verdict.
+LOCK_KEY = "integrity"
+
+_NUL = b"\x00"
+_CRLF = b"\r\n"
+_LF = b"\n"
+
 
 def sha256_file(path: Path) -> str:
+    """Byte-exact sha256 of a file."""
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -53,8 +63,38 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sha256_lf(path: Path) -> str:
+    """sha256 with CRLF normalised to LF. Empty string for binary content.
+
+    A digest over a working-tree text file is not reproducible across
+    platforms. ``core.autocrlf=true`` rewrites line endings on checkout, so
+    one commit yields different bytes on Windows and Linux. Measured: the
+    committed blob for ``vendor_blocks_mirror/audit/Dockerfile`` hashes to
+    905bd5e5..., matching its manifest, while the Windows working copy hashes
+    to 601d37f8... and matched nothing.
+
+    Comparing normalised content keeps the check meaningful for what it
+    guards -- tampering, truncation, a stale mirror -- and gives up only the
+    ability to notice a difference that is purely line endings, which is a
+    checkout representation rather than content.
+    """
+    raw = path.read_bytes()
+    if _NUL in raw:
+        return ""
+    return hashlib.sha256(raw.replace(_CRLF, _LF)).hexdigest()
+
+
+def digest_matches(path: Path, expected: str) -> bool:
+    """True when the file matches byte-exactly, or after LF normalisation."""
+    want = str(expected).strip().lower()
+    if sha256_file(path).lower() == want:
+        return True
+    normalised = sha256_lf(path)
+    return bool(normalised) and normalised.lower() == want
+
+
 def verify_block(block_dir: Path) -> Dict[str, object]:
-    """Re-hash one vendored block against its own manifest."""
+    """Check one block's files against the digests its own manifest declares."""
     out: Dict[str, object] = {
         "block_id": block_dir.name,
         "digested": 0,
@@ -65,12 +105,12 @@ def verify_block(block_dir: Path) -> Dict[str, object]:
     }
     manifest = block_dir / "block.json"
     if not manifest.is_file():
-        out["missing"].append("block.json")
+        out["missing"].append(f"{block_dir.name}/block.json")
         return out
     try:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        out["missing"].append(f"block.json unreadable: {exc}")
+        out["missing"].append(f"{block_dir.name}/block.json unreadable: {exc}")
         return out
 
     digests = data.get("digests")
@@ -80,37 +120,35 @@ def verify_block(block_dir: Path) -> Dict[str, object]:
     out["has_digests"] = True
 
     for name, expected in sorted(digests.items()):
-        target = block_dir / name
-        if not target.is_file():
-            out["missing"].append(f"{block_dir.name}/{name}")
-            continue
         # block.json cannot digest itself: the field is written into the very
         # bytes being hashed, so the manifest's own entry is self-referential.
         if Path(name).name == "block.json":
             continue
-        actual = sha256_file(target)
+        target = block_dir / name
+        if not target.is_file():
+            out["missing"].append(f"{block_dir.name}/{name}")
+            continue
         out["digested"] = int(out["digested"]) + 1
-        if actual.lower() != str(expected).lower():
+        if not digest_matches(target, expected):
             out["mismatched"].append(
-                f"{block_dir.name}/{name}: manifest {str(expected)[:12]}… "
-                f"but vendored bytes hash to {actual[:12]}…"
+                f"{block_dir.name}/{name}: manifest {str(expected)[:12]}... "
+                f"but source hashes to {sha256_file(target)[:12]}... "
+                "(checked byte-exact and LF-normalised)"
             )
     return out
 
 
-LOCK_KEY = "integrity"
-
-
 def lock_record(source_dir: Path) -> Dict[str, object]:
-    """Clone-time verdict for one block, for blocks.lock.json."""
+    """Clone-time verdict for one block, written into blocks.lock.json."""
     report = verify_block(source_dir)
+    findings = [str(m) for m in report["mismatched"]]
+    findings += [f"{n}: named in digests but absent from source" for n in report["missing"]]
     return {
-        "verified": not report["mismatched"] and not report["missing"],
+        "verified": not findings,
         "files_hashed": report["digested"],
         "has_digests": report["has_digests"],
         "signed_unverified": report["signed"],
-        "findings": [str(m) for m in report["mismatched"]]
-        + [f"{n}: named in digests but absent from source" for n in report["missing"]],
+        "findings": findings,
     }
 
 
@@ -120,18 +158,14 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
 
     vendor = ctx.workspace / "vendor" / "blocks"
     if not vendor.is_dir():
-        return GateResult(
-            ok=True,
-            gate=GATE_NAME,
-            detail="no vendored blocks to verify",
-        )
+        return GateResult(ok=True, gate=GATE_NAME, detail="no vendored blocks to verify")
 
     lock_path = ctx.workspace / "blocks.lock.json"
     if not lock_path.is_file():
         return GateResult(
             ok=False,
             gate=GATE_NAME,
-            detail="blocks.lock.json is missing — no integrity record to check",
+            detail="blocks.lock.json is missing - no integrity record to check",
             findings=["cloner wrote no lockfile"],
         )
     try:
@@ -146,11 +180,11 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
 
     entries = lock.get("blocks") or {}
     findings: List[str] = []
+    unrecorded: List[str] = []
+    undigested: List[str] = []
     checked = 0
     files = 0
-    undigested: List[str] = []
     signed = 0
-    unrecorded: List[str] = []
 
     for block_dir in sorted(p for p in vendor.iterdir() if p.is_dir()):
         checked += 1
@@ -166,10 +200,9 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
         if not record.get("verified"):
             findings.extend(str(f) for f in (record.get("findings") or []))
 
-    if unrecorded:
-        findings.extend(
-            f"{name}: vendored with no clone-time integrity record" for name in unrecorded
-        )
+    findings.extend(
+        f"{name}: vendored with no clone-time integrity record" for name in unrecorded
+    )
 
     if findings:
         return GateResult(

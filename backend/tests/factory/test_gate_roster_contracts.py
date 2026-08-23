@@ -89,7 +89,7 @@ def test_integrity_gate_fails_when_source_did_not_match_its_manifest(tmp_path):
     result = gate_vendored_integrity(_ctx(tmp_path, BuildRole.CLONER))
     assert result.ok is False
     assert result.gate == INTEGRITY_GATE
-    assert any("hash to" in f for f in result.findings), result.findings
+    assert any("hashes to" in f for f in result.findings), result.findings
 
 
 def test_integrity_gate_fails_a_block_vendored_with_no_record(tmp_path):
