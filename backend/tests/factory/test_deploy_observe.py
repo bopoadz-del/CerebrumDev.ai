@@ -417,11 +417,14 @@ def test_structured_logs_carry_request_id_and_reject_emoji(built, tmp_path):
         ) == "s11-factory"
     finally:
         logs = _stop(proc)
-    json_lines = [ln for ln in logs.splitlines() if ln.strip().startswith("{")]
+    jsonl = storage / "request.jsonl"
+    file_lines = jsonl.read_text(encoding="utf-8").splitlines() if jsonl.is_file() else []
+    stdout_lines = [ln for ln in logs.splitlines() if ln.strip().startswith("{")]
+    json_lines = file_lines + stdout_lines
+    assert json_lines, "no structured request lines on disk or stdout"
     assert_no_emoji_in_machine_logs(json_lines)
-    if json_lines:
-        parsed = [json.loads(ln) for ln in json_lines]
-        assert any(item.get("request_id") == "s11-factory" for item in parsed)
+    parsed = [json.loads(ln) for ln in json_lines]
+    assert any(item.get("request_id") == "s11-factory" for item in parsed)
     observed = _probe(
         built,
         storage,
