@@ -1,0 +1,15 @@
+{
+  "stage": "S5",
+  "name": "pilot_path",
+  "verdict": "FAIL",
+  "reread_of": "build/stages/S5_pilot_path.json",
+  "reread_at": "2026-08-23T07:09:30Z",
+  "independent": true,
+  "checked": [
+    "pilot.py:43 prepare_pilot_workspace still present",
+    "runner.py still imports and calls it on the pilot cycle",
+    "test_pilot_cycle.py still requires patches"
+  ],
+  "disagreements": [],
+  "agrees_stop": true
+}

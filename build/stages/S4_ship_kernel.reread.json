@@ -1,0 +1,23 @@
+{
+  "stage": "S4",
+  "name": "ship_kernel",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S4_ship_kernel.json",
+  "reread_at": "2026-08-23T07:08:00Z",
+  "independent": true,
+  "checked": [
+    "roles.py _vendor_product_kernel copies backend/app/cerebrum_product_kernel",
+    "run_writer writes app/kernel_bridge.py",
+    "_templated_route_body awaits run_capability",
+    "_coder_route_body returns None",
+    "grep cerebrum_product_kernel factory/build is no longer empty",
+    "No handle→guard→save persist-wrapper module was added"
+  ],
+  "disagreements": [
+    "S4 priority list also asked to delete F18 and then fix emitters. Those items are not done. This reread still PASSes S4 on the required first action (U12) and records the rest as remaining — not as silently closed."
+  ],
+  "still_true": [
+    "Draft 2 persist-wrapper approach was not resumed",
+    "LotDesk was not patched"
+  ]
+}
