@@ -53,6 +53,11 @@ def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
     # F19: a red suite must not produce a deployable image.
     assert "scripts/release_gate.py" in text
     assert "requirements-dev.txt" in text
+    # S10: versioned migrations run against the mounted disk before serve.
+    assert "scripts/entrypoint.sh" in text
+    entry = (built / "scripts" / "entrypoint.sh").read_text(encoding="utf-8")
+    assert "alembic upgrade head" in entry
+    assert "uvicorn" in entry
 
 
 def test_the_render_blueprint_declares_no_database(built):
@@ -99,8 +104,20 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
     arbitrary files at the workspace root."""
     ws = tmp_path / "w"
     ws.mkdir()
-    for allowed in ("Dockerfile", "Procfile", ".env.example", ".dockerignore", "render.yaml"):
+    for allowed in (
+        "Dockerfile",
+        "Procfile",
+        ".env.example",
+        ".dockerignore",
+        "render.yaml",
+        "alembic.ini",
+        "scripts/entrypoint.sh",
+        "docs/data_lifecycle.json",
+    ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
+    assert assert_write_allowed(
+        BuildRole.WRITER, ws / "alembic" / "versions" / "0001_baseline.py", workspace=ws
+    )
     for allowed in (
         "product-dna/entity_model.json",
         "docs/blueprint/product_blueprint.json",

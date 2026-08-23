@@ -174,14 +174,23 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
     for rel in (
         "app/models.py",
         "app/store.py",
+        "app/migrations.py",
+        "app/backup.py",
         "app/routes.py",
         "app/jobs.py",
         "app/main.py",
         "app/dispatch.py",
+        "alembic.ini",
+        "alembic/env.py",
+        "alembic/versions/0001_baseline.py",
+        "alembic/versions/0002_lifecycle_audit.py",
+        "scripts/entrypoint.sh",
+        "docs/data_lifecycle.json",
         "README.md",
         "requirements.txt",
         "tests/conftest.py",
         "tests/test_models.py",
+        "tests/test_data_lifecycle.py",
         "tests/test_routes.py",
         "tests/test_smoke.py",
         "blocks.lock.json",
@@ -189,10 +198,16 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         assert (out / rel).is_file(), f"missing {rel}"
 
     # Persistence and models are generated from one spec, so their columns
-    # cannot drift apart.
+    # cannot drift apart. Schema is Alembic, not connect()-time DDL.
     store_src = (out / "app" / "store.py").read_text(encoding="utf-8")
     models_src = (out / "app" / "models.py").read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS analytics_surface" in store_src
+    assert "CREATE TABLE IF NOT EXISTS" not in store_src
+    assert "PRAGMA journal_mode=WAL" in store_src
+    mig = (out / "alembic" / "versions" / "0001_baseline.py").read_text(
+        encoding="utf-8"
+    )
+    assert "analytics_surface" in mig
+    assert "def upgrade" in mig and "def downgrade" in mig
     assert "class AnalyticsSurface" in models_src
     assert "MODELS = {" in models_src
 
@@ -227,6 +242,10 @@ def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
     models_test = (out / "tests" / "test_models.py").read_text(encoding="utf-8")
     assert "store.save(" in models_test and "store.get(" in models_test
     assert "did not persist" in models_test
+    lifecycle = (out / "tests" / "test_data_lifecycle.py").read_text(encoding="utf-8")
+    assert "test_restore_drill_backup_wipe_restore_rows" in lifecycle
+    assert "test_schema_change_applies_to_populated_v1_and_rolls_back" in lifecycle
+    assert "test_parallel_writes_match_fastapi_threadpool" in lifecycle
 
     routes_test = (out / "tests" / "test_routes.py").read_text(encoding="utf-8")
     assert "TestClient" in routes_test

@@ -178,7 +178,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # provenance it audits. Named, not a wildcard, for the same
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
+            (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
+            (LaneRoot.WORKSPACE, "alembic.ini"),
+            (LaneRoot.WORKSPACE, "alembic/**"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
+            (LaneRoot.WORKSPACE, "docs/data_lifecycle.json"),
             # 14-class contract surfaces ProductGenerator already emits.
             # Named prefixes, not a root or docs/** wildcard.
             (LaneRoot.WORKSPACE, "product-dna/**"),

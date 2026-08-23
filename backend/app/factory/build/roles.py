@@ -1239,7 +1239,6 @@ def _templated_body(block_ids: Sequence[str]) -> str:
 
 
 _PY_DEFAULTS = {"str": '""', "int": "0", "float": "0.0", "bool": "False"}
-_SQL_TYPES = {"str": "TEXT", "int": "INTEGER", "float": "REAL", "bool": "INTEGER"}
 
 
 def _fallback_spec(cap: Any) -> Dict[str, Any]:
@@ -1330,92 +1329,11 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
 def _render_store(specs: Dict[str, Dict[str, Any]]) -> str:
     """sqlite3 persistence derived from the same specs the models came from.
 
-    stdlib sqlite3, file-backed, no server. One table per entity, columns
-    generated from the spec so the schema cannot drift from the dataclass.
+    Schema is versioned Alembic (S10). connect() does not CREATE TABLE.
     """
-    tables = []
-    for spec in sorted(specs.values(), key=lambda s: s["entity"]):
-        cols = ", ".join(
-            f"{f['name']} {_SQL_TYPES[f['type']]}" for f in spec["fields"]
-        )
-        tables.append(
-            f'    "{spec["entity"]}": "CREATE TABLE IF NOT EXISTS {spec["entity"]} '
-            f'(id INTEGER PRIMARY KEY AUTOINCREMENT, {cols})",'
-        )
-    columns = {
-        spec["entity"]: [f["name"] for f in spec["fields"]]
-        for spec in specs.values()
-    }
-    return (
-        '"""SQLite persistence for the domain models.\n'
-        "\n"
-        "stdlib sqlite3 and a local file: the platform stores data with no\n"
-        "database server and no network. STORAGE_PATH relocates the file.\n"
-        '"""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "import os\n"
-        "import sqlite3\n"
-        "from pathlib import Path\n"
-        "from typing import Any, Dict, List\n"
-        "\n"
-        "SCHEMA = {\n" + "\n".join(tables) + "\n}\n"
-        "\n"
-        f"COLUMNS: Dict[str, List[str]] = {columns!r}\n"
-        "\n"
-        "\n"
-        "def db_path() -> Path:\n"
-        '    root = Path(os.getenv("STORAGE_PATH", "./data"))\n'
-        "    root.mkdir(parents=True, exist_ok=True)\n"
-        '    return root / "platform.db"\n'
-        "\n"
-        "\n"
-        "def connect() -> sqlite3.Connection:\n"
-        "    conn = sqlite3.connect(db_path())\n"
-        "    conn.row_factory = sqlite3.Row\n"
-        "    for ddl in SCHEMA.values():\n"
-        "        conn.execute(ddl)\n"
-        "    conn.commit()\n"
-        "    return conn\n"
-        "\n"
-        "\n"
-        "def save(entity: str, record: Dict[str, Any]) -> Dict[str, Any]:\n"
-        '    """Insert a record and return it with its assigned id."""\n'
-        "    cols = COLUMNS[entity]\n"
-        "    values = [record.get(c) for c in cols]\n"
-        '    placeholders = ", ".join("?" for _ in cols)\n'
-        "    conn = connect()\n"
-        "    try:\n"
-        "        cur = conn.execute(\n"
-        '            f"INSERT INTO {entity} ({\', \'.join(cols)}) VALUES ({placeholders})",\n'
-        "            values,\n"
-        "        )\n"
-        "        conn.commit()\n"
-        '        return {"id": cur.lastrowid, **{c: record.get(c) for c in cols}}\n'
-        "    finally:\n"
-        "        conn.close()\n"
-        "\n"
-        "\n"
-        "def list_all(entity: str) -> List[Dict[str, Any]]:\n"
-        "    conn = connect()\n"
-        "    try:\n"
-        '        rows = conn.execute(f"SELECT * FROM {entity} ORDER BY id").fetchall()\n'
-        "        return [dict(r) for r in rows]\n"
-        "    finally:\n"
-        "        conn.close()\n"
-        "\n"
-        "\n"
-        "def get(entity: str, record_id: int) -> Dict[str, Any] | None:\n"
-        "    conn = connect()\n"
-        "    try:\n"
-        "        row = conn.execute(\n"
-        '            f"SELECT * FROM {entity} WHERE id = ?", (record_id,)\n'
-        "        ).fetchone()\n"
-        "        return dict(row) if row else None\n"
-        "    finally:\n"
-        "        conn.close()\n"
-    )
+    from app.factory.build.data_lifecycle import render_store
+
+    return render_store(specs)
 
 
 def _constraint_guard(spec: Dict[str, Any]) -> str:
@@ -1664,11 +1582,23 @@ def _render_main(product_name: str) -> str:
         "\n"
         "from __future__ import annotations\n"
         "\n"
+        "from contextlib import asynccontextmanager\n"
+        "\n"
         "from fastapi import FastAPI\n"
         "\n"
         "from app.routes import router\n"
         "\n"
-        f'app = FastAPI(title="{product_name}")\n'
+        "\n"
+        "@asynccontextmanager\n"
+        "async def lifespan(_app: FastAPI):\n"
+        "    # Fail-closed: a revision behind head refuses boot.\n"
+        "    from app.migrations import upgrade_head\n"
+        "\n"
+        "    upgrade_head()\n"
+        "    yield\n"
+        "\n"
+        "\n"
+        f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
         'app.include_router(router, prefix="/v1")\n'
         "\n"
         "\n"
@@ -1685,9 +1615,12 @@ def _render_requirements() -> str:
         "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
         f"# the platform runs with no database server and no network ({POSTURE_ID}).\n"
         "# pydantic is required by the vendored cerebrum_product_kernel contract.\n"
+        "# Alembic applies versioned schema at deploy against STORAGE_PATH.\n"
         "fastapi>=0.110\n"
         "uvicorn>=0.29\n"
         "pydantic>=2.0\n"
+        "alembic>=1.13\n"
+        "sqlalchemy>=2.0\n"
     )
 
 
@@ -1718,7 +1651,7 @@ def _render_dockerfile() -> str:
         "\n"
         "COPY . .\n"
         "ENV PYTHONPATH=/app\n"
-        "# Persistence is a sqlite file; mount a volume here to keep it.\n"
+        "# Persistence is a sqlite file on the mounted disk (F23).\n"
         "ENV STORAGE_PATH=/app/data\n"
         "RUN mkdir -p /app/data\n"
         "\n"
@@ -1726,7 +1659,8 @@ def _render_dockerfile() -> str:
         "RUN python3 scripts/release_gate.py\n"
         "\n"
         "EXPOSE 8000\n"
-        'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]\n'
+        "# S10: migrate against the persistent disk, then serve. Failure refuses boot.\n"
+        'ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]\n'
     )
     assert_generated_dockerfile(text)
     return text
@@ -1839,7 +1773,10 @@ if __name__ == "__main__":
 
 
 def _render_procfile() -> str:
-    return "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
+    return (
+        "web: python -m alembic upgrade head && "
+        "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n"
+    )
 
 
 def _render_platform_env_example() -> str:
@@ -1935,6 +1872,8 @@ python -m pytest tests                   # includes Store-backed @pytest.mark.pi
 ```
 
 Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
+Schema is Alembic (`alembic upgrade head` at deploy). `app/store.py` does not
+`CREATE TABLE`.
 
 ## Layout
 
@@ -1942,7 +1881,10 @@ Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
 |---|---|
 | `app/jobs.py` | kernel job descriptions (`GET /v1/jobs` and friends) |
 | `app/models.py` | domain dataclasses |
-| `app/store.py` | sqlite persistence |
+| `app/store.py` | sqlite persistence (WAL; no DDL) |
+| `app/migrations.py` | Alembic upgrade / downgrade |
+| `app/backup.py` | backup / restore / retention |
+| `alembic/` | versioned up and down revisions |
 | `app/routes.py` | HTTP surface |
 | `app/actions/` | capability handlers |
 | `app/dispatch.py` | local block dispatch |
@@ -2377,14 +2319,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
     ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
 
-    # Persistence is rendered from the same specs, so the schema cannot drift
-    # from the dataclasses it stores.
-    ctx.workspace.write_text(Path("app") / "store.py", _render_store(specs))
+    # Persistence + versioned Alembic from the same specs. connect() does
+    # not CREATE TABLE — deploy applies revisions against STORAGE_PATH.
+    from app.factory.build.data_lifecycle import emit_writer_artifacts
+
+    emit_writer_artifacts(ctx.workspace, specs)
     sources["persistence"] = (
         "derived from coder-designed models"
         if any(s.get("model") for s in specs.values())
         else fallback_source
     )
+    sources["migrations"] = "alembic revisions emitted from unused-kit pattern"
 
     # --- capability handlers ------------------------------------------------
     actions_init = ['"""Capability handlers."""', ""]
@@ -2542,6 +2487,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             {
                 "file": "tests/test_models.py",
                 "covers": "sqlite round-trip via store.save / store.get",
+                "gated": True,
+            },
+            {
+                "file": "tests/test_data_lifecycle.py",
+                "covers": "Alembic up/down on populated v1, restore drill, parallel writes",
                 "gated": True,
             },
             {
@@ -2784,6 +2734,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
 
+# Schema is versioned. connect() does not CREATE TABLE. Apply head so
+# model/route tests have tables; a missing revision fails the suite.
+from app.migrations import upgrade_head  # noqa: E402
+
+upgrade_head()
+
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _real_connect = socket.socket.connect
 
@@ -3019,6 +2975,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         model_lines.append("    pass")
     ctx.workspace.write_text(
         Path("tests") / "test_models.py", "\n".join(model_lines) + "\n"
+    )
+    from app.factory.build.data_lifecycle import render_product_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_data_lifecycle.py", render_product_tests(specs)
     )
 
     # -- routes return their documented shape ------------------------------
