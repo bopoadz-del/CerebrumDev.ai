@@ -158,6 +158,10 @@ def converge_writer_emitters(ctx: Any) -> Dict[str, Any]:
         plan=plan.to_dict(),
         inputs_hash=inputs_hash,
     )
+    # ProductGenerator stamps wall-clock generated_at. RoleRunner cannot:
+    # two identical builds must byte-match, and coder variance must stay
+    # inside app/actions/. The field remains; the value is the input hash.
+    prov["generated_at"] = f"blueprint:{inputs_hash}"
     ctx.workspace.write_text(
         Path("docs") / "provenance" / "provenance.json",
         json.dumps(prov, indent=2, sort_keys=True) + "\n",
