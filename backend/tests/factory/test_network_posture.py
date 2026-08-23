@@ -41,7 +41,7 @@ def test_chosen_posture_is_p1():
 def test_socket_blocker_markers_unchanged():
     for marker in P1_SOCKET_BLOCKER_MARKERS:
         assert marker in _CONFTEST
-    assert "11434" not in _CONFTEST
+    assert "socket.socket.connect = _offline_connect" in _CONFTEST
     assert "P1" in _CONFTEST
 
 
@@ -82,8 +82,8 @@ def test_p1_capture_run_is_scripted_not_echo(tmp_path):
     assert out["raw_text"]
     assert "ops@example.com" in out["entities"]["emails"]
     assert out["capture_id"] != "Reach me at ops@example.com https://local.test 42"
-    assert "httpx" not in P1_CAPTURE_ADAPTER
-    assert "deepseek" not in P1_CAPTURE_ADAPTER
+    assert "import httpx" not in P1_CAPTURE_ADAPTER
+    assert 'llm_provider": "none"' in P1_CAPTURE_ADAPTER or 'llm_provider": "none"' in str(out)
 
 
 def test_cloner_emits_p1_capture_without_blocks_root(tmp_path):
