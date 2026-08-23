@@ -1942,7 +1942,7 @@ and they do not execute the test suite (`GET /v1/gates` describes coverage only)
 
 
 def _templated_readme(product_name: str, caps: Sequence[str], blocks: Sequence[str]) -> str:
-    from app.factory.build.network_posture import POSTURE_ID as NETWORK_POSTURE
+    from app.factory.build.network_posture import NETWORK_POSTURE
 
     cap_lines = "\n".join(f"- `{c}`" for c in caps) or "- (none)"
     block_lines = "\n".join(f"- `{b}`" for b in blocks) or "- (none)"
