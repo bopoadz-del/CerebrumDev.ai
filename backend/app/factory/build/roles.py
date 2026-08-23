@@ -1679,11 +1679,17 @@ def _render_requirements() -> str:
         f"# the platform runs with no database server and no network ({POSTURE_ID}).\n"
         "# pydantic is required by the vendored cerebrum_product_kernel contract.\n"
         "# Alembic applies versioned schema at deploy against STORAGE_PATH.\n"
+        "# starlette is imported directly by app/observe.py. FastAPI pulls it in\n"
+        "# transitively, but a runtime module that imports a package must declare\n"
+        "# it: relying on someone else's dependency graph breaks the moment that\n"
+        "# graph changes, and F10 is exactly the class of defect where an import\n"
+        "# is satisfied by accident rather than by declaration.\n"
         "fastapi>=0.110\n"
         "uvicorn>=0.29\n"
         "pydantic>=2.0\n"
         "alembic>=1.13\n"
         "sqlalchemy>=2.0\n"
+        "starlette>=0.37\n"
     )
 
 
