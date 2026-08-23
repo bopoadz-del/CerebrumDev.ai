@@ -516,6 +516,8 @@ def test_cloner_rewrites_zero_arg_store_constructors(tmp_path):
         encoding="utf-8"
     )
     assert "_instantiate_store_block" in shim
+    assert "_ensure_store_block_ready" in shim
+    assert "return _ensure_store_block_ready(call())" in shim
     assert "instance = block_cls()" not in shim
     assert "_OfflineHal" in shim
     assert "block_cls(None, {})" not in shim
@@ -590,4 +592,72 @@ def test_cloner_instantiates_store_blocks_with_offline_hal_cursor(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr + proc.stdout
     assert json.loads(proc.stdout.strip()) == {"greeting": "hello", "rows": 1}
+
+
+def test_cloner_emits_store_unwired_adapter_contracts(tmp_path):
+    """CLONER, not a post-gate patcher, writes the four offline contracts."""
+    store = _faux_store(tmp_path)
+    init = (
+        "import importlib\n"
+        "_EXTENDED_BLOCK_DEFS = {\n"
+        '    "notification": ("app.blocks.notification", "NotificationBlock"),\n'
+        '    "database": ("app.blocks.database", "DatabaseBlock"),\n'
+        '    "storage": ("app.blocks.storage", "StorageBlock"),\n'
+        "}\n"
+        "def get_block(name):\n"
+        "    module_path, class_name = _EXTENDED_BLOCK_DEFS[name]\n"
+        "    return getattr(importlib.import_module(module_path), class_name)\n"
+    )
+    (store / "app" / "blocks" / "__init__.py").write_text(init, encoding="utf-8")
+    (store / "app" / "blocks" / "notification.py").write_text(
+        "class NotificationBlock:\n"
+        "    def send(self, block_name, payload):\n"
+        "        try:\n"
+        "            from vendor.cerebrum.blocks import BLOCK_REGISTRY\n"
+        "            from app.dependencies import _create_block_instance\n"
+        "            return BLOCK_REGISTRY\n",
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "database.py").write_text(
+        "class DatabaseBlock:\n"
+        "    def insert(self):\n"
+        "        except Exception as e:\n"
+        '            return {"error": f"Insert failed: {str(e)}"}\n'
+        "    async def _query(self, data):\n"
+        '        """Execute SELECT query"""\n'
+        '        sql = data.get("sql")\n'
+        '        params = data.get("params", ())\n'
+        "        \n"
+        "        try:\n"
+        "            cursor = self._connection.cursor()\n"
+        "            cursor.execute(sql, params)\n",
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "storage.py").write_text(
+        "import aiofiles\n"
+        "class StorageBlock:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    for bid in ("notification", "database", "storage"):
+        reg = store / "block_registry" / bid
+        reg.mkdir(parents=True)
+        (reg / "block.json").write_text(json.dumps({"id": bid}), encoding="utf-8")
+        (reg / "block.py").write_text(
+            "from app.blocks import get_block\n"
+            f"def run(**kwargs):\n"
+            f"    return get_block({bid!r})\n",
+            encoding="utf-8",
+        )
+
+    ws, result = _clone(tmp_path, store, block_ids=("notification", "database", "storage"))
+    assert result.ok, result.detail
+    cerebrum = ws.destination / "vendor" / "cerebrum" / "blocks"
+    notify = (cerebrum / "notification.py").read_text(encoding="utf-8")
+    assert "Store-unwired MCP" in notify
+    db = (cerebrum / "database.py").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS" in db
+    assert "Store-unwired query" in db
+    storage = (cerebrum / "storage.py").read_text(encoding="utf-8")
+    assert "Store-unwired aiofiles" in storage
 
