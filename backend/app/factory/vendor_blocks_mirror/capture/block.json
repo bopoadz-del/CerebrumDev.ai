@@ -68,14 +68,14 @@
       "type": "string"
     },
     {
-      "default": "deepseek-chat",
+      "default": "",
       "description": "Configuration parameter: deepseek_model",
       "name": "deepseek_model",
       "required": false,
       "type": "string"
     },
     {
-      "default": "anthropic/claude-3.5-sonnet",
+      "default": "",
       "description": "Configuration parameter: openrouter_model",
       "name": "openrouter_model",
       "required": false,
@@ -89,7 +89,7 @@
       "type": "string"
     },
     {
-      "default": "claude-3-5-sonnet-20241022",
+      "default": "",
       "description": "Configuration parameter: anthropic_model",
       "name": "anthropic_model",
       "required": false,

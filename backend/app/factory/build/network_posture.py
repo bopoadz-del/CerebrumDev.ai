@@ -232,6 +232,9 @@ def apply_p1_capture_manifest(data: Mapping[str, Any]) -> Dict[str, Any]:
             "openrouter_api_key",
             "anthropic_api_key",
             "vector_db_url",
+            "deepseek_model",
+            "openrouter_model",
+            "anthropic_model",
         }:
             inp["default"] = ""
         elif name == "store_captures":

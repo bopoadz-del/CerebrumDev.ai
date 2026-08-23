@@ -58,6 +58,9 @@ def test_vendor_mirror_capture_json_defaults_are_p1():
     assert providers["llm_provider"] == "none"
     assert providers["ocr_engine"] == "tesseract"
     assert providers["ollama_base_url"] == ""
+    assert providers["deepseek_model"] == ""
+    assert providers["openrouter_model"] == ""
+    assert providers["anthropic_model"] == ""
     assert providers["store_captures"] is False
     assert "get_block" in MIRROR_CAPTURE_PY.read_text(encoding="utf-8")
 
