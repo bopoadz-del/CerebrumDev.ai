@@ -1041,6 +1041,22 @@ def _known_fields(block_id: str) -> set:
 def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
     """Pass the caller payload through. Never invent Store fields (F18)."""
     data = dict(payload) if isinstance(payload, dict) else {"value": payload}
+    known = _known_fields(block_id)
+    # Store blocks are action-dispatched: the domain record travels in the
+    # block's declared ``input`` slot, with block params beside it. A handler
+    # that passes the record flat gets every domain key refused as unknown --
+    # measured on the warehouse `audit` capability, which declares
+    # reference/status/quantity in its own model and had all three rejected.
+    #
+    # This is adaptation, not F18 fabrication. No value is invented and no
+    # field is conjured to satisfy a validator: the caller's own record is
+    # placed in the field the block declares for exactly it. If the caller
+    # already supplied ``input``, nothing is moved.
+    if known and "input" in known and "input" not in data:
+        stray = {k: v for k, v in data.items() if k not in known}
+        if stray:
+            data = {k: v for k, v in data.items() if k in known}
+            data["input"] = stray
     missing = [
         field for field in _required_fields(block_id)
         if field not in data or data[field] in (None, "")
@@ -1049,7 +1065,6 @@ def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, A
         raise DispatchContractError(
             f"{block_id} missing required field(s): {', '.join(missing)}"
         )
-    known = _known_fields(block_id)
     if known:
         unknown = sorted(str(key) for key in data if key not in known)
         if unknown:
@@ -1488,7 +1503,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "",
         "from typing import Any, Dict",
         "",
-        "from fastapi import APIRouter, HTTPException",
+        "from fastapi import APIRouter, HTTPException, Request",
         "",
         "from app import jobs, store",
         "from app.domain_ops import perform as perform_domain",
@@ -1561,8 +1576,27 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             "",
             "",
             f'@router.get("/{name}")',
-            f"def {name}_list() -> Dict[str, Any]:",
-            f'    return {{"items": store.list_all("{entity}")}}',
+            f"def {name}_list(request: Request) -> Dict[str, Any]:",
+            "    # F7: filter/sort/page from the entity's own declared columns.",
+            "    # An unrecognised query field is refused rather than ignored --",
+            "    # silently dropping ?staus=open returns the whole table and looks",
+            "    # like a match.",
+            '    CONTROLS = {"limit", "offset", "sort", "order"}',
+            f'    allowed = set(store.COLUMNS["{entity}"]) | CONTROLS',
+            "    given = dict(request.query_params)",
+            "    unknown = sorted(k for k in given if k not in allowed)",
+            "    if unknown:",
+            '        return {"ok": False,',
+            '                "error": "unknown query field(s): " + ", ".join(unknown)}',
+            "    try:",
+            f'        return store.query("{entity}",',
+            "            filters={k: v for k, v in given.items() if k not in CONTROLS},",
+            '            sort=given.get("sort"),',
+            '            order=given.get("order", "asc"),',
+            '            limit=int(given.get("limit", 50)),',
+            '            offset=int(given.get("offset", 0)))',
+            "    except (store.QueryError, ValueError) as exc:",
+            '        return {"ok": False, "error": str(exc)}',
             "",
             "",
             f'@router.get("/{name}/{{item_id}}")',
