@@ -218,6 +218,12 @@ def render_migrations() -> str:
         "        return None\n"
         "    finally:\n"
         "        conn.close()\n"
+        "\n"
+        "\n"
+        "def head_revision() -> str | None:\n"
+        "    from alembic.script import ScriptDirectory\n"
+        "\n"
+        "    return ScriptDirectory.from_config(alembic_config()).get_current_head()\n"
     )
 
 
@@ -540,6 +546,7 @@ def render_entrypoint() -> str:
         "set -eu\n"
         "cd /app\n"
         "python -m alembic upgrade head\n"
+        "python -c \"import json, os; print(json.dumps({'event': 'entrypoint.start', 'revision': os.getenv('APP_REVISION', ''), 'storage': os.getenv('STORAGE_PATH', '')}))\"\n"
         'exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"\n'
     )
 

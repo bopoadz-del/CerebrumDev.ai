@@ -179,10 +179,12 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
             (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
+            (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
             (LaneRoot.WORKSPACE, "alembic.ini"),
             (LaneRoot.WORKSPACE, "alembic/**"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),
             (LaneRoot.WORKSPACE, "docs/data_lifecycle.json"),
+            (LaneRoot.WORKSPACE, "docs/deploy.json"),
             # 14-class contract surfaces ProductGenerator already emits.
             # Named prefixes, not a root or docs/** wildcard.
             (LaneRoot.WORKSPACE, "product-dna/**"),

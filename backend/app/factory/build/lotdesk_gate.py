@@ -166,6 +166,13 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
         findings.append(
             Finding("F24", "app/main.py", "GET /health is a constant ok"),
         )
+        findings.append(
+            Finding(
+                "F1",
+                "app/main.py",
+                "GET /health is unconditional ok / always-200 (LotDesk-class)",
+            ),
+        )
 
     if not any(name.startswith("ui/") or name.startswith("frontend/") for name in normalised):
         # Presence of any ui/frontend file in the scan set. Tree/zip reads

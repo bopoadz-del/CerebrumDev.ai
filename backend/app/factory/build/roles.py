@@ -1570,42 +1570,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
 
 
 def _render_main(product_name: str) -> str:
-    from app.factory.build.network_posture import NETWORK_POSTURE, NETWORK_POSTURE_REASON
+    from app.factory.build.deploy import render_main
 
-    return (
-        '"""Entrypoint for the generated platform.\n'
-        "\n"
-        "Runs standalone: uvicorn app.main:app. No factory, no block store, no\n"
-        f"outbound dependency at runtime ({NETWORK_POSTURE}: {NETWORK_POSTURE_REASON}).\n"
-        "Kernel jobs are at GET /v1/jobs.\n"
-        '"""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "from contextlib import asynccontextmanager\n"
-        "\n"
-        "from fastapi import FastAPI\n"
-        "\n"
-        "from app.routes import router\n"
-        "\n"
-        "\n"
-        "@asynccontextmanager\n"
-        "async def lifespan(_app: FastAPI):\n"
-        "    # Fail-closed: a revision behind head refuses boot.\n"
-        "    from app.migrations import upgrade_head\n"
-        "\n"
-        "    upgrade_head()\n"
-        "    yield\n"
-        "\n"
-        "\n"
-        f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
-        'app.include_router(router, prefix="/v1")\n'
-        "\n"
-        "\n"
-        '@app.get("/health")\n'
-        "def health() -> dict:\n"
-        '    return {"status": "ok"}\n'
-    )
+    return render_main(product_name)
 
 
 def _render_requirements() -> str:
@@ -2323,14 +2290,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     # Persistence + versioned Alembic from the same specs. connect() does
     # not CREATE TABLE — deploy applies revisions against STORAGE_PATH.
     from app.factory.build.data_lifecycle import emit_writer_artifacts
+    from app.factory.build.deploy import emit_writer_artifacts as emit_deploy_artifacts
 
     emit_writer_artifacts(ctx.workspace, specs)
+    emit_deploy_artifacts(ctx.workspace)
     sources["persistence"] = (
         "derived from coder-designed models"
         if any(s.get("model") for s in specs.values())
         else fallback_source
     )
     sources["migrations"] = "alembic revisions emitted from unused-kit pattern"
+    sources["deploy_observe"] = "S11 fail-closed health, rollback drill, JSON request logs"
 
     # --- capability handlers ------------------------------------------------
     actions_init = ['"""Capability handlers."""', ""]
@@ -2493,6 +2463,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             {
                 "file": "tests/test_data_lifecycle.py",
                 "covers": "Alembic up/down on populated v1, restore drill, parallel writes",
+                "gated": True,
+            },
+            {
+                "file": "tests/test_deploy.py",
+                "covers": "Fail-closed /health, correlation logs, revision rollback identity",
                 "gated": True,
             },
             {
@@ -2986,6 +2961,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("tests") / "test_data_lifecycle.py", render_product_tests(specs)
     )
+    from app.factory.build.deploy import render_product_tests as render_deploy_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_deploy.py", render_deploy_tests(specs)
+    )
 
     # -- routes return their documented shape ------------------------------
     route_lines = [
@@ -3002,7 +2982,12 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "def test_health():",
         '    resp = client.get("/health")',
         "    assert resp.status_code == 200",
-        '    assert resp.json()["status"] == "ok"',
+        "    body = resp.json()",
+        '    assert body["status"] == "ok"',
+        '    assert body["ok"] is True',
+        '    names = {item["name"] for item in body["checks"]}',
+        '    assert {"process", "persistent_disk", "database", "migrations"} <= names',
+        "    assert all(item[\"ok\"] for item in body[\"checks\"])",
         "",
         "",
         "def test_kernel_jobs_roster():",
