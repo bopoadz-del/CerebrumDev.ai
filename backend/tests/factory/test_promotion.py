@@ -264,8 +264,8 @@ def test_write_evidence_is_the_only_true_pilot_ready_sink(tmp_path):
     assert reread["verdict"] == written["verdict"]
 
 
-def test_in_tree_lotdesk_stays_false_and_s9_reread_blocks_full_tree():
-    """In-tree S9 reread is stale FAIL vs PASS — emitter must not promote."""
+def test_in_tree_lotdesk_stays_false_and_reread_mismatches_block_full_tree():
+    """In-tree S4 disagreements and S9 verdict drift — emitter must not promote."""
     lotdesk = reject_lotdesk_promotion()
     assert lotdesk["PILOT_READY"] is False
     stages = ROOT / "build" / "stages"
@@ -273,8 +273,11 @@ def test_in_tree_lotdesk_stays_false_and_s9_reread_blocks_full_tree():
     assert (stages / "S11_deploy.json").is_file()
     assert (stages / "S12_domain.json").is_file()
     result = evaluate_promotion(stages)
-    evidence = json.loads((stages / "S9_test.json").read_text(encoding="utf-8"))
-    twin = json.loads((stages / "S9_test.reread.json").read_text(encoding="utf-8"))
-    assert evidence.get("verdict") != twin.get("verdict")
+    s9 = json.loads((stages / "S9_test.json").read_text(encoding="utf-8"))
+    s9_twin = json.loads((stages / "S9_test.reread.json").read_text(encoding="utf-8"))
+    s4_twin = json.loads((stages / "S4_ship_kernel.reread.json").read_text(encoding="utf-8"))
+    assert s9.get("verdict") != s9_twin.get("verdict")
+    assert s4_twin.get("disagreements")
     assert result["PILOT_READY"] is False
+    assert "S4_ship_kernel.json" in result["failed"]
     assert "S9_test.json" in result["failed"]
