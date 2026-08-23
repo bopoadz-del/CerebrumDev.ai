@@ -255,7 +255,10 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         # takeover the blueprint is approved, so the model used to refuse
         # start_coder ("no blueprint pending") while 22/28 artifacts sat
         # on disk.
-        if platform_chat_flow.is_resume_request(user_message) and (
+        if (
+            platform_chat_flow.is_resume_request(user_message)
+            or platform_chat_flow.is_pilot_request(user_message)
+        ) and (
             platform_chat_flow.has_pending_blueprint(state)
             or platform_chat_flow.is_generation_resumable(state)
             or platform_chat_flow.is_generation_complete(state)
@@ -263,6 +266,10 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             if (
                 platform_chat_flow.has_pending_blueprint(state)
                 or platform_chat_flow.is_generation_resumable(state)
+                or (
+                    platform_chat_flow.is_generation_complete(state)
+                    and not platform_chat_flow.is_pilot_ready(state)
+                )
             ):
                 try:
                     require_within_limit(getattr(state, "user_id", None), "generation")

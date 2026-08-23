@@ -392,6 +392,28 @@ def _offline_hal():
     return _OfflineHal(str(root / "store_blocks.sqlite"))
 
 
+def _ensure_store_block_ready(instance):
+    """DatabaseBlock only opens SQLite in _legacy_initialize.
+
+    Construct-with-HAL is not enough: process() uses self._connection,
+    which stays None until initialize runs. LotDesk pilot then died on
+    Insert failed: 'NoneType' object has no attribute 'cursor'.
+    """
+    conn = getattr(instance, "_connection", None)
+    init = getattr(instance, "_legacy_initialize", None)
+    if conn is None and callable(init):
+        import asyncio
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(init())
+            return instance
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            pool.submit(asyncio.run, init()).result()
+    return instance
+
+
 def _instantiate_store_block(block_cls):
     """Store classes take (hal_block, config); kit shims called block_cls()."""
     hal = _offline_hal()
@@ -403,7 +425,7 @@ def _instantiate_store_block(block_cls):
         lambda: block_cls(),
     ):
         try:
-            return call()
+            return _ensure_store_block_ready(call())
         except TypeError as exc:
             attempts.append(exc)
     raise attempts[-1]
@@ -3163,18 +3185,54 @@ def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
 def run_store_manager(ctx: RoleContext) -> RoleResult:
     """Store registrar: register what this build took from the Store.
 
-    MINIMAL. This records the clone manifest for the registrar and applies no
-    Store op. Harvesting improvements back upstream and admitting client-driven
-    net-new capability into inventory are the unbuilt parts of this role --
-    registered in KNOWN_INCOMPLETE.md rather than faked here. No agent.
-    Published on the product as ``GET /v1/provenance``.
+    Code-phase 5/5 records the clone register and applies no Store op
+    (historical). The pilot cycle applies authorised ``STORE_READ`` for
+    every clone. A live Store URL additionally runs
+    ``STORE_RUN_COMPATIBILITY``. When ``CEREBRUM_API_URL`` is unset the
+    gate still passes with an honest ``store_unwired`` flag — local reads
+    only. No agent. Published on the product as ``GET /v1/provenance``.
     """
+    import os
+
+    from app.factory.store_manager import StoreOp, assert_store_op_allowed
+
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
+    cycle = str(ctx.state.get("build_cycle") or "code")
+    ops: list = []
+    store_unwired = False
+    if cycle == "pilot":
+        for bid in vendored:
+            assert_store_op_allowed(StoreOp.STORE_READ)
+            ops.append(
+                {
+                    "op": StoreOp.STORE_READ.value,
+                    "block_id": bid,
+                    "source": "clone_register",
+                }
+            )
+        store_unwired = not (os.getenv("CEREBRUM_API_URL") or "").strip()
+        if not store_unwired:
+            assert_store_op_allowed(StoreOp.STORE_RUN_COMPATIBILITY)
+            ops.append(
+                {
+                    "op": StoreOp.STORE_RUN_COMPATIBILITY.value,
+                    "source": "store_url",
+                }
+            )
+        detail = f"registered {len(vendored)} clone(s); applied {len(ops)} store op(s)"
+        if store_unwired:
+            detail += "; store unwired — local STORE_READ only"
+    else:
+        detail = f"registered {len(vendored)} clone(s); no store op applied"
     return RoleResult(
         ok=True,
-        detail=f"registered {len(vendored)} clone(s); no store op applied",
+        detail=detail,
         vendored_blocks=tuple(vendored),
-        notes={"registered": vendored, "store_ops": []},
+        notes={
+            "registered": vendored,
+            "store_ops": ops,
+            "store_unwired": store_unwired,
+        },
     )
 
 

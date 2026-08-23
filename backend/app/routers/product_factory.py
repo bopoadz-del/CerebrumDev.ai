@@ -45,6 +45,7 @@ class GenerateRequest(BaseModel):
     brief: Optional[str] = None
     vertical_hint: Optional[str] = None
     output_dir: Optional[str] = None
+    cycle: Optional[str] = None
 
 
 def _default_output(product_id: str) -> Path:
@@ -114,7 +115,9 @@ def generate_from_architecture(
             bp = ProductBlueprint.model_validate(body.blueprint)
             out = safe_output_dir(body.output_dir, bp.product_id)
             plan = plan_blueprint(bp, blocks_root=blocks_root)
-            result = generate_product(bp, out, blocks_root=blocks_root)
+            result = generate_product(
+                bp, out, blocks_root=blocks_root, cycle=body.cycle
+            )
             return {
                 "ok": True,
                 "blueprint": bp.model_dump(mode="json"),

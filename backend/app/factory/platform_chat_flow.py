@@ -20,6 +20,8 @@ Routing contract (this is law, the smoke tests enforce it):
     4. Approval starts WRITER when a blueprint is pending. continue/resume
      resumes an in-flight or interrupted run even after the blueprint is
      already approved — a pending unapproved blueprint is not required.
+     After code-phase 5/5 SUCCESS, continue opens a pilot cycle on the
+     same workspace (pytest -m pilot + STORE ops), not a new product.
     5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
     6. Anything else falls through to the normal kit-configurator chat.
@@ -108,6 +110,18 @@ _RESUME_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Floor "run the pilot" after code-phase 5/5. Same workspace — not a new draft.
+_PILOT_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:run\s+(?:the\s+)?pilot(?:\s+gate|\s+cycle)?|"
+    r"make\s+it\s+pilot(?:-?\s*ready)?|"
+    r"pilot(?:-?\s*ready)?|"
+    r"continue\s+(?:to\s+)?pilot|"
+    r"resume\s+(?:to\s+)?pilot)"
+    r"(?:\s+please)?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
 
 def is_kit_config_vocabulary(message: str) -> bool:
     """True when the message is about chains/blocks/kits, not a product brief."""
@@ -167,6 +181,11 @@ def is_approval(message: str) -> bool:
 def is_resume_request(message: str) -> bool:
     """True when the user asked to continue/resume an existing coding run."""
     return bool(_RESUME_RE.match((message or "").strip()))
+
+
+def is_pilot_request(message: str) -> bool:
+    """True when the user asked to run the Store-green / pilot cycle."""
+    return bool(_PILOT_RE.match((message or "").strip()))
 
 
 # --- State helpers ----------------------------------------------------------
@@ -711,8 +730,24 @@ def _record_generation(
     }
 
 
+def is_pilot_ready(state: Any, output_root: Optional[Path] = None) -> bool:
+    """True only after a SUCCESS that closed a Store-green / pilot cycle."""
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return False
+    try:
+        return bool(_ledger_for(out).pilot_ready())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def already_complete_reply(state: Any) -> Dict[str, Any]:
-    """Honest answer when continue is typed after a successful run."""
+    """Honest answer when continue is typed after a finished run.
+
+    Pilot-ready (Store-green) is the only terminal that refuses another
+    coding run. Code-phase 5/5 still has a pilot cycle to open — callers
+    should use ``resume_pilot_cycle`` instead of this reply.
+    """
     pd = state.product_design
     gen = pd.generation or {}
     product = gen.get("product_id") or (pd.blueprint or {}).get("product_name") or "this product"
@@ -720,10 +755,25 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
     done = st.get("phases_done")
     total = st.get("phases_total")
     phase = f" ({done}/{total} phases)" if done is not None and total is not None else ""
+    if is_pilot_ready(state):
+        summary = (
+            f"{product} is already pilot-ready (Store-green){phase}. "
+            "I did not start a new coding run. Download it from Your Platforms."
+        )
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": summary,
+            "stream_delta": True,
+            "already_complete": True,
+            "pilot_ready": True,
+            "generation": gen,
+            "build": st,
+        }
     summary = (
-        f"{product} already finished successfully{phase}. "
-        "I did not start a new coding run. Download it from Your Platforms, "
-        "or describe a different platform to draft a new blueprint."
+        f"{product} finished the code-phase 5/5{phase}. "
+        "It is not yet pilot-ready (pytest -m pilot / Store ops). "
+        "Say continue to open a pilot cycle on the same workspace."
     )
     return {
         "ok": True,
@@ -731,6 +781,7 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
         "summary": summary,
         "stream_delta": True,
         "already_complete": True,
+        "pilot_ready": False,
         "generation": gen,
         "build": st,
     }
@@ -782,7 +833,7 @@ def resume_generation(
         }
 
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    result = generate_product(bp, out, blocks_root=_blocks_root())
+    result = generate_product(bp, out, blocks_root=_blocks_root(), cycle="code")
     _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
     if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
         logger.warning(
@@ -818,6 +869,75 @@ def resume_generation(
     }
 
 
+def resume_pilot_cycle(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "regex_pilot",
+) -> Dict[str, Any]:
+    """Open a Store-green cycle on the same workspace / hash / output.
+
+    Does not draft or approve a new blueprint. The runner sees
+    ``PILOT_OPENED``, skips COLLECTOR/CLONER/WRITER, runs ``pytest -m pilot``,
+    reworks only failing capabilities, and applies STORE ops.
+    """
+    if is_pilot_ready(state, output_root):
+        return already_complete_reply(state)
+    pd = state.product_design
+    if not pd or not pd.blueprint:
+        raise ValueError("no blueprint drafted — describe the platform first")
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    pd.blueprint_approved = True
+    if not pd.plan:
+        pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
+    out = _generation_output_dir(state, output_root)
+    if out is None:
+        out = _session_output(state.session_id, bp.product_id, output_root)
+    live = _live_build_thread(bp.product_id)
+    if live is not None:
+        st = _generation_status(state, output_root)
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"The coding agent is still writing {bp.product_id}. "
+                "I did not start a second run."
+            ),
+            "stream_delta": True,
+            "already_running": True,
+            "generation": pd.generation,
+            "build": st,
+        }
+    prior_hash = (pd.generation or {}).get("inputs_hash")
+    result = generate_product(bp, out, blocks_root=_blocks_root(), cycle="pilot")
+    _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
+    if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
+        logger.warning(
+            "pilot resume hash changed for %s: was %s now %s",
+            bp.product_id,
+            prior_hash[:12],
+            str(result["inputs_hash"])[:12],
+        )
+    st = result.get("build") or {}
+    summary = (
+        f"Opening a pilot cycle for {result['product_id']} on the same "
+        "workspace/hash. TESTER will run pytest -m pilot; WRITER reworks "
+        "only failing capabilities; STORE_MANAGER applies store ops. "
+        "Not a new product."
+    )
+    return {
+        "ok": True,
+        "sse": "generation",
+        "generation": pd.generation,
+        "plan": pd.plan,
+        "triggered_by": triggered_by,
+        "resumed": True,
+        "cycle": "pilot",
+        "stream_delta": False,
+        "summary": summary,
+        "build": st,
+    }
+
+
 def start_or_resume_coder(
     state: Any,
     output_root: Optional[Path] = None,
@@ -825,15 +945,23 @@ def start_or_resume_coder(
 ) -> Dict[str, Any]:
     """Start WRITER on a pending blueprint, or resume an interrupted run.
 
-    Never requires a pending unapproved blueprint to resume. Never starts a
-    new product when the last run already succeeded.
+    Never requires a pending unapproved blueprint to resume. Code-phase
+    SUCCESS is not the end: continue opens a pilot cycle on the same
+    workspace. Only a Store-green SUCCESS refuses another run.
     """
     if has_pending_blueprint(state):
         return approve_and_generate(
             state, output_root=output_root, triggered_by=triggered_by
         )
-    if is_generation_complete(state):
+    if is_pilot_ready(state, output_root):
         return already_complete_reply(state)
+    if is_generation_complete(state):
+        resume_by = (
+            "chat_llm" if triggered_by == "chat_llm" else "regex_pilot"
+        )
+        return resume_pilot_cycle(
+            state, output_root=output_root, triggered_by=resume_by
+        )
     if is_generation_resumable(state):
         resume_by = (
             "chat_llm" if triggered_by == "chat_llm" else "regex_resume"

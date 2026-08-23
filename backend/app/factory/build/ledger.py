@@ -47,6 +47,10 @@ class EventKind(str, Enum):
     REWORK = "REWORK"
     CLONE = "CLONE"
     NOTE = "NOTE"
+    #: Reopens TESTER + STORE_MANAGER after a code-phase SUCCESS so the same
+    #: workspace can run the Store-green / ``pytest -m pilot`` cycle. Does
+    #: not wipe WRITER artifacts or start a second product.
+    PILOT_OPENED = "PILOT_OPENED"
     #: Terminal verdicts. Exactly one of these ends a finished run, so the
     #: outcome is readable from the ledger alone without re-deriving it from
     #: phase events -- and a run that stopped without one is, correctly, not
@@ -186,6 +190,22 @@ class BuildLedger:
             },
         )
 
+    def open_pilot_cycle(
+        self,
+        *,
+        reason: str = "code-phase SUCCESS; opening Store-green cycle",
+    ) -> BuildEvent:
+        """Reopen TESTER + STORE_MANAGER on an existing workspace.
+
+        Append-only: COLLECTOR/CLONER/WRITER verdicts stay. A later
+        ``RUN_SUCCEEDED`` with ``cycle=pilot`` is what ``pilot_ready`` reads.
+        """
+        return self.append(
+            EventKind.PILOT_OPENED,
+            detail=reason,
+            payload={"cycle": "pilot"},
+        )
+
     def record_clone(
         self,
         *,
@@ -232,6 +252,13 @@ class BuildLedger:
         """
         state: Dict[BuildRole, EventKind] = {}
         for event in self.events():
+            if event.kind is EventKind.PILOT_OPENED:
+                # Code-phase TESTER used ``not pilot``; STORE_MANAGER applied
+                # no store op. Both must run again. WRITER stays complete
+                # until a failed pilot gate sends a rework.
+                state.pop(BuildRole.TESTER, None)
+                state.pop(BuildRole.STORE_MANAGER, None)
+                continue
             if not event.role:
                 continue
             if event.kind is EventKind.PHASE_STARTED or event.kind in TERMINAL_KINDS:
@@ -286,15 +313,43 @@ class BuildLedger:
 
         None is the honest answer for a killed run: absence of a verdict is
         not success, and callers must not infer one from "no failures seen".
+        A ``PILOT_OPENED`` after the last terminal reopens the run.
         """
-        for event in reversed(self.events()):
+        last: Optional[BuildEvent] = None
+        for event in self.events():
             if event.kind in (EventKind.RUN_SUCCEEDED, EventKind.RUN_FAILED):
-                return event
-        return None
+                last = event
+            elif event.kind is EventKind.PILOT_OPENED:
+                last = None
+        return last
 
     def succeeded(self) -> bool:
         event = self.terminal_event()
         return event is not None and event.kind is EventKind.RUN_SUCCEEDED
+
+    def code_phase_succeeded(self) -> bool:
+        """True once any RUN_SUCCEEDED was recorded (code-phase 5/5 counts)."""
+        return any(e.kind is EventKind.RUN_SUCCEEDED for e in self.events())
+
+    def pilot_cycle_open(self) -> bool:
+        """True when a PILOT_OPENED is the latest cycle marker (no later SUCCESS)."""
+        last_pilot = last_success = None
+        for event in self.events():
+            if event.kind is EventKind.PILOT_OPENED:
+                last_pilot = event
+            if event.kind is EventKind.RUN_SUCCEEDED:
+                last_success = event
+        return last_pilot is not None and (
+            last_success is None or last_pilot.seq > last_success.seq
+        )
+
+    def pilot_ready(self) -> bool:
+        """True only after a SUCCESS that closed a pilot cycle."""
+        event = self.terminal_event()
+        if event is None or event.kind is not EventKind.RUN_SUCCEEDED:
+            return False
+        payload = event.payload or {}
+        return payload.get("cycle") == "pilot" or bool(payload.get("pilot_ready"))
 
     def rework_counts(self) -> Dict[str, int]:
         counts: Dict[str, int] = {}
