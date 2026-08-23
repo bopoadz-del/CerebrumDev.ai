@@ -112,7 +112,9 @@ def test_dispatch_emoji_print_is_not_swallowed_as_a_domain_error(tmp_path):
         sys.path.insert(0, ".")
         from app.dispatch import execute
         out = execute("printer", {"x": 1}, action="run")
-        sys.stdout.write(json.dumps(out))
+        # Marker on its own line so block prints (checkmark/emoji) do not
+        # poison JSON parse of the result.
+        sys.stderr.write("F13_RESULT=" + json.dumps(out) + "\\n")
         if out.get("status") != "ok" or out.get("printed") is not True:
             raise SystemExit("dispatch did not return the block result: " + repr(out))
         if "UnicodeEncodeError" in str(out):
@@ -130,7 +132,10 @@ def test_dispatch_emoji_print_is_not_swallowed_as_a_domain_error(tmp_path):
         env=_hostile_cp1252_env(),
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
-    out = json.loads(proc.stdout)
+    marker = "F13_RESULT="
+    lines = [line for line in (proc.stderr or "").splitlines() if line.startswith(marker)]
+    assert lines, proc.stderr
+    out = json.loads(lines[-1][len(marker) :])
     assert out["status"] == "ok"
     assert out["printed"] is True
     assert "UnicodeEncodeError" not in str(out)
