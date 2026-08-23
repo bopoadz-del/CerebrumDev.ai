@@ -1,13 +1,13 @@
 {
   "stage": "S9",
   "name": "TEST",
-  "evaluated_at": "2026-08-23T08:25:00Z",
+  "evaluated_at": "2026-08-23T08:40:00Z",
   "verdict": "FAIL",
-  "first_failing_criterion": "windows_cp1252_parity_not_run",
+  "first_failing_criterion": "windows_cp1252_parity_job_not_yet_green",
   "checked": {
     "windows_cp1252_parity": {
       "result": "FAIL",
-      "reason": "This environment is Linux only (x86_64, UTF-8). Spec requires FAIL-closed when Windows/cp1252 cannot run. Do not fake it. F26 remains open."
+      "reason": "F26 is now in the delivery path: required GitHub Actions job 'Windows cp1252 encoding parity (F13/F26)' on windows-latest (PYTHONIOENCODING=cp1252, PYTHONUTF8=0, chcp 1252; pytest test_windows_cp1252_parity.py + test_tester_isolation.py + test_network_posture.py + test_dispatch_does_not_pass_on_a_block_refusal). This Linux host still cannot run cp1252 and must not fake Windows. The job has been added but has not gone green on this commit — do not self-certify. Verdict stays FAIL until that windows-latest job is actually green."
     },
     "keyed_path_in_ci": {
       "result": "PASS",
@@ -33,21 +33,30 @@
       "result": "PASS",
       "reason": "Fresh RoleRunner runner_smoke tree has no F18/F19. LotDesk fixture still has both. Executed on this Linux host."
     },
+    "f13_dispatch_stdio": {
+      "result": "CODED_NOT_CERTIFIED",
+      "reason": "_DISPATCH_RUNTIME now calls _force_utf8_stdio() (PYTHONIOENCODING=utf-8, stdout/stderr reconfigure) and names UnicodeEncodeError as encoding, not domain. Covered by tests/factory/test_windows_cp1252_parity.py. Not certified until windows-latest is green."
+    },
     "u7_shape_not_outcome": {
       "result": "OPEN",
       "reason": "FACTORY_SUITE_MARKER_EXPR remains 'not pilot'; code-phase still judges shape. Not closed in this turn."
     }
   },
   "factory_suite": {
-    "command": "cd backend && ENV=test ./venv/bin/python -m pytest tests/factory",
-    "passed": 363,
-    "skipped": 1,
-    "skipped_reason": "test_keyed_process_env_matches_production_when_ci_sets_it requires KEYED_PATH_CI=1 (dedicated CI step)",
-    "warnings": 89,
-    "seconds": 89.62
+    "command": "cd backend && ENV=test ./venv/bin/python -m pytest tests/factory/test_windows_cp1252_parity.py tests/factory/test_tester_isolation.py tests/factory/test_network_posture.py tests/factory/test_block_action_contract.py::test_dispatch_does_not_pass_on_a_block_refusal",
+    "note": "Linux host can exercise PYTHONIOENCODING=cp1252 in a child process; that is not a Windows/cp1252 product-suite run. Official F26 evidence is the windows-latest job."
   },
-  "not_claimed": ["PILOT_READY", "S10–S13"],
-  "stop": "S9 still FAIL on windows_cp1252_parity_not_run. Do not start S10.",
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "new_job_id": "windows-cp1252-parity",
+    "new_job_name": "Windows cp1252 encoding parity (F13/F26)",
+    "runs_on": "windows-latest",
+    "allow_failure": false,
+    "ubuntu_jobs_unchanged": ["backend", "frontend", "docker"],
+    "job_green_on_this_eval": false
+  },
+  "not_claimed": ["PILOT_READY", "S10–S13", "windows_cp1252_parity PASS"],
+  "stop": "S9 still FAIL: windows-latest F26 job is in the delivery path but has not gone green. Do not start S10.",
   "lotdesk": "fixture only; not patched",
   "blocks_harvest": "BLOCKED — no authorized write path to Cerebrum-Blocks in this repo. STORE_MANAGER harvest remains unbuilt (U6)."
 }

@@ -1062,6 +1062,32 @@ def _error_envelope(block_id: str, action: str | None, error: str) -> Dict[str, 
     }
 
 
+def _force_utf8_stdio() -> None:
+    """F13: a checkmark/emoji print must not become a charmap crash.
+
+    Windows cp1252 consoles encode print() with the console codepage. A
+    vendored block that prints one checkmark used to raise UnicodeEncodeError;
+    execute() then swallowed that into a generic error envelope that looked
+    like a domain refusal. Force UTF-8 on this process before the block runs.
+    """
+    import os
+    import sys
+
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    os.environ["PYTHONUTF8"] = "1"
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError, AttributeError):
+            continue
+
+
+_force_utf8_stdio()
+
+
 def execute(
     block_id: str,
     payload: Dict[str, Any],
@@ -1112,10 +1138,17 @@ def execute(
     # the diagnosis: a handler (and a failing test) sees "Input validation
     # failed" with no block name and no field list. Structural failures --
     # a block that is not vendored -- still raise above.
+    _force_utf8_stdio()
     try:
         result = run(input=adapted, **kwargs)
     except BlockNotVendored:
         raise
+    except UnicodeEncodeError as exc:
+        return _error_envelope(
+            block_id,
+            action,
+            f"UnicodeEncodeError on block stdout (encoding, not domain): {exc}",
+        )
     except Exception as exc:
         return _error_envelope(
             block_id, action, f"{type(exc).__name__}: {exc}"
