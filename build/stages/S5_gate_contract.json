@@ -1,0 +1,13 @@
+{
+  "stage": "S5",
+  "name": "GATE_CONTRACT",
+  "evaluated_at": "2026-08-23T07:00:30Z",
+  "verdict": "PASS",
+  "named_gate": "SEALED_AFTER_CLONER / assert_write_allowed sealed vendor/**",
+  "maps_f29_to": "FAILED_AUTHORITY",
+  "checked": [
+    "grep prepare_pilot_workspace backend/app/factory/build/runner.py is empty of calls",
+    "RoleRunner._run_phase seals vendor/** when CLONER is already complete",
+    "WRITER/TESTER write to vendor/** raises AuthorityError matching sealed after CLONER"
+  ]
+}

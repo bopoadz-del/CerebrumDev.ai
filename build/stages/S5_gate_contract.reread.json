@@ -1,0 +1,14 @@
+{
+  "stage": "S5",
+  "name": "gate_contract",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S5_gate_contract.json",
+  "reread_at": "2026-08-23T07:01:15Z",
+  "independent": true,
+  "checked": [
+    "assert_write_allowed(..., sealed=) raises when vendor/** matches after CLONER",
+    "AuthorityError message names FAILED_AUTHORITY / sealed after CLONER",
+    "F29 is no longer a NOTE in runner.py"
+  ],
+  "disagreements": []
+}
