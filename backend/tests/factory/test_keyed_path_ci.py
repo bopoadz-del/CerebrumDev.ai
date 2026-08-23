@@ -86,7 +86,7 @@ def test_ci_yml_declares_the_keyed_path_job():
 def test_keyed_process_env_matches_production_when_ci_sets_it():
     """Dedicated CI step sets KEYED_PATH_CI=1; skip in the default suite."""
     if os.environ.get("KEYED_PATH_CI") != "1":
-        pytest.skip("not the keyed-path CI job")
+        pytest.skip(reason="not the keyed-path CI job")
     assert os.environ.get("FACTORY_CODER_ENABLED") == "1"
     assert os.environ.get("KIMI_API_KEY") or os.environ.get("CEREBRUM_LLM_API_KEY")
 
