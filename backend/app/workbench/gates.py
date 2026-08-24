@@ -122,9 +122,16 @@ def run_acceptance_gates(
                     _gate_result(name, False, message="no candidate blueprint")
                 )
             else:
+                # Surveyed before planning so the evidence survives the
+                # raise. Reading plan().unsupported could only ever report
+                # an empty list -- plan() refuses before returning one --
+                # so the gate that exists to name unsupported capabilities
+                # never named any.
+                planner = CapabilityPlanner(None, None)
+                unsupported: list = []
                 try:
-                    plan = CapabilityPlanner(None, None).plan(blueprint)
-                    unsupported = list(plan.unsupported or [])
+                    unsupported = list(planner.survey(blueprint).unsupported or [])
+                    plan = planner.plan(blueprint)
                     passed = True
                     msg = "planner completed"
                     if name == "dual_registry_gate":
@@ -151,7 +158,7 @@ def run_acceptance_gates(
                         _gate_result(
                             name,
                             False,
-                            evidence={"error": str(exc)},
+                            evidence={"error": str(exc), "unsupported": unsupported},
                             message=str(exc),
                         )
                     )

@@ -19,7 +19,7 @@ from app.factory.paths import (
     factory_outputs_root,
     is_safe_to_clean,
 )
-from app.factory.planner import CapabilityPlanner, ProductPlan
+from app.factory.planner import CapabilityPlanner, ProductPlan, assert_generatable
 from app.factory.resident_engineer import write_resident_engineer, write_store_docs
 from app.product_dna.emit import emit_product_dna
 from app.resident_engineer.ship.inject import inject_resident_runtime
@@ -41,7 +41,7 @@ class ProductGenerator:
         self._coder_report: Dict[str, Any] = {"written": [], "stubbed": {}}
         self.blueprint = blueprint
         self.planner = CapabilityPlanner(blocks_root, factory_shelf)
-        self.plan = plan or self.planner.plan(blueprint)
+        self.plan = assert_generatable(plan) if plan else self.planner.plan(blueprint)
         self.factory_commit = factory_commit
         self.blocks_commit = blocks_commit
         self.blocks_root = blocks_root

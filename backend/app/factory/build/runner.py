@@ -164,13 +164,17 @@ class RoleRunner:
         clock: Callable[[], float] = time.monotonic,
         cycle: str = "code",
     ) -> None:
-        from app.factory.planner import CapabilityPlanner
+        from app.factory.planner import CapabilityPlanner, assert_generatable
 
         self.blueprint = blueprint
         self.workspace = Path(workspace).resolve()
         self.blocks_root = Path(blocks_root) if blocks_root else None
         self.store_root = Path(store_root) if store_root else None
-        self.plan = plan or CapabilityPlanner(self.blocks_root).plan(blueprint)
+        self.plan = (
+            assert_generatable(plan)
+            if plan
+            else CapabilityPlanner(self.blocks_root).plan(blueprint)
+        )
         self.budget = budget or BuildBudget()
         # Roles are injectable so a test can drive a misbehaving role; gates
         # are NOT -- see the module docstring.
