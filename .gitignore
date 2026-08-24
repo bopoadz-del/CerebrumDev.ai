@@ -30,3 +30,4 @@ artifacts/audits/
 # tests shell out to it. They embed a machine-specific worktree path + timestamp
 # and must never be committed (they were, as test-run byproducts).
 artifacts/steward_*.json
+backend/.venv-factory/
