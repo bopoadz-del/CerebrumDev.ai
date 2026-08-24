@@ -1,11 +1,20 @@
 """S13 upstream harvest — Cerebrum-Blocks / factory-upstream.
 
-STORE_MANAGER's write half is unbuilt (U6). This repo has no authorized
-write path to ``bopoadz-del/Cerebrum-Blocks``. Harvest must not pretend to
-copy pipeline fixes upstream.
+STORE_MANAGER's write half was unbuilt (U6) and this module was the honest
+BLOCK around it: ``store_write_exists`` was the literal ``False``.
 
-This module is the honest BLOCK: it records why harvest cannot run and
-what that means for the next product. It never writes to a Store checkout.
+The write path now exists — ``app.factory.build.store_write`` — so this
+module reports a real verdict instead of a permanent refusal. Two things
+must both hold before harvest is READY:
+
+* **authorization**, a committed ``build/stages/HARVEST_AUTHORIZED.json``
+  naming this Store. An environment flag is deliberately not enough: a
+  dashboard secret must not be able to write to Cerebrum-Blocks.
+* **a writable checkout** — present, clean, and pointing at that Store.
+
+READY means a harvest *may* be written, not that anything was written.
+This module still never writes; ``store_write.execute_harvest`` does, onto
+a review branch, and it never pushes.
 """
 
 from __future__ import annotations
@@ -21,6 +30,10 @@ BLOCKS_REPO = "bopoadz-del/Cerebrum-Blocks"
 
 # Factory-owned corrections that live only in CerebrumDev.ai emission until
 # an authorized harvest exists. Named so the BLOCK is about real files.
+# Corrections that still live only in this repo's emission. The F16
+# ui_schema divergence has left this list: it is computed and harvestable
+# by store_write.plan_harvest. These remain because each needs upstream
+# code review, not a mechanical edit.
 UNHARVESTED_FIXES = (
     "RoleRunner offline_adapters (Store-unwired vendor contracts)",
     "P1 capture adapter (network:false / llm_provider=none)",
@@ -62,8 +75,13 @@ def _store_write_authorized() -> bool:
         has_marker = (
             data.get("authorized") is True and data.get("blocks_repo") == BLOCKS_REPO
         )
-    # registrar.py is read-only; no workflow pushes to Cerebrum-Blocks.
-    store_write_exists = False
+    # U6: a write path now exists (app.factory.build.store_write). It writes
+    # to a fresh branch in a Cerebrum-Blocks checkout and never pushes, so
+    # authorization still gates it: the marker says this repo may write, the
+    # capability says a write is mechanically possible, and both are needed.
+    from app.factory.build.store_write import store_write_capability
+
+    store_write_exists = bool(store_write_capability().get("implemented"))
     return bool(has_marker and store_write_exists)
 
 
@@ -84,31 +102,47 @@ def _blocks_checkout(explicit: Optional[Path] = None) -> Optional[Path]:
 
 def evaluate_harvest(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
     """Return a harvest verdict. Never copies files. Never writes upstream."""
+    from app.factory.build.store_write import checkout_is_writable
+
     checkout = _blocks_checkout(blocks_root)
     authorized = _store_write_authorized()
     copied: list[str] = []
-    blocked = True
-    reason = (
-        "STORE_MANAGER harvest remains unbuilt (U6). "
-        "authority.py STORE_MANAGER mandate: harvesting improvements back "
-        "upstream remains unbuilt. registrar.py is read-only. No git remote "
-        f"or workflow in this repo writes to {BLOCKS_REPO}."
-    )
-    if checkout is not None and not authorized:
-        reason += (
-            f" A checkout exists at {checkout} but write is not authorized; "
-            "files were not copied."
+    writable = checkout_is_writable(checkout)
+
+    if authorized and writable["writable"]:
+        blocked = False
+        reason = (
+            "harvest is authorized and a writable Cerebrum-Blocks checkout is "
+            f"present at {checkout}. Run store_write.execute_harvest to write a "
+            "review branch; it never targets the default branch and never pushes."
         )
+    else:
+        blocked = True
+        if not authorized:
+            reason = (
+                "harvest write is NOT authorized. A committed "
+                "build/stages/HARVEST_AUTHORIZED.json naming "
+                f"{BLOCKS_REPO} is required; an environment flag is not "
+                "authorization. The write path itself now exists (U6, "
+                "app.factory.build.store_write)."
+            )
+        else:
+            reason = (
+                "harvest is authorized but no writable checkout is available: "
+                f"{writable['reason']}."
+            )
     return {
         "gate": HARVEST_ID,
-        "verdict": "BLOCKED",
-        "ok": False,
+        "verdict": "BLOCKED" if blocked else "READY",
+        "ok": not blocked,
         "blocked": blocked,
         "copied": copied,
         "copied_count": 0,
         "authorized_write_path": authorized,
         "blocks_repo": BLOCKS_REPO,
         "blocks_checkout": str(checkout) if checkout else None,
+        "checkout_writable": writable["writable"],
+        "write_path": "app.factory.build.store_write",
         "unharvested_fixes": list(UNHARVESTED_FIXES),
         "reason": reason,
         "consequence": CONSEQUENCE,
