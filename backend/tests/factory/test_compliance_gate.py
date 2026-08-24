@@ -198,7 +198,7 @@ def test_shipped_blueprints_are_compliant(rel):
 
     path = BLUEPRINTS / rel
     if not path.is_file():
-        pytest.skip(f"{rel} not present")
+        pytest.skip(reason=f"{rel} not present")
     bp = load_blueprint(path)
     plan = CapabilityPlanner(None, None).plan(bp)
     verdict = evaluate_plan(plan, blueprint=bp)
