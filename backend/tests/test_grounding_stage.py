@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.grounding import (
+    STRICT_FIGURES_ENV,
+    strict_figures,
     VERDICT_BLOCKED,
     VERDICT_FLAG,
     VERDICT_GROUNDED,
@@ -203,3 +205,63 @@ class TestFactoryEmitsGroundingStage:
         assert verdict["answer"] is None
         ok = module.retrieval_verdict([{"chunk_id": "c1"}])
         assert ok["verdict"] == "grounded"
+
+
+class TestFigureVerificationIsByValue:
+    """Figures are compared as values against the figures sources assert.
+
+    The previous test was `figure not in corpus_string`, so any number that
+    happened to be a substring of a real one verified clean. A fabricated
+    "25" passed because a source somewhere said "1250".
+    """
+
+    SOURCES = ["The Q3 report shows revenue of 1250 units across 3 regions."]
+
+    def test_a_figure_that_is_only_a_substring_is_not_grounded(self):
+        result = evaluate_grounding(
+            "There were 25 incidents.", sources=self.SOURCES, strict=False
+        )
+        assert result["verdict"] == VERDICT_FLAG
+        assert result["unsupported_figures"] == ["25"]
+
+    def test_the_same_value_spelled_differently_is_grounded(self):
+        """1,250 and 1250.00 are the figure the source asserts, not new ones."""
+        for spelling in ("1250", "1,250", "1250.00"):
+            result = evaluate_grounding(
+                f"Revenue was {spelling} units.", sources=self.SOURCES
+            )
+            assert result["verdict"] == VERDICT_GROUNDED, spelling
+
+    def test_a_genuinely_invented_figure_is_still_caught(self):
+        result = evaluate_grounding(
+            "Revenue was 9987 units.", sources=self.SOURCES, strict=False
+        )
+        assert result["verdict"] == VERDICT_FLAG
+        assert result["unsupported_figures"] == ["9987"]
+
+    def test_single_digits_are_not_treated_as_claims(self):
+        """"3 regions" is prose, not a reportable figure."""
+        result = evaluate_grounding("There are 3 regions.", sources=self.SOURCES)
+        assert result["verdict"] == VERDICT_GROUNDED
+
+
+class TestStrictFiguresIsReachable:
+    """`strict` shipped from the start and no caller ever passed it."""
+
+    def test_it_defaults_to_blocking(self, monkeypatch):
+        monkeypatch.delenv(STRICT_FIGURES_ENV, raising=False)
+        assert strict_figures() is True
+
+    @pytest.mark.parametrize("value", ["0", "false", "off", "no", ""])
+    def test_it_can_be_turned_down_to_flagging(self, monkeypatch, value):
+        monkeypatch.setenv(STRICT_FIGURES_ENV, value)
+        assert strict_figures() is False
+
+    def test_the_chat_surface_asks_for_strict(self):
+        """A wrong build count is worse than a refusal on this surface."""
+        import inspect
+
+        from app.routers import chat as chat_router
+
+        source = inspect.getsource(chat_router)
+        assert "strict=strict_figures()" in source

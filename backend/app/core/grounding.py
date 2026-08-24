@@ -18,12 +18,39 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 VERDICT_GROUNDED = "grounded"
 VERDICT_FLAG = "flag-as-estimate"
 VERDICT_BLOCKED = "blocked"
+
+#: Whether an unsupported figure blocks the answer or only annotates it.
+STRICT_FIGURES_ENV = "CEREBRUM_GROUNDING_STRICT_FIGURES"
+
+
+def strict_figures() -> bool:
+    """Do unsupported figures block, on surfaces that report platform data?
+
+    ``strict`` existed from the start and no caller ever passed it, so the
+    blocking branch was unreachable: every fabricated figure shipped with an
+    estimate disclosure appended, which helps only a reader who notices it.
+    This makes the branch reachable and on by default.
+
+    The cost is real and worth stating: a *derived* figure — one the model
+    computed correctly from grounded inputs, like a total the sources never
+    spell out — is indistinguishable from a fabricated one to a detector that
+    only matches values. Strict mode refuses both. That is the right trade on
+    a surface reporting build and artifact counts, where a confidently wrong
+    number is worse than a refusal, and it is why this is a setting rather
+    than a constant. Set ``CEREBRUM_GROUNDING_STRICT_FIGURES=0`` to return to
+    flagging.
+    """
+    raw = os.getenv(STRICT_FIGURES_ENV)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
 
 _URL_RE = re.compile(r"https?://[^\s)\]}>\"']+")
 # Figures worth checking: 2+ digit numbers, decimals, or percentages.
@@ -36,6 +63,23 @@ def _normalize_figure(raw: str) -> str:
 
 def _figures(text: str) -> List[str]:
     return [_normalize_figure(m) for m in _FIGURE_RE.findall(text)]
+
+
+def _figure_key(raw: str) -> Any:
+    """Compare figures by value, not by spelling.
+
+    Returns a Decimal when the token is numeric so that 1,250 / 1250 /
+    1250.00 are one figure, and falls back to the string otherwise.
+    """
+    try:
+        return Decimal(raw)
+    except (InvalidOperation, ValueError):
+        return raw
+
+
+def _supported_figures(corpus: str) -> Set[Any]:
+    """Every figure the sources actually assert, as comparable values."""
+    return {_figure_key(f) for f in _figures(corpus)}
 
 
 def evaluate_grounding(
@@ -52,7 +96,11 @@ def evaluate_grounding(
     """
     answer = answer or ""
     corpus = "\n".join([s for s in sources if s] + [query or ""])
-    corpus_normalized = corpus.replace(",", "")
+    # Figures are compared as values against the figures the sources assert,
+    # never as substrings of the raw corpus. A substring test called "25"
+    # grounded because a source said "1250" — a fabricated number passed
+    # verification for containing digits that happened to appear elsewhere.
+    supported = _supported_figures(corpus)
     reasons: List[str] = []
 
     invented_urls = [u for u in _URL_RE.findall(answer) if u.rstrip(".,") not in corpus]
@@ -67,7 +115,7 @@ def evaluate_grounding(
             "unsupported_figures": [],
         }
 
-    unsupported = [f for f in _figures(answer) if f not in corpus_normalized]
+    unsupported = [f for f in _figures(answer) if _figure_key(f) not in supported]
     if unsupported:
         reasons.append(
             "figure(s) not present in any source: " + ", ".join(sorted(set(unsupported)))

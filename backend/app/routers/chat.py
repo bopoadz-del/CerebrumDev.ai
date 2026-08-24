@@ -20,6 +20,7 @@ from ..core.grounding import (
     check_scope_refusal,
     evaluate_grounding,
     persist_verdict,
+    strict_figures,
 )
 from ..core.rule_injector import inject_rules
 from ..core.llm_throttle import require_llm_rate
@@ -413,8 +414,14 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         _session_state_summary(state),
         *[m.get("content", "") for m in state.chat_history],
     ]
+    # This surface reports build state and artifact counts, so a figure the
+    # sources do not assert is refused rather than annotated: a confidently
+    # wrong count is worse here than a refusal.
     verdict = evaluate_grounding(
-        assistant_message, sources=grounding_sources, query=user_message
+        assistant_message,
+        sources=grounding_sources,
+        query=user_message,
+        strict=strict_figures(),
     )
     persist_verdict(
         {
