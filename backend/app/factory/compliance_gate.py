@@ -3,9 +3,10 @@
 The planner already refuses UNSUPPORTED capabilities. This gate refuses the
 quieter failures a plan can carry while still looking well-formed:
 
-- a capability planned as REUSE/ADAPT/COMPOSE that names no block. The
+- a capability planned as REUSE or COMPOSE that names no block. The
   strategy says "an existing block does this"; an empty block list says
-  nothing does. The product ships a capability backed by nothing.
+  nothing does. The product ships a capability backed by nothing. (ADAPT is
+  excluded on purpose -- see BLOCK_BACKED_STRATEGIES.)
 - a block referenced by a capability but absent from the plan's own
   dual-registration list.
 - a capability the blueprint asked for that no plan entry answers.
@@ -26,7 +27,7 @@ than one that admits it does not.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 #: Strategies whose name asserts that an existing block does the work.
