@@ -73,6 +73,10 @@ jobs:
         working-directory: .
         run: python scripts/audit_stubs.py
 
+      - name: Gate audit (reachable, consumed, proven to refuse)
+        working-directory: .
+        run: python scripts/audit_gates.py
+
       - name: Secret scan
         working-directory: .
         run: python scripts/scan_secrets.py
