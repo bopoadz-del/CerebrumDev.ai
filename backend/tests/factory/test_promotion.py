@@ -267,22 +267,34 @@ def test_harvest_is_honestly_blocked():
     assert harvest["unharvested_fixes"]
 
 
-def test_harvest_marker_alone_does_not_copy(tmp_path, monkeypatch):
-    """A planted authorization file is still not a Store write path."""
+def test_authorization_alone_does_not_copy(tmp_path, monkeypatch):
+    """Authorized means a harvest MAY be written, never that one was.
+
+    Before U6 this asserted that a planted marker could not authorize,
+    because store_write_exists was the literal False. The write path now
+    exists, so the marker does authorize — and the guarantee that still
+    matters is the separation: evaluate_harvest never copies anything.
+    Writing is store_write.execute_harvest, onto a review branch.
+    """
     stages = tmp_path / "build" / "stages"
     stages.mkdir(parents=True)
     (stages / "HARVEST_AUTHORIZED.json").write_text(
         json.dumps({"authorized": True, "blocks_repo": BLOCKS_REPO}),
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        "app.factory.build.harvest._repo_root", lambda: tmp_path
-    )
-    assert _store_write_authorized() is False
-    harvest = evaluate_harvest()
-    assert harvest["verdict"] == "BLOCKED"
+    monkeypatch.setattr("app.factory.build.harvest._repo_root", lambda: tmp_path)
+
+    assert _store_write_authorized() is True
+
+    # An explicit non-checkout keeps this off whatever clone the machine has.
+    not_a_checkout = tmp_path / "not-a-checkout"
+    not_a_checkout.mkdir()
+    harvest = evaluate_harvest(not_a_checkout)
+
     assert harvest["copied_count"] == 0
-    assert harvest["authorized_write_path"] is False
+    assert harvest["copied"] == []
+    assert harvest["verdict"] == "BLOCKED"
+    assert harvest["checkout_writable"] is False
 
 
 def test_coder_route_body_stays_none():
