@@ -522,6 +522,22 @@ def generate_product(
 
         blocks = resolve_blocks_root()
 
+    # Contract compliance, checked once, here. There are seven call sites of
+    # this function across four modules; gating there would be seven
+    # wirings and a silent bypass for the eighth. This is the door every
+    # production path already funnels through, so the gate is structural
+    # rather than remembered.
+    #
+    # The plan is computed and discarded: both engines plan again from the
+    # blueprint. That duplication is deliberate -- threading a plan through
+    # start_runner_build would add a parameter that could carry an ungated
+    # plan, which is the shape of bypass this gate exists to close.
+    from app.factory.compliance_gate import assert_compliant
+
+    assert_compliant(
+        CapabilityPlanner(blocks).plan(blueprint), blueprint=blueprint
+    )
+
     from app.factory.build_jobs import RUNNER, build_engine, start_runner_build
 
     if build_engine() == RUNNER:
