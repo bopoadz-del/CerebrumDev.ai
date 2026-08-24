@@ -95,8 +95,24 @@ def _pilot_workspace(tmp_path: Path) -> Path:
     build ledger with RUN_SUCCEEDED at cycle=pilot, because a document can
     be written by hand and a pilot cycle cannot.
     """
+    from app.factory.build.package import write_identity
+
+    class _Stampable:
+        def __init__(self, root):
+            self.workspace = root
+
+        def write_text(self, rel, text):
+            dest = self.workspace / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(text, encoding="utf-8")
+
     ws = tmp_path / "pilot-ws"
-    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "app").mkdir(parents=True, exist_ok=True)
+    (ws / "app" / "routes.py").write_text("# payload\n", encoding="utf-8")
+    # Identity is stamped because the proof binds the ledger to these bytes:
+    # a ledger with no package_identity.json proves a cycle ran somewhere,
+    # not that it ran on this tree.
+    write_identity(_Stampable(ws))
     event = json.dumps({"kind": "RUN_SUCCEEDED", "payload": {"cycle": "pilot"}})
     (ws / "build_ledger.jsonl").write_text(event + "\n", encoding="utf-8")
     return ws

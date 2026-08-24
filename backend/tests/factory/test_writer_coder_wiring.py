@@ -19,6 +19,7 @@ import pytest
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.runner import RoleRunner
+from tests.factory.coder_stub_bodies import invoking_handler_body
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
@@ -99,7 +100,7 @@ def test_the_writer_uses_the_coding_agent_when_one_is_configured(
     def fake_coder(**kwargs):
         calls.append(kwargs)
         return {
-            "body": '    return {"capability": CAPABILITY_ID, "agent": True}',
+            "body": invoking_handler_body({"agent": True}),
             "model": "test-model-1",
         }
 
@@ -178,7 +179,7 @@ def test_rework_findings_are_handed_to_the_coder(blueprint, tmp_path, monkeypatc
 
     def fake_coder(**kwargs):
         seen.append(list(kwargs.get("work_list") or []))
-        return {"body": '    return {"capability": CAPABILITY_ID}', "model": "m"}
+        return {"body": invoking_handler_body(), "model": "m"}
 
     monkeypatch.setattr("app.factory.coder.generate_platform_handler", fake_coder)
 

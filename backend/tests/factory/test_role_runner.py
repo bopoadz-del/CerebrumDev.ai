@@ -32,6 +32,7 @@ from app.factory.build.runner import (
     blueprint_hash,
     runner_enabled,
 )
+from tests.factory.coder_stub_bodies import invoking_handler_body
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
@@ -540,7 +541,9 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
     def varying(**kwargs):
         counter["n"] += 1
         return {
-            "body": f'    return {{"capability": CAPABILITY_ID, "run": {counter["n"]}}}',
+            # Varies per call (that is the point of this test) while still
+            # invoking the declared blocks -- a canned body would be F11.
+            "body": invoking_handler_body({"run": counter["n"]}),
             "model": "stub-coder",
         }
 

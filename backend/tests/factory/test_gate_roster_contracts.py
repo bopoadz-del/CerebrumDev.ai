@@ -234,3 +234,41 @@ def test_durability_gate_fails_a_pilot_workspace_with_no_models(tmp_path):
     )
     assert result.ok is False
     assert result.gate == DURABILITY_GATE
+
+
+# -- the probes are source, and must be treated as source -------------------
+
+
+def test_the_embedded_probes_are_valid_python():
+    """A probe is a string until it runs; a syntax error in one is invisible.
+
+    Both gates ship their check as source embedded in a module-level string.
+    The module parsing proves nothing about the probe, and a broken literal
+    inside one made every build fail with 'workspace does not import' —
+    which reads like a defect in the product rather than in the gate.
+    """
+    import ast
+
+    from app.factory.build import pilot_durability, writer_behaviour
+
+    for name, source in (
+        ("BEHAVIOUR_PROBE", writer_behaviour.BEHAVIOUR_PROBE),
+        ("DURABILITY_PROBE", pilot_durability.DURABILITY_PROBE),
+    ):
+        ast.parse(source)  # raises SyntaxError with the offending line
+
+
+def test_probe_findings_are_marked_so_library_logging_cannot_bury_them():
+    """alembic and uvicorn log to stderr too.
+
+    The gate used to report the last lines of stderr, so a build that failed
+    for a real reason reported alembic INFO noise instead. Every finding the
+    probe emits carries a marker the gate filters on.
+    """
+    from app.factory.build import writer_behaviour
+
+    probe = writer_behaviour.BEHAVIOUR_PROBE
+    writes = [ln for ln in probe.splitlines() if "stderr.write" in ln]
+    assert writes, "probe emits no findings at all"
+    marked = probe.count("GATE-FINDING")
+    assert marked >= len(writes), (marked, len(writes))
