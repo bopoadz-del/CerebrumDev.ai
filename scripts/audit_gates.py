@@ -193,13 +193,13 @@ def roster_consumers(app_dir, roster_file):
     for path in _py_files(app_dir):
         if os.path.abspath(path) == roster_abs:
             continue
-        try:
-            src = open(path, encoding="utf-8", errors="ignore").read()
-        except OSError:
+        tree = _parse(path)
+        if tree is None:
             continue
-        # A rendered template that merely emits the word into product source
-        # is not a consumer of this roster.
-        for node in ast.walk(_parse(path) or ast.Module(body=[], type_ignores=[])):
+        # Walked as AST, not grepped: roles.py renders the literal string
+        # "GATES" into generated product source, and a template that emits
+        # the word is not a consumer of this roster.
+        for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in (ROSTER_NAME, "gate_for"):
                 out.append(path)
                 break
