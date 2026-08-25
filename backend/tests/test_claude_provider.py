@@ -248,10 +248,11 @@ def test_claude_code_call_posts_the_messages_endpoint(monkeypatch):
 
     monkeypatch.setattr(coder.httpx, "post", fake_post)
 
-    out = coder._llm_code_call(
+    out, model_used = coder._llm_code_call(
         [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}]
     )
     assert out == "    return {}"
+    assert model_used == sent["json"]["model"], "reported a model it did not call"
     assert sent["url"].endswith("/messages")
     assert "chat/completions" not in sent["url"]
     assert sent["headers"]["x-api-key"] == FAKE_CLAUDE
@@ -279,7 +280,7 @@ def test_kimi_code_call_is_unchanged_by_claude_support(monkeypatch):
 
     monkeypatch.setattr(coder.httpx, "post", fake_post)
 
-    assert coder._llm_code_call([{"role": "user", "content": "U"}]) == "    return {}"
+    assert coder._llm_code_call([{"role": "user", "content": "U"}])[0] == "    return {}"
     assert sent["url"].endswith("/chat/completions")
     assert sent["headers"]["Authorization"] == f"Bearer {FAKE_KIMI}"
     assert "x-api-key" not in sent["headers"]

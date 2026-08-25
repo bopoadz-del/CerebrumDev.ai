@@ -206,5 +206,10 @@ def test_the_fallback_leg_is_actually_tried(monkeypatch):
 
     monkeypatch.setattr(coder.httpx, "post", fake_post)
 
-    assert coder._llm_code_call([{"role": "user", "content": "hi"}]) == "return {}"
+    text, model_used = coder._llm_code_call([{"role": "user", "content": "hi"}])
+    assert text == "return {}"
+    # The fallback leg answered, so the fallback model is what provenance must
+    # record -- naming the primary here is how a build claims an author it
+    # never had.
+    assert model_used == "fallback-model"
     assert tried == ["primary-model", "fallback-model"]

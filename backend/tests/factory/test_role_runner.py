@@ -566,7 +566,8 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
         },
     )
     monkeypatch.setattr(
-        "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
+        "app.factory.coder._llm_code_call",
+        lambda messages: ("# stub readme\n", "stub-model"),
     )
 
     a, b = tmp_path / "a", tmp_path / "b"
