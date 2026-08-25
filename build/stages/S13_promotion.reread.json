@@ -1,10 +1,10 @@
 {
   "stage": "S13",
   "name": "promotion",
-  "verdict": "FAIL",
-  "PILOT_READY": false,
+  "verdict": "PASS",
+  "PILOT_READY": true,
   "reread_of": "/workspace/build/stages/S13_promotion.json",
-  "reread_at": "2026-08-25T12:55:20Z",
+  "reread_at": "2026-08-25T13:10:59Z",
   "independent": true,
   "reader": "cloud-agent-s13-promotion",
   "emitter": "app.factory.build.promotion.evaluate_promotion",
@@ -18,7 +18,7 @@
     "harvest evaluate_harvest is BLOCKED; no Blocks write"
   ],
   "disagreements": [],
-  "first_failing_criterion": "pilot_cycle:no pilot workspace given \u2014 set FACTORY_PILOT_WORKSPACE to the build workspace whose pilot cycle backs this promotion",
+  "first_failing_criterion": null,
   "harvest_verdict": "BLOCKED",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
