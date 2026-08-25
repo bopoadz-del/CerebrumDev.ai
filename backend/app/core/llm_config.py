@@ -25,6 +25,12 @@ Selecting a provider whose key is missing is a loud error. It never falls
 through to the other provider -- a silent switch is a cost surprise, which is
 a product bug.
 
+That rule governs the PRIMARY provider. A cross-provider *fallback leg* --
+see :func:`get_factory_fallback_leg` -- is available to the factory coder
+only, runs only after the primary has already failed, and is pinned to a
+zero-priced model so it cannot create the cost surprise the rule exists to
+prevent.
+
 ``LLM_PROVIDER`` accepts ``kimi``/``moonshot`` (aliased to kimi) and
 ``claude``/``anthropic`` (aliased to claude).
 """
@@ -73,7 +79,7 @@ def _kimi_model(*prefixes: str) -> str:
     # 404 on api.moonshot.ai — measured live on the 2026-08-13 factory build:
     # every primary call failed and only the fallback leg did the work. The
     # code-oriented sibling is real on this endpoint; override via KIMI_MODEL.
-    return _env_first(*candidates, default="kimi-k2.7-code-highspeed")
+    return _env_first(*candidates, default="kimi-k2.7-code")
 
 
 def _kimi_fallback_model(*prefixes: str, default: str) -> str:
@@ -104,7 +110,7 @@ def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
         "base_url": _kimi_base_url(*prefixes),
         "model": _kimi_model(*prefixes),
         # The fallback leg must be a DIFFERENT, live model: with the primary
-        # now kimi-k2.7-code-highspeed, falling back to itself would just
+        # now kimi-k2.7-code, falling back to itself would just
         # replay a 429 into the same rate limit. moonshot-v1-8k is weaker but
         # proven to write handlers, and provenance headers record which leg
         # produced every artifact.
@@ -314,6 +320,94 @@ def get_factory_llm_config() -> Dict[str, Any]:
             "or set KIMI_MOCK=1 for tests"
         )
     return cfg
+
+
+# -- Cross-provider fallback leg (OpenRouter) ------------------------------
+#
+# The rule above -- never fall through to another provider -- is about COST
+# SURPRISE: a silent switch that moves a bill is a product bug. That rule
+# governs which provider is PRIMARY, and it stands.
+#
+# A fallback leg is a different question. It runs only after the primary has
+# already failed, so the alternative it is measured against is not "a cheaper
+# provider", it is "no artifact at all". And a leg pinned to a ``:free`` slug
+# cannot move a bill, so the reason for the prohibition does not reach it.
+#
+# The invariant is preserved literally: a non-free fallback model is refused
+# unless FACTORY_LLM_FALLBACK_ALLOW_PAID=1 says otherwise. Setting
+# OPENROUTER_API_KEY is the explicit act that arms the leg -- there is no
+# path where it turns on by itself.
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+#: Verified against OpenRouter's live catalogue on 2026-08-25: prompt and
+#: completion both price 0, 256K context. The ``:free`` suffix is
+#: load-bearing -- plain ``z-ai/glm-5.2`` is the paid tier (1M context, and
+#: $1.19/$3.74 per Mtok), so dropping four characters silently starts a bill.
+DEFAULT_OPENROUTER_FALLBACK_MODEL = "z-ai/glm-5.2:free"
+
+SUPPORTED_FALLBACK_PROVIDERS = ("openrouter",)
+
+
+def _is_free_slug(model: str) -> bool:
+    """OpenRouter marks zero-priced models with a ``:free`` variant suffix."""
+    return model.strip().lower().endswith(":free")
+
+
+def get_factory_fallback_leg() -> Dict[str, Any] | None:
+    """The cross-provider fallback leg for the factory coder, or None.
+
+    Returns a leg with its OWN endpoint and credentials -- unlike
+    ``fallback_model``, which only swaps the model name while reusing the
+    primary's base_url and key. Crossing vendors needs the whole triple.
+
+    Returns None when unarmed (no key, or explicitly disabled). Returns a leg
+    carrying ``error`` when it is armed but misconfigured, so the caller can
+    report why the leg did not run instead of silently having no fallback.
+    """
+    if _env_first("FACTORY_LLM_FALLBACK_PROVIDER", default="openrouter").lower() in {
+        "none",
+        "off",
+        "disabled",
+    }:
+        return None
+
+    api_key = _env_first("OPENROUTER_API_KEY", "FACTORY_LLM_FALLBACK_API_KEY")
+    if not api_key:
+        return None
+
+    model = _env_first(
+        "FACTORY_LLM_FALLBACK_MODEL",
+        "OPENROUTER_MODEL",
+        default=DEFAULT_OPENROUTER_FALLBACK_MODEL,
+    )
+
+    leg: Dict[str, Any] = {
+        "provider": "openrouter",
+        "api_key": api_key,
+        "base_url": _env_first("OPENROUTER_BASE_URL", default=OPENROUTER_BASE_URL),
+        "model": model,
+        "temperature": _llm_temperature(),
+        # Whether this leg can spend money. Two decisions hang off it, and
+        # both are the same cost argument, so they share one flag rather than
+        # drifting apart:
+        #
+        #  * a 429 is retried per Retry-After (free slugs are served from a
+        #    shared upstream pool and answer 429 within seconds -- measured
+        #    live 2026-08-25 on the first call with an unused key); retrying
+        #    a PAID 429 would spend money on the same answer;
+        #  * the leg may run with no primary configured at all, which would
+        #    be a cost surprise if the leg were billable.
+        "is_free": _is_free_slug(model),
+    }
+
+    if not _is_free_slug(model) and not _truthy("FACTORY_LLM_FALLBACK_ALLOW_PAID"):
+        leg["error"] = (
+            f"fallback model {model!r} is not a ':free' slug and "
+            "FACTORY_LLM_FALLBACK_ALLOW_PAID is not set; refusing to arm a "
+            "fallback leg that can spend money without being asked to"
+        )
+    return leg
 
 
 def active_provider() -> str:

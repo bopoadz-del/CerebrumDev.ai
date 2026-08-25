@@ -51,7 +51,8 @@ def _keyed_stub(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
+        "app.factory.coder._llm_code_call",
+        lambda messages: ("# stub readme\n", "stub-model"),
     )
     monkeypatch.setattr(
         "app.factory.coder.review_capability_bindings",

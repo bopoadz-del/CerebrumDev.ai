@@ -249,32 +249,91 @@ def _anthropic_text(data: Dict[str, Any]) -> str:
     return text
 
 
-def _llm_code_call(messages: List[Dict[str, str]]) -> str:
-    """Text completion against the factory LLM. Raises CoderError on failure."""
+def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
+    """Text completion against the factory LLM.
+
+    Returns ``(text, model_used)`` -- the model that ACTUALLY answered, not
+    the one that was configured. Those differ whenever a fallback leg runs,
+    and the difference is stamped into every emitted module as CODER_MODEL.
+    Before this returned two values, a handler written by moonshot-v1-8k was
+    stamped with the primary's name: provenance that names the wrong author
+    is worse than none, because it is trusted.
+
+    Raises CoderError on failure.
+    """
+    from app.core.llm_config import get_factory_fallback_leg
+
     from .product_architect import get_factory_llm_config
 
     cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise CoderError("LLM mock mode — coder has no model to call")
+
+    cross = get_factory_fallback_leg()
+    if cross and cross.get("error"):
+        logger.warning("cross-provider fallback not armed: %s", cross["error"])
+        cross = None
+
+    #: False when the primary has no usable credentials. The leg then runs
+    #: alone rather than the coder refusing outright -- see below.
+    primary_usable = not cfg.get("error")
+
     if cfg.get("error"):
         # Fail closed with the provider's own message; never borrow the other
         # provider's credentials to keep going.
-        raise CoderError(str(cfg["error"]))
+        #
+        # One narrow exception: nobody asked for a provider BY NAME, none is
+        # configured, and a zero-cost leg is armed. Refusing there means every
+        # artifact takes the template path on a deployment that has a working
+        # free model sitting right beside it -- which is precisely the Render
+        # service in KNOWN_INCOMPLETE item 2, where no LLM key is set and the
+        # coder therefore cannot run at all.
+        #
+        # Both halves of the original rule survive. An explicit LLM_PROVIDER
+        # whose key is missing still raises: a request that cannot be honoured
+        # is an error, not an invitation to substitute. And a PAID leg still
+        # raises, because running one unasked is the cost surprise the rule
+        # exists to prevent.
+        explicit = os.getenv("LLM_PROVIDER", "").strip()
+        if explicit or not (cross and cross.get("is_free")):
+            raise CoderError(str(cfg["error"]))
+        logger.warning(
+            "no factory LLM credentials (%s); running on the zero-cost "
+            "fallback leg %s alone",
+            cfg["error"],
+            cross["model"],
+        )
+
     provider = cfg.get("provider")
-    if provider not in ("moonshot", "kimi", "claude"):
+    if primary_usable and provider not in ("moonshot", "kimi", "claude"):
         raise CoderError(f"unsupported coder provider: {provider!r}")
 
-    def _try(model: str) -> str:
-        if provider == "claude":
-            url, payload, headers = _anthropic_request(cfg, messages, model)
+    #: A leg is a whole endpoint -- provider, base_url, key -- not just a
+    #: model name. ``fallback_model`` only ever swapped the name while reusing
+    #: the primary's endpoint, which is why it could never cross vendors.
+    primary_leg: Dict[str, Any] = {
+        "provider": provider,
+        "base_url": cfg.get("base_url", ""),
+        "api_key": cfg.get("api_key", ""),
+        "temperature": cfg.get("temperature"),
+    }
+
+    def _try(leg: Dict[str, Any], model: str) -> str:
+        if leg.get("provider") == "claude":
+            url, payload, headers = _anthropic_request(leg, messages, model)
             resp = httpx.post(url, json=payload, headers=headers, timeout=120.0)
             resp.raise_for_status()
             return _anthropic_text(resp.json())
 
         headers = {"Content-Type": "application/json"}
-        if cfg.get("api_key"):
-            headers["Authorization"] = f"Bearer {cfg['api_key']}"
-        url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
+        if leg.get("api_key"):
+            headers["Authorization"] = f"Bearer {leg['api_key']}"
+        if leg.get("provider") == "openrouter":
+            # Attribution headers; optional to OpenRouter, useful on the
+            # dashboard for telling factory traffic from everything else.
+            headers["HTTP-Referer"] = "https://cerebrumdev.ai"
+            headers["X-Title"] = "CerebrumDev Factory"
+        url = f"{leg['base_url'].rstrip('/')}/chat/completions"
         payload = {
             "model": model,
             "messages": messages,
@@ -287,7 +346,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
         # capable enough to write working code. llm_config._llm_temperature()
         # already returns None by default for this reason; the coder was the
         # one caller ignoring it.
-        temperature = cfg.get("temperature")
+        temperature = leg.get("temperature")
         if temperature is not None:
             payload["temperature"] = temperature
         resp = httpx.post(url, json=payload, headers=headers, timeout=_call_timeout_s())
@@ -313,22 +372,40 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
             )
         return content
 
-    def _try_with_connect_retries(model: str) -> str:
+    def _try_with_connect_retries(leg: Dict[str, Any], model: str) -> str:
         """Transient transport failures get bounded retries with backoff.
 
         Two live campaign runs were lost to intermittent DNS: a single
         ``getaddrinfo failed`` at the wrong moment permanently degraded an
         artifact to the template path and the whole build failed honestly on
-        it hours later. Only connection-class errors retry -- an HTTP status
-        or an empty completion is the model answering, and retrying those
-        would just spend money on the same answer.
+        it hours later. Connection-class errors retry -- an HTTP status or an
+        empty completion is the model answering, and retrying those would
+        just spend money on the same answer.
+
+        One status does retry: a 429 on a zero-cost leg (``is_free``).
+        That is a refusal to answer YET rather than an answer, it costs
+        nothing to wait out, and the server states how long.
         """
         import time as _time
 
         last: Exception | None = None
         for attempt in range(3):
             try:
-                return _try(model)
+                return _try(leg, model)
+            except httpx.HTTPStatusError as exc:
+                # An HTTP status is normally the model ANSWERING, and retrying
+                # it just buys the same answer twice -- which is why this
+                # block does not exist for statuses in general. A 429 is the
+                # exception: it is a refusal to answer yet, and the free
+                # OpenRouter pool states how long to wait. Gated on the leg
+                # being zero-cost so no paid call is ever retried into a bill.
+                if not (
+                    leg.get("is_free") and exc.response.status_code == 429
+                ):
+                    raise
+                last = exc
+                if attempt < 2:
+                    _time.sleep(_retry_after_s(exc))
             # ReadTimeout is deliberately NOT retried. It means the model did
             # not answer within the call timeout; a retry costs the same wait
             # again for the same likely outcome. Retrying it turned one slow
@@ -343,26 +420,80 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> str:
                     _time.sleep(2 * (attempt + 1))
         raise last
 
-    try:
-        return _try_with_connect_retries(cfg["model"])
-    except Exception as first:  # noqa: BLE001 — one fallback, then honest failure
-        fallback = cfg.get("fallback_model")
-        if not fallback or fallback == cfg["model"]:
-            raise CoderError(f"coder LLM failed: {type(first).__name__}: {first}") from first
+    if not primary_usable:
+        # The leg is the only thing there is. No primary to fall back FROM, so
+        # a failure here is simply the failure -- reported with the leg named,
+        # not dressed up as a fallback of something that never ran.
         try:
-            return _try_with_connect_retries(fallback)
-        except Exception as second:  # noqa: BLE001
-            # Carry both MESSAGES, not just the class names. This line used to
-            # read "failed on primary (ValueError) and fallback
-            # (HTTPStatusError)", which is unactionable: it cost a live
-            # debugging run to discover the ValueError was an empty completion
-            # from a starved token budget. coder_failures is often the only
-            # record anyone sees, so it has to carry the reason.
+            return _try_with_connect_retries(cross, cross["model"]), cross["model"]
+        except Exception as only:  # noqa: BLE001
             raise CoderError(
-                f"coder LLM failed on primary {cfg['model']} "
-                f"({type(first).__name__}: {first}) and fallback {fallback} "
-                f"({type(second).__name__}: {second})"
-            ) from second
+                f"coder LLM failed on {cross['model']} (the only configured "
+                f"leg; no primary credentials): "
+                f"{type(only).__name__}: {only}"
+            ) from only
+
+    try:
+        return _try_with_connect_retries(primary_leg, cfg["model"]), cfg["model"]
+    except Exception as first:  # noqa: BLE001 — fallback legs, then honest failure
+        legs: List[tuple[Dict[str, Any], str]] = []
+
+        # Leg 1: same endpoint, different model. The original fallback.
+        same_endpoint = cfg.get("fallback_model")
+        if same_endpoint and same_endpoint != cfg["model"]:
+            legs.append((primary_leg, same_endpoint))
+
+        # Leg 2: a different vendor entirely, reached only when the primary
+        # vendor's own fallback also failed. That ordering matters: an
+        # out-of-credit or rate-limited Moonshot account fails BOTH its models
+        # identically, so a same-vendor fallback is no fallback at all for the
+        # failure that actually happens most.
+        if cross:
+            legs.append((cross, cross["model"]))
+
+        if not legs:
+            raise CoderError(
+                f"coder LLM failed: {type(first).__name__}: {first}"
+            ) from first
+
+        # Carry every leg's MESSAGE, not just the class names. This used to
+        # read "failed on primary (ValueError) and fallback
+        # (HTTPStatusError)", which is unactionable: it cost a live debugging
+        # run to discover the ValueError was an empty completion from a
+        # starved token budget. coder_failures is often the only record
+        # anyone sees, so it has to carry the reason.
+        reasons = [f"primary {cfg['model']} ({type(first).__name__}: {first})"]
+        for leg, model in legs:
+            try:
+                text = _try_with_connect_retries(leg, model)
+            except Exception as exc:  # noqa: BLE001
+                reasons.append(f"fallback {model} ({type(exc).__name__}: {exc})")
+                continue
+            if leg is not primary_leg:
+                logger.warning(
+                    "coder fell back across providers to %s/%s after %s failed",
+                    leg.get("provider"),
+                    model,
+                    cfg["model"],
+                )
+            return text, model
+        raise CoderError("coder LLM failed on " + " and ".join(reasons))
+
+
+#: Cap on a server-stated Retry-After. The coder already runs under a build
+#: budget; honouring an arbitrarily long wait would hand a third party the
+#: power to stall a build.
+MAX_RETRY_AFTER_S = 10.0
+
+
+def _retry_after_s(exc: httpx.HTTPStatusError) -> float:
+    """Seconds to wait per the response's Retry-After, clamped and defaulted."""
+    raw = exc.response.headers.get("Retry-After", "")
+    try:
+        seconds = float(raw)
+    except (TypeError, ValueError):
+        seconds = 5.0
+    return max(0.0, min(seconds, MAX_RETRY_AFTER_S))
 
 
 def _strip_fences(text: str) -> str:
@@ -435,7 +566,9 @@ def _validate_body(body: str, capability_id: str) -> str:
     return indented
 
 
-def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> str:
+def _call_validate_retry(
+    messages: List[Dict[str, str]], capability_id: str
+) -> tuple[str, str]:
     """One LLM call, statically validated; ONE bounded retry on rejection.
 
     The tenth live build lost a whole capability -- and with it the run --
@@ -446,9 +579,9 @@ def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> 
     is another model call judged by the same gate, and a second rejection
     raises exactly as before.
     """
-    raw = _llm_code_call(messages)
+    raw, model_used = _llm_code_call(messages)
     try:
-        return _validate_body(_strip_fences(raw), capability_id)
+        return _validate_body(_strip_fences(raw), capability_id), model_used
     except CoderError as exc:
         retry = messages + [
             {"role": "assistant", "content": raw},
@@ -462,8 +595,8 @@ def _call_validate_retry(messages: List[Dict[str, str]], capability_id: str) -> 
                 ),
             },
         ]
-        raw = _llm_code_call(retry)
-        return _validate_body(_strip_fences(raw), capability_id)
+        raw, model_used = _llm_code_call(retry)
+        return _validate_body(_strip_fences(raw), capability_id), model_used
 
 
 _PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """
@@ -612,7 +745,7 @@ def generate_model_spec(
         f"Capability description: {description}\n\n"
         "Design the entity this capability stores. Return the JSON now."
     )
-    raw = _llm_code_call(
+    raw, model_used = _llm_code_call(
         [
             {"role": "system", "content": _SPEC_SYSTEM},
             {"role": "user", "content": user},
@@ -660,12 +793,24 @@ def generate_model_spec(
     if not unique:
         raise CoderError(f"model spec for {capability_id} declared no usable fields")
 
-    model = get_factory_llm_config_model()
-    logger.info("coder designed %s.%s (%d fields)", capability_id, entity, len(unique))
-    return {"entity": entity, "fields": unique[:8], "model": model}
+    logger.info(
+        "coder designed %s.%s (%d fields) via %s",
+        capability_id,
+        entity,
+        len(unique),
+        model_used,
+    )
+    return {"entity": entity, "fields": unique[:8], "model": model_used}
 
 
 def get_factory_llm_config_model() -> str:
+    """The CONFIGURED primary model.
+
+    Not necessarily the model that answered any given call -- when a fallback
+    leg runs, that is a different model, possibly a different vendor. Use the
+    ``model`` returned alongside each completion for provenance; this is only
+    for describing configuration.
+    """
     from .product_architect import get_factory_llm_config
 
     return get_factory_llm_config().get("model", "unknown")
@@ -760,21 +905,20 @@ def generate_route_body(
         )
     lines.append("\nWrite the endpoint() body now.")
 
-    body = _call_validate_retry(
+    body, model_used = _call_validate_retry(
         [
             {"role": "system", "content": _ROUTE_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
         ],
         f"{capability_id}:route",
     )
-    model = get_factory_llm_config_model()
     logger.info(
         "coder wrote platform route %s (%d lines) via %s",
         capability_id,
         body.count("\n") + 1,
-        model,
+        model_used,
     )
-    return {"body": body, "model": model}
+    return {"body": body, "model": model_used}
 
 
 def generate_platform_handler(
@@ -803,8 +947,6 @@ def generate_platform_handler(
     required fields) -- without it the coder guesses payload shapes and real
     blocks reject them with "Input validation failed".
     """
-    from .product_architect import get_factory_llm_config
-
     lines = [
         f"Platform: {product_name} (vertical: {vertical})",
         f"Capability id: {capability_id}",
@@ -848,21 +990,20 @@ def generate_platform_handler(
         )
     lines.append("\nWrite the handle() body now.")
 
-    body = _call_validate_retry(
+    body, model_used = _call_validate_retry(
         [
             {"role": "system", "content": _PLATFORM_SYSTEM},
             {"role": "user", "content": "\n".join(lines)},
         ],
         capability_id,
     )
-    model = get_factory_llm_config().get("model", "unknown")
     logger.info(
         "coder wrote platform handler %s (%d lines) via %s",
         capability_id,
         body.count("\n") + 1,
-        model,
+        model_used,
     )
-    return {"body": body, "model": model}
+    return {"body": body, "model": model_used}
 
 
 def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> Dict[str, Any]:
@@ -871,8 +1012,6 @@ def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> D
     Returns {"body": <indented code>, "model": <model id>}. Raises CoderError
     on any failure — the generator decides what an honest fallback looks like.
     """
-    from .product_architect import get_factory_llm_config
-
     user = (
         f"Platform: {blueprint.product_name} (vertical: {blueprint.vertical})\n"
         f"Platform summary: {blueprint.summary}\n\n"
@@ -880,16 +1019,17 @@ def generate_handler_body(cap: CapabilitySpec, blueprint: ProductBlueprint) -> D
         f"Capability description: {cap.description}\n\n"
         "Write the generated_logic body now."
     )
-    raw = _llm_code_call(
+    raw, model_used = _llm_code_call(
         [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user},
         ]
     )
     body = _validate_body(_strip_fences(raw), cap.id)
-    model = get_factory_llm_config().get("model", "unknown")
-    logger.info("coder wrote %s (%d lines) via %s", cap.id, body.count("\n") + 1, model)
-    return {"body": body, "model": model}
+    logger.info(
+        "coder wrote %s (%d lines) via %s", cap.id, body.count("\n") + 1, model_used
+    )
+    return {"body": body, "model": model_used}
 
 
 # -- Kernel-side agent (COLLECTOR review, TESTER extra cases) --------------
@@ -928,8 +1068,10 @@ Do not ask to run tests over HTTP; GET /v1/gates describes coverage only.
 """
 
 
-def _llm_json_object(messages: List[Dict[str, str]], what: str) -> Dict[str, Any]:
-    raw = _llm_code_call(messages)
+def _llm_json_object(
+    messages: List[Dict[str, str]], what: str
+) -> tuple[Dict[str, Any], str]:
+    raw, model_used = _llm_code_call(messages)
     text = _strip_fences(raw).strip()
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
@@ -940,7 +1082,7 @@ def _llm_json_object(messages: List[Dict[str, str]], what: str) -> Dict[str, Any
         raise CoderError(f"{what} is not valid JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise CoderError(f"{what} is not a JSON object")
-    return data
+    return data, model_used
 
 
 def review_capability_bindings(
@@ -956,7 +1098,7 @@ def review_capability_bindings(
         + json.dumps(capabilities, indent=2, sort_keys=True)
         + "\n\nReturn the reviews JSON now."
     )
-    data = _llm_json_object(
+    data, model_used = _llm_json_object(
         [
             {"role": "system", "content": _COLLECTOR_REVIEW_SYSTEM},
             {"role": "user", "content": user},
@@ -986,14 +1128,13 @@ def review_capability_bindings(
         )
     if not reviews:
         raise CoderError("collector binding review named no known capabilities")
-    model = get_factory_llm_config_model()
     logger.info(
         "coder reviewed %d/%d collector bindings via %s",
         len(reviews),
         len(known),
-        model,
+        model_used,
     )
-    return {"reviews": reviews, "model": model}
+    return {"reviews": reviews, "model": model_used}
 
 
 def propose_domain_test_cases(
@@ -1009,7 +1150,7 @@ def propose_domain_test_cases(
         + json.dumps(capabilities, indent=2, sort_keys=True)
         + "\n\nReturn the extra cases JSON now."
     )
-    data = _llm_json_object(
+    data, model_used = _llm_json_object(
         [
             {"role": "system", "content": _TESTER_CASES_SYSTEM},
             {"role": "user", "content": user},
@@ -1040,6 +1181,5 @@ def propose_domain_test_cases(
         )
     if not cases:
         raise CoderError("tester proposed no usable domain cases")
-    model = get_factory_llm_config_model()
-    logger.info("coder proposed %d tester domain case(s) via %s", len(cases), model)
-    return {"cases": cases, "model": model}
+    logger.info("coder proposed %d tester domain case(s) via %s", len(cases), model_used)
+    return {"cases": cases, "model": model_used}
