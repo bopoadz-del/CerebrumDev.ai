@@ -857,7 +857,8 @@ def evaluate_supply_chain(
                 "network:false vs cloud, closed in S7)"
             ),
             "declared": declared,
-            "observed": observe_behaviour(docker, entry, posture),
+            "observed": f21.get("observed")
+            or observe_behaviour(docker, entry, posture),
             "findings": f21_findings,
         },
         "pass_criteria": {
