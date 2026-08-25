@@ -55,7 +55,8 @@ def _coder_on(monkeypatch):
     )
     # The README path calls _llm_code_call directly.
     monkeypatch.setattr(
-        "app.factory.coder._llm_code_call", lambda messages: "# stub readme\n"
+        "app.factory.coder._llm_code_call",
+        lambda messages: ("# stub readme\n", "stub-model"),
     )
     monkeypatch.setattr(
         "app.factory.coder.review_capability_bindings",
@@ -213,7 +214,7 @@ def test_coder_output_still_passes_the_validation_gate(monkeypatch):
     monkeypatch.setenv("KIMI_API_KEY", "sk-not-real")
     # Column-zero statements: _validate_body indents them into the wrapper.
     monkeypatch.setattr(
-        coder, "_llm_code_call", lambda messages: "import os\nreturn {}"
+        coder, "_llm_code_call", lambda messages: ("import os\nreturn {}", "stub-model")
     )
 
     with pytest.raises(coder.CoderError, match="forbidden construct"):
@@ -235,7 +236,10 @@ def test_valid_coder_output_is_indented_into_the_handler(monkeypatch):
     monkeypatch.setattr(
         coder,
         "_llm_code_call",
-        lambda messages: 'data = execute(BLOCK_IDS[0], payload)\nreturn {"capability": CAPABILITY_ID, "data": data}',
+        lambda messages: (
+            'data = execute(BLOCK_IDS[0], payload)\nreturn {"capability": CAPABILITY_ID, "data": data}',
+            "stub-model",
+        ),
     )
 
     result = coder.generate_platform_handler(

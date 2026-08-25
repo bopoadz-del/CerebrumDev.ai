@@ -505,7 +505,7 @@ def test_the_coder_prompt_carries_the_vendored_roster(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)
@@ -650,7 +650,7 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)
@@ -725,8 +725,9 @@ def test_a_transient_connect_error_is_retried_not_templated(monkeypatch):
         },
     )
 
-    out = coder._llm_code_call([{"role": "user", "content": "u"}])
+    out, model_used = coder._llm_code_call([{"role": "user", "content": "u"}])
     assert out == 'return {"ok": True}'
+    assert model_used == "kimi-k2.7-code-highspeed", "the answering leg was misreported"
     assert len(attempts) == 3, "the transient failures were not retried"
 
 
@@ -783,13 +784,14 @@ def test_a_rejected_body_gets_one_repair_retry(monkeypatch):
 
     def _stub(messages):
         calls.append(messages)
-        return outputs[len(calls) - 1]
+        return outputs[len(calls) - 1], "stub-model"
 
     monkeypatch.setattr(coder, "_llm_code_call", _stub)
-    body = coder._call_validate_retry(
+    body, model_used = coder._call_validate_retry(
         [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}], "cap"
     )
     assert "ok" in body
+    assert model_used == "stub-model"
     assert len(calls) == 2
     # The retry conversation carries the rejected code and the gate's reason.
     retry_messages = calls[1]
@@ -801,7 +803,7 @@ def test_a_second_rejection_still_raises(monkeypatch):
     from app.factory import coder
 
     bad = 'def endpoint(payload):\n    return {"ok": True}\n'
-    monkeypatch.setattr(coder, "_llm_code_call", lambda messages: bad)
+    monkeypatch.setattr(coder, "_llm_code_call", lambda messages: (bad, "stub-model"))
     with pytest.raises(coder.CoderError, match="never returns"):
         coder._call_validate_retry([{"role": "user", "content": "u"}], "cap")
 
@@ -816,7 +818,7 @@ def test_a_rework_prompt_carries_the_previous_attempt(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}'
+        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)

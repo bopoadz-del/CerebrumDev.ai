@@ -2153,9 +2153,9 @@ def _coder_readme(
     if not coder_enabled():
         return None
     try:
-        from app.factory.coder import _llm_code_call, get_factory_llm_config_model
+        from app.factory.coder import _llm_code_call
 
-        text = _llm_code_call(
+        text, model_used = _llm_code_call(
             [
                 {
                     "role": "system",
@@ -2185,7 +2185,7 @@ def _coder_readme(
         return None
     if not text.strip():
         return None
-    return text, f"coder LLM ({get_factory_llm_config_model()})"
+    return text, f"coder LLM ({model_used})"
 
 
 def _failing_capability_ids(work_list: Sequence[str], cap_ids: Sequence[str]) -> set:
