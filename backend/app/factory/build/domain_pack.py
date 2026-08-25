@@ -552,7 +552,7 @@ def reject_lotdesk_pack(explicit: Optional[Path] = None) -> Dict[str, Any]:
         return {
             "ok": False,
             "gate": "lotdesk_domain_pack",
-            "fixture": str(path),
+            "fixture": _posix_under_repo(path),
             "empty": True,
             "reason": "LotDesk-class empty Domain Pack",
             "lotdesk": "fixture only; not patched",
