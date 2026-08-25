@@ -1,20 +1,44 @@
-"""Base-tier business definitions, and the precedence rule for overlaying them.
+"""Base-tier business definitions, and the overlay precedence rule.
 
-WHY THIS IS KERNEL AND NOT A KIT
---------------------------------
-These definitions are the floor every generated platform stands on. A floor is
-not a peer that other things declare a dependency on -- you cannot opt out of
-the ground you are standing on -- so this ships the way the kernel contract
-ships: ``generator._write_app`` copytrees the whole
-``cerebrum_product_kernel`` tree into every product, consulting no manifest,
-no plan and no blueprint. Placing the set here requires no new generator code
-and no declaration by any kit.
+This is a kernel-tier proposal implemented here so every generated product
+receives it. It is not a port of an existing engine.
 
-It was previously a kit (``block_store/kits/universal_business``). That route
-could never have worked: ``kit_pack.stock_kits`` reaches a kit only through
-``factory_blocks.json``, and neither ``formula_executor_v2`` nor
-``universal_business`` appears in that shelf. The isolation was a symptom of
-the wrong tier, not of missing wiring.
+WHAT THIS IS NOT
+----------------
+* Product Delivery Standard Section 15 is EXPORTS AND REPORTING. There is no
+  Section 15 precedence engine.
+* ``encoding sheet`` is not a source in this repository (zero hits).
+* ``docs/REASONING_KERNEL.md`` names AuthorityResolver and ConflictDetector
+  among 22 planned components. Neither symbol exists. This module is not
+  those components and does not implement them.
+
+WHY THIS SHIPS IN THE KERNEL COPYTREE
+-------------------------------------
+These definitions are the floor every generated platform stands on. A floor
+is not a peer that other things declare a dependency on, so this ships the
+way the kernel contract ships: ``ProductGenerator._write_app`` copytrees
+``cerebrum_product_kernel`` into every product (RoleRunner's
+``_vendor_product_kernel`` copies the same tree file-by-file). No extra
+registry, kit, or shelf entry.
+
+Dead routes that must not carry this set:
+
+* ``kit_pack.stock_kits`` reaches a kit only through ``factory_blocks.json``.
+  ``formula_executor_v2`` is a Store runtime alias for the dual-registered
+  ``formula_executor`` budget block. It is not a Factory kit and does not
+  carry this set. Do not add it to the shelf to "gate" it.
+* ``universal_kernel`` is a GOLD/awaiting kit-library destination, not the
+  product kernel. Putting base-tier content there would contradict shipping
+  in every platform.
+* Blocks ``_GENERIC_BLOCK_DEFS`` / ``_EXTENDED_BLOCK_DEFS`` and the Fork
+  whole-repo-copy are not the path that reaches every Factory product.
+  Auth is kit-provided in the one real generated product
+  (``app/steward/auth.py``); billing is extended-def / legacy-boot-only.
+
+Product Q&A is :func:`answer_definition`. It reads :func:`definition_index`,
+so an override's address, provenance, reason, and tier appear on the answer
+path that copytrees into every product. Domain overlays are ingested by
+``scripts/intake_formulas.py``, which runs the same precedence contract.
 
 THE OVERLAY CONTRACT
 --------------------
@@ -23,24 +47,18 @@ A domain layer may do exactly two things to this set, and must say which:
 * **extend** -- contribute a definition the base does not have (waste factors,
   commission maths, CPM quantities). Its id must not collide with a base id.
 * **override** -- replace a base definition, naming the exact base address it
-  replaces (``overrides: "universal:gross_margin_v1"``), with its own
+  replaces (``overrides: "universal:gross_margin_ratio_v1"``), with its own
   provenance and a stated reason.
 
 Anything else is refused. Specifically, an overlay definition whose id
 collides with a base definition but declares no ``overrides`` is an error, not
 a silent replacement -- see :class:`PrecedenceError`.
 
-That refusal is the whole point. Every other overlay mechanism in these two
-repos resolves collisions by position: the platform generator's renderer
-overwrites existing files last-writer-wins with no log line; the block
-registry lets a kit spec silently replace a generic block; kit install is
-first-writer-wins and at least records what it skipped. Position is not
-authority. Which layer wins here is stated in the data, and a conflict nobody
-declared stops the resolve instead of being settled by load order.
-
-Resolution reports the tier that answered -- ``base``, ``domain-extension``,
-or ``domain-override of base`` -- so a caller can always say which layer a
-number came from and on whose provenance.
+Position is not authority. Which layer wins here is stated in the data, and a
+conflict nobody declared stops the resolve instead of being settled by load
+order. Resolution reports the tier that answered -- ``base``,
+``domain-extension``, or ``domain-override of base`` -- so a caller can always
+say which layer a number came from and on whose provenance.
 """
 
 from __future__ import annotations
@@ -53,6 +71,8 @@ __all__ = [
     "BASE_SET_ID",
     "PrecedenceError",
     "ResolvedDefinition",
+    "answer_definition",
+    "definition_index",
     "load_base_definitions",
     "resolve_definitions",
 ]
@@ -142,8 +162,10 @@ def resolve_definitions(
     for definition in base.get("definitions", []) + base.get("conventions", []):
         entry = ResolvedDefinition(definition)
         entry["tier"] = TIER_BASE
+        entry["origin"] = base_set_id
+        entry["address"] = _address(base_set_id, definition)
         resolved[definition["id"]] = entry
-        addresses[_address(base_set_id, definition)] = definition["id"]
+        addresses[entry["address"]] = definition["id"]
 
     claimed_by: Dict[str, str] = {}
 
@@ -179,6 +201,7 @@ def resolve_definitions(
                 entry = ResolvedDefinition(definition)
                 entry["tier"] = TIER_EXTENSION
                 entry["origin"] = origin
+                entry["address"] = _address(origin, definition)
                 resolved[ident] = entry
                 claimed_by[ident] = origin
                 continue
@@ -206,6 +229,7 @@ def resolve_definitions(
             entry = ResolvedDefinition(definition)
             entry["tier"] = TIER_OVERRIDE
             entry["origin"] = origin
+            entry["address"] = _address(origin, definition)
             entry["supersedes"] = target
             resolved[ident] = entry
             claimed_by[ident] = origin
@@ -213,22 +237,52 @@ def resolve_definitions(
     return resolved
 
 
+def _index_row(ident: str, entry: ResolvedDefinition) -> Dict[str, Any]:
+    """One answer-surface row: who defined this, at which address, why."""
+    provenance = entry.get("provenance") or {}
+    return {
+        "id": ident,
+        "address": entry.get("address") or "",
+        "tier": entry["tier"],
+        "expression": entry.get("expression", ""),
+        "supersedes": entry.get("supersedes") or "",
+        "provenance": provenance,
+        "reason": entry.get("reason") or "",
+        "origin": entry.get("origin") or "",
+    }
+
+
 def definition_index(
     resolved: Optional[Dict[str, ResolvedDefinition]] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """A flat listing of what is defined and which tier defined it.
 
-    Intended for the answer surface: a generated calculation should be able to
-    say ``gross_margin -- base`` or ``waste_factor -- domain-extension`` rather
-    than leaving the reader to guess whether a number was defined or invented.
+    Consumed by :func:`answer_definition` (the product Q&A path that ships
+    via kernel copytree). An override row carries the overlay address, the
+    base address it supersedes, provenance, reason, and tier -- so the
+    answer surface cannot report a number without saying which layer
+    produced it.
     """
     resolved = resolve_definitions() if resolved is None else resolved
-    return [
-        {
-            "id": ident,
-            "tier": entry["tier"],
-            "expression": entry.get("expression", ""),
-            "supersedes": entry.get("supersedes") or "",
-        }
-        for ident, entry in sorted(resolved.items())
-    ]
+    return [_index_row(ident, entry) for ident, entry in sorted(resolved.items())]
+
+
+def answer_definition(
+    ident: str,
+    *,
+    resolved: Optional[Dict[str, ResolvedDefinition]] = None,
+    overlays: Iterable[Dict[str, Any]] = (),
+) -> Optional[Dict[str, Any]]:
+    """Product Q&A: look up a definition on the resolved set.
+
+    Returns the index row (address, provenance, reason, tier) or ``None``
+    when the id is not defined. Absence stays absence -- a missing
+    definition must not fall through to an invented derivation.
+
+    Overlay resolve still refuses silent shadowing; this function does not
+    invent a second merge rule.
+    """
+    if resolved is None:
+        resolved = resolve_definitions(overlays=overlays)
+    index = {row["id"]: row for row in definition_index(resolved)}
+    return index.get(ident)
