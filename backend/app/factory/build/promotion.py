@@ -26,13 +26,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from app.cerebrum_product_kernel.contract.runtime import execute_action
 from app.factory.build.domain_acceptance import inspect_lotdesk_domain
 from app.factory.build.harvest import evaluate_harvest
 from app.factory.build.lotdesk_gate import inspect_path, reject_lotdesk_as_shipped
 from app.factory.build.pilot_cycle_proof import inspect_pilot_cycle
 from app.factory.build.network_posture import NETWORK_POSTURE, NETWORK_POSTURE_REASON
-from app.factory.build.roles import _coder_route_body
+from app.factory.build.preflight import inspect_kernel_ownership
 from app.factory.generator import git_head
 
 EMITTER_ID = "app.factory.build.promotion.evaluate_promotion"
@@ -220,27 +219,6 @@ def _evaluate_record(evidence_path: Path) -> Dict[str, Any]:
         return record
     record["ok"] = True
     return record
-
-
-def inspect_kernel_ownership() -> Dict[str, Any]:
-    """Kernel owns HTTP. LLM route authorship stays off."""
-    coder_none = _coder_route_body(None, None, None) is None
-    from app.factory.build import pilot as pilot_mod
-    from app.factory.build import runner as runner_mod
-
-    runner_src = Path(runner_mod.__file__).read_text(encoding="utf-8")
-    return {
-        "execute_action": execute_action.__module__ + ".execute_action",
-        "execute_action_callable": callable(execute_action),
-        "_coder_route_body_is_None": coder_none,
-        "prepare_pilot_workspace": "absent",
-        "prepare_pilot_workspace_in_runner": "prepare_pilot_workspace" in runner_src,
-        "prepare_pilot_workspace_in_pilot": hasattr(pilot_mod, "prepare_pilot_workspace"),
-        "ok": coder_none
-        and callable(execute_action)
-        and "prepare_pilot_workspace" not in runner_src
-        and not hasattr(pilot_mod, "prepare_pilot_workspace"),
-    }
 
 
 def _spof_from(data: Dict[str, Any]) -> Optional[str]:

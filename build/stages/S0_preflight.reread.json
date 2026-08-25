@@ -1,11 +1,36 @@
 {
   "stage": "S0",
-  "independent_reread": true,
-  "reread_at": "2026-08-23T06:28:02.993487+00:00",
-  "source": "build/stages/S0_preflight.json",
+  "name": "preflight",
   "verdict": "PASS",
-  "rechecked_hashes": 13,
-  "kernel_mentions_in_build": [],
-  "errors": [],
-  "notes": "Re-hashed every factory_source path. Confirmed grep cerebrum_product_kernel over factory/build/*.py is empty (U12). Confirmed LotDesk zip identity and delivery_standard pin."
+  "reread_of": "/workspace/build/stages/S0_preflight.json",
+  "reread_at": "2026-08-25T10:33:40Z",
+  "independent": true,
+  "reader": "cloud-agent-s0-preflight",
+  "emitter": "app.factory.build.preflight.evaluate_preflight",
+  "git_sha": "cb8889fe907f8bdbff73ba0c8fc89154cf14186a",
+  "kernel_ownership": {
+    "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
+    "execute_action_callable": true,
+    "_coder_route_body_is_None": true,
+    "prepare_pilot_workspace": "absent",
+    "prepare_pilot_workspace_in_runner": false,
+    "prepare_pilot_workspace_in_pilot": false,
+    "ok": true
+  },
+  "disagreements": [],
+  "checked": [
+    "factory sources re-hashed",
+    "RoleRunner default engine re-read",
+    "execute_action callable; _coder_route_body is None",
+    "existing build/stages files listed",
+    "missing stage-table modules named"
+  ],
+  "not_claimed": [
+    "PILOT_READY",
+    "S2 SBOM / signatures",
+    "S3 dealership Domain Pack",
+    "S4 U4 _ensure_route_persists_payload removal",
+    "S5 U7 FACTORY_SUITE_MARKER_EXPR"
+  ],
+  "PILOT_READY": false
 }

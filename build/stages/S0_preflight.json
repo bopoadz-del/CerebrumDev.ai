@@ -1,26 +1,30 @@
 {
   "stage": "S0",
   "name": "PREFLIGHT",
-  "evaluated_at": "2026-08-23T06:27:34.182806+00:00",
+  "evaluated_at": "2026-08-25T10:33:40Z",
+  "emitter": "app.factory.build.preflight.evaluate_preflight",
   "verdict": "PASS",
-  "diagnosis_revision": "draft3_u10_two_emitters_kernel_not_shipped",
-  "pass_criteria": {
-    "factory_source_fingerprinted": true,
-    "delivery_standard_sha256_matches_pin": true,
-    "kernel_present_in_factory_host": true,
-    "kernel_absent_from_role_runner_build": true,
-    "two_emitters_observed": true,
-    "kit_registry": true,
-    "lotdesk_fixture": true,
-    "toolchain_digest_pinned": true
+  "ok": true,
+  "first_failing_criterion": null,
+  "git_sha": "cb8889fe907f8bdbff73ba0c8fc89154cf14186a",
+  "kernel_ownership": {
+    "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
+    "execute_action_callable": true,
+    "_coder_route_body_is_None": true,
+    "prepare_pilot_workspace": "absent",
+    "prepare_pilot_workspace_in_runner": false,
+    "prepare_pilot_workspace_in_pilot": false,
+    "ok": true
   },
-  "u10_two_emitters": {
-    "product_architect_default": "role_runner via build_jobs.build_engine() default RUNNER",
-    "runner_py_docstring": "claims ProductGenerator template path is still the default — stale vs product_architect.py:506-529",
-    "roles_py_same_shape_claim": "build/roles.py:17-19 claims both paths write the same shape — counter-evidenced",
-    "generator_artifact_classes": [
+  "emitter_identity": {
+    "id": "app.factory.build.runner.RoleRunner",
+    "default_engine": "runner",
+    "engine_env": "FACTORY_BUILD_ENGINE",
+    "runner_is_default": true,
+    "template_revert": "FACTORY_BUILD_ENGINE=template",
+    "fourteen_artifact_classes": [
       "app/main.py",
-      "app/actions/",
+      "app/actions",
       "app/agents/manifests",
       "app/workflows",
       "app/cerebrum_product_kernel",
@@ -34,115 +38,294 @@
       "kits",
       "scripts/release_gate.py"
     ],
-    "role_runner_drops": [
-      "app/agents/manifests",
-      "app/workflows",
-      "app/cerebrum_product_kernel",
-      "app/connectors",
-      "product-dna",
-      "docs/blueprint",
-      "docs/provenance",
-      "docs/certification",
-      "frontend"
-    ],
-    "kernel_mentions_in_factory_build_py": []
+    "kernel_class_in_contract": true,
+    "generator_class": "app.factory.generator.ProductGenerator",
+    "converge_module": "backend/app/factory/build/converge.py"
   },
   "delivery_standard": {
     "pin": "b0e15b92bb8f94445308d99ea25bb23da968e0204f5b2960fc802fefba6acc3b",
-    "actual": "b0e15b92bb8f94445308d99ea25bb23da968e0204f5b2960fc802fefba6acc3b",
-    "match": true,
     "domain_pack_field_count": 15
-  },
-  "lotdesk_fixture": {
-    "path": "artifacts/lotdesk_pilot_ready.zip",
-    "sha256": "8eec994d37f7068155152d1af486f705ff28d9674c587c0e4aa48217993f1554",
-    "role": "failed_build_regression_fixture_not_a_patient"
-  },
-  "kit_registry": {
-    "factory_kits": ["private_estate_operations"],
-    "dealership_kit_not_primary": true
-  },
-  "blocks": {
-    "hosted_health": "https://cerebrum-blocks-10ug.onrender.com/health",
-    "http_status": 200,
-    "body": {"status": "ok"},
-    "local_clone": "not_found_in_this_environment",
-    "factory_vendor_mirror_block_count": 25
-  },
-  "toolchain": {
-    "python3.12_sha256": "1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118",
-    "pin_by": "digest_not_tag"
   },
   "factory_source": [
     {
       "path": "backend/app/factory/delivery_standard.py",
+      "present": true,
       "sha256": "b7d78385187d38fc51e99a0fa83b0eb668a2dd3f968fbe162f62337877970cf0",
       "bytes": 4681
     },
     {
       "path": "backend/app/factory/standards/product_delivery_standard.md",
+      "present": true,
       "sha256": "b0e15b92bb8f94445308d99ea25bb23da968e0204f5b2960fc802fefba6acc3b",
       "bytes": 26530
     },
     {
       "path": "backend/app/factory/build/roles.py",
-      "sha256": "101f5792f2555ab4b36140df2e02c98469f4cb0cb68844822c722deb5b3fc82a",
-      "bytes": 126820
+      "present": true,
+      "sha256": "e56262d00b1f809f9f02aaa1300c527a0aa56eb215f18b688f6a71e8c7b8aa21",
+      "bytes": 135850
     },
     {
       "path": "backend/app/factory/build/gates.py",
-      "sha256": "86c209f029f64ec4a150690513884500a1d85a8d0df658868b883632bb288f64",
-      "bytes": 13323
+      "present": true,
+      "sha256": "d2fff2909e2a6ae372b65ca46362a6cf3116c49377a7a348fbd64de3872d5516",
+      "bytes": 15979
     },
     {
       "path": "backend/app/factory/build/authority.py",
-      "sha256": "76cb8466793ded15b320eb89b18b79f9f8230332cdd3f5087936ba36c5c9422d",
-      "bytes": 14528
+      "present": true,
+      "sha256": "101c7ec3a13f0409b60a551f488e2b86d7f4c5f4fdb85120b6f79a7fc9d6743d",
+      "bytes": 16550
     },
     {
       "path": "backend/app/factory/build/runner.py",
-      "sha256": "ad17571d08be220ce230d9567096da9b5b29f81f7de9c639460bbefc6b8ae432",
-      "bytes": 18866
+      "present": true,
+      "sha256": "9b69689e08a733ffb2f4b51504be58e57a30e4f1f4877e42f6d7d2974b77e879",
+      "bytes": 20302
     },
     {
       "path": "backend/app/factory/build/pilot.py",
-      "sha256": "25b0e9a1c875e8fc039d1f5e1bf8c6c891929e8bdef93181b1816c37c5021155",
-      "bytes": 8492
+      "present": true,
+      "sha256": "4ea4ae7c19ccc8005785a4a22a64f97846d817676ac0b237b3a292e697981931",
+      "bytes": 247
+    },
+    {
+      "path": "backend/app/factory/build/converge.py",
+      "present": true,
+      "sha256": "6e6d020ef0b5eac05c178276f6683f05703d5c57a00f2a15c2b45e758f0c6261",
+      "bytes": 5961
     },
     {
       "path": "backend/app/factory/coder.py",
-      "sha256": "44a62bb3bd620b25c6479ac6a48cc38a3fce228212a876638c9a0ef70b581f53",
-      "bytes": 42697
+      "present": true,
+      "sha256": "4c5eefd6e9f766ebe162e71fb5e0e41f5a7a269bf6743f795e104ff97817a106",
+      "bytes": 48896
     },
     {
       "path": "backend/app/factory/generator.py",
-      "sha256": "f31e5f2e6c8a7e8a3002fb56ceec775527aea8ff5532901655189ce5aa3f2a00",
-      "bytes": 55762
+      "present": true,
+      "sha256": "5a4fb077db21dd858211b6d572a9a4630658a37486fd2312f42dd0ebeb267564",
+      "bytes": 56069
     },
     {
       "path": "backend/app/factory/product_architect.py",
-      "sha256": "d602748431636beaed4db73c52a561994c3418b618be5b9e0b84f0f815a29959",
-      "bytes": 20944
+      "present": true,
+      "sha256": "fa582be549f436abf4e49256ce88db002243284ed374f66568f59506e1ee5a83",
+      "bytes": 21728
+    },
+    {
+      "path": "backend/app/factory/build_jobs.py",
+      "present": true,
+      "sha256": "59cdc3213fd59316d5463841cab0df5dd15ae856c37040f8b948dd219829492b",
+      "bytes": 15222
     },
     {
       "path": "backend/app/cerebrum_product_kernel/contract/runtime.py",
+      "present": true,
       "sha256": "680f436948c64a718c795784cfb1c0d67b99e9f3a98da7064e85a25088112da4",
       "bytes": 8030
     },
     {
       "path": "backend/app/cerebrum_product_kernel/__init__.py",
+      "present": true,
       "sha256": "def997bbbba2c72183dd97baf18fda316cd217b8f50089ebb1eed2093b2735c8",
       "bytes": 478
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "a352c40fac5137f27fe59ea5f16c49e27a4085bada4fc375c58083be69647b09",
-      "bytes": 2947
+      "present": true,
+      "sha256": "0f772fe146bc5aba193671b005209af495da2b5990dca96593f9b83b59e7e917",
+      "bytes": 5187
+    },
+    {
+      "path": "backend/app/factory/build/preflight.py",
+      "present": true,
+      "sha256": "954e099ed18112107c280b48dc0a6d767ffeda1ea11f5727f6d89642bd58d885",
+      "bytes": 16022
+    },
+    {
+      "path": "backend/app/factory/build/root_cause.py",
+      "present": true,
+      "sha256": "f7efa4316728beeac8b536cfeda0a3c41ef15c19d5e7f6fdcce55e7901e67b14",
+      "bytes": 23747
     }
   ],
-  "honest_limitations": [
-    "Cerebrum-Blocks checkout not present in this environment; hosted /health is 200; /v1/blocks not fingerprinted (CEREBRUM_API_KEY unset).",
-    "S0 fingerprints master emitters before S4 kernel-shipping edits.",
-    "Draft-2 persist-wrapper edits were reverted; they are not this baseline."
-  ]
+  "existing_stage_files": [
+    "HARVEST_BLOCKED.json",
+    "S0_preflight.json",
+    "S0_preflight.reread.json",
+    "S10_data.json",
+    "S10_data.reread.json",
+    "S11_deploy.json",
+    "S11_deploy.reread.json",
+    "S12_domain.json",
+    "S12_domain.reread.json",
+    "S13_promotion.json",
+    "S13_promotion.reread.json",
+    "S1_root_cause.json",
+    "S1_root_cause.reread.json",
+    "S2_supply_chain.json",
+    "S2_supply_chain.reread.json",
+    "S3_domain_pack.json",
+    "S3_domain_pack.reread.json",
+    "S4_ship_kernel.json",
+    "S4_ship_kernel.reread.json",
+    "S5_gate_contract.json",
+    "S5_gate_contract.reread.json",
+    "S5_pilot_path.json",
+    "S5_pilot_path.reread.json",
+    "S6_emitter_parity.json",
+    "S6_emitter_parity.reread.json",
+    "S7_network_posture.json",
+    "S7_network_posture.reread.json",
+    "S7_posture.json",
+    "S7_posture.reread.json",
+    "S8_package.json",
+    "S8_package.reread.json",
+    "S9_test.json",
+    "S9_test.reread.json"
+  ],
+  "stage_module_inventory": [
+    {
+      "stage": "S0",
+      "expected": "backend/app/factory/build/preflight.py",
+      "purpose": "fingerprint factory + RoleRunner emission before a build",
+      "present": true
+    },
+    {
+      "stage": "S1",
+      "expected": "backend/app/factory/build/root_cause.py",
+      "purpose": "lane-authority map U1\u2013U12, F1\u2013F29",
+      "present": true
+    },
+    {
+      "stage": "S2",
+      "expected": "backend/app/factory/build/supply_chain.py",
+      "purpose": "Dockerfile digest pin",
+      "gaps": [
+        "SBOM",
+        "signature verification",
+        "F21 permissions-vs-behaviour (capture network:false vs cloud is S7 F22)"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S3",
+      "expected": "backend/app/factory/standards/domain_packs/dealership.md",
+      "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
+      "gaps": [
+        "dealership Domain Pack"
+      ],
+      "present": false
+    },
+    {
+      "stage": "S4",
+      "expected": "backend/app/factory/build/roles.py",
+      "purpose": "kernel shipped via execute_action",
+      "gaps": [
+        "_ensure_route_persists_payload still present (U4)"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S5",
+      "expected": "backend/app/factory/build/gates.py",
+      "purpose": "gate contract",
+      "gaps": [
+        "FACTORY_SUITE_MARKER_EXPR remains \"not pilot\" (U7)"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S6",
+      "expected": "backend/app/factory/build/converge.py",
+      "purpose": "14-class emitter parity",
+      "gaps": [
+        "chat not bound (U11)",
+        "capture not executed (F17)"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S7",
+      "expected": "backend/app/factory/build/network_posture.py",
+      "purpose": "P1 offline-strict posture",
+      "present": true
+    },
+    {
+      "stage": "S8",
+      "expected": "backend/app/factory/build/package.py",
+      "purpose": "package.write_identity",
+      "present": true
+    },
+    {
+      "stage": "S9",
+      "expected": "backend/tests/factory/test_keyed_path_ci.py",
+      "purpose": "keyed path + LotDesk fixture rejection",
+      "gaps": [
+        "F26 parity matrix not honestly Windows"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S10",
+      "expected": "backend/app/factory/build/data_lifecycle.py",
+      "purpose": "Alembic + restore drill",
+      "gaps": [
+        "no factory evidence emitter for S10_data.json"
+      ],
+      "present": true
+    },
+    {
+      "stage": "S11",
+      "expected": "backend/app/factory/build/deploy.py",
+      "purpose": "fail-closed health, observability, rollback drill",
+      "note": "audit said no module; deploy.py is present",
+      "present": true
+    },
+    {
+      "stage": "S12",
+      "expected": "backend/app/factory/build/domain_acceptance.py",
+      "purpose": "ten outcomes through execute_action",
+      "note": "verified present; do not assume from the table",
+      "present": true
+    },
+    {
+      "stage": "S13",
+      "expected": "backend/app/factory/build/promotion.py",
+      "purpose": "PILOT_READY machine emitter; harvest BLOCKED",
+      "note": "fail-closed is not completion",
+      "present": true
+    }
+  ],
+  "missing_modules": [
+    {
+      "stage": "S3",
+      "expected": "backend/app/factory/standards/domain_packs/dealership.md",
+      "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
+      "gaps": [
+        "dealership Domain Pack"
+      ],
+      "present": false
+    }
+  ],
+  "pass_criteria": {
+    "factory_source_fingerprinted": true,
+    "git_sha_recorded": true,
+    "emitter_identity_recorded": true,
+    "kernel_execute_action_callable": true,
+    "kernel_coder_route_body_is_None": true,
+    "existing_stage_files_listed": true,
+    "missing_modules_named": true
+  },
+  "PILOT_READY": false,
+  "not_claimed": [
+    "PILOT_READY",
+    "S2 SBOM / signatures",
+    "S3 dealership Domain Pack",
+    "S4 U4 _ensure_route_persists_payload removal",
+    "S5 U7 FACTORY_SUITE_MARKER_EXPR"
+  ],
+  "lotdesk": "fixture only; not patched",
+  "llm_route_authorship": "not restored; _coder_route_body still returns None"
 }
