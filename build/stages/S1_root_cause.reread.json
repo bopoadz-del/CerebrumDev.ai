@@ -2,31 +2,25 @@
   "stage": "S1",
   "name": "root_cause",
   "verdict": "PASS",
-  "reread_of": "build/stages/S1_root_cause.json",
-  "reread_at": "2026-08-23T06:38:00Z",
+  "reread_of": "/workspace/build/stages/S1_root_cause.json",
+  "reread_at": "2026-08-25T12:55:12Z",
   "independent": true,
-  "checked": [
-    "backend/app/cerebrum_product_kernel/contract/runtime.py:execute_action does trust-scope, schema, always ActionResult",
-    "backend/app/factory/generator.py:490 vendors kernel; 229-247 lists 14 artifact classes",
-    "backend/app/factory/build/roles.py:17-19 same-shape claim is false (U10)",
-    "backend/app/factory/build/runner.py:24 stale ProductGenerator-default docstring",
-    "backend/app/factory/product_architect.py:25 FACTORY_RUNNER_ENABLED default 1",
-    "grep cerebrum_product_kernel factory/build empty (U12)",
-    "roles.py:1465 _templated_route_body already has guard (draft 1 overturned)",
-    "roles.py:977 _DISPATCH_RUNTIME fabrication (F18)",
-    "roles.py:2121 _coder_route_body displaces template when keyed (U2/U5)",
-    "pilot.py:70 prepare_pilot_workspace patches (F29)",
-    "lanes from authority.py:108-224 match S1 map",
-    "41 distinct ids U1-U12 + F19-F29 + F1-F18; F0 aliases U7"
-  ],
+  "reader": "cloud-agent-s1-root-cause",
+  "emitter": "app.factory.build.root_cause.evaluate_root_cause",
   "disagreements": [],
-  "amendments": [
-    "S1 count 41 distinct + F0=U7 alias. Spec '42' is acceptable as 41+alias."
+  "checked": [
+    "U1\u2013U12 and F1\u2013F29 keys present",
+    "each id has a named owner_module",
+    "LotDesk-class symptoms map to those owners",
+    "lanes cited from authority.py ROLE_CONTRACTS",
+    "_coder_route_body still returns None"
   ],
-  "still_true": [
-    "Do not implement persist-wrapper",
-    "S4 first action is ship kernel via execute_action",
-    "S6 is emitter parity not UI",
-    "LotDesk is fixture"
-  ]
+  "lane_source": "backend/app/factory/build/authority.py",
+  "not_claimed": [
+    "PILOT_READY",
+    "S2 cosign / image signature verification",
+    "U4 persist-rewrite removal",
+    "U7 marker change"
+  ],
+  "PILOT_READY": false
 }
