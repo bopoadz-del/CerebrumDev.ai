@@ -708,6 +708,14 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
 
+def _posix_under_repo(path: Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(_repo_root()).as_posix()
+    except ValueError:
+        return Path(path).as_posix()
+
+
 def canonical_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
     """Stable subset compared across a reread. Timestamps excluded."""
     return {
@@ -952,7 +960,7 @@ def write_reread_twin(
         "stage": STAGE,
         "name": "supply_chain",
         "verdict": result.get("verdict"),
-        "reread_of": evidence_path.as_posix(),
+        "reread_of": _posix_under_repo(evidence_path),
         "reread_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "independent": True,
         "reader": "cloud-agent-s2-supply-chain",
