@@ -12,6 +12,7 @@ from app.factory.build.harvest import (
     _store_write_authorized,
     evaluate_harvest,
 )
+from app.factory.build.preflight import S4_EVIDENCE_FILENAME
 from app.factory.build.promotion import (
     EMITTER_ID,
     evaluate_promotion,
@@ -236,6 +237,21 @@ def test_earlier_present_stage_mismatch_blocks_promotion(tmp_path):
     assert result["PILOT_READY"] is False
     assert "S9_test.json" in result["failed"]
     assert "S9" in result["required_stages"]
+
+
+def test_s4_alias_is_not_a_reader_input(tmp_path):
+    """S4_kernel.json must not dual-count next to S4_ship_kernel.json."""
+    stages = tmp_path / "stages"
+    stages.mkdir()
+    _complete_s10_s12(stages)
+    _write_stage(stages, "S4_ship_kernel")
+    _write_stage(stages, "S4_kernel", verdict="FAIL")
+    result = evaluate_promotion(stages, pilot_workspace=_pilot_workspace(tmp_path))
+    names = [record.get("evidence") for record in result["records"]]
+    assert S4_EVIDENCE_FILENAME in names
+    assert "S4_kernel.json" not in names
+    assert result["PILOT_READY"] is True, result
+    assert "S4_kernel.json" not in result["failed"]
 
 
 def test_lotdesk_cannot_become_pilot_ready():

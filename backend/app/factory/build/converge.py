@@ -69,6 +69,7 @@ DECLARED_RUNNER_EXTRAS: Tuple[str, ...] = (
     "app/work_queue.py",
     "docs/build_provenance.json",
     "docs/domain_acceptance.json",
+    "docs/domain_pack.json",
 )
 
 

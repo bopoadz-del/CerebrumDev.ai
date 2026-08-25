@@ -414,6 +414,21 @@ class RoleRunner:
                 inputs_hash=inputs_hash,
             )
 
+        from app.factory.build.preflight import evaluate_preflight
+
+        preflight = evaluate_preflight()
+        self.state["preflight"] = {
+            "verdict": preflight["verdict"],
+            "git_sha": preflight["git_sha"],
+            "emitter": preflight["emitter_identity"]["id"],
+            "kernel_ownership_ok": preflight["kernel_ownership"]["ok"],
+        }
+        if not preflight["ok"]:
+            return self._finish(
+                Outcome.FAILED_GATE,
+                f"S0 preflight failed: {preflight.get('first_failing_criterion')}",
+            )
+
         self._restore_workspace_state()
         if self.cycle == "pilot":
             self.state["build_cycle"] = "pilot"
