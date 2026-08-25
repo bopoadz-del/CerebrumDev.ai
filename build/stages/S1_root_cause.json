@@ -1,7 +1,7 @@
 {
   "stage": "S1",
   "name": "ROOT_CAUSE",
-  "evaluated_at": "2026-08-25T10:39:00Z",
+  "evaluated_at": "2026-08-25T10:39:25Z",
   "emitter": "app.factory.build.root_cause.evaluate_root_cause",
   "verdict": "PASS",
   "ok": true,

@@ -1,12 +1,12 @@
 {
   "stage": "S0",
   "name": "PREFLIGHT",
-  "evaluated_at": "2026-08-25T10:38:59Z",
+  "evaluated_at": "2026-08-25T10:39:25Z",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
   "verdict": "PASS",
   "ok": true,
   "first_failing_criterion": null,
-  "git_sha": "ad2e2d894094a64e417217889338a600e95ac545",
+  "git_sha": "eb391db7806a410ad13231cd54ea95822380f63f",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
