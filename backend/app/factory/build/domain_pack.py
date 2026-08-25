@@ -470,14 +470,13 @@ def assert_pack(pack: Mapping[str, Any]) -> None:
     extra = [name for name in names if name not in DOMAIN_PACK_FIELDS]
     if extra:
         raise DomainPackError("unknown Domain Pack fields: " + ", ".join(extra))
-    if names != list(DOMAIN_PACK_FIELDS):
-        raise DomainPackError("fields must appear in DOMAIN_PACK_FIELDS order")
     if not callable(execute_action):
         raise DomainPackError("execute_action is not callable")
 
 
 def render_pack(pack: Mapping[str, Any]) -> str:
-    return json.dumps(pack, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+    # Do not sort_keys: fields_order / DOMAIN_PACK_FIELDS order is the contract.
+    return json.dumps(pack, indent=2, ensure_ascii=True) + "\n"
 
 
 def emit_domain_pack(

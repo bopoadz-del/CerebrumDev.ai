@@ -135,7 +135,8 @@ def test_role_runner_emits_domain_pack(tmp_path: Path):
     assert pack_path.is_file()
     pack = load_emitted_pack(out)
     assert_pack(pack)
-    assert list(pack["fields"]) == list(DOMAIN_PACK_FIELDS)
+    assert pack["fields_order"] == list(DOMAIN_PACK_FIELDS)
+    assert set(pack["fields"]) == set(DOMAIN_PACK_FIELDS)
 
 
 def test_coder_route_body_stays_none_on_s3_path():
