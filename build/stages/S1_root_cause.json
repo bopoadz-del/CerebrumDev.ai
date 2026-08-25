@@ -1,7 +1,7 @@
 {
   "stage": "S1",
   "name": "ROOT_CAUSE",
-  "evaluated_at": "2026-08-25T10:39:25Z",
+  "evaluated_at": "2026-08-25T11:32:41Z",
   "emitter": "app.factory.build.root_cause.evaluate_root_cause",
   "verdict": "PASS",
   "ok": true,
@@ -105,6 +105,9 @@
           "docs/certification/**",
           "docs/edge_profile.json",
           "docs/network_posture.json",
+          "docs/sbom.cdx.json",
+          "docs/permissions.json",
+          "docs/domain_pack.json",
           "docs/package_identity.json",
           "frontend/**"
         ],
@@ -288,7 +291,7 @@
       "owner_symbol": "execute_action input_schema",
       "lane": "kernel, not HTTP 200",
       "status": "open",
-      "note": "needs S3 dealership Domain Pack enums; pack is missing",
+      "note": "S3 pack binds VIN class to execute_action input_schema; sample acceptance still kernel-side",
       "owner_present": true
     },
     "F4": {
@@ -322,12 +325,12 @@
     },
     "F7": {
       "title": "no status transition machine",
-      "owner_module": "backend/app/factory/standards/domain_packs/dealership.md",
-      "owner_symbol": "domain_rules",
+      "owner_module": "backend/app/factory/build/domain_pack.py",
+      "owner_symbol": "DEALERSHIP_STATUS_MACHINE / domain_rules",
       "lane": "S3 Domain Pack + kernel",
-      "status": "open",
-      "note": "S3 not started; owner path is the missing pack",
-      "owner_present": false
+      "status": "partial",
+      "note": "S3 pack binds domain_rules to execute_action status contracts; machine not closed this stage",
+      "owner_present": true
     },
     "F8": {
       "title": "no restart-survival test",
@@ -456,10 +459,10 @@
     "F21": {
       "title": "signatures/digests not verified",
       "owner_module": "backend/app/factory/build/supply_chain.py",
-      "owner_symbol": "PYTHON_312_SLIM_DIGEST",
+      "owner_symbol": "perform_pin_verification",
       "lane": "CLONER lock records commit/path only",
-      "status": "open",
-      "note": "digest pin exists; signature verification does not (S2 gap)",
+      "status": "partial",
+      "note": "S2 performs registry manifest GET of the recorded digest. Cosign is not claimed when it cannot be performed. THIS TURN F21 is also permissions-vs-behaviour in supply_chain.",
       "owner_present": true
     },
     "F22": {
@@ -468,16 +471,18 @@
       "owner_symbol": "NETWORK_POSTURE P1",
       "lane": "CLONER capture emission",
       "status": "partial",
-      "note": "S7 closed capture network:false vs cloud defaults; F21 is signatures",
-      "owner_present": true
+      "also": "backend/app/factory/build/supply_chain.py",
+      "note": "S7 closed capture network:false vs cloud defaults. S2 reconcile_permissions covers Dockerfile/entrypoint/posture.",
+      "owner_present": true,
+      "also_present": true
     },
     "F23": {
       "title": "no SBOM",
       "owner_module": "backend/app/factory/build/supply_chain.py",
-      "owner_symbol": null,
+      "owner_symbol": "emit_supply_chain_artifacts",
       "lane": "packager / S2",
-      "status": "open",
-      "note": "no SBOM emitter; S2 not started this turn",
+      "status": "closed",
+      "note": "RoleRunner WRITER emits docs/sbom.cdx.json (CycloneDX 1.5)",
       "owner_present": true
     },
     "F24": {
@@ -615,8 +620,7 @@
   "PILOT_READY": false,
   "not_claimed": [
     "PILOT_READY",
-    "S2 SBOM / signatures",
-    "S3 dealership Domain Pack",
+    "S2 cosign / image signature verification",
     "U4 persist-rewrite removal",
     "U7 marker change"
   ],

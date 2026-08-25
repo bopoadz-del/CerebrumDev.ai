@@ -1,12 +1,12 @@
 {
   "stage": "S0",
   "name": "PREFLIGHT",
-  "evaluated_at": "2026-08-25T10:39:25Z",
+  "evaluated_at": "2026-08-25T11:32:41Z",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
   "verdict": "PASS",
   "ok": true,
   "first_failing_criterion": null,
-  "git_sha": "eb391db7806a410ad13231cd54ea95822380f63f",
+  "git_sha": "6f272999f821265705719dfaee0c016165d1721f",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
@@ -62,8 +62,8 @@
     {
       "path": "backend/app/factory/build/roles.py",
       "present": true,
-      "sha256": "e56262d00b1f809f9f02aaa1300c527a0aa56eb215f18b688f6a71e8c7b8aa21",
-      "bytes": 135850
+      "sha256": "a27ecd92d689c1dca3d3337df7d85ac6dc7a53507eab95526d43d2c50c97065d",
+      "bytes": 136558
     },
     {
       "path": "backend/app/factory/build/gates.py",
@@ -74,8 +74,8 @@
     {
       "path": "backend/app/factory/build/authority.py",
       "present": true,
-      "sha256": "101c7ec3a13f0409b60a551f488e2b86d7f4c5f4fdb85120b6f79a7fc9d6743d",
-      "bytes": 16550
+      "sha256": "a99d7c77ad12764a9bb47919a73a16da225d480e0a23f3d28041f3b4770a2a14",
+      "bytes": 16724
     },
     {
       "path": "backend/app/factory/build/runner.py",
@@ -92,8 +92,8 @@
     {
       "path": "backend/app/factory/build/converge.py",
       "present": true,
-      "sha256": "6e6d020ef0b5eac05c178276f6683f05703d5c57a00f2a15c2b45e758f0c6261",
-      "bytes": 5961
+      "sha256": "e907eec21caa8d18db6bb990a8318c6ca38e94619bb2f3c6fb9b61652aa4fb1a",
+      "bytes": 5990
     },
     {
       "path": "backend/app/factory/coder.py",
@@ -104,8 +104,8 @@
     {
       "path": "backend/app/factory/generator.py",
       "present": true,
-      "sha256": "5a4fb077db21dd858211b6d572a9a4630658a37486fd2312f42dd0ebeb267564",
-      "bytes": 56069
+      "sha256": "9b6eebf409cb28a682ccb95410db9036a4ea1c7dee8dcd87fb45c296dff0ac66",
+      "bytes": 56933
     },
     {
       "path": "backend/app/factory/product_architect.py",
@@ -140,14 +140,20 @@
     {
       "path": "backend/app/factory/build/preflight.py",
       "present": true,
-      "sha256": "954e099ed18112107c280b48dc0a6d767ffeda1ea11f5727f6d89642bd58d885",
-      "bytes": 16022
+      "sha256": "47544ffeae2541dc2216795e7175f5a195985aaad58843aca7fefa698d5b4910",
+      "bytes": 15961
     },
     {
       "path": "backend/app/factory/build/root_cause.py",
       "present": true,
-      "sha256": "f7efa4316728beeac8b536cfeda0a3c41ef15c19d5e7f6fdcce55e7901e67b14",
-      "bytes": 23747
+      "sha256": "83b2636c1f096a90ca487af3024e294730e423d50942ed73b2fdc862d3d46025",
+      "bytes": 24185
+    },
+    {
+      "path": "backend/app/factory/build/domain_pack.py",
+      "present": true,
+      "sha256": "3d8aa0036ca91b512f1d6899e6032e4b592d2322c3fd8b91cb78ac2b3eedf6d2",
+      "bytes": 29371
     }
   ],
   "existing_stage_files": [
@@ -201,22 +207,17 @@
     {
       "stage": "S2",
       "expected": "backend/app/factory/build/supply_chain.py",
-      "purpose": "Dockerfile digest pin",
+      "purpose": "Dockerfile digest pin, SBOM, performed digest verify, F21",
       "gaps": [
-        "SBOM",
-        "signature verification",
-        "F21 permissions-vs-behaviour (capture network:false vs cloud is S7 F22)"
+        "cosign/signature verification not performed (honest; not claimed)"
       ],
       "present": true
     },
     {
       "stage": "S3",
-      "expected": "backend/app/factory/standards/domain_packs/dealership.md",
+      "expected": "backend/app/factory/build/domain_pack.py",
       "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
-      "gaps": [
-        "dealership Domain Pack"
-      ],
-      "present": false
+      "present": true
     },
     {
       "stage": "S4",
@@ -298,17 +299,7 @@
       "present": true
     }
   ],
-  "missing_modules": [
-    {
-      "stage": "S3",
-      "expected": "backend/app/factory/standards/domain_packs/dealership.md",
-      "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
-      "gaps": [
-        "dealership Domain Pack"
-      ],
-      "present": false
-    }
-  ],
+  "missing_modules": [],
   "pass_criteria": {
     "factory_source_fingerprinted": true,
     "git_sha_recorded": true,
@@ -321,8 +312,7 @@
   "PILOT_READY": false,
   "not_claimed": [
     "PILOT_READY",
-    "S2 SBOM / signatures",
-    "S3 dealership Domain Pack",
+    "S2 cosign / image signature verification",
     "S4 U4 _ensure_route_persists_payload removal",
     "S5 U7 FACTORY_SUITE_MARKER_EXPR"
   ],

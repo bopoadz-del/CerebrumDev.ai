@@ -3,7 +3,7 @@
   "name": "root_cause",
   "verdict": "PASS",
   "reread_of": "/workspace/build/stages/S1_root_cause.json",
-  "reread_at": "2026-08-25T10:39:25Z",
+  "reread_at": "2026-08-25T11:32:41Z",
   "independent": true,
   "reader": "cloud-agent-s1-root-cause",
   "emitter": "app.factory.build.root_cause.evaluate_root_cause",
@@ -18,8 +18,7 @@
   "lane_source": "backend/app/factory/build/authority.py",
   "not_claimed": [
     "PILOT_READY",
-    "S2 SBOM / signatures",
-    "S3 dealership Domain Pack",
+    "S2 cosign / image signature verification",
     "U4 persist-rewrite removal",
     "U7 marker change"
   ],

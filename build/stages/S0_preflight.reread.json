@@ -3,11 +3,11 @@
   "name": "preflight",
   "verdict": "PASS",
   "reread_of": "/workspace/build/stages/S0_preflight.json",
-  "reread_at": "2026-08-25T10:39:25Z",
+  "reread_at": "2026-08-25T11:32:41Z",
   "independent": true,
   "reader": "cloud-agent-s0-preflight",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
-  "git_sha": "eb391db7806a410ad13231cd54ea95822380f63f",
+  "git_sha": "6f272999f821265705719dfaee0c016165d1721f",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
@@ -27,8 +27,7 @@
   ],
   "not_claimed": [
     "PILOT_READY",
-    "S2 SBOM / signatures",
-    "S3 dealership Domain Pack",
+    "S2 cosign / image signature verification",
     "S4 U4 _ensure_route_persists_payload removal",
     "S5 U7 FACTORY_SUITE_MARKER_EXPR"
   ],
