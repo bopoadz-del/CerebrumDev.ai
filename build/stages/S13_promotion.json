@@ -1,11 +1,11 @@
 {
   "stage": "S13",
   "name": "PROMOTION AND UPSTREAM HARVEST",
-  "evaluated_at": "2026-08-25T12:55:20Z",
+  "evaluated_at": "2026-08-25T13:10:59Z",
   "emitter": "app.factory.build.promotion.evaluate_promotion",
-  "PILOT_READY": false,
-  "verdict": "FAIL",
-  "first_failing_criterion": "pilot_cycle:no pilot workspace given \u2014 set FACTORY_PILOT_WORKSPACE to the build workspace whose pilot cycle backs this promotion",
+  "PILOT_READY": true,
+  "verdict": "PASS",
+  "first_failing_criterion": null,
   "required_stages": [
     "S0",
     "S1",
@@ -27,15 +27,17 @@
     "S12"
   ],
   "pilot_cycle": {
-    "ok": false,
-    "reason": "no pilot workspace given \u2014 set FACTORY_PILOT_WORKSPACE to the build workspace whose pilot cycle backs this promotion",
-    "ledger": null,
-    "succeeded_pilot_runs": 0,
+    "ok": true,
+    "reason": null,
+    "ledger": "/workspace/build/pilot_workspace/build_ledger.jsonl",
+    "succeeded_pilot_runs": 1,
     "workspace_env": "FACTORY_PILOT_WORKSPACE",
     "identity": {
-      "checked": false,
-      "matches": null,
-      "digest": null
+      "checked": true,
+      "matches": true,
+      "digest": "3eaabc052ddd77c8",
+      "stamped": "3eaabc052ddd77c8",
+      "reason": null
     },
     "note": "binds the pilot ledger to the bytes of the workspace it came from; does not by itself tie that workspace to a factory revision"
   },
@@ -237,11 +239,9 @@
     }
   ],
   "missing": [],
-  "failed": [
-    "pilot_cycle"
-  ],
+  "failed": [],
   "provenance": {
-    "git_sha": "1779089fd8095b4dfc286a934385a2eeb56b713d",
+    "git_sha": "0051091582e0be623ac6a9120947bc152ec066c8",
     "emitter": "app.factory.build.promotion.evaluate_promotion",
     "stage_verdicts": {
       "S0_preflight.json": "PASS",
@@ -299,7 +299,7 @@
     ],
     "reason": "harvest write is NOT authorized. A committed build/stages/HARVEST_AUTHORIZED.json naming bopoadz-del/Cerebrum-Blocks is required; an environment flag is not authorization. The write path itself now exists (U6, app.factory.build.store_write).",
     "consequence": "Products will not receive those Factory pipeline fixes from Cerebrum-Blocks until harvest exists. The next product re-ships Factory-owned corrections only if CLONER/WRITER emission in this repo stays applied. This does not pretend Blocks was fixed. No Blocks write was performed; none is authorized from this repo.",
-    "evaluated_at": "2026-08-25T12:55:20Z"
+    "evaluated_at": "2026-08-25T13:10:59Z"
   },
   "lotdesk": "fixture only; not patched",
   "llm_route_authorship": "not restored; _coder_route_body still returns None"
