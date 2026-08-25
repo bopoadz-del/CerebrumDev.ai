@@ -1,0 +1,76 @@
+{
+  "stage": "S4",
+  "name": "KERNEL",
+  "evaluated_at": "2026-08-25T11:45:29Z",
+  "emitter": "app.factory.build.kernel.evaluate_kernel",
+  "verdict": "PASS",
+  "ok": true,
+  "first_failing_criterion": null,
+  "git_sha": "bef9fed8314b055a866eac2746986119e193a125",
+  "kernel": {
+    "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
+    "execute_action_callable": true,
+    "_coder_route_body_is_None": true,
+    "persist_wrapper_symbol_gone": true,
+    "persist_wrapper_hasattr": false,
+    "templated_route_uses_execute_action": true,
+    "prepare_pilot_workspace": "absent",
+    "ok": true
+  },
+  "lotdesk_persist_wrapper": {
+    "ok": false,
+    "gate": "lotdesk_persist_wrapper",
+    "fixture": "backend/tests/factory/fixtures/lotdesk_pilot_ready.zip",
+    "findings": [
+      "handle() then save() without execute_action (LotDesk-class persist-wrapper)"
+    ],
+    "reason": "LotDesk-class persist-wrapper: capability HTTP handle()+save() without execute_action",
+    "lotdesk": "fixture only; not patched"
+  },
+  "pass_criteria": {
+    "persist_wrapper_symbol_gone": true,
+    "coder_route_body_is_None": true,
+    "execute_action_callable": true,
+    "templated_route_uses_execute_action": true,
+    "lotdesk_persist_wrapper_rejected": true,
+    "prepare_pilot_workspace_absent": true
+  },
+  "implementation": {
+    "module": "backend/app/factory/build/kernel.py",
+    "shipping_path": "backend/app/factory/build/roles.py",
+    "kernel_entry": "backend/app/cerebrum_product_kernel/contract/runtime.py:execute_action",
+    "u4": "deleted from shipping path; persist stays in kernel/store"
+  },
+  "deleted": [
+    "function _ensure_route_persists_payload in roles.py",
+    "WRITER call site body = _ensure_route_persists_payload(body)",
+    "test that asserted save(result)/save(handled) is rewritten to save(payload)"
+  ],
+  "kept": [
+    "_templated_route_body save(payload) after ActionStatus.SUCCESS (store persist)",
+    "_coder_route_body returns None (no LLM HTTP authorship)",
+    "kernel_bridge.run_capability awaits execute_action",
+    "WRITER behaviour gate (persist only on SUCCESS)",
+    "F18 fabrication layer already deleted from factory dispatch",
+    "prepare_pilot_workspace remains absent"
+  ],
+  "PILOT_READY": false,
+  "not_claimed": [
+    "PILOT_READY",
+    "S5 U7 FACTORY_SUITE_MARKER_EXPR",
+    "S6 chat/capture binding"
+  ],
+  "lotdesk": "fixture only; not patched",
+  "llm_route_authorship": "not restored; _coder_route_body still returns None",
+  "not_started": [
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "S9",
+    "S10",
+    "S11",
+    "S12",
+    "S13"
+  ]
+}

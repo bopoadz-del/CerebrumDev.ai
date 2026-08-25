@@ -1,0 +1,38 @@
+{
+  "stage": "S4",
+  "name": "kernel",
+  "verdict": "PASS",
+  "reread_of": "build/stages/S4_kernel.json",
+  "reread_at": "2026-08-25T11:45:29Z",
+  "independent": true,
+  "reader": "cloud-agent-s4-kernel",
+  "emitter": "app.factory.build.kernel.evaluate_kernel",
+  "git_sha": "bef9fed8314b055a866eac2746986119e193a125",
+  "disagreements": [],
+  "checked": [
+    "_ensure_route_persists_payload symbol gone from roles.py",
+    "RoleRunner templated route still goes through execute_action",
+    "LotDesk-class persist-wrapper is rejected; fixture not patched",
+    "_coder_route_body still returns None",
+    "prepare_pilot_workspace remains absent"
+  ],
+  "deleted": [
+    "function _ensure_route_persists_payload in roles.py",
+    "WRITER call site body = _ensure_route_persists_payload(body)",
+    "test that asserted save(result)/save(handled) is rewritten to save(payload)"
+  ],
+  "kept": [
+    "_templated_route_body save(payload) after ActionStatus.SUCCESS (store persist)",
+    "_coder_route_body returns None (no LLM HTTP authorship)",
+    "kernel_bridge.run_capability awaits execute_action",
+    "WRITER behaviour gate (persist only on SUCCESS)",
+    "F18 fabrication layer already deleted from factory dispatch",
+    "prepare_pilot_workspace remains absent"
+  ],
+  "not_claimed": [
+    "PILOT_READY",
+    "S5 U7 FACTORY_SUITE_MARKER_EXPR",
+    "S6 chat/capture binding"
+  ],
+  "PILOT_READY": false
+}

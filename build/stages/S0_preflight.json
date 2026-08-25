@@ -1,16 +1,17 @@
 {
   "stage": "S0",
   "name": "PREFLIGHT",
-  "evaluated_at": "2026-08-25T11:32:41Z",
+  "evaluated_at": "2026-08-25T11:45:29Z",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
   "verdict": "PASS",
   "ok": true,
   "first_failing_criterion": null,
-  "git_sha": "6f272999f821265705719dfaee0c016165d1721f",
+  "git_sha": "bef9fed8314b055a866eac2746986119e193a125",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
     "_coder_route_body_is_None": true,
+    "persist_wrapper_absent": true,
     "prepare_pilot_workspace": "absent",
     "prepare_pilot_workspace_in_runner": false,
     "prepare_pilot_workspace_in_pilot": false,
@@ -62,8 +63,8 @@
     {
       "path": "backend/app/factory/build/roles.py",
       "present": true,
-      "sha256": "a27ecd92d689c1dca3d3337df7d85ac6dc7a53507eab95526d43d2c50c97065d",
-      "bytes": 136558
+      "sha256": "205ebef96838c9734272bc4e05d30483195ab713f44cca1f8fef92073dc524bf",
+      "bytes": 135925
     },
     {
       "path": "backend/app/factory/build/gates.py",
@@ -140,20 +141,26 @@
     {
       "path": "backend/app/factory/build/preflight.py",
       "present": true,
-      "sha256": "47544ffeae2541dc2216795e7175f5a195985aaad58843aca7fefa698d5b4910",
-      "bytes": 15961
+      "sha256": "c166fcb237dac340009b70d577e7430e9a839b71f75d0e3aa646820c823366b8",
+      "bytes": 16321
     },
     {
       "path": "backend/app/factory/build/root_cause.py",
       "present": true,
-      "sha256": "83b2636c1f096a90ca487af3024e294730e423d50942ed73b2fdc862d3d46025",
-      "bytes": 24185
+      "sha256": "4adc1ebe16034e34387173ed69a78f949d66a37f8eccd2015a7d8b6122778f99",
+      "bytes": 24407
     },
     {
       "path": "backend/app/factory/build/domain_pack.py",
       "present": true,
       "sha256": "3d8aa0036ca91b512f1d6899e6032e4b592d2322c3fd8b91cb78ac2b3eedf6d2",
       "bytes": 29371
+    },
+    {
+      "path": "backend/app/factory/build/kernel.py",
+      "present": true,
+      "sha256": "dc2de1557ba02947a3ef201f57ee76905970148aaea32f0eb3b0ed9cf684291d",
+      "bytes": 14070
     }
   ],
   "existing_stage_files": [
@@ -174,6 +181,8 @@
     "S2_supply_chain.reread.json",
     "S3_domain_pack.json",
     "S3_domain_pack.reread.json",
+    "S4_kernel.json",
+    "S4_kernel.reread.json",
     "S4_ship_kernel.json",
     "S4_ship_kernel.reread.json",
     "S5_gate_contract.json",
@@ -221,11 +230,8 @@
     },
     {
       "stage": "S4",
-      "expected": "backend/app/factory/build/roles.py",
-      "purpose": "kernel shipped via execute_action",
-      "gaps": [
-        "_ensure_route_persists_payload still present (U4)"
-      ],
+      "expected": "backend/app/factory/build/kernel.py",
+      "purpose": "kernel execute_action shipping path; U4 persist-wrapper removed",
       "present": true
     },
     {
@@ -306,6 +312,7 @@
     "emitter_identity_recorded": true,
     "kernel_execute_action_callable": true,
     "kernel_coder_route_body_is_None": true,
+    "kernel_persist_wrapper_absent": true,
     "existing_stage_files_listed": true,
     "missing_modules_named": true
   },
@@ -313,7 +320,6 @@
   "not_claimed": [
     "PILOT_READY",
     "S2 cosign / image signature verification",
-    "S4 U4 _ensure_route_persists_payload removal",
     "S5 U7 FACTORY_SUITE_MARKER_EXPR"
   ],
   "lotdesk": "fixture only; not patched",

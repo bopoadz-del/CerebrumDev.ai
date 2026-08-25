@@ -3,7 +3,7 @@
   "name": "root_cause",
   "verdict": "PASS",
   "reread_of": "/workspace/build/stages/S1_root_cause.json",
-  "reread_at": "2026-08-25T11:32:41Z",
+  "reread_at": "2026-08-25T11:45:30Z",
   "independent": true,
   "reader": "cloud-agent-s1-root-cause",
   "emitter": "app.factory.build.root_cause.evaluate_root_cause",
@@ -13,13 +13,13 @@
     "each id has a named owner_module",
     "LotDesk-class symptoms map to those owners",
     "lanes cited from authority.py ROLE_CONTRACTS",
-    "_coder_route_body still returns None"
+    "_coder_route_body still returns None",
+    "U4 persist rewriter owner is kernel.py reject_lotdesk_persist_wrapper (closed)"
   ],
   "lane_source": "backend/app/factory/build/authority.py",
   "not_claimed": [
     "PILOT_READY",
     "S2 cosign / image signature verification",
-    "U4 persist-rewrite removal",
     "U7 marker change"
   ],
   "PILOT_READY": false

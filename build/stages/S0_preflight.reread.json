@@ -3,15 +3,16 @@
   "name": "preflight",
   "verdict": "PASS",
   "reread_of": "/workspace/build/stages/S0_preflight.json",
-  "reread_at": "2026-08-25T11:32:41Z",
+  "reread_at": "2026-08-25T11:45:29Z",
   "independent": true,
   "reader": "cloud-agent-s0-preflight",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
-  "git_sha": "6f272999f821265705719dfaee0c016165d1721f",
+  "git_sha": "bef9fed8314b055a866eac2746986119e193a125",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
     "_coder_route_body_is_None": true,
+    "persist_wrapper_absent": true,
     "prepare_pilot_workspace": "absent",
     "prepare_pilot_workspace_in_runner": false,
     "prepare_pilot_workspace_in_pilot": false,
@@ -22,13 +23,13 @@
     "factory sources re-hashed",
     "RoleRunner default engine re-read",
     "execute_action callable; _coder_route_body is None",
+    "U4 persist-wrapper absent from roles.py",
     "existing build/stages files listed",
     "missing stage-table modules named"
   ],
   "not_claimed": [
     "PILOT_READY",
     "S2 cosign / image signature verification",
-    "S4 U4 _ensure_route_persists_payload removal",
     "S5 U7 FACTORY_SUITE_MARKER_EXPR"
   ],
   "PILOT_READY": false
