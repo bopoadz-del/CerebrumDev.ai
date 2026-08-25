@@ -70,11 +70,11 @@ def test_preflight_records_required_keys():
     assert "S13_promotion.json" in result["existing_stage_files"]
 
 
-def test_preflight_names_missing_dealership_pack_and_cites_existing_s11_s12():
+def test_preflight_names_dealership_pack_module_and_cites_existing_s11_s12():
     result = evaluate_preflight()
     inventory = {row["stage"]: row for row in result["stage_module_inventory"]}
-    assert inventory["S3"]["present"] is False
-    assert "dealership" in inventory["S3"]["expected"]
+    assert inventory["S3"]["present"] is True
+    assert inventory["S3"]["expected"].endswith("domain_pack.py")
     assert inventory["S11"]["present"] is True
     assert inventory["S11"]["expected"].endswith("deploy.py")
     assert inventory["S12"]["present"] is True
@@ -83,7 +83,7 @@ def test_preflight_names_missing_dealership_pack_and_cites_existing_s11_s12():
     assert inventory["S8"]["present"] is True
     assert inventory["S10"]["present"] is True
     missing_stages = {row["stage"] for row in result["missing_modules"]}
-    assert "S3" in missing_stages
+    assert "S3" not in missing_stages
     assert "S11" not in missing_stages
     assert "S12" not in missing_stages
     assert result["verdict"] == "PASS"

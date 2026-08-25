@@ -1,9 +1,9 @@
 """S0 preflight — fingerprint factory + RoleRunner emission before a build.
 
-This is an inventory and identity gate, not a later-stage closer. Missing
-S3 (dealership Domain Pack) and S2 gaps (SBOM, signatures) are recorded.
-They do not fail S0. Kernel ownership failure does: ``execute_action`` must
-be callable and ``_coder_route_body`` must return None.
+This is an inventory and identity gate, not a later-stage closer. S3
+(dealership Domain Pack) is ``build/domain_pack.py``. S2 residual: cosign
+is not performed. Kernel ownership failure does fail S0: ``execute_action``
+must be callable and ``_coder_route_body`` must return None.
 
 Evidence: ``build/stages/S0_preflight.json`` + reread twin. A fingerprint
 mismatch between the two is FAIL. Does not emit PILOT_READY.
@@ -49,6 +49,7 @@ FACTORY_SOURCE_PATHS: Tuple[str, ...] = (
     ".github/workflows/ci.yml",
     "backend/app/factory/build/preflight.py",
     "backend/app/factory/build/root_cause.py",
+    "backend/app/factory/build/domain_pack.py",
 )
 
 #: Honest inventory of the stage table. Cite existing modules; do not
@@ -75,9 +76,8 @@ STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
     },
     {
         "stage": "S3",
-        "expected": "backend/app/factory/standards/domain_packs/dealership.md",
+        "expected": "backend/app/factory/build/domain_pack.py",
         "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
-        "gaps": ("dealership Domain Pack",),
     },
     {
         "stage": "S4",
@@ -335,8 +335,7 @@ def evaluate_preflight(
         "PILOT_READY": False,
         "not_claimed": [
             "PILOT_READY",
-            "S2 SBOM / signatures",
-            "S3 dealership Domain Pack",
+            "S2 cosign / image signature verification",
             "S4 U4 _ensure_route_persists_payload removal",
             "S5 U7 FACTORY_SUITE_MARKER_EXPR",
         ],

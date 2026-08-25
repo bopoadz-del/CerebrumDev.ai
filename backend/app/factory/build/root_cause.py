@@ -173,7 +173,7 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
         "owner_symbol": "execute_action input_schema",
         "lane": "kernel, not HTTP 200",
         "status": "open",
-        "note": "needs S3 dealership Domain Pack enums; pack is missing",
+        "note": "S3 pack binds VIN class to execute_action input_schema; sample acceptance still kernel-side",
     },
     "F4": {
         "title": "missing required skipped",
@@ -202,11 +202,11 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
     },
     "F7": {
         "title": "no status transition machine",
-        "owner_module": "backend/app/factory/standards/domain_packs/dealership.md",
-        "owner_symbol": "domain_rules",
+        "owner_module": "backend/app/factory/build/domain_pack.py",
+        "owner_symbol": "DEALERSHIP_STATUS_MACHINE / domain_rules",
         "lane": "S3 Domain Pack + kernel",
-        "status": "open",
-        "note": "S3 not started; owner path is the missing pack",
+        "status": "partial",
+        "note": "S3 pack binds domain_rules to execute_action status contracts; machine not closed this stage",
     },
     "F8": {
         "title": "no restart-survival test",
@@ -545,8 +545,7 @@ def evaluate_root_cause(*, repo: Optional[Path] = None) -> Dict[str, Any]:
         "PILOT_READY": False,
         "not_claimed": [
             "PILOT_READY",
-            "S2 SBOM / signatures",
-            "S3 dealership Domain Pack",
+            "S2 cosign / image signature verification",
             "U4 persist-rewrite removal",
             "U7 marker change",
         ],

@@ -2667,10 +2667,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
     except SupplyChainError as exc:
         raise RoleError(str(exc)) from exc
+    from app.factory.build.domain_pack import DomainPackError, emit_domain_pack
+
+    try:
+        emit_domain_pack(ctx.workspace, blueprint=ctx.blueprint)
+    except DomainPackError as exc:
+        raise RoleError(str(exc)) from exc
     sources["deploy_scaffold"] = fallback_source
     sources["network_posture"] = POSTURE_ID
     sources["sbom"] = fallback_source
     sources["permissions"] = fallback_source
+    sources["domain_pack"] = fallback_source
 
     from app.factory.build.converge import converge_writer_emitters
 

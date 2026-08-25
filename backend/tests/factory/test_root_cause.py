@@ -40,10 +40,8 @@ def test_required_u_and_f_keys_exist():
         assert spec["owner_module"], code
         assert spec["title"], code
         assert spec["lane"], code
-        if code != "F7":
-            assert spec["owner_present"] is True, f"{code} -> {spec['owner_module']}"
-    assert owners["F7"]["owner_present"] is False
-    assert "dealership" in owners["F7"]["owner_module"]
+        assert spec["owner_present"] is True, f"{code} -> {spec['owner_module']}"
+    assert owners["F7"]["owner_module"].endswith("domain_pack.py")
 
 
 def test_lane_authority_map_cites_authority_contracts():
@@ -75,8 +73,7 @@ def test_lotdesk_class_symptoms_map_to_named_owner_module():
         assert code in owners, code
         assert by_code[code]["owner_module"] == owners[code]["owner_module"]
         assert by_code[code]["owner_module"]
-        if code != "F7":
-            assert (ROOT / by_code[code]["owner_module"]).is_file(), code
+        assert (ROOT / by_code[code]["owner_module"]).is_file(), code
 
 
 def test_root_cause_evidence_and_reread_mismatch_fails(tmp_path):
