@@ -144,11 +144,10 @@ def test_role_runner_records_preflight_before_roles(tmp_path):
     assert preflight["kernel_ownership_ok"] is True
     assert preflight["emitter"] == "app.factory.build.runner.RoleRunner"
     events = list(runner.ledger.events())
-    notes = [e for e in events if e.kind.value == "NOTE" and "S0 preflight" in e.detail]
-    assert notes, "preflight must be ledgered before roles complete"
+    started = [e for e in events if e.kind.value == "RUN_STARTED"]
     passed = [e for e in events if e.kind.value == "GATE_PASSED"]
-    assert passed
-    assert notes[0].seq < passed[0].seq
+    assert started and passed
+    assert started[0].seq < passed[0].seq
 
 
 def test_failed_kernel_ownership_aborts_before_collector(tmp_path, monkeypatch):

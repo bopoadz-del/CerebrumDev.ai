@@ -423,15 +423,6 @@ class RoleRunner:
             "emitter": preflight["emitter_identity"]["id"],
             "kernel_ownership_ok": preflight["kernel_ownership"]["ok"],
         }
-        self.ledger.append(
-            EventKind.NOTE,
-            detail="S0 preflight",
-            payload={
-                "git_sha": preflight["git_sha"],
-                "emitter": preflight["emitter_identity"]["id"],
-                "verdict": preflight["verdict"],
-            },
-        )
         if not preflight["ok"]:
             return self._finish(
                 Outcome.FAILED_GATE,

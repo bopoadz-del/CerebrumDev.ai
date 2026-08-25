@@ -1,12 +1,12 @@
 {
   "stage": "S0",
   "name": "PREFLIGHT",
-  "evaluated_at": "2026-08-25T10:33:40Z",
+  "evaluated_at": "2026-08-25T10:38:59Z",
   "emitter": "app.factory.build.preflight.evaluate_preflight",
   "verdict": "PASS",
   "ok": true,
   "first_failing_criterion": null,
-  "git_sha": "cb8889fe907f8bdbff73ba0c8fc89154cf14186a",
+  "git_sha": "ad2e2d894094a64e417217889338a600e95ac545",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
     "execute_action_callable": true,
@@ -80,8 +80,8 @@
     {
       "path": "backend/app/factory/build/runner.py",
       "present": true,
-      "sha256": "9b69689e08a733ffb2f4b51504be58e57a30e4f1f4877e42f6d7d2974b77e879",
-      "bytes": 20302
+      "sha256": "d4c1ff895b090901f03bb6bb7526d4696d09af330217be32af1e8f401b81fb8f",
+      "bytes": 20002
     },
     {
       "path": "backend/app/factory/build/pilot.py",
