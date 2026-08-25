@@ -24,8 +24,9 @@ registry, kit, or shelf entry.
 Dead routes that must not carry this set:
 
 * ``kit_pack.stock_kits`` reaches a kit only through ``factory_blocks.json``.
-  Neither ``formula_executor_v2`` nor ``universal_business`` is a kit on that
-  shelf, so a kit could never have reached a generated platform.
+  ``formula_executor_v2`` is a Store runtime alias for the dual-registered
+  ``formula_executor`` budget block. It is not a Factory kit and does not
+  carry this set. Do not add it to the shelf to "gate" it.
 * ``universal_kernel`` is a GOLD/awaiting kit-library destination, not the
   product kernel. Putting base-tier content there would contradict shipping
   in every platform.
@@ -33,6 +34,11 @@ Dead routes that must not carry this set:
   whole-repo-copy are not the path that reaches every Factory product.
   Auth is kit-provided in the one real generated product
   (``app/steward/auth.py``); billing is extended-def / legacy-boot-only.
+
+Product Q&A is :func:`answer_definition`. It reads :func:`definition_index`,
+so an override's address, provenance, reason, and tier appear on the answer
+path that copytrees into every product. Domain overlays are ingested by
+``scripts/intake_formulas.py``, which runs the same precedence contract.
 
 THE OVERLAY CONTRACT
 --------------------
@@ -65,6 +71,7 @@ __all__ = [
     "BASE_SET_ID",
     "PrecedenceError",
     "ResolvedDefinition",
+    "answer_definition",
     "definition_index",
     "load_base_definitions",
     "resolve_definitions",
@@ -155,8 +162,10 @@ def resolve_definitions(
     for definition in base.get("definitions", []) + base.get("conventions", []):
         entry = ResolvedDefinition(definition)
         entry["tier"] = TIER_BASE
+        entry["origin"] = base_set_id
+        entry["address"] = _address(base_set_id, definition)
         resolved[definition["id"]] = entry
-        addresses[_address(base_set_id, definition)] = definition["id"]
+        addresses[entry["address"]] = definition["id"]
 
     claimed_by: Dict[str, str] = {}
 
@@ -192,6 +201,7 @@ def resolve_definitions(
                 entry = ResolvedDefinition(definition)
                 entry["tier"] = TIER_EXTENSION
                 entry["origin"] = origin
+                entry["address"] = _address(origin, definition)
                 resolved[ident] = entry
                 claimed_by[ident] = origin
                 continue
@@ -219,6 +229,7 @@ def resolve_definitions(
             entry = ResolvedDefinition(definition)
             entry["tier"] = TIER_OVERRIDE
             entry["origin"] = origin
+            entry["address"] = _address(origin, definition)
             entry["supersedes"] = target
             resolved[ident] = entry
             claimed_by[ident] = origin
@@ -226,23 +237,52 @@ def resolve_definitions(
     return resolved
 
 
+def _index_row(ident: str, entry: ResolvedDefinition) -> Dict[str, Any]:
+    """One answer-surface row: who defined this, at which address, why."""
+    provenance = entry.get("provenance") or {}
+    return {
+        "id": ident,
+        "address": entry.get("address") or "",
+        "tier": entry["tier"],
+        "expression": entry.get("expression", ""),
+        "supersedes": entry.get("supersedes") or "",
+        "provenance": provenance,
+        "reason": entry.get("reason") or "",
+        "origin": entry.get("origin") or "",
+    }
+
+
 def definition_index(
     resolved: Optional[Dict[str, ResolvedDefinition]] = None,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """A flat listing of what is defined and which tier defined it.
 
-    Intended for the answer surface: a generated calculation should be able to
-    say ``gross_margin_ratio -- base`` or ``waste_factor -- domain-extension``
-    rather than leaving the reader to guess whether a number was defined or
-    invented.
+    Consumed by :func:`answer_definition` (the product Q&A path that ships
+    via kernel copytree). An override row carries the overlay address, the
+    base address it supersedes, provenance, reason, and tier -- so the
+    answer surface cannot report a number without saying which layer
+    produced it.
     """
     resolved = resolve_definitions() if resolved is None else resolved
-    return [
-        {
-            "id": ident,
-            "tier": entry["tier"],
-            "expression": entry.get("expression", ""),
-            "supersedes": entry.get("supersedes") or "",
-        }
-        for ident, entry in sorted(resolved.items())
-    ]
+    return [_index_row(ident, entry) for ident, entry in sorted(resolved.items())]
+
+
+def answer_definition(
+    ident: str,
+    *,
+    resolved: Optional[Dict[str, ResolvedDefinition]] = None,
+    overlays: Iterable[Dict[str, Any]] = (),
+) -> Optional[Dict[str, Any]]:
+    """Product Q&A: look up a definition on the resolved set.
+
+    Returns the index row (address, provenance, reason, tier) or ``None``
+    when the id is not defined. Absence stays absence -- a missing
+    definition must not fall through to an invented derivation.
+
+    Overlay resolve still refuses silent shadowing; this function does not
+    invent a second merge rule.
+    """
+    if resolved is None:
+        resolved = resolve_definitions(overlays=overlays)
+    index = {row["id"]: row for row in definition_index(resolved)}
+    return index.get(ident)

@@ -9,7 +9,7 @@
     "note": "A definition's version is part of its address. An overlay that overrides universal:gross_margin_ratio_v1 stops matching the moment the base definition becomes _v2, so a base change cannot silently re-point somebody's override at arithmetic they never reviewed."
   },
   "principle": {
-    "no_encoded_rates": "Not one formula in this file contains a tax rate, interest rate, fee percentage or statutory threshold. Every such value is a named INPUT the caller supplies. That is what makes the set universal: a jurisdiction-specific number encoded here would be wrong for most of the businesses that load it, and would be a figure nobody could check. A jurisdiction-specific rate belongs in a domain overlay that extends this set, with provenance.",
+    "no_encoded_rates": "Not one formula in this file contains a tax rate, interest rate, fee percentage or statutory threshold. Every such value is a named INPUT the caller supplies. That is what makes the set universal: a jurisdiction-specific number encoded here would be wrong for most of the businesses that load it, and would be a figure nobody could check. A jurisdiction-specific rate belongs in a domain overlay, entered through scripts/intake_formulas.py with provenance.",
     "units": "Money inputs must share one currency; the set is currency-agnostic and performs no conversion. Rates are decimal fractions (0.15, not 15).",
     "margin_is_not_markup": "gross_margin_ratio divides by REVENUE; markup_on_cost divides by COST. Confusing them is the most common costing error this set exists to prevent - see price_from_margin vs price_from_markup."
   },
