@@ -193,6 +193,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         "docs/data_lifecycle.json",
         "docs/deploy.json",
         "docs/domain_acceptance.json",
+        "docs/domain_pack.json",
         "app/domain_ops.py",
         "app/work_queue.py",
         "README.md",

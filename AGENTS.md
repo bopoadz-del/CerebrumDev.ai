@@ -65,6 +65,22 @@ Every block used to generate a product must be registered in **both**:
 2. CerebrumDev.ai Factory shelf/registry (`backend/app/factory/block_registry/` or
    equivalent shelf consumer)
 
+### Before creating a module
+
+Grep this repo's `master` **and** sibling repos (Cerebrum-Blocks, The_Fork)
+before adding a new Python module. Consume the existing module, or dual-register
+it with a drift test. Never re-implement a module that already exists under
+another name. Factory `build/root_cause.py` (lane-authority map) is not
+Cerebrum `healing/root_cause.py`; do not copy one over the other.
+
+### Stage evidence never ships inside feature PRs
+
+Do not commit `build/stages/*.json` (or reread twins) in a feature PR. Stage
+evidence is regenerable; emit it in a later single run at final HEAD after the
+code merge. Closed #203 was rejected for ~5k hand-committed regenerable
+evidence plus a second S4 filename. Canonical S4 evidence is
+`S4_ship_kernel.json` (`S4_kernel.json` is not a reader input).
+
 
 ## Product factory (Milestone 1+)
 

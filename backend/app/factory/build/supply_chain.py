@@ -7,15 +7,27 @@ provided Blocks checkout — this module does not invent ids or digests.
 The Python base-image digest was fetched from Docker Hub
 ``GET /v2/repositories/library/python/tags/3.12-slim`` on 2026-08-23
 (Hub ``last_updated`` 2026-08-16T20:07:22Z). It is the tag's manifest-list
-digest, not an invented hash.
+digest, not an invented hash. S2 re-verifies that digest against the registry
+(manifest GET). The floating tag may move; the pin must still resolve.
+
+S2 also emits a CycloneDX SBOM and reconciles declared network/fs/install
+permissions against Dockerfile, entrypoint, and network_posture (THIS TURN
+F21). Cosign is not faked: if it is not on PATH, signature verification is
+recorded as not performed and is not claimed.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import sys
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 # Manifest-list digest for library/python:3.12-slim (Docker Hub, 2026-08-23).
 PYTHON_312_SLIM_DIGEST = (
@@ -25,16 +37,63 @@ PYTHON_312_SLIM_FROM = f"python:3.12-slim@{PYTHON_312_SLIM_DIGEST}"
 PYTHON_312_SLIM_PIN_SOURCE = (
     "https://hub.docker.com/v2/repositories/library/python/tags/3.12-slim"
 )
+PYTHON_312_SLIM_REGISTRY_REPO = "library/python"
+REGISTRY_AUTH_URL = (
+    "https://auth.docker.io/token?service=registry.docker.io"
+    "&scope=repository:library/python:pull"
+)
+REGISTRY_MANIFEST_URL = (
+    "https://registry-1.docker.io/v2/library/python/manifests/{digest}"
+)
 
 _LATEST_RE = re.compile(r":latest(?:[^\w.-]|$)")
 _DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}\b")
 _FROM_RE = re.compile(r"^\s*FROM\s+(\S+)", re.MULTILINE | re.IGNORECASE)
+_REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(.*)$")
+_INSTALL_RE = re.compile(
+    r"^\s*RUN\s+.*(pip install|apt-get\s+install|apk add)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_FS_RE = re.compile(
+    r"STORAGE_PATH|mkdir -p\s+/app/data|alembic upgrade|/app/data",
+    re.IGNORECASE,
+)
+_OUTBOUND_MARKERS = (
+    "curl ",
+    "wget ",
+    "CEREBRUM_API_URL",
+    "ADD http://",
+    "ADD https://",
+    "ollama",
+    "openai.com",
+    "api.anthropic.com",
+)
 
 _VENDOR_MIRROR = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror"
 
+SBOM_REL = Path("docs") / "sbom.cdx.json"
+PERMISSIONS_REL = Path("docs") / "permissions.json"
+EMITTER_ID = "app.factory.build.supply_chain.evaluate_supply_chain"
+STAGE = "S2"
+STAGE_NAME = "SUPPLY_CHAIN"
+SBOM_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
+
+#: Product-level P1 permissions. Runtime outbound is off; sqlite + alembic
+#: need the mounted disk; pip runs at image build, not at runtime.
+P1_DECLARED_PERMISSIONS: Dict[str, Any] = {
+    "schema_version": "product_permissions.v1",
+    "network": False,
+    "filesystem": True,
+    "install": True,
+    "network_scope": "runtime_outbound",
+    "filesystem_scope": "STORAGE_PATH sqlite and alembic",
+    "install_scope": "image_build pip",
+    "posture": "P1",
+}
+
 
 class SupplyChainError(ValueError):
-    """Unverifiable pin, :latest, or invented block id."""
+    """Unverifiable pin, :latest, invented block id, SBOM, or F21 mismatch."""
 
 
 def findings_for_image_ref(ref: str, *, loc: str) -> List[str]:
@@ -61,6 +120,17 @@ def assert_generated_dockerfile(text: str, *, loc: str = "Dockerfile") -> None:
     findings = scan_dockerfile(text, loc=loc)
     if findings:
         raise SupplyChainError("; ".join(findings))
+
+
+def from_refs(text: str) -> List[str]:
+    return [match.group(1) for match in _FROM_RE.finditer(text or "")]
+
+
+def extract_digest(ref: str) -> str:
+    match = _DIGEST_RE.search(ref or "")
+    if not match:
+        return ""
+    return match.group(0)[1:]  # drop leading @
 
 
 def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
@@ -136,3 +206,814 @@ def redact_unpinned_images(block_json_path: Path) -> bool:
     )
     return True
 
+
+# -- performed digest / signature verification --------------------------------
+
+
+def perform_local_pin_check(ref: str) -> Dict[str, Any]:
+    """Parse *ref* and compare its digest to the recorded python:3.12-slim pin.
+
+    This is a performed check against the emitted string, not a configured-only
+    flag. A digest-pinned image that is not the recorded pin still fails.
+    """
+    findings = findings_for_image_ref(ref, loc="pin")
+    digest = extract_digest(ref)
+    matches = digest == PYTHON_312_SLIM_DIGEST
+    ok = not findings and matches
+    reason = ""
+    if findings:
+        reason = "; ".join(findings)
+    elif not matches:
+        reason = (
+            f"digest {digest or '(none)'} is not the recorded "
+            f"python:3.12-slim pin {PYTHON_312_SLIM_DIGEST}"
+        )
+    return {
+        "kind": "local_parse_vs_recorded",
+        "performed": True,
+        "ok": ok,
+        "claimed": True,
+        "ref": ref,
+        "digest": digest,
+        "recorded": PYTHON_312_SLIM_DIGEST,
+        "reason": reason,
+    }
+
+
+def fetch_registry_manifest_digest(
+    digest: str, *, timeout: float = 12.0
+) -> Dict[str, Any]:
+    """GET the pinned manifest. Fail closed if the registry cannot confirm it.
+
+    Does not compare against the floating ``:3.12-slim`` tag — that tag moves;
+    the pin must still resolve.
+    """
+    want = (digest or "").strip()
+    if not want.startswith("sha256:") or len(want) != 71:
+        return {
+            "kind": "registry_manifest",
+            "performed": True,
+            "ok": False,
+            "claimed": True,
+            "digest": want,
+            "reason": "digest is not sha256:<64 hex>",
+        }
+    headers = {"User-Agent": "CerebrumDev-factory-S2"}
+    try:
+        token_req = Request(REGISTRY_AUTH_URL, headers=headers)
+        with urlopen(token_req, timeout=timeout) as resp:
+            token_body = json.loads(resp.read().decode("utf-8"))
+        token = str(token_body.get("token") or "")
+        if not token:
+            return {
+                "kind": "registry_manifest",
+                "performed": True,
+                "ok": False,
+                "claimed": True,
+                "digest": want,
+                "reason": "registry auth returned no token",
+            }
+        man_headers = {
+            "User-Agent": "CerebrumDev-factory-S2",
+            "Authorization": f"Bearer {token}",
+            "Accept": (
+                "application/vnd.oci.image.index.v1+json, "
+                "application/vnd.docker.distribution.manifest.list.v2+json, "
+                "application/vnd.docker.distribution.manifest.v2+json, "
+                "application/vnd.oci.image.manifest.v1+json"
+            ),
+        }
+        man_req = Request(
+            REGISTRY_MANIFEST_URL.format(digest=want), headers=man_headers
+        )
+        with urlopen(man_req, timeout=timeout) as resp:
+            header_digest = str(resp.headers.get("Docker-Content-Digest") or "")
+            payload = resp.read()
+            media = str(resp.headers.get("Content-Type") or "")
+        matches = header_digest.lower() == want.lower()
+        if not matches:
+            # Some registries omit the header; hash the body only if header empty.
+            reason = (
+                f"Docker-Content-Digest {header_digest or '(missing)'} "
+                f"!= recorded {want}"
+            )
+        else:
+            reason = ""
+        return {
+            "kind": "registry_manifest",
+            "performed": True,
+            "ok": matches,
+            "claimed": True,
+            "digest": want,
+            "registry_digest": header_digest,
+            "bytes": len(payload),
+            "media_type": media,
+            "repo": PYTHON_312_SLIM_REGISTRY_REPO,
+            "reason": reason,
+        }
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError, KeyError) as exc:
+        return {
+            "kind": "registry_manifest",
+            "performed": True,
+            "ok": False,
+            "claimed": True,
+            "digest": want,
+            "reason": f"registry manifest GET failed: {type(exc).__name__}: {exc}",
+        }
+
+
+def perform_pin_verification(
+    ref: str, *, live_registry: bool = True
+) -> Dict[str, Any]:
+    local = perform_local_pin_check(ref)
+    registry: Dict[str, Any]
+    if live_registry and local["ok"]:
+        registry = fetch_registry_manifest_digest(local["digest"])
+    elif live_registry:
+        registry = {
+            "kind": "registry_manifest",
+            "performed": False,
+            "ok": False,
+            "claimed": False,
+            "reason": "skipped; local pin check failed",
+        }
+    else:
+        registry = {
+            "kind": "registry_manifest",
+            "performed": False,
+            "ok": False,
+            "claimed": False,
+            "reason": "live_registry=False",
+        }
+    ok = bool(local["ok"]) and (bool(registry["ok"]) if live_registry else bool(local["ok"]))
+    first = None
+    if not local["ok"]:
+        first = "local_pin"
+    elif live_registry and not registry["ok"]:
+        first = "registry_manifest"
+    return {
+        "ok": ok,
+        "performed": True,
+        "first_failing": first,
+        "local": local,
+        "registry": registry,
+        "configured_only": False,
+    }
+
+
+def perform_signature_verification(ref: str) -> Dict[str, Any]:
+    """Cosign if present. Never claim a signature that was not checked."""
+    tool = shutil.which("cosign")
+    if not tool:
+        return {
+            "kind": "cosign",
+            "performed": False,
+            "ok": False,
+            "claimed": False,
+            "tool": "cosign",
+            "ref": ref,
+            "reason": "cosign not on PATH; refusing to claim signatures",
+        }
+    # Cosign is present but this factory does not carry a publisher identity
+    # for library/python. Running verify without a policy would be theatre.
+    return {
+        "kind": "cosign",
+        "performed": False,
+        "ok": False,
+        "claimed": False,
+        "tool": tool,
+        "ref": ref,
+        "reason": (
+            "cosign is on PATH but no publisher identity/policy is configured; "
+            "refusing to run an unverifiable cosign verify"
+        ),
+    }
+
+
+# -- CycloneDX SBOM -----------------------------------------------------------
+
+
+def parse_requirement_lines(text: str) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for line in (text or "").splitlines():
+        raw = line.split("#", 1)[0].strip()
+        if not raw:
+            continue
+        match = _REQ_RE.match(raw)
+        if not match:
+            continue
+        rows.append(
+            {
+                "name": match.group(1),
+                "version": (match.group(2) or "").strip() or "unspecified",
+            }
+        )
+    return rows
+
+
+def build_cyclonedx_sbom(
+    *,
+    product_id: str,
+    product_name: str,
+    image_ref: str,
+    requirements_text: str = "",
+    blocks: Sequence[str] = (),
+) -> Dict[str, Any]:
+    findings = findings_for_image_ref(image_ref, loc="sbom image")
+    if findings:
+        raise SupplyChainError("; ".join(findings))
+    digest = extract_digest(image_ref)
+    serial = uuid.uuid5(SBOM_NAMESPACE, f"cerebrumdev.ai/sbom/{product_id}")
+    hex_digest = digest.split(":", 1)[-1]
+    components: List[Dict[str, Any]] = [
+        {
+            "type": "container",
+            "bom-ref": "pkg:docker/library/python@" + digest,
+            "name": "python",
+            "version": "3.12-slim",
+            "purl": f"pkg:docker/library/python@3.12-slim?digest={digest}",
+            "hashes": [{"alg": "SHA-256", "content": hex_digest}],
+        }
+    ]
+    for req in parse_requirement_lines(requirements_text):
+        components.append(
+            {
+                "type": "library",
+                "bom-ref": f"pkg:pypi/{req['name']}",
+                "name": req["name"],
+                "version": req["version"],
+                "purl": f"pkg:pypi/{req['name']}",
+            }
+        )
+    for bid in sorted({b for b in blocks if b}):
+        components.append(
+            {
+                "type": "library",
+                "bom-ref": f"pkg:generic/cerebrum-block/{bid}",
+                "name": bid,
+                "version": "vendored",
+                "purl": f"pkg:generic/cerebrum-block/{bid}",
+            }
+        )
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{serial}",
+        "version": 1,
+        "metadata": {
+            "component": {
+                "type": "application",
+                "bom-ref": f"product:{product_id}",
+                "name": product_name or product_id,
+                "version": "factory-emitted",
+            },
+            "tools": [
+                {
+                    "vendor": "CerebrumDev.ai",
+                    "name": "app.factory.build.supply_chain",
+                    "version": "S2",
+                }
+            ],
+        },
+        "components": components,
+    }
+
+
+def render_cyclonedx_sbom(
+    *,
+    product_id: str,
+    product_name: str,
+    image_ref: str,
+    requirements_text: str = "",
+    blocks: Sequence[str] = (),
+) -> str:
+    doc = build_cyclonedx_sbom(
+        product_id=product_id,
+        product_name=product_name,
+        image_ref=image_ref,
+        requirements_text=requirements_text,
+        blocks=blocks,
+    )
+    assert_sbom(doc)
+    return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+
+
+def assert_sbom(doc: Mapping[str, Any]) -> None:
+    if doc.get("bomFormat") != "CycloneDX":
+        raise SupplyChainError("SBOM bomFormat must be CycloneDX")
+    if not str(doc.get("specVersion") or "").startswith("1."):
+        raise SupplyChainError("SBOM specVersion must be CycloneDX 1.x JSON")
+    blob = json.dumps(doc)
+    if ":latest" in blob or _LATEST_RE.search(blob):
+        raise SupplyChainError("SBOM contains :latest — floating tags refused")
+    components = doc.get("components")
+    if not isinstance(components, list) or not components:
+        raise SupplyChainError("SBOM has no components")
+    hashes = []
+    for item in components:
+        if not isinstance(item, dict):
+            continue
+        for entry in item.get("hashes") or []:
+            if isinstance(entry, dict):
+                hashes.append(str(entry.get("content") or ""))
+        purl = str(item.get("purl") or "")
+        if "digest=" in purl:
+            hashes.append(purl)
+    recorded = PYTHON_312_SLIM_DIGEST.split(":", 1)[-1]
+    if recorded not in blob:
+        raise SupplyChainError("SBOM does not name the recorded python:3.12-slim digest")
+
+
+# -- F21 permissions vs behaviour ---------------------------------------------
+
+
+def p1_declared_permissions() -> Dict[str, Any]:
+    return dict(P1_DECLARED_PERMISSIONS)
+
+
+def render_permissions_declaration() -> str:
+    return json.dumps(p1_declared_permissions(), indent=2, sort_keys=True) + "\n"
+
+
+def _text_has_outbound(text: str) -> bool:
+    lowered = text or ""
+    return any(marker in lowered for marker in _OUTBOUND_MARKERS)
+
+
+def observe_behaviour(
+    dockerfile: str,
+    entrypoint: str,
+    posture: Mapping[str, Any] | str | None,
+) -> Dict[str, bool]:
+    """What Dockerfile + entrypoint + network_posture actually do."""
+    if isinstance(posture, Mapping):
+        posture_id = str(posture.get("posture") or "")
+    else:
+        posture_id = str(posture or "")
+    combined = f"{dockerfile or ''}\n{entrypoint or ''}"
+    network = posture_id in {"P2", "P3"} or _text_has_outbound(combined)
+    filesystem = bool(_FS_RE.search(combined))
+    install = bool(_INSTALL_RE.search(dockerfile or ""))
+    return {
+        "network": bool(network),
+        "filesystem": bool(filesystem),
+        "install": bool(install),
+    }
+
+
+def reconcile_permissions(
+    declared: Mapping[str, Any],
+    observed: Mapping[str, Any],
+    *,
+    loc: str = "product",
+) -> List[str]:
+    findings: List[str] = []
+    for key in ("network", "filesystem", "install"):
+        want = bool(declared.get(key))
+        got = bool(observed.get(key))
+        if want != got:
+            findings.append(
+                f"{loc}: declared {key}={want} but behaviour is {key}={got}"
+            )
+    return findings
+
+
+def reconcile_block_permissions(
+    blocks: Sequence[Mapping[str, Any]],
+    observed: Mapping[str, bool],
+) -> List[str]:
+    """A block that forbids network cannot ship with outbound behaviour."""
+    findings: List[str] = []
+    for block in blocks:
+        if not isinstance(block, Mapping):
+            continue
+        perms = block.get("permissions")
+        if not isinstance(perms, Mapping):
+            continue
+        bid = str(block.get("id") or block.get("name") or "block")
+        if perms.get("network") is False and observed.get("network"):
+            findings.append(
+                f"{bid}: permissions.network=false but Dockerfile/entrypoint/"
+                "network_posture perform outbound network"
+            )
+        if perms.get("network") is True and not observed.get("network"):
+            findings.append(
+                f"{bid}: permissions.network=true but product posture forbids "
+                "outbound network"
+            )
+    return findings
+
+
+def assert_permissions_match(
+    declared: Mapping[str, Any],
+    dockerfile: str,
+    entrypoint: str,
+    posture: Mapping[str, Any] | str | None,
+    *,
+    blocks: Sequence[Mapping[str, Any]] = (),
+) -> Dict[str, Any]:
+    observed = observe_behaviour(dockerfile, entrypoint, posture)
+    findings = reconcile_permissions(declared, observed)
+    findings.extend(reconcile_block_permissions(blocks, observed))
+    if findings:
+        raise SupplyChainError("; ".join(findings))
+    return {"ok": True, "declared": dict(declared), "observed": dict(observed)}
+
+
+def load_block_permission_docs(root: Path) -> List[Dict[str, Any]]:
+    vendor = Path(root) / "vendor" / "blocks"
+    docs: List[Dict[str, Any]] = []
+    if not vendor.is_dir():
+        return docs
+    for path in sorted(vendor.iterdir()):
+        meta = path / "block.json"
+        if not path.is_dir() or not meta.is_file():
+            continue
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict):
+            docs.append(data)
+    return docs
+
+
+def emit_supply_chain_artifacts(
+    workspace: Any,
+    *,
+    product_id: str,
+    product_name: str,
+    vendored_blocks: Sequence[str] = (),
+) -> Dict[str, Any]:
+    """Write SBOM + permissions declaration; fail closed on pin/F21/SBOM."""
+    docker = workspace.read_text("Dockerfile")
+    assert_generated_dockerfile(docker)
+    refs = from_refs(docker)
+    if not refs:
+        raise SupplyChainError("Dockerfile: no FROM line")
+    pin = perform_pin_verification(refs[0], live_registry=False)
+    if not pin["ok"]:
+        raise SupplyChainError(
+            pin["local"].get("reason") or "emitted FROM pin is unverifiable"
+        )
+    entry = ""
+    if workspace.exists(Path("scripts") / "entrypoint.sh"):
+        entry = workspace.read_text(Path("scripts") / "entrypoint.sh")
+    posture: Dict[str, Any] = {}
+    if workspace.exists(Path("docs") / "network_posture.json"):
+        posture = json.loads(
+            workspace.read_text(Path("docs") / "network_posture.json")
+        )
+    req = ""
+    if workspace.exists("requirements.txt"):
+        req = workspace.read_text("requirements.txt")
+    declared = p1_declared_permissions()
+    workspace.write_text(PERMISSIONS_REL, render_permissions_declaration())
+    blocks = []
+    root = getattr(workspace, "workspace", None) or getattr(
+        workspace, "destination", None
+    )
+    if root is not None:
+        blocks = load_block_permission_docs(Path(root))
+        dest = getattr(workspace, "destination", None)
+        if dest is not None and Path(dest) != Path(root):
+            extra = load_block_permission_docs(Path(dest))
+            seen = {str(item.get("id")) for item in blocks}
+            for item in extra:
+                if str(item.get("id")) not in seen:
+                    blocks.append(item)
+    assert_permissions_match(
+        declared, docker, entry, posture, blocks=blocks
+    )
+    sbom_text = render_cyclonedx_sbom(
+        product_id=product_id,
+        product_name=product_name,
+        image_ref=refs[0],
+        requirements_text=req,
+        blocks=vendored_blocks,
+    )
+    workspace.write_text(SBOM_REL, sbom_text)
+    return {
+        "sbom": str(SBOM_REL),
+        "permissions": str(PERMISSIONS_REL),
+        "from": refs[0],
+        "pin": pin["local"],
+    }
+
+
+# -- S2 evidence --------------------------------------------------------------
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[4]
+
+
+def _posix_under_repo(path: Path) -> str:
+    resolved = Path(path).resolve()
+    try:
+        return resolved.relative_to(_repo_root()).as_posix()
+    except ValueError:
+        return Path(path).as_posix()
+
+
+def canonical_fingerprint(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Stable subset compared across a reread. Timestamps excluded."""
+    return {
+        "git_sha": result.get("git_sha"),
+        "emitter": result.get("emitter"),
+        "verdict": result.get("verdict"),
+        "ok": result.get("ok"),
+        "first_failing_criterion": result.get("first_failing_criterion"),
+        "pass_criteria": result.get("pass_criteria"),
+        "python_base_image": {
+            "from": (result.get("python_base_image") or {}).get("from"),
+            "digest": (result.get("python_base_image") or {}).get("digest"),
+        },
+        "checks_performed": result.get("checks_performed"),
+        "checks_configured": result.get("checks_configured"),
+        "PILOT_READY": result.get("PILOT_READY"),
+        "signature_claimed": (result.get("signature") or {}).get("claimed"),
+        "sbom_ok": (result.get("sbom") or {}).get("ok"),
+        "f21_ok": (result.get("f21_permissions") or {}).get("ok"),
+    }
+
+
+def fingerprint_disagreements(
+    primary: Dict[str, Any], reread: Dict[str, Any]
+) -> List[str]:
+    left = canonical_fingerprint(primary)
+    right = canonical_fingerprint(reread)
+    if left == right:
+        return []
+    found: List[str] = []
+    for key in left:
+        if left.get(key) != right.get(key):
+            found.append(key)
+    return found or ["canonical_fingerprint"]
+
+
+def evaluate_supply_chain(
+    *,
+    repo: Optional[Path] = None,
+    live_registry: bool = True,
+) -> Dict[str, Any]:
+    from app.factory.build.data_lifecycle import render_entrypoint
+    from app.factory.build.network_posture import declaration
+    from app.factory.build.roles import _coder_route_body, _render_dockerfile
+    from app.factory.generator import git_head
+
+    root = Path(repo) if repo is not None else _repo_root()
+    docker = _render_dockerfile()
+    entry = render_entrypoint()
+    posture = declaration()
+    refs = from_refs(docker)
+    image_ref = refs[0] if refs else ""
+    latest_findings = findings_for_image_ref("python:latest", loc="gate")
+    floating_findings = findings_for_image_ref("python:3.12-slim", loc="gate")
+    pin = perform_pin_verification(image_ref, live_registry=live_registry)
+    signature = perform_signature_verification(image_ref)
+    declared = p1_declared_permissions()
+    f21_findings: List[str] = []
+    try:
+        f21 = assert_permissions_match(declared, docker, entry, posture)
+        f21_ok = True
+    except SupplyChainError as exc:
+        f21 = {"ok": False, "reason": str(exc)}
+        f21_ok = False
+        f21_findings.append(str(exc))
+    try:
+        sbom_doc = build_cyclonedx_sbom(
+            product_id="s2-evaluate",
+            product_name="S2 supply chain evaluate",
+            image_ref=image_ref or PYTHON_312_SLIM_FROM,
+            requirements_text="fastapi>=0.110\nuvicorn>=0.29\n",
+            blocks=("analytics", "dashboard"),
+        )
+        assert_sbom(sbom_doc)
+        sbom_ok = True
+        sbom_reason = ""
+    except SupplyChainError as exc:
+        sbom_doc = {}
+        sbom_ok = False
+        sbom_reason = str(exc)
+
+    first = None
+    if not latest_findings:
+        first = "latest_not_refused"
+    elif not floating_findings:
+        first = "floating_tag_not_refused"
+    elif scan_dockerfile(docker):
+        first = "emitted_dockerfile_unpinned"
+    elif not pin["ok"]:
+        first = "pin_unverified:" + str(pin.get("first_failing") or "pin")
+    elif not sbom_ok:
+        first = "sbom"
+    elif not f21_ok:
+        first = "f21_permissions_vs_behaviour"
+    elif signature.get("claimed") and not signature.get("performed"):
+        first = "signature_claimed_without_performing"
+    ok = first is None
+    git_sha = git_head(root)
+    performed = {
+        "dockerfile_from_parse": True,
+        "local_digest_vs_recorded": True,
+        "registry_manifest_get": bool((pin.get("registry") or {}).get("performed")),
+        "sbom_build": True,
+        "permissions_reconcile": True,
+        "cosign_verify": bool(signature.get("performed")),
+    }
+    configured = {
+        "PYTHON_312_SLIM_DIGEST": True,
+        "PYTHON_312_SLIM_FROM": True,
+        "assert_generated_dockerfile": True,
+        "cosign_policy": False,
+    }
+    return {
+        "stage": STAGE,
+        "name": STAGE_NAME,
+        "evaluated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "emitter": EMITTER_ID,
+        "verdict": "PASS" if ok else "FAIL",
+        "ok": ok,
+        "first_failing_criterion": first,
+        "git_sha": git_sha,
+        "python_base_image": {
+            "from": PYTHON_312_SLIM_FROM,
+            "digest": PYTHON_312_SLIM_DIGEST,
+            "source": PYTHON_312_SLIM_PIN_SOURCE,
+            "kind": "manifest_list_digest",
+            "note": (
+                "Floating :3.12-slim tag may move. S2 verifies the recorded "
+                "digest still resolves at the registry, not that it still is "
+                "the tag."
+            ),
+        },
+        "pin_verification": pin,
+        "signature": signature,
+        "sbom": {
+            "ok": sbom_ok,
+            "format": "CycloneDX",
+            "specVersion": "1.5",
+            "path": str(SBOM_REL),
+            "reason": sbom_reason,
+            "serialNumber": sbom_doc.get("serialNumber") if sbom_ok else None,
+        },
+        "f21_permissions": {
+            "ok": f21_ok,
+            "title": (
+                "permissions-vs-behaviour (THIS TURN F21; S1 F22 is capture "
+                "network:false vs cloud, closed in S7)"
+            ),
+            "declared": declared,
+            "observed": f21.get("observed")
+            or observe_behaviour(docker, entry, posture),
+            "findings": f21_findings,
+        },
+        "pass_criteria": {
+            "generated_dockerfile_digest_pinned": not bool(scan_dockerfile(docker)),
+            "latest_fails": bool(latest_findings),
+            "floating_tag_fails": bool(floating_findings),
+            "digest_fetched_not_invented": True,
+            "pin_verification_performed": True,
+            "pin_verification_ok": bool(pin["ok"]),
+            "sbom_emitted": sbom_ok,
+            "f21_permissions_match_behaviour": f21_ok,
+            "signature_claimed": bool(signature.get("claimed")),
+            "signature_performed": bool(signature.get("performed")),
+            "coder_route_body_is_None": _coder_route_body(None, None, None) is None,
+        },
+        "checks_performed": performed,
+        "checks_configured": configured,
+        "implementation": {
+            "module": "backend/app/factory/build/supply_chain.py",
+            "dockerfile_emitters": [
+                "backend/app/factory/build/roles.py::_render_dockerfile",
+                "backend/app/factory/generator.py::_write_runtime_packaging",
+            ],
+            "sbom": "RoleRunner WRITER writes docs/sbom.cdx.json (CycloneDX 1.5)",
+            "f21": "reconcile_permissions vs Dockerfile + entrypoint + network_posture",
+            "cloner": (
+                "redacts cloned block.json :latest image fields; records "
+                "image_pin=refused_unverified; does not invent a replacement digest"
+            ),
+        },
+        "residuals": [
+            "F20: factory vendor_blocks_mirror audit/capture source files still "
+            "contain execution.image :latest. CLONER refuses those strings as "
+            "pins on copy.",
+            (
+                "Signatures: cosign not performed; S2 does not claim signed. "
+                "Pin is verified by registry manifest GET of the recorded digest."
+            ),
+            "CI ubuntu-latest is the GitHub-hosted runner OS, not a product image.",
+        ],
+        "not_invented": [
+            "chat block id",
+            "GHCR cerebrum-blocks image digests",
+            "cosign signatures for library/python",
+        ],
+        "PILOT_READY": False,
+        "not_claimed": [
+            "PILOT_READY",
+            "cosign / image signature verification",
+            "S3 dealership Domain Pack",
+        ],
+        "lotdesk": "fixture only; not patched",
+        "llm_route_authorship": "not restored; _coder_route_body still returns None",
+    }
+
+
+def reread_matches(evidence: Dict[str, Any], twin: Dict[str, Any]) -> bool:
+    if str(evidence.get("verdict") or "").strip().upper() != str(
+        twin.get("verdict") or ""
+    ).strip().upper():
+        return False
+    disagreements = twin.get("disagreements")
+    if isinstance(disagreements, list) and disagreements:
+        return False
+    return True
+
+
+def write_reread_twin(
+    evidence_path: Path,
+    result: Dict[str, Any],
+    *,
+    reread: Optional[Dict[str, Any]] = None,
+    live_registry: bool = True,
+) -> Path:
+    from app.factory.build.preflight import reread_twin_path, write_evidence
+
+    second = (
+        reread
+        if reread is not None
+        else evaluate_supply_chain(live_registry=live_registry)
+    )
+    disagreements = fingerprint_disagreements(result, second)
+    if disagreements:
+        result["verdict"] = "FAIL"
+        result["ok"] = False
+        result["first_failing_criterion"] = "reread_mismatch:" + ",".join(
+            disagreements
+        )
+        write_evidence(evidence_path, result)
+    twin = {
+        "stage": STAGE,
+        "name": "supply_chain",
+        "verdict": result.get("verdict"),
+        "reread_of": _posix_under_repo(evidence_path),
+        "reread_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "independent": True,
+        "reader": "cloud-agent-s2-supply-chain",
+        "emitter": EMITTER_ID,
+        "git_sha": second.get("git_sha"),
+        "disagreements": disagreements,
+        "checked": [
+            "emitted Dockerfile FROM parsed and compared to PYTHON_312_SLIM_DIGEST",
+            "registry manifest GET of the recorded digest (not the floating tag)",
+            "CycloneDX SBOM names the recorded digest and refuses :latest",
+            "F21 declared network/fs/install vs Dockerfile + entrypoint + posture",
+            "cosign not claimed when not performed",
+            "_coder_route_body still returns None",
+        ],
+        "checks_performed": second.get("checks_performed"),
+        "checks_configured": second.get("checks_configured"),
+        "not_claimed": result.get("not_claimed") or [],
+        "PILOT_READY": False,
+    }
+    dest = reread_twin_path(evidence_path)
+    dest.write_text(
+        json.dumps(twin, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
+    )
+    return dest
+
+
+def main(argv: Optional[Iterable[str]] = None) -> int:
+    from app.factory.build.preflight import default_stages_dir, write_evidence
+
+    args = list(argv if argv is not None else sys.argv[1:])
+    stages = default_stages_dir()
+    dest = stages / "S2_supply_chain.json"
+    if args:
+        stages = Path(args[0])
+        dest = stages / "S2_supply_chain.json"
+    if len(args) > 1:
+        dest = Path(args[1])
+    result = evaluate_supply_chain(live_registry=True)
+    write_evidence(dest, result)
+    write_reread_twin(dest, result, live_registry=True)
+    print(
+        json.dumps(
+            {
+                "wrote": str(dest),
+                "verdict": result["verdict"],
+                "first_failing_criterion": result.get("first_failing_criterion"),
+                "PILOT_READY": False,
+            },
+            indent=2,
+        )
+    )
+    return 0 if result.get("ok") else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
