@@ -51,6 +51,27 @@ services:
       # Factory Product Architect / platform CLI path.
       - key: CEREBRUM_FACTORY_LLM_MODEL
         value: kimi-k2.7-code
+      # Cross-provider fallback leg for the factory coder
+      # (llm_config.get_factory_fallback_leg). Setting the key is the explicit
+      # act that arms it: with no key the leg returns None, and Kimi has had no
+      # fallback in production since #199 merged. The blueprint never declared
+      # the variable, so it was not merely unset -- it was invisible.
+      #
+      # sync: false declares the variable without committing the secret, which
+      # also means a blueprint sync cannot prune a dashboard-set value.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Declared rather than defaulted, so the leg's provider is greppable here
+      # instead of only in the code default.
+      - key: FACTORY_LLM_FALLBACK_PROVIDER
+        value: openrouter
+      # The :free suffix is load-bearing. z-ai/glm-5.2 without it is a paid
+      # 1M-context model at $1.19/$3.74 per Mtok; the leg refuses to arm on a
+      # paid slug unless FACTORY_LLM_FALLBACK_ALLOW_PAID is set. Pinning the
+      # slug here means a change to the code default cannot quietly move
+      # production onto a billable model.
+      - key: FACTORY_LLM_FALLBACK_MODEL
+        value: z-ai/glm-5.2:free
       - key: MARKER_ENABLED
         value: "false"
       - key: CHROMA_PERSIST_DIR
