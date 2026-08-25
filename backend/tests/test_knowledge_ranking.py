@@ -11,7 +11,28 @@ import json
 from pathlib import Path
 
 from app.blocks import _knowledge as kb
-from app.core.credibility import CredibilityTier
+from app.core.credibility import CredibilityScorer, CredibilityTier
+
+# Dual-register pin. This string is copied identically into Cerebrum-Blocks
+# ``tests/blocks/test_credibility_ladder_parity.py``. A unilateral edit of
+# the tier map or CERTIFIED_MIN_ACCURACY fails CI unless BOTH copies of this
+# literal are updated together.
+CREDIBILITY_LADDER_LITERAL = (
+    "CERTIFIED=1,OPERATIONAL=2,EXPERIMENTAL=3,UNVERIFIED=4,QUARANTINE=5;"
+    "CERTIFIED_MIN_ACCURACY=0.95"
+)
+
+
+def _parse_credibility_ladder_literal(literal: str) -> tuple[dict[str, int], float]:
+    """Split the shared pin into a tier map and CERTIFIED_MIN_ACCURACY."""
+    tier_blob, acc_blob = literal.split(";")
+    tiers = {}
+    for item in tier_blob.split(","):
+        name, raw = item.split("=")
+        tiers[name] = int(raw)
+    acc_name, acc_raw = acc_blob.split("=")
+    assert acc_name == "CERTIFIED_MIN_ACCURACY"
+    return tiers, float(acc_raw)
 
 
 def _temp_kb(tmp_path: Path, monkeypatch, entries):
@@ -36,6 +57,30 @@ def _entry(eid, tier, **extra):
         "applicability": {"applies_to": ["construction.roads"]},
         **extra,
     }
+
+
+def test_knowledge_ranking_and_ladder_match_shared_literal(tmp_path, monkeypatch):
+    """Ranking + CredibilityTier + CERTIFIED_MIN_ACCURACY pin one shared literal."""
+    tiers, certified_min = _parse_credibility_ladder_literal(CREDIBILITY_LADDER_LITERAL)
+    for name, value in tiers.items():
+        assert int(getattr(CredibilityTier, name)) == value, name
+    assert CredibilityScorer.CERTIFIED_MIN_ACCURACY == certified_min
+    assert tiers["CERTIFIED"] < tiers["QUARANTINE"]
+    assert kb.credibility_rank({"credibility_tier": tiers["CERTIFIED"]}) < (
+        kb.credibility_rank({"credibility_tier": tiers["QUARANTINE"]})
+    )
+    _temp_kb(
+        tmp_path,
+        monkeypatch,
+        [
+            _entry("roads.quarantine", tiers["QUARANTINE"]),
+            _entry("roads.certified", tiers["CERTIFIED"]),
+        ],
+    )
+    results = kb.search_knowledge("asphalt laying temperature minimum", top_k=2)
+    assert [r["id"] for r in results] == ["roads.certified", "roads.quarantine"]
+    assert results[0]["credibility_tier"] == tiers["CERTIFIED"]
+    assert results[1]["credibility_tier"] == tiers["QUARANTINE"]
 
 
 def test_credibility_ladder_lower_int_is_more_credible():
