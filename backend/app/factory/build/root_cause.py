@@ -75,11 +75,15 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
     },
     "U4": {
         "title": "_ensure_route_persists_payload force-injects save(payload)",
-        "owner_module": "backend/app/factory/build/roles.py",
-        "owner_symbol": "_ensure_route_persists_payload",
+        "owner_module": "backend/app/factory/build/kernel.py",
+        "owner_symbol": "reject_lotdesk_persist_wrapper",
         "lane": "factory host, outside RoleContract",
-        "status": "open",
-        "note": "S4 residual; this PR does not remove it",
+        "status": "closed",
+        "also": "backend/app/factory/build/roles.py",
+        "note": (
+            "rewriter deleted from shipping path; persist stays in "
+            "kernel/store after ActionStatus.SUCCESS"
+        ),
     },
     "U5": {
         "title": "on keyed path the model owns persist/envelope",
@@ -149,7 +153,7 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
         "lane": "WRITER app/** can vendor kernel",
         "status": "closed",
         "also": "backend/app/cerebrum_product_kernel/contract/runtime.py",
-        "note": "S4 shipped kernel; U4 persist rewrite remains",
+        "note": "S4 shipped kernel; U4 persist rewriter removed from shipping path",
     },
     "F1": {
         "title": "echo/stub still succeeds — always-200 health / HTTP ok:true",
@@ -546,7 +550,6 @@ def evaluate_root_cause(*, repo: Optional[Path] = None) -> Dict[str, Any]:
         "not_claimed": [
             "PILOT_READY",
             "S2 cosign / image signature verification",
-            "U4 persist-rewrite removal",
             "U7 marker change",
         ],
         "lotdesk": "fixture only; not patched",
@@ -596,6 +599,7 @@ def write_reread_twin(
             "LotDesk-class symptoms map to those owners",
             "lanes cited from authority.py ROLE_CONTRACTS",
             "_coder_route_body still returns None",
+            "U4 persist rewriter owner is kernel.py reject_lotdesk_persist_wrapper (closed)",
         ],
         "lane_source": (second.get("lane_authority_map") or {}).get("source"),
         "not_claimed": result.get("not_claimed") or [],

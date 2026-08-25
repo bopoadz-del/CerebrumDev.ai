@@ -57,19 +57,30 @@ def test_an_email_field_samples_an_address_not_the_word_sample():
     assert _sample_value({"name": "tasting_note", "type": "str"}) == "sample"
 
 
-def test_coder_route_that_saves_the_handle_envelope_is_rewritten_to_payload():
-    """Live zip POSTed ok:true then stored all-null rows because the coder
-    persisted handle()'s {ok, data} envelope instead of the request."""
-    from app.factory.build.roles import _ensure_route_persists_payload
+def test_persist_wrapper_is_gone_not_used_to_rewrite_handle_envelopes():
+    """U4: a route rewriter that force-injects save(payload) is not shipping.
 
+    Persistence stays in the kernel/store after execute_action SUCCESS.
+    LotDesk-class handle()+save() without the kernel is rejected.
+    """
+    from app.factory.build import roles as roles_mod
+    from app.factory.build.kernel import (
+        KernelError,
+        assert_no_persist_wrapper,
+        persist_wrapper_findings,
+        wrapper_symbol_gone,
+    )
+
+    assert not hasattr(roles_mod, "_ensure_route_persists_payload")
+    assert wrapper_symbol_gone() is True
     guest = "    result = handle(payload)\n    record = save(result)\n"
-    assert "save(payload)" in _ensure_route_persists_payload(guest)
-    assert "save(result)" not in _ensure_route_persists_payload(guest)
     waitlist = "    handled = handle(payload)\n    saved = save(handled)\n"
-    assert "save(payload)" in _ensure_route_persists_payload(waitlist)
-    assert "save(handled)" not in _ensure_route_persists_payload(waitlist)
-    already = "    stored = save(payload)\n"
-    assert _ensure_route_persists_payload(already) == already
+    with pytest.raises(KernelError):
+        assert_no_persist_wrapper(guest)
+    with pytest.raises(KernelError):
+        assert_no_persist_wrapper(waitlist)
+    assert persist_wrapper_findings(guest)
+    assert persist_wrapper_findings(waitlist)
 
 
 def test_a_bounded_number_samples_inside_its_bounds():

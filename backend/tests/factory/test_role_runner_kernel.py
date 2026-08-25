@@ -35,3 +35,7 @@ def test_role_runner_vendors_kernel_and_routes_through_execute_action(tmp_path):
     assert "from app.kernel_bridge import run_capability" in routes
     assert "await run_capability" in routes
     assert "async def analytics_surface_create" in routes
+    assert "_ensure_route_persists_payload" not in routes
+    from app.factory.build.kernel import persist_wrapper_findings
+
+    assert persist_wrapper_findings(routes) == []

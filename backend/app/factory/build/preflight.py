@@ -3,7 +3,8 @@
 This is an inventory and identity gate, not a later-stage closer. S3
 (dealership Domain Pack) is ``build/domain_pack.py``. S2 residual: cosign
 is not performed. Kernel ownership failure does fail S0: ``execute_action``
-must be callable and ``_coder_route_body`` must return None.
+must be callable, ``_coder_route_body`` must return None, and the U4
+persist-wrapper ``_ensure_route_persists_payload`` must be absent.
 
 Evidence: ``build/stages/S0_preflight.json`` + reread twin. A fingerprint
 mismatch between the two is FAIL. Does not emit PILOT_READY.
@@ -50,6 +51,7 @@ FACTORY_SOURCE_PATHS: Tuple[str, ...] = (
     "backend/app/factory/build/preflight.py",
     "backend/app/factory/build/root_cause.py",
     "backend/app/factory/build/domain_pack.py",
+    "backend/app/factory/build/kernel.py",
 )
 
 #: Honest inventory of the stage table. Cite existing modules; do not
@@ -81,9 +83,8 @@ STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
     },
     {
         "stage": "S4",
-        "expected": "backend/app/factory/build/roles.py",
-        "purpose": "kernel shipped via execute_action",
-        "gaps": ("_ensure_route_persists_payload still present (U4)",),
+        "expected": "backend/app/factory/build/kernel.py",
+        "purpose": "kernel execute_action shipping path; U4 persist-wrapper removed",
     },
     {
         "stage": "S5",
@@ -157,21 +158,25 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def inspect_kernel_ownership() -> Dict[str, Any]:
-    """Kernel owns HTTP. LLM route authorship stays off."""
+    """Kernel owns HTTP. LLM route authorship stays off. U4 rewriter stays gone."""
     coder_none = _coder_route_body(None, None, None) is None
     from app.factory.build import pilot as pilot_mod
     from app.factory.build import runner as runner_mod
+    from app.factory.build.kernel import wrapper_symbol_gone
 
     runner_src = Path(runner_mod.__file__).read_text(encoding="utf-8")
+    persist_gone = wrapper_symbol_gone()
     return {
         "execute_action": execute_action.__module__ + ".execute_action",
         "execute_action_callable": callable(execute_action),
         "_coder_route_body_is_None": coder_none,
+        "persist_wrapper_absent": persist_gone,
         "prepare_pilot_workspace": "absent",
         "prepare_pilot_workspace_in_runner": "prepare_pilot_workspace" in runner_src,
         "prepare_pilot_workspace_in_pilot": hasattr(pilot_mod, "prepare_pilot_workspace"),
         "ok": coder_none
         and callable(execute_action)
+        and persist_gone
         and "prepare_pilot_workspace" not in runner_src
         and not hasattr(pilot_mod, "prepare_pilot_workspace"),
     }
@@ -329,6 +334,7 @@ def evaluate_preflight(
             "kernel_coder_route_body_is_None": bool(
                 kernel["_coder_route_body_is_None"]
             ),
+            "kernel_persist_wrapper_absent": bool(kernel.get("persist_wrapper_absent")),
             "existing_stage_files_listed": True,
             "missing_modules_named": True,
         },
@@ -336,7 +342,6 @@ def evaluate_preflight(
         "not_claimed": [
             "PILOT_READY",
             "S2 cosign / image signature verification",
-            "S4 U4 _ensure_route_persists_payload removal",
             "S5 U7 FACTORY_SUITE_MARKER_EXPR",
         ],
         "lotdesk": "fixture only; not patched",
@@ -396,6 +401,7 @@ def write_reread_twin(
             "factory sources re-hashed",
             "RoleRunner default engine re-read",
             "execute_action callable; _coder_route_body is None",
+            "U4 persist-wrapper absent from roles.py",
             "existing build/stages files listed",
             "missing stage-table modules named",
         ],

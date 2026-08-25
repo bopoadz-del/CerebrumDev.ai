@@ -103,5 +103,7 @@ def test_coder_route_body_stays_none_on_s1_path():
     owners = defect_owners()
     assert owners["U5"]["owner_symbol"] == "_coder_route_body"
     assert owners["U5"]["status"] == "closed"
-    assert owners["U4"]["status"] == "open"
+    assert owners["U4"]["status"] == "closed"
+    assert owners["U4"]["owner_symbol"] != "_ensure_route_persists_payload"
+    assert owners["U4"]["owner_module"].endswith("kernel.py")
     assert owners["U7"]["status"] == "open"

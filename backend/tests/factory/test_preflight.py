@@ -55,6 +55,7 @@ def test_preflight_records_required_keys():
     assert result["git_sha"] != "unknown"
     assert result["kernel_ownership"]["execute_action_callable"] is True
     assert result["kernel_ownership"]["_coder_route_body_is_None"] is True
+    assert result["kernel_ownership"]["persist_wrapper_absent"] is True
     assert result["kernel_ownership"]["ok"] is True
     assert result["emitter_identity"]["id"] == "app.factory.build.runner.RoleRunner"
     assert result["emitter_identity"]["default_engine"] == RUNNER
@@ -75,6 +76,9 @@ def test_preflight_names_dealership_pack_module_and_cites_existing_s11_s12():
     inventory = {row["stage"]: row for row in result["stage_module_inventory"]}
     assert inventory["S3"]["present"] is True
     assert inventory["S3"]["expected"].endswith("domain_pack.py")
+    assert inventory["S4"]["present"] is True
+    assert inventory["S4"]["expected"].endswith("kernel.py")
+    assert "_ensure_route_persists_payload" not in str(inventory["S4"].get("gaps") or ())
     assert inventory["S11"]["present"] is True
     assert inventory["S11"]["expected"].endswith("deploy.py")
     assert inventory["S12"]["present"] is True
@@ -84,6 +88,7 @@ def test_preflight_names_dealership_pack_module_and_cites_existing_s11_s12():
     assert inventory["S10"]["present"] is True
     missing_stages = {row["stage"] for row in result["missing_modules"]}
     assert "S3" not in missing_stages
+    assert "S4" not in missing_stages
     assert "S11" not in missing_stages
     assert "S12" not in missing_stages
     assert result["verdict"] == "PASS"
