@@ -51,7 +51,9 @@ from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
 from app.factory.build.vendored_integrity import lock_record as _integrity_record
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
+    SupplyChainError,
     assert_generated_dockerfile,
+    emit_supply_chain_artifacts,
     redact_unpinned_images,
 )
 from app.factory.build.workspace import RoleWorkspace
@@ -2656,8 +2658,19 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.network_posture import POSTURE_ID, declaration_json
 
     ctx.workspace.write_text(Path("docs") / "network_posture.json", declaration_json())
+    try:
+        emit_supply_chain_artifacts(
+            ctx.workspace,
+            product_id=str(product_id),
+            product_name=str(product_name),
+            vendored_blocks=sorted(vendored),
+        )
+    except SupplyChainError as exc:
+        raise RoleError(str(exc)) from exc
     sources["deploy_scaffold"] = fallback_source
     sources["network_posture"] = POSTURE_ID
+    sources["sbom"] = fallback_source
+    sources["permissions"] = fallback_source
 
     from app.factory.build.converge import converge_writer_emitters
 

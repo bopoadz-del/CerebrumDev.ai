@@ -12,7 +12,11 @@ from typing import Any, Dict, Optional
 
 from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, write_provenance
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
-from app.factory.build.supply_chain import PYTHON_312_SLIM_FROM
+from app.factory.build.supply_chain import (
+    PYTHON_312_SLIM_FROM,
+    assert_generated_dockerfile,
+    render_cyclonedx_sbom,
+)
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.paths import (
     UnsafeOutputDir,
@@ -928,7 +932,27 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
                 'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]',
             ]
         )
-        (out / "Dockerfile").write_text("\n".join(docker_lines) + "\n", encoding="utf-8")
+        docker_text = "\n".join(docker_lines) + "\n"
+        assert_generated_dockerfile(docker_text)
+        (out / "Dockerfile").write_text(docker_text, encoding="utf-8")
+        req_text = ""
+        req_path = out / "requirements.txt"
+        if req_path.is_file():
+            req_text = req_path.read_text(encoding="utf-8")
+        block_ids = []
+        for cap in self.plan.capabilities:
+            block_ids.extend(cap.block_ids or [])
+        (out / "docs").mkdir(parents=True, exist_ok=True)
+        (out / "docs" / "sbom.cdx.json").write_text(
+            render_cyclonedx_sbom(
+                product_id=self.blueprint.product_id,
+                product_name=self.blueprint.product_name,
+                image_ref=PYTHON_312_SLIM_FROM,
+                requirements_text=req_text,
+                blocks=block_ids,
+            ),
+            encoding="utf-8",
+        )
         (out / "Procfile").write_text(
             "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n",
             encoding="utf-8",

@@ -316,10 +316,14 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
     "F21": {
         "title": "signatures/digests not verified",
         "owner_module": "backend/app/factory/build/supply_chain.py",
-        "owner_symbol": "PYTHON_312_SLIM_DIGEST",
+        "owner_symbol": "perform_pin_verification",
         "lane": "CLONER lock records commit/path only",
-        "status": "open",
-        "note": "digest pin exists; signature verification does not (S2 gap)",
+        "status": "partial",
+        "note": (
+            "S2 performs registry manifest GET of the recorded digest. "
+            "Cosign is not claimed when it cannot be performed. THIS TURN "
+            "F21 is also permissions-vs-behaviour in supply_chain."
+        ),
     },
     "F22": {
         "title": "permissions vs behaviour",
@@ -327,15 +331,19 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
         "owner_symbol": "NETWORK_POSTURE P1",
         "lane": "CLONER capture emission",
         "status": "partial",
-        "note": "S7 closed capture network:false vs cloud defaults; F21 is signatures",
+        "also": "backend/app/factory/build/supply_chain.py",
+        "note": (
+            "S7 closed capture network:false vs cloud defaults. S2 "
+            "reconcile_permissions covers Dockerfile/entrypoint/posture."
+        ),
     },
     "F23": {
         "title": "no SBOM",
         "owner_module": "backend/app/factory/build/supply_chain.py",
-        "owner_symbol": None,
+        "owner_symbol": "emit_supply_chain_artifacts",
         "lane": "packager / S2",
-        "status": "open",
-        "note": "no SBOM emitter; S2 not started this turn",
+        "status": "closed",
+        "note": "RoleRunner WRITER emits docs/sbom.cdx.json (CycloneDX 1.5)",
     },
     "F24": {
         "title": "health always ok",

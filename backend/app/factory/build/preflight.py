@@ -68,11 +68,9 @@ STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
     {
         "stage": "S2",
         "expected": "backend/app/factory/build/supply_chain.py",
-        "purpose": "Dockerfile digest pin",
+        "purpose": "Dockerfile digest pin, SBOM, performed digest verify, F21",
         "gaps": (
-            "SBOM",
-            "signature verification",
-            "F21 permissions-vs-behaviour (capture network:false vs cloud is S7 F22)",
+            "cosign/signature verification not performed (honest; not claimed)",
         ),
     },
     {

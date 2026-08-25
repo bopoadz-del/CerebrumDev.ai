@@ -200,6 +200,8 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "docs/certification/**"),
             (LaneRoot.WORKSPACE, "docs/edge_profile.json"),
             (LaneRoot.WORKSPACE, "docs/network_posture.json"),
+            (LaneRoot.WORKSPACE, "docs/sbom.cdx.json"),
+            (LaneRoot.WORKSPACE, "docs/permissions.json"),
             (LaneRoot.WORKSPACE, "docs/package_identity.json"),
             (LaneRoot.WORKSPACE, "frontend/**"),
         ),
