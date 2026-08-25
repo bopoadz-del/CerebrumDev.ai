@@ -388,13 +388,17 @@ def get_factory_fallback_leg() -> Dict[str, Any] | None:
         "base_url": _env_first("OPENROUTER_BASE_URL", default=OPENROUTER_BASE_URL),
         "model": model,
         "temperature": _llm_temperature(),
-        # Free slugs are served from a shared upstream pool and answer 429
-        # with a Retry-After of a few seconds -- measured live on 2026-08-25,
-        # first call, on an unused key. That is the model refusing to answer
-        # YET, not the model answering, so it is worth waiting out. Confined
-        # to zero-cost legs: retrying a paid 429 spends money on the same
-        # answer, which is why the coder does not retry statuses in general.
-        "retry_on_429": _is_free_slug(model),
+        # Whether this leg can spend money. Two decisions hang off it, and
+        # both are the same cost argument, so they share one flag rather than
+        # drifting apart:
+        #
+        #  * a 429 is retried per Retry-After (free slugs are served from a
+        #    shared upstream pool and answer 429 within seconds -- measured
+        #    live 2026-08-25 on the first call with an unused key); retrying
+        #    a PAID 429 would spend money on the same answer;
+        #  * the leg may run with no primary configured at all, which would
+        #    be a cost surprise if the leg were billable.
+        "is_free": _is_free_slug(model),
     }
 
     if not _is_free_slug(model) and not _truthy("FACTORY_LLM_FALLBACK_ALLOW_PAID"):

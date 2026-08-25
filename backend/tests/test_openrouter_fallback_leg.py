@@ -312,3 +312,106 @@ def test_a_hostile_retry_after_cannot_stall_the_build():
     assert coder._retry_after_s(_throttled("3600")) == coder.MAX_RETRY_AFTER_S
     assert coder._retry_after_s(_throttled("nonsense")) == 5.0
     assert coder._retry_after_s(_throttled("-1")) == 0.0
+
+
+# -- no primary at all -----------------------------------------------------
+#
+# KNOWN_INCOMPLETE item 2: the Render service has NO LLM key, so the coder
+# cannot run and every artifact silently takes the template path. A zero-cost
+# leg sitting right there should carry that deployment rather than watch it
+# degrade -- but only when nobody asked for a specific provider, and only
+# when the leg cannot spend money.
+
+
+@pytest.fixture
+def no_credentials(monkeypatch):
+    for var in (
+        "LLM_PROVIDER",
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_API_KEY",
+        "KIMI_MOCK",
+        "CEREBRUM_LLM_MOCK",
+        "LLM_TEMPERATURE",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+
+def test_the_free_leg_carries_a_deployment_with_no_key(monkeypatch, no_credentials):
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
+    posts = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        posts.append({"url": url, "model": json["model"]})
+        return _ok("return {}")
+
+    monkeypatch.setattr(coder.httpx, "post", fake_post)
+
+    text, model_used = coder._llm_code_call([{"role": "user", "content": "hi"}])
+
+    assert text == "return {}"
+    assert model_used == DEFAULT_OPENROUTER_FALLBACK_MODEL
+    assert len(posts) == 1, "no primary exists; there was nothing to try first"
+    assert "openrouter" in posts[0]["url"]
+
+
+def test_an_explicit_provider_without_its_key_still_refuses(
+    monkeypatch, no_credentials
+):
+    """A request that cannot be honoured is an error, not an invitation to
+    substitute. This is the half of the fail-closed rule that must survive."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
+    monkeypatch.setenv("LLM_PROVIDER", "claude")
+    posts = []
+    monkeypatch.setattr(
+        coder.httpx, "post", lambda *a, **k: posts.append(1) or _ok("x")
+    )
+
+    with pytest.raises(coder.CoderError, match="ANTHROPIC_API_KEY"):
+        coder._llm_code_call([{"role": "user", "content": "hi"}])
+
+    assert not posts, "it substituted a provider that was never asked for"
+
+
+def test_a_paid_leg_will_not_run_unasked_with_no_primary(monkeypatch, no_credentials):
+    """Running a billable leg on a box with no key is the cost surprise the
+    fail-closed rule exists to prevent."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_ALLOW_PAID", "1")
+    posts = []
+    monkeypatch.setattr(
+        coder.httpx, "post", lambda *a, **k: posts.append(1) or _ok("x")
+    )
+
+    with pytest.raises(coder.CoderError, match="KIMI_API_KEY"):
+        coder._llm_code_call([{"role": "user", "content": "hi"}])
+
+    assert not posts
+
+
+def test_no_key_and_no_leg_fails_exactly_as_before(monkeypatch, no_credentials):
+    with pytest.raises(coder.CoderError, match="KIMI_API_KEY"):
+        coder._llm_code_call([{"role": "user", "content": "hi"}])
+
+
+def test_a_leg_only_failure_is_not_dressed_up_as_a_fallback(
+    monkeypatch, no_credentials
+):
+    monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        raise RuntimeError("glm is down")
+
+    monkeypatch.setattr(coder.httpx, "post", fake_post)
+
+    with pytest.raises(coder.CoderError) as exc:
+        coder._llm_code_call([{"role": "user", "content": "hi"}])
+
+    message = str(exc.value)
+    assert "the only configured leg" in message
+    assert "glm is down" in message

@@ -268,12 +268,44 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     cfg = get_factory_llm_config()
     if cfg.get("mock"):
         raise CoderError("LLM mock mode — coder has no model to call")
+
+    cross = get_factory_fallback_leg()
+    if cross and cross.get("error"):
+        logger.warning("cross-provider fallback not armed: %s", cross["error"])
+        cross = None
+
+    #: False when the primary has no usable credentials. The leg then runs
+    #: alone rather than the coder refusing outright -- see below.
+    primary_usable = not cfg.get("error")
+
     if cfg.get("error"):
         # Fail closed with the provider's own message; never borrow the other
         # provider's credentials to keep going.
-        raise CoderError(str(cfg["error"]))
+        #
+        # One narrow exception: nobody asked for a provider BY NAME, none is
+        # configured, and a zero-cost leg is armed. Refusing there means every
+        # artifact takes the template path on a deployment that has a working
+        # free model sitting right beside it -- which is precisely the Render
+        # service in KNOWN_INCOMPLETE item 2, where no LLM key is set and the
+        # coder therefore cannot run at all.
+        #
+        # Both halves of the original rule survive. An explicit LLM_PROVIDER
+        # whose key is missing still raises: a request that cannot be honoured
+        # is an error, not an invitation to substitute. And a PAID leg still
+        # raises, because running one unasked is the cost surprise the rule
+        # exists to prevent.
+        explicit = os.getenv("LLM_PROVIDER", "").strip()
+        if explicit or not (cross and cross.get("is_free")):
+            raise CoderError(str(cfg["error"]))
+        logger.warning(
+            "no factory LLM credentials (%s); running on the zero-cost "
+            "fallback leg %s alone",
+            cfg["error"],
+            cross["model"],
+        )
+
     provider = cfg.get("provider")
-    if provider not in ("moonshot", "kimi", "claude"):
+    if primary_usable and provider not in ("moonshot", "kimi", "claude"):
         raise CoderError(f"unsupported coder provider: {provider!r}")
 
     #: A leg is a whole endpoint -- provider, base_url, key -- not just a
@@ -350,7 +382,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
         empty completion is the model answering, and retrying those would
         just spend money on the same answer.
 
-        One status does retry: a 429 on a zero-cost leg (``retry_on_429``).
+        One status does retry: a 429 on a zero-cost leg (``is_free``).
         That is a refusal to answer YET rather than an answer, it costs
         nothing to wait out, and the server states how long.
         """
@@ -368,7 +400,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                 # OpenRouter pool states how long to wait. Gated on the leg
                 # being zero-cost so no paid call is ever retried into a bill.
                 if not (
-                    leg.get("retry_on_429") and exc.response.status_code == 429
+                    leg.get("is_free") and exc.response.status_code == 429
                 ):
                     raise
                 last = exc
@@ -388,6 +420,19 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                     _time.sleep(2 * (attempt + 1))
         raise last
 
+    if not primary_usable:
+        # The leg is the only thing there is. No primary to fall back FROM, so
+        # a failure here is simply the failure -- reported with the leg named,
+        # not dressed up as a fallback of something that never ran.
+        try:
+            return _try_with_connect_retries(cross, cross["model"]), cross["model"]
+        except Exception as only:  # noqa: BLE001
+            raise CoderError(
+                f"coder LLM failed on {cross['model']} (the only configured "
+                f"leg; no primary credentials): "
+                f"{type(only).__name__}: {only}"
+            ) from only
+
     try:
         return _try_with_connect_retries(primary_leg, cfg["model"]), cfg["model"]
     except Exception as first:  # noqa: BLE001 — fallback legs, then honest failure
@@ -403,12 +448,8 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
         # out-of-credit or rate-limited Moonshot account fails BOTH its models
         # identically, so a same-vendor fallback is no fallback at all for the
         # failure that actually happens most.
-        cross = get_factory_fallback_leg()
         if cross:
-            if cross.get("error"):
-                logger.warning("cross-provider fallback not armed: %s", cross["error"])
-            else:
-                legs.append((cross, cross["model"]))
+            legs.append((cross, cross["model"]))
 
         if not legs:
             raise CoderError(
