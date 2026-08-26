@@ -532,10 +532,17 @@ def generate_product(
     # blueprint. That duplication is deliberate -- threading a plan through
     # start_runner_build would add a parameter that could carry an ungated
     # plan, which is the shape of bypass this gate exists to close.
-    from app.factory.compliance_gate import assert_compliant
+    from app.factory.compliance_gate import assert_compliant, load_trust_tiers
 
+    # The tiers are read here rather than inside the gate so the gate stays a
+    # pure function of the plan. load_trust_tiers() returns None when the
+    # shelf is unreadable, and the trust check then abstains -- it will not
+    # invent a refusal it cannot substantiate, nor pass a plan it never
+    # checked.
     assert_compliant(
-        CapabilityPlanner(blocks).plan(blueprint), blueprint=blueprint
+        CapabilityPlanner(blocks).plan(blueprint),
+        blueprint=blueprint,
+        trust_tiers=load_trust_tiers(),
     )
 
     from app.factory.build_jobs import RUNNER, build_engine, start_runner_build
