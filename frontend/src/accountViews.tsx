@@ -273,7 +273,10 @@ export function Subscription() {
               <p className="dim note">
                 Payments are not connected on this deployment yet — the factory owner
                 links the Stripe account. Upgrade still says so instead of opening a
-                blank checkout. Your current access is unaffected.
+                blank checkout.{" "}
+                {status.enforcement
+                  ? 'Billing enforcement is on for this deployment, so sessions and factory runs stop once a trial ends — until the owner connects Stripe or updates your subscription.'
+                  : 'Your current access is unaffected.'}
               </p>
             )}
           </>
