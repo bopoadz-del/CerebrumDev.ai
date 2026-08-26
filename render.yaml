@@ -1,3 +1,13 @@
+# NOT A LIVE BLUEPRINT (verified 2026-08-25).
+#
+# This file is the intended-state document for the environment; it is not
+# applied. The workspace has exactly one Blueprint instance -- stockwisepro-bot
+# -- and it is not this repo. cerebrumdev-backend (srv-d9ta2pad0e5s738lllpg)
+# was created manually and its dashboard is authoritative.
+#
+# Keep it honest anyway: measured against the live service today it declared
+# 8 keys that are not set there and omitted 1 that is. A reader consulting
+# this file to learn what production runs on was wrong in nine places.
 services:
   - type: web
     name: cerebrumdev-backend
@@ -51,6 +61,27 @@ services:
       # Factory Product Architect / platform CLI path.
       - key: CEREBRUM_FACTORY_LLM_MODEL
         value: kimi-k2.7-code
+      # Cross-provider fallback leg for the factory coder
+      # (llm_config.get_factory_fallback_leg). Setting the key is the explicit
+      # act that arms it: with no key the leg returns None, and Kimi has had no
+      # fallback in production since #199 merged. The blueprint never declared
+      # the variable, so it was not merely unset -- it was invisible.
+      #
+      # sync: false declares the variable without committing the secret, which
+      # also means a blueprint sync cannot prune a dashboard-set value.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Declared rather than defaulted, so the leg's provider is greppable here
+      # instead of only in the code default.
+      - key: FACTORY_LLM_FALLBACK_PROVIDER
+        value: openrouter
+      # The :free suffix is load-bearing. z-ai/glm-5.2 without it is a paid
+      # 1M-context model at $1.19/$3.74 per Mtok; the leg refuses to arm on a
+      # paid slug unless FACTORY_LLM_FALLBACK_ALLOW_PAID is set. Pinning the
+      # slug here means a change to the code default cannot quietly move
+      # production onto a billable model.
+      - key: FACTORY_LLM_FALLBACK_MODEL
+        value: z-ai/glm-5.2:free
       - key: MARKER_ENABLED
         value: "false"
       - key: CHROMA_PERSIST_DIR
@@ -137,15 +168,35 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
-      # Engine checkout for platform packaging. GITHUB_TOKEN is required when
-      # CEREBRUM_BLOCKS_REPO is a private GitHub repository.
+      # Engine checkout for platform packaging.
+      #
+      # GITHUB_TOKEN has NO REACHABLE CONSUMER today; leave it unset and do not
+      # read its absence as a missing production secret. All three call sites
+      # are inert for unrelated reasons:
+      #   - deployer.py returns at the DEPLOY_REPO_URL check (line 150) before
+      #     the token branch (line 160), and DEPLOY_REPO_URL is not set;
+      #   - engine_discovery._authenticated_repo_url only injects it for
+      #     PRIVATE GitHub URLs, and Cerebrum-Blocks is public (an anonymous
+      #     git-upload-pack probe returns 200);
+      #   - factory/build/store_write.py never pushes and never contacts the
+      #     network -- "Authorization is a committed file, not an env var."
+      # It becomes required only if CEREBRUM_BLOCKS_REPO is made private.
       - key: CEREBRUM_BLOCKS_REPO
         value: "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
       - key: GITHUB_TOKEN
         sync: false
       # Flip to true to enforce paid entitlement on sessions/factory runs.
+      # Read billing.py:88-96 before flipping it: with Stripe unconfigured,
+      # an account that is not entitled gets 402 and the only self-serve
+      # remedy returns 503. scripts/ops_set_subscription.py is the recovery
+      # seam; there is no other one.
       - key: BILLING_ENFORCEMENT
         value: "false"
+      # Coder budget per generation, in seconds. Code default is 120 with a
+      # 30s floor (coder.py:182). Live on the service but undeclared here
+      # until now.
+      - key: FACTORY_CODER_TIMEOUT_S
+        value: "120"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
