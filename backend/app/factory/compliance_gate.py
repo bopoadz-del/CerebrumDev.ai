@@ -43,6 +43,22 @@ REASON_UNSUPPORTED = "unsupported_capability"
 REASON_NO_BLOCK_DECLARES = "no_block_declares"
 REASON_NOT_DUAL_REGISTERED = "not_dual_registered"
 REASON_NOT_PLANNED = "capability_not_planned"
+REASON_NO_TRUST_TIER = "no_trust_tier"
+
+#: Tiers the platform will build on, and what each one asserts.
+#:
+#: These are PROVENANCE claims, not quality scores. ``platform`` says the
+#: block ships inside this repository, so the platform authored it and can
+#: vouch for it by construction. ``contributor_reviewed`` says a named
+#: reviewer read a contributed block and signed it off.
+#:
+#: What is deliberately NOT here is the empty string. A block carrying no
+#: tier has had nobody vouch for it, and "nobody has looked at this" must not
+#: read the same as "this is fine" -- which is exactly what it read as while
+#: the field did not exist. Every block on the shelf today is ``platform``,
+#: so this gate refuses nothing that currently builds; it fires the first
+#: time an unvouched block reaches a plan.
+ACCEPTED_TRUST_TIERS = frozenset({"platform", "contributor_reviewed"})
 
 
 @dataclass(frozen=True)
@@ -91,7 +107,35 @@ class ComplianceError(RuntimeError):
         self.verdict = verdict
 
 
-def evaluate_plan(plan: Any, *, blueprint: Optional[Any] = None) -> ComplianceVerdict:
+def load_trust_tiers() -> Optional[Dict[str, str]]:
+    """block_id -> trust tier, from the Factory shelf. None when unreadable.
+
+    Deliberately NOT called by :func:`evaluate_plan` itself. Every other check
+    in this module reads from the plan, which keeps the gate pure, fast and
+    testable without a filesystem. Having it reach out to disk on its own
+    would also make it disagree with the planner, whose
+    ``dual_registered_blocks`` is a claim the gate otherwise takes at face
+    value -- and a gate that contradicts the component it guards gets
+    switched off, not fixed.
+
+    So the production call site supplies the tiers (see
+    ``product_architect``), and a caller that passes nothing gets no trust
+    verdict rather than a guessed one.
+    """
+    try:
+        from .dual_registry import load_factory_shelf
+
+        return {bid: ref.trust_tier for bid, ref in load_factory_shelf().items()}
+    except Exception:  # noqa: BLE001 -- a missing shelf must not break the gate
+        return None
+
+
+def evaluate_plan(
+    plan: Any,
+    *,
+    blueprint: Optional[Any] = None,
+    trust_tiers: Optional[Dict[str, str]] = None,
+) -> ComplianceVerdict:
     """Return a verdict on ``plan``. Never raises on a bad plan; reports it.
 
     ``blueprint`` is optional because the coverage check is only meaningful
@@ -100,6 +144,9 @@ def evaluate_plan(plan: Any, *, blueprint: Optional[Any] = None) -> ComplianceVe
     pass it did not perform, nor a failure it cannot substantiate.
     """
     gaps: List[CapabilityGap] = []
+    #: None means no caller offered tiers, so the trust check abstains. It
+    #: must not fall back to loading the shelf: see load_trust_tiers().
+    shelf = trust_tiers
     capabilities = list(getattr(plan, "capabilities", ()) or ())
     checked = [c.capability_id for c in capabilities]
     dual = set(getattr(plan, "dual_registered_blocks", ()) or ())
@@ -138,6 +185,26 @@ def evaluate_plan(plan: Any, *, blueprint: Optional[Any] = None) -> ComplianceVe
                 )
             )
 
+        # Trust. Runs only on blocks that cleared dual registration, so a
+        # block absent from the shelf is reported once, as the registration
+        # gap it is, rather than twice under two names.
+        if shelf is not None:
+            unvouched = sorted(
+                b
+                for b in block_ids
+                if b not in missing
+                and (shelf.get(b) or "") not in ACCEPTED_TRUST_TIERS
+            )
+            if unvouched:
+                gaps.append(
+                    CapabilityGap(
+                        cap.capability_id,
+                        REASON_NO_TRUST_TIER,
+                        "block(s) carry no accepted trust tier, so nobody has "
+                        "vouched for them: " + ", ".join(unvouched),
+                    )
+                )
+
     if blueprint is not None:
         planned = {c.capability_id for c in capabilities}
         planned |= set(getattr(plan, "unsupported", ()) or ())
@@ -158,13 +225,21 @@ def evaluate_plan(plan: Any, *, blueprint: Optional[Any] = None) -> ComplianceVe
     )
 
 
-def assert_compliant(plan: Any, *, blueprint: Optional[Any] = None) -> Any:
+def assert_compliant(
+    plan: Any,
+    *,
+    blueprint: Optional[Any] = None,
+    trust_tiers: Optional[Dict[str, str]] = None,
+) -> Any:
     """Return ``plan``, or raise ComplianceError describing every gap.
 
     Every gap is reported, not just the first: a caller fixing one gap at a
     time learns the shape of the problem one build at a time.
+
+    ``trust_tiers`` is forwarded to :func:`evaluate_plan`; omitting it means
+    the trust check abstains rather than passing by default.
     """
-    verdict = evaluate_plan(plan, blueprint=blueprint)
+    verdict = evaluate_plan(plan, blueprint=blueprint, trust_tiers=trust_tiers)
     if not verdict.compliant:
         raise ComplianceError(verdict)
     return plan

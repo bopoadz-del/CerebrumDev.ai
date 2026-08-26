@@ -18,6 +18,11 @@ class BlockRef:
     block_id: str
     version: str
     source: str
+    #: Who vouches for this block. Empty means nobody has -- which is the
+    #: state ``compliance_gate`` refuses, not a synonym for "fine". Only the
+    #: Factory shelf carries tiers today; refs from the Blocks registry leave
+    #: it empty, and the gate only consults the shelf.
+    trust_tier: str = ""
 
 
 def _default_blocks_root() -> Path:
@@ -47,7 +52,12 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
     out: Dict[str, BlockRef] = {}
     for item in data.get("blocks", []):
         bid = item["id"]
-        out[bid] = BlockRef(block_id=bid, version=item.get("version", "0"), source="factory")
+        out[bid] = BlockRef(
+            block_id=bid,
+            version=item.get("version", "0"),
+            source="factory",
+            trust_tier=(item.get("trust_tier") or "").strip(),
+        )
     return out
 
 
