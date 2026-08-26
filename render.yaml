@@ -75,13 +75,19 @@ services:
       # instead of only in the code default.
       - key: FACTORY_LLM_FALLBACK_PROVIDER
         value: openrouter
-      # The :free suffix is load-bearing. z-ai/glm-5.2 without it is a paid
-      # 1M-context model at $1.19/$3.74 per Mtok; the leg refuses to arm on a
-      # paid slug unless FACTORY_LLM_FALLBACK_ALLOW_PAID is set. Pinning the
-      # slug here means a change to the code default cannot quietly move
+      # The :free suffix is load-bearing. minimax/minimax-m3 without it is a
+      # paid model at $0.30/$1.20 per Mtok; the leg refuses to arm on a paid
+      # slug unless FACTORY_LLM_FALLBACK_ALLOW_PAID is set. Pinning the slug
+      # here means a change to the code default cannot quietly move
       # production onto a billable model.
+      #
+      # Was z-ai/glm-5.2:free until measured on 2026-08-27: four calls each,
+      # same key -- GLM answered 1 of 4 (upstream_provider_shared_pool 429),
+      # minimax-m3 answered 3 of 4. A leg that fails three times in four is a
+      # second way for the request to die, not a fallback. minimax-m3:free is
+      # also 1M context against GLM free's 256K.
       - key: FACTORY_LLM_FALLBACK_MODEL
-        value: z-ai/glm-5.2:free
+        value: minimax/minimax-m3:free
       - key: MARKER_ENABLED
         value: "false"
       - key: CHROMA_PERSIST_DIR

@@ -62,8 +62,9 @@ def test_a_key_arms_the_leg_on_the_free_model(monkeypatch):
     assert leg["base_url"] == OPENROUTER_BASE_URL
     assert leg["model"] == DEFAULT_OPENROUTER_FALLBACK_MODEL
     assert leg["model"].endswith(":free"), (
-        "the default fallback must be a zero-priced slug; plain z-ai/glm-5.2 "
-        "is the paid tier and would start a bill nobody asked for"
+        "the default fallback must be a zero-priced slug; plain "
+        "minimax/minimax-m3 is the paid tier and would start a bill "
+        "nobody asked for"
     )
     assert "error" not in leg
 
@@ -78,7 +79,7 @@ def test_it_can_be_turned_off_even_with_a_key_present(monkeypatch):
 def test_a_paid_model_is_refused_unless_asked_for_by_name(monkeypatch):
     """The no-cost-surprise invariant, preserved literally."""
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
-    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "minimax/minimax-m3")
 
     leg = get_factory_fallback_leg()
 
@@ -88,13 +89,13 @@ def test_a_paid_model_is_refused_unless_asked_for_by_name(monkeypatch):
 
 def test_a_paid_model_is_allowed_when_it_is(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
-    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "minimax/minimax-m3")
     monkeypatch.setenv("FACTORY_LLM_FALLBACK_ALLOW_PAID", "1")
 
     leg = get_factory_fallback_leg()
 
     assert leg is not None and "error" not in leg
-    assert leg["model"] == "z-ai/glm-5.2"
+    assert leg["model"] == "minimax/minimax-m3"
 
 
 # -- the leg in the coder --------------------------------------------------
@@ -186,7 +187,7 @@ def test_a_misconfigured_leg_does_not_run_and_says_why(monkeypatch, kimi_env, ca
     """Armed but refused (paid slug) is not the same as absent -- the reason
     has to reach the log, or the leg looks like it silently did not exist."""
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
-    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "minimax/minimax-m3")
     posts = []
 
     def fake_post(url, json=None, headers=None, timeout=None):
@@ -227,6 +228,11 @@ def test_every_failed_leg_is_named_in_the_error(monkeypatch, kimi_env):
 # Measured live on 2026-08-25: the very first call to z-ai/glm-5.2:free on an
 # unused key returned 429 with limit_source="upstream_provider_shared_pool"
 # and Retry-After: 5. A leg that gives up on that is a leg that rarely works.
+#
+# Re-measured 2026-08-27, four calls per model on the same key: GLM answered
+# 1 of 4, minimax-m3 answered 3 of 4, which is why the default moved. The
+# retry stays either way -- a shared free pool throttles whichever slug is
+# sitting in it, so this behaviour is about the pool, not the model.
 
 
 def _throttled(retry_after="5"):
@@ -263,7 +269,7 @@ def test_a_free_leg_waits_out_a_429_and_succeeds(monkeypatch, kimi_env):
 def test_a_paid_leg_does_not_retry_a_429(monkeypatch, kimi_env):
     """The no-money-on-the-same-answer rule still holds where it costs money."""
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
-    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "minimax/minimax-m3")
     monkeypatch.setenv("FACTORY_LLM_FALLBACK_ALLOW_PAID", "1")
     monkeypatch.setattr("time.sleep", lambda s: None)
     calls = []
@@ -381,7 +387,7 @@ def test_a_paid_leg_will_not_run_unasked_with_no_primary(monkeypatch, no_credent
     """Running a billable leg on a box with no key is the cost surprise the
     fail-closed rule exists to prevent."""
     monkeypatch.setenv("OPENROUTER_API_KEY", FAKE_OPENROUTER)
-    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "z-ai/glm-5.2")
+    monkeypatch.setenv("FACTORY_LLM_FALLBACK_MODEL", "minimax/minimax-m3")
     monkeypatch.setenv("FACTORY_LLM_FALLBACK_ALLOW_PAID", "1")
     posts = []
     monkeypatch.setattr(

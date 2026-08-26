@@ -340,11 +340,23 @@ def get_factory_llm_config() -> Dict[str, Any]:
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-#: Verified against OpenRouter's live catalogue on 2026-08-25: prompt and
-#: completion both price 0, 256K context. The ``:free`` suffix is
-#: load-bearing -- plain ``z-ai/glm-5.2`` is the paid tier (1M context, and
-#: $1.19/$3.74 per Mtok), so dropping four characters silently starts a bill.
-DEFAULT_OPENROUTER_FALLBACK_MODEL = "z-ai/glm-5.2:free"
+#: Verified against OpenRouter's live catalogue on 2026-08-27: prompt and
+#: completion both price 0, 1M context. The ``:free`` suffix is
+#: load-bearing -- plain ``minimax/minimax-m3`` is the paid tier at
+#: $0.30/$1.20 per Mtok, so dropping five characters silently starts a bill.
+#:
+#: This was ``z-ai/glm-5.2:free`` until measured availability decided it.
+#: Four consecutive calls per model on 2026-08-27, same key:
+#:
+#:     z-ai/glm-5.2:free        1 of 4   (upstream_provider_shared_pool 429)
+#:     minimax/minimax-m3:free  3 of 4
+#:
+#: A fallback leg that fails three times in four is not a fallback -- it is a
+#: second way for the request to die. GLM 5.2's free tier is also 256K
+#: context against minimax-m3's 1M, so the swap costs nothing on capability.
+#: The 429 retry stays regardless: a shared free pool will rate-limit
+#: whichever slug sits in it.
+DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
 SUPPORTED_FALLBACK_PROVIDERS = ("openrouter",)
 
