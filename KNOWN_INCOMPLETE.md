@@ -332,10 +332,12 @@ cannot run at all, so a production factory run cannot produce any
 agent-written capability — every artifact would silently take the template
 path. Local development is unaffected (`backend/.env` carries a key).
 
-Note `/ready`'s `llm_configured` field reports `true` regardless
-(`app/main.py`, `or os.getenv("LLM_PROVIDER")`) — do not trust it as evidence
-the LLM works. Verify instead with the `coder_failures` field of a build, or
-`POST /v1/factory/product/draft` and check `drafting_mode`.
+Note `/ready`'s `llm_configured` field is true only when a real LLM
+credential is set (`KIMI_API_KEY`, `CEREBRUM_LLM_API_KEY`, chat/factory
+variants, or `ANTHROPIC_API_KEY`). `LLM_PROVIDER` alone is not evidence —
+that was a lie this register used to warn about. Verify a live factory run
+with the `coder_failures` field of a build, or `POST /v1/factory/product/draft`
+and check `drafting_mode`.
 
 ### 3. Steward blocks dual-register against the factory's own mirror
 `estate_registry` and `portfolio_rollup` do not exist in the real

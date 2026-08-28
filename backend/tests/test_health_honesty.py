@@ -73,3 +73,36 @@ async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
     body = json.loads(resp.body)
     assert body["checks"]["llm_configured"] is False, "KIMI_MOCK is not a configured LLM"
     assert body["checks"]["llm_mock"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_does_not_count_provider_without_a_key_as_llm(tmp_path, monkeypatch):
+    """LLM_PROVIDER is pinned in render.yaml; it is not a credential."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.delenv("KIMI_MOCK", raising=False)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    assert body["checks"]["llm_configured"] is False, (
+        "LLM_PROVIDER without a key must not report llm_configured"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_configured_when_a_key_is_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("CEREBRUM_LLM_API_KEY", "sk-not-a-real-key")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    assert body["checks"]["llm_configured"] is True
