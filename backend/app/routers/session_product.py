@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 
 from app.core.auth import Principal, require_api_key
 from app.core.llm_throttle import require_llm_rate
-from app.core.session_store import get_session, update_session
+from app.core.session_guard import owned_session_or_404
+from app.core.session_store import update_session
 from app.core.trial_limits import require_within_limit
 from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
@@ -59,13 +60,8 @@ class ModeBody(BaseModel):
 
 
 def _require_session(session_id: str, principal: Principal):
-    state = get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="session not found")
-    if principal.kind == "user" and state.user_id != principal.account_id:
-        # Do not leak existence across accounts (mirrors routers/sessions.py).
-        raise HTTPException(status_code=404, detail="session not found")
-    return state
+    """Same ownership rule as every other session-scoped router."""
+    return owned_session_or_404(session_id, principal)
 
 
 def _session_output(session_id: str, product_id: str) -> Path:

@@ -124,6 +124,23 @@ def _enforce_verification(principal: Principal) -> Principal:
     return principal
 
 
+def _tokens_match(provided: str, expected: str) -> bool:
+    """Constant-time equality that does not 500 on length mismatch.
+
+    ``hmac.compare_digest`` on the raw strings raises ``ValueError`` on
+    Python < 3.12 when the lengths differ. Production is 3.11. Without the
+    hash, a login token (``cdt_…``) compared against the master key would
+    crash the request before user-principal resolution — every signed-in
+    caller 500ing on every credential-gated route.
+
+    Hashing both sides first makes the compared buffers fixed-length, which
+    is also what :func:`require_master_key` already did.
+    """
+    left = hashlib.sha256(provided.encode("utf-8")).digest()
+    right = hashlib.sha256(expected.encode("utf-8")).digest()
+    return hmac.compare_digest(left, right)
+
+
 def require_master_key(
     authorization: str | None = Header(None, alias="Authorization"),
     x_api_key: str | None = Header(None, alias="X-API-Key"),
@@ -137,9 +154,7 @@ def require_master_key(
     if not master:
         raise HTTPException(status_code=404, detail="Not Found")
     provided = _provided_token(authorization, x_api_key)
-    left = hashlib.sha256(provided.encode("utf-8")).digest()
-    right = hashlib.sha256(master.encode("utf-8")).digest()
-    if not hmac.compare_digest(left, right):
+    if not _tokens_match(provided, master):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return Principal(kind="admin")
 
@@ -158,7 +173,7 @@ def require_api_key(
     master = _master_key()
 
     if master:
-        if provided and hmac.compare_digest(provided, master):
+        if provided and _tokens_match(provided, master):
             return Principal(kind="admin")
         principal = _resolve_user_principal(provided) if provided else None
         if principal is not None:

@@ -24,6 +24,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.core.auth import Principal, require_api_key
+from app.core.session_guard import owned_session_or_404
 from app.core.google_drive_connector import (
     AuditEvent,
     DriveConnection,
@@ -39,7 +40,6 @@ from app.core.google_drive_connector import (
     get_access_token,
     list_files,
 )
-from app.core.session_store import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -118,16 +118,8 @@ def _require_session(
     session_id: str,
     principal: Principal = Depends(require_api_key),
 ) -> dict[str, Any]:
-    """Dependency that loads the session or raises a non-leaking 404.
-
-    Enforces per-account ownership: user credentials only reach their own
-    sessions; admin/master and local-dev principals pass through.
-    """
-    state = get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if principal.kind == "user" and state.user_id != principal.account_id:
-        raise HTTPException(status_code=404, detail="Session not found")
+    """Dependency that loads the session or raises a non-leaking 404."""
+    state = owned_session_or_404(session_id, principal)
     return {
         "session_id": state.session_id,
         "user_id": state.user_id,
