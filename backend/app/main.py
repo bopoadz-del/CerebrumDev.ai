@@ -36,6 +36,8 @@ load_dotenv()
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 
 from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
@@ -64,7 +66,84 @@ from .resident_engineer.flags import resident_engineer_enabled
 
 verify_production_auth()
 
-app = FastAPI(title="CerebrumDev.ai API", version="0.1.0")
+_TRUTHY = {"1", "true", "yes", "on"}
+_FALSY = {"0", "false", "no", "off"}
+_OPENAPI_PATHS = {"/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"}
+
+
+def openapi_docs_enabled() -> bool:
+    """Swagger/ReDoc/OpenAPI are off in production unless explicitly re-enabled.
+
+    Live currently serves ``/docs``, ``/redoc`` and a 100-path ``/openapi.json``
+    to the public internet — including ``/v1/auth/smoke-login`` and admin
+    retention. That is a map of the attack surface, not a product feature.
+    ``OPENAPI_DOCS_ENABLED=1`` is the deliberate local/debug override.
+    """
+    explicit = os.getenv("OPENAPI_DOCS_ENABLED", "").strip().lower()
+    if explicit in _TRUTHY:
+        return True
+    if explicit in _FALSY:
+        return False
+    env = os.getenv("ENV", "development").strip().lower()
+    return env not in {"production", "prod"}
+
+
+def llm_key_configured() -> bool:
+    """True only when a real LLM credential is present.
+
+    ``LLM_PROVIDER`` is a routing choice, not a key. render.yaml pins
+    ``LLM_PROVIDER=kimi``, so treating it as configured made ``/ready``
+    report ``llm_configured: true`` on a keyless box. ``KIMI_MOCK`` is a
+    mock and is reported separately as ``llm_mock``.
+    """
+    return bool(
+        os.getenv("KIMI_API_KEY", "").strip()
+        or os.getenv("CEREBRUM_LLM_API_KEY", "").strip()
+        or os.getenv("CEREBRUM_CHAT_LLM_API_KEY", "").strip()
+        or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY", "").strip()
+        or os.getenv("ANTHROPIC_API_KEY", "").strip()
+    )
+
+
+def _is_openapi_path(path: str) -> bool:
+    return path in _OPENAPI_PATHS or path.startswith("/docs/")
+
+
+def _apply_security_headers(response: Response) -> None:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+    )
+    env = os.getenv("ENV", "").strip().lower()
+    if env in {"production", "prod"}:
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+
+
+class ProductionHttpSurfaceMiddleware(BaseHTTPMiddleware):
+    """Close OpenAPI in production-like ENV and stamp baseline security headers."""
+
+    async def dispatch(self, request: StarletteRequest, call_next):
+        if not openapi_docs_enabled() and _is_openapi_path(request.url.path):
+            response = JSONResponse({"detail": "Not Found"}, status_code=404)
+        else:
+            response = await call_next(request)
+        _apply_security_headers(response)
+        return response
+
+
+_docs = openapi_docs_enabled()
+app = FastAPI(
+    title="CerebrumDev.ai API",
+    version="0.1.0",
+    docs_url="/docs" if _docs else None,
+    redoc_url="/redoc" if _docs else None,
+    openapi_url="/openapi.json" if _docs else None,
+)
 
 
 # Nightly backups run in-process: Render cron jobs cannot mount persistent
@@ -104,6 +183,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Outermost: 404s /docs in production (per-request, so tests can flip ENV)
+# and stamps security headers on every response, including CORS 403s.
+app.add_middleware(ProductionHttpSurfaceMiddleware)
 
 # Public account endpoints (register/login/verify carry no credential; me/keys
 # enforce their own account principal).
@@ -314,13 +396,8 @@ async def ready():
     storage = _probe_storage()
     blocks = _probe_blocks()
     # KIMI_MOCK is a mock, not a configured LLM — reported separately.
-    llm_configured = bool(
-        os.getenv("KIMI_API_KEY")
-        or os.getenv("CEREBRUM_LLM_API_KEY")
-        or os.getenv("CEREBRUM_CHAT_LLM_API_KEY")
-        or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY")
-        or os.getenv("LLM_PROVIDER")
-    )
+    # LLM_PROVIDER is a routing choice, not evidence a key exists.
+    llm_configured = llm_key_configured()
     checks = {
         "storage": bool(storage.get("ok")),
         "cerebrum_blocks": bool(blocks.get("ok")),
