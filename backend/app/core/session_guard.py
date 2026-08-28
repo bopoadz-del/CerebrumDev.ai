@@ -16,16 +16,30 @@ from ..models.session import SessionState
 from .auth import Principal, require_api_key
 from .session_store import get_session
 
+_NOT_FOUND = "Session not found"
+
+
+def owned_session_or_404(session_id: str, principal: Principal) -> SessionState:
+    """Load the path session and enforce per-account ownership.
+
+    User credentials only reach their own sessions. Admin (master key) and
+    local-dev principals pass through. Cross-account access gets a
+    non-leaking 404 — same status and body as a missing session.
+
+    Sync so both ``Depends(require_owned_session)`` handlers and the
+    session-product / Drive routers (which stay sync) share one body.
+    """
+    state = get_session(session_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND)
+    if principal.kind == "user" and state.user_id != principal.account_id:
+        raise HTTPException(status_code=404, detail=_NOT_FOUND)
+    return state
+
 
 async def require_owned_session(
     session_id: str,
     principal: Principal = Depends(require_api_key),
 ) -> SessionState:
-    """Load the path session and enforce per-account ownership."""
-    state = get_session(session_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if principal.kind == "user" and state.user_id != principal.account_id:
-        # Do not leak existence across accounts.
-        raise HTTPException(status_code=404, detail="Session not found")
-    return state
+    """FastAPI dependency wrapping :func:`owned_session_or_404`."""
+    return owned_session_or_404(session_id, principal)

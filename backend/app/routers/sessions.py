@@ -1,11 +1,12 @@
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends
 
 from ..core import accounts_store
 from ..core.auth import Principal, require_api_key
 from ..core.billing import require_entitled
+from ..core.session_guard import owned_session_or_404
 from ..core.session_store import _session_store, create_session, get_session
 from ..models.session import SessionState
 
@@ -65,10 +66,4 @@ async def list_sessions(principal: Principal = Depends(require_api_key)) -> List
 async def get_session_state(
     session_id: str, principal: Principal = Depends(require_api_key)
 ):
-    state = get_session(session_id)
-    if not state:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if principal.kind == "user" and state.user_id != principal.account_id:
-        # Do not leak existence across accounts.
-        raise HTTPException(status_code=404, detail="Session not found")
-    return state
+    return owned_session_or_404(session_id, principal)
