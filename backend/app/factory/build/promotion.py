@@ -442,6 +442,7 @@ def write_reread_twin(evidence_path: Path, result: Dict[str, Any]) -> Path:
         ],
         "disagreements": [],
         "first_failing_criterion": result.get("first_failing_criterion"),
+        "git_sha": (result.get("provenance") or {}).get("git_sha"),
         "harvest_verdict": (result.get("harvest") or {}).get("verdict"),
         "kernel_ownership": (result.get("provenance") or {}).get("kernel_ownership"),
         "not_claimed": [

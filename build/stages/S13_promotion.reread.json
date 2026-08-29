@@ -4,7 +4,7 @@
   "verdict": "PASS",
   "PILOT_READY": true,
   "reread_of": "/workspace/build/stages/S13_promotion.json",
-  "reread_at": "2026-08-25T13:10:59Z",
+  "reread_at": "2026-08-29T14:50:29Z",
   "independent": true,
   "reader": "cloud-agent-s13-promotion",
   "emitter": "app.factory.build.promotion.evaluate_promotion",
@@ -19,6 +19,7 @@
   ],
   "disagreements": [],
   "first_failing_criterion": null,
+  "git_sha": "eacc2548dcd01d4d02a8425203f3f92fe9836a8c",
   "harvest_verdict": "BLOCKED",
   "kernel_ownership": {
     "execute_action": "app.cerebrum_product_kernel.contract.runtime.execute_action",
