@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { auth, getEmail, getToken, setSession } from './api/factory'
+import { auth, getEmail, setSession } from './api/factory'
 
 /* ---------------------------------- Auth ---------------------------------- */
 
@@ -185,7 +185,7 @@ export function AuthGate({
     try {
       if (mode === 'register') {
         const res = await auth.register(email, password)
-        setSession(res.login_token, email)
+        setSession(email)
         const v = res.verification
         onAuthed(
           v?.dev_verification_token
@@ -193,8 +193,8 @@ export function AuthGate({
             : undefined,
         )
       } else if (mode === 'login') {
-        const res = await auth.login(email, password)
-        setSession(res.login_token, email)
+        await auth.login(email, password)
+        setSession(email)
         onAuthed()
       } else if (mode === 'forgot') {
         const res = await auth.forgotPassword(email)
@@ -212,12 +212,14 @@ export function AuthGate({
         setMode('login')
       } else if (mode === 'verify') {
         await auth.verifyEmail(token)
-        if (getToken()) {
+        try {
+          await auth.me()
           onAuthed()
           return
+        } catch {
+          setNotice('Email verified. Sign in to enter the factory.')
+          setMode('login')
         }
-        setNotice('Email verified. Sign in to enter the factory.')
-        setMode('login')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'request failed')
