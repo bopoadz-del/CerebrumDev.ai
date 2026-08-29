@@ -6,6 +6,8 @@ import {
   downloadProductPackage,
   getEmail,
   product,
+  factoryAccessPaused,
+  type AccountInfo,
   type BillingStatus,
   type BuildStatus,
   type ProductDesign,
@@ -247,7 +249,7 @@ export function Subscription() {
                 </>
               )}
               <dt>Factory access</dt>
-              <dd>{status.entitled === false ? 'Paused' : 'Active'}</dd>
+              <dd>{factoryAccessPaused(status) ? 'Paused' : 'Active'}</dd>
             </dl>
             <div className="plan-cards">
               <div className="plan-card">
@@ -289,15 +291,37 @@ export function Subscription() {
   )
 }
 
-export function Account({ onLogout }: { onLogout: () => void }) {
-  const [me, setMe] = useState<Record<string, unknown> | null>(null)
+function verifiedLabel(me: AccountInfo | null): string {
+  if (typeof me?.email_verified !== 'boolean') return '—'
+  return me.email_verified ? 'Yes' : 'No'
+}
+
+export function Account({
+  onLogout,
+  initialMe,
+}: {
+  onLogout: () => void
+  initialMe?: AccountInfo | null
+}) {
+  const [me, setMe] = useState<AccountInfo | null>(initialMe ?? null)
   const [verifyToken, setVerifyToken] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    auth.me().then((m) => setMe(m as Record<string, unknown>)).catch(() => setMe(null))
-  }, [])
+    let cancelled = false
+    auth
+      .me()
+      .then((m) => {
+        if (!cancelled) setMe(m)
+      })
+      .catch(() => {
+        if (!cancelled && !initialMe) setMe(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [initialMe])
 
   async function verify(e: FormEvent) {
     e.preventDefault()
@@ -307,7 +331,7 @@ export function Account({ onLogout }: { onLogout: () => void }) {
       await auth.verifyEmail(verifyToken)
       setNote('Email verified.')
       const m = await auth.me()
-      setMe(m as Record<string, unknown>)
+      setMe(m)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'verification failed')
     }
@@ -323,15 +347,11 @@ export function Account({ onLogout }: { onLogout: () => void }) {
           <dt>Email</dt>
           <dd>{me?.email ? String(me.email) : getEmail() ?? '—'}</dd>
           <dt>Email verified</dt>
-          <dd>{me?.email_verified ? 'Yes' : 'No'}</dd>
-          {!!me?.account_id && (
-            <>
-              <dt>Account</dt>
-              <dd className="mono">{String(me.account_id)}</dd>
-            </>
-          )}
+          <dd>{verifiedLabel(me)}</dd>
+          <dt>Account</dt>
+          <dd className="mono">{me?.account_id ? String(me.account_id) : '—'}</dd>
         </dl>
-        {me && !me.email_verified && (
+        {me && me.email_verified === false && (
           <form className="verify-row" onSubmit={verify}>
             <input
               type="text"

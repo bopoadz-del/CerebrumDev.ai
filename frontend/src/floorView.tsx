@@ -50,11 +50,13 @@ export function BlueprintCard({
   busy,
   onApprove,
   onRefine,
+  accessPaused = false,
 }: {
   blueprint: NonNullable<ChatMsg['blueprint']>
   busy: boolean
   onApprove: (excludedIds: string[]) => void
   onRefine: (text: string) => void
+  accessPaused?: boolean
 }) {
   const caps = blueprint.capabilities ?? []
   const [ticked, setTicked] = useState<Record<string, boolean>>(() =>
@@ -89,7 +91,9 @@ export function BlueprintCard({
       )}
       {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
       <h4>Capabilities ({caps.length})</h4>
-      <p className="bp-pick-hint dim">Tick what the platform should include, then approve.</p>
+      {!accessPaused && (
+        <p className="bp-pick-hint dim">Tick what the platform should include, then approve.</p>
+      )}
       <ul className="bp-caps">
         {caps.map((c) => (
           <li key={c.id} className={ticked[c.id] === false ? 'bp-cap-excluded' : ''}>
@@ -97,7 +101,7 @@ export function BlueprintCard({
               <input
                 type="checkbox"
                 checked={ticked[c.id] !== false}
-                disabled={busy}
+                disabled={busy || accessPaused}
                 onChange={(e) =>
                   setTicked((t) => ({ ...t, [c.id]: e.target.checked }))
                 }
@@ -112,27 +116,31 @@ export function BlueprintCard({
           </li>
         ))}
       </ul>
-      <div className="card-actions">
-        <button disabled={busy || selectedCount === 0} onClick={() => onApprove(excluded)}>
-          {excluded.length > 0
-            ? 'Approve & build (' + selectedCount + ' of ' + caps.length + ')'
-            : 'Approve & build'}
-        </button>
-      </div>
-      <p className="bp-refine-hint">
-        Refine:{' '}
-        <button className="link" disabled={busy} onClick={() => onRefine('list capabilities')}>
-          list capabilities
-        </button>{' '}
-        ·{' '}
-        <button className="link" disabled={busy} onClick={() => onRefine('add capability payments')}>
-          add payments
-        </button>{' '}
-        ·{' '}
-        <button className="link" disabled={busy} onClick={() => onRefine('remove capability audit')}>
-          remove audit
-        </button>
-      </p>
+      {!accessPaused && (
+        <>
+          <div className="card-actions">
+            <button disabled={busy || selectedCount === 0} onClick={() => onApprove(excluded)}>
+              {excluded.length > 0
+                ? 'Approve & build (' + selectedCount + ' of ' + caps.length + ')'
+                : 'Approve & build'}
+            </button>
+          </div>
+          <p className="bp-refine-hint">
+            Refine:{' '}
+            <button className="link" disabled={busy} onClick={() => onRefine('list capabilities')}>
+              list capabilities
+            </button>{' '}
+            ·{' '}
+            <button className="link" disabled={busy} onClick={() => onRefine('add capability payments')}>
+              add payments
+            </button>{' '}
+            ·{' '}
+            <button className="link" disabled={busy} onClick={() => onRefine('remove capability audit')}>
+              remove audit
+            </button>
+          </p>
+        </>
+      )}
     </div>
   )
 }
@@ -268,7 +276,15 @@ function hydrateFromDesign(design: ProductDesign): {
   return { msgs, coderActive: false }
 }
 
-export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatforms: () => void }) {
+export function Floor({
+  sessionId,
+  goPlatforms,
+  accessPaused = false,
+}: {
+  sessionId: string
+  goPlatforms: () => void
+  accessPaused?: boolean
+}) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
       role: 'factory',
@@ -405,7 +421,7 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
   const send = useCallback(
     async (text: string) => {
       const message = text.trim()
-      if (!message || busy) return
+      if (!message || busy || accessPaused) return
       setInput('')
       setBusy(true)
       try {
@@ -414,12 +430,12 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
         setBusy(false)
       }
     },
-    [busy, sendCore],
+    [accessPaused, busy, sendCore],
   )
 
   const approveWithSelection = useCallback(
     async (excludedIds: string[]) => {
-      if (busy) return
+      if (busy || accessPaused) return
       setBusy(true)
       try {
         for (const id of excludedIds) {
@@ -430,7 +446,7 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
         setBusy(false)
       }
     },
-    [busy, sendCore],
+    [accessPaused, busy, sendCore],
   )
 
   const coderBuilding =
@@ -463,6 +479,7 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
                 <BlueprintCard
                   blueprint={m.blueprint}
                   busy={busy || coderActive}
+                  accessPaused={accessPaused}
                   onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
                   onRefine={(text) => send(text)}
                 />
@@ -520,16 +537,21 @@ export function Floor({ sessionId, goPlatforms }: { sessionId: string; goPlatfor
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={
-            coderBuilding
-              ? 'The coding agent has taken over this floor…'
-              : 'Try: "Build me a secure multi-user platform for my team…"'
+            accessPaused
+              ? 'Factory access is paused'
+              : coderBuilding
+                ? 'The coding agent has taken over this floor…'
+                : 'Try: "Build me a secure multi-user platform for my team…"'
           }
-          disabled={busy || coderBuilding}
+          disabled={busy || coderBuilding || accessPaused}
         />
-        <button type="submit" disabled={busy || coderBuilding || !input.trim()}>
+        <button type="submit" disabled={busy || coderBuilding || accessPaused || !input.trim()}>
           Send
         </button>
       </form>
+      {accessPaused && (
+        <p className="dim composer-paused">Factory access is paused.</p>
+      )}
     </div>
   )
 }
