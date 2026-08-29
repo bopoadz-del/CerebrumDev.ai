@@ -25,7 +25,7 @@ stripe==15.3.1
 
 # Observability: error tracking + performance. Activates when SENTRY_DSN is
 # set; inert otherwise. See backend/.env.example.
-sentry-sdk[fastapi]==2.66.1
+sentry-sdk[fastapi]==2.68.1
 
 # Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
 # session fan-out. Optional — everything falls back to in-memory.
