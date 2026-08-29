@@ -29,7 +29,12 @@ for candidate in (_HERE.parents[1], _HERE.parents[2]):
 
 config = context.config
 
-if config.config_file_name is not None:
+# CLI `alembic upgrade` may configure its own loggers. In-process callers
+# (tests via apply_accounts_migrations) must keep the process logging
+# config — fileConfig() replaces root handlers and empties pytest caplog.
+if config.config_file_name is not None and not config.attributes.get(
+    "skip_logging_config"
+):
     fileConfig(config.config_file_name)
 
 
