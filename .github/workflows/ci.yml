@@ -90,6 +90,34 @@ jobs:
           fi
           echo "ok: no VITE_API_KEY in frontend/src"
 
+  # Incremental typecheck. Scope is backend/mypy.ini — not the whole tree.
+  # Adding a new HTTP/ops helper under app/core/ means adding it to files=
+  # and keeping this job green. Do not widen to factory god-files in this job.
+  backend-types:
+    name: Backend typecheck (mypy, scoped)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: mypy (scoped files= in mypy.ini)
+        run: python -m mypy
+
   # F26 / windows_cp1252_parity. Linux agents cannot certify this.
   # Required (no continue-on-error / allow_failure). Workflow fails if red.
   windows-cp1252-parity:

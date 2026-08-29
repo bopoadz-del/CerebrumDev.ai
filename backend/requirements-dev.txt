@@ -9,3 +9,6 @@ pgvector>=0.2.5
 
 # Static analysis gate (pyflakes only -- see ruff.toml for why).
 ruff>=0.6
+
+# Incremental typecheck. Scope is backend/mypy.ini (not the whole tree).
+mypy>=1.11

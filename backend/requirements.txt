@@ -27,6 +27,9 @@ stripe==15.3.1
 # set; inert otherwise. See backend/.env.example.
 sentry-sdk[fastapi]==2.66.1
 
+# Prometheus /metrics (ops scrape; route is master-key gated in main).
+prometheus-client==0.21.1
+
 # Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
 # session fan-out. Optional — everything falls back to in-memory.
 redis==8.0.1

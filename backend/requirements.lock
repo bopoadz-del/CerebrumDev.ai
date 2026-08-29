@@ -65,6 +65,7 @@ packaging==26.3
 pillow==12.3.0
 pluggy==1.6.0
 propcache==0.5.2
+prometheus_client==0.21.1
 protobuf==7.36.0
 psycopg==3.3.4
 psycopg-binary==3.3.4

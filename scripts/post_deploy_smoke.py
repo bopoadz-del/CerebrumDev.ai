@@ -15,7 +15,15 @@ Verified-principal options (public email verification stays fail-closed):
     SMOKE_EMAIL + SMOKE_PASSWORD
     SMOKE_EMAIL_2 + SMOKE_PASSWORD_2  — optional isolation peer
 
-Exit code 0 = all checks pass. Prints a LIVE/DEAD line per kernel.
+If no verified-principal secret is set, the script waits for /health and
+/ready, checks /version, and PASSES with a GitHub notice that gated
+factory checks were skipped. Do not invent or commit a token. A missing
+GitHub Actions secret must not fail the whole master pipeline.
+
+The script waits up to SMOKE_READY_WAIT_S (default 300) for /health and
+/ready after a Render bounce before any gated check.
+
+Exit code 0 = all checks that ran pass. Prints a LIVE/DEAD line per kernel.
 """
 import io
 import json
@@ -27,21 +35,70 @@ import urllib.request
 import uuid
 import zipfile
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://api.cerebrum-dev.com").rstrip("/")
+DEFAULT_BASE = "https://api.cerebrum-dev.com"
 FAILURES = []
 TRANSIENT = {502, 503, 504}
+SKIP_ANNOTATION = (
+    "Gated factory checks skipped — SMOKE_GATE_TOKEN (and "
+    "SMOKE_EMAIL+SMOKE_PASSWORD) unset. Unauthenticated health/ready/version only."
+)
+
+# Set in main() so `import` under pytest does not treat test paths as a host.
+BASE = DEFAULT_BASE
 
 
-def req(method, path, body=None, token=None, raw=False, extra_headers=None, retries=4):
+def resolve_base(argv=None):
+    args = sys.argv if argv is None else argv
+    if len(args) > 1 and not str(args[1]).startswith("-"):
+        return str(args[1]).rstrip("/")
+    return os.environ.get("SMOKE_BASE_URL", DEFAULT_BASE).rstrip("/")
+
+
+def ready_wait_seconds():
+    raw = os.environ.get("SMOKE_READY_WAIT_S", "300").strip() or "300"
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 300
+
+
+def ready_interval_seconds():
+    raw = os.environ.get("SMOKE_READY_INTERVAL_S", "5").strip() or "5"
+    try:
+        return max(0.05, float(raw))
+    except ValueError:
+        return 5.0
+
+
+def has_gated_credentials():
+    """True when a verified-principal secret is present.
+
+    An empty GitHub ``secrets.SMOKE_GATE_TOKEN`` is unset, not a token.
+    """
+    if os.environ.get("SMOKE_GATE_TOKEN", "").strip():
+        return True
+    email = os.environ.get("SMOKE_EMAIL", "").strip()
+    password = os.environ.get("SMOKE_PASSWORD", "").strip()
+    return bool(email and password)
+
+
+def emit_gated_skip_annotation():
+    """Human line plus a GitHub Actions notice. Never fails the job."""
+    print(f"SMOKE SKIP: {SKIP_ANNOTATION}")
+    print(f"::notice title=Post-deploy smoke::{SKIP_ANNOTATION}")
+
+
+def req(method, path, body=None, token=None, raw=False, extra_headers=None, retries=4, base=None):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     if extra_headers:
         headers.update(extra_headers)
     last_status, last_body = None, None
+    root = (base or BASE).rstrip("/")
     for attempt in range(retries + 1):
         r = urllib.request.Request(
-            BASE + path, method=method,
+            root + path, method=method,
             data=json.dumps(body).encode() if body is not None else None,
             headers=headers,
         )
@@ -67,6 +124,58 @@ def req(method, path, body=None, token=None, raw=False, extra_headers=None, retr
                 continue
             return last_status, last_body
     return last_status, last_body
+
+
+def _mapping(body):
+    return body if isinstance(body, dict) else {}
+
+
+def surface_is_ready(health_status, health_body, ready_status, ready_body):
+    """True when /health and /ready both answer ready (post-bounce)."""
+    health_ok = health_status == 200
+    ready_ok = ready_status == 200 and _mapping(ready_body).get("status") == "ready"
+    return bool(health_ok and ready_ok)
+
+
+def wait_for_ready(timeout_s=None, interval_s=None, req_fn=None, sleeper=None):
+    """Poll /health and /ready until ready, or until timeout_s.
+
+    Returns True if the surface became ready. Records a DEAD check on timeout.
+    ``req_fn`` / ``sleeper`` are injectable for tests.
+    """
+    timeout = ready_wait_seconds() if timeout_s is None else timeout_s
+    interval = ready_interval_seconds() if interval_s is None else interval_s
+    probe = req if req_fn is None else req_fn
+    pause = time.sleep if sleeper is None else sleeper
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    last_h, last_r = (0, {}), (0, {})
+    while True:
+        attempt += 1
+        last_h = probe("GET", "/health", retries=0)
+        last_r = probe("GET", "/ready", retries=0)
+        hs, hb = last_h
+        rs, rb = last_r
+        if surface_is_ready(hs, hb, rs, rb):
+            print(f"surface ready after {attempt} probe(s) (health={hs} ready={rs})")
+            return True
+        remaining = deadline - time.monotonic()
+        ready_status = _mapping(rb).get("status") if not isinstance(rb, (bytes, bytearray)) else None
+        print(
+            f"  waiting for /health+/ready: health={hs} ready={rs} "
+            f"status={ready_status} remaining={max(0, int(remaining))}s"
+        )
+        if remaining <= 0:
+            break
+        pause(min(interval, remaining))
+        if time.monotonic() >= deadline:
+            break
+    check(
+        "health/ready wait",
+        False,
+        f"timeout {timeout}s last health={last_h[0]} ready={last_r[0]}",
+    )
+    return False
 
 
 def check(name, ok, evidence=""):
@@ -136,17 +245,48 @@ def verified_tokens():
     return None, None
 
 
-def main():
-    print(f"post-deploy smoke against {BASE}\n")
+def record_unauthenticated_surface(health=None, ready=None, version=None):
+    """LIVE/DEAD lines for the public ops surface (no principal)."""
+    if health is None:
+        health = req("GET", "/health")
+    if ready is None:
+        ready = req("GET", "/ready")
+    if version is None:
+        version = req("GET", "/version")
+    hs, h = health
+    h = _mapping(h)
+    check("health endpoint", hs == 200 and h.get("status") == "ok", f"status={h.get('status')}")
+    rs, r = ready
+    r = _mapping(r)
+    check(
+        "ready endpoint",
+        rs == 200 and r.get("status") == "ready",
+        f"http={rs} status={r.get('status')}",
+    )
+    vs, v = version
+    v = _mapping(v)
+    sha = v.get("git_sha") or ""
+    check("version endpoint", vs == 200 and bool(sha), f"http={vs} sha={sha[:12] if sha else None}")
+    return hs, h, rs, r, vs, v
 
-    s, h = req("GET", "/health")
-    check("health endpoint", s == 200 and h.get("status") == "ok", f"status={h.get('status')}")
+
+def main():
+    global BASE
+    BASE = resolve_base(sys.argv)
+    print(f"post-deploy smoke against {BASE}\n")
+    FAILURES.clear()
+
+    if not wait_for_ready():
+        return finish()
+
+    hs, h, _rs, _r, _vs, _v = record_unauthenticated_surface()
+
+    if not has_gated_credentials():
+        emit_gated_skip_annotation()
+        return finish()
+
     redis = h.get("redis") or {}
     check("redis rate limiting configured", bool(redis.get("configured") and redis.get("ok")), f"redis={redis}")
-
-    s, v = req("GET", "/version")
-    sha = (v or {}).get("git_sha") or ""
-    check("version endpoint", s == 200 and bool(sha), f"http={s} sha={sha[:12] if sha else None}")
 
     email = f"smoke-{uuid.uuid4().hex[:8]}@factory.dev"
     s, r = req("POST", "/v1/auth/register", {"email": email, "password": "Smoke!23456"})
@@ -287,6 +427,9 @@ def finish():
     if FAILURES:
         print(f"SMOKE FAIL: {len(FAILURES)} dead kernel(s): {', '.join(FAILURES)}")
         sys.exit(1)
+    if not has_gated_credentials():
+        print("SMOKE PASS: unauthenticated surface only; gated checks skipped.")
+        sys.exit(0)
     print("SMOKE PASS: every kernel live.")
     sys.exit(0)
 
