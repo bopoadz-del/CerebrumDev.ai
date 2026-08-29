@@ -49,8 +49,11 @@ BASE = DEFAULT_BASE
 
 def resolve_base(argv=None):
     args = sys.argv if argv is None else argv
-    if len(args) > 1 and not str(args[1]).startswith("-"):
-        return str(args[1]).rstrip("/")
+    if len(args) > 1:
+        candidate = str(args[1]).rstrip("/")
+        # Only an explicit URL is a host. pytest argv[1] is a test path.
+        if candidate.startswith(("http://", "https://")):
+            return candidate
     return os.environ.get("SMOKE_BASE_URL", DEFAULT_BASE).rstrip("/")
 
 
