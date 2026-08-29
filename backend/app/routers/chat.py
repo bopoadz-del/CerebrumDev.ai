@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..core.auth import Principal, require_api_key
+from ..core.billing import assert_entitled
 from ..core.session_guard import require_owned_session
 from ..core.session_store import get_session, update_session
 from ..core.chain_generator import (
@@ -24,7 +26,7 @@ from ..core.grounding import (
 )
 from ..core.rule_injector import inject_rules
 from ..core.llm_throttle import require_llm_rate
-from ..core.trial_limits import TrialLimitExceeded, require_within_limit
+from ..core.trial_limits import TrialLimitExceeded, require_remaining, require_within_limit
 from ..core.block_taxonomy import list_optional_blocks
 from ..factory import platform_chat_flow, platform_chat_llm
 from ..models.session import SessionState
@@ -273,12 +275,14 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 )
             ):
                 try:
-                    require_within_limit(getattr(state, "user_id", None), "generation")
+                    require_remaining(getattr(state, "user_id", None), "generation")
                 except TrialLimitExceeded as exc:
                     yield _sse_event("error", exc.detail["message"])
                     yield _sse_event("done", "")
                     return
             result = platform_chat_flow.start_or_resume_coder(state)
+            if not result.get("already_running") and not result.get("already_complete"):
+                require_within_limit(getattr(state, "user_id", None), "generation")
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
@@ -311,12 +315,19 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             if decision:
                 if decision.get("action") == "start_coder":
                     try:
-                        require_within_limit(getattr(state, "user_id", None), "generation")
+                        require_remaining(getattr(state, "user_id", None), "generation")
                     except TrialLimitExceeded as exc:
                         yield _sse_event("error", exc.detail["message"])
                         yield _sse_event("done", "")
                         return
                 llm_result = platform_chat_llm.apply_decision(state, user_message, decision)
+                if (
+                    decision.get("action") == "start_coder"
+                    and llm_result is not None
+                    and not llm_result.get("already_running")
+                    and not llm_result.get("already_complete")
+                ):
+                    require_within_limit(getattr(state, "user_id", None), "generation")
 
         if llm_result is not None:
             state.chat_history.append({"role": "assistant", "content": llm_result["summary"]})
@@ -329,12 +340,14 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
             # Offline / LLM-down fallback: the Approve button still starts WRITER.
             try:
-                require_within_limit(getattr(state, "user_id", None), "generation")
+                require_remaining(getattr(state, "user_id", None), "generation")
             except TrialLimitExceeded as exc:
                 yield _sse_event("error", exc.detail["message"])
                 yield _sse_event("done", "")
                 return
             result = platform_chat_flow.approve_and_generate(state)
+            if not result.get("already_running"):
+                require_within_limit(getattr(state, "user_id", None), "generation")
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
@@ -520,15 +533,36 @@ async def _yield_platform_result(result: dict) -> AsyncGenerator[str, None]:
     yield _sse_event("done", "")
 
 
+def _chat_starts_generation(state: SessionState, message: str) -> bool:
+    """True when this chat turn will start or resume a factory generate."""
+    if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(
+        message
+    ):
+        return True
+    if (
+        platform_chat_flow.is_resume_request(message)
+        or platform_chat_flow.is_pilot_request(message)
+    ) and (
+        platform_chat_flow.has_pending_blueprint(state)
+        or platform_chat_flow.is_generation_resumable(state)
+        or platform_chat_flow.is_generation_complete(state)
+    ):
+        return True
+    return False
+
+
 @router.post("/{session_id}/chat")
 async def chat(
     body: ChatMessage,
     state: SessionState = Depends(require_owned_session),
+    principal: Principal = Depends(require_api_key),
 ):
     # Burst throttle before the stream opens (429 is clean here; inside the
     # SSE generator it could only surface as an event). Quotas exempt
     # subscribers; this binds every account.
     require_llm_rate(getattr(state, "user_id", None), "chat")
+    if _chat_starts_generation(state, body.message):
+        assert_entitled(principal)
     return StreamingResponse(
         _stream_response(state.session_id, body.message),
         media_type="text/event-stream",

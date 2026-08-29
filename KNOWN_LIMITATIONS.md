@@ -60,13 +60,13 @@ corpus-blind questions hit a relevant KB entry at 0.25 hit@5
 
 ## Observability
 
-- Sentry initializes only when `SENTRY_DSN` is set; there are no metrics or
-  alerting, and 26 files still log via `print()`.
+- Sentry initializes only when `SENTRY_DSN` is set. There is no Prometheus
+  `/metrics` scrape yet. Factory paths that this audit pass touched use
+  `logging`; some unused/generated scripts still `print()`.
 
 ## Test suite
 
-Two failures and six errors are known and pre-date the free-trial
-hardening, reproduced on a clean tree: `test_estate_kit_phase0` (steward
-demo emission), `test_harvest_nhtsa` (external script), and the six
-`test_steward_pilot_auth` errors (environment-dependent DB setup).
-Everything else is green: 647 passed at the time of writing.
+CI collects the `backend/tests/` tree (`pytest.ini` `testpaths = tests`).
+Counts move with the tree — do not treat a snapshot number as a gate.
+Factory subset: `python -m pytest tests/factory` from `backend/`.
+Playwright mocked specs run as a separate CI job (`frontend/e2e/`).

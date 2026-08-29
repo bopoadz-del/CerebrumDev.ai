@@ -12,10 +12,11 @@ from app.factory.generator import ProductGenerator
 from app.factory.planner import CapabilityPlanner
 from app.product_dna.emit import verify_checksum_manifest
 
+from tests.factory.blocks_root import real_blocks_root
+
 ROOT = Path(__file__).resolve().parents[3]
 # Prefer a live Blocks checkout when present; CI relies on vendor_blocks_mirror.
-_BLOCKS_CANDIDATE = Path("/home/ubuntu/repos/Cerebrum-Blocks")
-BLOCKS = _BLOCKS_CANDIDATE if _BLOCKS_CANDIDATE.exists() else None
+BLOCKS = real_blocks_root()
 
 ESTATE_PLATFORM_BLOCKS = [
     "database",

@@ -15,11 +15,12 @@ import os
 import re
 import socket
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
-from urllib.parse import urlparse
+from typing import Iterator, List, Optional, Set, Tuple
+from urllib.parse import urljoin, urlparse
 from uuid import uuid4
 
 import httpx
@@ -173,6 +174,63 @@ def _is_private_or_blocked_host(hostname: str) -> Tuple[bool, Optional[str]]:
     return False, None
 
 
+def _public_ips_for_host(hostname: str) -> Set[str]:
+    """Resolve *hostname* and return only addresses that pass the SSRF check."""
+    blocked, _reason = _is_private_or_blocked_host(hostname)
+    if blocked:
+        return set()
+    try:
+        info = socket.getaddrinfo(hostname.lower(), None)
+    except socket.gaierror:
+        return set()
+    ips: Set[str] = set()
+    for item in info:
+        addr = item[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+            or str(ip) in _CLOUD_METADATA_HOSTS
+        ):
+            continue
+        ips.add(str(ip))
+    return ips
+
+
+@contextmanager
+def _pin_resolved_ips(hostname: str, pinned: Set[str]) -> Iterator[None]:
+    """Force getaddrinfo for *hostname* to the IPs we already validated.
+
+    Closes the DNS-rebinding window between validate and connect: httpx
+    cannot resolve a later private address for the same name.
+    """
+    orig = socket.getaddrinfo
+
+    def _pinned(host, port, *args, **kwargs):
+        if host and str(host).lower() == hostname.lower():
+            results = []
+            for ip in pinned:
+                family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+                sock_port = port if port is not None else 0
+                results.append((family, socket.SOCK_STREAM, 0, "", (ip, sock_port)))
+            if results:
+                return results
+        return orig(host, port, *args, **kwargs)
+
+    socket.getaddrinfo = _pinned  # type: ignore[assignment]
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = orig
+
+
 def validate_source_uri(uri: str) -> None:
     """Validate a source URI for safe acquisition.
 
@@ -278,9 +336,21 @@ def _fetch_with_redirect_guard(
 ) -> FetchResult:
     """Fetch a URL, validating each redirect target."""
     validate_source_uri(url)
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    pinned = _public_ips_for_host(hostname) if hostname else set()
+    if hostname and not pinned:
+        raise _error(
+            "SOURCE_URI_BLOCKED",
+            "The source URI has no pinned public address.",
+            "source_uri",
+        )
 
     try:
-        response = client.get(url, headers={"Accept": ", ".join(_ALLOWED_CONTENT_TYPES)})
+        with _pin_resolved_ips(hostname, pinned):
+            response = client.get(
+                url, headers={"Accept": ", ".join(_ALLOWED_CONTENT_TYPES)}
+            )
     except httpx.TimeoutException as exc:
         raise _error("SOURCE_TIMEOUT", f"Request timed out: {exc}", "source_uri") from exc
     except httpx.TransportError as exc:
@@ -308,6 +378,7 @@ def _fetch_with_redirect_guard(
                 "Redirect response missing Location header.",
                 "source_uri",
             )
+        location = urljoin(url, location)
         # Validate redirect target before following.
         try:
             validate_source_uri(location)

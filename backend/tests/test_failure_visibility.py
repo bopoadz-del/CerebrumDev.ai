@@ -138,15 +138,17 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
                     "jobs cannot mount disks, so this job can never do its work"
                 )
 
-        from app.main import app as fastapi_app
+        from app.main import _lifespan, app as fastapi_app
 
-        startup_names = [
-            getattr(h, "__name__", "") for h in fastapi_app.router.on_startup
-        ]
-        assert any("backup" in name for name in startup_names), (
-            "the web service does not arm the in-process backup scheduler at "
-            f"startup; hooks seen: {startup_names}"
+        # FastAPI lifespan (not the deprecated on_startup list) arms backup.
+        import inspect
+
+        lifespan_src = inspect.getsource(_lifespan)
+        assert "backup_scheduler.start" in lifespan_src, (
+            "the web service does not arm the in-process backup scheduler in "
+            f"lifespan; seen: {lifespan_src[:400]}"
         )
+        assert fastapi_app.router.lifespan_context is not None
 
         web = [s for s in render["services"] if s.get("name") == "cerebrumdev-backend"]
         keys = {e.get("key") for e in web[0].get("envVars", [])}

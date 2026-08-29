@@ -502,6 +502,7 @@ def generate_product(
     *,
     blocks_root: Optional[Path] = None,
     cycle: Optional[str] = None,
+    quota_account_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a product. The role runner is the default engine.
 
@@ -549,7 +550,11 @@ def generate_product(
 
     if build_engine() == RUNNER:
         return start_runner_build(
-            blueprint, output_dir, blocks_root=blocks, cycle=cycle
+            blueprint,
+            output_dir,
+            blocks_root=blocks,
+            cycle=cycle,
+            quota_account_id=quota_account_id,
         )
 
     factory_root = _repo_root()
@@ -559,7 +564,15 @@ def generate_product(
         factory_commit=git_head(factory_root),
         blocks_commit=git_head(blocks) if blocks else "unknown",
     )
-    return gen.generate(output_dir)
+    result = gen.generate(output_dir)
+    if blueprint.product_id == "cerebrum-steward":
+        from app.factory.build_jobs import clone_steward_canonical
+
+        try:
+            result["canonical_output"] = str(clone_steward_canonical(output_dir))
+        except Exception:  # noqa: BLE001
+            logger.exception("Steward canonical clone failed after template generate")
+    return result
 
 
 def architect_pipeline(

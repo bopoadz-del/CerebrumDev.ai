@@ -28,6 +28,9 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.fixture(autouse=True)
 def _flags(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    # Existing fixtures generate Steward under tmp_path/. Confine workbench
+    # to that tree so M3 does not break local packager/CLI tests.
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path))
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setenv("CHANGE_REQUEST_INTAKE_ENABLED", "true")
     monkeypatch.setenv("BUILD_MODE_ENABLED", "true")
@@ -383,6 +386,20 @@ def test_candidate_artifact_propagates_cli_error_fields(monkeypatch, tmp_path):
     )
     assert candidate["agent"]["kimi_error"] == "cli_session_failed"
     assert candidate["agent"]["cli_returncode"] == 3
+
+
+def test_workbench_product_root_must_stay_inside_factory_outputs(tmp_path, monkeypatch):
+    from app.factory.paths import factory_outputs_root
+    from app.workbench.session import _resolve_product_root
+
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    (factory_outputs_root() / "ok").mkdir(parents=True)
+    with pytest.raises(WorkbenchRejected, match="factory_outputs"):
+        _resolve_product_root({}, Path("/etc"))
+    with pytest.raises(WorkbenchRejected, match="factory_outputs"):
+        _resolve_product_root({}, tmp_path / "outside")
+    ok = _resolve_product_root({}, factory_outputs_root() / "ok")
+    assert ok == (factory_outputs_root() / "ok").resolve()
 
 
 def test_load_verified_dna_rejects_schema_invalid_doc(tmp_path):

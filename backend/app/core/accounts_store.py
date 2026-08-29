@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 _LOCK = threading.RLock()
 _ENGINES: Dict[str, sa.engine.Engine] = {}
@@ -620,28 +621,72 @@ def get_usage(account_id: str, counter: str, period: str) -> int:
 
 
 def increment_usage(account_id: str, counter: str, period: str) -> int:
-    """Atomically increment one usage counter; returns the new value."""
+    """Atomically increment one usage counter; returns the new value.
+
+    Uses INSERT … ON CONFLICT DO UPDATE so two workers hitting a missing
+    row cannot both INSERT and raise IntegrityError. A leftover race still
+    retries the upsert rather than 500ing the request.
+    """
+    last_error: Optional[Exception] = None
+    for _attempt in range(3):
+        try:
+            with _LOCK, _engine().begin() as conn:
+                now = _iso(_utcnow())
+                dialect = conn.dialect.name
+                if dialect == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                    stmt = pg_insert(_t_usage_counters).values(
+                        account_id=account_id,
+                        counter=counter,
+                        period=period,
+                        value=1,
+                        updated_at=now,
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["account_id", "counter", "period"],
+                        set_={
+                            "value": _t_usage_counters.c.value + 1,
+                            "updated_at": now,
+                        },
+                    )
+                else:
+                    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                    stmt = sqlite_insert(_t_usage_counters).values(
+                        account_id=account_id,
+                        counter=counter,
+                        period=period,
+                        value=1,
+                        updated_at=now,
+                    )
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["account_id", "counter", "period"],
+                        set_={
+                            "value": _t_usage_counters.c.value + 1,
+                            "updated_at": now,
+                        },
+                    )
+                conn.execute(stmt)
+                row = conn.execute(
+                    sa.select(_t_usage_counters.c.value).where(
+                        _t_usage_counters.c.account_id == account_id,
+                        _t_usage_counters.c.counter == counter,
+                        _t_usage_counters.c.period == period,
+                    )
+                ).first()
+                return int(row[0]) if row else 1
+        except IntegrityError as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("increment_usage failed without IntegrityError")
+
+
+def decrement_usage(account_id: str, counter: str, period: str) -> int:
+    """Subtract one unit (not below zero). Used to refund a failed generation."""
     with _LOCK, _engine().begin() as conn:
-        updated = conn.execute(
-            sa.update(_t_usage_counters)
-            .where(
-                _t_usage_counters.c.account_id == account_id,
-                _t_usage_counters.c.counter == counter,
-                _t_usage_counters.c.period == period,
-            )
-            .values(value=_t_usage_counters.c.value + 1, updated_at=_iso(_utcnow()))
-        )
-        if updated.rowcount == 0:
-            conn.execute(
-                sa.insert(_t_usage_counters).values(
-                    account_id=account_id,
-                    counter=counter,
-                    period=period,
-                    value=1,
-                    updated_at=_iso(_utcnow()),
-                )
-            )
-            return 1
         row = conn.execute(
             sa.select(_t_usage_counters.c.value).where(
                 _t_usage_counters.c.account_id == account_id,
@@ -649,7 +694,19 @@ def increment_usage(account_id: str, counter: str, period: str) -> int:
                 _t_usage_counters.c.period == period,
             )
         ).first()
-        return int(row[0])
+        if row is None:
+            return 0
+        new_value = max(0, int(row[0]) - 1)
+        conn.execute(
+            sa.update(_t_usage_counters)
+            .where(
+                _t_usage_counters.c.account_id == account_id,
+                _t_usage_counters.c.counter == counter,
+                _t_usage_counters.c.period == period,
+            )
+            .values(value=new_value, updated_at=_iso(_utcnow()))
+        )
+        return new_value
 
 
 def list_usage_counters(account_id: str) -> List[Dict[str, Any]]:

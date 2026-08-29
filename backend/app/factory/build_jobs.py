@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -300,6 +301,66 @@ def is_build_complete(output_dir: Path | str) -> bool:
 # -- starting a build -----------------------------------------------------
 
 
+def _quota_marker(output_dir: Path) -> Path:
+    return Path(output_dir) / ".generation_quota_account"
+
+
+def _write_quota_marker(output_dir: Path, account_id: Optional[str]) -> None:
+    if not account_id:
+        return
+    _quota_marker(output_dir).write_text(account_id, encoding="utf-8")
+
+
+def _clear_quota_marker(output_dir: Path) -> None:
+    try:
+        _quota_marker(output_dir).unlink()
+    except FileNotFoundError:
+        return
+
+
+def _refund_generation_quota(output_dir: Path) -> None:
+    path = _quota_marker(output_dir)
+    if not path.is_file():
+        return
+    try:
+        account_id = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return
+    if account_id:
+        from app.core.trial_limits import refund
+
+        refund(account_id, "generation")
+    _clear_quota_marker(output_dir)
+
+
+def clone_steward_canonical(source_dir: Path | str) -> Path:
+    """Copy a finished Steward tree to factory_outputs/Cerebrum-Steward.
+
+    A second runner used to start here and double LLM spend. Clone only.
+    """
+    from app.factory.paths import factory_outputs_root, is_safe_to_clean
+
+    src = Path(source_dir)
+    dest = factory_outputs_root() / "Cerebrum-Steward"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        if not is_safe_to_clean(dest):
+            raise RuntimeError(f"refusing to replace unsafe canonical path {dest}")
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest)
+    return dest
+
+
+def _maybe_clone_steward_canonical(blueprint: Any, output_dir: Path) -> None:
+    if getattr(blueprint, "product_id", None) != "cerebrum-steward":
+        return
+    try:
+        dest = clone_steward_canonical(output_dir)
+        logger.info("cloned Steward canonical copy to %s", dest)
+    except Exception:  # noqa: BLE001 — clone must not fail the build record
+        logger.exception("Steward canonical clone failed from %s", output_dir)
+
+
 def _run(
     blueprint: Any,
     output_dir: Path,
@@ -339,6 +400,17 @@ def _run(
             )
         except Exception:  # noqa: BLE001
             logger.exception("could not record the crash in the ledger")
+        _refund_generation_quota(output_dir)
+        return
+    from app.factory.build.ledger import BuildLedger, EventKind
+
+    terminal = BuildLedger(_ledger_path(output_dir)).terminal_event()
+    failed = terminal is not None and terminal.kind is EventKind.RUN_FAILED
+    if failed:
+        _refund_generation_quota(output_dir)
+        return
+    _maybe_clone_steward_canonical(blueprint, output_dir)
+    _clear_quota_marker(output_dir)
 
 
 def start_runner_build(
@@ -347,6 +419,7 @@ def start_runner_build(
     *,
     blocks_root: Optional[Path] = None,
     cycle: Optional[str] = None,
+    quota_account_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
 
@@ -374,11 +447,27 @@ def start_runner_build(
     # first ledger write. The runner sees an existing ledger with a matching
     # inputs_hash and resumes into it rather than starting a second run.
     ledger = BuildLedger(_ledger_path(out))
+    if ledger.exists():
+        status = build_status(out)
+        if status.get("state") == "building":
+            logger.info("refusing second runner start; build already in progress at %s", out)
+            return {
+                "engine": RUNNER,
+                "output_dir": str(out),
+                "product_id": getattr(blueprint, "product_id", "unknown"),
+                "inputs_hash": inputs_hash,
+                "build": status,
+                "cycle": resolved,
+                "already_running": True,
+            }
+
     if not ledger.exists():
         ledger.start_run(
             product_id=getattr(blueprint, "product_id", "unknown"),
             inputs_hash=inputs_hash,
         )
+
+    _write_quota_marker(out, quota_account_id)
 
     thread = threading.Thread(
         target=_run,
@@ -396,4 +485,5 @@ def start_runner_build(
         "inputs_hash": inputs_hash,
         "build": build_status(out),
         "cycle": resolved,
+        "already_running": False,
     }

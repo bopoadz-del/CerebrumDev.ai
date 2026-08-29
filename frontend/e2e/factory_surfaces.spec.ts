@@ -185,7 +185,7 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'vineyard' })).toBeVisible()
   await expect(page.getByText('runner', { exact: true })).toBeVisible()
-  await expect(page.getByText('Coding agent wrote 13 of 19 artifacts.')).toBeVisible()
+  await expect(page.getByText('Finished — 13 artifacts; 6 templated')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
 })
 

@@ -75,9 +75,22 @@ def test_verify_production_auth_passes_with_key(monkeypatch):
 
 
 def test_verify_production_auth_passes_with_explicit_opt_in(monkeypatch):
+    monkeypatch.setenv("ENV", "test")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     verify_production_auth()
+
+
+@pytest.mark.parametrize("env_value", ["production", "prod"])
+def test_verify_production_auth_refuses_anonymous_dev_in_production(
+    monkeypatch, env_value
+):
+    """ALLOW_ANONYMOUS_DEV is refused in production even when a master key exists."""
+    monkeypatch.setenv("ENV", env_value)
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-present")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    with pytest.raises(RuntimeError, match="ALLOW_ANONYMOUS_DEV"):
+        verify_production_auth()
 
 
 # --- misconfiguration matrix ---------------------------------------------

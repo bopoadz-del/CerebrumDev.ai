@@ -4,16 +4,26 @@ One-page operations guide for CerebrumDev.ai factory and Automotive Safety Intel
 
 ## Deploy (factory)
 
-1. Ensure Render Blueprint uses [render.yaml](../render.yaml).
-2. Set secrets in Render dashboard (never commit):
-   - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key (`sync: false`)
+`render.yaml` is **not a live Blueprint**. The Render dashboard for
+`cerebrumdev-backend` / `cerebrumdev-frontend` is the source of truth.
+Do not sync this file as a Blueprint; it would change production security
+(email-verify, accounts DB wiring, and historically a frontend master key).
+
+1. Set secrets in the **Render dashboard** (never commit, never bake into Vite):
+   - `CEREBRUM_DEV_API_KEY` — master/admin key, backend only
+   - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key
    - `KIMI_API_KEY` (or `CEREBRUM_LLM_API_KEY`) — Kimi/Moonshot is the only LLM provider
-   - `VITE_API_KEY` on the static site — must match backend `CEREBRUM_DEV_API_KEY`
-   - `REDIS_URL` — Internal URL from Key Value `cerebrumdev-redis` (MCP cannot read the connection string)
-   - `SMOKE_GATE_TOKEN` — production smoke verified-principal gate; public email verification stays on
-   - `SENTRY_DSN` / frontend `VITE_SENTRY_DSN` — optional; observability is inert without them
-3. Deploy backend first, copy generated `CEREBRUM_DEV_API_KEY`, set frontend `VITE_API_KEY`, redeploy frontend.
-4. Confirm `GET /health` and `GET /ready` return healthy.
+   - `REDIS_URL` — Internal URL from Key Value `cerebrumdev-redis`
+   - `SMOKE_GATE_TOKEN` — production smoke verified-principal gate
+   - `SENTRY_DSN` / frontend `VITE_SENTRY_DSN` — optional
+   - `DATA_ENCRYPTION_KEY` — required in production when Google Drive is configured
+2. Frontend env is only `VITE_API_URL` (and optional `VITE_SENTRY_DSN`).
+   The SPA authenticates with `cdt_` login tokens. **Do not** set
+   `VITE_API_KEY` to the master key — Vite would publish it in the static bundle.
+3. Deploy backend first. Confirm `GET /health` and `GET /ready` return healthy.
+4. After each production deploy, the post-merge smoke workflow runs
+   `scripts/post_deploy_smoke.py` against `https://api.cerebrum-dev.com`.
+   That job (not PR unit CI) is the market-ready gate.
 
 ## Deploy (automotive pilot package)
 
@@ -38,10 +48,12 @@ Smoke:
 
 ## Key rotation
 
-1. Rotate `CEREBRUM_DEV_API_KEY` / `VITE_API_KEY` together.
+1. Rotate `CEREBRUM_DEV_API_KEY` on the **backend** service only. Do not
+   put it on the frontend. Existing `cdt_` sessions stay valid until expiry.
 2. Rotate `CEREBRUM_API_KEY` to match Cerebrum-Blocks.
 3. Rotate `DATA_ENCRYPTION_KEY` only with a re-encrypt plan for Drive tokens.
-4. Restart backend after rotation; rebuild frontend when `VITE_*` changes.
+4. Restart backend after rotation; rebuild frontend only when `VITE_API_URL`
+   or `VITE_SENTRY_DSN` changes.
 
 ## Disk / backup (`/app/storage`)
 
@@ -135,18 +147,29 @@ anyone for an OOM, a hang, or a full disk. Add an external uptime check against
 `/ready` before opening registration, or the first signal of an outage is a
 customer complaining.
 
-## Before opening registration
+## Before opening registration / paid launch
+
+Do **not** flip `BILLING_ENFORCEMENT` or `ACCOUNTS_REQUIRE_VERIFIED_EMAIL`
+in the dashboard while Stripe checkout is unconfigured (users 402 with no
+remedy). Order:
+
+1. Mail provider live (`RESEND_API_KEY` / SMTP), then email-verify.
+2. Stripe checkout + webhook live (not 503).
+3. Confirm Floor generate + approve-and-generate chat return 402 for an
+   expired trial (`require_entitled` on those paths).
+4. Then `BILLING_ENFORCEMENT=true` in the dashboard. Update `render.yaml`
+   comments to match; do not treat the file as applied.
+
+Also:
 
 - [ ] `backup_cli drill` passes.
 - [ ] An external uptime check points at `/ready`.
-- [ ] A mail provider is set (`RESEND_API_KEY`), **then**
-      `ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1`. The second without the first locks
-      out every new account.
 - [ ] `ACCOUNTS_EXPOSE_DEV_TOKENS` is unset or `0` everywhere.
-- [ ] `DATA_ENCRYPTION_KEY` is set, or you accept that Drive OAuth tokens and
-      stored documents sit plaintext on disk.
-- [ ] The Postgres cutover is decided before launch, not under load.
-- [ ] Counsel has cleared `docs/legal/`.
+- [ ] `DATA_ENCRYPTION_KEY` is set whenever Drive OAuth is configured
+      (`/ready` fails in production if Drive is on and encryption is off).
+- [ ] `ALLOW_ANONYMOUS_DEV` is unset in production (boot refuses it).
+- [ ] Post-deploy smoke workflow is green at this SHA.
+- [ ] Counsel has cleared `docs/legal/` (those files are still drafts).
 
 ## Provider failure
 
