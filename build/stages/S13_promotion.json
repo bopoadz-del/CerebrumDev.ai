@@ -1,7 +1,7 @@
 {
   "stage": "S13",
   "name": "PROMOTION AND UPSTREAM HARVEST",
-  "evaluated_at": "2026-08-25T13:10:59Z",
+  "evaluated_at": "2026-08-29T14:50:29Z",
   "emitter": "app.factory.build.promotion.evaluate_promotion",
   "PILOT_READY": true,
   "verdict": "PASS",
@@ -241,7 +241,7 @@
   "missing": [],
   "failed": [],
   "provenance": {
-    "git_sha": "0051091582e0be623ac6a9120947bc152ec066c8",
+    "git_sha": "eacc2548dcd01d4d02a8425203f3f92fe9836a8c",
     "emitter": "app.factory.build.promotion.evaluate_promotion",
     "stage_verdicts": {
       "S0_preflight.json": "PASS",
@@ -299,7 +299,7 @@
     ],
     "reason": "harvest write is NOT authorized. A committed build/stages/HARVEST_AUTHORIZED.json naming bopoadz-del/Cerebrum-Blocks is required; an environment flag is not authorization. The write path itself now exists (U6, app.factory.build.store_write).",
     "consequence": "Products will not receive those Factory pipeline fixes from Cerebrum-Blocks until harvest exists. The next product re-ships Factory-owned corrections only if CLONER/WRITER emission in this repo stays applied. This does not pretend Blocks was fixed. No Blocks write was performed; none is authorized from this repo.",
-    "evaluated_at": "2026-08-25T13:10:59Z"
+    "evaluated_at": "2026-08-29T14:50:29Z"
   },
   "lotdesk": "fixture only; not patched",
   "llm_route_authorship": "not restored; _coder_route_body still returns None"

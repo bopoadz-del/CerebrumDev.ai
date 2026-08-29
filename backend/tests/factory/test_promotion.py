@@ -345,6 +345,8 @@ def test_write_evidence_is_the_only_true_pilot_ready_sink(tmp_path):
     assert reread["PILOT_READY"] is True
     assert reread["disagreements"] == []
     assert reread["verdict"] == written["verdict"]
+    assert reread["git_sha"] == written["provenance"]["git_sha"]
+    assert reread["git_sha"]
 
 
 def test_in_tree_stage_evidence_is_clean_but_still_needs_a_pilot_cycle():
