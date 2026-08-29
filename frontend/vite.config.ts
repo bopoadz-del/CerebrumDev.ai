@@ -18,7 +18,7 @@ export default defineConfig({
       'X-Frame-Options': 'DENY',
       'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy':
-        "default-src 'self'; frame-ancestors 'none'; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000",
+        "default-src 'self'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss: http://127.0.0.1:8000 http://localhost:8000",
     },
   },
   preview: {

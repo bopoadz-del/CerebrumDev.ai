@@ -35,14 +35,7 @@ def run_all(product_root: str, results: GateResults) -> GateResults:
             argv = shlex.split(cmd)
             if not argv:
                 raise ValueError("empty gate command")
-            proc = subprocess.run(
-                argv,
-                shell=False,
-                cwd=product_root,
-                capture_output=True,
-                text=True,
-                timeout=900,
-            )
+            proc = subprocess.run(argv, shell=False, cwd=product_root, capture_output=True, text=True, timeout=900)
             gates.append({"command": cmd, "returncode": proc.returncode, "output_tail": ((proc.stdout or "") + (proc.stderr or "")).strip()[-2000:]})
         except Exception as exc:  # noqa: BLE001 — a gate that cannot run is a failed gate
             gates.append({"command": cmd, "returncode": -1, "output_tail": str(exc)})

@@ -115,7 +115,7 @@ def test_start_coder_on_approved_incomplete_resumes_not_pending_error(tmp_path, 
     state = _state_with_approved_run(tmp_path)
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         captured["output_dir"] = str(output_dir)
         captured["product_id"] = bp.product_id
         assert (Path(output_dir) / "app" / "writer_progress.txt").read_text(
@@ -145,7 +145,7 @@ def test_continue_after_success_opens_pilot_on_same_workspace(tmp_path, monkeypa
     state = _state_with_approved_run(tmp_path, succeeded=True)
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         captured["output_dir"] = str(output_dir)
         captured["cycle"] = cycle
         captured["product_id"] = bp.product_id
@@ -209,7 +209,7 @@ def test_resume_after_worker_restart_keeps_hash_and_workspace(tmp_path, monkeypa
         state.product_design.generation["product_id"]
     ) is None
 
-    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         # The generate door must be pointed at the existing tree.
         assert Path(output_dir) == out
         assert (out / "app" / "writer_progress.txt").exists()
@@ -248,7 +248,7 @@ async def test_chat_continue_resumes_instead_of_no_blueprint_pending(tmp_path, m
     session_store._session_store[state.session_id] = state
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         captured["called"] = True
         captured["out"] = str(output_dir)
         return {
@@ -303,7 +303,7 @@ async def test_chat_continue_after_success_opens_pilot(tmp_path, monkeypatch):
     session_store._session_store[state.session_id] = state
     captured = {}
 
-    def fake_generate(bp, output_dir, blocks_root=None, cycle=None):
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         captured["cycle"] = cycle
         captured["out"] = str(output_dir)
         return {

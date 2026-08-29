@@ -6,7 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from . import change_request, dna, engine, envelope, gates, protocols, report, stop
 
@@ -43,34 +43,16 @@ def _declare(eng: engine.Engine, law, cr, bundle) -> Dict[str, Any]:
     return _json_reply(eng.complete([{"role": "system", "content": _system(law)}, {"role": "user", "content": user}]))
 
 
-def _command_argv(cmd: str) -> Optional[List[str]]:
-    """Parse an allowlisted command into argv. No shell."""
-    try:
-        parts = shlex.split(cmd)
-    except ValueError:
-        return None
-    if not parts:
-        return None
-    for allowed in ALLOWED_COMMANDS:
-        allowed_parts = shlex.split(allowed)
-        if parts[: len(allowed_parts)] == allowed_parts:
-            return parts
-    return None
-
-
 def _run_command(cmd: str, product_root: str) -> str:
-    argv = _command_argv(cmd)
-    if argv is None:
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        argv = []
+    allowed = any(argv[:len(shlex.split(a))] == shlex.split(a) for a in ALLOWED_COMMANDS)
+    if not argv or not allowed:
         return f"BLOCKED: command not on the allowlist ({cmd!r})"
     try:
-        proc = subprocess.run(
-            argv,
-            shell=False,
-            cwd=product_root,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        proc = subprocess.run(argv, shell=False, cwd=product_root, capture_output=True, text=True, timeout=600)
         return ((proc.stdout or "") + (proc.stderr or "")).strip()[-4000:] or f"(exit {proc.returncode}, no output)"
     except Exception as exc:  # noqa: BLE001
         return f"ERROR: {exc}"

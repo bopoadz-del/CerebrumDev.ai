@@ -43,7 +43,7 @@ COPY backend/scripts /app/scripts
 ENV PORT=8000
 # Non-root runtime. The entrypoint chowns $STORAGE_PATH when started as root
 # (Render disk mounts are often root-owned) then drops to uid 10001.
-# The HTTP contract is unchanged: bind 0.0.0.0:$PORT after alembic upgrade head.
+# The HTTP contract is unchanged: bind 0.0.0.0:$PORT after migrations.
 RUN useradd --system --uid 10001 --no-create-home appuser \
     && mkdir -p /app/storage \
     && chown -R appuser:appuser /app
