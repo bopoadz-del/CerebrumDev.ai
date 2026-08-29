@@ -7,8 +7,12 @@ import { expect, test, type Page } from '@playwright/test'
  */
 
 async function mockUnverifiedFactory(page: Page, extra?: { devToken?: string }) {
+  // Boot always probes /me before showing AuthGate. Unauthenticated callers
+  // must 401; only after register should /me return email_not_verified.
+  let registered = false
   await page.route('**/v1/auth/register', async (route) => {
     const posted = route.request().postDataJSON() as { email?: string }
+    registered = true
     await route.fulfill({
       status: 201,
       contentType: 'application/json',
@@ -29,10 +33,26 @@ async function mockUnverifiedFactory(page: Page, extra?: { devToken?: string }) 
     })
   })
   await page.route('**/v1/auth/me', async (route) => {
+    if (!registered) {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Invalid or missing API key' }),
+      })
+      return
+    }
     await route.fulfill({
       status: 403,
       contentType: 'application/json',
       body: JSON.stringify({ detail: 'email_not_verified' }),
+    })
+  })
+  await page.route('**/v1/auth/logout', async (route) => {
+    registered = false
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
     })
   })
   await page.route('**/v1/sessions/**', async (route) => {
@@ -78,6 +98,9 @@ async function mockUnverifiedFactory(page: Page, extra?: { devToken?: string }) 
 async function registerThrowaway(page: Page) {
   const email = `pw.e2e.${Date.now()}@example.com`
   await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible({
+    timeout: 15_000,
+  })
   await page.getByRole('button', { name: 'Create an account' }).click()
   await page.getByPlaceholder('you@company.com').fill(email)
   await page.getByPlaceholder('password (8+ characters)').fill(`Pw${Date.now()}Aa1`)

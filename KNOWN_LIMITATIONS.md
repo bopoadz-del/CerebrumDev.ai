@@ -60,9 +60,10 @@ corpus-blind questions hit a relevant KB entry at 0.25 hit@5
 
 ## Observability
 
-- Sentry initializes only when `SENTRY_DSN` is set. There is no Prometheus
-  `/metrics` scrape yet. Factory paths that this audit pass touched use
-  `logging`; some unused/generated scripts still `print()`.
+- Sentry initializes only when `SENTRY_DSN` is set. Prometheus `/metrics`
+  is master-key gated (same as `POST /v1/ops/backup`); it is not a public
+  scrape. Factory paths that this audit pass touched use `logging`; some
+  unused/generated scripts still `print()`.
 
 ## Test suite
 

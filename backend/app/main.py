@@ -43,6 +43,8 @@ from starlette.requests import Request as StarletteRequest
 from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
 from .core.auth import require_api_key, require_master_key, verify_production_auth
+from .core.cors_policy import cors_allow_origins
+from .core.metrics import metrics_response
 from .core.billing import require_entitled
 from .routers import (
     accounts,
@@ -54,7 +56,6 @@ from .routers import (
     chat,
     deploy,
     factory_drive,
-    product_factory,
     session_product,
     delivery_standard,
     resend_verification,
@@ -162,15 +163,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-_frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-_cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOW_ORIGINS",
-        f"{_frontend_url},https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend-kkz2.onrender.com",
-    ).split(",")
-    if origin.strip()
-]
+_cors_origins = cors_allow_origins()
 
 # Body-size ceiling. Added BEFORE the CORS block on purpose: Starlette runs the
 # last-added middleware outermost, so registering this first leaves CORS on the
@@ -203,14 +196,9 @@ app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"], dependenci
 app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.callback_router)
-# Factory runs are paid actions: require_entitled blocks expired trials with
-# 402 when BILLING_ENFORCEMENT is on (it chains require_api_key).
-app.include_router(
-    product_factory.router,
-    prefix="/v1/factory/product",
-    tags=["product-factory"],
-    dependencies=[Depends(require_entitled)],
-)
+# The live product surface is Floor session chat + ``/v1/sessions/{id}/product/*``.
+# Unused ``/v1/factory/product/*`` was a second HTTP door (frontend, Playwright,
+# and CI never called it) and is not mounted.
 # The coder's canonical brief: immutable standard + per-product domain pack.
 app.include_router(
     delivery_standard.router,
@@ -459,6 +447,12 @@ async def ready_head():
     """Render and uptime probes sometimes HEAD the health path."""
     resp = await ready()
     return Response(status_code=resp.status_code)
+
+
+@app.get("/metrics")
+async def metrics(_admin=Depends(require_master_key)):
+    """Prometheus scrape. Master key only — same gate as ``POST /v1/ops/backup``."""
+    return metrics_response()
 
 
 @app.get("/version")

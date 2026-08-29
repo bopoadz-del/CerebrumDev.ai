@@ -88,12 +88,9 @@ def test_every_llm_route_is_wired():
     """Pin the coverage: each LLM-backed route module calls require_llm_rate
     for each guarded action, so a new route can't silently ship unthrottled."""
     import app.routers.chat as chat
-    import app.routers.product_factory as pf
     import app.routers.session_product as sp
 
     assert 'require_llm_rate(getattr(state, "user_id", None), "chat")' in inspect.getsource(chat)
-    pf_src = inspect.getsource(pf)
     sp_src = inspect.getsource(sp)
     for bucket in ("draft", "plan", "generate"):
-        assert f'require_llm_rate(principal, "{bucket}")' in pf_src, bucket
         assert f'require_llm_rate(principal, "{bucket}")' in sp_src, bucket

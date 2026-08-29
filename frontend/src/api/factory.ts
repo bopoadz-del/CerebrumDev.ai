@@ -7,8 +7,8 @@
 const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
 
-const TOKEN_KEY = 'cerebrum.factory.token'
 const EMAIL_KEY = 'cerebrum.factory.email'
+const LEGACY_TOKEN_KEY = 'cerebrum.factory.token'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -29,28 +29,35 @@ export function isDomainStoreUnreachable(err: unknown): boolean {
   return /domain store unreachable/i.test(err.message)
 }
 
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
-}
 export function getEmail(): string | null {
   return localStorage.getItem(EMAIL_KEY)
 }
-export function setSession(token: string, email: string): void {
-  localStorage.setItem(TOKEN_KEY, token)
+/** Persist the display email only. The ``cdt_`` login token lives in an HttpOnly cookie. */
+export function setSession(email: string): void {
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
   localStorage.setItem(EMAIL_KEY, email)
 }
 export function clearSession(): void {
-  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
   localStorage.removeItem(EMAIL_KEY)
+}
+
+/** Drop the display email and ask the API to clear the HttpOnly cookie. */
+export async function signOut(): Promise<void> {
+  clearSession()
+  try {
+    await auth.logout()
+  } catch {
+    /* cookie may already be gone */
+  }
 }
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  const t = getToken()
-  if (t) headers['Authorization'] = `Bearer ${t}`
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
+    credentials: 'include',
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
@@ -111,6 +118,7 @@ export const auth = {
     req<RegisterResponse>('POST', '/v1/auth/register', { email, password }),
   login: (email: string, password: string) =>
     req<LoginResponse>('POST', '/v1/auth/login', { email, password }),
+  logout: () => req<{ ok?: boolean }>('POST', '/v1/auth/logout'),
   me: () => req<AccountInfo>('GET', '/v1/auth/me'),
   forgotPassword: (email: string) =>
     req<ForgotResponse>('POST', '/v1/auth/forgot-password', { email }),
@@ -147,13 +155,12 @@ export async function chatStream(
   message: string,
   onEvent: (ev: ChatEvent) => void,
 ): Promise<void> {
-  const t = getToken()
   const res = await fetch(`${API_BASE}/v1/sessions/${sessionId}/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(t ? { Authorization: `Bearer ${t}` } : {}),
     },
+    credentials: 'include',
     body: JSON.stringify({ message }),
   })
   if (!res.ok || !res.body) {
@@ -320,9 +327,8 @@ export async function awaitBuild(
 }
 
 export async function downloadProductPackage(sid: string): Promise<void> {
-  const t = getToken()
   const res = await fetch(`${API_BASE}/v1/sessions/${sid}/product/package`, {
-    headers: t ? { Authorization: `Bearer ${t}` } : {},
+    credentials: 'include',
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => '')

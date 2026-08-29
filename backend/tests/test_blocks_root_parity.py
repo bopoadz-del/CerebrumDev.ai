@@ -64,10 +64,8 @@ def test_chat_flow_delegates_to_shared_resolver(monkeypatch, tmp_path):
 def test_http_routes_use_the_shared_resolver_not_raw_env():
     """Pin the regression precisely: the routers must call resolve_blocks_root
     and must not re-grow their own env-only resolution."""
-    import app.routers.product_factory as pf
     import app.routers.session_product as sp
 
-    for mod in (pf, sp):
-        src = inspect.getsource(mod)
-        assert "resolve_blocks_root()" in src, mod.__name__
-        assert 'os.getenv("CEREBRUM_BLOCKS_ROOT")' not in src, mod.__name__
+    src = inspect.getsource(sp)
+    assert "resolve_blocks_root()" in src
+    assert 'os.getenv("CEREBRUM_BLOCKS_ROOT")' not in src

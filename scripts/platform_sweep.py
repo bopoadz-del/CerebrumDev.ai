@@ -400,14 +400,19 @@ def run_sweep(base_url: str) -> List[ProbeResult]:
         check=lambda s, b: isinstance(b, dict) and "packs" in b,
     )
 
-    # --- Golden steward -------------------------------------------------------
+    # --- Golden steward (Floor draft) -----------------------------------------
     client.probe(
         "golden steward",
-        "GET",
-        "/v1/factory/product/golden/steward",
+        "POST",
+        f"/v1/sessions/{session_id}/product/draft",
         want_status=200,
         token=token,
-        check=lambda s, b: isinstance(b, dict) and len(b.get("capabilities", [])) >= 10,
+        body={
+            "brief": "Generate Cerebrum-Steward private estate operations",
+            "vertical_hint": "estate",
+        },
+        check=lambda s, b: isinstance(b, dict)
+        and len((b.get("blueprint") or {}).get("capabilities") or []) >= 10,
     )
 
     # --- Mode kit config ------------------------------------------------------

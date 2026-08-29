@@ -1,12 +1,14 @@
 name: Post-deploy smoke
 
 # Market-ready gate. Runs after merge to master (and on demand), not on PRs.
-# A red unit job on a PR must not be this workflow. Fail here when
-# scripts/post_deploy_smoke.py exits non-zero.
+# A red unit job on a PR must not be this workflow.
 #
-# Required GitHub secret (dashboard): SMOKE_GATE_TOKEN
-# — never commit a token value. The script also accepts SMOKE_EMAIL /
-# SMOKE_PASSWORD if you prefer a verified account.
+# Render already has SMOKE_GATE_TOKEN. GitHub Actions often does not.
+# The script waits for /health and /ready (Render bounce, ~5 min) then:
+#   - token/email set → full gated factory checks; fail the job on DEAD
+#   - SMOKE_GATE_TOKEN unset (and no SMOKE_EMAIL+PASSWORD) → unauthenticated
+#     health/ready/version only, PASS with a notice that gated checks skipped
+# Never invent or commit a token value.
 
 on:
   push:
@@ -19,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
 
@@ -30,4 +32,5 @@ jobs:
           SMOKE_GATE_TOKEN: ${{ secrets.SMOKE_GATE_TOKEN }}
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          SMOKE_READY_WAIT_S: "300"
         run: python3 scripts/post_deploy_smoke.py https://api.cerebrum-dev.com

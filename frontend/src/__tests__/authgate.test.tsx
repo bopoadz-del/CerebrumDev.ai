@@ -10,7 +10,6 @@ vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
   return {
     ...actual,
-    getToken: () => null,
     setSession: vi.fn(),
     clearSession: vi.fn(),
     auth: {

@@ -22,8 +22,10 @@ vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
   return {
     ...actual,
-    getToken: () => 'cdt_unverified',
     getEmail: () => 'new@factory.dev',
+    setSession: vi.fn(),
+    clearSession: vi.fn(),
+    signOut: vi.fn().mockResolvedValue(undefined),
     auth: {
       ...actual.auth,
       me: (...args: unknown[]) => meMock(...args),
@@ -129,6 +131,15 @@ describe('App boot', () => {
     expect(screen.getByTestId('dev-verification-token')).toHaveTextContent('cdv_from_resend')
     expect(screen.getByPlaceholderText('verification token')).toHaveValue('cdv_from_resend')
     expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
+  })
+
+  it('shows sign-in when the cookie session is missing', async () => {
+    meMock.mockRejectedValue(new ApiError(401, 'Invalid or missing API key'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enter the factory' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(listMock).not.toHaveBeenCalled()
   })
 
   it('still shows Factory unreachable when the API is actually down', async () => {

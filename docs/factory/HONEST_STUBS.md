@@ -12,8 +12,7 @@ Last audited against live `cerebrumdev-backend` / `cerebrumdev-frontend` (API ma
 | Chain preview / approve | Real after chat proposes a chain |
 | Upload + index | Real |
 | Deploy package (`platform` / `edge` / `cloud` packager) | Real; download uses authenticated API fetch |
-| Design product draft → plan → approve → generate | Real; Steward uses golden blueprint |
-| Factory `/v1/factory/product/golden/steward` | Real |
+| Design product draft → plan → approve → generate | Real Floor path (`/v1/sessions/{id}/product/*`); Steward uses golden blueprint |
 
 ## Optional / gated
 
@@ -40,7 +39,7 @@ Emitted by Factory generator into product repos (e.g. Steward):
 | Capability | Where it lives |
 |------------|----------------|
 | Domains RAG dry-run / ingestion APIs | `/v1/domains/...` API only |
-| Standalone `/v1/factory/product/*` draft/plan/generate | API only (session Design Product covers UX) |
+| Standalone `/v1/factory/product/*` | Removed — Floor session product is the only HTTP surface |
 | Orphan `ChatChainGenerator.tsx` | Unused duplicate — do not mount |
 
 ## Role reminder

@@ -91,55 +91,6 @@ def _count_drafts(monkeypatch, module):
 class TestDraftQuota:
     """Draft was the one paid LLM path with no quota at all."""
 
-    def test_factory_draft_stops_spending_at_the_limit(self, trial_client, monkeypatch):
-        from app.routers import product_factory
-
-        monkeypatch.setenv("TRIAL_DRAFT_LIMIT", "2")
-        calls = _count_drafts(monkeypatch, product_factory)
-
-        statuses = [
-            trial_client.post(
-                "/v1/factory/product/draft",
-                json={"brief": "Build a fleet maintenance platform"},
-            ).status_code
-            for _ in range(3)
-        ]
-
-        assert statuses == [200, 200, 429], statuses
-        # The load-bearing assertion: the third request cost nothing.
-        assert len(calls) == 2, f"drafter ran {len(calls)} times, quota did not gate it"
-
-    def test_factory_plan_is_metered_too(self, trial_client, monkeypatch):
-        monkeypatch.setenv("TRIAL_DRAFT_LIMIT", "1")
-        blueprint = {
-            "schema_version": "product_blueprint.v1",
-            "product_id": "quota-probe",
-            "product_name": "Quota Probe",
-            "vertical": "quota_probe",
-            "summary": "Planner cost probe",
-            "factory_scenario": "CREATE_PRODUCT",
-            "capabilities": [
-                {
-                    "id": "core",
-                    "description": "core",
-                    "block_ids": [],
-                    "strategy_hint": "GENERATE",
-                }
-            ],
-            "ui_modules": ["command_center"],
-            "connectors": [],
-            "edge_profile": "standard",
-            "human_authority": True,
-        }
-        first = trial_client.post(
-            "/v1/factory/product/plan", json={"blueprint": blueprint}
-        )
-        second = trial_client.post(
-            "/v1/factory/product/plan", json={"blueprint": blueprint}
-        )
-        assert first.status_code != 429, first.text
-        assert second.status_code == 429, second.text
-
     def test_session_draft_stops_spending_at_the_limit(
         self, trial_client, monkeypatch
     ):

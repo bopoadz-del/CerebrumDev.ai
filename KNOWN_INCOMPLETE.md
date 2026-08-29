@@ -336,7 +336,7 @@ Note `/ready`'s `llm_configured` field is true only when a real LLM
 credential is set (`KIMI_API_KEY`, `CEREBRUM_LLM_API_KEY`, chat/factory
 variants, or `ANTHROPIC_API_KEY`). `LLM_PROVIDER` alone is not evidence —
 that was a lie this register used to warn about. Verify a live factory run
-with the `coder_failures` field of a build, or `POST /v1/factory/product/draft`
+with the `coder_failures` field of a build, or `POST /v1/sessions/{id}/product/draft`
 and check `drafting_mode`.
 
 ### 3. Steward blocks dual-register against the factory's own mirror

@@ -1,9 +1,9 @@
 """Auth for CerebrumDev.ai backend — master key + per-user credentials.
 
 Resolution order for every request:
-1. ``CEREBRUM_DEV_API_KEY`` (master/admin key) — full access, unchanged.
+1. ``CEREBRUM_DEV_API_KEY`` (master/admin key) — full access, header only.
 2. Per-account API key (``cdk_…``) via Bearer or X-API-Key.
-3. Per-account login token (``cdt_…``) via Bearer.
+3. Per-account login token (``cdt_…``) via Bearer, then the HttpOnly ``cdt`` cookie.
 4. No master key configured AND ``ALLOW_ANONYMOUS_DEV=1`` → open dev principal.
 
 The anonymous dev principal is opt-in. It used to be the fallback whenever no
@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 from fastapi import Header, HTTPException, Request
+
+from .auth_cookies import cookie_login_token
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -97,7 +99,7 @@ def verify_production_auth() -> None:
     )
 
 
-def _provided_token(authorization: Optional[str], x_api_key: Optional[str]) -> str:
+def _header_token(authorization: Optional[str], x_api_key: Optional[str]) -> str:
     if authorization:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() == "bearer":
@@ -107,6 +109,18 @@ def _provided_token(authorization: Optional[str], x_api_key: Optional[str]) -> s
     if x_api_key:
         return x_api_key.strip()
     return ""
+
+
+def _provided_token(
+    authorization: Optional[str],
+    x_api_key: Optional[str],
+    request: Optional[Request] = None,
+) -> str:
+    """Header credentials win. Cookie is only a ``cdt_`` login token."""
+    header = _header_token(authorization, x_api_key)
+    if header:
+        return header
+    return cookie_login_token(request)
 
 
 def _verification_required() -> bool:
@@ -169,7 +183,7 @@ def require_master_key(
     master = _master_key()
     if not master:
         raise HTTPException(status_code=404, detail="Not Found")
-    provided = _provided_token(authorization, x_api_key)
+    provided = _header_token(authorization, x_api_key)
     if not _tokens_match(provided, master):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return Principal(kind="admin")
@@ -185,7 +199,7 @@ def require_api_key(
     Returns the resolved :class:`Principal`; routers that need identity
     depend on this same function (FastAPI dedupes it per request).
     """
-    provided = _provided_token(authorization, x_api_key)
+    provided = _provided_token(authorization, x_api_key, request)
     master = _master_key()
 
     if master:
@@ -212,6 +226,7 @@ def require_api_key(
 
 
 def require_account_allow_unverified(
+    request: Request,
     authorization: str | None = Header(None, alias="Authorization"),
     x_api_key: str | None = Header(None, alias="X-API-Key"),
 ) -> Principal:
@@ -222,7 +237,7 @@ def require_account_allow_unverified(
     keep working in that state so the user can finish the flow instead of
     seeing a dead Factory.
     """
-    provided = _provided_token(authorization, x_api_key)
+    provided = _provided_token(authorization, x_api_key, request)
     if not provided:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     principal = _resolve_user_principal(provided)

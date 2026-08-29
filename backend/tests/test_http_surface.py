@@ -56,6 +56,20 @@ def test_production_env_sets_hsts(client, monkeypatch):
     )
 
 
+def test_stateless_factory_product_surface_is_gone(client):
+    """Floor is the only product HTTP surface. Unused /v1/factory/product/* 404s."""
+    posts = (
+        "/v1/factory/product/draft",
+        "/v1/factory/product/plan",
+        "/v1/factory/product/generate",
+    )
+    for path in posts:
+        res = client.post(path, json={})
+        assert res.status_code == 404, (path, res.status_code, res.text)
+    res = client.get("/v1/factory/product/golden/steward")
+    assert res.status_code == 404, res.text
+
+
 def test_render_yaml_declares_frontend_security_headers():
     import yaml
 

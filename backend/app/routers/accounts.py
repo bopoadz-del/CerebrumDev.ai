@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..core import accounts_store, billing, data_rights, mailer
 from ..core.auth import Principal, require_api_key
+from ..core.auth_cookies import clear_login_cookie, set_login_cookie
 from ..core.rate_limit import check_rate_limit_for_request
 
 router = APIRouter()
@@ -124,6 +125,22 @@ def _require_user(principal: Principal) -> Principal:
     return principal
 
 
+def _json_with_login_cookie(
+    request: Request, payload: dict, status_code: int = 200
+) -> JSONResponse:
+    """Return JSON and set the HttpOnly ``cdt`` cookie for browser clients.
+
+    ``login_token`` stays in the body so smoke scripts and ``cdk_``-style
+    API clients keep working. The Floor SPA ignores the body token and
+    sends the cookie with ``credentials: include``.
+    """
+    response = JSONResponse(payload, status_code=status_code)
+    token = payload.get("login_token")
+    if isinstance(token, str):
+        set_login_cookie(response, token, request)
+    return response
+
+
 @router.post("/register", status_code=201)
 async def register(body: RegisterBody, request: Request):
     _rate_limit(request, "register")
@@ -168,25 +185,29 @@ async def register(body: RegisterBody, request: Request):
             "email_sent": False,
             "note": "Verification email could not be sent. Request a new one shortly.",
         }
-    return {
-        "ok": True,
-        "account_id": account["account_id"],
-        "email": account["email"],
-        "email_verified": False,
-        "login_token": login_token,
-        "verification": verification,
-        "billing": billing.billing_status(account["account_id"]),
-        "what_this_is_not_yet": (
-            "The factory generates a working prototype — real code, tests and "
-            "deploy files — not a finished production system. Third-party "
-            "integrations in generated products are stubs until you connect "
-            "your own credentials, deployment is a step you run rather than "
-            "something that happens for you, and free-trial accounts have "
-            "server-enforced caps on generations, daily chat and exports. "
-            "Answers are grounding-checked: when a claim can't be verified it "
-            "is withheld, not invented."
-        ),
-    }
+    return _json_with_login_cookie(
+        request,
+        {
+            "ok": True,
+            "account_id": account["account_id"],
+            "email": account["email"],
+            "email_verified": False,
+            "login_token": login_token,
+            "verification": verification,
+            "billing": billing.billing_status(account["account_id"]),
+            "what_this_is_not_yet": (
+                "The factory generates a working prototype — real code, tests and "
+                "deploy files — not a finished production system. Third-party "
+                "integrations in generated products are stubs until you connect "
+                "your own credentials, deployment is a step you run rather than "
+                "something that happens for you, and free-trial accounts have "
+                "server-enforced caps on generations, daily chat and exports. "
+                "Answers are grounding-checked: when a claim can't be verified it "
+                "is withheld, not invented."
+            ),
+        },
+        status_code=201,
+    )
 
 
 @router.post("/login")
@@ -195,13 +216,24 @@ async def login(body: LoginBody, request: Request):
     account = accounts_store.authenticate(body.email, body.password)
     if account is None:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {
-        "ok": True,
-        "account_id": account["account_id"],
-        "email": account["email"],
-        "email_verified": account["email_verified"],
-        "login_token": accounts_store.issue_login_token(account["account_id"]),
-    }
+    return _json_with_login_cookie(
+        request,
+        {
+            "ok": True,
+            "account_id": account["account_id"],
+            "email": account["email"],
+            "email_verified": account["email_verified"],
+            "login_token": accounts_store.issue_login_token(account["account_id"]),
+        },
+    )
+
+
+@router.post("/logout")
+async def logout(request: Request):
+    """Clear the HttpOnly session cookie. Safe to call while unauthenticated."""
+    response = JSONResponse({"ok": True})
+    clear_login_cookie(response, request)
+    return response
 
 
 @router.get("/me")
@@ -231,14 +263,17 @@ async def smoke_login(request: Request):
     password = _smoke_account_password(expected)
     account_a = accounts_store.ensure_verified_account(_SMOKE_EMAIL_A, password)
     account_b = accounts_store.ensure_verified_account(_SMOKE_EMAIL_B, password)
-    return {
-        "ok": True,
-        "email_verified": True,
-        "login_token": accounts_store.issue_login_token(account_a["account_id"]),
-        "login_token_b": accounts_store.issue_login_token(account_b["account_id"]),
-        "account_id": account_a["account_id"],
-        "account_id_b": account_b["account_id"],
-    }
+    return _json_with_login_cookie(
+        request,
+        {
+            "ok": True,
+            "email_verified": True,
+            "login_token": accounts_store.issue_login_token(account_a["account_id"]),
+            "login_token_b": accounts_store.issue_login_token(account_b["account_id"]),
+            "account_id": account_a["account_id"],
+            "account_id_b": account_b["account_id"],
+        },
+    )
 
 
 @router.post("/verify-email")
@@ -274,11 +309,15 @@ async def reset_password(body: ResetBody, request: Request):
     account_id = accounts_store.confirm_reset_token(body.token.strip(), body.new_password)
     if account_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-    return {
-        "ok": True,
-        "account_id": account_id,
-        "message": "Password updated — sign in again (all previous sessions were closed).",
-    }
+    response = JSONResponse(
+        {
+            "ok": True,
+            "account_id": account_id,
+            "message": "Password updated — sign in again (all previous sessions were closed).",
+        }
+    )
+    clear_login_cookie(response, request)
+    return response
 
 
 @router.post("/keys", status_code=201)
@@ -358,8 +397,10 @@ async def delete_my_account(
 
     report = data_rights.purge_account(account_id)
     if report["ok"]:
-        return Response(status_code=204)
-    return JSONResponse(
+        response = Response(status_code=204)
+        clear_login_cookie(response, request)
+        return response
+    response = JSONResponse(
         status_code=200,
         content={
             "ok": False,
@@ -370,6 +411,8 @@ async def delete_my_account(
             **report,
         },
     )
+    clear_login_cookie(response, request)
+    return response
 
 
 @router.post("/admin/retention")
