@@ -43,6 +43,8 @@ from starlette.requests import Request as StarletteRequest
 from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
 from .core.auth import require_api_key, require_master_key, verify_production_auth
+from .core.cors_policy import cors_allow_origins
+from .core.metrics import metrics_response
 from .core.billing import require_entitled
 from .routers import (
     accounts,
@@ -161,15 +163,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-_frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-_cors_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "CORS_ALLOW_ORIGINS",
-        f"{_frontend_url},https://cerebrum-dev.com,https://www.cerebrum-dev.com,https://cerebrumdev-frontend-kkz2.onrender.com",
-    ).split(",")
-    if origin.strip()
-]
+_cors_origins = cors_allow_origins()
 
 # Body-size ceiling. Added BEFORE the CORS block on purpose: Starlette runs the
 # last-added middleware outermost, so registering this first leaves CORS on the
@@ -453,6 +447,12 @@ async def ready_head():
     """Render and uptime probes sometimes HEAD the health path."""
     resp = await ready()
     return Response(status_code=resp.status_code)
+
+
+@app.get("/metrics")
+async def metrics(_admin=Depends(require_master_key)):
+    """Prometheus scrape. Master key only — same gate as ``POST /v1/ops/backup``."""
+    return metrics_response()
 
 
 @app.get("/version")

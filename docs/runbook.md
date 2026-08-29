@@ -38,7 +38,7 @@ Smoke:
 
 - `GET /health`
 - `GET /ready`
-- `GET /metrics`
+- `GET /metrics` (factory: master API key; same gate as `POST /v1/ops/backup`)
 
 ## Rollback
 
