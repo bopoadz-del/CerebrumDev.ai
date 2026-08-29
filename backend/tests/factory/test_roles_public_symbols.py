@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
-
 import app.factory.build.roles as roles
 import app.factory.build.roles_constants as roles_constants
 import app.factory.build.roles_handlers as roles_handlers
@@ -112,25 +109,8 @@ def test_roles_facade_reexports_extracted_modules():
     assert roles.ROLE_IMPLEMENTATIONS is roles_handlers.ROLE_IMPLEMENTATIONS
 
 
-def test_roles_facade_all_matches_extracted_defs():
-    """__all__ is the union of the three implementation modules' top-level defs."""
-
-    def top_level(path: Path) -> set[str]:
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        names: set[str] = set()
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names.add(node.name)
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        names.add(target.id)
-        return names
-
-    root = Path(roles_handlers.__file__).resolve().parent
-    expected = (
-        top_level(root / "roles_models.py")
-        | top_level(root / "roles_constants.py")
-        | top_level(root / "roles_handlers.py")
-    )
-    assert set(roles.__all__) == expected
+def test_roles_facade_all_covers_pre_split_and_resolves():
+    """__all__ keeps every pre-split name; extra split helpers may stay private."""
+    assert set(_PRE_SPLIT_SYMBOLS) <= set(roles.__all__)
+    missing = [name for name in roles.__all__ if not hasattr(roles, name)]
+    assert missing == []

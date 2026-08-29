@@ -47,6 +47,20 @@ from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
 from app.factory.build.vendored_integrity import lock_record as _integrity_record
 
 
+def _from_facade(name: str, fallback):
+    """Resolve a helper via the ``roles.py`` facade.
+
+    Tests monkeypatch ``app.factory.build.roles._block_source_dir``. Looking
+    the name up here keeps that contract after the split.
+    """
+    import sys
+
+    facade = sys.modules.get("app.factory.build.roles")
+    if facade is None:
+        return fallback
+    return getattr(facade, name, fallback)
+
+
 # -- COLLECTOR -----------------------------------------------------------
 
 
@@ -115,7 +129,9 @@ def run_collector(ctx: RoleContext) -> RoleResult:
 def _collector_block_meta(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
     """Harvest a block.json the COLLECTOR can read (no vendor/ yet)."""
     meta: Dict[str, Any] = {"block_id": block_id}
-    source = _block_source_dir(block_id, ctx.blocks_root)
+    source = _from_facade("_block_source_dir", _block_source_dir)(
+        block_id, ctx.blocks_root
+    )
     if source is None:
         return meta
     path = source / "block.json"
@@ -641,7 +657,9 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     )
 
     for bid in block_ids:
-        source = _block_source_dir(bid, ctx.blocks_root)
+        source = _from_facade("_block_source_dir", _block_source_dir)(
+            bid, ctx.blocks_root
+        )
         if source is None:
             missing.append(bid)
             continue
