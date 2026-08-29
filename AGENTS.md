@@ -14,7 +14,7 @@
 - Architect LLM drafting and the coding agent turn on automatically when `CEREBRUM_LLM_API_KEY` or `KIMI_API_KEY` is set (explicit `ARCHITECT_LLM_DRAFTING_ENABLED=0` still wins). Put that key in the Cloud Agents dashboard secrets — it is account-wide; do not commit it. Without a key the Floor labels **template fallback** and Your Platforms shows **0 agent-written** artifacts. Approving the feature list in Floor chat starts the coding agent immediately (chat LLM `start_coder` when keyed; regex `approve` fallback otherwise) and the Floor shows the coder takeover panel.
 - Use port **8000** for the backend in dev (not 8001). Vite proxies `/v1` to `http://localhost:8000` (`frontend/vite.config.ts`); the `8001` in README/`docker-compose.yml` is only the Docker port mapping.
 - Frontend: `cd frontend && npm run dev -- --host` (Vite on 5173). The app auto-creates a session on load. Lint/build/test commands are in `frontend/package.json` and `.github/workflows/ci.yml`.
-- The Cerebrum-Blocks domain store is an **optional external service** (`CEREBRUM_API_URL`). Without it, `/v1/domains/*` returns 503 and the UI shows a "Domain store unreachable" toast — this is expected in dev. The Factory "Design product" flow (`/v1/factory/product/*`, `/v1/sessions/{id}/product/draft`) works fully offline from golden blueprints in `blueprints/`.
+- The Cerebrum-Blocks domain store is an **optional external service** (`CEREBRUM_API_URL`). Without it, `/v1/domains/*` returns 503 and the UI shows a "Domain store unreachable" toast — this is expected in dev. The Factory Floor (`/v1/sessions/{id}/product/draft` plus session chat) works fully offline from golden blueprints in `blueprints/`.
 - Backend tests: `cd backend && ENV=test ./venv/bin/python -m pytest` (see `pytest.ini`). Factory subset: `./venv/bin/python -m pytest tests/factory`.
 
 ### PR babysit / auto-merge (owner rule)
@@ -109,8 +109,10 @@ See also `docs/audits/REGISTERED_BUT_DEAD_AUDIT.md`.
 
 
 
-### Product architect API
+### Product architect API (Floor — canonical)
 
-- `POST /v1/factory/product/draft` — brief → `product_blueprint.v1` (Steward brief uses golden YAML)
-- `POST /v1/factory/product/plan` — plan capabilities (fail-closed dual registry)
-- `POST /v1/factory/product/generate` — regenerate product into `factory_outputs/`
+- `POST /v1/sessions/{id}/product/draft` — brief → `product_blueprint.v1` (Steward brief uses golden YAML)
+- `POST /v1/sessions/{id}/product/plan` — plan capabilities (fail-closed dual registry)
+- `POST /v1/sessions/{id}/product/generate` — regenerate product into `factory_outputs/`
+
+`/v1/factory/product/*` is not a second product surface (removed; Floor only).
