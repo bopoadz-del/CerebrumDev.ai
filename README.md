@@ -44,7 +44,7 @@ backs **all** session-scoped routers (chat, config, upload, train, deploy,
 drive, session_product): user credentials (`cdt_` login tokens, `cdk_` API
 keys) only ever reach their own sessions — cross-account access gets a
 non-leaking 404. Admin/master and local-dev principals pass through.
-Regression-covered in `backend/app/tests/test_session_ownership.py`.
+Regression-covered in `backend/tests/test_session_ownership.py`.
 
 ## Observability (Sentry)
 
@@ -86,18 +86,33 @@ Error tracking and performance are wired on both tiers and activate by DSN:
 
 ## Development
 
-```bash
-# backend
-cd backend && pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest
-uvicorn app.main:app --reload   # serve on :8000  (GET /health -> 200)
+Local happy path (no master key in the frontend; the SPA uses `cdt_` login tokens):
 
-# frontend
-cd frontend && npm install && npm run build && npm run lint && npm run test
+```bash
+# backend — port 8000 (Vite proxies /v1 here). Do not use 8001 unless you
+# are on docker-compose, which maps host 8001 → container 8000.
+cd backend
+python3 -m venv venv && ./venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+ALLOW_ANONYMOUS_DEV=1 ENV=dev ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+# GET /health and GET /ready
+
+# frontend — same-origin /v1 when VITE_API_URL is unset
+cd frontend && npm install && npm run dev -- --host
+# open http://127.0.0.1:5173 — register, then Floor chat / Design product
+```
+
+```bash
+# tests
+cd backend && ENV=test ./venv/bin/python -m pytest
+cd frontend && npm test && npm run lint && npm run build
+# mocked Playwright (no live API): npm run e2e:mocked
 
 # accounts migrations
-cd backend && alembic upgrade head
+cd backend && ./venv/bin/alembic upgrade head
 ```
+
+Do **not** set `VITE_API_KEY`. Do **not** flip `BILLING_ENFORCEMENT` or
+`ACCOUNTS_REQUIRE_VERIFIED_EMAIL` until mail + Stripe checkout work.
 
 ### LLM providers: Kimi by default, Claude on request
 

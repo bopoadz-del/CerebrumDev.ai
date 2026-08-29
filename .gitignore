@@ -23,6 +23,10 @@ generated/
 # Factory generate/regenerate outputs (local only; golden Steward tagged steward-golden-v1).
 factory_outputs/
 
+# Regenerable stage evidence. Emit at final HEAD after a code merge; do not
+# ship inside feature PRs (see AGENTS.md). Canonical S4 is S4_ship_kernel.json.
+build/stages/
+
 # Generated live audit artifacts (timestamps + deployment evidence; kept locally).
 artifacts/audits/
 
