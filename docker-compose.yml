@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   backend:
+    # Local-dev image (backend/Dockerfile). Production uses the repo-root
+    # Dockerfile. Host 8001 avoids colliding with native uvicorn on 8000.
     build: ./backend
     ports:
       - "8001:8000"

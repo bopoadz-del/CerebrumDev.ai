@@ -81,6 +81,15 @@ jobs:
         working-directory: .
         run: python scripts/scan_secrets.py
 
+      - name: Forbid VITE_API_KEY in frontend/src
+        working-directory: .
+        run: |
+          if grep -R --line-number -E 'VITE_API_KEY' frontend/src; then
+            echo "VITE_API_KEY must never appear in frontend/src (it would bake the master key into the static bundle)." >&2
+            exit 1
+          fi
+          echo "ok: no VITE_API_KEY in frontend/src"
+
   # F26 / windows_cp1252_parity. Linux agents cannot certify this.
   # Required (no continue-on-error / allow_failure). Workflow fails if red.
   windows-cp1252-parity:
@@ -145,6 +154,27 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  frontend-e2e:
+    name: Frontend Playwright (mocked)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Mocked factory surfaces
+        run: npx playwright test e2e/factory_surfaces.spec.ts e2e/verify_email_boot.spec.ts
 
   docker:
     name: Production Docker build

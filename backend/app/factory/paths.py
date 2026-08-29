@@ -107,3 +107,77 @@ def safe_output_dir(candidate: Path | str | None, product_id: str) -> Path:
             f"output_dir must resolve inside {root}; refusing {candidate!r}"
         )
     return Path(candidate).resolve()
+
+
+class UnsafeProductRoot(ValueError):
+    """A workbench product_root resolved outside factory_outputs/."""
+
+
+def safe_workbench_product_root(candidate: Path | str) -> Path:
+    """Resolve a workbench workspace, refusing anything outside factory_outputs/.
+
+    Same containment rule as :func:`safe_output_dir`. Workbench is default-off;
+    when the flag is on, a caller-supplied path must still stay inside the
+    outputs tree.
+    """
+    if candidate is None or str(candidate).strip() == "":
+        raise UnsafeProductRoot("product_root is required")
+    resolved = Path(candidate).resolve()
+    if not is_within_outputs_root(resolved):
+        raise UnsafeProductRoot(
+            f"product_root must resolve inside {factory_outputs_root()}; "
+            f"refusing {candidate!r}"
+        )
+    return resolved
+
+
+def cleanup_stale_session_outputs(*, max_age_days: int | None = None) -> dict:
+    """Delete old ``factory_outputs/sessions/*`` trees.
+
+    Hook for the in-process backup scheduler. Does not resize disks.
+    ``FACTORY_OUTPUTS_MAX_AGE_DAYS`` (default 14) is the retention.
+    """
+    import shutil
+    import time
+
+    if max_age_days is None:
+        raw = os.getenv("FACTORY_OUTPUTS_MAX_AGE_DAYS", "14").strip()
+        try:
+            max_age_days = max(1, int(raw))
+        except ValueError:
+            max_age_days = 14
+    root = factory_outputs_root() / "sessions"
+    removed = 0
+    bytes_freed = 0
+    cutoff = time.time() - (max_age_days * 86400)
+    if not root.is_dir():
+        return {
+            "ok": True,
+            "removed": 0,
+            "bytes_freed": 0,
+            "max_age_days": max_age_days,
+        }
+    for session_dir in list(root.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        try:
+            mtime = session_dir.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > cutoff:
+            continue
+        if not is_safe_to_clean(session_dir):
+            continue
+        try:
+            size = sum(p.stat().st_size for p in session_dir.rglob("*") if p.is_file())
+            shutil.rmtree(session_dir)
+            removed += 1
+            bytes_freed += size
+        except OSError:
+            continue
+    return {
+        "ok": True,
+        "removed": removed,
+        "bytes_freed": bytes_freed,
+        "max_age_days": max_age_days,
+    }

@@ -385,6 +385,20 @@ def test_candidate_artifact_propagates_cli_error_fields(monkeypatch, tmp_path):
     assert candidate["agent"]["cli_returncode"] == 3
 
 
+def test_workbench_product_root_must_stay_inside_factory_outputs(tmp_path, monkeypatch):
+    from app.factory.paths import factory_outputs_root
+    from app.workbench.session import _resolve_product_root
+
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    (factory_outputs_root() / "ok").mkdir(parents=True)
+    with pytest.raises(WorkbenchRejected, match="factory_outputs"):
+        _resolve_product_root({}, Path("/etc"))
+    with pytest.raises(WorkbenchRejected, match="factory_outputs"):
+        _resolve_product_root({}, tmp_path / "outside")
+    ok = _resolve_product_root({}, factory_outputs_root() / "ok")
+    assert ok == (factory_outputs_root() / "ok").resolve()
+
+
 def test_load_verified_dna_rejects_schema_invalid_doc(tmp_path):
     """A DNA doc that passes checksums but violates its schema must be refused."""
     import hashlib

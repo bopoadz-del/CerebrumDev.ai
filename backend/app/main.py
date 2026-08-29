@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import asyncio
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
@@ -136,6 +137,21 @@ class ProductionHttpSurfaceMiddleware(BaseHTTPMiddleware):
         return response
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Arm in-process nightly backup (+ stale factory_outputs sweep)."""
+    # Nightly backups run in-process: Render cron jobs cannot mount persistent
+    # disks and a disk belongs to exactly one service, so this process is the
+    # only one that can read /app/storage at all. See core/backup_scheduler.py.
+    app.state.backup_task = backup_scheduler.start()
+    try:
+        yield
+    finally:
+        task = getattr(app.state, "backup_task", None)
+        if task is not None:
+            task.cancel()
+
+
 _docs = openapi_docs_enabled()
 app = FastAPI(
     title="CerebrumDev.ai API",
@@ -143,22 +159,8 @@ app = FastAPI(
     docs_url="/docs" if _docs else None,
     redoc_url="/redoc" if _docs else None,
     openapi_url="/openapi.json" if _docs else None,
+    lifespan=_lifespan,
 )
-
-
-# Nightly backups run in-process: Render cron jobs cannot mount persistent
-# disks and a disk belongs to exactly one service, so this process is the only
-# one that can read /app/storage at all. See core/backup_scheduler.py.
-@app.on_event("startup")
-async def _arm_backup_scheduler() -> None:
-    app.state.backup_task = backup_scheduler.start()
-
-
-@app.on_event("shutdown")
-async def _disarm_backup_scheduler() -> None:
-    task = getattr(app.state, "backup_task", None)
-    if task is not None:
-        task.cancel()
 
 _frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
 _cors_origins = [
@@ -268,7 +270,7 @@ def _backup_details() -> dict:
             "at": None,
             "error": "no backup recorded",
             "accounts_host": None,
-            "live_accounts_host": live_host,
+            "live_accounts_host": backup_mod.public_accounts_host_label(live_host),
             "matches_live_engine": False if live_host else None,
             **probe,
         }
@@ -279,8 +281,8 @@ def _backup_details() -> dict:
         "error": last.get("error"),
         "engine": last.get("engine"),
         "dump_method": last.get("dump_method"),
-        "accounts_host": recorded_host,
-        "live_accounts_host": live_host,
+        "accounts_host": backup_mod.public_accounts_host_label(recorded_host),
+        "live_accounts_host": backup_mod.public_accounts_host_label(live_host),
         "matches_live_engine": (
             recorded_host == live_host if live_host else None
         ),
@@ -308,6 +310,24 @@ def _probe_redis() -> dict:
         return {"configured": True, "ok": False, "error": "redis package not installed"}
     except Exception as exc:  # noqa: BLE001
         return {"configured": True, "ok": False, "error": str(exc)}
+
+
+def _probe_drive_encryption() -> dict:
+    """Drive tokens must be encrypted at rest in production."""
+    from .core.file_crypto import encryption_enabled
+    from .core.google_drive_connector import configured as drive_configured
+
+    drive_on = drive_configured()
+    enc = encryption_enabled()
+    return {
+        "drive_configured": drive_on,
+        "encryption_enabled": enc,
+        "ok": (not drive_on) or enc,
+    }
+
+
+def _env_is_production() -> bool:
+    return os.getenv("ENV", "").strip().lower() in {"production", "prod"}
 
 
 def _probe_storage() -> dict:
@@ -411,6 +431,12 @@ async def ready():
     # Informational, not gating: a failed backup must page someone, not take
     # the API out of rotation.
     last_backup = _backup_details()
+    encryption = _probe_drive_encryption()
+    checks["data_encryption"] = bool(encryption.get("ok"))
+    # Production + Drive configured + no DATA_ENCRYPTION_KEY is not ready:
+    # OAuth refresh tokens would sit plaintext on the Render disk.
+    if _env_is_production() and not encryption.get("ok"):
+        ready_ok = False
     body = {
         "status": "ready" if ready_ok else "not_ready",
         "checks": checks,
@@ -419,6 +445,7 @@ async def ready():
             "cerebrum_blocks": blocks,
             "last_backup": last_backup,
             "sentry": _probe_sentry(),
+            "data_encryption": encryption,
         },
     }
     # Answer with a status code the platform can act on. This endpoint is the

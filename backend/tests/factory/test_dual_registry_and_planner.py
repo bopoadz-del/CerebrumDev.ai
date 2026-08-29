@@ -7,8 +7,10 @@ from app.factory.dual_registry import DualRegistryError, assert_dual_registered
 from app.factory.planner import CapabilityPlanner
 
 
+from tests.factory.blocks_root import real_blocks_root
+
 ROOT = Path(__file__).resolve().parents[3]
-BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+BLOCKS = real_blocks_root() or ROOT / "vendor_blocks_mirror"
 
 
 def test_estate_blocks_dual_registered():

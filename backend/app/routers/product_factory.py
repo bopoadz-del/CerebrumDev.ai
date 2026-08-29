@@ -6,11 +6,14 @@ Steward may still use the predefined golden blueprint when the brief matches.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+logger = logging.getLogger(__name__)
 
 from app.core.auth import Principal, require_api_key
 from app.core.llm_throttle import require_llm_rate
@@ -95,8 +98,13 @@ def plan_product(
     try:
         bp = ProductBlueprint.model_validate(body.blueprint)
         plan = plan_blueprint(bp)
-    except (BlueprintError, DualRegistryError, Exception) as exc:
+    except (BlueprintError, DualRegistryError, ValidationError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("stateless product plan failed")
+        raise HTTPException(status_code=500, detail="internal_error") from exc
     return {"ok": True, "plan": plan.to_dict()}
 
 

@@ -9,7 +9,7 @@ WORKDIR /app
 # omit the gpg binary even when gnupg is listed, which failed CI in ~20s.
 # SQLAlchemy fallback in app.core.backup still covers a mismatch if apt pins drift.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ cmake git ca-certificates curl \
+    build-essential gcc g++ cmake git ca-certificates curl util-linux \
     && mkdir -p /usr/share/keyrings \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       -o /usr/share/keyrings/pgdg.asc \
@@ -20,10 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends postgresql-client-18 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt backend/requirements-marker.txt ./
+COPY backend/requirements.lock backend/requirements.txt backend/requirements-marker.txt ./
+# Install the locked graph, not a floating requirements.txt resolve.
+# requirements.txt remains the direct manifest; lock is the image contract.
 # Do NOT install requirements-marker.txt in production images.
 # marker-pdf is local-only; see README for details.
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.lock
 
 COPY backend/app /app/app
 # Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
@@ -39,6 +41,15 @@ COPY backend/alembic /app/alembic
 COPY backend/scripts /app/scripts
 
 ENV PORT=8000
+# Non-root runtime. The entrypoint chowns $STORAGE_PATH when started as root
+# (Render disk mounts are often root-owned) then drops to uid 10001.
+# The HTTP contract is unchanged: bind 0.0.0.0:$PORT after alembic upgrade head.
+RUN useradd --system --uid 10001 --no-create-home appuser \
+    && mkdir -p /app/storage \
+    && chown -R appuser:appuser /app
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 755 /app/docker-entrypoint.sh
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # Apply accounts-DB migrations before serving (no-op when already at head).
 # A failed migration must stop the boot. The previous form swallowed the
 # failure with `|| echo`, which produced a RUNNING service on the wrong schema:

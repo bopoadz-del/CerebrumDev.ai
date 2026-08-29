@@ -12,19 +12,23 @@ POST /v1/sessions/{id}/product/mode
 
 from __future__ import annotations
 
+import logging
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.core.auth import Principal, require_api_key
+from app.core.billing import require_entitled
 from app.core.llm_throttle import require_llm_rate
 from app.core.session_guard import owned_session_or_404
 from app.core.session_store import update_session
-from app.core.trial_limits import require_within_limit
+from app.core.trial_limits import require_remaining, require_within_limit
+
+logger = logging.getLogger(__name__)
 from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
@@ -75,6 +79,25 @@ def _enforce_export_quota(account_id: Optional[str]) -> None:
 
 def _enforce_generation_quota(account_id: Optional[str]) -> None:
     """Server-side trial boundary: generations are metered per account."""
+    require_within_limit(account_id, "generation")
+
+
+def _raise_product_error(session_id: str, state, exc: BaseException) -> None:
+    """400 for blueprint/registry mistakes; 500 (and Sentry) for the rest."""
+    state.product_design.last_error = str(exc)
+    update_session(session_id, state)
+    if isinstance(exc, HTTPException):
+        raise exc
+    if isinstance(
+        exc, (BlueprintError, DualRegistryError, UnsafeOutputDir, ValidationError)
+    ):
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    logger.exception("session product handler failed")
+    raise HTTPException(status_code=500, detail="internal_error") from exc
+
+
+def _consume_generation_on_start(account_id: Optional[str]) -> None:
+    """Charge one generation after a build actually started."""
     require_within_limit(account_id, "generation")
 
 
@@ -253,7 +276,7 @@ def set_product_mode(
 
 @router.post("/{session_id}/product/draft")
 def draft_product(
-    session_id: str, body: DraftBody, principal: Principal = Depends(require_api_key)
+    session_id: str, body: DraftBody, principal: Principal = Depends(require_entitled)
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
     # Outside the try/except below on purpose: that handler catches bare
@@ -278,15 +301,13 @@ def draft_product(
             if bp.product_id == "cerebrum-steward"
             else "drafted",
         }
-    except (BlueprintError, DualRegistryError, Exception) as exc:
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        _raise_product_error(session_id, state, exc)
 
 
 @router.post("/{session_id}/product/plan")
 def plan_product(
-    session_id: str, principal: Principal = Depends(require_api_key)
+    session_id: str, principal: Principal = Depends(require_entitled)
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
     if not state.product_design.blueprint:
@@ -301,19 +322,13 @@ def plan_product(
         state.product_design.last_error = None
         update_session(session_id, state)
         return {"ok": True, "plan": state.product_design.plan}
-    except DualRegistryError as exc:
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_product_error(session_id, state, exc)
 
 
 @router.post("/{session_id}/product/approve")
 def approve_blueprint(
-    session_id: str, body: ApproveBody, principal: Principal = Depends(require_api_key)
+    session_id: str, body: ApproveBody, principal: Principal = Depends(require_entitled)
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
     if body.blueprint is not None:
@@ -335,7 +350,7 @@ def approve_blueprint(
 @router.post("/{session_id}/product/pilot")
 def run_pilot_cycle(
     session_id: str,
-    principal: Principal = Depends(require_api_key),
+    principal: Principal = Depends(require_entitled),
 ) -> Dict[str, Any]:
     """Reopen TESTER/STORE on the existing workspace for Store-green.
 
@@ -344,12 +359,14 @@ def run_pilot_cycle(
     from app.factory.platform_chat_flow import resume_pilot_cycle
 
     state = _require_session(session_id, principal)
-    _enforce_generation_quota(principal.account_id)
+    require_remaining(principal.account_id, "generation")
     require_llm_rate(principal, "generate")
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint")
     try:
         result = resume_pilot_cycle(state, triggered_by="product_pilot")
+        if not result.get("already_running") and not result.get("already_complete"):
+            _consume_generation_on_start(principal.account_id)
         update_session(session_id, state)
         return {
             "ok": True,
@@ -357,29 +374,35 @@ def run_pilot_cycle(
             "generation": state.product_design.generation,
             "summary": result.get("summary"),
             "already_complete": result.get("already_complete"),
+            "already_running": result.get("already_running"),
             "pilot_ready": result.get("pilot_ready"),
             "resumed": result.get("resumed"),
         }
     except Exception as exc:  # noqa: BLE001
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_product_error(session_id, state, exc)
 
 
 @router.post("/{session_id}/product/generate")
 def generate_approved_product(
     session_id: str,
     body: Optional[GenerateBody] = None,
-    principal: Principal = Depends(require_api_key),
+    principal: Principal = Depends(require_entitled),
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
-    _enforce_generation_quota(principal.account_id)
+    require_remaining(principal.account_id, "generation")
     require_llm_rate(principal, "generate")
     body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint")
+    from app.factory.platform_chat_flow import has_running_build
+
+    if has_running_build(state):
+        raise HTTPException(
+            status_code=409,
+            detail="a build is already in progress — poll /product/build-status",
+        )
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
     try:
@@ -393,14 +416,19 @@ def generate_approved_product(
             out = safe_output_dir(body.output_dir, bp.product_id)
         else:
             out = _session_output(session_id, bp.product_id)
-        # Also mirror Steward golden to canonical factory_outputs path
         result = generate_product(
-            bp, out, blocks_root=blocks_root, cycle=body.cycle
+            bp,
+            out,
+            blocks_root=blocks_root,
+            cycle=body.cycle,
+            quota_account_id=principal.account_id,
         )
-        if bp.product_id == "cerebrum-steward":
-            canonical = factory_outputs_root() / "Cerebrum-Steward"
-            generate_product(bp, canonical, blocks_root=blocks_root)
-            result["canonical_output"] = str(canonical)
+        if result.get("already_running"):
+            raise HTTPException(
+                status_code=409,
+                detail="a build is already in progress — poll /product/build-status",
+            )
+        _consume_generation_on_start(principal.account_id)
         state.product_design.generation = {
             "output_dir": result["output_dir"],
             "inputs_hash": result["inputs_hash"],
@@ -420,15 +448,5 @@ def generate_approved_product(
             "plan": state.product_design.plan,
             "generation": state.product_design.generation,
         }
-    except UnsafeOutputDir as exc:
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except DualRegistryError as exc:
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        state.product_design.last_error = str(exc)
-        update_session(session_id, state)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_product_error(session_id, state, exc)

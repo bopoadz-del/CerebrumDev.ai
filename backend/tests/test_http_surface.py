@@ -72,3 +72,11 @@ def test_render_yaml_declares_frontend_security_headers():
     assert "X-Content-Type-Options" in names
     assert "X-Frame-Options" in names
     assert "Strict-Transport-Security" in names
+    assert "Content-Security-Policy" in names
+    csp = next(
+        h["value"]
+        for h in frontend[0]["headers"]
+        if h["name"] == "Content-Security-Policy"
+    )
+    assert "default-src 'self'" in csp
+    assert "frame-ancestors 'none'" in csp

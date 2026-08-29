@@ -101,8 +101,8 @@ frontend_payload = {
     },
     "envVars": [
         {"key": "VITE_API_URL", "value": "https://api.cerebrum-dev.com"},
-        # Set manually to match backend CEREBRUM_DEV_API_KEY after first deploy.
-        {"key": "VITE_API_KEY", "value": os.getenv("VITE_API_KEY", "")},
+        # Do not bake CEREBRUM_DEV_API_KEY into a VITE_* var — the SPA uses
+        # cdt_ login tokens. Dashboard is source of truth for frontend env.
     ],
 }
 
@@ -114,5 +114,5 @@ print("\nCreating frontend service...")
 frontend = create_service(frontend_payload)
 print(json.dumps(frontend, indent=2))
 print(
-    "\nNext: copy backend CEREBRUM_DEV_API_KEY into frontend VITE_API_KEY and redeploy frontend."
+    "\nNext: confirm frontend VITE_API_URL in the dashboard. Do not set VITE_API_KEY."
 )

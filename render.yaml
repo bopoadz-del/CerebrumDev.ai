@@ -115,6 +115,12 @@ services:
       - key: DATA_ENCRYPTION_KEY
         generateValue: true
         sync: false
+      # Launch order (do not flip these in the dashboard until the earlier
+      # steps are live): (1) mail provider + Stripe checkout, (2) Floor
+      # entitlement gate on session generate/chat (H2), (3) then
+      # ACCOUNTS_REQUIRE_VERIFIED_EMAIL=1 and BILLING_ENFORCEMENT=true.
+      # Flipping the flags while checkout is 503 gives users a 402 with no
+      # self-serve remedy.
       # Flip to "1" once a mail provider above is actually configured. Turning
       # it on without working mail locks every new account out, because nobody
       # can complete verification.
@@ -185,11 +191,12 @@ services:
         value: "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
       - key: GITHUB_TOKEN
         sync: false
-      # Flip to true to enforce paid entitlement on sessions/factory runs.
-      # Read billing.py:88-96 before flipping it: with Stripe unconfigured,
-      # an account that is not entitled gets 402 and the only self-serve
-      # remedy returns 503. scripts/ops_set_subscription.py is the recovery
-      # seam; there is no other one.
+      # Flip to true only AFTER mail + Stripe checkout are live AND the Floor
+      # generate/chat path is behind require_entitled. With Stripe
+      # unconfigured, an account that is not entitled gets 402 and the only
+      # self-serve remedy returns 503. scripts/ops_set_subscription.py is the
+      # recovery seam; there is no other one. Do not treat this file as a
+      # live Blueprint — the dashboard is source of truth.
       - key: BILLING_ENFORCEMENT
         value: "false"
       # Coder budget per generation, in seconds. Code default is 120 with a
@@ -246,13 +253,16 @@ services:
         name: Referrer-Policy
         value: no-referrer
       - path: /*
+        name: Content-Security-Policy
+        value: "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; connect-src 'self' https://api.cerebrum-dev.com https://*.ingest.sentry.io; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+      - path: /*
         name: Strict-Transport-Security
         value: max-age=31536000; includeSubDomains
     envVars:
       - key: VITE_API_URL
         value: https://api.cerebrum-dev.com
-      - key: VITE_API_KEY
-        sync: false
+      # Do not bake CEREBRUM_DEV_API_KEY into the static bundle.
+      # The SPA authenticates with cdt_ login tokens, not VITE_API_KEY.
       # Observability: paste the Sentry project DSN (javascript-react) here.
       # The frontend loads Sentry lazily only when this is set at build time.
       - key: VITE_SENTRY_DSN

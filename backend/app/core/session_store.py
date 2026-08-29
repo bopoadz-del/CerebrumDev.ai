@@ -47,9 +47,17 @@ def _rehydrate_from_chroma(session_id: str) -> Optional[SessionState]:
     if not data:
         return None
 
+    owner = None
+    try:
+        from .accounts_store import session_owner
+
+        owner = session_owner(session_id)
+    except Exception as exc:  # noqa: BLE001 — ownership lookup must not block recovery
+        logger.warning("Could not resolve session owner for %s: %s", session_id, exc)
+
     state = SessionState(
         session_id=session_id,
-        user_id="anonymous",
+        user_id=owner or "anonymous",
         phase=3,
         phase_status="in_progress",
     )

@@ -11,10 +11,11 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.session_store import create_session, get_session, update_session
+from tests.factory.blocks_root import real_blocks_root
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+BLOCKS = real_blocks_root() or ROOT / "vendor_blocks_mirror"
 
 
 @pytest.fixture()
