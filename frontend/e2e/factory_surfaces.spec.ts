@@ -16,7 +16,10 @@ const BLUEPRINT = {
   ],
 }
 
-async function mockVerifiedFactory(page: Page) {
+async function mockVerifiedFactory(
+  page: Page,
+  billing?: { entitled?: boolean; trial_days_left?: number },
+) {
   await page.addInitScript(() => {
     localStorage.removeItem('cerebrum.factory.token')
     localStorage.setItem('cerebrum.factory.email', 'e2e.floor@factory.dev')
@@ -65,8 +68,8 @@ async function mockVerifiedFactory(page: Page) {
         billing: {
           plan: 'trial',
           subscription_status: 'trialing',
-          trial_days_left: 3,
-          entitled: true,
+          trial_days_left: billing?.trial_days_left ?? 3,
+          entitled: billing?.entitled ?? true,
           checkout_available: false,
         },
       }),
@@ -233,5 +236,40 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
   await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
+  await expect(page.getByText('acct_e2e_floor')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+})
+
+test('paused Factory access hard-disables Floor Send and does not offer Approve & build', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page, { entitled: false, trial_days_left: 0 })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: false,
+      }),
+    })
+  })
+  let chatPosts = 0
+  await page.route('**/v1/sessions/sess_e2e_floor/chat', async (route) => {
+    chatPosts += 1
+    await route.fulfill({ status: 500, body: 'should not send' })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Vineyard Platform')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled()
+  await expect(page.getByPlaceholder('Factory access is paused')).toBeDisabled()
+  await expect(page.getByText('Factory access is paused.')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Approve & build/ })).toHaveCount(0)
+  expect(chatPosts).toBe(0)
+
+  await page.getByRole('button', { name: 'Subscription' }).click()
+  await expect(page.getByText('Paused')).toBeVisible()
 })

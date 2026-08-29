@@ -47,6 +47,19 @@ describe('Subscription', () => {
     ).toBeInTheDocument()
   })
 
+  it('labels Factory access Paused from the entitled flag', async () => {
+    statusMock.mockResolvedValue({
+      plan: 'trial',
+      subscription_status: 'trialing',
+      trial_days_left: 0,
+      entitled: false,
+      checkout_available: false,
+    })
+    render(<Subscription />)
+    expect(await screen.findByText('Paused')).toBeInTheDocument()
+    expect(screen.queryByText('Active')).toBeNull()
+  })
+
   it('never uses hand-waving "being connected" copy', async () => {
     render(<Subscription />)
     await screen.findByText('Trial days left')

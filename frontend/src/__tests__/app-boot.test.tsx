@@ -6,17 +6,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, isDomainStoreUnreachable, isEmailNotVerifiedError } from '../api/factory'
 import App from '../App'
 
-const { meMock, verifyEmailMock, resendMock, listMock, createMock, domainsListMock, productGetMock } = vi.hoisted(
-  () => ({
-    meMock: vi.fn(),
-    verifyEmailMock: vi.fn(),
-    resendMock: vi.fn(),
-    listMock: vi.fn(),
-    createMock: vi.fn(),
-    domainsListMock: vi.fn(),
-    productGetMock: vi.fn(),
-  }),
-)
+const {
+  meMock,
+  verifyEmailMock,
+  resendMock,
+  listMock,
+  createMock,
+  domainsListMock,
+  productGetMock,
+  billingStatusMock,
+} = vi.hoisted(() => ({
+  meMock: vi.fn(),
+  verifyEmailMock: vi.fn(),
+  resendMock: vi.fn(),
+  listMock: vi.fn(),
+  createMock: vi.fn(),
+  domainsListMock: vi.fn(),
+  productGetMock: vi.fn(),
+  billingStatusMock: vi.fn(),
+}))
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -42,6 +50,10 @@ vi.mock('../api/factory', async (importOriginal) => {
     product: {
       ...actual.product,
       get: (...args: unknown[]) => productGetMock(...args),
+    },
+    billing: {
+      ...actual.billing,
+      status: (...args: unknown[]) => billingStatusMock(...args),
     },
   }
 })
@@ -73,6 +85,8 @@ describe('App boot', () => {
     domainsListMock.mockResolvedValue({ domains: [] })
     productGetMock.mockReset()
     productGetMock.mockResolvedValue({})
+    billingStatusMock.mockReset()
+    billingStatusMock.mockResolvedValue({ entitled: true })
   })
 
   it('shows verify-email — not Factory unreachable — when boot is 403 email_not_verified', async () => {
@@ -161,5 +175,41 @@ describe('App boot', () => {
     expect(await screen.findByText('Domain store unreachable')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Verify your email' })).not.toBeInTheDocument()
+  })
+
+  it('hard-disables Floor Send when billing entitled is false', async () => {
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_paused',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    billingStatusMock.mockResolvedValue({
+      plan: 'trial',
+      subscription_status: 'trialing',
+      trial_days_left: 0,
+      entitled: false,
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.getByPlaceholderText('Factory access is paused')).toBeDisabled()
+    expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
+  })
+
+  it('Account Verified is Yes on first paint from boot /me — never No', async () => {
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Factory Floor' })
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+    expect(screen.getByRole('heading', { name: 'Account' })).toBeInTheDocument()
+    expect(screen.getByText('Yes')).toBeInTheDocument()
+    expect(screen.queryByText('No')).not.toBeInTheDocument()
+    expect(screen.getByText('acct_boot')).toBeInTheDocument()
   })
 })

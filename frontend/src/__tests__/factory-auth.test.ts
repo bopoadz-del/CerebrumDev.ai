@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearSession, getEmail, setSession } from '../api/factory'
+import { clearSession, factoryAccessPaused, getEmail, setSession } from '../api/factory'
 
 describe('factory auth storage', () => {
   afterEach(() => {
@@ -36,5 +36,15 @@ describe('factory auth storage', () => {
     const headers = init.headers as Record<string, string>
     expect(headers.Authorization).toBeUndefined()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('factoryAccessPaused', () => {
+  it('matches Subscription Factory access: paused only when entitled is false', () => {
+    expect(factoryAccessPaused({ entitled: false })).toBe(true)
+    expect(factoryAccessPaused({ entitled: true })).toBe(false)
+    expect(factoryAccessPaused({})).toBe(false)
+    expect(factoryAccessPaused(null)).toBe(false)
+    expect(factoryAccessPaused(undefined)).toBe(false)
   })
 })

@@ -2,19 +2,22 @@ import { useEffect, useState } from 'react'
 import {
   ApiError,
   auth,
+  billing,
   clearSession,
   domains,
+  factoryAccessPaused,
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
   sessions,
   setSession,
   signOut,
+  type AccountInfo,
 } from './api/factory'
 import { AuthGate, VerifyEmailGate } from './authGates'
 import { Account, Floor, Platforms, Subscription } from './factoryViews'
 
 export { AuthGate, VerifyEmailGate } from './authGates'
-export { BlueprintCard, Floor, Platforms, Subscription } from './factoryViews'
+export { Account, BlueprintCard, Floor, Platforms, Subscription } from './factoryViews'
 
 type View = 'floor' | 'platforms' | 'subscription' | 'account'
 
@@ -27,6 +30,8 @@ export default function App() {
   const [pendingDevToken, setPendingDevToken] = useState<string | null>(null)
   const [domainStoreNotice, setDomainStoreNotice] = useState<string | null>(null)
   const [bootNonce, setBootNonce] = useState(0)
+  const [accountMe, setAccountMe] = useState<AccountInfo | null>(null)
+  const [accessPaused, setAccessPaused] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -44,7 +49,10 @@ export default function App() {
       try {
         const me = await auth.me()
         if (me.email) setSession(String(me.email))
-        const list = await sessions.list()
+        const [list, bill] = await Promise.all([
+          sessions.list(),
+          billing.status().catch(() => null),
+        ])
         const arr = Array.isArray(list) ? list : list.sessions ?? []
         let sid = arr[0]?.session_id
         if (!sid) {
@@ -52,6 +60,8 @@ export default function App() {
           sid = created.session_id
         }
         if (!cancelled) {
+          setAccountMe(me)
+          setAccessPaused(factoryAccessPaused(bill))
           setNeedsEmailVerify(false)
           setBootError(null)
           setSessionId(sid ?? null)
@@ -180,11 +190,18 @@ export default function App() {
         </div>
       </aside>
       <main>
-        {view === 'floor' && <Floor sessionId={sessionId} goPlatforms={() => setView('platforms')} />}
+        {view === 'floor' && (
+          <Floor
+            sessionId={sessionId}
+            goPlatforms={() => setView('platforms')}
+            accessPaused={accessPaused}
+          />
+        )}
         {view === 'platforms' && <Platforms sessionId={sessionId} />}
         {view === 'subscription' && <Subscription />}
         {view === 'account' && (
           <Account
+            initialMe={accountMe}
             onLogout={() => {
               void signOut().then(() => setAuthed(false))
             }}

@@ -265,4 +265,29 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(await screen.findByText(/Drafting a tasting-room platform/)).toBeInTheDocument()
     expect(screen.queryByText(/That sounds like kit configuration/)).not.toBeInTheDocument()
   })
+
+  it('hard-disables Send when Factory access is paused — typing does not unlock it', async () => {
+    render(<Floor sessionId="sess_paused" goPlatforms={() => {}} accessPaused />)
+    const send = await screen.findByRole('button', { name: 'Send' })
+    expect(send).toBeDisabled()
+    const composer = screen.getByPlaceholderText('Factory access is paused')
+    expect(composer).toBeDisabled()
+    fireEvent.change(composer, { target: { value: 'Invoice Tracker for a small studio' } })
+    expect(send).toBeDisabled()
+    fireEvent.click(send)
+    expect(chatStreamMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
+  })
+
+  it('does not offer Approve & build on a hydrated draft when access is paused', async () => {
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: false,
+    })
+    render(<Floor sessionId="sess_paused_draft" goPlatforms={() => {}} accessPaused />)
+    expect(await screen.findByText('Vineyard Platform')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Approve & build/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+    expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
+  })
 })

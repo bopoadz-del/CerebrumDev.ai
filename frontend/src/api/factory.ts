@@ -358,6 +358,13 @@ export interface BillingStatus {
   [k: string]: unknown
 }
 
+/** Same flag Subscription uses for Factory access: Paused iff entitled === false. */
+export function factoryAccessPaused(
+  status: Pick<BillingStatus, 'entitled'> | null | undefined,
+): boolean {
+  return status?.entitled === false
+}
+
 export const billing = {
   status: async () => {
     const raw = await req<BillingStatus & { billing?: BillingStatus; ok?: boolean }>(
