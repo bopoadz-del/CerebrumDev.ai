@@ -15,7 +15,7 @@
   "dependencies": {
     "@sentry/react": "^10.71.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
@@ -23,7 +23,7 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^18.2.43",
-    "@types/react-dom": "^18.2.17",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^4.2.1",
     "eslint": "^10.6.0",
     "eslint-plugin-react-hooks": "^7.1.1",
