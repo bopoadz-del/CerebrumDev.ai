@@ -26,24 +26,27 @@ def test_increment_usage_retries_integrity_error(tmp_path, monkeypatch):
     aid = account["account_id"]
     assert accounts_store.increment_usage(aid, "generation", "lifetime") == 1
 
-    engine = accounts_store._engine()
-    real_begin = engine.begin
+    real_engine = accounts_store._engine()
     attempts = {"n": 0}
 
-    def _counting_begin():
-        ctx = real_begin()
-        orig_enter = ctx.__enter__
+    class _BeginOnce:
+        def __init__(self, ctx):
+            self._ctx = ctx
 
-        def _enter():
+        def __enter__(self):
             attempts["n"] += 1
             if attempts["n"] == 1:
-                raise IntegrityError("simulated", params=None, orig=None)
-            return orig_enter()
+                raise IntegrityError("simulated", {}, Exception("dup"))
+            return self._ctx.__enter__()
 
-        ctx.__enter__ = _enter  # type: ignore[method-assign]
-        return ctx
+        def __exit__(self, *args):
+            return self._ctx.__exit__(*args)
 
-    monkeypatch.setattr(engine, "begin", _counting_begin)
+    class _EngineProxy:
+        def begin(self):
+            return _BeginOnce(real_engine.begin())
+
+    monkeypatch.setattr(accounts_store, "_engine", lambda: _EngineProxy())
     value = accounts_store.increment_usage(aid, "generation", "lifetime")
     assert value == 2
     assert attempts["n"] >= 2

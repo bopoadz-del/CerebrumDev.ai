@@ -91,11 +91,16 @@ def _state_save(state: str, session_id: str, user_id: str) -> None:
         client = _redis()
         if client is None:
             raise OAuthStateUnavailable("REDIS_URL is set but Redis is unreachable")
-        client.setex(
-            f"drive_oauth_state:{state}",
-            _STATE_TTL,
-            json.dumps({"session_id": session_id, "user_id": user_id}),
-        )
+        try:
+            client.setex(
+                f"drive_oauth_state:{state}",
+                _STATE_TTL,
+                json.dumps({"session_id": session_id, "user_id": user_id}),
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise OAuthStateUnavailable(
+                "REDIS_URL is set but Redis is unreachable"
+            ) from exc
         return
     _pending_states[state] = (session_id, user_id, time.time())
 
@@ -105,7 +110,12 @@ def _state_pop(state: str) -> tuple[str, str, float] | None:
         client = _redis()
         if client is None:
             raise OAuthStateUnavailable("REDIS_URL is set but Redis is unreachable")
-        raw = client.getdel(f"drive_oauth_state:{state}")
+        try:
+            raw = client.getdel(f"drive_oauth_state:{state}")
+        except Exception as exc:  # noqa: BLE001
+            raise OAuthStateUnavailable(
+                "REDIS_URL is set but Redis is unreachable"
+            ) from exc
         if raw is None:
             return None
         data = json.loads(raw)

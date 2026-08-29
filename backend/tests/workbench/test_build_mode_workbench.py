@@ -28,6 +28,9 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.fixture(autouse=True)
 def _flags(monkeypatch, tmp_path):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    # Existing fixtures generate Steward under tmp_path/. Confine workbench
+    # to that tree so M3 does not break local packager/CLI tests.
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path))
     monkeypatch.delenv("REDIS_URL", raising=False)
     monkeypatch.setenv("CHANGE_REQUEST_INTAKE_ENABLED", "true")
     monkeypatch.setenv("BUILD_MODE_ENABLED", "true")

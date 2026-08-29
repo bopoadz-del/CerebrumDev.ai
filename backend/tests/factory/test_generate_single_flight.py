@@ -33,7 +33,7 @@ def test_start_runner_build_refuses_second_start(tmp_path, monkeypatch):
     out.mkdir()
     ledger = BuildLedger(out / "build_ledger.jsonl")
     ledger.start_run(product_id="single-flight-demo", inputs_hash="abc123")
-    ledger.append(EventKind.PHASE_STARTED, role="collector", detail="in flight")
+    ledger.append(EventKind.PHASE_STARTED, role="COLLECTOR", detail="in flight")
 
     started = []
 
@@ -71,7 +71,7 @@ def test_http_generate_409_when_already_building(tmp_path, monkeypatch):
     out.mkdir(parents=True)
     ledger = BuildLedger(out / "build_ledger.jsonl")
     ledger.start_run(product_id="single-flight-demo", inputs_hash="abc123")
-    ledger.append(EventKind.PHASE_STARTED, role="writer", detail="in flight")
+    ledger.append(EventKind.PHASE_STARTED, role="WRITER", detail="in flight")
     state.product_design.generation = {
         "output_dir": str(out),
         "product_id": "single-flight-demo",
