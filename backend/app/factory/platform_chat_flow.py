@@ -454,8 +454,23 @@ def approve_and_generate(
     if not pd.plan:
         pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
 
+    if has_running_build(state) or _live_build_thread(bp.product_id) is not None:
+        reply = running_build_reply(state)
+        reply["already_running"] = True
+        return reply
+
     out = _session_output(state.session_id, bp.product_id, output_root)
-    result = generate_product(bp, out, blocks_root=_blocks_root())
+    result = generate_product(
+        bp,
+        out,
+        blocks_root=_blocks_root(),
+        quota_account_id=getattr(state, "user_id", None),
+    )
+    if result.get("already_running"):
+        _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
+        reply = running_build_reply(state)
+        reply["already_running"] = True
+        return reply
     _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
     pd.last_error = None
 
@@ -833,7 +848,27 @@ def resume_generation(
         }
 
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    result = generate_product(bp, out, blocks_root=_blocks_root(), cycle="code")
+    result = generate_product(
+        bp,
+        out,
+        blocks_root=_blocks_root(),
+        cycle="code",
+        quota_account_id=getattr(state, "user_id", None),
+    )
+    if result.get("already_running"):
+        _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"The coding agent is still writing {bp.product_id}. "
+                "I did not start a second run."
+            ),
+            "stream_delta": True,
+            "already_running": True,
+            "generation": pd.generation,
+            "build": result.get("build"),
+        }
     _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
     if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
         logger.warning(
@@ -908,7 +943,27 @@ def resume_pilot_cycle(
             "build": st,
         }
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    result = generate_product(bp, out, blocks_root=_blocks_root(), cycle="pilot")
+    result = generate_product(
+        bp,
+        out,
+        blocks_root=_blocks_root(),
+        cycle="pilot",
+        quota_account_id=getattr(state, "user_id", None),
+    )
+    if result.get("already_running"):
+        _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"The coding agent is still writing {bp.product_id}. "
+                "I did not start a second run."
+            ),
+            "stream_delta": True,
+            "already_running": True,
+            "generation": pd.generation,
+            "build": result.get("build"),
+        }
     _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
     if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
         logger.warning(

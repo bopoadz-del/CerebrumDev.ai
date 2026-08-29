@@ -68,9 +68,35 @@ def test_ready_backup_reports_live_host_mismatch(client, tmp_path, monkeypatch):
     res = client.get("/ready")
     assert res.status_code == 200
     backup = res.json()["details"]["last_backup"]
-    assert backup["accounts_host"] == "dpg-old.oregon-postgres.render.com"
-    assert backup["live_accounts_host"] == "ep-new.aws.neon.tech"
+    from app.core.backup import public_accounts_host_label
+
+    assert backup["accounts_host"] == public_accounts_host_label(
+        "dpg-old.oregon-postgres.render.com"
+    )
+    assert backup["live_accounts_host"] == public_accounts_host_label(
+        "ep-new.aws.neon.tech"
+    )
+    assert "ep-new.aws.neon.tech" not in str(backup)
     assert backup["matches_live_engine"] is False
+
+
+def test_ready_fails_in_production_when_drive_lacks_encryption(
+    client, tmp_path, monkeypatch
+):
+    """M5: production + Drive credentials + no DATA_ENCRYPTION_KEY → not ready."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "master-for-ready")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "drive-client")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "drive-secret")
+    monkeypatch.delenv("DATA_ENCRYPTION_KEY", raising=False)
+    res = client.get("/ready")
+    assert res.status_code == 503
+    body = res.json()
+    assert body["status"] == "not_ready"
+    assert body["checks"]["data_encryption"] is False
+    assert body["details"]["data_encryption"]["drive_configured"] is True
+    assert body["details"]["data_encryption"]["encryption_enabled"] is False
 
 
 def test_ready_head_matches_get_status(client, tmp_path, monkeypatch):
@@ -130,3 +156,11 @@ def test_ops_backup_runs_and_overwrites_stale_fail(client, tmp_path, monkeypatch
     assert sched.last_status()["ok"] is True
     ready = client.get("/ready").json()["details"]["last_backup"]
     assert ready["ok"] is True
+    # Public /ready hashes the host; the master-key backup report keeps it.
+    if body.get("accounts_host"):
+        assert "neon.tech" in str(body.get("accounts_host")) or "." in str(
+            body.get("accounts_host")
+        )
+        assert ready.get("accounts_host") != body.get("accounts_host") or ready.get(
+            "accounts_host", ""
+        ).startswith("sha256:")

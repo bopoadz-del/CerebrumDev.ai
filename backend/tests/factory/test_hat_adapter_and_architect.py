@@ -9,8 +9,10 @@ from app.factory.planner import CapabilityPlanner
 from app.factory.product_architect import architect_pipeline, draft_blueprint_from_brief
 
 
+from tests.factory.blocks_root import real_blocks_root
+
 ROOT = Path(__file__).resolve().parents[3]
-BLOCKS = Path("/home/ubuntu/repos/Cerebrum-Blocks")
+BLOCKS = real_blocks_root() or ROOT / "vendor_blocks_mirror"
 
 
 def test_steward_hats_adapted_from_tek_pattern():

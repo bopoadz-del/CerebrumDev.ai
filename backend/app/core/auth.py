@@ -50,6 +50,14 @@ def _anonymous_dev_allowed() -> bool:
     return os.getenv("ALLOW_ANONYMOUS_DEV", "").strip().lower() in _TRUTHY
 
 
+def _env_name() -> str:
+    return os.getenv("ENV", "").strip().lower()
+
+
+def _env_is_production() -> bool:
+    return _env_name() in {"production", "prod"}
+
+
 @dataclass(frozen=True)
 class Principal:
     """Who is calling. ``kind``: admin (master key) | user (account) | dev (open)."""
@@ -63,11 +71,19 @@ class Principal:
 def verify_production_auth() -> None:
     """Refuse to boot in any configuration that would accept anonymous callers.
 
-    Not conditional on ``ENV`` any more. The previous check only fired when
-    ``ENV`` was exactly ``"production"``, so ``prod``, ``PRODUCTION``, or an
-    unset value booted wide open. The safe invariant is simply: either a
-    master key exists, or someone deliberately asked for open mode.
+    Not conditional on ``ENV`` for the master-key requirement: ``prod``,
+    ``PRODUCTION``, or an unset value must not boot wide open. In addition,
+    ``ALLOW_ANONYMOUS_DEV`` is refused when ``ENV`` is ``production``/``prod``
+    even if a master key exists — the flag bypasses ownership checks and
+    must never ride along in a shared environment.
     """
+    if _env_is_production() and _anonymous_dev_allowed():
+        raise RuntimeError(
+            "Refusing to start: ALLOW_ANONYMOUS_DEV is set while ENV is "
+            "production/prod. The anonymous 'dev' principal bypasses all "
+            "per-account ownership checks. Unset ALLOW_ANONYMOUS_DEV in any "
+            "shared environment."
+        )
     if _master_key():
         return
     if _anonymous_dev_allowed():

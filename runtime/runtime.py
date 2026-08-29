@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from typing import Any, Dict, List
@@ -43,10 +44,15 @@ def _declare(eng: engine.Engine, law, cr, bundle) -> Dict[str, Any]:
 
 
 def _run_command(cmd: str, product_root: str) -> str:
-    if not any(cmd.strip().startswith(a) for a in ALLOWED_COMMANDS):
+    try:
+        argv = shlex.split(cmd)
+    except ValueError:
+        argv = []
+    allowed = any(argv[:len(shlex.split(a))] == shlex.split(a) for a in ALLOWED_COMMANDS)
+    if not argv or not allowed:
         return f"BLOCKED: command not on the allowlist ({cmd!r})"
     try:
-        proc = subprocess.run(cmd, shell=True, cwd=product_root, capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(argv, shell=False, cwd=product_root, capture_output=True, text=True, timeout=600)
         return ((proc.stdout or "") + (proc.stderr or "")).strip()[-4000:] or f"(exit {proc.returncode}, no output)"
     except Exception as exc:  # noqa: BLE001
         return f"ERROR: {exc}"

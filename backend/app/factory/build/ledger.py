@@ -24,12 +24,55 @@ record of its own gate is the same hole that
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Set
+
+logger = logging.getLogger(__name__)
+
+_FILE_LOCKS: Dict[str, threading.Lock] = {}
+_FILE_LOCKS_GUARD = threading.Lock()
+
+
+def _thread_lock_for(path: Path) -> threading.Lock:
+    key = str(path)
+    with _FILE_LOCKS_GUARD:
+        lock = _FILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _FILE_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _exclusive_ledger(path: Path):
+    """Process + inter-process lock around a ledger append."""
+    lock_path = Path(str(path) + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    thread_lock = _thread_lock_for(path)
+    with thread_lock:
+        with lock_path.open("a+", encoding="utf-8") as lock_fh:
+            flocked = False
+            try:
+                import fcntl
+
+                fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+                flocked = True
+            except ImportError:
+                pass
+            try:
+                yield
+            finally:
+                if flocked:
+                    import fcntl
+
+                    fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 from app.factory.build.authority import BUILD_PHASES, BuildRole
 
@@ -170,13 +213,13 @@ class BuildLedger:
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(event.to_json(), sort_keys=True) + "\n"
-        # One write plus fsync per event: the whole point of the ledger is
-        # that it is intact after the process dies, so buffering it away
-        # would defeat it.
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
-            fh.flush()
-            os.fsync(fh.fileno())
+        # One write plus fsync per event, under a file lock so two workers
+        # cannot interleave JSONL lines.
+        with _exclusive_ledger(self.path):
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(line)
+                fh.flush()
+                os.fsync(fh.fileno())
         return event
 
     def start_run(self, *, product_id: str, inputs_hash: str) -> BuildEvent:

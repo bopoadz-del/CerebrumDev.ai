@@ -14,6 +14,7 @@ only copy of anything (Postgres/disk truth survives a flush).
 """
 from __future__ import annotations
 
+import pytest
 
 
 class _DeadRedis:
@@ -44,23 +45,25 @@ class TestRateLimiterDegradation:
             True, True, True, False,
         ]
 
-    def test_dead_redis_fails_OPEN_not_closed(self, monkeypatch):
-        # THE safety property: a Redis that dies mid-flight must never lock
-        # users out. Each call raises inside the Redis branch, is caught, and
-        # falls through to the in-memory bucket — which still ALLOWS up to the
-        # limit rather than 429-ing everyone.
+    def test_dead_redis_auth_fails_CLOSED(self, monkeypatch):
+        # Auth buckets fail closed on a mid-flight Redis outage so the
+        # brute-force budget cannot expand to N workers × in-memory.
         rl = self._fresh(monkeypatch, _DeadRedis())
-        results = [rl.check_rate_limit("login", "ip2") for _ in range(4)]
-        assert results[0] is True, "a dead Redis must not lock out the first request"
+        results = [rl.check_rate_limit("login", "ip2") for _ in range(3)]
+        assert results == [False, False, False]
+
+    def test_dead_redis_llm_bucket_still_fails_open(self, monkeypatch):
+        rl = self._fresh(monkeypatch, _DeadRedis())
+        results = [rl.check_rate_limit("llm:draft", "acct") for _ in range(4)]
+        assert results[0] is True
         assert results == [True, True, True, False]
 
-    def test_dead_redis_isolates_identities(self, monkeypatch):
+    def test_dead_redis_isolates_identities_for_non_auth(self, monkeypatch):
         rl = self._fresh(monkeypatch, _DeadRedis())
         for _ in range(3):
-            rl.check_rate_limit("login", "a")
-        # a is now full; b is untouched — fallback keys per identity.
-        assert rl.check_rate_limit("login", "a") is False
-        assert rl.check_rate_limit("login", "b") is True
+            rl.check_rate_limit("llm:chat", "a")
+        assert rl.check_rate_limit("llm:chat", "a") is False
+        assert rl.check_rate_limit("llm:chat", "b") is True
 
 
 # ── (2) Drive OAuth pending-state store ──────────────────────────────────────
@@ -81,16 +84,22 @@ class TestOAuthStateDegradation:
         assert fd._state_pop("st1") is None
 
     def test_dead_redis_save_and_pop_still_round_trip(self, monkeypatch):
-        # save() raises in the Redis branch -> writes memory; pop() raises in
-        # the Redis branch -> reads memory. The consent state survives a Redis
-        # outage that spans the whole OAuth round-trip.
+        # REDIS_URL unset: single-process tests keep the in-memory store.
+        monkeypatch.delenv("REDIS_URL", raising=False)
         fd = self._mod(monkeypatch, _DeadRedis())
         fd._state_save("st2", "sess2", "user2")
         got = fd._state_pop("st2")
         assert got is not None
         assert got[0] == "sess2" and got[1] == "user2"
 
+    def test_configured_redis_outage_has_no_memory_fallback(self, monkeypatch):
+        monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+        fd = self._mod(monkeypatch, _DeadRedis())
+        with pytest.raises(fd.OAuthStateUnavailable):
+            fd._state_save("st3", "sess3", "user3")
+
     def test_unknown_state_is_none_not_error(self, monkeypatch):
+        monkeypatch.delenv("REDIS_URL", raising=False)
         fd = self._mod(monkeypatch, _DeadRedis())
         assert fd._state_pop("never-issued") is None
 

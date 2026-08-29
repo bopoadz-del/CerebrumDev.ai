@@ -79,8 +79,8 @@ def billing_status(account_id: str) -> Optional[Dict[str, Any]]:
     }
 
 
-def require_entitled(principal: Principal = Depends(require_api_key)) -> Principal:
-    """Gate paid actions: admin/dev pass; users need an active sub or live trial.
+def assert_entitled(principal: Principal) -> Principal:
+    """Same gate as :func:`require_entitled`, callable from handlers and streams.
 
     Raises 402 ``trial_expired`` so the frontend can route to the billing page
     (distinct from 401 bad credential / 403 not-verified).
@@ -95,3 +95,8 @@ def require_entitled(principal: Principal = Depends(require_api_key)) -> Princip
     if not is_entitled(fields["subscription_status"], fields["trial_ends_at"]):
         raise HTTPException(status_code=402, detail="trial_expired")
     return principal
+
+
+def require_entitled(principal: Principal = Depends(require_api_key)) -> Principal:
+    """Gate paid actions: admin/dev pass; users need an active sub or live trial."""
+    return assert_entitled(principal)

@@ -4,8 +4,9 @@ Backends, in order of preference:
 1. Redis (``REDIS_URL`` set) — buckets shared across instances and restarts.
 2. In-memory deque buckets (default) — zero deps, single-process.
 
-Redis failures fall back to the in-memory bucket so an outage never locks
-users out.
+Redis failures fall back to the in-memory bucket for non-auth budgets so an
+outage never locks paid/LLM routes. Auth buckets (login, register, …) fail
+closed: a dead Redis must not lift the brute-force budget.
 
 Two hardening properties beyond the original:
 
@@ -49,6 +50,20 @@ TRUSTED_PROXY_ENV = "TRUSTED_PROXY"
 TRUSTED_PROXY_HOPS_ENV = "TRUSTED_PROXY_HOP_COUNT"
 TRUSTED_PROXY_HOPS_DEFAULT = 1
 FORWARDED_FOR_HEADER = "x-forwarded-for"
+
+# Auth endpoints only. LLM/other budgets keep the in-memory fallback.
+AUTH_FAIL_CLOSED_BUCKETS = frozenset(
+    {
+        "register",
+        "login",
+        "smoke-login",
+        "verify-email",
+        "forgot-password",
+        "reset-password",
+        "delete-account",
+        "resend-verification",
+    }
+)
 
 
 def _limits() -> tuple[int, int]:
@@ -205,7 +220,9 @@ def check_rate_limit(
                 client.expire(rkey, window * 2)
             return count <= max_attempts
         except Exception:
-            pass  # fall back to the in-memory bucket on Redis errors
+            if bucket in AUTH_FAIL_CLOSED_BUCKETS:
+                return False
+            # Non-auth budgets: fall back to the in-memory bucket.
     now = time.monotonic()
     with _LOCK:
         q = _bucket_locked(bucket, key, now, window)

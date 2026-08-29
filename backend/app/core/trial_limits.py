@@ -101,6 +101,32 @@ def consume(account_id: str, counter: str) -> Dict[str, Any]:
     }
 
 
+def refund(account_id: Optional[str], counter: str) -> None:
+    """Return one unit of ``counter`` after a failed generation attempt."""
+    if not account_id or not _is_limited_account(account_id):
+        return
+    _limit_unused, scope = _limit(counter)
+    accounts_store.decrement_usage(account_id, counter, _period(scope))
+
+
+def remaining_ok(account_id: Optional[str], counter: str) -> bool:
+    """Read-only check: True when another unit would still be within the limit."""
+    if not _is_limited_account(account_id):
+        return True
+    assert account_id is not None
+    limit, scope = _limit(counter)
+    used = accounts_store.get_usage(account_id, counter, _period(scope))
+    return used < limit
+
+
+def require_remaining(account_id: Optional[str], counter: str) -> None:
+    """429 if the next consume would exceed the limit. Does not increment."""
+    if remaining_ok(account_id, counter):
+        return
+    limit, scope = _limit(counter)
+    raise TrialLimitExceeded(counter, limit, scope)
+
+
 def require_within_limit(account_id: Optional[str], counter: str) -> None:
     """Server-side quota gate. Raises 429 TrialLimitExceeded over the limit."""
     if not _is_limited_account(account_id):

@@ -211,6 +211,12 @@ def run_backup_once() -> Dict[str, Any]:
         if result.ok:
             removed = backup.prune_backups(keep=keep_count())
             report["pruned"] = [p.name for p in removed]
+            try:
+                from app.factory.paths import cleanup_stale_session_outputs
+
+                report["factory_outputs_cleanup"] = cleanup_stale_session_outputs()
+            except Exception as exc:  # noqa: BLE001 — cleanup must not fail the backup
+                logger.warning("factory_outputs cleanup skipped: %s", exc)
     except Exception as exc:  # noqa: BLE001 — the loop must survive anything
         report = {
             "at": started,

@@ -74,31 +74,52 @@ def _redis():
     return _redis_client
 
 
+def _redis_required() -> bool:
+    """When REDIS_URL is set, pending OAuth state must live there — no memory."""
+    return bool(os.getenv("REDIS_URL", "").strip())
+
+
+class OAuthStateUnavailable(RuntimeError):
+    """Redis is configured but cannot store/load the OAuth pending state."""
+
+
 def _state_save(state: str, session_id: str, user_id: str) -> None:
-    client = _redis()
-    if client is not None:
+    # Multi-instance: pending state must be on Redis so the callback worker
+    # that Google hits is the one that can see it. In-memory fallback is only
+    # for single-process tests / local boots with REDIS_URL unset.
+    if _redis_required():
+        client = _redis()
+        if client is None:
+            raise OAuthStateUnavailable("REDIS_URL is set but Redis is unreachable")
         try:
             client.setex(
                 f"drive_oauth_state:{state}",
                 _STATE_TTL,
                 json.dumps({"session_id": session_id, "user_id": user_id}),
             )
-            return
-        except Exception:
-            pass  # fall back to memory
+        except Exception as exc:  # noqa: BLE001
+            raise OAuthStateUnavailable(
+                "REDIS_URL is set but Redis is unreachable"
+            ) from exc
+        return
     _pending_states[state] = (session_id, user_id, time.time())
 
 
 def _state_pop(state: str) -> tuple[str, str, float] | None:
-    client = _redis()
-    if client is not None:
+    if _redis_required():
+        client = _redis()
+        if client is None:
+            raise OAuthStateUnavailable("REDIS_URL is set but Redis is unreachable")
         try:
             raw = client.getdel(f"drive_oauth_state:{state}")
-            if raw is not None:
-                data = json.loads(raw)
-                return data["session_id"], data["user_id"], 0.0
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            raise OAuthStateUnavailable(
+                "REDIS_URL is set but Redis is unreachable"
+            ) from exc
+        if raw is None:
+            return None
+        data = json.loads(raw)
+        return data["session_id"], data["user_id"], 0.0
     return _pending_states.pop(state, None)
 
 
@@ -143,7 +164,10 @@ async def drive_connect(session: dict = Depends(_require_session)):
         )
     _prune_states()
     state = secrets.token_urlsafe(24)  # type: ignore[name-defined]
-    _state_save(state, session["session_id"], session["user_id"])
+    try:
+        _state_save(state, session["session_id"], session["user_id"])
+    except OAuthStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="oauth_state_unavailable") from exc
     return {"auth_url": build_auth_url(state)}
 
 
@@ -154,7 +178,10 @@ async def drive_callback(
     error: str = Query(""),
 ):
     _prune_states()
-    pending = _state_pop(state)
+    try:
+        pending = _state_pop(state)
+    except OAuthStateUnavailable as exc:
+        raise HTTPException(status_code=503, detail="oauth_state_unavailable") from exc
     if pending is None:
         raise HTTPException(status_code=400, detail="Invalid or expired OAuth state.")
     session_id, user_id, _ = pending

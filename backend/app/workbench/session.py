@@ -26,16 +26,29 @@ class WorkbenchRejected(Exception):
 
 
 def _resolve_product_root(item: Dict[str, Any], product_root: Optional[Path]) -> Path:
+    from app.factory.paths import UnsafeProductRoot, safe_workbench_product_root
+
+    raw: Optional[Path | str] = None
     if product_root:
-        return Path(product_root).resolve()
-    evidence = (item.get("request") or {}).get("evidence") or {}
-    for key in ("scaffold", "product_root", "path"):
-        if evidence.get(key):
-            return Path(str(evidence[key])).resolve()
-    ws = item.get("workspace") or {}
-    if ws.get("product_root"):
-        return Path(str(ws["product_root"])).resolve()
-    raise WorkbenchRejected("product_root required (pass explicitly or in request.evidence.scaffold)")
+        raw = product_root
+    else:
+        evidence = (item.get("request") or {}).get("evidence") or {}
+        for key in ("scaffold", "product_root", "path"):
+            if evidence.get(key):
+                raw = str(evidence[key])
+                break
+        if raw is None:
+            ws = item.get("workspace") or {}
+            if ws.get("product_root"):
+                raw = str(ws["product_root"])
+    if raw is None:
+        raise WorkbenchRejected(
+            "product_root required (pass explicitly or in request.evidence.scaffold)"
+        )
+    try:
+        return safe_workbench_product_root(raw)
+    except UnsafeProductRoot as exc:
+        raise WorkbenchRejected(str(exc), status_code=400) from exc
 
 
 def run_workbench_session(

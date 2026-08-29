@@ -64,13 +64,31 @@ def accounts_database_url() -> str:
 
 
 def accounts_host_fingerprint(url: Optional[str] = None) -> Optional[str]:
-    """Hostname only — never credentials — so /ready can detect a cutover."""
+    """Hostname only — never credentials — so /ready can detect a cutover.
+
+    This is the full hostname. Public ``/ready`` must use
+    :func:`public_accounts_host_label` instead of returning this value.
+    """
     from urllib.parse import urlparse
 
     raw = accounts_database_url() if url is None else (url or "").strip()
     if not raw:
         return None
     return urlparse(raw).hostname
+
+
+def public_accounts_host_label(hostname: Optional[str]) -> Optional[str]:
+    """Hash a DB hostname for unauthenticated health output.
+
+    Operators comparing cutovers still get a stable label; the full Neon
+    hostname stays on the master-key backup endpoint.
+    """
+    import hashlib
+
+    if not hostname:
+        return None
+    digest = hashlib.sha256(hostname.encode("utf-8")).hexdigest()[:16]
+    return f"sha256:{digest}"
 
 
 def accounts_sqlite_path() -> Path:

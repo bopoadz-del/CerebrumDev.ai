@@ -31,9 +31,12 @@ def _default_blocks_root() -> Path:
         return Path(env).resolve()
     here = Path(__file__).resolve()
     # /workspace/backend/app/factory -> try sibling repos
+    from app.factory.paths import factory_repo_root
+
+    repo = factory_repo_root()
     candidates = [
+        repo.parent / "Cerebrum-Blocks",
         here.parents[3] / "Cerebrum-Blocks",
-        Path("/home/ubuntu/repos/Cerebrum-Blocks"),
         Path("../Cerebrum-Blocks").resolve(),
     ]
     for c in candidates:
