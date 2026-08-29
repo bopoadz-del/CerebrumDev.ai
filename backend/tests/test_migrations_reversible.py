@@ -45,8 +45,9 @@ def test_usage_counters_migration_round_trips(tmp_path):
     assert up.returncode == 0, up.stderr
     assert "usage_counters" in _tables(url), "upgrade did not create usage_counters"
 
-    # Downgrade one step must DROP usage_counters (reversible, not a no-op).
-    down = _alembic(["downgrade", "-1"], url)
+    # Downgrade to the revision before usage_counters (0003 now sits on
+    # head; ``-1`` would only drop billing columns).
+    down = _alembic(["downgrade", "0001"], url)
     assert down.returncode == 0, down.stderr
     assert "usage_counters" not in _tables(url), "downgrade did not drop usage_counters"
 

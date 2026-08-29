@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import threading
@@ -146,11 +147,29 @@ def _database_url() -> str:
     return "sqlite:///" + _db_path()
 
 
+_log = logging.getLogger(__name__)
+
+
 def _ensure_column(conn: sa.engine.Connection, table: str, column: str, ddl: str) -> None:
-    """Add a column to a pre-existing table (cheap pilot migration)."""
-    cols = {c["name"] for c in sa.inspect(conn).get_columns(table)}
-    if column not in cols:
-        conn.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
+    """Deprecated. Schema changes go through Alembic only.
+
+    One-release safety shim: logs if something still calls this helper.
+    It must not ``ALTER TABLE`` on a production request path.
+    """
+    present = False
+    try:
+        present = column in {c["name"] for c in sa.inspect(conn).get_columns(table)}
+    except Exception:  # noqa: BLE001 -- logging must not fail the caller
+        present = False
+    _log.warning(
+        "accounts_store._ensure_column is disabled; Alembic is the schema "
+        "source of truth (table=%s column=%s present=%s ddl=%s). This helper "
+        "will be removed after one release.",
+        table,
+        column,
+        present,
+        ddl,
+    )
 
 
 def _engine() -> sa.engine.Engine:
@@ -160,13 +179,9 @@ def _engine() -> sa.engine.Engine:
         if eng is None:
             eng = sa.create_engine(url, pool_pre_ping=True)
             with eng.begin() as conn:
+                # Table bootstrap only (CREATE TABLE IF NOT EXISTS). Missing
+                # columns are Alembic's job — never ALTER TABLE here.
                 _META.create_all(conn, checkfirst=True)
-                _ensure_column(conn, "accounts", "reset_token_hash", "reset_token_hash TEXT")
-                _ensure_column(conn, "accounts", "reset_expires_at", "reset_expires_at TEXT")
-                _ensure_column(conn, "accounts", "trial_ends_at", "trial_ends_at TEXT")
-                _ensure_column(conn, "accounts", "subscription_status", "subscription_status TEXT")
-                _ensure_column(conn, "accounts", "stripe_customer_id", "stripe_customer_id TEXT")
-                _ensure_column(conn, "accounts", "stripe_subscription_id", "stripe_subscription_id TEXT")
             _ENGINES[url] = eng
         return eng
 
