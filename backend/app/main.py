@@ -54,7 +54,6 @@ from .routers import (
     chat,
     deploy,
     factory_drive,
-    product_factory,
     session_product,
     delivery_standard,
     resend_verification,
@@ -203,14 +202,9 @@ app.include_router(chat.router, prefix="/v1/sessions", tags=["chat"], dependenci
 app.include_router(deploy.router, prefix="/v1/sessions", tags=["deploy"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.router, prefix="/v1/sessions", tags=["factory-drive"], dependencies=[Depends(require_api_key)])
 app.include_router(factory_drive.callback_router)
-# Factory runs are paid actions: require_entitled blocks expired trials with
-# 402 when BILLING_ENFORCEMENT is on (it chains require_api_key).
-app.include_router(
-    product_factory.router,
-    prefix="/v1/factory/product",
-    tags=["product-factory"],
-    dependencies=[Depends(require_entitled)],
-)
+# The live product surface is Floor session chat + ``/v1/sessions/{id}/product/*``.
+# Unused ``/v1/factory/product/*`` was a second HTTP door (frontend, Playwright,
+# and CI never called it) and is not mounted.
 # The coder's canonical brief: immutable standard + per-product domain pack.
 app.include_router(
     delivery_standard.router,

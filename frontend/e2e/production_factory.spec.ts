@@ -86,13 +86,23 @@ const SMALL_BRIEF = 'build me a vineyard operations desk for a family winery'
 
 async function signInLive(page: Page) {
   if (liveToken) {
-    await page.addInitScript(
-      ([token, email]) => {
-        localStorage.setItem('cerebrum.factory.token', token)
-        if (email) localStorage.setItem('cerebrum.factory.email', email)
+    await page.context().addCookies([
+      {
+        name: 'cdt',
+        value: liveToken,
+        domain: 'api.cerebrum-dev.com',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+        sameSite: 'Lax',
       },
-      [liveToken, liveEmail],
-    )
+    ])
+    if (liveEmail) {
+      await page.addInitScript((email) => {
+        localStorage.setItem('cerebrum.factory.email', email)
+        localStorage.removeItem('cerebrum.factory.token')
+      }, liveEmail)
+    }
     await page.goto('/')
   } else {
     await page.goto('/')

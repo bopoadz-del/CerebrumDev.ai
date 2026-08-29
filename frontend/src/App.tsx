@@ -4,10 +4,11 @@ import {
   auth,
   clearSession,
   domains,
-  getToken,
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
   sessions,
+  setSession,
+  signOut,
 } from './api/factory'
 import { AuthGate, VerifyEmailGate } from './authGates'
 import { Account, Floor, Platforms, Subscription } from './factoryViews'
@@ -18,7 +19,7 @@ export { BlueprintCard, Floor, Platforms, Subscription } from './factoryViews'
 type View = 'floor' | 'platforms' | 'subscription' | 'account'
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean>(!!getToken())
+  const [authed, setAuthed] = useState<boolean | null>(null)
   const [view, setView] = useState<View>('floor')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
@@ -28,7 +29,6 @@ export default function App() {
   const [bootNonce, setBootNonce] = useState(0)
 
   useEffect(() => {
-    if (!authed) return
     let cancelled = false
     ;(async () => {
       const params = new URLSearchParams(window.location.search)
@@ -42,7 +42,8 @@ export default function App() {
         }
       }
       try {
-        await auth.me()
+        const me = await auth.me()
+        if (me.email) setSession(String(me.email))
         const list = await sessions.list()
         const arr = Array.isArray(list) ? list : list.sessions ?? []
         let sid = arr[0]?.session_id
@@ -54,18 +55,22 @@ export default function App() {
           setNeedsEmailVerify(false)
           setBootError(null)
           setSessionId(sid ?? null)
+          setAuthed(true)
         }
       } catch (e) {
         if (!cancelled) {
           if (e instanceof ApiError && e.status === 401) {
             clearSession()
             setNeedsEmailVerify(false)
+            setSessionId(null)
             setAuthed(false)
           } else if (isEmailNotVerifiedError(e)) {
             setBootError(null)
             setNeedsEmailVerify(true)
+            setAuthed(true)
           } else {
             setBootError(e instanceof Error ? e.message : 'backend unreachable')
+            setAuthed(true)
           }
         }
       }
@@ -73,7 +78,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [authed, bootNonce])
+  }, [bootNonce])
 
   useEffect(() => {
     if (!sessionId) return
@@ -93,12 +98,19 @@ export default function App() {
     }
   }, [sessionId])
 
+  if (authed === null)
+    return (
+      <div className="center-screen">
+        <div className="loader">Opening your factory floor…</div>
+      </div>
+    )
   if (!authed)
     return (
       <AuthGate
         onAuthed={(info) => {
           setPendingDevToken(info?.devVerificationToken ?? null)
           setAuthed(true)
+          setBootNonce((n) => n + 1)
         }}
       />
     )
@@ -114,10 +126,11 @@ export default function App() {
           setBootNonce((n) => n + 1)
         }}
         onLogout={() => {
-          clearSession()
-          setNeedsEmailVerify(false)
-          setPendingDevToken(null)
-          setAuthed(false)
+          void signOut().then(() => {
+            setNeedsEmailVerify(false)
+            setPendingDevToken(null)
+            setAuthed(false)
+          })
         }}
       />
     )
@@ -170,7 +183,13 @@ export default function App() {
         {view === 'floor' && <Floor sessionId={sessionId} goPlatforms={() => setView('platforms')} />}
         {view === 'platforms' && <Platforms sessionId={sessionId} />}
         {view === 'subscription' && <Subscription />}
-        {view === 'account' && <Account onLogout={() => { clearSession(); setAuthed(false) }} />}
+        {view === 'account' && (
+          <Account
+            onLogout={() => {
+              void signOut().then(() => setAuthed(false))
+            }}
+          />
+        )}
       </main>
       {domainStoreNotice && (
         <div className="toast" role="status">

@@ -18,7 +18,7 @@ const BLUEPRINT = {
 
 async function mockVerifiedFactory(page: Page) {
   await page.addInitScript(() => {
-    localStorage.setItem('cerebrum.factory.token', 'cdt_e2e_verified')
+    localStorage.removeItem('cerebrum.factory.token')
     localStorage.setItem('cerebrum.factory.email', 'e2e.floor@factory.dev')
   })
   await page.route('**/v1/auth/me', async (route) => {
