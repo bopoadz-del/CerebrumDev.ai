@@ -86,6 +86,20 @@ def test_engine_does_not_add_missing_columns(tmp_path, monkeypatch):
         accounts_store._ENGINES.clear()
 
 
+def test_apply_migrations_does_not_reset_process_logging(
+    tmp_path, monkeypatch, caplog
+):
+    """Alembic fileConfig must not wipe pytest/app handlers (CI caplog leak)."""
+    monkeypatch.setenv("ACCOUNTS_DATABASE_URL", f"sqlite:///{tmp_path}/fresh.db")
+    monkeypatch.delenv("ACCOUNTS_DB_PATH", raising=False)
+    apply_accounts_migrations()
+    with caplog.at_level(logging.WARNING):
+        logging.getLogger("app.factory.coder").warning(
+            "cross-provider fallback not armed: paid model refused"
+        )
+    assert "not armed" in caplog.text
+
+
 def test_missing_columns_are_added_by_alembic_not_runtime(tmp_path, monkeypatch):
     db = tmp_path / "legacy.db"
     _legacy_accounts_db(db)

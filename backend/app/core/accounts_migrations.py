@@ -31,4 +31,5 @@ def apply_accounts_migrations() -> None:
     ini = _alembic_ini()
     cfg = Config(str(ini))
     cfg.set_main_option("script_location", str(ini.parent / "alembic"))
+    cfg.attributes["skip_logging_config"] = True
     command.upgrade(cfg, "head")
