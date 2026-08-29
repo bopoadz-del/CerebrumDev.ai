@@ -3,7 +3,7 @@ uvicorn==0.52.0
 pydantic==2.10.4
 python-multipart==0.0.20
 httpx==0.28.1
-python-dotenv==1.2.2
+python-dotenv==1.2.3
 cryptography==43.0.3
 pypdf==6.14.2
 python-docx==1.2.0
@@ -21,11 +21,11 @@ alembic==1.18.5
 
 # Billing (P3): Stripe subscription checkout + webhooks. Account state changes
 # only through accounts_store.set_subscription; this SDK is the transport.
-stripe==15.3.1
+stripe==15.5.1
 
 # Observability: error tracking + performance. Activates when SENTRY_DSN is
 # set; inert otherwise. See backend/.env.example.
-sentry-sdk[fastapi]==2.66.1
+sentry-sdk[fastapi]==2.68.1
 
 # Prometheus /metrics (ops scrape; route is master-key gated in main).
 prometheus-client==0.21.1
@@ -56,7 +56,7 @@ pytest==9.1.1
 anyio==4.14.2
 click==8.4.2
 numpy==2.4.6
-orjson==3.11.9
+orjson==3.12.0
 rich==15.0.0
 sniffio==1.3.1
 transformers==5.14.1
