@@ -36,11 +36,13 @@ def sqlite_path() -> Path:
 
 
 def normalise_url(raw: str) -> str:
-    if raw.startswith("postgres://"):
-        raw = "postgresql://" + raw[len("postgres://"):]
-    if raw.startswith("postgresql://"):
-        raw = raw.replace("postgresql://", "postgresql+psycopg://", 1)
-    return raw
+    from app.core.accounts_store import (
+        normalize_accounts_database_url,
+        prepare_libpq_client_env,
+    )
+
+    prepare_libpq_client_env()
+    return normalize_accounts_database_url(raw)
 
 
 def read_sqlite(path: Path) -> Dict[str, List[Tuple]]:

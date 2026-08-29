@@ -76,6 +76,22 @@ class TestMigrationFailureStopsTheBoot:
                 f"successful migration: {line.strip()}"
             )
 
+    def test_production_image_does_not_probe_root_client_cert(self):
+        """Non-root + HOME=/root made libpq open /root/.postgresql/postgresql.crt.
+
+        That path is EACCES after setpriv drops to uid 10001, and Alembic
+        aborted the Neon boot. sslmode=require is enough; no client cert.
+        """
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        entry = (REPO_ROOT / "docker-entrypoint.sh").read_text(encoding="utf-8")
+        assert "ENV HOME=/app" in dockerfile
+        assert "--home-dir /app" in dockerfile
+        assert "PGSSLCERT" not in dockerfile or "ENV PGSSLCERT" not in dockerfile
+        assert "export HOME=/app" in entry
+        assert "unset PGSSLCERT" in entry
+        assert "unset PGSSLKEY" in entry
+        assert "/root/*" in entry
+
 
 class TestHealthCheckPathPointsAtSomethingThatCanFail:
     def test_render_health_check_uses_the_endpoint_with_real_probes(self):
