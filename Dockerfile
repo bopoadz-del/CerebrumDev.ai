@@ -41,10 +41,15 @@ COPY backend/alembic /app/alembic
 COPY backend/scripts /app/scripts
 
 ENV PORT=8000
+# libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
+# leaves HOME=/root. After the entrypoint drops to uid 10001 that path is
+# EACCES and Alembic/Neon boot dies — Neon only needs sslmode=require.
+# HOME=/app is owned by appuser; do not set PGSSLCERT.
+ENV HOME=/app
 # Non-root runtime. The entrypoint chowns $STORAGE_PATH when started as root
 # (Render disk mounts are often root-owned) then drops to uid 10001.
 # The HTTP contract is unchanged: bind 0.0.0.0:$PORT after migrations.
-RUN useradd --system --uid 10001 --no-create-home appuser \
+RUN useradd --system --uid 10001 --home-dir /app --no-create-home appuser \
     && mkdir -p /app/storage \
     && chown -R appuser:appuser /app
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh

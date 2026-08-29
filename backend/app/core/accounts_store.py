@@ -26,6 +26,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -136,14 +137,85 @@ def _db_path() -> str:
     return os.path.join(storage, "accounts.db")
 
 
+_LIBPQ_CERT_ENV = ("PGSSLCERT", "PGSSLKEY")
+
+
+def prepare_libpq_client_env() -> None:
+    """Stop libpq probing an unreadable default client certificate.
+
+    Measured on Render after the post-``7ea3c48`` non-root image: ``alembic
+    upgrade head`` died with ``could not open certificate file
+    "/root/.postgresql/postgresql.crt": Permission denied``. ``setpriv``
+    drops to uid 10001 but leaves ``HOME=/root`` (python:slim default).
+    ``/root`` is mode 0700, so the default sslcert path is EACCES. libpq
+    treats that as a hard SSL failure even though Neon only needs
+    ``sslmode=require`` — no client certificate.
+
+    Safe to call more than once. No-op when ``HOME`` is already readable
+    and no ``PGSSLCERT`` / ``PGSSLKEY`` points at an unreadable path.
+    """
+    home = os.environ.get("HOME") or ""
+    if not home or not os.access(home, os.R_OK | os.X_OK):
+        for candidate in (
+            os.environ.get("STORAGE_PATH", "").strip(),
+            "/app",
+            "/tmp",
+        ):
+            if candidate and os.access(candidate, os.R_OK | os.X_OK):
+                os.environ["HOME"] = candidate
+                break
+        else:
+            os.environ["HOME"] = "/tmp"
+
+    for key in _LIBPQ_CERT_ENV:
+        path = (os.environ.get(key) or "").strip()
+        if not path:
+            continue
+        if path.startswith("/root/") or not os.access(path, os.R_OK):
+            os.environ.pop(key, None)
+
+
+def normalize_accounts_database_url(url: str) -> str:
+    """psycopg3 driver rewrite plus Neon TLS without a client cert.
+
+    Strips ``sslcert`` / ``sslkey`` query params that point at ``/root/...``
+    or any unreadable file. Adds ``sslmode=require`` for ``*.neon.tech``
+    when the URL did not already set a mode. Does not invent a client cert.
+    """
+    url = (url or "").strip()
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
+    if url.startswith("postgresql://") and "+psycopg" not in url:
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+    if not url.startswith("postgresql"):
+        return url
+
+    parsed = urlparse(url)
+    kept: List[tuple[str, str]] = []
+    have_sslmode = False
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        lowered = key.lower()
+        if lowered == "sslmode":
+            have_sslmode = True
+        if lowered in {"sslcert", "sslkey"}:
+            if (
+                not value
+                or value.startswith("/root/")
+                or not os.access(value, os.R_OK)
+            ):
+                continue
+        kept.append((key, value))
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".neon.tech") and not have_sslmode:
+        kept.append(("sslmode", "require"))
+    return urlunparse(parsed._replace(query=urlencode(kept)))
+
+
 def _database_url() -> str:
     pg = os.getenv("ACCOUNTS_DATABASE_URL", "").strip()
     if pg:
-        if pg.startswith("postgres://"):
-            pg = "postgresql://" + pg[len("postgres://"):]
-        if pg.startswith("postgresql://") and "+psycopg" not in pg:
-            pg = pg.replace("postgresql://", "postgresql+psycopg://", 1)
-        return pg
+        prepare_libpq_client_env()
+        return normalize_accounts_database_url(pg)
     return "sqlite:///" + _db_path()
 
 
@@ -177,6 +249,7 @@ def _engine() -> sa.engine.Engine:
     with _LOCK:
         eng = _ENGINES.get(url)
         if eng is None:
+            prepare_libpq_client_env()
             eng = sa.create_engine(url, pool_pre_ping=True)
             with eng.begin() as conn:
                 # Table bootstrap only (CREATE TABLE IF NOT EXISTS). Missing

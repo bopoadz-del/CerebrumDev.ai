@@ -162,12 +162,14 @@ def pg_dump_probe() -> Dict[str, Any]:
 
 
 def _sqlalchemy_accounts_url(url: str) -> str:
-    """Same driver rewrite accounts_store uses — postgres:// → postgresql+psycopg."""
-    if url.startswith("postgres://"):
-        url = "postgresql://" + url[len("postgres://") :]
-    if url.startswith("postgresql://") and "+psycopg" not in url:
-        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
-    return url
+    """Same driver rewrite + libpq hygiene accounts_store uses."""
+    from app.core.accounts_store import (
+        normalize_accounts_database_url,
+        prepare_libpq_client_env,
+    )
+
+    prepare_libpq_client_env()
+    return normalize_accounts_database_url(url)
 
 
 def _sanitize_dump_err(text: str, url: str) -> str:
