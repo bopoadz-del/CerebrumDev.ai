@@ -25,6 +25,7 @@ from app.factory.build.roles import (
     _DISPATCH_RUNTIME,
     RoleContext,
     _block_contract,
+    _ensure_handler_fails_closed,
     _handler_module,
     _templated_body,
 )
@@ -366,6 +367,53 @@ def test_the_templated_handler_does_not_report_ok_around_a_failed_block(tmp_path
     assert out["ok"] is False
     assert "workflow" in out["error"]
     assert "Input validation failed" in out["error"]
+
+
+def test_handler_module_refuses_success_over_a_failed_block(tmp_path):
+    """Regression: coder body that ignores execute() errors must not ship ok:True.
+
+    Live invoice-management handlers (moonshot-v1-8k / kimi-k2.7-code) returned
+    success over a failed block; writer_behaviour then halted the whole run.
+    """
+    dishonest = (
+        "    res = execute(BLOCK_IDS[0], payload, action='insert')\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID, 'ignored': res}\n"
+    )
+    module_text = _handler_module(
+        "invoice_management",
+        ["database"],
+        dishonest,
+        "coder LLM (moonshot-v1-8k)",
+        {"database": "insert"},
+    )
+    handler_path = tmp_path / "handler.py"
+    handler_path.write_text(module_text, encoding="utf-8")
+
+    import sys
+    import types
+
+    fake = types.ModuleType("app.dispatch")
+    fake.execute = lambda block_id, payload, action=None, params=None: {
+        "status": "error",
+        "block": block_id,
+        "error": "writer_behaviour gate: forced block failure",
+    }
+    sys.modules["app.dispatch"] = fake
+    try:
+        spec = importlib.util.spec_from_file_location("coder_honesty_probe", handler_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.handle({"reference": "INV-1"})
+    finally:
+        del sys.modules["app.dispatch"]
+
+    assert out["ok"] is False, out
+    assert "database" in str(out.get("error")), out
+    assert "forced block failure" in str(out.get("error")), out
+    wrapped = _ensure_handler_fails_closed(dishonest)
+    assert "_block_errors" in wrapped
+    assert "_watched" in wrapped
+    assert "execute=_watched" in wrapped
 
 
 def test_the_smoke_scans_nested_results_for_block_errors(tmp_path):

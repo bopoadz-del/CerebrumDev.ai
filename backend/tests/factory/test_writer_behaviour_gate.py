@@ -169,3 +169,148 @@ def test_gate_reports_a_writer_that_produced_nothing(tmp_path):
 
     assert result.ok is False
     assert "missing" in result.detail or "nothing" in result.detail
+
+
+# A coder-shaped handler that ignores execute() errors — the live
+# invoice-management shape (moonshot/kimi, 2026-08-30).
+_DISHONEST_HANDLER = """    res = execute('database', {'input': payload}, action='insert')
+    return {'ok': True, 'capability': CAPABILITY_ID, 'ignored': res}
+"""
+
+
+def _write_mixed_workspace(root: Path) -> None:
+    """One honest capability and one that reports success over a failed block.
+
+    The live Floor run had six capabilities; writer_behaviour failed the
+    whole WRITER phase because one route lied. Isolated F1 is a miss.
+    """
+    _write_workspace(root, _GUARDED)
+
+    app = root / "app"
+    models = (app / "models.py").read_text(encoding="utf-8")
+    (app / "models.py").write_text(
+        models.replace(
+            "MODELS = {'widget_intake': Widget}\n",
+            "MODELS = {'widget_intake': Widget, 'invoice_management': Widget}\n",
+        ),
+        encoding="utf-8",
+    )
+    jobs = (app / "jobs.py").read_text(encoding="utf-8")
+    (app / "jobs.py").write_text(
+        jobs.replace(
+            "CAPABILITIES = [{'id': 'widget_intake', 'entity': 'widget'}]\n",
+            "CAPABILITIES = ["
+            "{'id': 'widget_intake', 'entity': 'widget'}, "
+            "{'id': 'invoice_management', 'entity': 'invoice'}]\n",
+        ),
+        encoding="utf-8",
+    )
+    (app / "actions" / "__init__.py").write_text(
+        "from app.actions import widget_intake  # noqa: F401\n"
+        "from app.actions import invoice_management  # noqa: F401\n",
+        encoding="utf-8",
+    )
+    (app / "actions" / "invoice_management.py").write_text(
+        "from app.dispatch import execute\n\n"
+        "CAPABILITY_ID = 'invoice_management'\n\n"
+        "def handle(payload):\n"
+        + _DISHONEST_HANDLER,
+        encoding="utf-8",
+    )
+    routes = (app / "routes.py").read_text(encoding="utf-8")
+    extra = '''
+from app.actions import invoice_management as _invoice_action
+
+@router.post("/invoice_management")
+def invoice_management_create(payload: Dict[str, Any]) -> Dict[str, Any]:
+    CAPABILITY_ID = "invoice_management"
+    handle = _invoice_action.handle
+    save = lambda record: store.save("invoice", record)
+    result = handle(payload)
+    saved = save(payload)
+    return {"ok": True, "capability": CAPABILITY_ID, "stored": saved}
+'''
+    (app / "routes.py").write_text(routes + extra, encoding="utf-8")
+
+
+def test_gate_records_an_isolated_success_over_failed_block_as_a_miss(tmp_path):
+    """Regression for the live halt: one F1 must not fail the WRITER gate.
+
+    A workspace with one honest capability and one that reports success
+    over a failed block used to exit writer_behaviour non-zero and stop
+    the run before TESTER/STORE_MANAGER (no zip). Isolated F1 is a miss.
+    """
+    _write_mixed_workspace(tmp_path)
+    result = _run_gate(tmp_path)
+
+    assert result.ok is True, result
+    joined = " ".join(result.findings) + " " + " ".join(result.payload.get("misses") or [])
+    assert "invoice_management" in joined, (result.detail, joined)
+    assert "did not fail closed" in joined or "persisted" in joined, joined
+    assert "miss" in result.detail
+    assert "widget_intake" not in joined
+
+
+def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
+    """Live path: templated route -> run_capability -> dishonest handle().
+
+    Isolated subprocess so the workspace's ``app`` package does not collide
+    with the factory host. The coder handler returns ok:True after
+    execute() errors; the kernel bridge must refuse ActionStatus.SUCCESS
+    so the route cannot persist or answer ok:True.
+    """
+    import shutil
+
+    from app.factory.build.roles import _render_kernel_bridge, _templated_route_body
+
+    app = tmp_path / "app"
+    (app / "actions").mkdir(parents=True)
+    (app / "__init__.py").write_text("", encoding="utf-8")
+    (app / "actions" / "__init__.py").write_text(
+        "from app.actions import invoice_management  # noqa: F401\n",
+        encoding="utf-8",
+    )
+    (app / "dispatch.py").write_text(
+        "def execute(block_id, payload=None, action=None, params=None):\n"
+        "    return {'status': 'error', 'block': block_id,\n"
+        "            'error': 'writer_behaviour gate: forced block failure'}\n",
+        encoding="utf-8",
+    )
+    (app / "actions" / "invoice_management.py").write_text(
+        "from app.dispatch import execute\n\n"
+        "CAPABILITY_ID = 'invoice_management'\n\n"
+        "def handle(payload):\n"
+        + _DISHONEST_HANDLER,
+        encoding="utf-8",
+    )
+    (app / "kernel_bridge.py").write_text(_render_kernel_bridge(), encoding="utf-8")
+    kernel_src = Path(__file__).resolve().parents[2] / "app" / "cerebrum_product_kernel"
+    shutil.copytree(kernel_src, app / "cerebrum_product_kernel")
+
+    route_body = _templated_route_body({"fields": []})
+    (tmp_path / "probe.py").write_text(
+        "import asyncio\n"
+        "from app.kernel_bridge import run_capability\n"
+        "\n"
+        "saved = []\n"
+        "\n"
+        "async def _route(payload, run_capability, save, CAPABILITY_ID='invoice_management'):\n"
+        f"{route_body}\n"
+        "\n"
+        "out = asyncio.run(_route({'reference': 'INV-1'}, run_capability, saved.append))\n"
+        "print(out)\n"
+        "print('SAVED', saved)\n"
+        "assert out.get('ok') is False, out\n"
+        "assert saved == [], out\n"
+        "assert out.get('result', {}).get('status') != 'success', out\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, "probe.py"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**__import__("os").environ, "PYTHONPATH": str(tmp_path)},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr

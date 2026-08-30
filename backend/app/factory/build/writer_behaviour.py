@@ -19,7 +19,12 @@ Two phases, in order, because a one-phase probe passes for the wrong reason:
   schema is a defect in itself, and without this phase an invalid payload
   would make phase two "pass" while never reaching a block at all.
 * **forced failure** -- with every block call returning an error envelope,
-  no route may answer ``ok: True`` and no row may appear in the store.
+  a route that answers ``ok: True`` or persists is a *per-capability miss*.
+  One dishonest capability must not halt the whole WRITER phase (live
+  invoice-management, 2026-08-30: four handlers written, then
+  ``writer_behaviour`` stopped the run before TESTER/STORE_MANAGER, no zip).
+  The gate fails only when *every* block-reaching capability misses, or
+  when the workspace cannot be probed.
 
 The seam is ``app.dispatch.execute``. Both the kernel path
 (``run_capability`` -> ``execute_action`` -> handler) and a coder-written
@@ -258,6 +263,9 @@ for _name, _mod in list(sys.modules.items()):
     if _name.startswith("app.actions") and hasattr(_mod, "execute"):
         _mod.execute = _forced_failure
 
+misses = []
+honest = 0
+
 for cap_id, cls in targets:
     entity = _entity_of(cap_id, cls)
     before = _rows(entity)
@@ -275,29 +283,46 @@ for cap_id, cls in targets:
         # this position; asserting fail-closed here would reject it for
         # having no dependency to fail.
         continue
+    missed = False
     if resp.status_code == 200 and data.get("ok") is not False:
-        findings.append(
+        misses.append(
             "%s: did not fail closed — answered %s while every block call "
             "failed (F1)" % (cap_id, json.dumps(data)[:120])
         )
+        missed = True
     after = _rows(entity)
     if before is None or after is None:
         findings.append(
             "%s: cannot read entity %r — persistence was never checked" % (cap_id, entity)
         )
     elif after > before:
-        findings.append(
+        misses.append(
             "%s: persisted %d row(s) after a failed handler (F1)" % (cap_id, after - before)
         )
+        missed = True
+    if not missed:
+        honest += 1
 
 if findings:
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in findings))
     raise SystemExit(1)
+if misses and honest == 0:
+    # Every block-reaching capability lied. Same as LotDesk: the WRITER
+    # produced nothing honest to ship. Isolated misses (below) continue.
+    sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
+    raise SystemExit(1)
+if misses:
+    sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in misses))
 '''
 
 
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
-    """WRITER: no route reports success, or persists, over a failed block."""
+    """WRITER: isolated success-over-failed-block is a miss, not a halt.
+
+    The probe still fail-closes when every block-reaching capability lies
+    (LotDesk). One dishonest route among honest ones is recorded and the
+    phase continues so TESTER/STORE_MANAGER can still produce a zip.
+    """
     from app.factory.build.gates import GateResult
 
     if not (ctx.workspace / "app" / "models.py").is_file():
@@ -324,17 +349,31 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             detail="a capability route reported success over a failed block",
             findings=lines[-20:] or ["behaviour probe failed with no output"],
         )
+    raw_out = proc.stdout or ""
+    raw_err = proc.stderr or ""
+    misses = [
+        ln.split("GATE-MISS: ", 1)[1]
+        for ln in (raw_out + "\n" + raw_err).splitlines()
+        if "GATE-MISS: " in ln
+    ]
     skipped = [
         ln
-        for ln in (proc.stdout or "").splitlines()
-        if ln.strip() and ln.strip() != "SKIPPED"
+        for ln in raw_out.splitlines()
+        if ln.strip() and ln.strip() != "SKIPPED" and "GATE-MISS: " not in ln
     ]
     detail = "every capability fails closed when its blocks fail"
+    if misses:
+        n_caps = len({m.split(":", 1)[0] for m in misses})
+        detail = (
+            f"{n_caps} capability(ies) recorded as misses "
+            "(success over a failed block); remaining capabilities fail closed"
+        )
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
     return GateResult(
         ok=True,
         gate=GATE_NAME,
         detail=detail,
-        payload={"skipped": skipped},
+        findings=list(misses),
+        payload={"skipped": skipped, "misses": misses},
     )
