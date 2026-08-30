@@ -94,10 +94,26 @@ def blueprint_hash(blueprint: Any) -> str:
 
 class Outcome(str, Enum):
     SUCCESS = "SUCCESS"
+    #: Instrumented collect-all run: every phase executed, every gate
+    #: finding recorded, no halt. NOT a success — ``BuildOutcome.ok``
+    #: stays False and no package identity is sealed. The build is an
+    #: instrument report (board P7: one run logging ALL gate findings).
+    COLLECT_ALL_REPORT = "COLLECT_ALL_REPORT"
     FAILED_GATE = "FAILED_GATE"
     FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
     FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
     FAILED_AUTHORITY = "FAILED_AUTHORITY"
+
+
+def _collect_all_enabled() -> bool:
+    """FACTORY_GATE_COLLECT_ALL read live (tests / operators flip it
+    without re-import). When truthy the run loop records every failed
+    gate and RoleError as findings and keeps going instead of halting,
+    so ONE run surfaces the complete list (board P7 collect-all). Lane
+    violations (AuthorityError) stay terminal — that is a security
+    boundary, not a build finding."""
+    raw = os.getenv("FACTORY_GATE_COLLECT_ALL", "")
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass(frozen=True)
@@ -443,6 +459,7 @@ class RoleRunner:
         done = self.ledger.completed_roles()
         rework_used = 0
         work_list: Sequence[str] = ()
+        collected: list[str] = []
 
         index = 0
         while index < len(BUILD_PHASES):
@@ -474,6 +491,19 @@ class RoleRunner:
                     rework=rework_used,
                 )
             except RoleError as exc:
+                if _collect_all_enabled():
+                    finding = f"{role.value}: role error: {exc}"
+                    collected.append(finding)
+                    self.ledger.append(
+                        EventKind.NOTE,
+                        role=role,
+                        detail=f"COLLECT-ALL: halt suppressed — {finding}",
+                        payload={"collect_all": True, "finding": finding},
+                    )
+                    done.add(role)
+                    work_list = ()
+                    index += 1
+                    continue
                 self.ledger.append(
                     EventKind.PHASE_ABORTED, role=role, detail=str(exc)
                 )
@@ -490,7 +520,30 @@ class RoleRunner:
                 index += 1
                 continue
 
-            # Gate failed. Only the TESTER sends work back to the WRITER;
+            # Gate failed. In collect-all mode every failed gate is a
+            # recorded finding, never a halt: the phase is marked done so
+            # later phases still run and ONE instrumented run surfaces the
+            # complete list. No rework rounds either — a single linear pass.
+            if _collect_all_enabled():
+                header = f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}"
+                collected.append(header)
+                collected.extend(f"{role.value}: {f}" for f in verdict.findings)
+                self.ledger.append(
+                    EventKind.NOTE,
+                    role=role,
+                    detail=f"COLLECT-ALL: halt suppressed — {header}",
+                    payload={
+                        "collect_all": True,
+                        "gate": verdict.gate,
+                        "findings": list(verdict.findings),
+                    },
+                )
+                done.add(role)
+                work_list = ()
+                index += 1
+                continue
+
+            # Only the TESTER sends work back to the WRITER;
             # every other failed gate is terminal, because there is no role
             # positioned to act on its findings.
             if role is not REWORK_SOURCE:
@@ -523,6 +576,15 @@ class RoleRunner:
             # Send the WRITER back round. Its earlier pass no longer counts.
             done.discard(REWORK_TARGET)
             index = BUILD_PHASES.index(REWORK_TARGET)
+
+        if collected:
+            return self._finish(
+                Outcome.COLLECT_ALL_REPORT,
+                f"collect-all: all phases ran; {len(collected)} finding(s) "
+                "recorded — instrument report, not a clean pass",
+                rework=rework_used,
+                findings=collected,
+            )
 
         return self._finish(
             Outcome.SUCCESS,
