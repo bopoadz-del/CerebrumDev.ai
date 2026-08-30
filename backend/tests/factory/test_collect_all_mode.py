@@ -22,21 +22,21 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 @pytest.fixture(autouse=True)
 def _no_paid_calls(monkeypatch):
-      monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
 
 @pytest.fixture()
 def blueprint():
-      return load_blueprint(SMOKE)
+    return load_blueprint(SMOKE)
 
 
 def test_collect_all_records_failed_gate_and_keeps_going(blueprint, tmp_path, monkeypatch):
-      """A gate failure that is terminal today becomes a recorded finding."""
-      monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
+    """A gate failure that is terminal today becomes a recorded finding."""
+    monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
 
     def empty_cloner(ctx):
-              # Claims blocks were vendored but writes nothing (cloner gate fails).
-              return RoleResult(ok=True, detail="lied", vendored_blocks=("analytics",))
+        # Claims blocks were vendored but writes nothing (cloner gate fails).
+        return RoleResult(ok=True, detail="lied", vendored_blocks=("analytics",))
 
     roles = dict(ROLE_IMPLEMENTATIONS)
     roles[BuildRole.CLONER] = empty_cloner
@@ -59,19 +59,19 @@ def test_collect_all_records_failed_gate_and_keeps_going(blueprint, tmp_path, mo
 
 
 def test_collect_all_clean_run_is_still_success(blueprint, tmp_path, monkeypatch):
-      """The flag alone must not change a green build's outcome."""
-      monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
-      outcome = RoleRunner(blueprint, tmp_path / "build").run()
-      assert outcome.outcome is Outcome.SUCCESS
-      assert outcome.ok
+    """The flag alone must not change a green build's outcome."""
+    monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
+    outcome = RoleRunner(blueprint, tmp_path / "build").run()
+    assert outcome.outcome is Outcome.SUCCESS
+    assert outcome.ok
 
 
 def test_flag_off_keeps_terminal_behaviour(blueprint, tmp_path, monkeypatch):
-      """Default (flag unset) is byte-for-byte today's halt semantics."""
-      monkeypatch.delenv("FACTORY_GATE_COLLECT_ALL", raising=False)
+    """Default (flag unset) is byte-for-byte today's halt semantics."""
+    monkeypatch.delenv("FACTORY_GATE_COLLECT_ALL", raising=False)
 
     def empty_cloner(ctx):
-              return RoleResult(ok=True, detail="lied", vendored_blocks=("analytics",))
+        return RoleResult(ok=True, detail="lied", vendored_blocks=("analytics",))
 
     roles = dict(ROLE_IMPLEMENTATIONS)
     roles[BuildRole.CLONER] = empty_cloner
