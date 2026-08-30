@@ -23,12 +23,15 @@ Two phases, in order, because a one-phase probe passes for the wrong reason:
   One dishonest capability must not halt the whole WRITER phase (live
   invoice-management, 2026-08-30: four handlers written, then
   ``writer_behaviour`` stopped the run before TESTER/STORE_MANAGER, no zip).
-  Isolated schema refusals are the same class of miss: they must not halt
-  a mixed workspace. The gate fails only when *every* capability is
-  dishonest (all refuse their own schema, or every block-reaching
-  capability lies), or when the workspace cannot be probed. The Floor
-  banner must name that reason (schema vs F1) — never map a schema halt
-  onto ``success over a failed block``.
+  Isolated schema refusals and isolated F11 unused-block declarations
+  are the same class of miss: they must not halt a mixed workspace.
+  The gate fails only when *every* capability is dishonest (all refuse
+  their own schema, every capability declares blocks it never invokes,
+  or every block-reaching capability lies), or when the workspace
+  cannot be probed. The Floor banner must name that reason (schema vs
+  F11 vs F1) — never map a schema or F11 halt onto
+  ``success over a failed block``. ``(F1)`` is a substring of
+  ``(F11)``; the host must not treat an F11 finding as F1.
 
 The seam is ``app.dispatch.execute``. Both the kernel path
 (``run_capability`` -> ``execute_action`` -> handler) and a coder-written
@@ -53,6 +56,9 @@ SCHEMA_HALT = "no capability accepted its own schema"
 #: Probe / Floor text when every block-reaching capability lies (LotDesk).
 F1_HALT = "a capability route reported success over a failed block"
 
+#: Probe / Floor text when every capability declares unused BLOCK_IDS (F11).
+F11_HALT = "a capability declares block(s) it never invokes"
+
 #: Runs inside the generated workspace. Prints one finding per line to
 #: stderr and exits non-zero; a clean run exits 0 and prints nothing.
 BEHAVIOUR_PROBE = r'''
@@ -63,6 +69,7 @@ sys.path.insert(0, os.getcwd())
 
 findings = []
 schema_misses = []
+f11_misses = []
 
 try:
     from app.models import MODELS
@@ -245,7 +252,7 @@ for _cap_id, _cls in targets:
     _invoked = _seen["blocks"].get(_cap_id, set())
     _never = sorted(b for b in _declared if b not in _invoked)
     if _never:
-        findings.append(
+        f11_misses.append(
             "%s: declares block(s) it never invokes: %s (F11)"
             % (_cap_id, ", ".join(_never))
         )
@@ -327,13 +334,22 @@ for cap_id, cls in targets:
 if findings:
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in findings))
     raise SystemExit(1)
+_f11_caps = set(m.split(":", 1)[0] for m in f11_misses)
+if f11_misses and all(cid in _f11_caps for cid, _cls in targets):
+    # Every probed capability declared unused BLOCK_IDS. Isolated F11
+    # (below) continues so a mixed workspace can still ship a zip.
+    sys.stderr.write(
+        "GATE-FINDING: a capability declares block(s) it never invokes\n"
+        + "".join("GATE-FINDING: %s\n" % f for f in f11_misses)
+    )
+    raise SystemExit(1)
 if misses and honest == 0:
     # Every block-reaching capability lied. Same as LotDesk: the WRITER
     # produced nothing honest to ship. Isolated misses (below) continue.
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
     raise SystemExit(1)
-# Isolated F1 and isolated schema refusals: record, do not halt.
-recorded = list(misses) + list(schema_misses)
+# Isolated F1, F11, and schema refusals: record, do not halt.
+recorded = list(misses) + list(schema_misses) + list(f11_misses)
 if recorded:
     sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in recorded))
 '''
@@ -353,12 +369,33 @@ def _is_schema_line(line: str) -> bool:
     )
 
 
+def _is_f11_line(line: str) -> bool:
+    """True when a probe line is unused BLOCK_IDS (F11), not an F1 lie.
+
+    ``(F1)`` is a substring of ``(F11)``, so F1 matching must not run
+    first or an F11 finding becomes the LotDesk banner.
+    """
+    return any(
+        token in line
+        for token in (F11_HALT, "(F11)", "never invokes", "declares block(s)")
+    )
+
+
+def _is_f1_line(line: str) -> bool:
+    """True when a probe line is success-over-failed-block, not F11."""
+    if _is_f11_line(line):
+        return False
+    return "(F1)" in line or "did not fail closed" in line or "persisted" in line
+
+
 def banner_detail(findings: list[str]) -> str:
     """Floor banner text from probe findings.
 
     Live construction (2026-08-30): findings were
     ``no capability accepted its own schema`` but the host mapped every
     non-zero exit onto F1, so the Floor lied about which phase failed.
+    The same mapping turned F11 unused-block findings into F1 because
+    ``(F1)`` is a substring of ``(F11)``.
     """
     if not findings:
         return "behaviour probe failed with no output"
@@ -366,16 +403,17 @@ def banner_detail(findings: list[str]) -> str:
         return SCHEMA_HALT
     if any(_is_schema_line(ln) for ln in findings):
         return next(ln for ln in findings if _is_schema_line(ln))
-    if any(
-        "(F1)" in ln or "did not fail closed" in ln or "persisted" in ln
-        for ln in findings
-    ):
+    if any(F11_HALT in ln or _is_f11_line(ln) for ln in findings):
+        return F11_HALT
+    if any(_is_f1_line(ln) for ln in findings):
         return F1_HALT
     return findings[0]
 
 
-def _pass_detail(f1_misses: list[str], schema_misses: list[str]) -> str:
-    """Success-path banner: name schema vs F1, never collapse them."""
+def _pass_detail(
+    f1_misses: list[str], schema_misses: list[str], f11_misses: list[str]
+) -> str:
+    """Success-path banner: name schema vs F11 vs F1, never collapse them."""
     parts = []
     if f1_misses:
         n = len({m.split(":", 1)[0] for m in f1_misses})
@@ -388,19 +426,26 @@ def _pass_detail(f1_misses: list[str], schema_misses: list[str]) -> str:
         parts.append(
             f"{n} capability(ies) recorded as misses (refused their own schema)"
         )
+    if f11_misses:
+        n = len({m.split(":", 1)[0] for m in f11_misses})
+        parts.append(
+            f"{n} capability(ies) recorded as misses "
+            "(declared blocks they never invoke — F11)"
+        )
     if parts:
         return "; ".join(parts) + "; remaining capabilities fail closed"
     return "every capability fails closed when its blocks fail"
 
 
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
-    """WRITER: isolated schema or F1 is a miss, not a halt.
+    """WRITER: isolated schema, F11, or F1 is a miss, not a halt.
 
     The probe still fail-closes when every capability is dishonest
-    (all refuse their own schema, or every block-reaching capability
-    lies — LotDesk). One miss among honest ones is recorded and the
-    phase continues so TESTER/STORE_MANAGER can still produce a zip.
-    The Floor banner uses the actual finding (schema vs F1).
+    (all refuse their own schema, every capability declares unused
+    blocks, or every block-reaching capability lies — LotDesk). One
+    miss among honest ones is recorded and the phase continues so
+    TESTER/STORE_MANAGER can still produce a zip. The Floor banner
+    uses the actual finding (schema vs F11 vs F1).
     """
     from app.factory.build.gates import GateResult
 
@@ -437,13 +482,16 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         if "GATE-MISS: " in ln
     ]
     schema_misses = [m for m in misses if _is_schema_line(m)]
-    f1_misses = [m for m in misses if not _is_schema_line(m)]
+    f11_misses = [m for m in misses if _is_f11_line(m)]
+    f1_misses = [
+        m for m in misses if not _is_schema_line(m) and not _is_f11_line(m)
+    ]
     skipped = [
         ln
         for ln in raw_out.splitlines()
         if ln.strip() and ln.strip() != "SKIPPED" and "GATE-MISS: " not in ln
     ]
-    detail = _pass_detail(f1_misses, schema_misses)
+    detail = _pass_detail(f1_misses, schema_misses, f11_misses)
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
     return GateResult(
@@ -455,6 +503,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             "skipped": skipped,
             "misses": misses,
             "schema_misses": schema_misses,
+            "f11_misses": f11_misses,
             "f1_misses": f1_misses,
         },
     )
