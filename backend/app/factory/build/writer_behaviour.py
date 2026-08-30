@@ -23,8 +23,12 @@ Two phases, in order, because a one-phase probe passes for the wrong reason:
   One dishonest capability must not halt the whole WRITER phase (live
   invoice-management, 2026-08-30: four handlers written, then
   ``writer_behaviour`` stopped the run before TESTER/STORE_MANAGER, no zip).
-  The gate fails only when *every* block-reaching capability misses, or
-  when the workspace cannot be probed.
+  Isolated schema refusals are the same class of miss: they must not halt
+  a mixed workspace. The gate fails only when *every* capability is
+  dishonest (all refuse their own schema, or every block-reaching
+  capability lies), or when the workspace cannot be probed. The Floor
+  banner must name that reason (schema vs F1) — never map a schema halt
+  onto ``success over a failed block``.
 
 The seam is ``app.dispatch.execute``. Both the kernel path
 (``run_capability`` -> ``execute_action`` -> handler) and a coder-written
@@ -43,6 +47,12 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 GATE_NAME = "writer_behaviour"
 
+#: Probe / Floor text when no capability accepts a payload from its own model.
+SCHEMA_HALT = "no capability accepted its own schema"
+
+#: Probe / Floor text when every block-reaching capability lies (LotDesk).
+F1_HALT = "a capability route reported success over a failed block"
+
 #: Runs inside the generated workspace. Prints one finding per line to
 #: stderr and exits non-zero; a clean run exits 0 and prints nothing.
 BEHAVIOUR_PROBE = r'''
@@ -52,7 +62,7 @@ os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="writer-gate-")
 sys.path.insert(0, os.getcwd())
 
 findings = []
-skipped = []
+schema_misses = []
 
 try:
     from app.models import MODELS
@@ -192,22 +202,29 @@ for cap_id, cls in MODELS.items():
     try:
         resp = client.post("/v1/" + cap_id, json=body)
     except Exception as exc:
-        findings.append("%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc))
+        schema_misses.append(
+            "%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc)
+        )
         continue
     if resp.status_code != 200:
-        findings.append("%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code))
+        schema_misses.append(
+            "%s: baseline POST returned HTTP %s" % (cap_id, resp.status_code)
+        )
         continue
     data = resp.json() if resp.content else {}
     # House convention: ``ok is False`` is the refusal. A route that omits
     # ``ok`` has not refused, so it belongs in phase two rather than being
     # reported here as a schema rejection.
     if data.get("ok") is False:
-        # The capability refuses a payload built from its own declared
-        # fields. That is a real contract mismatch -- app/models.py and the
-        # handler disagree -- but it is not what this gate judges, and the
-        # capability cannot reach a block, so there is no fail-closed
-        # behaviour to test. Recorded so the skip is never silent.
-        skipped.append(
+        # Kernel wrap (#237) and the handler wrap refuse success when a
+        # real block fails on the sample payload. That is not a schema
+        # miss: a block was reached, so phase two can still judge
+        # fail-closed. Treating it as a skip emptied targets on the live
+        # construction kit and SystemExit'd before the F1 miss path.
+        if _seen["blocks"].get(cap_id):
+            targets.append((cap_id, cls))
+            continue
+        schema_misses.append(
             "%s: refused a payload built from its own declared constraints (%s)"
             % (cap_id, str(data.get("error"))[:160])
         )
@@ -234,9 +251,13 @@ for _cap_id, _cls in targets:
         )
 
 if not targets:
+    # Every capability failed schema (or never reached a probeable
+    # state). Isolated schema misses do not take this path. Always emit
+    # the canonical sentence first so the host cannot map this halt to F1.
     sys.stderr.write(
-        "".join("GATE-FINDING: %s\n" % f for f in findings)
-        or "GATE-FINDING: no capability accepted its own schema\n"
+        "GATE-FINDING: no capability accepted its own schema\n"
+        + "".join("GATE-FINDING: %s\n" % f for f in findings)
+        + "".join("GATE-FINDING: %s\n" % f for f in schema_misses)
     )
     raise SystemExit(1)
 
@@ -311,17 +332,75 @@ if misses and honest == 0:
     # produced nothing honest to ship. Isolated misses (below) continue.
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
     raise SystemExit(1)
-if misses:
-    sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in misses))
+# Isolated F1 and isolated schema refusals: record, do not halt.
+recorded = list(misses) + list(schema_misses)
+if recorded:
+    sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in recorded))
 '''
 
 
-def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
-    """WRITER: isolated success-over-failed-block is a miss, not a halt.
+def _is_schema_line(line: str) -> bool:
+    """True when a probe line is a schema refusal, not an F1 lie."""
+    return any(
+        token in line
+        for token in (
+            SCHEMA_HALT,
+            "refused a payload",
+            "own declared constraints",
+            "baseline POST",
+            "POST raised",
+        )
+    )
 
-    The probe still fail-closes when every block-reaching capability lies
-    (LotDesk). One dishonest route among honest ones is recorded and the
+
+def banner_detail(findings: list[str]) -> str:
+    """Floor banner text from probe findings.
+
+    Live construction (2026-08-30): findings were
+    ``no capability accepted its own schema`` but the host mapped every
+    non-zero exit onto F1, so the Floor lied about which phase failed.
+    """
+    if not findings:
+        return "behaviour probe failed with no output"
+    if any(SCHEMA_HALT in ln for ln in findings):
+        return SCHEMA_HALT
+    if any(_is_schema_line(ln) for ln in findings):
+        return next(ln for ln in findings if _is_schema_line(ln))
+    if any(
+        "(F1)" in ln or "did not fail closed" in ln or "persisted" in ln
+        for ln in findings
+    ):
+        return F1_HALT
+    return findings[0]
+
+
+def _pass_detail(f1_misses: list[str], schema_misses: list[str]) -> str:
+    """Success-path banner: name schema vs F1, never collapse them."""
+    parts = []
+    if f1_misses:
+        n = len({m.split(":", 1)[0] for m in f1_misses})
+        parts.append(
+            f"{n} capability(ies) recorded as misses "
+            "(success over a failed block)"
+        )
+    if schema_misses:
+        n = len({m.split(":", 1)[0] for m in schema_misses})
+        parts.append(
+            f"{n} capability(ies) recorded as misses (refused their own schema)"
+        )
+    if parts:
+        return "; ".join(parts) + "; remaining capabilities fail closed"
+    return "every capability fails closed when its blocks fail"
+
+
+def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
+    """WRITER: isolated schema or F1 is a miss, not a halt.
+
+    The probe still fail-closes when every capability is dishonest
+    (all refuse their own schema, or every block-reaching capability
+    lies — LotDesk). One miss among honest ones is recorded and the
     phase continues so TESTER/STORE_MANAGER can still produce a zip.
+    The Floor banner uses the actual finding (schema vs F1).
     """
     from app.factory.build.gates import GateResult
 
@@ -343,11 +422,12 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         ]
         if not lines:
             lines = [ln for ln in raw if ln.strip()][-8:]
+        findings = lines[-20:] or ["behaviour probe failed with no output"]
         return GateResult(
             ok=False,
             gate=GATE_NAME,
-            detail="a capability route reported success over a failed block",
-            findings=lines[-20:] or ["behaviour probe failed with no output"],
+            detail=banner_detail(findings),
+            findings=findings,
         )
     raw_out = proc.stdout or ""
     raw_err = proc.stderr or ""
@@ -356,18 +436,14 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         for ln in (raw_out + "\n" + raw_err).splitlines()
         if "GATE-MISS: " in ln
     ]
+    schema_misses = [m for m in misses if _is_schema_line(m)]
+    f1_misses = [m for m in misses if not _is_schema_line(m)]
     skipped = [
         ln
         for ln in raw_out.splitlines()
         if ln.strip() and ln.strip() != "SKIPPED" and "GATE-MISS: " not in ln
     ]
-    detail = "every capability fails closed when its blocks fail"
-    if misses:
-        n_caps = len({m.split(":", 1)[0] for m in misses})
-        detail = (
-            f"{n_caps} capability(ies) recorded as misses "
-            "(success over a failed block); remaining capabilities fail closed"
-        )
+    detail = _pass_detail(f1_misses, schema_misses)
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
     return GateResult(
@@ -375,5 +451,10 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         gate=GATE_NAME,
         detail=detail,
         findings=list(misses),
-        payload={"skipped": skipped, "misses": misses},
+        payload={
+            "skipped": skipped,
+            "misses": misses,
+            "schema_misses": schema_misses,
+            "f1_misses": f1_misses,
+        },
     )
