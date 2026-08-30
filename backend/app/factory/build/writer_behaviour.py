@@ -363,8 +363,9 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     ]
     detail = "every capability fails closed when its blocks fail"
     if misses:
+        n_caps = len({m.split(":", 1)[0] for m in misses})
         detail = (
-            f"{len(misses)} capability(ies) recorded as misses "
+            f"{n_caps} capability(ies) recorded as misses "
             "(success over a failed block); remaining capabilities fail closed"
         )
     if skipped:

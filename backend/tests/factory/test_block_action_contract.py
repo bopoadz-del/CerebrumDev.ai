@@ -412,7 +412,8 @@ def test_handler_module_refuses_success_over_a_failed_block(tmp_path):
     assert "forced block failure" in str(out.get("error")), out
     wrapped = _ensure_handler_fails_closed(dishonest)
     assert "_block_errors" in wrapped
-    assert "_real_execute" in wrapped
+    assert "_watched" in wrapped
+    assert "execute=_watched" in wrapped
 
 
 def test_the_smoke_scans_nested_results_for_block_errors(tmp_path):

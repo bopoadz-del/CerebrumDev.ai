@@ -810,10 +810,10 @@ def _ensure_handler_fails_closed(body: str) -> str:
     returns ``ok: False`` is left alone.
     """
     return (
-        "    _real_execute = execute\n"
+        "    import app.dispatch as _dispatch\n"
         "    _block_errors = []\n"
-        "    def execute(block_id, *a, **kw):\n"
-        "        res = _real_execute(block_id, *a, **kw)\n"
+        "    def _watched(block_id, *a, **kw):\n"
+        "        res = _dispatch.execute(block_id, *a, **kw)\n"
         "        if isinstance(res, dict) and (\n"
         '            res.get("status") == "error" or "error" in res\n'
         "        ):\n"
@@ -821,7 +821,7 @@ def _ensure_handler_fails_closed(body: str) -> str:
         '                "%s: %s" % (block_id, str(res.get("error") or res.get("status"))[:160])\n'
         "            )\n"
         "        return res\n"
-        "    def _impl(payload):\n"
+        "    def _impl(payload, execute=_watched):\n"
         f"{_indent_handler_body(body, 4)}\n"
         "    result = _impl(payload)\n"
         "    if _block_errors and (\n"

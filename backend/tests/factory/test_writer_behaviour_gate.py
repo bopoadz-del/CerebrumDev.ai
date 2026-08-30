@@ -245,9 +245,10 @@ def test_gate_records_an_isolated_success_over_failed_block_as_a_miss(tmp_path):
 
     assert result.ok is True, result
     joined = " ".join(result.findings) + " " + " ".join(result.payload.get("misses") or [])
-    assert "invoice_management" in joined, joined
+    assert "invoice_management" in joined, (result.detail, joined)
     assert "did not fail closed" in joined or "persisted" in joined, joined
     assert "miss" in result.detail
+    assert "widget_intake" not in joined
 
 
 def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):

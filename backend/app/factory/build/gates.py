@@ -392,6 +392,8 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
         ok=True,
         gate="writer_contract",
         detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}",
+        findings=list(behaviour.findings),
+        payload=dict(behaviour.payload),
     )
 
 
