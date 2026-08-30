@@ -794,6 +794,49 @@ def _render_dispatch(contracts: Optional[Dict[str, Any]] = None) -> str:
     )
 
 
+def _indent_handler_body(body: str, extra: int = 4) -> str:
+    """Indent a handle() body so it can sit inside a nested ``_impl``."""
+    pad = " " * extra
+    return "\n".join((pad + line if line.strip() else line) for line in body.splitlines())
+
+
+def _ensure_handler_fails_closed(body: str) -> str:
+    """Refuse ``ok: True`` when ``execute()`` returned a block error.
+
+    Coder handlers (moonshot/kimi on the live invoice-management run) often
+    ignore the envelope and return success anyway. The deterministic template
+    already fail-closes; this wrapper makes every path — coder or template —
+    refuse success when a block failed. Idempotent: a body that already
+    returns ``ok: False`` is left alone.
+    """
+    return (
+        "    _real_execute = execute\n"
+        "    _block_errors = []\n"
+        "    def execute(block_id, *a, **kw):\n"
+        "        res = _real_execute(block_id, *a, **kw)\n"
+        "        if isinstance(res, dict) and (\n"
+        '            res.get("status") == "error" or "error" in res\n'
+        "        ):\n"
+        "            _block_errors.append(\n"
+        '                "%s: %s" % (block_id, str(res.get("error") or res.get("status"))[:160])\n'
+        "            )\n"
+        "        return res\n"
+        "    def _impl(payload):\n"
+        f"{_indent_handler_body(body, 4)}\n"
+        "    result = _impl(payload)\n"
+        "    if _block_errors and (\n"
+        '        not isinstance(result, dict) or result.get("ok") is not False\n'
+        "    ):\n"
+        "        return {\n"
+        '            "ok": False,\n'
+        '            "capability": CAPABILITY_ID,\n'
+        '            "error": "block failed: " + "; ".join(_block_errors),\n'
+        '            "result": result,\n'
+        "        }\n"
+        "    return result"
+    )
+
+
 def _handler_module(
     capability_id: str,
     block_ids: Sequence[str],
@@ -821,7 +864,7 @@ BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
-{body}
+{_ensure_handler_fails_closed(body)}
 '''
 
 
@@ -1854,7 +1897,37 @@ from app.cerebrum_product_kernel.contract.runtime import execute_action
 
 def _wrap_handle(handle):
     async def _handler(context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
-        out = handle(arguments)
+        # Live invoice-management (2026-08-30): a coder handler returned
+        # ok:True after execute() failed. Without watching the seam, this
+        # wrapper treated that as ActionStatus.SUCCESS and the route
+        # persisted. A capability route must not report success over a
+        # failed block, whichever path wrote the handler.
+        import sys
+        import app.dispatch as _dispatch
+
+        _real = _dispatch.execute
+        _failed = []
+
+        def _watched(block_id, *a, **kw):
+            res = _real(block_id, *a, **kw)
+            if isinstance(res, dict) and (
+                res.get("status") == "error" or "error" in res
+            ):
+                _failed.append(str(block_id))
+            return res
+
+        _dispatch.execute = _watched
+        _patched = []
+        for _name, _mod in list(sys.modules.items()):
+            if _name.startswith("app.actions") and hasattr(_mod, "execute"):
+                _patched.append((_mod, _mod.execute))
+                _mod.execute = _watched
+        try:
+            out = handle(arguments)
+        finally:
+            _dispatch.execute = _real
+            for _mod, _prev in _patched:
+                _mod.execute = _prev
         if not isinstance(out, dict):
             return ActionOutcome(
                 status=ActionStatus.EXECUTION_ERROR,
@@ -1866,6 +1939,13 @@ def _wrap_handle(handle):
                 status=ActionStatus.VALIDATION_ERROR,
                 error_code="refused",
                 error_message=str(out.get("error") or "refused"),
+                output=out,
+            )
+        if _failed:
+            return ActionOutcome(
+                status=ActionStatus.EXECUTION_ERROR,
+                error_code="block_failed",
+                error_message="block(s) failed: " + ", ".join(_failed),
                 output=out,
             )
         return ActionOutcome.success(out)
