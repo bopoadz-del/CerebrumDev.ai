@@ -12,9 +12,11 @@ from app.factory.build.preflight import (
     EMITTER_ID,
     FACTORY_SOURCE_PATHS,
     S4_EVIDENCE_FILENAME,
+    _repo_root,
     canonical_fingerprint,
     evaluate_preflight,
     fingerprint_disagreements,
+    fingerprint_factory,
     inspect_kernel_ownership,
     is_admitted_stage_evidence,
     reread_matches,
@@ -25,6 +27,8 @@ from app.factory.build.roles import _coder_route_body
 from app.factory.build.runner import Outcome, RoleRunner
 from app.factory.build_jobs import RUNNER, build_engine
 from app.factory.delivery_standard import DOMAIN_PACK_FIELDS
+from app.factory.generator import git_head
+from app.factory.paths import factory_repo_root
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
@@ -156,6 +160,68 @@ def test_role_runner_records_preflight_before_roles(tmp_path):
     passed = [e for e in events if e.kind.value == "GATE_PASSED"]
     assert started and passed
     assert started[0].seq < passed[0].seq
+
+
+def test_preflight_repo_root_follows_factory_repo_root():
+    """S0 must inspect the Docker-aware workdir, not parents[4] of this file.
+
+    In the live image this file lives at /app/app/factory/build/preflight.py,
+    so parents[4] is / and every FACTORY_SOURCE_PATH is missing.
+    """
+    assert _repo_root() == factory_repo_root()
+    assert (_repo_root() / "blueprints").is_dir()
+
+
+def test_old_docker_layout_is_factory_source_missing(tmp_path):
+    """COPY backend/app → /app/app without planting backend/ or ci.yml.
+
+    That is the live cerebrumdev-backend failure: factory_source_missing
+    lists every inventory path.
+    """
+    (tmp_path / "app").symlink_to(ROOT / "backend" / "app")
+    missing = [row["path"] for row in fingerprint_factory(tmp_path) if not row["present"]]
+    assert missing == list(FACTORY_SOURCE_PATHS)
+
+
+def _plant_production_image_tree(image: Path) -> None:
+    """Reproduce the production Dockerfile's S0 inventory layout."""
+    (image / "app").symlink_to(ROOT / "backend" / "app")
+    (image / "blueprints").symlink_to(ROOT / "blueprints")
+    (image / "backend").mkdir()
+    (image / "backend" / "app").symlink_to(image / "app")
+    workflows = image / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").symlink_to(ROOT / ".github" / "workflows" / "ci.yml")
+
+
+def test_packaged_image_tree_has_no_factory_source_missing(tmp_path):
+    """Regression: every S0 inventory path must exist in the image workdir."""
+    _plant_production_image_tree(tmp_path)
+    rows = fingerprint_factory(tmp_path)
+    missing = [row["path"] for row in rows if not row["present"]]
+    assert missing == [], f"factory_source_missing:{','.join(missing)}"
+    assert {row["path"] for row in rows} == set(FACTORY_SOURCE_PATHS)
+    assert all(row["present"] and row["sha256"] for row in rows)
+
+
+def test_evaluate_preflight_on_image_tree_does_not_fail_factory_source(
+    tmp_path, monkeypatch
+):
+    _plant_production_image_tree(tmp_path)
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "a" * 40)
+    result = evaluate_preflight(repo=tmp_path, stages_dir=tmp_path / "build" / "stages")
+    first = result.get("first_failing_criterion") or ""
+    assert not str(first).startswith("factory_source_missing"), first
+    assert all(row["present"] for row in result["factory_source"])
+
+
+def test_git_head_falls_back_to_render_commit(tmp_path, monkeypatch):
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    monkeypatch.delenv("SOURCE_VERSION", raising=False)
+    assert git_head(tmp_path) == "unknown"
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "abcdef1234567890")
+    assert git_head(tmp_path) == "abcdef1234567890"
 
 
 def test_failed_kernel_ownership_aborts_before_collector(tmp_path, monkeypatch):
