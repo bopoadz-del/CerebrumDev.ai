@@ -213,3 +213,12 @@ jobs:
 
       - name: Build production image
         run: docker build -t cerebrumdev-backend:ci .
+
+      - name: S0 factory source is in the image workdir
+        run: |
+          docker run --rm --entrypoint python cerebrumdev-backend:ci -c "
+          from app.factory.build.preflight import FACTORY_SOURCE_PATHS, _repo_root
+          root = _repo_root()
+          missing = [p for p in FACTORY_SOURCE_PATHS if not (root / p).is_file()]
+          raise SystemExit(0 if not missing else 'factory_source_missing:' + ','.join(missing))
+          "

@@ -172,6 +172,23 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "blueprint does not pin BACKUP_SCHEDULE_ENABLED on the web service"
         )
 
+    def test_production_image_plants_s0_factory_source_in_the_workdir(self):
+        """S0 fingerprints repo-relative paths from factory_repo_root()=/app.
+
+        COPY backend/app → /app/app drops the backend/ prefix and omits
+        .github/workflows/ci.yml. Live Approve & build then dies with
+        factory_source_missing. The image must plant both.
+        """
+        from app.factory.build.preflight import FACTORY_SOURCE_PATHS
+
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "COPY backend/app /app/app" in dockerfile
+        assert "ln -s /app/app /app/backend/app" in dockerfile
+        assert "COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml" in dockerfile
+        for rel in FACTORY_SOURCE_PATHS:
+            assert (REPO_ROOT / rel).is_file(), rel
+            assert rel.startswith("backend/app/") or rel == ".github/workflows/ci.yml", rel
+
     def test_every_scheduled_entry_point_is_actually_in_the_image(self):
         """Scheduled jobs must be able to import what they run.
 

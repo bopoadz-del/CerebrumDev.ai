@@ -40,6 +40,14 @@ COPY backend/alembic /app/alembic
 # Without this COPY those tools fail at import.
 COPY backend/scripts /app/scripts
 
+# S0 preflight fingerprints repo-relative paths from factory_repo_root()
+# (/app in this image): backend/app/factory/**, cerebrum_product_kernel, and
+# .github/workflows/ci.yml. COPY backend/app → /app/app drops the backend/
+# prefix those paths use, and never shipped ci.yml. Plant both so
+# factory_source_missing cannot fire on Approve & build.
+RUN mkdir -p /app/backend && ln -s /app/app /app/backend/app
+COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
+
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -1471,4 +1472,12 @@ def git_head(repo: Path) -> str:
             return r.stdout.strip()
     except OSError:
         pass
+    # Production image has no .git. Render injects RENDER_GIT_COMMIT; the
+    # same keys /version already reads. Prefer a real deploy SHA over
+    # "unknown" so S0 does not fail-closed on git_sha_unknown after the
+    # factory-source inventory is present.
+    for key in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_VERSION"):
+        val = os.getenv(key, "").strip()
+        if val:
+            return val
     return "unknown"

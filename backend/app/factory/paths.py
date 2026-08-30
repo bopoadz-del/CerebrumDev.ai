@@ -6,6 +6,8 @@ Local checkout::
 Docker image (Dockerfile copies ``backend/app`` → ``/app/app``)::
   /app/app/factory/*.py            → root = /app
   with ``blueprints/`` copied to ``/app/blueprints``.
+  S0 inventory also plants ``/app/backend/app`` → ``/app/app`` and
+  ``/app/.github/workflows/ci.yml`` so repo-relative FACTORY_SOURCE_PATHS exist.
 """
 
 from __future__ import annotations

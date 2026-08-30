@@ -24,6 +24,7 @@ from app.factory.build.roles import _coder_route_body
 from app.factory.build_jobs import BUILD_ENGINE_ENV, RUNNER, build_engine
 from app.factory.delivery_standard import DOMAIN_PACK_FIELDS, STANDARD_SHA256
 from app.factory.generator import git_head
+from app.factory.paths import factory_repo_root
 
 EMITTER_ID = "app.factory.build.preflight.evaluate_preflight"
 STAGE = "S0"
@@ -146,7 +147,15 @@ STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[4]
+    """Workdir S0 fingerprints. Local checkout is the git root; the
+    production image is ``/app`` (see ``factory_repo_root``).
+
+    ``parents[4]`` is correct only when this file lives at
+    ``backend/app/factory/build/preflight.py``. The live image copies
+    ``backend/app`` → ``/app/app``, so that walk lands on ``/`` and every
+    inventory path is ``factory_source_missing``.
+    """
+    return factory_repo_root()
 
 
 def default_stages_dir() -> Path:
