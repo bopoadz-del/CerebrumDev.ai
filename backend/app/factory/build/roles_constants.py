@@ -199,7 +199,37 @@ def _required_fields(block_id: str) -> list:
 
 
 def _known_fields(block_id: str) -> set:
-    """Closed field set from the harvested contract. Empty = no allow-list."""
+    """Closed field set from the harvested contract. Empty = no allow-list.
+
+    Three sources, and the third is the one that was missing:
+
+    * ``declared_inputs`` -- the block's CONFIG parameters, from block.json
+      (backend, connection_string, theme, ...).
+    * ``input_required_fields`` -- what the block refuses to run without.
+    * ``input_keys_read_by_block`` -- the keys the block's own code actually
+      reads off its payload at run time (table, values, where, file_path,
+      user_id, ...).
+
+    Leaving the third one out is what made every generated platform inert.
+    ``database`` declares only {input, backend, connection_string}, so a
+    correct call -- ``{"table": "crew_logs", "values": {...}}`` -- had both
+    keys counted as stray, folded into ``input`` by _adapt_input below, and
+    handed to the block double-wrapped. ``_insert`` then read ``table=None``
+    and ``values={}`` and emitted ``INSERT INTO None () VALUES ()``:
+
+        database: Insert failed: near ")": syntax error
+
+    One defect, four faces, measured on the booted zip of session
+    sess_6400b6c: ``document_engine`` answered "No input files provided"
+    holding a file_path, ``notification`` answered "block or tool name
+    required for MCP channel" holding a block name, and ``team`` answered
+    "Team access denied" holding a user_id. The platform built, shipped,
+    booted and served all seventeen routes -- and could not persist a row.
+
+    The fold itself stays: a key the block never reads is still a domain
+    record and still belongs in ``input`` (the warehouse `audit` case the
+    fold was written for). Only keys the block reads stay flat.
+    """
     contract = BLOCK_CONTRACTS.get(block_id) or {}
     names: set = set()
     for item in contract.get("declared_inputs") or []:
@@ -209,6 +239,9 @@ def _known_fields(block_id: str) -> set:
     for field in contract.get("input_required_fields") or []:
         if field != "action":
             names.add(field)
+    for field in contract.get("input_keys_read_by_block") or []:
+        if field and field != "action":
+            names.add(str(field))
     return names
 
 
