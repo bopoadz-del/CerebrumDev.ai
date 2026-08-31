@@ -28,7 +28,7 @@ import ast
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
 
@@ -505,7 +505,9 @@ def _strip_fences(text: str) -> str:
     return text.strip("\n")
 
 
-def _validate_body(body: str, capability_id: str) -> str:
+def _validate_body(
+    body: str, capability_id: str, block_ids: Sequence[str] | None = None,
+) -> str:
     """Static gate on emitted code. Reject, never repair.
 
     The gate parses the emitted body inside the exact wrapper it will live in
@@ -563,11 +565,42 @@ def _validate_body(body: str, capability_id: str) -> str:
             "body (a return inside a nested def does not count) -- the caller "
             "would receive None"
         )
+
+    # F11 coverage, checked HERE rather than at the runtime WRITER gate.
+    # writer_behaviour fails the build when a declared BLOCK_IDS entry is
+    # never invoked, but the coder prompt used to say "every block whose
+    # output the capability needs", which licenses skipping one. Live
+    # sess_6400b6c halted on exactly that: crew_dashboard (dashboard +
+    # database), daily_log_management (capture + document_engine). Catching
+    # it here costs one bounded retry; catching it at the gate costs the
+    # whole run, after WRITER, with TESTER and STORE_MANAGER never started.
+    declared = [str(b) for b in (block_ids or []) if str(b).strip()]
+    if declared:
+        iterates_all = any(
+            isinstance(node, ast.Name) and node.id == "BLOCK_IDS"
+            for node in ast.walk(tree)
+        )
+        if not iterates_all:
+            literals = {
+                node.value
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            }
+            missing = [b for b in declared if b not in literals]
+            if missing:
+                raise CoderError(
+                    f"coder output for {capability_id} never invokes declared "
+                    f"block(s): {', '.join(sorted(missing))}. Every id in "
+                    "BLOCK_IDS must be passed to execute() (iterating "
+                    "BLOCK_IDS also satisfies this)."
+                )
     return indented
 
 
 def _call_validate_retry(
-    messages: List[Dict[str, str]], capability_id: str
+    messages: List[Dict[str, str]],
+    capability_id: str,
+    block_ids: Sequence[str] | None = None,
 ) -> tuple[str, str]:
     """One LLM call, statically validated; ONE bounded retry on rejection.
 
@@ -581,7 +614,10 @@ def _call_validate_retry(
     """
     raw, model_used = _llm_code_call(messages)
     try:
-        return _validate_body(_strip_fences(raw), capability_id), model_used
+        return (
+            _validate_body(_strip_fences(raw), capability_id, block_ids),
+            model_used,
+        )
     except CoderError as exc:
         retry = messages + [
             {"role": "assistant", "content": raw},
@@ -596,7 +632,10 @@ def _call_validate_retry(
             },
         ]
         raw, model_used = _llm_code_call(retry)
-        return _validate_body(_strip_fences(raw), capability_id), model_used
+        return (
+            _validate_body(_strip_fences(raw), capability_id, block_ids),
+            model_used,
+        )
 
 
 _PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """
@@ -631,7 +670,13 @@ Contract:
   Treat result.get("status") == "error" (or an "error" key in the result)
   as a failure: surface it in your return value as {"ok": False,
   "error": ...} rather than pretending success.
-- Use execute() for every block in BLOCK_IDS whose output the capability needs.
+- Call execute() for EVERY id in BLOCK_IDS. Not "the ones you need" --
+  every one. A declared block that is never invoked fails the WRITER
+  behaviour gate (F11) and halts the whole build, because declaring a
+  block the capability never calls is a false claim about what the
+  capability does. If a block seems unnecessary, still invoke it and
+  fold its result into the response; do not silently drop it.
+  Iterating `for block_id in BLOCK_IDS:` is the simplest way to be sure.
 - Return a JSON-serialisable dict. Include "capability": CAPABILITY_ID.
 - Standard library only, and no import statements at all. No network, no
   filesystem, no subprocess, no eval/exec.
@@ -996,6 +1041,7 @@ def generate_platform_handler(
             {"role": "user", "content": "\n".join(lines)},
         ],
         capability_id,
+        block_ids,
     )
     logger.info(
         "coder wrote platform handler %s (%d lines) via %s",
