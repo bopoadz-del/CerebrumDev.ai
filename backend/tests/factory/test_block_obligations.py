@@ -326,7 +326,6 @@ def test_the_four_dependencies_that_shipped_undeclared_are_all_covered():
 from pathlib import Path
 
 from app.factory.build.roles_handlers import _render_requirements
-from app.factory.build.block_obligations import dependency_obligations
 
 
 def test_render_requirements_declares_what_the_cloner_vendored():
