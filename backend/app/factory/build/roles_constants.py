@@ -281,6 +281,39 @@ def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, A
     return data
 
 
+#: A block that answers with one of these has NOT succeeded. "partial" is the
+#: word both the workflow and notification blocks use for "some of it failed"
+#: -- workflow sets it on every step that raises, times out, names an unknown
+#: block, or returns an error. Reading only "error" let a pipeline whose only
+#: step failed come back as success.
+_FAILED_STATUSES = {"error", "failed", "partial"}
+
+
+def _failed_steps(result: Dict[str, Any]) -> list:
+    """Sub-step failures the top-level status may not carry.
+
+    Live, from the booted sess_6400b6c zip: punch_list_tracking returned
+    ``ok: true`` wrapped around
+
+        {"status": "partial", "results": [{"step_id": "step_0",
+          "block": "database", "status": "failed",
+          "error": "DatabaseBlock.__init__() missing 2 required positional
+          arguments: 'hal_block' and 'config'"}]}
+
+    The capability reported success. The row was never written.
+    """
+    steps = result.get("results")
+    if not isinstance(steps, list):
+        steps = result.get("steps")
+    if not isinstance(steps, list):
+        return []
+    return [
+        step for step in steps
+        if isinstance(step, dict)
+        and str(step.get("status") or "").lower() in {"error", "failed"}
+    ]
+
+
 def _error_envelope(block_id: str, action: str | None, error: str) -> Dict[str, Any]:
     return {
         "status": "error",
@@ -382,14 +415,24 @@ def execute(
         return _error_envelope(
             block_id, action, f"{type(exc).__name__}: {exc}"
         )
-    if isinstance(result, dict) and (
-        result.get("status") == "error" or result.get("ok") is False
-    ):
-        refused = dict(result)
-        refused.setdefault("status", "error")
-        refused.setdefault("block", block_id)
-        refused["ok"] = False
-        return refused
+    if isinstance(result, dict):
+        status = str(result.get("status") or "").lower()
+        failed = _failed_steps(result)
+        if status in _FAILED_STATUSES or result.get("ok") is False or failed:
+            refused = dict(result)
+            refused["status"] = status if status in _FAILED_STATUSES else "error"
+            refused.setdefault("block", block_id)
+            refused["ok"] = False
+            if failed and not refused.get("error"):
+                refused["error"] = "; ".join(
+                    "%s (%s): %s" % (
+                        step.get("step_id") or "step",
+                        step.get("block") or "?",
+                        str(step.get("error") or step.get("status"))[:160],
+                    )
+                    for step in failed
+                )
+            return refused
     return result
 '''
 
