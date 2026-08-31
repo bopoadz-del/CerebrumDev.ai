@@ -553,7 +553,17 @@ def test_the_coder_prompt_carries_the_vendored_roster(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
+        # Must invoke every declared block: the static F11 coverage gate
+        # rejects a body that declares blocks it never calls (live
+        # sess_6400b6c halted on exactly that). Iterating BLOCK_IDS
+        # satisfies it; these tests assert prompt contents, not the body.
+        return (
+            "results = {}\n"
+            "for block_id in BLOCK_IDS:\n"
+            "    results[block_id] = execute(block_id, payload)\n"
+            'return {"ok": True, "capability": CAPABILITY_ID, "results": results}',
+            "stub-model",
+        )
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)
@@ -698,7 +708,17 @@ def test_the_coder_prompt_carries_the_block_contract(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
+        # Must invoke every declared block: the static F11 coverage gate
+        # rejects a body that declares blocks it never calls (live
+        # sess_6400b6c halted on exactly that). Iterating BLOCK_IDS
+        # satisfies it; these tests assert prompt contents, not the body.
+        return (
+            "results = {}\n"
+            "for block_id in BLOCK_IDS:\n"
+            "    results[block_id] = execute(block_id, payload)\n"
+            'return {"ok": True, "capability": CAPABILITY_ID, "results": results}',
+            "stub-model",
+        )
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)
@@ -866,7 +886,17 @@ def test_a_rework_prompt_carries_the_previous_attempt(monkeypatch):
 
     def _capture(messages):
         captured["messages"] = messages
-        return 'return {"ok": True, "capability": CAPABILITY_ID}', "stub-model"
+        # Must invoke every declared block: the static F11 coverage gate
+        # rejects a body that declares blocks it never calls (live
+        # sess_6400b6c halted on exactly that). Iterating BLOCK_IDS
+        # satisfies it; these tests assert prompt contents, not the body.
+        return (
+            "results = {}\n"
+            "for block_id in BLOCK_IDS:\n"
+            "    results[block_id] = execute(block_id, payload)\n"
+            'return {"ok": True, "capability": CAPABILITY_ID, "results": results}',
+            "stub-model",
+        )
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(coder, "_llm_code_call", _capture)
