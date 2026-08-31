@@ -843,6 +843,7 @@ def _handler_module(
     body: str,
     source: str,
     default_actions: Optional[Dict[str, str]] = None,
+    field_names: Optional[Sequence[str]] = None,
 ) -> str:
     return f'''"""Handler for capability {capability_id}.
 
@@ -861,6 +862,11 @@ BLOCK_IDS = {list(block_ids)!r}
 #: Each block's declared default action (from its block.json). Blocks are
 #: action-dispatched; calling one with no action is answered with an error.
 BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
+#: This capability's own domain columns. The kernel strips trust-scope keys
+#: from caller arguments; a column that shares one of those names (project_id
+#: is the obvious one for construction) would be deleted before handle() ever
+#: saw it. Declaring the names here tells the kernel they are domain data.
+CAPABILITY_FIELDS = {list(field_names or [])!r}
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1961,7 +1967,14 @@ def spec_for(capability_id: str) -> ActionSpec:
         domain="product",
         name=name,
         description=str(getattr(mod, "CAPABILITY_ID", name)),
-        input_schema={},
+        # The capability's own domain columns. Without them the kernel strips
+        # any column named like a trust-scope key -- project_id, user_id,
+        # tenant_id -- and the handler refuses its own well-formed payload.
+        input_schema={
+            "properties": {
+                str(f): {} for f in (getattr(mod, "CAPABILITY_FIELDS", ()) or ())
+            }
+        },
         output_schema={},
         required_context=[],
         permissions=[],
@@ -2118,7 +2131,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         }
         ctx.workspace.write_text(
             handler_rel,
-            _handler_module(cid, usable, body, source, default_actions),
+            _handler_module(
+                cid, usable, body, source, default_actions,
+                field_names=[
+                    str(f.get("name"))
+                    for f in ((specs.get(cid) or {}).get("fields") or [])
+                    if isinstance(f, dict) and f.get("name")
+                ],
+            ),
         )
         sources[cid] = source
         ctx.note(

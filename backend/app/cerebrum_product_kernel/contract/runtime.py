@@ -31,16 +31,59 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _sanitize_arguments(arguments: Dict[str, Any]) -> tuple[Dict[str, Any], list[str]]:
+def _declared_fields(spec: "ActionSpec") -> frozenset:
+    """Field names the action declares as its own domain input.
+
+    A generated product's entity columns are ordinary domain data even when
+    one is spelled like a trust-scope key. ``project_id`` is the most natural
+    column name a construction platform has.
+    """
+    schema = getattr(spec, "input_schema", None) or {}
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if isinstance(props, dict):
+        return frozenset(str(k) for k in props)
+    if isinstance(schema, dict):
+        return frozenset(str(k) for k in schema)
+    return frozenset()
+
+
+def _sanitize_arguments(
+    arguments: Dict[str, Any],
+    declared_fields: frozenset = frozenset(),
+) -> tuple[Dict[str, Any], list[str]]:
     """Strip reserved trust-scope keys from model/caller-supplied arguments.
 
     Model-generated arguments must never be able to set tenant/permission/domain
     scope. Any such keys are removed and reported as warnings.
+
+    ``declared_fields`` is the exception, and it is not a loosening: trust scope
+    travels in ``ActionContext``, a separate parameter the caller cannot reach,
+    so a key here can only ever be domain data. What it CAN do is collide with a
+    domain column, and then silently delete it.
+
+    Live, from the booted sess_6400b6c zip. ``daily_log_management`` and
+    ``punch_list_tracking`` both declare ``project_id`` -- the obvious column
+    name for a construction platform -- and both answered every well-formed
+    request with
+
+        project_id must be a non-empty string
+
+    while carrying, in a warnings list nothing surfaces:
+
+        ignored reserved argument 'project_id' (trust scope is server-controlled)
+
+    Two of the platform's four capabilities could never succeed. The third,
+    ``photo_documentation``, worked only because its column happens to be named
+    ``project_code``. ``user_id``, ``tenant_id``, ``domain`` and ``context`` are
+    the same trap waiting for the next vertical.
+
+    An action that does not declare the name still has it stripped, with the
+    warning, exactly as before.
     """
     clean: Dict[str, Any] = {}
     warnings: list[str] = []
     for key, value in (arguments or {}).items():
-        if key in RESERVED_CONTEXT_KEYS:
+        if key in RESERVED_CONTEXT_KEYS and key not in declared_fields:
             warnings.append(
                 f"ignored reserved argument '{key}' (trust scope is server-controlled)"
             )
@@ -92,7 +135,9 @@ async def execute_action(
     """
     request_id = request_id or f"act_{uuid.uuid4().hex}"
     started_at = _now()
-    clean_args, arg_warnings = _sanitize_arguments(arguments or {})
+    clean_args, arg_warnings = _sanitize_arguments(
+        arguments or {}, _declared_fields(spec)
+    )
 
     # 1. Trusted context completeness (required_context).
     missing_ctx = [
