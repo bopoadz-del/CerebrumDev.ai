@@ -976,6 +976,7 @@ def generate_platform_handler(
     work_list: Optional[List[str]] = None,
     block_contracts: Optional[Dict[str, Any]] = None,
     model_fields: Optional[List[Dict[str, Any]]] = None,
+    resource_obligations: Optional[str] = None,
     previous_attempt: Optional[str] = None,
     vendored_roster: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
@@ -1004,6 +1005,12 @@ def generate_platform_handler(
             "model. Validate ONLY these fields; never demand any other:\n"
             + describe_fields(model_fields)
         )
+    if resource_obligations:
+        # A block that mints its own id cannot be driven from payload values.
+        # Live: crew_dashboard passed team_id = payload["primary_crew"] -- a
+        # crew name -- and got "Team access denied" from a team it had never
+        # created. The block was working; the handler had invented the id.
+        lines.append("\n" + resource_obligations)
     if block_contracts:
         lines.append(
             "\nBlock contracts (invoke each block with an action it supports "
