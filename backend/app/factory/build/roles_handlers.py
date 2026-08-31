@@ -21,6 +21,13 @@ from app.factory.build.offline_adapters import (
     emit_instantiate_ready,
     emit_runtime_module,
 )
+from app.factory.build.block_obligations import (
+    assert_feedable,
+    augment_model_spec,
+    dependency_obligations,
+    describe_resource_obligations,
+    render_dependency_lines,
+)
 from app.factory.build.roles_constants import (
     _BLOCK_CLASS_RE,
     _BLOCK_DEF_RE,
@@ -563,11 +570,16 @@ def _vendor_runtime_slice(
 
     written: List[str] = []
     lazy_foreign: List[str] = []
+    # Every vendored file's final text, keyed by workspace path. The
+    # dependency obligation is read off THIS -- the bytes that ship -- not
+    # off the Store checkout, which the rewrites have already diverged from.
+    shipped: Dict[str, str] = {}
 
     def _write(rel: Path, text: str) -> None:
         lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
         ctx.workspace.write_text(rel, text)
         written.append(rel.as_posix())
+        shipped[rel.as_posix()] = text
 
     base = Path("vendor") / "cerebrum"
     _write(
@@ -616,6 +628,13 @@ def _vendor_runtime_slice(
             text = emit_instantiate_ready(_rewrite_shim_constructors(text))
             lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
             ctx.workspace.write_text(rel, text)
+            shipped[rel.as_posix()] = text
+
+    # Raises on an import with no recorded distribution. Failing the CLONER
+    # is the point: a requirements.txt that omits what the source imports is
+    # the same F10 defect as an import satisfied by accident, and it surfaces
+    # as a dead feature in the customer's platform rather than a build error.
+    ctx.state["vendored_dependencies"] = dependency_obligations(shipped)
 
     return written, sorted(set(lazy_foreign))
 
@@ -1314,7 +1333,15 @@ def _render_main(product_name: str) -> str:
     return render_main(product_name)
 
 
-def _render_requirements() -> str:
+#: Distributions the factory's own runtime lane declares. Named so the
+#: vendored-dependency pass can dedupe against them instead of emitting a
+#: second, conflicting line for the same package.
+_RUNTIME_DISTRIBUTIONS = (
+    "fastapi", "uvicorn", "pydantic", "alembic", "sqlalchemy", "starlette",
+)
+
+
+def _render_requirements(vendored_deps: Optional[Dict[str, Any]] = None) -> str:
     from app.factory.build.network_posture import POSTURE_ID
 
     return (
@@ -1333,6 +1360,8 @@ def _render_requirements() -> str:
         "alembic>=1.13\n"
         "sqlalchemy>=2.0\n"
         "starlette>=0.37\n"
+    ) + render_dependency_lines(
+        vendored_deps or {}, already=_RUNTIME_DISTRIBUTIONS
     )
 
 
@@ -1735,6 +1764,7 @@ def _coder_body(
             work_list=list(ctx.work_list),
             block_contracts={b: _block_contract(ctx, b) for b in usable},
             model_fields=(spec or {}).get("fields"),
+            resource_obligations=describe_resource_obligations(usable),
             previous_attempt=previous_attempt,
             vendored_roster=sorted(ctx.state.get("vendored_blocks", ())),
         )
@@ -2058,12 +2088,25 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
         if cid not in failing and cid in previous_specs:
-            specs[cid] = previous_specs[cid]
+            # A ratcheted spec gets the same obligation check: the round that
+            # produced it may predate the block assignment it is reused with.
+            _kept = [b for b in cap.block_ids if b in vendored]
+            specs[cid] = augment_model_spec(previous_specs[cid], _kept)
+            assert_feedable(cid, _kept, specs[cid])
             sources[f"model:{cid}"] = previous_sources.get(
                 f"model:{cid}", "unchanged from previous round"
             )
             continue
         spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
+        # IF YOU ASSIGN IT, YOU FEED IT. A block whose precondition only the
+        # caller can meet obligates this spec to carry a field for it; the
+        # agent still owns the design, this only closes what it left open.
+        # Audited immediately after, so an unfeedable assignment fails HERE
+        # with the missing field named -- not at the F11 gate, after four
+        # handlers were written, with no zip.
+        _assigned = [b for b in cap.block_ids if b in vendored]
+        spec = augment_model_spec(spec, _assigned)
+        assert_feedable(cid, _assigned, spec)
         specs[cid] = spec
         sources[f"model:{cid}"] = (
             f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
@@ -2312,7 +2355,13 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
     ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
-    ctx.workspace.write_text("requirements.txt", _render_requirements())
+    # A vendored block's imports are a precondition exactly like a schema
+    # field: assigned means declared. Derived from the source the CLONER
+    # actually wrote, so it cannot drift from what ships.
+    ctx.workspace.write_text(
+        "requirements.txt",
+        _render_requirements(ctx.state.get("vendored_dependencies")),
+    )
     ctx.workspace.write_text(
         "requirements-dev.txt", _render_dev_requirements()
     )
