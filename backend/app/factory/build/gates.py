@@ -310,6 +310,29 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
     )
 
 
+def gate_tester_contract(ctx: GateContext) -> GateResult:
+    """TESTER: the code-phase suite, or -- on the pilot cycle -- PRODUCT.
+
+    OWNER'S RULING 1, 2026-09-01 (FINDING 3). The code-phase gate runs
+    ``pytest -m "not pilot"``, and ``@pytest.mark.pilot`` is the marker on
+    the only tests that exercise a business action. So "all phase gates
+    passed" meant "everything except the tests that check the product works
+    passed", and residential-lettings shipped a booting 216-file zip that
+    could not persist one record with every gate green.
+
+    The code-phase gate is UNCHANGED: a 20-30 minute coder pass is not where
+    a product is judged. What changes is that the pilot cycle's TESTER phase
+    is now the PRODUCT gate -- the pilot-marked suite against the booted
+    product, plus a one-record round-trip per capability (R1e) -- rather
+    than the same suite runner with a different marker.
+    """
+    from app.factory.build.product_gate import gate_product
+
+    if (ctx.cycle or "code").strip().lower() == "pilot":
+        return gate_product(ctx)
+    return gate_suite_green(ctx)
+
+
 def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
     """STORE_MANAGER: nothing was published without passing its op gate.
 
@@ -422,7 +445,7 @@ GATES: Mapping[BuildRole, Gate] = {
     BuildRole.COLLECTOR: gate_gaps_enumerated,
     BuildRole.CLONER: gate_cloner_contract,
     BuildRole.WRITER: gate_writer_contract,
-    BuildRole.TESTER: gate_suite_green,
+    BuildRole.TESTER: gate_tester_contract,
     BuildRole.STORE_MANAGER: gate_store_manager_contract,
 }
 
