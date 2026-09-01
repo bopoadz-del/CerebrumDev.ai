@@ -26,6 +26,7 @@ from app.factory.build.block_obligations import (
     augment_model_spec,
     dependency_obligations,
     describe_resource_obligations,
+    render_preconditions_module,
     render_dependency_lines,
 )
 from app.factory.build.roles_constants import (
@@ -2370,6 +2371,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
     ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
+    # Platform preconditions as CODE, not as prose in a coder prompt (R1c).
+    # The prompt told every handler to create the team first; on
+    # residential-lettings three of four did not, and the one that used the
+    # correct calling convention still answered "Team access denied".
+    ctx.workspace.write_text(
+        Path("app") / "preconditions.py",
+        render_preconditions_module(
+            sorted({str(b) for b in (ctx.state.get("vendored_blocks") or ())}),
+            product_name,
+        ),
+    )
     # A vendored block's imports are a precondition exactly like a schema
     # field: assigned means declared. Derived from the source the CLONER
     # actually wrote, so it cannot drift from what ships.

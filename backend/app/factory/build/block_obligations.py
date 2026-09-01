@@ -73,9 +73,26 @@ SCHEMA_OBLIGATIONS: Dict[str, Dict[str, Any]] = {
 #: Blocks that need an id only the BLOCK can mint. The capability must call
 #: ``ensure`` first and carry the returned ``carry`` key into every action in
 #: ``into``.
+#: ``scope`` says WHERE the ensure step belongs, and it is a real
+#: distinction rather than a label:
+#:
+#: * ``platform`` -- the resource exists once for the whole platform and its
+#:   ensure inputs are platform constants. ``create_team`` needs
+#:   ``user_id``/``name``/``slug``, none of which is a domain value, so it can
+#:   and should run at STARTUP, before any capability (owner's ruling R1c).
+#: * ``per_record`` -- the resource is minted per record and its ensure inputs
+#:   ARE the caller's data. ``store`` needs ``content`` and ``filename``; a
+#:   boot-time step would have to invent a file, which is F18. It stays the
+#:   handler's job, and the WRITER contract probe names it when the handler
+#:   gets it wrong.
+#:
+#: Getting this backwards would be worse than leaving it alone: a startup
+#: step that fabricates a record is exactly the class of defect the factory
+#: refuses.
 RESOURCE_OBLIGATIONS: Dict[str, Dict[str, Any]] = {
     "team": {
         "resource": "team",
+        "scope": "platform",
         "ensure": "create_team",
         "ensure_input": ["user_id", "name", "slug"],
         "carry": "team_id",
@@ -91,6 +108,7 @@ RESOURCE_OBLIGATIONS: Dict[str, Dict[str, Any]] = {
     },
     "storage": {
         "resource": "stored_file",
+        "scope": "per_record",
         "ensure": "store",
         "ensure_input": ["content", "filename"],
         "carry": "file_id",
@@ -193,20 +211,188 @@ def assert_feedable(
         )
 
 
+def platform_obligations_for(block_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
+    """Only the preconditions that can honestly be met at startup."""
+    return {
+        b: rule
+        for b, rule in resource_obligations_for(block_ids).items()
+        if rule.get("scope") == "platform"
+    }
+
+
+def render_preconditions_module(
+    block_ids: Sequence[str], product_name: str = "platform"
+) -> str:
+    """Emit ``app/preconditions.py`` for this build.
+
+    OWNER'S RULING R1c, 2026-09-01: preconditions become GENERATED STARTUP
+    CODE -- an ensure step per declared precondition, before any capability
+    runs.
+
+    Until now the obligation reached the coder as prose in its prompt
+    (``describe_resource_obligations``), and every handler had to remember it
+    independently. On residential-lettings three of four handlers did not:
+    ``maintenance_issue_tracking`` used the correct calling convention and
+    still answered ``team: Team access denied``, because nothing had created
+    the team. A rule that has to be re-obeyed in every handler is a rule that
+    will be missed in one.
+
+    Only ``scope: platform`` obligations are emitted here. A ``per_record``
+    one would have to invent the caller's data to run at boot, which is F18.
+
+    The module never raises on failure: a platform that cannot reach a block
+    at boot must still start and report the fact, rather than refusing to
+    serve anything. The failure is recorded and readable.
+    """
+    rules = platform_obligations_for(block_ids)
+    header = [
+        '"""Platform preconditions, run once at startup.',
+        "A block that mints its own id needs that id created BEFORE any",
+        "capability calls it. Generated from the factory's resource",
+        "obligations (R1c) rather than left to each handler to remember.",
+        "",
+        "``resource_id(block_id)`` returns the id the ensure step received, or",
+        "None when the step has not run or did not succeed.",
+        '"""',
+        "",
+        "from __future__ import annotations",
+        "",
+        "import logging",
+        "from typing import Any, Dict, Optional",
+        "",
+        "_LOG = logging.getLogger(__name__)",
+        "",
+        "#: block_id -> the id its ensure action returned.",
+        "RESOURCE_IDS: Dict[str, str] = {}",
+        "#: block_id -> why its ensure step did not produce an id.",
+        "RESOURCE_ERRORS: Dict[str, str] = {}",
+        "",
+        "PRECONDITIONS: Dict[str, Dict[str, Any]] = " + repr(
+            {
+                b: {
+                    "ensure": r["ensure"],
+                    "carry": r["carry"],
+                    "input": _platform_ensure_input(r, product_name),
+                    "into": list(r.get("into") or []),
+                }
+                for b, r in sorted(rules.items())
+            }
+        ),
+        "",
+        "",
+        "def resource_id(block_id: str) -> Optional[str]:",
+        '    """The id ``ensure_all`` obtained for this block, if any."""',
+        "    return RESOURCE_IDS.get(block_id)",
+        "",
+        "",
+        "def ensure_all() -> Dict[str, Any]:",
+        '    """Run every platform precondition. Idempotent; never raises."""',
+        "    from app.dispatch import execute",
+        "",
+        "    for block_id, rule in PRECONDITIONS.items():",
+        "        if RESOURCE_IDS.get(block_id):",
+        "            continue",
+        "        try:",
+        "            result = execute(",
+        "                block_id, dict(rule[\"input\"]), action=rule[\"ensure\"]",
+        "            )",
+        "        except Exception as exc:  # noqa: BLE001 - boot must not die",
+        "            RESOURCE_ERRORS[block_id] = \"%s: %s\" % (",
+        "                type(exc).__name__, exc,",
+        "            )",
+        "            _LOG.warning(",
+        "                \"precondition %s %s raised: %s\",",
+        "                block_id, rule[\"ensure\"], exc,",
+        "            )",
+        "            continue",
+        "        got = None",
+        "        if isinstance(result, dict):",
+        "            got = result.get(rule[\"carry\"])",
+        "            if got is None and isinstance(result.get(\"result\"), dict):",
+        "                got = result[\"result\"].get(rule[\"carry\"])",
+        "        if got:",
+        "            RESOURCE_IDS[block_id] = str(got)",
+        "            RESOURCE_ERRORS.pop(block_id, None)",
+        "        else:",
+        "            RESOURCE_ERRORS[block_id] = str(",
+        "                (result or {}).get(\"error\") if isinstance(result, dict)",
+        "                else result",
+        "            )[:200]",
+        "            _LOG.warning(",
+        "                \"precondition %s %s returned no %s: %s\",",
+        "                block_id, rule[\"ensure\"], rule[\"carry\"],",
+        "                RESOURCE_ERRORS[block_id],",
+        "            )",
+        "    return {\"ids\": dict(RESOURCE_IDS), \"errors\": dict(RESOURCE_ERRORS)}",
+        "",
+    ]
+    return "\n".join(header)
+
+
+def _platform_ensure_input(
+    rule: Dict[str, Any], product_name: str
+) -> Dict[str, str]:
+    """Platform-constant values for a platform-scoped ensure step.
+
+    Every value here is about the PLATFORM, never about a domain record --
+    that is what makes the step honest rather than fabricated. A field the
+    factory has no platform-level value for would mean the obligation is
+    mis-scoped, so it is named rather than filled with a guess.
+    """
+    slug = "".join(
+        c if c.isalnum() else "-" for c in (product_name or "platform").lower()
+    ).strip("-") or "platform"
+    known = {
+        "user_id": "system",
+        "name": "%s system" % (product_name or "platform"),
+        "slug": "%s-system" % slug,
+        "owner": "system",
+        "description": "Created at startup by the platform's precondition step.",
+    }
+    out: Dict[str, str] = {}
+    for field in rule.get("ensure_input") or []:
+        if field not in known:
+            raise BlockObligationError(
+                "resource obligation for %r is scoped 'platform' but its "
+                "ensure input %r has no platform-level value -- it is domain "
+                "data, so the obligation is per_record" % (rule.get("resource"), field)
+            )
+        out[field] = known[field]
+    return out
+
+
 def describe_resource_obligations(block_ids: Sequence[str]) -> str:
     """The rule the coder must follow, as prose for the handler prompt."""
     rules = resource_obligations_for(block_ids)
     if not rules:
         return ""
     out = [
-        "Resource preconditions. These blocks mint their own id. Call the "
-        "'ensure' action FIRST and pass the id it RETURNS into the later "
-        "action -- never a domain value from the payload:",
+        "Resource preconditions. These blocks mint their own id and refuse "
+        "the action without it -- never pass a domain value from the payload "
+        "as that id:",
     ]
     for block_id, rule in sorted(rules.items()):
+        if rule.get("scope") == "platform":
+            # The startup step already created it (R1c). Telling the handler
+            # to create it again is how you get two teams and a race.
+            out.append(
+                "- %s: the platform ALREADY created this at startup. Read the "
+                "id with `from app.preconditions import resource_id` ->"
+                " `resource_id(%r)` and pass it as %s into %s. Do NOT call %s "
+                "yourself. %s"
+                % (
+                    block_id,
+                    block_id,
+                    rule["carry"],
+                    ", ".join(rule["into"]),
+                    rule["ensure"],
+                    rule["why"],
+                )
+            )
+            continue
         out.append(
-            "- %s: call %s (input: %s), read %s off its result, and pass that "
-            "%s into %s. %s"
+            "- %s: call %s (input: %s) FIRST, read %s off its result, and "
+            "pass that %s into %s. %s"
             % (
                 block_id,
                 rule["ensure"],
