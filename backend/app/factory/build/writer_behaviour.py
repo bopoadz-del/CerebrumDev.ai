@@ -70,6 +70,7 @@ sys.path.insert(0, os.getcwd())
 findings = []
 schema_misses = []
 f11_misses = []
+roundtrip_misses = []
 
 # Baked in by _render_probe() from app.factory.build.block_obligations, so
 # the probe can name a missing precondition without importing the factory
@@ -311,6 +312,107 @@ client_cm = TestClient(app)
 client = client_cm.__enter__()
 targets = []
 
+
+# ONE-RECORD ROUND TRIP (owner's ruling R1e, 2026-09-01).
+#
+#   "Boots and passes its own tests" is no longer enough; the product must
+#   remember one thing it was told.
+#
+# residential-lettings booted, served all its routes, passed its own gate --
+# and answered every GET with {"items": [], "total": 0}. Nothing in the
+# factory asked the one question a buyer asks first: I gave it a record, is
+# it still there?
+#
+# Scope, so this bites the real defect and nothing else. Only a capability
+# whose entity is READABLE is judged: store.list_all does SELECT * FROM
+# <entity>, so a generate-only capability with no table raises, _rows
+# returns None, and the capability is reported as unjudged rather than
+# failed. A capability that persists is judged on both halves -- the store
+# grew, AND the GET hands the record back.
+_ROUND_TRIP_CHECKED = set()
+
+
+def _record_matches(record, body):
+    """Does this stored/returned record carry a value the POST supplied?"""
+    if not isinstance(record, dict):
+        return False
+    for key, want in (body or {}).items():
+        got = record.get(key)
+        if got is None:
+            continue
+        if got == want or str(got) == str(want):
+            return True
+    return False
+
+
+def _listed_records(payload):
+    """Pull the record list out of whatever shape the list route answers."""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in ("items", "records", "results", "data", "rows"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+def _check_round_trip(cap_id, cls, body):
+    """POST created it; can it be read back? Judged once per capability."""
+    if cap_id in _ROUND_TRIP_CHECKED:
+        return
+    _ROUND_TRIP_CHECKED.add(cap_id)
+    entity = _entity_of(cap_id, cls)
+    rows = _rows(entity)
+    if rows is None:
+        # Not judgeable rather than failed: no table to read.
+        return
+    if rows < 1:
+        roundtrip_misses.append(
+            "%s: POST reported success and %s holds 0 row(s) -- the product "
+            "did not remember what it was told (ROUND-TRIP: nothing stored)"
+            % (cap_id, entity)
+        )
+        return
+    stored = store.list_all(entity)
+    if not any(_record_matches(r, body) for r in stored):
+        roundtrip_misses.append(
+            "%s: %s grew to %d row(s) but none carries a value the POST "
+            "supplied (ROUND-TRIP: wrong record)" % (cap_id, entity, rows)
+        )
+        return
+    # ... and the GET the buyer actually makes.
+    try:
+        got = client.get("/v1/" + cap_id)
+    except Exception as exc:
+        findings.append(
+            "%s: GET raised %s: %s" % (cap_id, type(exc).__name__, exc)
+        )
+        return
+    if got.status_code in (404, 405):
+        return  # no list route on this capability; the store half stands
+    if got.status_code != 200:
+        roundtrip_misses.append(
+            "%s: stored the record, then GET answered HTTP %s "
+            "(ROUND-TRIP: not readable)" % (cap_id, got.status_code)
+        )
+        return
+    listed = _listed_records(got.json() if got.content else {})
+    if not listed:
+        roundtrip_misses.append(
+            "%s: %s holds %d row(s) and GET answered with none -- the exact "
+            "residential-lettings answer (ROUND-TRIP: empty list)"
+            % (cap_id, entity, rows)
+        )
+        return
+    if not any(_record_matches(r, body) for r in listed):
+        roundtrip_misses.append(
+            "%s: GET returned %d record(s), none carrying a value the POST "
+            "supplied (ROUND-TRIP: wrong record returned)"
+            % (cap_id, len(listed))
+        )
+
 # -- phase 1: baseline -----------------------------------------------------
 for cap_id, cls in MODELS.items():
     body = _payload(cls)
@@ -328,6 +430,8 @@ for cap_id, cls in MODELS.items():
         )
         continue
     data = resp.json() if resp.content else {}
+    if data.get("ok") is not False:
+        _check_round_trip(cap_id, cls, body)
     # House convention: ``ok is False`` is the refusal. A route that omits
     # ``ok`` has not refused, so it belongs in phase two rather than being
     # reported here as a schema rejection.
@@ -452,6 +556,16 @@ if f11_misses and all(cid in _f11_caps for cid, _cls in targets):
         + "".join("GATE-FINDING: %s\n" % f for f in f11_misses)
     )
     raise SystemExit(1)
+_rt_caps = set(m.split(":", 1)[0] for m in roundtrip_misses)
+if roundtrip_misses and all(cid in _rt_caps for cid, _cls in targets):
+    # Nothing the product was told survived. That is residential-lettings
+    # exactly, and it is the bar "boots and passes its own tests" never
+    # reached. Isolated misses (below) record and continue.
+    sys.stderr.write(
+        "GATE-FINDING: no capability could read back a record it stored\n"
+        + "".join("GATE-FINDING: %s\n" % f for f in roundtrip_misses)
+    )
+    raise SystemExit(1)
 _contract_caps = set(m.split(":", 1)[0] for m in contract_misses)
 if contract_misses and all(cid in _contract_caps for cid, _cls in targets):
     # Every probed capability wrote a payload its own blocks refuse. That is
@@ -469,7 +583,10 @@ if misses and honest == 0:
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
     raise SystemExit(1)
 # Isolated F1, F11, contract and schema refusals: record, do not halt.
-recorded = list(misses) + list(schema_misses) + list(f11_misses) + list(contract_misses)
+recorded = (
+    list(misses) + list(schema_misses) + list(f11_misses)
+    + list(contract_misses) + list(roundtrip_misses)
+)
 if recorded:
     sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in recorded))
 '''
@@ -499,6 +616,16 @@ def _is_f11_line(line: str) -> bool:
         token in line
         for token in (F11_HALT, "(F11)", "never invokes", "declares block(s)")
     )
+
+
+def _is_round_trip_line(line: str) -> bool:
+    """True when a probe line is a record that did not survive.
+
+    Its own class again: the route accepted the payload, the blocks may all
+    have answered fine, and the handler may have failed closed correctly --
+    and the product still forgot what it was told.
+    """
+    return "(ROUND-TRIP" in line
 
 
 def _is_contract_line(line: str) -> bool:
@@ -625,11 +752,13 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     schema_misses = [m for m in misses if _is_schema_line(m)]
     f11_misses = [m for m in misses if _is_f11_line(m)]
     contract_misses = [m for m in misses if _is_contract_line(m)]
+    roundtrip_misses = [m for m in misses if _is_round_trip_line(m)]
     f1_misses = [
         m for m in misses
         if not _is_schema_line(m)
         and not _is_f11_line(m)
         and not _is_contract_line(m)
+        and not _is_round_trip_line(m)
     ]
     skipped = [
         ln
@@ -641,6 +770,11 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         detail += (
             f"; {len(contract_misses)} capability(ies) wrote a payload their "
             "blocks refuse (CONTRACT)"
+        )
+    if roundtrip_misses:
+        detail += (
+            f"; {len(roundtrip_misses)} capability(ies) could not read back a "
+            "record they stored (ROUND-TRIP)"
         )
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
@@ -656,5 +790,6 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             "f11_misses": f11_misses,
             "f1_misses": f1_misses,
             "contract_misses": contract_misses,
+            "roundtrip_misses": roundtrip_misses,
         },
     )
