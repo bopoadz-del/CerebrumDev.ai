@@ -188,6 +188,13 @@ class DispatchContractError(ValueError):
     """Caller payload failed the harvested contract. Do not invent fields."""
 
 
+#: Every envelope this dispatcher had to normalise, as
+#: ``(block_id, lifted_keys)``. A silent normalisation is still a defect in
+#: the generated handler; the WRITER contract probe reads this list so the
+#: mismatch is NAMED rather than absorbed.
+_LIFTED: list = []
+
+
 def _required_fields(block_id: str) -> list:
     contract = BLOCK_CONTRACTS.get(block_id) or {}
     required = list(contract.get("input_required_fields") or [])
@@ -208,7 +215,8 @@ def _known_fields(block_id: str) -> set:
     * ``input_required_fields`` -- what the block refuses to run without.
     * ``input_keys_read_by_block`` -- the keys the block's own code actually
       reads off its payload at run time (table, values, where, file_path,
-      user_id, ...).
+      user_id, ...). WORKAROUND, harvested from source; see
+      CerebrumDev.ai#256 and Cerebrum-Blocks#90.
 
     Leaving the third one out is what made every generated platform inert.
     ``database`` declares only {input, backend, connection_string}, so a
@@ -245,10 +253,95 @@ def _known_fields(block_id: str) -> set:
     return names
 
 
+def _keys_read(block_id: str) -> set:
+    """Only the keys the block's CODE reads off its payload at run time.
+
+    Distinct from ``_known_fields``, which also carries block.json's declared
+    CONFIG params. The distinction is what tells a declared ``input`` slot
+    from one the block actually reads: measured on the vendored blocks,
+    ``analytics``, ``database``, ``team`` and ``storage`` contain ZERO
+    ``.get("input")`` -- they read their keys flat -- while ``workflow``
+    reads one. Both facts are needed below.
+
+    WORKAROUND: ``input_keys_read_by_block`` is regex-harvested from the
+    vendored source because no manifest declares it yet. When block.json
+    carries ``requires_inputs`` (Cerebrum-Blocks#90), that declaration
+    replaces this read -- removal tracked in CerebrumDev.ai#256.
+    """
+    contract = BLOCK_CONTRACTS.get(block_id) or {}
+    return {
+        str(f) for f in (contract.get("input_keys_read_by_block") or []) if f
+    }
+
+
+def _envelope_mismatch(block_id: str, data: Dict[str, Any]) -> tuple:
+    """Is the caller's record one level too deep for this block?
+
+    Returns ``(buried, colliding)`` -- the keys the block reads that sit
+    inside ``data["input"]`` instead of at the top level, and any of those
+    that already exist at the top level with a different value.
+
+    THE INCIDENT (residential-lettings, sess_6400b6c273414352, post-#254).
+    ``unit_registry_and_vacancy_tracking`` called::
+
+        execute("analytics", {"input": {"metric": "monthly_rent_gbp",
+                                        "value": 1450.0, ...}},
+                action="track_event")
+
+    and got ``{'error': 'metric and value required'}``. Verified literally in
+    the block source: ``AnalyticsBlock._track_event`` reads
+    ``data.get("metric")`` and ``data.get("value")`` off the payload it is
+    handed, and ``analytics``' block.json declares ``input`` only as a config
+    slot -- the code never reads it. Both fields were present in the spec, so
+    a plan-time audit that looks for NAMES passes; the block still saw
+    neither. That is #254's class one level deeper, and the same file wrapped
+    three different shapes with no rule.
+    """
+    reads = _keys_read(block_id)
+    if not reads or "input" in reads:
+        # The block genuinely reads an ``input`` key (``workflow`` does).
+        # Its wrapper is the contract, not a mistake.
+        return (), ()
+    inner = data.get("input")
+    if not isinstance(inner, dict):
+        return (), ()
+    buried = sorted(k for k in inner if k in reads and k != "action")
+    colliding = sorted(
+        k for k in buried if k in data and data[k] != inner[k]
+    )
+    return tuple(buried), tuple(colliding)
+
+
 def _adapt_input(block_id: str, payload: Any, action: str | None) -> Dict[str, Any]:
-    """Pass the caller payload through. Never invent Store fields (F18)."""
+    """Pass the caller payload through. Never invent Store fields (F18).
+
+    A MISMATCHED ENVELOPE IS NEVER PASSED THROUGH SILENTLY. Either the
+    record is normalised to the shape the block reads, or the call fails
+    with the mismatch named -- it does not reach the block wearing a shape
+    the block cannot read (owner's ruling R1d, 2026-09-01).
+    """
     data = dict(payload) if isinstance(payload, dict) else {"value": payload}
     known = _known_fields(block_id)
+
+    buried, colliding = _envelope_mismatch(block_id, data)
+    if colliding:
+        # Two different values for the same field, one nested and one flat.
+        # Normalising would have to choose, and choosing is inventing.
+        verb = "appears" if len(colliding) == 1 else "appear"
+        raise DispatchContractError(
+            f"{block_id} envelope mismatch: {', '.join(colliding)} {verb} both "
+            f"at the top level and inside 'input' with different values; "
+            f"{block_id} reads them at the top level. Pass the record flat."
+        )
+    if buried:
+        inner = dict(data.get("input") or {})
+        for key in buried:
+            data[key] = inner.pop(key)
+        if inner:
+            data["input"] = inner
+        else:
+            data.pop("input", None)
+        _LIFTED.append((block_id, tuple(buried)))
     # Store blocks are action-dispatched: the domain record travels in the
     # block's declared ``input`` slot, with block params beside it. A handler
     # that passes the record flat gets every domain key refused as unknown --

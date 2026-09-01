@@ -1695,10 +1695,25 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
         )
         if errors:
             contract["runtime_error_contracts"] = sorted(set(errors))[:25]
+        # WORKAROUND -- removal tracked in CerebrumDev.ai#256.
+        #
         # The dict keys the block's code reads from its input are its de
         # facto vocabulary. A pipeline step written as {"block_id": ...}
         # failed with "No block specified" because the workflow block reads
-        # step.get("block") -- knowledge that sat in the vendored source.
+        # step.get("block") -- knowledge that sat in the vendored source and
+        # nowhere else, which is why this harvest exists at all.
+        #
+        # It reads the wrong artifact, and that is not a bug to fix here.
+        # A .get("x") anywhere in the module harvests identically whether x
+        # is a payload key, a result key, a config key or an env key; a key
+        # read through a variable (payload.get(field)) is invisible to it;
+        # and the cap of 40 is arbitrary. Only the kit author knows which
+        # keys are the contract.
+        #
+        # The design is Cerebrum-Blocks#90 (Lane 2 / L2.2): block.json
+        # declaring requires_inputs. Until it lands AND the vendored blocks
+        # fill it in -- it ships optional and empty on purpose -- a declared
+        # value wins over this one. The two are never merged silently.
         keys_read = re.findall(r"\.get\(\s*[\"'](\w{2,30})[\"']", source)
         if keys_read:
             contract["input_keys_read_by_block"] = sorted(set(keys_read))[:40]
