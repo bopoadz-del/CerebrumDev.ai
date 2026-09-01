@@ -71,6 +71,11 @@ findings = []
 schema_misses = []
 f11_misses = []
 
+# Baked in by _render_probe() from app.factory.build.block_obligations, so
+# the probe can name a missing precondition without importing the factory
+# (it runs inside the generated workspace, which carries no factory code).
+RESOURCE_OBLIGATIONS = {}
+
 try:
     from app.models import MODELS
     from app import store
@@ -184,13 +189,117 @@ import app.dispatch as _dispatch
 
 _real_execute = _dispatch.execute
 _seen = {"cap": None, "blocks": {}}
+contract_misses = []
+
+# CONTRACT PROBE (owner's ruling R1b, 2026-09-01).
+#
+# F11 says "declared means invoked". This says "invoked means ACCEPTED".
+#
+# The baseline phase already executes the REAL vendored blocks with the
+# payload the coder wrote, so the evidence was passing through this function
+# and being thrown away: only the block id was recorded, never the answer. On
+# the residential-lettings build (sess_6400b6c273414352, six hours after #254
+# merged) every one of these came back here and none was seen:
+#
+#   analytics  {'error': 'metric and value required'}   <- envelope shape
+#   team       'Unknown action: None'                   <- action in payload
+#   workflow   'workflow unknown field(s): action'      <- action in payload
+#   team       'Team access denied'                     <- precondition
+#
+# The build passed WRITER, passed its own gate, shipped a 216-file zip that
+# booted -- and could not persist one record.
+#
+# Classified, never guessed: each class is decided by the block's literal
+# answer plus the payload the coder actually passed.
+_REFUSAL_MARKERS = (
+    "required", "unknown action", "unknown field", "not found",
+    "access denied", "no input files", "invalid", "missing",
+)
+
+
+def _classify_refusal(block_id, payload, action, answer):
+    """Name the mismatch, or return None when the answer is not a refusal."""
+    if not isinstance(answer, dict):
+        return None
+    text = str(answer.get("error") or "")
+    # Block error literals use both conventions -- "Team not found" and
+    # "file_not_found" are the same class of answer, and the underscored one
+    # slipped every marker until a test caught it. Match on both spellings.
+    low = text.lower()
+    flat = low.replace("_", " ")
+    if not any(m in low or m in flat for m in _REFUSAL_MARKERS):
+        return None
+    data = payload if isinstance(payload, dict) else {}
+    inner = data.get("input") if isinstance(data.get("input"), dict) else {}
+
+    # (a) the action travelled inside the payload instead of as the keyword
+    if "unknown action" in low or "unknown field" in low:
+        if "action" in data or "action" in inner:
+            return (
+                "%s: the action travelled inside the payload; app/dispatch.py "
+                "routes payload keys into the block's record and reads the "
+                "operation only from the action= keyword. Answered %r "
+                "(CONTRACT: unknown action)" % (block_id, text[:90])
+            )
+        if action is None:
+            return (
+                "%s: called with no action= keyword. Answered %r "
+                "(CONTRACT: unknown action)" % (block_id, text[:90])
+            )
+
+    # (b) the record is one level too deep for a block that reads it flat
+    if inner:
+        try:
+            import app.dispatch as _d
+            reads = set(
+                (_d.BLOCK_CONTRACTS.get(block_id) or {})
+                .get("input_keys_read_by_block") or []
+            )
+        except Exception:
+            reads = set()
+        buried = sorted(k for k in inner if k in reads and k != "action")
+        if buried and "input" not in reads:
+            return (
+                "%s: envelope shape -- %s sit inside 'input' but %s reads them "
+                "at the top level. Answered %r (CONTRACT: envelope shape)"
+                % (block_id, ", ".join(buried), block_id, text[:90])
+            )
+
+    # (c) an action that needs an id the block itself mints, called without it
+    rule = RESOURCE_OBLIGATIONS.get(block_id) or {}
+    if action and action in (rule.get("into") or []):
+        carry = rule.get("carry")
+        if carry and not data.get(carry) and not inner.get(carry):
+            return (
+                "%s: called %s without %s. %s mints it and must run first, "
+                "with the returned %s carried in. Answered %r "
+                "(CONTRACT: missing precondition)"
+                % (block_id, action, carry, rule.get("ensure"), carry,
+                   text[:90])
+            )
+
+    return (
+        "%s: refused the payload the coder wrote -- answered %r (CONTRACT)"
+        % (block_id, text[:110])
+    )
 
 
 def _recording_execute(block_id, *a, **kw):
     cap = _seen["cap"]
     if cap is not None:
         _seen["blocks"].setdefault(cap, set()).add(str(block_id))
-    return _real_execute(block_id, *a, **kw)
+    result = _real_execute(block_id, *a, **kw)
+    if cap is not None:
+        payload = a[0] if a else kw.get("payload")
+        act = kw.get("action")
+        if act is None and len(a) > 1:
+            act = a[1]
+        note = _classify_refusal(block_id, payload, act, result)
+        if note:
+            line = "%s: %s" % (cap, note)
+            if line not in contract_misses:
+                contract_misses.append(line)
+    return result
 
 
 _dispatch.execute = _recording_execute
@@ -343,13 +452,24 @@ if f11_misses and all(cid in _f11_caps for cid, _cls in targets):
         + "".join("GATE-FINDING: %s\n" % f for f in f11_misses)
     )
     raise SystemExit(1)
+_contract_caps = set(m.split(":", 1)[0] for m in contract_misses)
+if contract_misses and all(cid in _contract_caps for cid, _cls in targets):
+    # Every probed capability wrote a payload its own blocks refuse. That is
+    # the residential-lettings shape exactly: a zip that boots and cannot
+    # persist. Isolated contract misses (below) continue so a mixed
+    # workspace can still ship.
+    sys.stderr.write(
+        "GATE-FINDING: every capability wrote a payload its blocks refuse\n"
+        + "".join("GATE-FINDING: %s\n" % f for f in contract_misses)
+    )
+    raise SystemExit(1)
 if misses and honest == 0:
     # Every block-reaching capability lied. Same as LotDesk: the WRITER
     # produced nothing honest to ship. Isolated misses (below) continue.
     sys.stderr.write("".join("GATE-FINDING: %s\n" % f for f in misses))
     raise SystemExit(1)
-# Isolated F1, F11, and schema refusals: record, do not halt.
-recorded = list(misses) + list(schema_misses) + list(f11_misses)
+# Isolated F1, F11, contract and schema refusals: record, do not halt.
+recorded = list(misses) + list(schema_misses) + list(f11_misses) + list(contract_misses)
 if recorded:
     sys.stdout.write("".join("GATE-MISS: %s\n" % m for m in recorded))
 '''
@@ -379,6 +499,16 @@ def _is_f11_line(line: str) -> bool:
         token in line
         for token in (F11_HALT, "(F11)", "never invokes", "declares block(s)")
     )
+
+
+def _is_contract_line(line: str) -> bool:
+    """True when a probe line is a block refusing the coder's payload.
+
+    Its own class: not a schema refusal (the ROUTE accepted the payload),
+    not F11 (the block WAS invoked), not F1 (the handler did fail closed --
+    that is how the refusal surfaced at all).
+    """
+    return "(CONTRACT" in line
 
 
 def _is_f1_line(line: str) -> bool:
@@ -437,6 +567,17 @@ def _pass_detail(
     return "every capability fails closed when its blocks fail"
 
 
+def _render_probe() -> str:
+    """The probe with this factory's resource obligations baked in."""
+    from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+
+    return BEHAVIOUR_PROBE.replace(
+        "RESOURCE_OBLIGATIONS = {}",
+        "RESOURCE_OBLIGATIONS = " + repr(dict(RESOURCE_OBLIGATIONS)),
+        1,
+    )
+
+
 def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     """WRITER: isolated schema, F11, or F1 is a miss, not a halt.
 
@@ -457,7 +598,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             findings=["writer produced no models"],
         )
 
-    proc = ctx.run([sys.executable, "-c", BEHAVIOUR_PROBE])
+    proc = ctx.run([sys.executable, "-c", _render_probe()])
     if proc.returncode != 0:
         raw = (proc.stderr or "").splitlines()
         # Filter to marked findings: alembic and uvicorn also log to stderr,
@@ -483,8 +624,12 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
     ]
     schema_misses = [m for m in misses if _is_schema_line(m)]
     f11_misses = [m for m in misses if _is_f11_line(m)]
+    contract_misses = [m for m in misses if _is_contract_line(m)]
     f1_misses = [
-        m for m in misses if not _is_schema_line(m) and not _is_f11_line(m)
+        m for m in misses
+        if not _is_schema_line(m)
+        and not _is_f11_line(m)
+        and not _is_contract_line(m)
     ]
     skipped = [
         ln
@@ -492,6 +637,11 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         if ln.strip() and ln.strip() != "SKIPPED" and "GATE-MISS: " not in ln
     ]
     detail = _pass_detail(f1_misses, schema_misses, f11_misses)
+    if contract_misses:
+        detail += (
+            f"; {len(contract_misses)} capability(ies) wrote a payload their "
+            "blocks refuse (CONTRACT)"
+        )
     if skipped:
         detail += f"; {len(skipped)} capability(ies) skipped — see payload"
     return GateResult(
@@ -505,5 +655,6 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
             "schema_misses": schema_misses,
             "f11_misses": f11_misses,
             "f1_misses": f1_misses,
+            "contract_misses": contract_misses,
         },
     )
