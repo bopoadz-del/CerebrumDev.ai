@@ -215,7 +215,8 @@ def _known_fields(block_id: str) -> set:
     * ``input_required_fields`` -- what the block refuses to run without.
     * ``input_keys_read_by_block`` -- the keys the block's own code actually
       reads off its payload at run time (table, values, where, file_path,
-      user_id, ...).
+      user_id, ...). WORKAROUND, harvested from source; see
+      CerebrumDev.ai#256 and Cerebrum-Blocks#90.
 
     Leaving the third one out is what made every generated platform inert.
     ``database`` declares only {input, backend, connection_string}, so a
@@ -261,6 +262,11 @@ def _keys_read(block_id: str) -> set:
     ``analytics``, ``database``, ``team`` and ``storage`` contain ZERO
     ``.get("input")`` -- they read their keys flat -- while ``workflow``
     reads one. Both facts are needed below.
+
+    WORKAROUND: ``input_keys_read_by_block`` is regex-harvested from the
+    vendored source because no manifest declares it yet. When block.json
+    carries ``requires_inputs`` (Cerebrum-Blocks#90), that declaration
+    replaces this read -- removal tracked in CerebrumDev.ai#256.
     """
     contract = BLOCK_CONTRACTS.get(block_id) or {}
     return {
