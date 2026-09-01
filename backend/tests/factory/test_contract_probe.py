@@ -40,7 +40,6 @@ WHAT WAS VERIFIED LITERALLY, on ``Cerebrum-Blocks@68a145a``, not inferred:
 from __future__ import annotations
 
 import ast
-import re
 from typing import Any, Dict
 
 import pytest
@@ -462,3 +461,202 @@ def test_calls_outside_a_capability_are_not_attributed(fake_dispatch):
     ns["_seen"]["cap"] = None
     ns["_recording_execute"]("team", {"user_id": "u"}, action="get_team_context")
     assert ns["contract_misses"] == []
+
+
+# --------------------------------------------------------------------------
+# R1e -- the one-record round trip
+# --------------------------------------------------------------------------
+# "Boots and passes its own tests" is no longer enough; the product must
+# remember one thing it was told. residential-lettings booted, served all
+# seventeen routes, passed its own gate -- and answered every GET with
+# {"items": [], "total": 0}.
+
+
+def _round_trip_flow(rows, listed, get_status=200, entity="unit"):
+    """Drive the probe's round-trip check against a canned store and route.
+
+    ``rows`` is what store.list_all returns; ``listed`` is what GET answers
+    with; ``entity=None`` makes the entity unreadable (no such table), which
+    is how a generate-only capability presents.
+    """
+    ns = {}
+    exec(_lift_from_probe({"_record_matches", "_listed_records",
+                           "_check_round_trip", "_ROUND_TRIP_CHECKED"}), ns)
+
+    class _Resp:
+        status_code = get_status
+        content = b"x"
+
+        def json(self):
+            return listed
+
+    class _Client:
+        def get(self, path):
+            return _Resp()
+
+    class _Store:
+        @staticmethod
+        def list_all(name):
+            if rows is None:
+                raise RuntimeError("no such table: %s" % name)
+            return list(rows)
+
+    ns["roundtrip_misses"] = []
+    ns["findings"] = []
+    ns["client"] = _Client()
+    ns["store"] = _Store()
+    ns["_entity_of"] = lambda cap, cls: entity
+    ns["_rows"] = lambda e: (None if rows is None else len(rows))
+    return ns
+
+
+BODY = {"unit_reference": "sample", "monthly_rent_gbp": 1, "status": "vacant"}
+
+
+def test_a_record_that_survives_is_not_a_miss():
+    ns = _round_trip_flow([dict(BODY)], {"items": [dict(BODY)], "total": 1})
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert ns["roundtrip_misses"] == []
+
+
+def test_nothing_stored_is_named():
+    ns = _round_trip_flow([], {"items": [], "total": 0})
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert len(ns["roundtrip_misses"]) == 1
+    line = ns["roundtrip_misses"][0]
+    assert "ROUND-TRIP: nothing stored" in line
+    assert "did not remember what it was told" in line
+
+
+def test_the_exact_lettings_answer_is_named():
+    """Stored a row, and every GET answers {"items": [], "total": 0}."""
+    ns = _round_trip_flow([dict(BODY)], {"items": [], "total": 0})
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert len(ns["roundtrip_misses"]) == 1
+    assert "ROUND-TRIP: empty list" in ns["roundtrip_misses"][0]
+    assert "residential-lettings" in ns["roundtrip_misses"][0]
+
+
+def test_a_row_that_is_not_the_posted_record_is_named():
+    """The STORE half, isolated. get_status=404 removes the list route so
+    only the store check can fire -- and the class is asserted exactly,
+    because "wrong record returned" contains "wrong record"."""
+    ns = _round_trip_flow([{"unit_reference": "something else"}], {},
+                          get_status=404)
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert len(ns["roundtrip_misses"]) == 1
+    line = ns["roundtrip_misses"][0]
+    assert line.endswith("(ROUND-TRIP: wrong record)"), line
+    assert "grew to 1 row(s)" in line
+
+
+def test_a_get_that_returns_other_records_is_named():
+    """The GET half, isolated: the store DOES hold the record."""
+    ns = _round_trip_flow([dict(BODY)], {"items": [{"unit_reference": "other"}]})
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert len(ns["roundtrip_misses"]) == 1
+    assert ns["roundtrip_misses"][0].endswith("(ROUND-TRIP: wrong record returned)")
+
+
+def test_a_get_that_errors_is_named():
+    ns = _round_trip_flow([dict(BODY)], {}, get_status=500)
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert "ROUND-TRIP: not readable" in ns["roundtrip_misses"][0]
+    assert "500" in ns["roundtrip_misses"][0]
+
+
+def test_no_list_route_leaves_the_store_half_standing():
+    """A capability without a list route is not failed for lacking one --
+    the store half already proved the record survived."""
+    for code in (404, 405):
+        ns = _round_trip_flow([dict(BODY)], {}, get_status=code)
+        ns["_check_round_trip"]("unit_registry", object, BODY)
+        assert ns["roundtrip_misses"] == [], code
+
+
+def test_an_unreadable_entity_is_unjudged_not_failed():
+    """A generate-only capability has no table. SELECT * raises, and it must
+    be reported as not judgeable rather than counted as a failure."""
+    ns = _round_trip_flow(None, {})
+    ns["_check_round_trip"]("pdf_export", object, BODY)
+    assert ns["roundtrip_misses"] == []
+    assert ns["findings"] == []
+
+
+def test_each_capability_is_judged_once():
+    ns = _round_trip_flow([], {"items": []})
+    for _ in range(4):
+        ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert len(ns["roundtrip_misses"]) == 1
+
+
+@pytest.mark.parametrize("shape", [
+    {"items": [{"unit_reference": "sample"}]},
+    {"records": [{"unit_reference": "sample"}]},
+    {"results": [{"unit_reference": "sample"}]},
+    {"data": [{"unit_reference": "sample"}]},
+    {"rows": [{"unit_reference": "sample"}]},
+    [{"unit_reference": "sample"}],
+])
+def test_every_list_shape_the_emitter_uses_is_understood(shape):
+    ns = _round_trip_flow([dict(BODY)], shape)
+    ns["_check_round_trip"]("unit_registry", object, BODY)
+    assert ns["roundtrip_misses"] == [], shape
+
+
+def test_a_value_stored_with_a_different_type_still_matches():
+    """sqlite hands an int back as an int and a str back as a str; a record
+    must not be called wrong for that."""
+    ns = _round_trip_flow([{"monthly_rent_gbp": "1"}],
+                          {"items": [{"monthly_rent_gbp": "1"}]})
+    ns["_check_round_trip"]("unit_registry", object, {"monthly_rent_gbp": 1})
+    assert ns["roundtrip_misses"] == []
+
+
+def test_a_round_trip_line_is_its_own_class():
+    from app.factory.build.writer_behaviour import _is_round_trip_line
+    line = ("unit_registry: unit holds 1 row(s) and GET answered with none "
+            "(ROUND-TRIP: empty list)")
+    assert _is_round_trip_line(line)
+    assert not _is_contract_line(line)
+    assert not _is_f11_line(line)
+    assert not _is_schema_line(line)
+
+
+def test_other_classes_are_not_counted_as_round_trip():
+    from app.factory.build.writer_behaviour import _is_round_trip_line
+    for line in (
+        "cap: declares block(s) it never invokes: workflow (F11)",
+        "cap: analytics: envelope shape -- metric (CONTRACT: envelope shape)",
+        "cap: did not fail closed - answered {} (F1)",
+    ):
+        assert not _is_round_trip_line(line), line
+
+
+def test_the_probe_runs_the_round_trip_on_the_baseline_post():
+    """Wired, not merely defined. A second POST would create a second record
+    and make the count assertion meaningless, so it rides the baseline one."""
+    from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
+    call = "        _check_round_trip(cap_id, cls, body)"
+    assert call in BEHAVIOUR_PROBE
+    assert BEHAVIOUR_PROBE.count(call) == 1, "one call site, on the baseline POST"
+    assert "def _check_round_trip(cap_id, cls, body):" in BEHAVIOUR_PROBE
+
+
+def test_all_capabilities_forgetting_is_a_halt():
+    """The GUARD, not just its message: a message left behind an ``if
+    False:`` reads identically in a substring check."""
+    from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
+    guard = ("if roundtrip_misses and all(cid in _rt_caps "
+             "for cid, _cls in targets):")
+    assert guard in BEHAVIOUR_PROBE
+    assert "no capability could read back a record it stored" in BEHAVIOUR_PROBE
+    assert "_rt_caps = set(m.split(\":\", 1)[0] for m in roundtrip_misses)" in BEHAVIOUR_PROBE
+
+
+def test_an_isolated_round_trip_miss_does_not_halt():
+    """One capability forgetting must not stop a mixed workspace shipping --
+    the same rule F1, F11 and schema misses already follow."""
+    from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
+    assert "Isolated misses (below) record and continue." in BEHAVIOUR_PROBE
+    assert "list(roundtrip_misses)" in BEHAVIOUR_PROBE
