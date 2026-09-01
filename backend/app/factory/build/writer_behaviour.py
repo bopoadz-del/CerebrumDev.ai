@@ -248,7 +248,10 @@ def _classify_refusal(block_id, payload, action, answer):
                 "(CONTRACT: unknown action)" % (block_id, text[:90])
             )
 
-    # (b) the record is one level too deep for a block that reads it flat
+    # (b) the record is one level too deep for a block that reads it flat.
+    # input_keys_read_by_block is harvested from source, not declared --
+    # WORKAROUND, removal tracked in CerebrumDev.ai#256 (design:
+    # Cerebrum-Blocks#90, block.json requires_inputs).
     if inner:
         try:
             import app.dispatch as _d
