@@ -21,6 +21,11 @@ from app.factory.build.offline_adapters import (
     emit_instantiate_ready,
     emit_runtime_module,
 )
+from app.factory.build.block_inputs import (
+    align_spec_to_handler_fields,
+    handler_required_fields,
+    render_block_inputs_module,
+)
 from app.factory.build.block_obligations import (
     assert_feedable,
     augment_model_spec,
@@ -828,12 +833,32 @@ def _ensure_handler_fails_closed(body: str) -> str:
     already fail-closes; this wrapper makes every path — coder or template —
     refuse success when a block failed. Idempotent: a body that already
     returns ``ok: False`` is left alone.
+
+    Before the call, domain records are shaped into block-acceptable inputs
+    via ``prepare_block_input`` (notification channel/message, workflow
+    steps, team string defaults, document_engine path/text). That is the
+    residential-lettings pilot fix: handlers that forward the domain JSON
+    unchanged still reach the block with a contract-valid payload. Soft
+    import keeps unit tests that stub only ``app.dispatch`` working.
     """
     return (
         "    import app.dispatch as _dispatch\n"
+        "    try:\n"
+        "        from app.block_inputs import prepare_block_input as _prepare_block_input\n"
+        "    except ImportError:  # pragma: no cover - unit stubs without the module\n"
+        "        def _prepare_block_input(block_id, data, **_kw):\n"
+        "            return data if isinstance(data, dict) else {'value': data}\n"
         "    _block_errors = []\n"
         "    def _watched(block_id, *a, **kw):\n"
-        "        res = _dispatch.execute(block_id, *a, **kw)\n"
+        "        data = a[0] if a else kw.get('payload', {})\n"
+        "        action = kw.get('action')\n"
+        "        params = kw.get('params')\n"
+        "        prepared = _prepare_block_input(\n"
+        "            block_id, data, action=action, roster=BLOCK_IDS,\n"
+        "        )\n"
+        "        res = _dispatch.execute(\n"
+        "            block_id, prepared, action=action, params=params\n"
+        "        )\n"
         "        if isinstance(res, dict) and (\n"
         '            res.get("status") == "error" or "error" in res\n'
         "        ):\n"
@@ -900,6 +925,10 @@ def _templated_body(block_ids: Sequence[str]) -> str:
             '    return {"capability": CAPABILITY_ID, "status": "no_block_bound",\n'
             '            "detail": "no vendored block backs this capability"}'
         )
+    # Domain JSON is not block-acceptable JSON. prepare_block_input (invoked
+    # inside the fail-closed execute wrapper, and explicitly here so the
+    # template documents the contract) builds channel/message, steps, team
+    # defaults, and document text/path strings from the capability record.
     # The nested check is the honesty line: the ninth live build shipped
     # three capabilities whose block calls all failed while the handler
     # reported ok -- the suite passed on a payload the blocks had rejected.
@@ -1024,10 +1053,20 @@ def _render_store(specs: Dict[str, Dict[str, Any]]) -> str:
 def _constraint_guard(spec: Dict[str, Any]) -> str:
     """Reject payloads that violate the capability's own field rules."""
     constraints = _constraints_of(spec)
+    required = [
+        str(f["name"])
+        for f in (spec.get("fields") or [])
+        if isinstance(f, dict) and f.get("name") and f.get("required")
+    ]
     return "\n".join(
         [
             "    if not isinstance(payload, dict):",
             '        return {"ok": False, "error": "payload must be an object"}',
+            f"    required_fields = {required!r}",
+            "    for name in required_fields:",
+            "        if name not in payload or payload[name] in (None, ''):",
+            '            return {"ok": False,',
+            '                    "error": "Missing required field: " + name}',
             f"    constraints = {constraints!r}",
             "    for name, rules in constraints.items():",
             "        if name not in payload:",
@@ -2093,6 +2132,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     vendored_ids = [b for b in ctx.state.get("vendored_blocks", ()) if b]
     contracts = {b: _block_contract(ctx, b) for b in vendored_ids}
     ctx.workspace.write_text(Path("app") / "dispatch.py", _render_dispatch(contracts))
+    # Shared block-input construction for every handler's execute wrapper.
+    # Lives beside dispatch (not inside it) so LotDesk F18 stays clean.
+    ctx.workspace.write_text(Path("app") / "block_inputs.py", render_block_inputs_module())
 
     vendored = set(ctx.state.get("vendored_blocks", ()))
     cap_ids = [cap.capability_id for cap in ctx.plan.capabilities]
@@ -2218,6 +2260,47 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
     )
+
+    # Handlers may validate domain fields the model_specs omitted (live:
+    # property_reference_code). Align specs so _sample_payload and the
+    # route guard agree with the handler before routes/tests are written.
+    aligned_specs = False
+    for cap in ctx.plan.capabilities:
+        cid = cap.capability_id
+        name = cid.replace("-", "_")
+        handler_rel = Path("app") / "actions" / f"{name}.py"
+        if not ctx.workspace.exists(handler_rel):
+            continue
+        needed = handler_required_fields(ctx.workspace.read_text(handler_rel))
+        specs[cid], added = align_spec_to_handler_fields(specs[cid], needed)
+        if not added:
+            continue
+        aligned_specs = True
+        field_names = [
+            str(f.get("name"))
+            for f in (specs[cid].get("fields") or [])
+            if isinstance(f, dict) and f.get("name")
+        ]
+        text = ctx.workspace.read_text(handler_rel)
+        text = re.sub(
+            r"^CAPABILITY_FIELDS = .*$",
+            f"CAPABILITY_FIELDS = {field_names!r}",
+            text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        ctx.workspace.write_text(handler_rel, text)
+        ctx.note(
+            f"aligned model_specs for {cid} with handler-required fields: "
+            + ", ".join(added),
+            stage="models",
+            capability=cid,
+            added=added,
+        )
+    if aligned_specs:
+        ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
+        emit_writer_artifacts(ctx.workspace, specs)
+        emit_domain_artifacts(ctx.workspace, specs)
 
     # --- API surface -------------------------------------------------------
     entries: List[Dict[str, Any]] = []
@@ -2568,8 +2651,21 @@ def _sample_value(field: Dict[str, Any]) -> Any:
 
 
 def _sample_payload(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """A valid instance of the entity, built from its own spec."""
-    return {f["name"]: _sample_value(f) for f in spec.get("fields", [])}
+    """A valid instance of the entity, built from its own spec.
+
+    Includes every declared field (required and optional) so pilot
+    ``test_every_capability_route_accepts_payload`` never omits a column the
+    route/handler guard demands. Values honour vocabulary, bounds, and
+    email-shaped names via ``_sample_value``.
+    """
+    out: Dict[str, Any] = {}
+    for field in spec.get("fields", []) or []:
+        if not isinstance(field, dict) or not field.get("name"):
+            continue
+        if "type" not in field:
+            field = {**field, "type": "str"}
+        out[str(field["name"])] = _sample_value(field)
+    return out
 
 
 def _field_default(field: Dict[str, Any]) -> str:
