@@ -3,7 +3,13 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, isDomainStoreUnreachable, isEmailNotVerifiedError } from '../api/factory'
+import {
+  ApiError,
+  clearSession,
+  isDomainStoreUnreachable,
+  isEmailNotVerifiedError,
+  signOut,
+} from '../api/factory'
 import App from '../App'
 
 const {
@@ -88,6 +94,8 @@ describe('App boot', () => {
     productGetMock.mockResolvedValue({})
     billingStatusMock.mockReset()
     billingStatusMock.mockResolvedValue({ entitled: true })
+    ;(clearSession as ReturnType<typeof vi.fn>).mockClear()
+    ;(signOut as ReturnType<typeof vi.fn>).mockClear()
   })
 
   it('shows verify-email — not Factory unreachable — when boot is 403 email_not_verified', async () => {
@@ -247,7 +255,6 @@ describe('App boot', () => {
       account_id: 'acct_boot',
     })
     listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
-    const { clearSession, signOut } = await import('../api/factory')
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
     expect(screen.getByText('Already signed in.')).toBeInTheDocument()
