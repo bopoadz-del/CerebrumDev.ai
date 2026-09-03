@@ -15,6 +15,12 @@ name: Dependabot auto-merge
 # That is only safe because this workflow never checks out, builds, or
 # executes any code from the pull request — it reads metadata and calls the
 # API. Do not add `actions/checkout` here without a `ref:` you control.
+#
+# Lockfile consistency is NOT checked here. This workflow must not inspect
+# the PR tree (write token + pull_request_target). The fail-closed twin is
+# the lockfile-consistency job (and the same script on Backend (pytest))
+# in ci.yml. A red CI check is what blocks `gh pr merge --auto`.
+# Do not skip, bypass, or `--admin` required CI checks from this file.
 
 on:
   pull_request_target:
