@@ -1,9 +1,10 @@
 /**
  * awaitBuild must not spin for 45 minutes on a finished template product
  * (status "unknown", no ledger) or on a dead runner thread ("stalled").
+ * watchBuildStatus keeps polling through succeed → building (pilot reopen).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { awaitBuild, product, type BuildStatus } from '../api/factory'
+import { awaitBuild, product, watchBuildStatus, type BuildStatus } from '../api/factory'
 
 describe('awaitBuild', () => {
   beforeEach(() => {
@@ -58,5 +59,51 @@ describe('awaitBuild', () => {
     expect(seen[0]?.activity).toBe('WRITER')
     expect(result.state).toBe('succeeded')
     expect(result.authorship?.agent_written).toBe(2)
+  })
+})
+
+describe('watchBuildStatus', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('keeps polling after succeeded so a pilot reopen can replace FINISHED', async () => {
+    const seen: BuildStatus[] = []
+    const ac = new AbortController()
+    vi.spyOn(product, 'buildStatus')
+      .mockResolvedValueOnce({
+        ok: true,
+        build: { state: 'succeeded', authorship: { agent_written: 11, templated: 19 } },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        build: {
+          state: 'building',
+          phases_done: 2,
+          phases_total: 5,
+          activity: 'pilot WRITER',
+        },
+      })
+      .mockImplementation(async () => {
+        ac.abort()
+        return {
+          ok: true,
+          build: { state: 'building', phases_done: 2, phases_total: 5 },
+        }
+      })
+    await watchBuildStatus('sess', (s) => seen.push(s), { intervalMs: 1, signal: ac.signal })
+    expect(seen.some((s) => s.state === 'succeeded')).toBe(true)
+    expect(seen.some((s) => s.state === 'building' && s.activity === 'pilot WRITER')).toBe(true)
+  })
+
+  it('stops on stalled', async () => {
+    vi.spyOn(product, 'buildStatus').mockResolvedValue({
+      ok: true,
+      build: { state: 'stalled', detail: 'no build activity for 40 min' },
+    })
+    const seen: BuildStatus[] = []
+    await watchBuildStatus('sess', (s) => seen.push(s), { intervalMs: 1 })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.state).toBe('stalled')
   })
 })

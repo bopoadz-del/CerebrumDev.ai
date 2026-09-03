@@ -11,6 +11,7 @@ const getMock = vi.fn()
 const buildStatusMock = vi.fn()
 const generateMock = vi.fn()
 const awaitBuildMock = vi.fn()
+const watchBuildMock = vi.fn()
 const downloadMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
@@ -24,6 +25,7 @@ vi.mock('../api/factory', async (importOriginal) => {
       generate: (...args: unknown[]) => generateMock(...args),
     },
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
+    watchBuildStatus: (...args: unknown[]) => watchBuildMock(...args),
     downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
   }
 })
@@ -41,15 +43,34 @@ describe('Your Platforms — coding-agent build', () => {
     buildStatusMock.mockReset()
     generateMock.mockReset()
     awaitBuildMock.mockReset()
+    watchBuildMock.mockReset()
     downloadMock.mockReset()
     buildStatusMock.mockResolvedValue({ ok: true, build: { state: 'not_started' } })
+    watchBuildMock.mockImplementation(async () => {})
+  })
+
+  it('shows a loading skeleton — never empty-state — while the first fetch is in flight', async () => {
+    let resolveGet: (v: object) => void = () => {}
+    getMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveGet = resolve as (v: object) => void
+        }),
+    )
+    render(<Platforms sessionId="sess_ui" />)
+    expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument()
+    expect(screen.queryByText('No platform built yet')).not.toBeInTheDocument()
+    resolveGet({ blueprint: { product_name: 'Draft', vertical: 'winery' } })
+    expect(await screen.findByText('No platform built yet')).toBeInTheDocument()
+    expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
+    expect(watchBuildMock).not.toHaveBeenCalled()
   })
 
   it('empty state when nothing has been generated', async () => {
     getMock.mockResolvedValue({ blueprint: { product_name: 'Draft', vertical: 'winery' } })
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('No platform built yet')).toBeInTheDocument()
-    expect(awaitBuildMock).not.toHaveBeenCalled()
+    expect(watchBuildMock).not.toHaveBeenCalled()
   })
 
   it('auto-polls and shows the coding agent at work', async () => {
@@ -57,7 +78,7 @@ describe('Your Platforms — coding-agent build', () => {
       generation: GENERATION,
       blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
     })
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       const building = {
         state: 'building',
         phases_done: 2,
@@ -72,8 +93,7 @@ describe('Your Platforms — coding-agent build', () => {
         stale: false,
         completed: ['COLLECTOR', 'CLONER'],
       }
-      onProgress?.(building)
-      return building
+      onProgress(building)
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('vineyard')).toBeInTheDocument()
@@ -83,7 +103,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
   })
 
-  it('refresh re-fetches product + build-status while the runner is at 2/5', async () => {
+  it('refresh shows Refreshing… then re-fetches product + build-status', async () => {
     getMock.mockResolvedValue({
       generation: GENERATION,
       blueprint: { product_name: 'Dealership Platform', vertical: 'auto' },
@@ -102,11 +122,12 @@ describe('Your Platforms — coding-agent build', () => {
       activity: 'TESTER gate',
       completed: ['cloner', 'writer'],
     }
-    buildStatusMock
-      .mockResolvedValueOnce({ ok: true, build: atTwo })
-      .mockResolvedValueOnce({ ok: true, build: atThree })
-    // Background poll stays in-flight; Refresh must not wait on it.
-    awaitBuildMock.mockImplementation(() => new Promise(() => {}))
+    // Refresh is the only buildStatus caller; watcher seeds the first snapshot.
+    buildStatusMock.mockResolvedValueOnce({ ok: true, build: atThree })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress(atTwo)
+      return new Promise(() => {})
+    })
 
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('runner')).toBeInTheDocument()
@@ -114,16 +135,17 @@ describe('Your Platforms — coding-agent build', () => {
       await screen.findByText(/Coding agent at work — 3\/5 · last: WRITER handler 2\/4 · still working/),
     ).toBeInTheDocument()
     expect(getMock).toHaveBeenCalledTimes(1)
-    expect(buildStatusMock).toHaveBeenCalledTimes(1)
+    expect(buildStatusMock).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(screen.getByRole('button', { name: 'Refreshing…' })).toBeDisabled()
 
     await waitFor(() => {
       expect(getMock).toHaveBeenCalledTimes(2)
-      expect(buildStatusMock).toHaveBeenCalledTimes(2)
+      expect(buildStatusMock).toHaveBeenCalledTimes(1)
     })
     expect(getMock).toHaveBeenNthCalledWith(2, 'sess_ui')
-    expect(buildStatusMock).toHaveBeenNthCalledWith(2, 'sess_ui')
+    expect(buildStatusMock).toHaveBeenNthCalledWith(1, 'sess_ui')
     expect(
       await screen.findByText(/Coding agent at work — 4\/5 · last: TESTER gate · still working/),
     ).toBeInTheDocument()
@@ -137,13 +159,11 @@ describe('Your Platforms — coding-agent build', () => {
       generation: GENERATION,
       blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
     })
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
-      const done = {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
         state: 'succeeded',
         authorship: { artifacts: 10, agent_written: 6, templated: 4 },
-      }
-      onProgress?.(done)
-      return done
+      })
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText('Finished — 6 artifacts; 4 templated')).toBeInTheDocument()
@@ -153,14 +173,16 @@ describe('Your Platforms — coding-agent build', () => {
 
   it('says so when the coding agent wrote nothing', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
-    awaitBuildMock.mockResolvedValue({
-      state: 'succeeded',
-      authorship: {
-        artifacts: 8,
-        agent_written: 0,
-        templated: 8,
-        coder_failures: { audit: 'Factory architect requires KIMI_API_KEY' },
-      },
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        authorship: {
+          artifacts: 8,
+          agent_written: 0,
+          templated: 8,
+          coder_failures: { audit: 'Factory architect requires KIMI_API_KEY' },
+        },
+      })
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(
@@ -171,18 +193,45 @@ describe('Your Platforms — coding-agent build', () => {
 
   it('downloads only after the build succeeds', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
-    awaitBuildMock.mockResolvedValue({
-      state: 'succeeded',
-      authorship: { artifacts: 3, agent_written: 3, templated: 0 },
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        authorship: { artifacts: 3, agent_written: 3, templated: 0 },
+      })
     })
     downloadMock.mockResolvedValue(undefined)
     render(<Platforms sessionId="sess_ui" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    // Wait for the succeeded snapshot — Download stays "Building…" until then.
+    expect(await screen.findByText('Finished — 3 artifacts; 0 templated')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Download platform export (.zip)' }))
     await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_ui'))
+  })
+
+  it('surfaces honest stalled UI instead of forever Building…', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'stalled',
+        detail: 'no build activity for 40 min — the build process may be gone; generate again',
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText(/Build stalled — no build activity for 40 min/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeDisabled()
   })
 
   it('does not download a failed coding-agent build', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        detail: 'TESTER gate red',
+      })
+    })
     awaitBuildMock.mockResolvedValue({
       state: 'failed',
       detail: 'TESTER gate red',

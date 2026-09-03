@@ -73,11 +73,20 @@ describe('Subscription', () => {
     expect(screen.queryByText('0')).toBeNull()
   })
 
+  it('shows a loading skeleton — never bare Loading… text — on first paint', () => {
+    statusMock.mockImplementation(() => new Promise(() => {}))
+    render(<Subscription />)
+    expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loading subscription')).toBeInTheDocument()
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+  })
+
   it('does not hang on Loading after a first-load fetch failure', async () => {
     statusMock.mockRejectedValue(new TypeError('Failed to fetch'))
     render(<Subscription />)
     expect(await screen.findByText('Failed to fetch')).toBeInTheDocument()
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
     expect(screen.getByText('Could not load subscription status.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })

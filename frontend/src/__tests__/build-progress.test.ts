@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import type { BuildStatus } from '../api/factory'
 import {
+  CLIENT_STALL_AFTER_S,
+  eventAgeSeconds,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
   phaseBarFraction,
+  stampBuildObservation,
+  withClientStall,
 } from '../buildProgress'
 
 const cloner: BuildStatus = {
@@ -38,6 +42,104 @@ describe('build progress copy', () => {
     }
     expect(formatHeartbeat(quiet)).toMatch(/quiet/)
     expect(formatHeartbeat(quiet)).toMatch(/4 min/)
+  })
+
+  it('advances relative age from last_event_at so a frozen server snapshot cannot stall the ticker', () => {
+    const at = '2026-09-03T16:00:00.000Z'
+    const t0 = Date.parse(at)
+    const build: BuildStatus = {
+      ...cloner,
+      last_event_at: at,
+      last_event_age_s: 120, // stale snapshot that would stay "2 min ago"
+      stale: false,
+    }
+    expect(eventAgeSeconds(build, t0 + 120_000)).toBeCloseTo(120, 0)
+    expect(formatHeartbeat(build, t0 + 120_000)).toBe('still working · 2 min ago')
+    expect(formatHeartbeat(build, t0 + 420_000)).toMatch(/quiet for 7 min/)
+  })
+
+  it('advances a frozen last_event_age_s across polls via client observation stamp', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const poll1 = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'wrote handler tenancy_application_pipeline',
+        last_event_age_s: 120, // field recheck: stuck at "2 min ago"
+        last_event_at: null,
+      },
+      null,
+      t0,
+    )
+    // Same ledger event, same frozen age_s — must keep the first stamp.
+    const poll2 = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'wrote handler tenancy_application_pipeline',
+        last_event_age_s: 120,
+        last_event_at: null,
+      },
+      poll1,
+      t0 + 60_000,
+    )
+    expect(poll2.client_observed_at_ms).toBe(t0)
+    expect(eventAgeSeconds(poll2, t0 + 300_000)).toBeCloseTo(420, 0) // 120 + 300s
+    expect(formatHeartbeat(poll2, t0 + 300_000)).toMatch(/quiet for 7 min/)
+    const stalled = withClientStall(poll2, t0 + (CLIENT_STALL_AFTER_S + 30) * 1000)
+    expect(stalled?.state).toBe('stalled')
+  })
+
+  it('re-stamps when the ledger event identity changes', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const first = stampBuildObservation(
+      { ...cloner, last_event: 'handler_a', last_event_age_s: 120 },
+      null,
+      t0,
+    )
+    const next = stampBuildObservation(
+      { ...cloner, last_event: 'handler_b', last_event_age_s: 5 },
+      first,
+      t0 + 60_000,
+    )
+    expect(next.client_observed_at_ms).toBe(t0 + 60_000)
+    expect(eventAgeSeconds(next, t0 + 65_000)).toBeCloseTo(10, 0)
+  })
+
+  it('labels a handler-wave reset so 3/5 → 1/5 does not read as a regression', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const atThree = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'tenancy_application_pipeline',
+        phase_progress: { done: 3, total: 5, fraction: 0.6, stage: 'handlers' },
+      },
+      null,
+      t0,
+    )
+    expect(formatPhaseCounts(atThree)).toBe('3/5 handlers')
+    const wave = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'unit_registry_and_vacancy_tracking',
+        phase_progress: { done: 1, total: 5, fraction: 0.2, stage: 'handlers' },
+      },
+      atThree,
+      t0 + 60_000,
+    )
+    expect(wave.client_wave_reset).toBe(true)
+    expect(formatPhaseCounts(wave)).toBe('1/5 handlers (new pass)')
+  })
+
+  it('promotes a forever-building snapshot to stalled after the stall window', () => {
+    const at = '2026-09-03T16:00:00.000Z'
+    const t0 = Date.parse(at)
+    const build: BuildStatus = {
+      ...cloner,
+      last_event_at: at,
+      last_event_age_s: 120,
+    }
+    const stalled = withClientStall(build, t0 + (CLIENT_STALL_AFTER_S + 60) * 1000)
+    expect(stalled?.state).toBe('stalled')
+    expect(stalled?.detail).toMatch(/no build activity/)
   })
 
   it('SUCCESS copy is finished, not hang-looking 22 of 28', () => {
