@@ -66,7 +66,7 @@ def test_readme_has_clone_and_test_sections(generated):
     # Ubuntu 24.04 / PEP 668: system pip refuses -- a stranger following
     # `python3 -m pip install -r requirements.txt` cannot clone-and-test.
     assert "python3 -m venv .venv" in readme
-    assert ".venv/bin/pip install -r requirements.txt" in readme
+    assert ".venv/bin/pip install -r requirements.txt -r requirements-dev.txt" in readme
     assert "python3 -m pip install -r requirements.txt" not in readme
 
 

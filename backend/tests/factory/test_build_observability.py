@@ -426,6 +426,21 @@ def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
     assert "[{sys.executable}" not in gate
 
 
+def test_runner_readme_installs_dev_deps_before_pytest(tmp_path):
+    """README 'Run it' must not tell a stranger to pytest after only
+    requirements.txt — pytest lives in requirements-dev.txt on the runner path."""
+    out = tmp_path / "build"
+    runner = RoleRunner(load_blueprint(SMOKE), out)
+    assert runner.run().ok
+
+    readme = (out / "README.md").read_text(encoding="utf-8")
+    assert "## Run it" in readme
+    run_it = readme.split("## Run it", 1)[1].split("\n## ", 1)[0]
+    assert "requirements-dev.txt" in run_it
+    assert "pytest" in run_it
+    assert run_it.index("requirements-dev.txt") < run_it.index("pytest")
+
+
 def test_release_gate_template_passes_this_interpreter_not_a_set():
     """The live winery-hospitality export crashed `scripts/release_gate.py`
     with TypeError: expected str, ... not set."""

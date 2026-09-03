@@ -97,7 +97,7 @@ _PRE_SPLIT_SYMBOLS = (
 def test_templated_readme_uses_venv_not_system_pip():
     readme = roles_handlers._templated_readme("Parks Desk", ["crew"], ["team"])
     assert "python3 -m venv .venv" in readme
-    assert ".venv/bin/pip install -r requirements.txt" in readme
+    assert ".venv/bin/pip install -r requirements.txt -r requirements-dev.txt" in readme
     assert "\npip install -r requirements.txt\n" not in readme
 
 

@@ -211,7 +211,7 @@ class ProductGenerator:
             + "## Quickstart (clone-and-test)\n\n"
             + "```bash\n"
             + "python3 -m venv .venv\n"
-            + ".venv/bin/pip install -r requirements.txt\n"
+            + ".venv/bin/pip install -r requirements.txt -r requirements-dev.txt\n"
             + "PYTHONPATH=. .venv/bin/uvicorn app.main:app --port 8000\n"
             + "```\n\n"
             + "Open `http://127.0.0.1:8000/` — the **universal console**: every\n"
