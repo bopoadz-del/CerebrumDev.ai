@@ -27,6 +27,7 @@ from app.factory.build.auto_pilot import (
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.runner import BuildBudget, RoleRunner
+from app.factory.build.roles_handlers import _writer_block_roster
 from app.factory.build_jobs import (
     _max_rework,
     _wall_clock_s,
@@ -51,6 +52,19 @@ def _no_paid_calls(monkeypatch):
         "CEREBRUM_LLM_MOCK",
     ):
         monkeypatch.delenv(var, raising=False)
+
+
+def test_writer_block_roster_stays_the_pass_list_not_the_shelf():
+    """Preconditions must not expand to vendor_blocks_mirror / the factory shelf."""
+    assert _writer_block_roster({"vendored_blocks": ("team", "storage")}) == (
+        "storage",
+        "team",
+    )
+    assert _writer_block_roster({"vendored_blocks": {"team": "x", "storage": "y"}}) == (
+        "storage",
+        "team",
+    )
+    assert _writer_block_roster({}) == ()
 
 
 def test_auto_pilot_off_without_a_factory_key():
