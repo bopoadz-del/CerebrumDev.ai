@@ -162,6 +162,25 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   )
 }
 
+/** Honesty footer when Stripe is unconfigured. Mention Upgrade only if that button is shown. */
+export function paymentsNotConnectedNote(opts: {
+  showUpgrade: boolean
+  enforcement?: boolean
+}): string {
+  const parts = [
+    'Payments are not connected on this deployment yet — the factory owner links the Stripe account.',
+  ]
+  if (opts.showUpgrade) {
+    parts.push('Upgrade still says so instead of opening a blank checkout.')
+  }
+  parts.push(
+    opts.enforcement
+      ? 'Billing enforcement is on for this deployment, so sessions and factory runs stop once a trial ends — until the owner connects Stripe or updates your subscription.'
+      : 'Your current access is unaffected.',
+  )
+  return parts.join(' ')
+}
+
 export function Subscription() {
   const [status, setStatus] = useState<BillingStatus | null>(null)
   const [note, setNote] = useState<string | null>(null)
@@ -292,12 +311,10 @@ export function Subscription() {
             )}
             {status.checkout_available === false && (
               <p className="dim note">
-                Payments are not connected on this deployment yet — the factory owner
-                links the Stripe account. Upgrade still says so instead of opening a
-                blank checkout.{" "}
-                {status.enforcement
-                  ? 'Billing enforcement is on for this deployment, so sessions and factory runs stop once a trial ends — until the owner connects Stripe or updates your subscription.'
-                  : 'Your current access is unaffected.'}
+                {paymentsNotConnectedNote({
+                  showUpgrade: view.currentPlan !== 'factory',
+                  enforcement: Boolean(status.enforcement),
+                })}
               </p>
             )}
           </>
@@ -329,6 +346,8 @@ export function Account({
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [resetBusy, setResetBusy] = useState(false)
+  const accountEmail = me?.email ? String(me.email) : getEmail()
 
   useEffect(() => {
     let cancelled = false
@@ -393,6 +412,33 @@ export function Account({
     }
   }
 
+  async function sendPasswordReset() {
+    const email = accountEmail?.trim()
+    if (!email) {
+      setNote(null)
+      setError('No signed-in email to send a reset to.')
+      return
+    }
+    setNote(null)
+    setError(null)
+    setResetBusy(true)
+    try {
+      const res = await auth.forgotPassword(email)
+      if (res.dev_reset_token) {
+        setNote(
+          res.note ??
+            'SMTP is not configured on this deployment — a reset token was issued. Finish on the reset-password page; this page does not change your password.',
+        )
+      } else {
+        setNote(res.message ?? 'If the email is registered, a reset link follows.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'password reset failed')
+    } finally {
+      setResetBusy(false)
+    }
+  }
+
   return (
     <div className="page">
       <header className="page-head">
@@ -401,7 +447,7 @@ export function Account({
       <div className="panel">
         <dl className="kv">
           <dt>Email</dt>
-          <dd>{me?.email ? String(me.email) : getEmail() ?? '—'}</dd>
+          <dd>{accountEmail ?? '—'}</dd>
           <dt>Email verified</dt>
           <dd>{verifiedLabel(me)}</dd>
           <dt>Account</dt>
@@ -428,9 +474,18 @@ export function Account({
         )}
         {note && <p className="dim note">{note}</p>}
         {error && <div className="error-box">{error}</div>}
-        <button className="danger" onClick={onLogout}>
-          Sign out
-        </button>
+        <div className="account-actions">
+          <button
+            type="button"
+            disabled={resetBusy || !accountEmail}
+            onClick={() => void sendPasswordReset()}
+          >
+            {resetBusy ? 'Working…' : 'Send password reset'}
+          </button>
+          <button className="danger" onClick={onLogout}>
+            Sign out
+          </button>
+        </div>
       </div>
     </div>
   )
