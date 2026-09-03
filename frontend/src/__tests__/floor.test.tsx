@@ -452,11 +452,38 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
     expect(screen.getByText(/rework budget of 3 exhausted/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(failedExport).toBeDisabled()
+    expect(failedExport).toHaveClass('ghost')
     expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
     const startNew = screen.getByRole('button', { name: 'Start a new product' })
     expect(startNew).toBeEnabled()
     fireEvent.click(startNew)
     await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not offer a ready Download when the coding agent stalled', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'stalled',
+        detail: 'no build activity for 31 min — the build process is gone (restart or redeploy); generate again',
+        pilot_ready: false,
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_stall" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stalled' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-stalled-pill')).toHaveTextContent('Build stalled')
+    expect(
+      screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
+    ).not.toBeInTheDocument()
+    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — build stalled' })
+    expect(exportBtn).toBeDisabled()
+    expect(exportBtn).toHaveClass('ghost')
   })
 
   it('does not offer Floor download while the coding agent is still writing', async () => {
