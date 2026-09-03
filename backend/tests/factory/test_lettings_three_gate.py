@@ -73,6 +73,73 @@ def test_manchester_lettings_brief_also_uses_the_golden():
     assert bp.product_id == "residential-lettings"
 
 
+# Live d4f6da2: Floor "New session" with this branded brief built
+# property-management (6 capabilities) — keyword/LLM GENERATE — instead of
+# the golden roster. The #294 matcher only accepted "residential lettings"
+# / "lettings platform", and LLM-first routing stole even those.
+NORTHBRIDGE_BRIEF = (
+    "Northbridge Lettings Desk — UK residential lettings CRM for landlords "
+    "and tenants in Leeds: property portfolio, tenancy applications, viewing "
+    "bookings, rent collection tracking, maintenance tickets, document vault. "
+    "Brand: Northbridge Lettings."
+)
+
+
+def _assert_golden_lettings_roster(bp) -> None:
+    assert bp.drafting_mode == "golden_lettings"
+    assert bp.product_id == "residential-lettings"
+    assert bp.vertical == "residential_lettings"
+    assert {c.id for c in bp.capabilities} == LIVE_CAPS
+    assert not any(c.strategy_hint == "GENERATE" for c in bp.capabilities)
+    assert all(c.block_ids for c in bp.capabilities)
+
+
+def test_northbridge_branded_brief_drafts_the_golden_roster():
+    bp = draft_blueprint_from_brief(NORTHBRIDGE_BRIEF, use_llm=False)
+    _assert_golden_lettings_roster(bp)
+
+
+@pytest.mark.parametrize(
+    "brief",
+    [
+        "Northbridge Lettings Desk — lettings CRM for landlords and tenants in Leeds",
+        "lettings CRM for landlords and tenants in Leeds",
+        "UK tenancy applications and viewing bookings for a lettings desk",
+        "Brand: Northbridge Lettings. Property portfolio and rent collection.",
+    ],
+)
+def test_branded_and_longer_lettings_briefs_use_the_golden(brief):
+    bp = draft_blueprint_from_brief(brief, use_llm=False)
+    _assert_golden_lettings_roster(bp)
+
+
+def test_generic_property_management_is_not_the_lettings_golden():
+    """A non-lettings property-management brief stays on keyword GENERATE."""
+    bp = draft_blueprint_from_brief(
+        "build a property management platform",
+        use_llm=False,
+    )
+    assert bp.drafting_mode == "keyword_fallback"
+    assert bp.vertical == "property_management"
+    assert bp.product_id == "property-management"
+    assert any(c.id.endswith("_core") and c.strategy_hint == "GENERATE" for c in bp.capabilities)
+    assert {c.id for c in bp.capabilities} != LIVE_CAPS
+
+
+def test_floor_chat_draft_labels_northbridge_as_golden():
+    from app.factory.blueprint import ProductBlueprint
+    from app.factory.platform_chat_flow import draft_from_chat
+    from app.models.session import ProductDesignState, SessionState
+
+    state = SessionState(session_id="sess-northbridge", user_id="u1", account_id="a1")
+    state.product_design = ProductDesignState()
+    result = draft_from_chat(state, NORTHBRIDGE_BRIEF)
+    assert result["drafting_mode"] == "golden_lettings"
+    assert result["source"] == "golden_lettings"
+    assert "golden residential-lettings" in result["summary"].lower()
+    _assert_golden_lettings_roster(ProductBlueprint.model_validate(result["blueprint"]))
+
+
 def test_lettings_golden_yaml_is_the_same_file_the_architect_loads():
     assert lettings_golden_path() == LETTINGS
     loaded = load_blueprint(LETTINGS)
