@@ -192,8 +192,9 @@ def test_pilot_writer_without_coder_keeps_existing_handlers(tmp_path, monkeypatc
         state={"build_cycle": "pilot", "vendored_blocks": ("database",)},
     )
     result = run_writer(ctx)
-    assert result.ok
-    assert "no coder key" in result.detail
+    # Fail closed: a no-op "ok" would burn TESTER rework rounds on identical code.
+    assert not result.ok
+    assert "coder key" in result.detail
     assert ws.read_text(handler) == "CAPABILITY_ID = 'vehicle_inventory'\n# kimi\n"
 
 
@@ -211,3 +212,45 @@ def test_pilot_tester_keeps_existing_suite(tmp_path):
     assert result.ok
     assert "existing suite kept" in result.detail
     assert "def test_ok" in ws.read_text(Path("tests") / "test_smoke.py")
+
+
+def test_pilot_tester_rework_refreshes_suite_from_model_specs(tmp_path):
+    """Stale code-phase payloads must not survive a pilot rework round."""
+    ws = RoleWorkspace(BuildRole.TESTER, tmp_path / "ws")
+    ws.write_text(
+        Path("tests") / "test_smoke.py",
+        "def test_every_capability_executes_end_to_end():\n"
+        "    out = vehicle_inventory.handle({'stale': True})\n",
+    )
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=(
+            "vehicle_inventory rejected a payload built from its own schema: missing vin",
+        ),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": {
+                "vehicle_inventory": {
+                    "entity": "vehicle",
+                    "fields": [
+                        {"name": "vin", "type": "str"},
+                        {"name": "status", "type": "str"},
+                    ],
+                }
+            },
+        },
+    )
+    result = run_tester(ctx)
+    assert result.ok
+    smoke = ws.read_text(Path("tests") / "test_smoke.py")
+    assert "existing suite kept" not in result.detail
+    assert "{'stale': True}" not in smoke
+    assert "vin" in smoke
+    assert "@pytest.mark.pilot" in smoke
+    assert "test_every_capability_executes_end_to_end" in smoke
+    routes = ws.read_text(Path("tests") / "test_routes.py")
+    assert "test_every_capability_route_accepts_payload" in routes
