@@ -364,12 +364,14 @@ export type BuildStatus = {
   activity_done?: number
   activity_total?: number
   authorship?: BuildAuthorship
+  cycle?: 'code' | 'pilot' | string
+  pilot_ready?: boolean
 }
 
 export async function awaitBuild(
   sid: string,
   onProgress?: (s: BuildStatus) => void,
-  { intervalMs = 4000, timeoutMs = 45 * 60 * 1000 } = {},
+  { intervalMs = 4000, timeoutMs = 180 * 60 * 1000 } = {},
 ): Promise<BuildStatus> {
   const deadline = Date.now() + timeoutMs
   for (;;) {

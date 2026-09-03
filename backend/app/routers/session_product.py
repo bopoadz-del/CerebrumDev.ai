@@ -116,6 +116,42 @@ _EXPORT_SKIP_SUFFIXES = {".pyc", ".pyo"}
 _ZIP_MIN_EPOCH = 315532800  # 1980-01-01 UTC
 
 
+_PROTOTYPE_MARKER = "CODE_CYCLE_PROTOTYPE.txt"
+_PROTOTYPE_MARKER_BODY = (
+    "This export is a CODE-CYCLE PROTOTYPE, not a pilot-ready product.\n"
+    "\n"
+    "The factory recorded RUN_SUCCEEDED with cycle=code and pilot_ready=false.\n"
+    "PRODUCT (pytest -m pilot) and STORE ops have not passed. Dual certification\n"
+    "is pending. Frontend modules and some handlers may be Factory templates.\n"
+    "\n"
+    "Say continue on the Factory Floor (or POST /product/pilot) to open a\n"
+    "Store-green cycle on the same workspace. Do not treat this zip as a\n"
+    "finished production platform.\n"
+)
+
+
+def _maybe_write_prototype_marker(zf: zipfile.ZipFile, out: Path) -> None:
+    """Stamp a code-cycle zip so the export cannot be mistaken for finished."""
+    try:
+        from app.factory.build.ledger import BuildLedger
+        from app.factory.build_jobs import _ledger_path
+
+        ledger = BuildLedger(_ledger_path(out))
+        if not ledger.exists() or ledger.pilot_ready():
+            return
+        if not ledger.succeeded():
+            return
+    except Exception:  # noqa: BLE001
+        return
+    if _PROTOTYPE_MARKER in zf.namelist():
+        return
+    import time as _time
+
+    info = zipfile.ZipInfo(_PROTOTYPE_MARKER, date_time=_time.localtime()[:6])
+    info.compress_type = zipfile.ZIP_DEFLATED
+    zf.writestr(info, _PROTOTYPE_MARKER_BODY)
+
+
 def zip_generated_product(out: Path, archive_base: Path) -> Path:
     """Zip ``out`` to ``{archive_base}.zip``, omitting TESTER caches.
 
@@ -128,6 +164,7 @@ def zip_generated_product(out: Path, archive_base: Path) -> Path:
 
     zip_path = Path(str(archive_base) + ".zip")
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        _maybe_write_prototype_marker(zf, out)
         for path in sorted(out.rglob("*")):
             rel = path.relative_to(out)
             if any(part in _EXPORT_SKIP_DIR_NAMES for part in rel.parts):
@@ -234,9 +271,14 @@ def download_product_package(
     archive_base = out.parent / f"{out.name}-export"
     archive = zip_generated_product(out, archive_base)
     product_id = gen.get("product_id") or out.name
+    filename = (
+        f"cerebrumdev-{product_id}-code-cycle-prototype.zip"
+        if status.get("state") == "succeeded" and status.get("pilot_ready") is False
+        else f"cerebrumdev-{product_id}.zip"
+    )
     return FileResponse(
         archive,
-        filename=f"cerebrumdev-{product_id}.zip",
+        filename=filename,
         media_type="application/zip",
     )
 

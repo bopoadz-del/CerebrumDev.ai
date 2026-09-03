@@ -181,6 +181,8 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
         product_id: 'vineyard',
         build: {
           state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
           authorship: { artifacts: 19, agent_written: 13, templated: 6 },
         },
       }),

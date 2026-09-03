@@ -1,8 +1,11 @@
 import type { BuildAuthorship, BuildStatus } from './api/factory'
 
-/** SUCCESS copy: never "22 of 28" — that reads as a hang. */
+/** SUCCESS copy: never "22 of 28" — that reads as a hang.
+ *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
+ */
 export function formatFinishedAuthorship(
   authorship: BuildAuthorship | null | undefined,
+  opts?: { pilotReady?: boolean | null },
 ): string | null {
   if (!authorship) return null
   const written = authorship.agent_written
@@ -10,13 +13,17 @@ export function formatFinishedAuthorship(
   if (written === 0) {
     return 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'
   }
-  if (typeof written === 'number' && typeof templated === 'number') {
-    return `Finished — ${written} artifacts; ${templated} templated`
+  const counts =
+    typeof written === 'number' && typeof templated === 'number'
+      ? `${written} artifacts; ${templated} templated`
+      : typeof written === 'number'
+        ? `${written} artifacts`
+        : null
+  if (!counts) return null
+  if (opts?.pilotReady === true) {
+    return `Finished — ${counts}`
   }
-  if (typeof written === 'number') {
-    return `Finished — ${written} artifacts`
-  }
-  return null
+  return `Code-cycle prototype — ${counts}. Not yet pilot-ready`
 }
 
 /** Named current phase plus 1-based index: "WRITER 3/5", not a bare "2/5". */

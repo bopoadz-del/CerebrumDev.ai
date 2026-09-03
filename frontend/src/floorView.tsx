@@ -211,12 +211,31 @@ function CoderProgress({ build }: { build: BuildStatus }) {
   )
 }
 
+function coderTakeoverHeading(build: BuildStatus | null): string {
+  if (build?.state === 'succeeded') {
+    return build.pilot_ready
+      ? 'Coding agent finished'
+      : 'Code-cycle prototype ready'
+  }
+  return 'Coding agent has taken over'
+}
+
 function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (!build) return null
   if (build.state === 'succeeded') {
-    const finished = formatFinishedAuthorship(build.authorship)
-    if (finished?.startsWith('Finished')) return finished + '. Download ready.'
-    return finished ?? 'Coding agent finished. Download it from Your Platforms.'
+    const finished = formatFinishedAuthorship(build.authorship, {
+      pilotReady: build.pilot_ready,
+    })
+    if (build.pilot_ready && finished?.startsWith('Finished')) {
+      return finished + '. Download ready.'
+    }
+    if (finished) {
+      return (
+        finished +
+        '. Download is a code-cycle prototype — say continue to open a pilot cycle.'
+      )
+    }
+    return 'Code-cycle 5/5 passed. Not yet pilot-ready. Download is a prototype.'
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -520,7 +539,7 @@ export function Floor({
       {coderActive && (
         <div className={'coder-takeover' + (coderBuild?.stale ? ' stale' : '')} role="status">
           <h3>
-            {coderBuild?.state === 'succeeded' ? 'Coding agent finished' : 'Coding agent has taken over'}
+            {coderTakeoverHeading(coderBuild)}
           </h3>
           <KernelStrip build={coderBuild} />
           {coderBuild && coderBuild.state === 'building' ? (

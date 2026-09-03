@@ -139,8 +139,10 @@ export function Platforms({ sessionId }: { sessionId: string }) {
           {build?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
-                {formatFinishedAuthorship(authorship) ??
-                  'Coding agent finished. Download it from Your Platforms.'}
+                {formatFinishedAuthorship(authorship, { pilotReady: build.pilot_ready }) ??
+                  (build.pilot_ready
+                    ? 'Coding agent finished. Download it from Your Platforms.'
+                    : 'Code-cycle prototype. Not yet pilot-ready.')}
               </p>
               {authorship.coder_failures &&
                 Object.keys(authorship.coder_failures).length > 0 && (
@@ -151,7 +153,13 @@ export function Platforms({ sessionId }: { sessionId: string }) {
             </>
           )}
           <button onClick={download} disabled={downloading || building}>
-            {building ? 'Building…' : downloading ? 'Packing…' : 'Download platform export (.zip)'}
+            {building
+              ? 'Building…'
+              : downloading
+                ? 'Packing…'
+                : build?.state === 'succeeded' && !build.pilot_ready
+                  ? 'Download code-cycle prototype (.zip)'
+                  : 'Download platform export (.zip)'}
           </button>
           <button className="ghost" onClick={refresh}>
             Refresh

@@ -197,10 +197,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
-  it('SUCCESS takeover heading is finished, not hang-looking 22 of 28', async () => {
+  it('SUCCESS takeover heading is finished only when pilot-ready', async () => {
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const status = {
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
       }
       onProgress?.(status)
@@ -216,6 +218,32 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText('Finished — 22 artifacts; 6 templated. Download ready.')).toBeInTheDocument()
     expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('code-cycle SUCCESS is a prototype, not Finished / Download ready', async () => {
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const status = {
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+      }
+      onProgress?.(status)
+      return status
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_proto" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
@@ -240,7 +268,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: 'build me a tasting room for a family winery' },

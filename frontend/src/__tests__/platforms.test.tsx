@@ -140,6 +140,7 @@ describe('Your Platforms — coding-agent build', () => {
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const done = {
         state: 'succeeded',
+        pilot_ready: true,
         authorship: { artifacts: 10, agent_written: 6, templated: 4 },
       }
       onProgress?.(done)
@@ -167,6 +168,29 @@ describe('Your Platforms — coding-agent build', () => {
       await screen.findByText(/Coding agent wrote 0 artifacts — this platform is templated/),
     ).toBeInTheDocument()
     expect(screen.getByText(/Coder skip: Factory architect requires KIMI_API_KEY/)).toBeInTheDocument()
+  })
+
+  it('labels a code-cycle SUCCESS as a prototype download', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const done = {
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+      }
+      onProgress?.(done)
+      return done
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(
+      await screen.findByText('Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
   })
 
   it('downloads only after the build succeeds', async () => {
