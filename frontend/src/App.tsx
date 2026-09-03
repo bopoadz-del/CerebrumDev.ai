@@ -33,6 +33,11 @@ export function isPublicAuthPath(pathname: string): boolean {
   )
 }
 
+/** Signed-in visits here stay on the floor — do not show the auth form or sign out. */
+export function isSignedInAuthRedirectPath(pathname: string): boolean {
+  return pathname === '/login' || pathname === '/register'
+}
+
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
   const [view, setView] = useState<View>('floor')
@@ -44,6 +49,7 @@ export default function App() {
   const [bootNonce, setBootNonce] = useState(0)
   const [accountMe, setAccountMe] = useState<AccountInfo | null>(null)
   const [accessPaused, setAccessPaused] = useState(false)
+  const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -78,6 +84,10 @@ export default function App() {
           setBootError(null)
           setSessionId(sid ?? null)
           setAuthed(true)
+          if (isSignedInAuthRedirectPath(window.location.pathname)) {
+            window.history.replaceState(null, '', '/')
+            setAlreadySignedInNotice(true)
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -213,6 +223,7 @@ export default function App() {
             sessionId={sessionId}
             goPlatforms={() => setView('platforms')}
             accessPaused={accessPaused}
+            notice={alreadySignedInNotice ? 'Already signed in.' : null}
           />
         )}
         {view === 'platforms' && <Platforms sessionId={sessionId} />}

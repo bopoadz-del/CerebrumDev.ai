@@ -280,10 +280,12 @@ export function Floor({
   sessionId,
   goPlatforms,
   accessPaused = false,
+  notice = null,
 }: {
   sessionId: string
   goPlatforms: () => void
   accessPaused?: boolean
+  notice?: string | null
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
@@ -459,6 +461,11 @@ export function Floor({
     <div className="floor">
       <header className="page-head">
         <h2>Factory Floor</h2>
+        {notice && (
+          <div className="notice-box already-signed-in" role="status">
+            {notice}
+          </div>
+        )}
         <p className="dim">Describe the platform. Approve the feature list. The coding agent takes over and writes it.</p>
         <p className="dim notice-not-yet">
           What this is not yet: the factory generates a working prototype — real code,

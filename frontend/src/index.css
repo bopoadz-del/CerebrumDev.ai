@@ -109,6 +109,7 @@ h3 { margin: 0 0 10px; }
 
 main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .page { padding: 28px; overflow-y: auto; }
+.already-signed-in { margin: 10px 0 0; }
 .page-head { margin-bottom: 20px; }
 .page-head p { margin: 6px 0 0; font-size: 13px; }
 
@@ -214,6 +215,15 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
 .plan-card.highlight {
   border-color: var(--gold, #f0b429);
+}
+
+.plan-current {
+  margin: 0 0 0.35rem;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--gold, #f0b429);
 }
 
 .plan-card h4 {

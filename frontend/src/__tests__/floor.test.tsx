@@ -266,6 +266,15 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/That sounds like kit configuration/)).not.toBeInTheDocument()
   })
 
+  it('renders a one-line already-signed-in notice when provided', async () => {
+    render(
+      <Floor sessionId="sess_ui" goPlatforms={() => {}} notice="Already signed in." />,
+    )
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText('Already signed in.')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
   it('hard-disables Send when Factory access is paused — typing does not unlock it', async () => {
     render(<Floor sessionId="sess_paused" goPlatforms={() => {}} accessPaused />)
     const send = await screen.findByRole('button', { name: 'Send' })

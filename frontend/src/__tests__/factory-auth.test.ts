@@ -91,6 +91,7 @@ describe('subscriptionDisplay', () => {
       showTrialDays: true,
       trialDaysLeft: 3,
       accessLabel: 'Active',
+      currentPlan: 'trial',
     })
   })
 
@@ -105,6 +106,8 @@ describe('subscriptionDisplay', () => {
     expect(view.accessLabel).toBe('Paused')
     expect(view.showTrialDays).toBe(false)
     expect(view.planLabel).toBe('trial')
+    expect(view.currentPlan).toBe('trial')
+    expect(view.statusLabel).not.toBe('trialing')
   })
 
   it('labels an active paid subscription as factory + Active', () => {
@@ -116,6 +119,7 @@ describe('subscriptionDisplay', () => {
     expect(view.statusLabel).toBe('active')
     expect(view.accessLabel).toBe('Active')
     expect(view.showTrialDays).toBe(false)
+    expect(view.currentPlan).toBe('factory')
   })
 })
 

@@ -433,6 +433,8 @@ export type SubscriptionDisplay = {
   showTrialDays: boolean
   trialDaysLeft: number | null
   accessLabel: 'Active' | 'Paused'
+  /** Which plan card is the live one — never both. */
+  currentPlan: 'trial' | 'factory'
 }
 
 /**
@@ -456,6 +458,7 @@ export function subscriptionDisplay(status: BillingStatus): SubscriptionDisplay 
       showTrialDays: false,
       trialDaysLeft: days,
       accessLabel: 'Paused',
+      currentPlan: 'trial',
     }
   }
 
@@ -466,12 +469,16 @@ export function subscriptionDisplay(status: BillingStatus): SubscriptionDisplay 
     else planLabel = raw
   }
 
+  const currentPlan: 'trial' | 'factory' =
+    planLabel.toLowerCase() === 'factory' || raw === 'active' ? 'factory' : 'trial'
+
   return {
     planLabel,
     statusLabel: raw,
     showTrialDays: raw === 'trialing' && days !== null && days > 0,
     trialDaysLeft: days,
     accessLabel: paused ? 'Paused' : 'Active',
+    currentPlan,
   }
 }
 

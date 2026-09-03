@@ -18,7 +18,12 @@ const BLUEPRINT = {
 
 async function mockVerifiedFactory(
   page: Page,
-  billing?: { entitled?: boolean; trial_days_left?: number },
+  billing?: {
+    entitled?: boolean
+    trial_days_left?: number
+    plan?: string
+    subscription_status?: string
+  },
 ) {
   await page.addInitScript(() => {
     localStorage.removeItem('cerebrum.factory.token')
@@ -66,8 +71,8 @@ async function mockVerifiedFactory(
       body: JSON.stringify({
         ok: true,
         billing: {
-          plan: 'trial',
-          subscription_status: 'trialing',
+          plan: billing?.plan ?? 'trial',
+          subscription_status: billing?.subscription_status ?? 'trialing',
           trial_days_left: billing?.trial_days_left ?? 3,
           entitled: billing?.entitled ?? true,
           checkout_available: false,
@@ -231,6 +236,14 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
   await expect(page.getByText(/being connected/i)).toHaveCount(0)
   await expect(page.getByText(/Payments are not connected on this deployment yet/i)).toBeVisible()
+  const trialCard = page.locator('.plan-card[data-plan="trial"]')
+  const factoryCard = page.locator('.plan-card[data-plan="factory"]')
+  await expect(trialCard).toBeVisible()
+  await expect(trialCard).toHaveAttribute('aria-current', 'true')
+  await expect(trialCard.getByText('Current')).toBeVisible()
+  await expect(factoryCard).toBeVisible()
+  await expect(factoryCard).not.toHaveAttribute('aria-current', 'true')
+  await expect(factoryCard.getByText('Current')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Account' }).click()
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
@@ -274,4 +287,43 @@ test('paused Factory access hard-disables Floor Send and does not offer Approve 
   await expect(page.getByText('Paused')).toBeVisible()
   await expect(page.getByText('expired')).toBeVisible()
   await expect(page.getByText('trialing')).toHaveCount(0)
+  await expect(page.getByText('Trial days left')).toHaveCount(0)
+  await expect(page.locator('.plan-card[data-plan="trial"]')).toHaveAttribute('aria-current', 'true')
+})
+
+test('Factory / Active subscription does not present Trial as a second current plan', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page, {
+    plan: 'factory',
+    subscription_status: 'active',
+    entitled: true,
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await page.getByRole('button', { name: 'Subscription' }).click()
+  await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible()
+  await expect(page.getByText('factory')).toBeVisible()
+  await expect(page.getByText('active')).toBeVisible()
+  await expect(page.locator('.plan-card[data-plan="trial"]')).toHaveCount(0)
+  const factoryCard = page.locator('.plan-card[data-plan="factory"]')
+  await expect(factoryCard).toHaveAttribute('aria-current', 'true')
+  await expect(factoryCard.getByText('Current')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
+  await expect(page.getByText(/Payments are not connected on this deployment yet/i)).toBeVisible()
+})
+
+test('signed-in /login and /register stay on Floor with a one-line notice', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.goto('/login')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Already signed in.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0)
+  expect(new URL(page.url()).pathname).toBe('/')
+
+  await page.goto('/register')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Already signed in.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Create your account' })).toHaveCount(0)
+  expect(new URL(page.url()).pathname).toBe('/')
 })

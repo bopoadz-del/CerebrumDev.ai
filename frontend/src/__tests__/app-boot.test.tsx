@@ -223,6 +223,40 @@ describe('App boot', () => {
     expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
   })
 
+  it('signed-in visit to /login stays on Floor with an already-signed-in notice', async () => {
+    window.history.pushState(null, '', '/login')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText('Already signed in.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Enter the factory' })).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+  })
+
+  it('signed-in visit to /register stays on Floor and does not sign out', async () => {
+    window.history.pushState(null, '', '/register')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    const { clearSession, signOut } = await import('../api/factory')
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText('Already signed in.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Create your account' })).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/')
+    expect(clearSession).not.toHaveBeenCalled()
+    expect(signOut).not.toHaveBeenCalled()
+  })
+
   it('Account Verified is Yes on first paint from boot /me — never No', async () => {
     meMock.mockResolvedValue({
       email: 'new@factory.dev',
