@@ -174,6 +174,82 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Pilot-ready')
   })
 
+  it('surfaces CODE_GREEN vs FOUNDING_CUSTOMER_READY vs failed on Platforms', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Lettings Hub', vertical: 'lettings' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        level_grade: {
+          level: 'CODE_GREEN',
+          pilot_ready: false,
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' },
+        },
+      })
+    })
+    const { unmount } = render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByTestId('platforms-prototype-pill')).toHaveTextContent(
+      'Code-green (prototype)',
+    )
+    expect(screen.getByTestId('platforms-gate-product')).toHaveTextContent('PRODUCT NOT RUN')
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('platforms-pilot-ready-pill')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+    unmount()
+
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          pilot_ready: true,
+          founding_customer_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    const second = render(<Platforms sessionId="sess_founding" />)
+    expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent(
+      'Founding-customer-ready',
+    )
+    expect(screen.getByText(/Founding-customer-ready — PRODUCT and STORE gates passed/)).toBeInTheDocument()
+    expect(screen.getByText('Finished — 22 artifacts; 6 templated')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    second.unmount()
+
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'pilot',
+        pilot_ready: false,
+        detail: 'PRODUCT (pilot-marked suite): suite is red',
+        level_grade: {
+          level: 'SCAFFOLD',
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'FAIL', STORE: 'NOT_RUN' },
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_failed" />)
+    expect(await screen.findByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(screen.getByTestId('platforms-gate-product')).toHaveTextContent('PRODUCT FAIL')
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    const refused = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(refused).toBeDisabled()
+    expect(refused).toHaveAttribute('disabled')
+    expect(refused).toHaveClass('ghost')
+  })
+
   it('says so when the coding agent wrote nothing', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
@@ -288,6 +364,7 @@ describe('Your Platforms — coding-agent build', () => {
     const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
     expect(exportBtn).toHaveClass('ghost')
     expect(exportBtn).toBeDisabled()
+    expect(exportBtn).toHaveAttribute('disabled')
     fireEvent.click(exportBtn)
     expect(downloadMock).not.toHaveBeenCalled()
   })

@@ -16,10 +16,14 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  hasSourcedLevel,
+  honestLevel,
+  isPilotZipReady,
   phaseBarFraction,
   stampBuildObservation,
   withClientStall,
 } from './buildProgress'
+import { LevelGradeStrip } from './levelGradeView'
 
 interface Capability {
   id: string
@@ -218,7 +222,7 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
 
 function coderTakeoverHeading(build: BuildStatus | null): string {
   if (build?.state === 'succeeded') {
-    return build.pilot_ready
+    return isPilotZipReady(build)
       ? 'Coding agent finished'
       : 'Code-cycle prototype ready'
   }
@@ -229,9 +233,17 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (!build) return null
   if (build.state === 'succeeded') {
     const finished = formatFinishedAuthorship(build.authorship, {
-      pilotReady: build.pilot_ready,
+      pilotReady: isPilotZipReady(build),
     })
-    if (build.pilot_ready) {
+    const level = honestLevel(build)
+    const sourced = hasSourcedLevel(build)
+    if (isPilotZipReady(build)) {
+      if (sourced && level === 'FOUNDING_CUSTOMER_READY') {
+        return (finished ?? 'Coding agent finished') + '. Founding-customer-ready. Download ready.'
+      }
+      if (sourced && level === 'STORE_GREEN') {
+        return (finished ?? 'Coding agent finished') + '. Store-green zip ready — not founding-customer-ready.'
+      }
       if (finished?.startsWith('Finished')) return finished + '. Download ready.'
       return finished ?? 'Coding agent finished. Download it from Your Platforms.'
     }
@@ -547,7 +559,7 @@ export function Floor({
     liveCoderBuild?.state !== 'stalled'
   const coderSucceeded = liveCoderBuild?.state === 'succeeded'
   const coderFailed = liveCoderBuild?.state === 'failed'
-  const coderPilotReady = liveCoderBuild?.pilot_ready === true
+  const coderPilotReady = isPilotZipReady(liveCoderBuild)
   const exportBtn = exportAffordance(liveCoderBuild)
   const latestGenerationIdx = (() => {
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -654,6 +666,7 @@ export function Floor({
                   ? 'Coding agent stopped'
                   : 'Coding agent has taken over'}
           </h3>
+          <LevelGradeStrip build={liveCoderBuild} testIdPrefix="floor" />
           <KernelStrip build={liveCoderBuild} />
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (
             <CoderProgress build={liveCoderBuild} nowMs={nowMs} />
