@@ -13,22 +13,37 @@ waited 1965s against a 480s attempt wall (production
 without cancelling the socket, so a hung httpx/ssl/anyio thread pinned
 the WRITER until the upstream finally dropped.
 
+#297 switched the wait to ``Event.wait`` and called ``httpx.Client.close()``
+on the caller thread. Live sess_ab446de still waited 1085s vs 480s
+(~2.3×). Proven path: ``Event.wait`` *does* return near the per-leg
+cap, but ``Client.close()`` → httpcore pool close → ``SSLSocket.close``
+takes the SSL lock the worker holds in ``SSL_read``. The raise therefore
+runs only after the proxy finally drops the TLS session (often ~18 min).
+That is a post-wait cleanup hang, not a join miss and not a reset
+contextvar.
+
 This helper:
 
 * waits on ``Event.wait(timeout)`` — never ``join`` after the deadline
-* closes the ``httpx.Client`` so the in-flight socket is cancelled
+* never runs ``Client.close()`` on the caller thread
+* shuts the raw socket down (unbound ``socket.shutdown``) on a daemon
+  thread so ``SSL_read`` unblocks without taking the SSL lock
 * honours an optional monotonic ``deadline`` so stacked legs cannot
   outrun ``attempt_wall_s()``
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import socket
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 import httpx
+
+logger = logging.getLogger("cerebrumdev.factory.llm_watchdog")
 
 CODER_TIMEOUT_ENV = "FACTORY_CODER_TIMEOUT_S"
 DEFAULT_CALL_TIMEOUT_S = 120.0
@@ -38,8 +53,8 @@ DEFAULT_CALL_TIMEOUT_S = 120.0
 MAX_LEGS = 3
 MODEL_CALL_GRACE_S = 30.0
 #: Caller must be released within this much of the deadline. Live 1965s
-#: vs 480s was ~4×; a hung post that overshoots by this much is still a
-#: bug in the watchdog, not "the model is thinking".
+#: vs 480s was ~4×; live 1085s vs 480s was ~2.3× after #297. A hung
+#: post that overshoots by this much is still a bug in the watchdog.
 WATCHDOG_OVERSHOOT_GRACE_S = 8.0
 
 
@@ -103,6 +118,58 @@ def _timeout_error(url: str, timeout_s: float) -> httpx.ReadTimeout:
     )
 
 
+def _iter_network_streams(client: Any) -> Iterable[Any]:
+    """Yield httpcore streams for an in-flight httpx Client.
+
+    Layouts differ across httpx/httpcore minors; missing attributes are
+    skipped. This is cancel-only — a miss just leaves the daemon worker.
+    """
+    transport = getattr(client, "_transport", None)
+    pool = getattr(transport, "_pool", None)
+    connections = list(getattr(pool, "_connections", None) or [])
+    seen: set[int] = set()
+    for conn in connections:
+        for stream in (
+            getattr(conn, "_network_stream", None),
+            getattr(getattr(conn, "_connection", None), "_network_stream", None),
+        ):
+            if stream is None:
+                continue
+            marker = id(stream)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            yield stream
+
+
+def _shutdown_client_sockets(client: Any) -> None:
+    """Unblock SSL/read without taking the SSL lock ``close()`` waits on.
+
+    ``SSLSocket.shutdown`` / ``SSLSocket.close`` serialize on the same lock
+    as ``SSL_read``. ``socket.socket.shutdown`` (unbound) hits the fd and
+    wakes the reader so the worker can exit.
+    """
+    for stream in _iter_network_streams(client):
+        get_info = getattr(stream, "get_extra_info", None)
+        sock = get_info("socket") if callable(get_info) else None
+        if sock is None:
+            continue
+        try:
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _close_client(client: Any) -> None:
+    if client is None:
+        return
+    _shutdown_client_sockets(client)
+    try:
+        client.close()
+    except Exception:  # noqa: BLE001 — best-effort; caller already released
+        pass
+
+
 def post_with_deadline(
     url: str,
     *,
@@ -117,10 +184,10 @@ def post_with_deadline(
     ``post`` defaults to ``httpx.post``. Callers that re-export ``httpx``
     (the coder) pass their own so existing test monkeypatches keep working.
 
-    The caller is released when ``Event.wait`` hits ``timeout``, even if
-    ``Thread.join`` would block for the abandoned worker. A real httpx
-    post is cancelled by closing the Client so a streaming/keepalive
-    socket cannot keep the WRITER busy past the wall.
+    The caller is released when ``Event.wait`` hits ``timeout``. Cancel
+    (socket shutdown + ``Client.close``) runs on a daemon thread so a
+    close that blocks in SSL/read cannot double the wall — live 1085s
+    vs 480s.
     """
     timeout_s = remaining_timeout_s(
         float(timeout) if timeout is not None else call_timeout_s(),
@@ -132,13 +199,13 @@ def post_with_deadline(
     done = threading.Event()
 
     def _cancel() -> None:
-        client = client_holder.get("client")
-        if client is None:
-            return
-        try:
-            client.close()
-        except Exception:  # noqa: BLE001 — best-effort socket cancel
-            pass
+        _close_client(client_holder.get("client"))
+
+    def _cancel_off_caller() -> None:
+        # Live 1085s>480s: close() on THIS thread waits for SSL_read.
+        threading.Thread(
+            target=_cancel, name="factory-llm-watchdog-cancel", daemon=True
+        ).start()
 
     def _run() -> None:
         try:
@@ -169,8 +236,16 @@ def post_with_deadline(
     worker.start()
     # Never join after the deadline. join(timeout) is how live 1965s>480s
     # happened: the worker held the caller until the socket died.
+    # Never close() after the deadline on this thread either — that is
+    # how live 1085s>480s happened.
     if not done.wait(timeout_s):
-        _cancel()
+        logger.warning(
+            "coder LLM watchdog fired after %.1fs; aborting off-caller "
+            "(Client.close must not run on this thread) url=%s",
+            timeout_s,
+            url,
+        )
+        _cancel_off_caller()
         raise _timeout_error(url, timeout_s)
     if "exc" in box:
         raise box["exc"]

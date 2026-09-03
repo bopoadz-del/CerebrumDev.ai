@@ -4,10 +4,12 @@ Live sess_3f3115ba6d764102 sat in WRITER with "quiet for 14+ min — model
 call may still be running" because httpx's idle read timeout never fired
 on a streaming/keepalive completion. #291 added a daemon-thread join;
 live sess_97a1bc6525924e8b still waited 1965s against a 480s attempt
-wall because join was waited without cancelling the socket. These tests
-pin the hard wall-clock abort, the alternate-model retry, the terminal
-message, and the Floor status that must not claim progress while the
-call is in flight.
+wall because join was waited without cancelling the socket. #297 switched
+to Event.wait + Client.close(); live sess_ab446de still waited 1085s
+vs 480s because close() blocks on the SSL lock the worker holds in
+SSL_read. These tests pin the hard wall-clock abort (including a hung
+close), the alternate-model retry, the terminal message, and the Floor
+status that must not claim progress while the call is in flight.
 """
 
 from __future__ import annotations
@@ -25,7 +27,10 @@ from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.roles import RoleContext, RoleError
 from app.factory.build_jobs import build_status
-from app.factory.llm_watchdog import post_with_deadline
+from app.factory.llm_watchdog import (
+    WATCHDOG_OVERSHOOT_GRACE_S,
+    post_with_deadline,
+)
 
 
 def _kimi_cfg(**overrides):
@@ -112,18 +117,18 @@ def test_hung_post_aborts_near_deadline_when_join_ignores_timeout(monkeypatch):
     assert "watchdog fired" in str(exc.value)
 
 
-def _dribble_server(hold_s: float, interval_s: float = 0.05) -> int:
+def _dribble_server(
+    hold_s: float, interval_s: float = 0.05, accept_n: int = 1
+) -> int:
     """HTTP/1.1 chunked dribble that resets an idle read timeout."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("127.0.0.1", 0))
-    sock.listen(1)
+    sock.listen(max(1, accept_n))
     port = sock.getsockname()[1]
 
-    def _serve() -> None:
+    def _serve_one(conn: socket.socket) -> None:
         try:
-            sock.settimeout(hold_s + 2.0)
-            conn, _ = sock.accept()
             conn.sendall(
                 b"HTTP/1.1 200 OK\r\n"
                 b"Content-Type: application/json\r\n"
@@ -141,9 +146,28 @@ def _dribble_server(hold_s: float, interval_s: float = 0.05) -> int:
                 conn.sendall(b"0\r\n\r\n")
             except OSError:
                 pass
-            conn.close()
         except OSError:
             pass
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _serve() -> None:
+        try:
+            sock.settimeout(hold_s + 2.0)
+            for _ in range(max(1, accept_n)):
+                try:
+                    conn, _ = sock.accept()
+                except OSError:
+                    break
+                threading.Thread(
+                    target=_serve_one,
+                    args=(conn,),
+                    name="dribble-conn",
+                    daemon=True,
+                ).start()
         finally:
             sock.close()
 
@@ -165,6 +189,85 @@ def test_watchdog_aborts_streaming_dribble_near_deadline():
     elapsed = time.monotonic() - started
     assert elapsed < timeout_s + 0.8, elapsed
     assert "watchdog" in str(exc.value).lower()
+
+
+def test_hung_client_close_does_not_double_the_deadline(monkeypatch):
+    """1085s > 480s class: Client.close() blocked in SSL/read.
+
+    #297's Event.wait returns on time, then the caller invokes
+    ``Client.close()``. close() → httpcore pool → SSLSocket.close takes
+    the SSL lock the worker holds in SSL_read, so the raise runs only
+    after the proxy drops the TLS session. Live: 1085s vs 480s (~2.3×),
+    matching an ~18 min idle drop after a 150s wait.
+
+    Patch close to hang ~2× the deadline the way that cleanup did.
+    The WRITER caller must return near the deadline, never ≥2×.
+    """
+    orig_close = httpx.Client.close
+    close_hang_s = 2.2
+    closed = threading.Event()
+
+    def _close_blocked_in_ssl_read(self):  # noqa: ANN001
+        # SSLSocket.close waits on the reader lock; do not use time.sleep
+        # (other tests no-op it for connect-retry backoff).
+        threading.Event().wait(close_hang_s)
+        closed.set()
+        return orig_close(self)
+
+    monkeypatch.setattr(httpx.Client, "close", _close_blocked_in_ssl_read)
+
+    port = _dribble_server(hold_s=4.0)
+    timeout_s = 0.5
+    started = time.monotonic()
+    with pytest.raises(httpx.ReadTimeout) as exc:
+        post_with_deadline(
+            f"http://127.0.0.1:{port}/",
+            json={"model": "primary"},
+            timeout=timeout_s,
+        )
+    elapsed = time.monotonic() - started
+
+    # Success criteria: ≤ deadline+15s; never ≥2× deadline.
+    # Without the fix elapsed ≈ timeout + close_hang (~2.7s ≥ 2× 0.5).
+    assert elapsed <= timeout_s + 15.0, elapsed
+    assert elapsed < 2 * timeout_s, elapsed
+    assert elapsed < close_hang_s, elapsed
+    assert elapsed <= timeout_s + WATCHDOG_OVERSHOOT_GRACE_S, elapsed
+    assert "watchdog fired" in str(exc.value)
+    # Cancel may still be blocked in the daemon — that is the point.
+    assert not closed.is_set() or elapsed < 2 * timeout_s
+
+
+def test_llm_code_call_hung_close_retries_then_coder_timeout(monkeypatch):
+    """Hung close must not eat the shared attempt wall before fallback."""
+    orig_close = httpx.Client.close
+
+    def _close_blocked_in_ssl_read(self):  # noqa: ANN001
+        threading.Event().wait(2.0)
+        return orig_close(self)
+
+    monkeypatch.setattr(httpx.Client, "close", _close_blocked_in_ssl_read)
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "0.25")
+    monkeypatch.setattr("app.factory.llm_watchdog.MODEL_CALL_GRACE_S", 0.2)
+    monkeypatch.setattr("app.factory.coder.MODEL_CALL_GRACE_S", 0.2, raising=False)
+
+    port = _dribble_server(hold_s=6.0, accept_n=3)
+    _arm_kimi(monkeypatch, base_url=f"http://127.0.0.1:{port}")
+    # Real httpx.post — Client.close is the live abort path.
+
+    started = time.monotonic()
+    with pytest.raises(coder.CoderTimeout) as exc:
+        coder._llm_code_call([{"role": "user", "content": "u"}])
+    elapsed = time.monotonic() - started
+
+    # attempt_wall = 0.25 * 3 + 0.2 = 0.95s. Two legs + hung close on
+    # the caller would be ~4.5s. Must stay under 2× the wall.
+    wall = 0.25 * 3 + 0.2
+    assert elapsed <= wall + 15.0, elapsed
+    assert elapsed < 2 * wall, elapsed
+    assert "coder LLM timed out" in str(exc.value)
+    assert "primary" in str(exc.value)
+    assert "fallback" in str(exc.value)
 
 
 def test_stacked_legs_cannot_outrun_attempt_wall(monkeypatch):
@@ -460,6 +563,46 @@ def test_overdue_uses_calling_note_age_not_a_later_event(tmp_path):
     assert "class_and_event_scheduling" in status["detail"]
     elapsed_s = int(status["detail"].split("after ", 1)[1].split("s", 1)[0])
     assert 1964 <= elapsed_s <= 1975, status["detail"]
+    assert status["pilot_ready"] is False
+
+
+def test_overdue_1085s_vs_480s_fails_the_build_status(tmp_path):
+    """Live sess_ab446de: 1085s elapsed vs 480s deadline is still a timeout."""
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="lettings", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="calling coder LLM for maintenance_tickets",
+        payload={
+            "stage": "coder",
+            "model_call": True,
+            "deadline_s": 480,
+        },
+    )
+    stale_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=1085)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = stale_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text(
+        "\n".join(aged) + "\n", encoding="utf-8"
+    )
+
+    status = build_status(out)
+    assert status["state"] == "failed", status
+    assert "deadline 480s" in status["detail"], status
+    assert "maintenance_tickets" in status["detail"]
+    elapsed_s = int(status["detail"].split("after ", 1)[1].split("s", 1)[0])
+    assert 1084 <= elapsed_s <= 1095, status["detail"]
     assert status["pilot_ready"] is False
 
 
