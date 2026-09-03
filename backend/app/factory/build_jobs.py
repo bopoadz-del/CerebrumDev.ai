@@ -160,7 +160,13 @@ def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
         ready = bool(ledger.pilot_ready())
     except Exception:  # noqa: BLE001
         ready = bool(payload.get("pilot_ready"))
-    return {"cycle": cycle or "code", "pilot_ready": ready}
+    try:
+        from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+
+        auto = bool(factory_auto_pilot_enabled())
+    except Exception:  # noqa: BLE001
+        auto = False
+    return {"cycle": cycle or "code", "pilot_ready": ready, "auto_pilot": auto}
 
 
 def _authorship(output_dir: Path | str) -> Dict[str, Any]:

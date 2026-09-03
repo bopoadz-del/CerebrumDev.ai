@@ -285,7 +285,9 @@ export default function App() {
             notice={alreadySignedInNotice ? 'Already signed in.' : null}
           />
         )}
-        {view === 'platforms' && <Platforms sessionId={sessionId} />}
+        {view === 'platforms' && (
+          <Platforms sessionId={sessionId} goFloor={() => go('floor')} />
+        )}
         {view === 'subscription' && <Subscription />}
         {view === 'account' && (
           <Account

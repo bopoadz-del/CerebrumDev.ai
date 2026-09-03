@@ -25,7 +25,13 @@ import { LoadingSkeleton } from './LoadingSkeleton'
 
 /* -------------------------------- Platforms -------------------------------- */
 
-export function Platforms({ sessionId }: { sessionId: string }) {
+export function Platforms({
+  sessionId,
+  goFloor,
+}: {
+  sessionId: string
+  goFloor?: () => void
+}) {
   const [design, setDesign] = useState<ProductDesign | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -149,7 +155,9 @@ export function Platforms({ sessionId }: { sessionId: string }) {
       return `Build stalled — ${liveBuild.detail ?? 'no recent activity'}`
     }
     if (liveBuild.state === 'succeeded' && !pilotReady) {
-      return 'Code-cycle prototype — not pilot-ready. Continue on the Factory Floor for the pilot cycle.'
+      return liveBuild.auto_pilot
+        ? 'Code-cycle prototype — not pilot-ready. The pilot cycle should open automatically.'
+        : 'Code-cycle prototype — not pilot-ready. Continue to pilot on the Factory Floor.'
     }
     if (liveBuild.state !== 'building') return null
     const headline = formatPhaseHeadline(liveBuild)
@@ -216,6 +224,11 @@ export function Platforms({ sessionId }: { sessionId: string }) {
               Pilot suite failed
             </span>
           )}
+          {codeOnlySuccess && (
+            <span className="status-pill" data-testid="platforms-prototype-pill">
+              Code-cycle prototype
+            </span>
+          )}
           {pilotReady && (
             <span className="status-pill status-pill-ready" data-testid="platforms-pilot-ready-pill">
               Pilot-ready
@@ -252,6 +265,15 @@ export function Platforms({ sessionId }: { sessionId: string }) {
                   </p>
                 )}
             </>
+          )}
+          {codeOnlySuccess && goFloor && (
+            <button
+              type="button"
+              data-testid="continue-to-pilot"
+              onClick={goFloor}
+            >
+              Continue to pilot on Factory Floor
+            </button>
           )}
           <button
             className={failed ? 'ghost' : undefined}

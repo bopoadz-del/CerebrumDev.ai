@@ -198,6 +198,81 @@ test('Floor finished state offers the zip download on the generate surface', asy
   await expect(page.getByText('Finished — 13 artifacts; 6 templated. Download ready.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Open Your Platforms' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Continue to pilot' })).toHaveCount(0)
+})
+
+test('Floor code-cycle SUCCESS is a prototype with Continue to pilot — never Finished', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          inputs_hash: 'b36090a4',
+          output_dir: '/tmp/residential-lettings',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          auto_pilot: false,
+          authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        },
+      }),
+    })
+  })
+  const continuePosts: string[] = []
+  await page.route('**/v1/sessions/sess_e2e_floor/chat', async (route) => {
+    const posted = route.request().postDataJSON() as { message?: string }
+    continuePosts.push(posted.message ?? '')
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body:
+        sse('generation', {
+          summary: 'Opening pilot cycle for residential-lettings on the same workspace/hash.',
+          triggered_by: 'chat_llm',
+          generation: {
+            engine: 'runner',
+            product_id: 'residential-lettings',
+            triggered_by: 'chat_llm',
+          },
+        }) + sse('done', ''),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Code-cycle prototype ready' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByText(/Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready/)).toBeVisible()
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByText(/Download ready/)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Continue to pilot' }).click()
+  await expect(page.getByText('Opening pilot cycle for residential-lettings')).toBeVisible()
+  expect(continuePosts).toEqual(['continue'])
 })
 
 test('Your Platforms shows a loading skeleton — never empty-state — while product fetch is in flight', async ({
@@ -297,6 +372,60 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
   await expect(page.getByText('runner', { exact: true })).toBeVisible()
   await expect(page.getByText('Finished — 13 artifacts; 6 templated')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Continue to pilot on Factory Floor' })).toHaveCount(0)
+})
+
+test('Your Platforms code-cycle SUCCESS is a prototype — never Finished', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Cerebrum Residential Lettings Hub', vertical: 'lettings' },
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          inputs_hash: 'b36090a4',
+          output_dir: '/tmp/residential-lettings',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          auto_pilot: false,
+          authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  await expect(
+    page.getByText('Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready'),
+  ).toBeVisible()
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByText(/Download ready/)).toHaveCount(0)
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveCount(0)
+  await expect(page.getByTestId('platforms-prototype-pill')).toContainText('Code-cycle prototype')
+  await expect(page.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Continue to pilot on Factory Floor' })).toBeEnabled()
 })
 
 test('Your Platforms shows Pilot suite failed — never a success Download — when TESTER is red', async ({

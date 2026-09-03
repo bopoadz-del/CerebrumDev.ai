@@ -245,7 +245,53 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('Continue to pilot sends continue when auto-pilot is blocked', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'generation',
+        data: {
+          summary: 'Opening pilot cycle for residential-lettings on the same workspace/hash.',
+          triggered_by: 'chat_llm',
+          generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+        },
+      })
+    })
+    watchBuildMock
+      .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          auto_pilot: false,
+          authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        })
+      })
+      .mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'building',
+          phases_done: 2,
+          phases_total: 5,
+          current_phase: { id: 'TESTER', label: 'Acceptance inspector' },
+          phase_index: 4,
+          phase_total: 5,
+        })
+      })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_cta" goPlatforms={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue to pilot' }))
+    await waitFor(() => expect(chatStreamMock).toHaveBeenCalledWith('sess_cta', 'continue', expect.any(Function)))
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
   })
 
   it('downloads the zip from the Floor after the coding agent finishes', async () => {

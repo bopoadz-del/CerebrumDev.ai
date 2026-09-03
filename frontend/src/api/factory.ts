@@ -350,6 +350,8 @@ export type BuildStatus = {
   outcome?: string
   /** True only after a SUCCESS that closed a pilot cycle (Store-green). */
   pilot_ready?: boolean
+  /** True when the Floor will (or did) auto-open a pilot cycle after code SUCCESS. */
+  auto_pilot?: boolean
   phases?: string[]
   completed?: string[]
   phases_done?: number

@@ -237,10 +237,14 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
     if (finished) {
       return (
         finished +
-        '. Download is a code-cycle prototype — say continue to open a pilot cycle.'
+        (build.auto_pilot
+          ? '. Download is a code-cycle prototype — the pilot cycle should open automatically.'
+          : '. Download is a code-cycle prototype — continue to open a pilot cycle.')
       )
     }
-    return 'Code-cycle 5/5 passed. Not yet pilot-ready. Download is a prototype.'
+    return build.auto_pilot
+      ? 'Code-cycle 5/5 passed. Not yet pilot-ready. The pilot cycle should open automatically.'
+      : 'Code-cycle 5/5 passed. Not yet pilot-ready. Continue to open a pilot cycle.'
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -629,6 +633,16 @@ export function Floor({
           )}
           {coderSucceeded && (
             <div className="card-actions">
+              {!coderPilotReady && (
+                <button
+                  type="button"
+                  data-testid="continue-to-pilot"
+                  onClick={() => void send('continue')}
+                  disabled={busy || accessPaused}
+                >
+                  Continue to pilot
+                </button>
+              )}
               <button
                 type="button"
                 className={coderPilotReady ? undefined : 'ghost'}

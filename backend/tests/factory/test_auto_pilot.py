@@ -108,6 +108,7 @@ def test_build_status_exposes_code_cycle_as_not_pilot_ready(tmp_path):
     assert status["state"] == "succeeded"
     assert status["cycle"] == "code"
     assert status["pilot_ready"] is False
+    assert status["auto_pilot"] is False
 
 
 def test_zip_stamps_a_code_cycle_prototype_marker(tmp_path):
@@ -248,3 +249,21 @@ def test_code_only_success_still_exists_without_auto_pilot(tmp_path):
     assert status["state"] == "succeeded"
     assert status["pilot_ready"] is False
     assert status["cycle"] == "code"
+    assert status["auto_pilot"] is False
+
+
+def test_build_status_exposes_auto_pilot_when_keyed(tmp_path, monkeypatch):
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("KIMI_API_KEY", "sk-live-not-used")
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="lettings", inputs_hash="abc")
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="CODE PASS",
+        payload={"cycle": "code", "pilot_ready": False},
+    )
+    status = build_status(out)
+    assert status["pilot_ready"] is False
+    assert status["auto_pilot"] is True
