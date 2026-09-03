@@ -3,6 +3,7 @@ import type { BuildStatus } from '../api/factory'
 import {
   CLIENT_STALL_AFTER_S,
   eventAgeSeconds,
+  exportAffordance,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -196,6 +197,32 @@ describe('build progress copy', () => {
         { pilotReady: false },
       ),
     ).not.toMatch(/Finished/)
+  })
+
+  it('gold Download is only for a Store-green success', () => {
+    expect(exportAffordance({ state: 'stalled', detail: 'gone' })).toEqual({
+      label: 'Export (.zip) — build stalled',
+      disabled: true,
+      ghost: true,
+      title: 'Build stalled — a full-pilot zip will be refused by the server',
+    })
+    expect(exportAffordance({ state: 'failed', pilot_ready: false })).toMatchObject({
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+    })
+    expect(
+      exportAffordance({ state: 'succeeded', pilot_ready: false }),
+    ).toMatchObject({
+      label: 'Download code-cycle prototype (.zip)',
+      disabled: false,
+      ghost: true,
+    })
+    expect(exportAffordance({ state: 'succeeded', pilot_ready: true })).toEqual({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+      ghost: false,
+    })
   })
 
   it('falls back to completed+1 when the API has no current_phase yet', () => {

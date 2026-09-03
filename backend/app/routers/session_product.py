@@ -263,7 +263,7 @@ def download_product_package(
         raise HTTPException(
             status_code=409,
             detail=(
-                "the build process is gone and will not be shipped: "
+                "the build stalled and will not be shipped as a full-pilot zip: "
                 + str(status.get("detail"))
             ),
         )

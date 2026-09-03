@@ -207,6 +207,46 @@ export function withClientStall(
   }
 }
 
+/** Honest export CTA. Gold "Download platform export" is only for Store-green. */
+export function exportAffordance(build: BuildStatus | null | undefined): {
+  label: string
+  disabled: boolean
+  ghost: boolean
+  title?: string
+} {
+  if (!build || build.state === 'building' || build.state === 'not_started') {
+    return { label: 'Building…', disabled: true, ghost: false }
+  }
+  if (build.state === 'stalled') {
+    return {
+      label: 'Export (.zip) — build stalled',
+      disabled: true,
+      ghost: true,
+      title: 'Build stalled — a full-pilot zip will be refused by the server',
+    }
+  }
+  if (build.state === 'failed') {
+    return {
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+    }
+  }
+  if (build.state === 'succeeded' && build.pilot_ready !== true) {
+    return {
+      label: 'Download code-cycle prototype (.zip)',
+      disabled: false,
+      ghost: true,
+      title: 'Code-cycle prototype — not a Store-green / full-pilot zip',
+    }
+  }
+  if (build.state === 'succeeded' && build.pilot_ready === true) {
+    return { label: 'Download platform export (.zip)', disabled: false, ghost: false }
+  }
+  return { label: 'Building…', disabled: true, ghost: false }
+}
+
 export function phaseBarFraction(build: BuildStatus): number | null {
   const progress = build.phase_progress
   if (progress && progress.total > 0) {

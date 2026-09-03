@@ -11,6 +11,7 @@ import {
   type ProductDesign,
 } from './api/factory'
 import {
+  exportAffordance,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -547,6 +548,7 @@ export function Floor({
   const coderSucceeded = liveCoderBuild?.state === 'succeeded'
   const coderFailed = liveCoderBuild?.state === 'failed'
   const coderPilotReady = liveCoderBuild?.pilot_ready === true
+  const exportBtn = exportAffordance(liveCoderBuild)
   const latestGenerationIdx = (() => {
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
       if (msgs[i].card === 'generation') return i
@@ -675,15 +677,27 @@ export function Floor({
               )}
               <button
                 type="button"
-                className={coderPilotReady ? undefined : 'ghost'}
+                className={exportBtn.ghost ? 'ghost' : undefined}
                 onClick={() => void download()}
-                disabled={downloading}
+                disabled={downloading || exportBtn.disabled}
+                title={exportBtn.title}
               >
-                {downloading
-                  ? 'Packing…'
-                  : coderPilotReady
-                    ? 'Download platform export (.zip)'
-                    : 'Download code-cycle prototype (.zip)'}
+                {downloading ? 'Packing…' : exportBtn.label}
+              </button>
+            </div>
+          )}
+          {liveCoderBuild?.state === 'stalled' && (
+            <div className="card-actions">
+              <span className="status-pill status-pill-failed" data-testid="floor-stalled-pill">
+                Build stalled
+              </span>
+              <button
+                type="button"
+                className="ghost"
+                disabled
+                title={exportAffordance(liveCoderBuild).title}
+              >
+                {exportAffordance(liveCoderBuild).label}
               </button>
             </div>
           )}
@@ -692,6 +706,14 @@ export function Floor({
               <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
                 Pilot suite failed
               </span>
+              <button
+                type="button"
+                className="ghost"
+                disabled
+                title={exportAffordance(liveCoderBuild).title}
+              >
+                {exportAffordance(liveCoderBuild).label}
+              </button>
               {onNewSession && (
                 <button
                   type="button"

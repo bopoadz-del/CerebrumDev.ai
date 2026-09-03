@@ -287,8 +287,8 @@ describe('Your Platforms — coding-agent build', () => {
     ).not.toBeInTheDocument()
     const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
     expect(exportBtn).toHaveClass('ghost')
+    expect(exportBtn).toBeDisabled()
     fireEvent.click(exportBtn)
-    expect(await screen.findByText(/will not be shipped/)).toBeInTheDocument()
     expect(downloadMock).not.toHaveBeenCalled()
   })
 
@@ -324,7 +324,13 @@ describe('Your Platforms — coding-agent build', () => {
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText(/Build stalled — no build activity for 40 min/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
+    ).not.toBeInTheDocument()
+    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — build stalled' })
+    expect(exportBtn).toBeDisabled()
+    expect(exportBtn).toHaveClass('ghost')
+    expect(screen.getByTestId('platforms-stalled-pill')).toHaveTextContent('Build stalled')
   })
 
   it('does not download a failed coding-agent build', async () => {
@@ -341,8 +347,10 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
-    fireEvent.click(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' }))
-    expect(await screen.findByText(/will not be shipped: TESTER gate red/)).toBeInTheDocument()
+    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(exportBtn).toBeDisabled()
+    expect(exportBtn).toHaveClass('ghost')
+    fireEvent.click(exportBtn)
     expect(downloadMock).not.toHaveBeenCalled()
   })
 })

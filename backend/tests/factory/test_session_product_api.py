@@ -203,7 +203,8 @@ def test_stalled_build_cannot_be_downloaded(client, tmp_path):
     pkg = client.get("/v1/sessions/sess_stalled_dl/product/package")
     assert pkg.status_code == 409, pkg.text
     detail = pkg.json()["detail"]
-    assert "gone" in detail or "stalled" in detail.lower() or "will not be shipped" in detail
+    assert "will not be shipped" in detail
+    assert "full-pilot" in detail or "stalled" in detail.lower()
 
 
 def test_product_export_omits_tester_caches(tmp_path):

@@ -14,6 +14,7 @@ import {
   type ProductDesign,
 } from './api/factory'
 import {
+  exportAffordance,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -135,12 +136,6 @@ export function Platforms({
     | undefined
   const gen = design?.generation
   const authorship = liveBuild?.authorship
-  // Gen present but no status tick yet — keep Download disabled (Building…)
-  // so a click cannot race ahead of the watcher into awaitBuild(undefined).
-  const building =
-    liveBuild?.state === 'building' ||
-    liveBuild?.state === 'not_started' ||
-    (Boolean(gen) && !liveBuild)
   const stalled = liveBuild?.state === 'stalled'
   const failed = liveBuild?.state === 'failed'
   const pilotReady = liveBuild?.pilot_ready === true
@@ -170,13 +165,10 @@ export function Platforms({
     if (heartbeat) bits.push(heartbeat)
     return bits.join(' · ')
   })()
-  const downloadLabel = (() => {
-    if (building) return 'Building…'
-    if (downloading) return 'Packing…'
-    if (failed) return 'Export (.zip) — pilot suite failed'
-    if (codeOnlySuccess) return 'Download code-cycle prototype (.zip)'
-    return 'Download platform export (.zip)'
-  })()
+  const exportBtn = exportAffordance(
+    liveBuild ?? (gen ? { state: 'building' } : null),
+  )
+  const downloadLabel = downloading ? 'Packing…' : exportBtn.label
 
   return (
     <div className="page">
@@ -219,6 +211,11 @@ export function Platforms({
       ) : (
         <div className="panel">
           <h3>{gen.product_id}</h3>
+          {stalled && (
+            <span className="status-pill status-pill-failed" data-testid="platforms-stalled-pill">
+              Build stalled
+            </span>
+          )}
           {failed && (
             <span className="status-pill status-pill-failed" data-testid="platforms-failed-pill">
               Pilot suite failed
@@ -276,14 +273,10 @@ export function Platforms({
             </button>
           )}
           <button
-            className={failed ? 'ghost' : undefined}
+            className={exportBtn.ghost || stalled || failed ? 'ghost' : undefined}
             onClick={download}
-            disabled={downloading || building || stalled || refreshing}
-            title={
-              failed
-                ? 'Pilot suite failed — export is not pilot-ready and will be refused by the server'
-                : undefined
-            }
+            disabled={downloading || exportBtn.disabled || refreshing}
+            title={exportBtn.title}
           >
             {downloadLabel}
           </button>
