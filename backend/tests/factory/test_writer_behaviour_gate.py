@@ -7,6 +7,7 @@ gate that passed both would not be testing anything.
 
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
 from pathlib import Path
@@ -15,13 +16,17 @@ import pytest
 
 from app.factory.build.gates import GateContext, gate_writer_contract
 from app.factory.build.authority import BuildRole
+from app.factory.build import writer_behaviour as writer_behaviour_mod
 from app.factory.build.writer_behaviour import (
     BEHAVIOUR_PROBE,
     F1_HALT,
     F11_HALT,
     GATE_NAME,
     SCHEMA_HALT,
+    SCHEMA_SQL_HALT,
     banner_detail,
+    classify_unmarked_probe_failure,
+    findings_from_probe_stderr,
 )
 
 # A route body that persists whatever arrived, regardless of the handler.
@@ -336,6 +341,12 @@ def test_probe_emits_canonical_f11_halt():
     assert "GATE-FINDING: " + F11_HALT in BEHAVIOUR_PROBE
     # ``(F1)`` is a substring of ``(F11)`` — the probe must still name F11.
     assert "(F11)" in BEHAVIOUR_PROBE
+
+
+def test_probe_emits_canonical_sql_halt():
+    """Import/migration crashes must be marked, never raw sqlite DDL."""
+    assert SCHEMA_SQL_HALT in BEHAVIOUR_PROBE
+    assert "GATE-FINDING: " + SCHEMA_SQL_HALT in BEHAVIOUR_PROBE
 
 
 def test_banner_detail_schema_does_not_masquerade_as_f1():
@@ -667,3 +678,277 @@ def test_gate_fails_all_f11_with_f11_detail_not_f1(tmp_path):
     assert "widget_intake" in joined
     assert "punch_list_tracking" in joined
     assert "(F11)" in joined
+
+
+# -- live veterinary-care / appointment-shaped workspace (2026-09-03) ------
+
+_LIVE_SQL_STDERR = """
+INFO  [alembic.runtime.migration] Running upgrade  -> 0001_baseline
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) unknown column "id" in primary key
+[SQL:
+CREATE TABLE appointment (
+id INTEGER NOT NULL,
+scheduled_time TEXT,
+duration_minutes INTEGER,
+status TEXT,
+service_type TEXT,
+PRIMARY KEY (id)
+)
+
+]
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+"""
+
+_INVALID_APPOINTMENT_REVISION = '''"""v1 domain tables — live-broken PRIMARY KEY without id column."""
+from __future__ import annotations
+
+from alembic import op
+
+revision = "0001_baseline"
+down_revision = None
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    op.execute(
+        """
+        CREATE TABLE appointment (
+            scheduled_time TEXT,
+            duration_minutes INTEGER,
+            status TEXT,
+            service_type TEXT,
+            PRIMARY KEY (id)
+        )
+        """
+    )
+
+
+def downgrade() -> None:
+    op.drop_table("appointment")
+'''
+
+
+def test_unmarked_sql_stderr_is_not_the_floor_banner():
+    """Live Floor banner was ``scheduled_time TEXT,`` from raw[-8:]."""
+    findings = findings_from_probe_stderr(_LIVE_SQL_STDERR)
+    assert findings
+    joined = " ".join(findings)
+    assert "scheduled_time TEXT" not in joined
+    assert SCHEMA_SQL_HALT in joined
+    assert "OperationalError" in joined or "schema or migration" in joined
+    detail = banner_detail(findings)
+    assert detail != "scheduled_time TEXT,"
+    assert "scheduled_time TEXT" not in detail
+    assert SCHEMA_SQL_HALT in detail
+    assert F1_HALT not in detail
+    assert SCHEMA_HALT not in detail
+
+
+def test_banner_detail_skips_raw_sql_fragments():
+    sql_lines = [
+        "scheduled_time TEXT,",
+        "duration_minutes INTEGER,",
+        "status TEXT,",
+        "service_type TEXT,",
+        "PRIMARY KEY (id)",
+    ]
+    assert banner_detail(sql_lines) != "scheduled_time TEXT,"
+    assert "scheduled_time TEXT" not in banner_detail(sql_lines)
+    assert SCHEMA_SQL_HALT in banner_detail(sql_lines)
+    classified = classify_unmarked_probe_failure(sql_lines)
+    assert classified.startswith(SCHEMA_SQL_HALT)
+
+
+def test_probe_value_samples_appointment_fields_not_the_word_sample():
+    """Probe _value must match the emitter for time/datetime names."""
+    marker = "BEHAVIOUR_PROBE = r" + (chr(39) * 3)
+    text = Path(writer_behaviour_mod.__file__).read_text(encoding="utf-8")
+    start = text.index(marker) + len(marker)
+    src = text[start:text.index(chr(39) * 3, start)]
+    tree = ast.parse(src)
+    picked = [
+        n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and n.name in {"_ann", "_value", "_payload"}
+    ]
+    ns: dict = {}
+    exec(compile(ast.Module(body=picked, type_ignores=[]), "<p>", "exec"), ns)
+
+    class Appointment:
+        FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type"]
+        CONSTRAINTS = {
+            "status": {"allowed_values": ["booked", "completed"]},
+            "scheduled_time": {"format": "time"},
+        }
+        __annotations__ = {
+            "scheduled_time": "str",
+            "duration_minutes": "int",
+            "status": "str",
+            "service_type": "str",
+        }
+
+    payload = ns["_payload"](Appointment)
+    assert payload["scheduled_time"] == "10:00:00"
+    assert payload["scheduled_time"] != "sample"
+    assert payload["duration_minutes"] == 1
+    assert payload["status"] == "booked"
+    assert payload["service_type"] == "sample"
+
+    class DatetimeAnn:
+        FIELDS = ["visit"]
+        CONSTRAINTS = {}
+        __annotations__ = {"visit": "datetime"}
+
+    assert ns["_value"](DatetimeAnn, "visit") == "2026-09-03T10:00:00"
+
+
+def _appointment_spec() -> dict:
+    return {
+        "end_to_end_appointment_workflow": {
+            "entity": "appointment",
+            "fields": [
+                {"name": "scheduled_time", "type": "str", "required": True},
+                {
+                    "name": "duration_minutes",
+                    "type": "int",
+                    "required": True,
+                    "min": 1,
+                },
+                {
+                    "name": "status",
+                    "type": "str",
+                    "required": True,
+                    "allowed_values": ["booked", "completed", "cancelled"],
+                },
+                {"name": "service_type", "type": "str", "required": True},
+            ],
+        }
+    }
+
+
+def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) -> None:
+    """Fixture matching the live vet appointment schema (sqlite + Alembic)."""
+    from app.factory.build.data_lifecycle import (
+        render_alembic_env,
+        render_alembic_ini,
+        render_migrations,
+        render_revision_0001,
+        render_revision_0002,
+        render_script_mako,
+        render_store,
+    )
+    from app.factory.build.roles_handlers import _render_models
+
+    specs = _appointment_spec()
+    app = root / "app"
+    (app / "actions").mkdir(parents=True, exist_ok=True)
+    (app / "__init__.py").write_text("", encoding="utf-8")
+    (app / "models.py").write_text(_render_models(specs), encoding="utf-8")
+    (app / "store.py").write_text(render_store(specs), encoding="utf-8")
+    (app / "migrations.py").write_text(render_migrations(), encoding="utf-8")
+    (root / "alembic.ini").write_text(render_alembic_ini(), encoding="utf-8")
+    alembic = root / "alembic" / "versions"
+    alembic.mkdir(parents=True, exist_ok=True)
+    (root / "alembic" / "env.py").write_text(render_alembic_env(), encoding="utf-8")
+    (root / "alembic" / "script.py.mako").write_text(
+        render_script_mako(), encoding="utf-8"
+    )
+    rev = (
+        _INVALID_APPOINTMENT_REVISION
+        if invalid_pk
+        else render_revision_0001(specs)
+    )
+    (alembic / "0001_baseline.py").write_text(rev, encoding="utf-8")
+    (alembic / "0002_lifecycle_audit.py").write_text(
+        render_revision_0002(), encoding="utf-8"
+    )
+
+    (app / "dispatch.py").write_text(
+        "def execute(block_id, payload=None, action=None, params=None):\n"
+        '    return {"status": "ok", "block": block_id}\n',
+        encoding="utf-8",
+    )
+    (app / "jobs.py").write_text(
+        "CAPABILITIES = ["
+        "{'id': 'end_to_end_appointment_workflow', 'entity': 'appointment'}]\n"
+        "JOBS = []\nCATALOG = {}\nGATES = {}\n",
+        encoding="utf-8",
+    )
+    (app / "actions" / "__init__.py").write_text(
+        "from app.actions import end_to_end_appointment_workflow  # noqa: F401\n",
+        encoding="utf-8",
+    )
+    (app / "actions" / "end_to_end_appointment_workflow.py").write_text(
+        "from app.dispatch import execute\n\n"
+        "CAPABILITY_ID = 'end_to_end_appointment_workflow'\n\n"
+        "def handle(payload):\n"
+        "    res = execute('database', {'input': payload}, action='insert')\n"
+        "    if res.get('status') == 'error':\n"
+        "        return {'ok': False, 'error': res.get('error')}\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID}\n",
+        encoding="utf-8",
+    )
+    (app / "routes.py").write_text(
+        "from typing import Any, Dict\n"
+        "from fastapi import APIRouter\n"
+        "from app import store\n"
+        "from app.actions import end_to_end_appointment_workflow as _action\n\n"
+        "router = APIRouter()\n\n"
+        '@router.post("/end_to_end_appointment_workflow")\n'
+        "def appointment_create(payload: Dict[str, Any]) -> Dict[str, Any]:\n"
+        '    CAPABILITY_ID = "end_to_end_appointment_workflow"\n'
+        "    result = _action.handle(payload)\n"
+        '    if isinstance(result, dict) and result.get("ok") is False:\n'
+        "        return result\n"
+        '    saved = store.save("appointment", payload)\n'
+        '    return {"ok": True, "capability": CAPABILITY_ID, "stored": saved}\n\n'
+        '@router.get("/end_to_end_appointment_workflow")\n'
+        "def appointment_list() -> Dict[str, Any]:\n"
+        '    items = store.list_all("appointment")\n'
+        '    return {"items": items, "total": len(items)}\n',
+        encoding="utf-8",
+    )
+    (app / "main.py").write_text(
+        "from fastapi import FastAPI\n"
+        "from app.routes import router\n"
+        'app = FastAPI(title="appointment-probe")\n'
+        'app.include_router(router, prefix="/v1")\n\n'
+        '@app.get("/health")\n'
+        "def health():\n"
+        '    return {"status": "ok"}\n',
+        encoding="utf-8",
+    )
+
+
+def test_gate_passes_appointment_shaped_sqlite_workspace(tmp_path):
+    """New-domain appointment schema must compile, migrate, and fail-closed."""
+    _write_appointment_sql_workspace(tmp_path, invalid_pk=False)
+    models = (tmp_path / "app" / "models.py").read_text(encoding="utf-8")
+    assert "scheduled_time" in models
+    assert "duration_minutes" in models
+    rev = (tmp_path / "alembic" / "versions" / "0001_baseline.py").read_text(
+        encoding="utf-8"
+    )
+    assert "scheduled_time" in rev
+    assert "duration_minutes" in rev
+    assert "service_type" in rev
+    result = _run_gate(tmp_path)
+    assert result.ok is True, (result.detail, result.findings)
+    assert result.detail != F1_HALT
+    assert "scheduled_time TEXT" not in (result.detail or "")
+    assert SCHEMA_SQL_HALT not in (result.detail or "")
+
+
+def test_gate_invalid_appointment_ddl_is_gate_finding_not_sql_banner(tmp_path):
+    """Broken PRIMARY KEY (id) without an id column must name the schema bug."""
+    _write_appointment_sql_workspace(tmp_path, invalid_pk=True)
+    result = _run_gate(tmp_path)
+    assert result.ok is False, result
+    assert result.gate == GATE_NAME
+    assert "scheduled_time TEXT" not in result.detail
+    assert result.detail != "scheduled_time TEXT,"
+    joined = " ".join(result.findings) + " " + result.detail
+    assert SCHEMA_SQL_HALT in joined
+    assert result.detail != F1_HALT
+    assert "success over a failed block" not in result.detail

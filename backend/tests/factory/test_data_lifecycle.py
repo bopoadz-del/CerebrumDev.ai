@@ -245,3 +245,65 @@ def test_connect_without_migrate_has_no_domain_tables(built, tmp_path):
         ),
     )
     assert result["has_analytics"] is False
+
+
+def test_appointment_revision_emits_valid_sqlite_ddl_with_id_primary_key():
+    """Live veterinary-care shape: scheduled_time TEXT, duration_minutes INTEGER.
+
+    The invalid form (PRIMARY KEY (id) with no id column) is what sqlite
+    rejects. The emitter must include id and still type the appointment
+    columns so a new-domain workspace can migrate.
+    """
+    import sqlite3
+
+    from app.factory.build.data_lifecycle import render_revision_0001, render_store
+
+    specs = {
+        "end_to_end_appointment_workflow": {
+            "entity": "appointment",
+            "fields": [
+                {"name": "scheduled_time", "type": "str"},
+                {"name": "duration_minutes", "type": "int"},
+                {"name": "status", "type": "str"},
+                {"name": "service_type", "type": "str"},
+            ],
+        }
+    }
+    rev = render_revision_0001(specs)
+    assert 'sa.Column("id", sa.Integer(), primary_key=True' in rev
+    assert 'sa.Column("scheduled_time", sa.Text()' in rev
+    assert 'sa.Column("duration_minutes", sa.Integer()' in rev
+    assert 'sa.Column("status", sa.Text()' in rev
+    assert 'sa.Column("service_type", sa.Text()' in rev
+    store_src = render_store(specs)
+    assert_no_connect_time_ddl(store_src)
+    assert "appointment" in store_src
+
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE appointment ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "scheduled_time TEXT, "
+        "duration_minutes INTEGER, "
+        "status TEXT, "
+        "service_type TEXT"
+        ")"
+    )
+    conn.execute(
+        "INSERT INTO appointment "
+        "(scheduled_time, duration_minutes, status, service_type) "
+        "VALUES ('10:00:00', 30, 'booked', 'consult')"
+    )
+    row = conn.execute("SELECT * FROM appointment").fetchone()
+    assert row[1] == "10:00:00"
+    with pytest.raises(sqlite3.OperationalError):
+        conn.execute(
+            "CREATE TABLE broken_appointment ("
+            "scheduled_time TEXT, "
+            "duration_minutes INTEGER, "
+            "status TEXT, "
+            "service_type TEXT, "
+            "PRIMARY KEY (id)"
+            ")"
+        )
+    conn.close()

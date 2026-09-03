@@ -36,6 +36,28 @@ _SA_TYPES = {
     "bool": "sa.Integer()",
 }
 
+_SA_TYPE_ALIASES = {
+    "str": "str",
+    "text": "str",
+    "string": "str",
+    "int": "int",
+    "integer": "int",
+    "float": "float",
+    "bool": "bool",
+    "boolean": "bool",
+    "datetime": "str",
+    "timestamp": "str",
+    "date": "str",
+    "time": "str",
+}
+
+
+def _field_sa_type(field: Dict[str, Any]) -> str:
+    """SQLAlchemy column type. Appointment datetime/date/time persist as TEXT."""
+    raw = str(field.get("type") or "str").strip().lower().replace("datetime.", "")
+    key = _SA_TYPE_ALIASES.get(raw, "str")
+    return _SA_TYPES.get(key, "sa.Text()")
+
 
 def table_specs(specs: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -553,9 +575,14 @@ def render_revision_0001(specs: Dict[str, Dict[str, Any]]) -> str:
         cols = [
             '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),'
         ]
+        seen = {"id"}
         for field in spec["fields"]:
-            sa_type = _SA_TYPES.get(field.get("type") or "str", "sa.Text()")
-            cols.append(f'        sa.Column("{field["name"]}", {sa_type}, nullable=True),')
+            name = str(field.get("name") or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            sa_type = _field_sa_type(field)
+            cols.append(f'        sa.Column("{name}", {sa_type}, nullable=True),')
         upgrade_lines.append(f'    op.create_table(\n        "{spec["entity"]}",')
         upgrade_lines.extend(cols)
         upgrade_lines.append("    )")

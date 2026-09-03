@@ -1013,7 +1013,9 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             "    id: Optional[int] = None",
         ]
         for f in spec["fields"]:
-            out.append(f"    {f['name']}: {f['type']} = {_field_default(f)}")
+            out.append(
+                f"    {f['name']}: {_python_annotation(f)} = {_field_default(f)}"
+            )
         out += [
             "",
             "    FIELDS = " + repr([f["name"] for f in spec["fields"]]),
@@ -2642,6 +2644,73 @@ def _looks_like_email_field(field: Dict[str, Any]) -> bool:
     return name == "email" or name.endswith("_email") or name.startswith("email_")
 
 
+_TYPE_ALIASES = {
+    "str": "str",
+    "text": "str",
+    "string": "str",
+    "int": "int",
+    "integer": "int",
+    "float": "float",
+    "bool": "bool",
+    "boolean": "bool",
+    "datetime": "datetime",
+    "timestamp": "datetime",
+    "date": "date",
+    "time": "time",
+}
+
+_TEMPORAL_SAMPLES = {
+    "datetime": "2026-09-03T10:00:00",
+    "date": "2026-09-03",
+    "time": "10:00:00",
+}
+
+
+def _normalize_field_type(raw: Any) -> str:
+    """Map LLM/SQL/annotation spellings onto the emitter's type set."""
+    kind = str(raw or "str").strip().lower()
+    kind = kind.replace("datetime.", "").replace("optional[", "").replace("]", "")
+    return _TYPE_ALIASES.get(kind, "str")
+
+
+def _python_annotation(field: Dict[str, Any]) -> str:
+    """Compilable dataclass annotation. datetime/date/time persist as ISO str."""
+    ftype = _normalize_field_type(field.get("type") or "str")
+    return {
+        "str": "str",
+        "int": "int",
+        "float": "float",
+        "bool": "bool",
+        "datetime": "str",
+        "date": "str",
+        "time": "str",
+    }.get(ftype, "str")
+
+
+def _temporal_sample(field: Dict[str, Any]) -> str | None:
+    """ISO sample for appointment-like fields, or None when not temporal.
+
+    Live veterinary-care: scheduled_time / duration_minutes / service_type.
+    The word "sample" is type-valid as str and rejected as a time.
+    """
+    fmt = str(field.get("format") or "").lower().replace("-", "")
+    ftype = _normalize_field_type(field.get("type") or "str")
+    name = str(field.get("name") or "").lower()
+    if ftype == "datetime" or fmt in ("datetime", "timestamp", "iso8601"):
+        return _TEMPORAL_SAMPLES["datetime"]
+    if ftype == "date" or fmt == "date":
+        return _TEMPORAL_SAMPLES["date"]
+    if ftype == "time" or fmt == "time":
+        return _TEMPORAL_SAMPLES["time"]
+    if name.endswith("_at") or name.endswith("_datetime"):
+        return _TEMPORAL_SAMPLES["datetime"]
+    if name.endswith("_date"):
+        return _TEMPORAL_SAMPLES["date"]
+    if name.endswith("_time") or name == "time":
+        return _TEMPORAL_SAMPLES["time"]
+    return None
+
+
 def _sample_value(field: Dict[str, Any]) -> Any:
     """A value that satisfies every constraint the field declares.
 
@@ -2655,14 +2724,17 @@ def _sample_value(field: Dict[str, Any]) -> Any:
         return field["allowed_values"][0]
     if _looks_like_email_field(field):
         return "guest@example.com"
-    ftype = field["type"]
+    temporal = _temporal_sample(field)
+    if temporal is not None:
+        return temporal
+    ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
         if lo is not None:
             return lo
         if hi is not None:
             return hi if hi < _SAMPLE_VALUES[ftype] else _SAMPLE_VALUES[ftype]
-    return _SAMPLE_VALUES[ftype]
+    return _SAMPLE_VALUES.get(ftype, "sample")
 
 
 def _sample_payload(spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -2687,15 +2759,23 @@ def _field_default(field: Dict[str, Any]) -> str:
     """Python literal for the dataclass default, valid under the constraints."""
     if field.get("allowed_values"):
         return repr(field["allowed_values"][0])
-    if field["type"] in ("int", "float") and field.get("min") is not None:
+    ftype = _normalize_field_type(field.get("type") or "str")
+    if ftype in ("int", "float") and field.get("min") is not None:
         return repr(field["min"])
-    return _PY_DEFAULTS[field["type"]]
+    temporal = _temporal_sample(field)
+    if temporal is not None:
+        return repr(temporal)
+    return _PY_DEFAULTS.get(ftype, '""')
 
 
 def _constraints_of(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
     for f in spec.get("fields", []):
-        c = {k: f[k] for k in ("allowed_values", "min", "max") if f.get(k) is not None}
+        c = {
+            k: f[k]
+            for k in ("allowed_values", "min", "max", "format")
+            if f.get(k) is not None
+        }
         if c:
             out[f["name"]] = c
     return out

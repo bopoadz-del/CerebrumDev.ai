@@ -42,6 +42,7 @@ module attributes are patched too.
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -58,6 +59,9 @@ F1_HALT = "a capability route reported success over a failed block"
 
 #: Probe / Floor text when every capability declares unused BLOCK_IDS (F11).
 F11_HALT = "a capability declares block(s) it never invokes"
+
+#: Probe / Floor text when import, Alembic, or sqlite DDL crashes the probe.
+SCHEMA_SQL_HALT = "workspace schema or migration failed"
 
 #: Runs inside the generated workspace. Prints one finding per line to
 #: stderr and exits non-zero; a clean run exits 0 and prints nothing.
@@ -108,23 +112,39 @@ def _value(cls, name):
     Mirrors the emitter's _sample_value: a type-valid but domain-invalid
     value would be rejected by the route's own guard, and the forced-failure
     phase would then pass without a block ever being called.
+    Appointment-shaped fields (scheduled_time, *_date, datetime annotations)
+    must not emit the word "sample" — routes and sqlite reject it.
     """
     con = getattr(cls, "CONSTRAINTS", {}).get(name, {})
     allowed = con.get("allowed_values")
     if allowed:
         return allowed[0]
     kind = _ann(cls, name)
-    if kind in ("int", "float"):
+    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
+    if kind in ("int", "float") or kind_l in ("int", "float"):
         low, high = con.get("min"), con.get("max")
         if low is not None:
             return low
         if high is not None:
             return high if high < 1 else 1
         return 1
-    if kind == "bool":
+    if kind == "bool" or kind_l == "bool":
         return False
     if "email" in name.lower():
         return "sample@example.com"
+    fmt = str(con.get("format") or "").lower().replace("-", "")
+    n = name.lower()
+    if (
+        kind_l in ("datetime", "timestamp")
+        or fmt in ("datetime", "timestamp", "iso8601")
+        or n.endswith("_at")
+        or n.endswith("_datetime")
+    ):
+        return "2026-09-03T10:00:00"
+    if kind_l == "date" or fmt == "date" or n.endswith("_date"):
+        return "2026-09-03"
+    if kind_l == "time" or fmt == "time" or n.endswith("_time") or n == "time":
+        return "10:00:00"
     return "sample"
 
 
@@ -175,12 +195,33 @@ def _rows(entity):
 # client context rather than construct it bare -- a bare TestClient skips
 # lifespan, leaving a schema-less database and "no such table" for every
 # capability. Explicit upgrade_head() first for workspaces whose startup
-# does not own the migration.
+# does not own the migration. ImportError is the JSON-store fixture path
+# (no Alembic). A real migration/SQL failure is a GATE-FINDING — never
+# swallowed, never left as unmarked sqlite stderr.
 try:
     from app.migrations import upgrade_head
-    upgrade_head()
-except Exception:
-    pass
+except ImportError:
+    upgrade_head = None
+if upgrade_head is not None:
+    try:
+        upgrade_head()
+    except Exception as exc:
+        sys.stderr.write(
+            "GATE-FINDING: workspace schema or migration failed: %s: %s\n"
+            % (type(exc).__name__, exc)
+        )
+        raise SystemExit(1)
+
+def _probe_excepthook(typ, exc, tb):
+    if issubclass(typ, SystemExit):
+        return sys.__excepthook__(typ, exc, tb)
+    sys.stderr.write(
+        "GATE-FINDING: workspace probe crashed: %s: %s\n"
+        % (getattr(typ, "__name__", typ), exc)
+    )
+    return sys.__excepthook__(typ, exc, tb)
+
+sys.excepthook = _probe_excepthook
 
 # F11: record which blocks each capability actually reaches while its
 # handler runs normally. A declared BLOCK_IDS entry that is never invoked is
@@ -311,8 +352,15 @@ for _name, _mod in list(sys.modules.items()):
     if _name.startswith("app.actions") and hasattr(_mod, "execute"):
         _mod.execute = _recording_execute
 
-client_cm = TestClient(app)
-client = client_cm.__enter__()
+try:
+    client_cm = TestClient(app)
+    client = client_cm.__enter__()
+except Exception as exc:
+    sys.stderr.write(
+        "GATE-FINDING: workspace does not boot: %s: %s\n"
+        % (type(exc).__name__, exc)
+    )
+    raise SystemExit(1)
 targets = []
 
 
@@ -601,12 +649,94 @@ def _is_schema_line(line: str) -> bool:
         token in line
         for token in (
             SCHEMA_HALT,
+            SCHEMA_SQL_HALT,
+            "workspace does not import",
+            "workspace does not boot",
+            "workspace probe crashed",
             "refused a payload",
             "own declared constraints",
             "baseline POST",
             "POST raised",
         )
     )
+
+
+_SQL_COL_RE = re.compile(
+    r"^[A-Za-z_][\w]*\s+"
+    r"(TEXT|INTEGER|REAL|BLOB|NUMERIC|FLOAT|BOOLEAN|DATETIME|DATE|TIME)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_sql_ddl_line(line: str) -> bool:
+    """True when a stderr line is a CREATE TABLE fragment, not a reason."""
+    s = line.strip().rstrip(",")
+    if not s:
+        return False
+    upper = s.upper()
+    if upper.startswith("CREATE TABLE") or upper.startswith("PRIMARY KEY"):
+        return True
+    if s in {")", "]", ");"} or s.startswith("[SQL"):
+        return True
+    return _SQL_COL_RE.match(s) is not None
+
+
+def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
+    """Turn unmarked sqlite/alembic stderr into one GATE-FINDING sentence.
+
+    Live veterinary-care (sess_3daeca83ae9d4286): the probe crashed during
+    import/migration, SQLAlchemy dumped the CREATE TABLE body to stderr,
+    and the host took ``lines = raw[-8:]`` so the Floor banner was the
+    first column line (``scheduled_time TEXT,``) instead of a reason.
+    """
+    nonempty = [ln.strip() for ln in raw_lines if ln.strip()]
+    for ln in nonempty:
+        if any(
+            tok in ln
+            for tok in (
+                "OperationalError",
+                "IntegrityError",
+                "ProgrammingError",
+                "CompileError",
+                "StatementError",
+            )
+        ):
+            msg = ln.split("[SQL:", 1)[0].strip()
+            if msg and not _looks_like_sql_ddl_line(msg):
+                return f"{SCHEMA_SQL_HALT}: {msg[:240]}"
+    text = "\n".join(nonempty)
+    if any(
+        tok in text
+        for tok in (
+            "CREATE TABLE",
+            "PRIMARY KEY",
+            "sqlite3",
+            "alembic",
+            "OperationalError",
+        )
+    ):
+        return (
+            f"{SCHEMA_SQL_HALT}: sqlite/alembic printed DDL without a "
+            "GATE-FINDING (probe crashed during import or migration)"
+        )
+    last = next(
+        (ln for ln in reversed(nonempty) if not _looks_like_sql_ddl_line(ln)),
+        "",
+    )
+    if last:
+        return f"workspace probe crashed: {last[:240]}"
+    return "behaviour probe failed with no output"
+
+
+def findings_from_probe_stderr(stderr: str) -> list[str]:
+    """Marked findings, or one classified reason — never raw SQL lines."""
+    raw = (stderr or "").splitlines()
+    marked = [
+        ln.split("GATE-FINDING: ", 1)[1] for ln in raw if "GATE-FINDING: " in ln
+    ]
+    if marked:
+        return marked[-20:]
+    return [classify_unmarked_probe_failure(raw)]
 
 
 def _is_f11_line(line: str) -> bool:
@@ -656,18 +786,26 @@ def banner_detail(findings: list[str]) -> str:
     non-zero exit onto F1, so the Floor lied about which phase failed.
     The same mapping turned F11 unused-block findings into F1 because
     ``(F1)`` is a substring of ``(F11)``.
+
+    Live veterinary-care (2026-09-03): unmarked sqlite DDL
+    (``scheduled_time TEXT,``) must never become the banner.
     """
+    usable = [ln for ln in findings if ln and not _looks_like_sql_ddl_line(ln)]
     if not findings:
         return "behaviour probe failed with no output"
-    if any(SCHEMA_HALT in ln for ln in findings):
+    if not usable:
+        return classify_unmarked_probe_failure(findings)
+    if any(SCHEMA_HALT in ln for ln in usable):
         return SCHEMA_HALT
-    if any(_is_schema_line(ln) for ln in findings):
-        return next(ln for ln in findings if _is_schema_line(ln))
-    if any(F11_HALT in ln or _is_f11_line(ln) for ln in findings):
+    if any(SCHEMA_SQL_HALT in ln for ln in usable):
+        return next(ln for ln in usable if SCHEMA_SQL_HALT in ln)
+    if any(_is_schema_line(ln) for ln in usable):
+        return next(ln for ln in usable if _is_schema_line(ln))
+    if any(F11_HALT in ln or _is_f11_line(ln) for ln in usable):
         return F11_HALT
-    if any(_is_f1_line(ln) for ln in findings):
+    if any(_is_f1_line(ln) for ln in usable):
         return F1_HALT
-    return findings[0]
+    return usable[0]
 
 
 def _pass_detail(
@@ -730,15 +868,10 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
 
     proc = ctx.run([sys.executable, "-c", _render_probe()])
     if proc.returncode != 0:
-        raw = (proc.stderr or "").splitlines()
-        # Filter to marked findings: alembic and uvicorn also log to stderr,
-        # so a tail of raw lines reported their INFO noise as the gate reason.
-        lines = [
-            ln.split("GATE-FINDING: ", 1)[1] for ln in raw if "GATE-FINDING: " in ln
-        ]
-        if not lines:
-            lines = [ln for ln in raw if ln.strip()][-8:]
-        findings = lines[-20:] or ["behaviour probe failed with no output"]
+        # Marked findings only. Unmarked sqlite/alembic stderr used to
+        # become the Floor banner (``scheduled_time TEXT,``). Classify
+        # that crash; do not hide a real schema bug by swallowing it.
+        findings = findings_from_probe_stderr(proc.stderr or "")
         return GateResult(
             ok=False,
             gate=GATE_NAME,
