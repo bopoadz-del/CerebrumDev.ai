@@ -6,6 +6,8 @@ Contract:
   estate, estate planning briefs should reach the architect).
 - Golden steward remains the deterministic fallback for explicit steward
   intent when LLM drafting is disabled.
+- Golden lettings DOES preempt the LLM. A keyed Floor drafted branded
+  lettings briefs as a property-management GENERATE stub (live d4f6da2).
 """
 
 from __future__ import annotations
@@ -96,3 +98,61 @@ def test_private_estate_steward_falls_back_when_llm_disabled(
 
     assert not llm_calls, "LLM must not be called when drafting is disabled"
     assert bp.product_id == "cerebrum-steward"
+
+
+NORTHBRIDGE_BRIEF = (
+    "Northbridge Lettings Desk — UK residential lettings CRM for landlords "
+    "and tenants in Leeds: property portfolio, tenancy applications, viewing "
+    "bookings, rent collection tracking, maintenance tickets, document vault. "
+    "Brand: Northbridge Lettings."
+)
+
+_LETTINGS_LIVE_CAPS = {
+    "unit_registry_and_vacancy_tracking",
+    "viewing_management",
+    "maintenance_issue_tracking",
+    "tenancy_application_pipeline",
+}
+
+
+def test_branded_lettings_brief_preempts_llm_property_management_stub(
+    monkeypatch, fake_dual_registry
+):
+    """Northbridge-style briefs must not become a property-management LLM stub."""
+    llm_calls = []
+
+    def _fake_draft_with_llm(brief, *, vertical_hint=None):
+        llm_calls.append((brief, vertical_hint))
+        return ProductBlueprint.model_validate(
+            {
+                "schema_version": "product_blueprint.v1",
+                "product_id": "property-management",
+                "product_name": "Property Management Platform",
+                "vertical": "property_management",
+                "summary": "Generic property-management GENERATE stub.",
+                "factory_scenario": "CREATE_PRODUCT",
+                "capabilities": [
+                    {
+                        "id": "property_management_core",
+                        "description": "Core property management workflows",
+                        "block_ids": [],
+                        "strategy_hint": "GENERATE",
+                    }
+                ],
+                "ui_modules": ["command_center"],
+                "connectors": [],
+                "edge_profile": "standard",
+                "human_authority": True,
+            }
+        )
+
+    monkeypatch.setenv(product_architect.LLM_DRAFTING_ENV, "true")
+    monkeypatch.setattr(product_architect, "_draft_with_llm", _fake_draft_with_llm)
+
+    bp = product_architect.draft_blueprint_from_brief(NORTHBRIDGE_BRIEF)
+
+    assert not llm_calls, "lettings golden must run before the architect LLM"
+    assert bp.drafting_mode == "golden_lettings"
+    assert bp.product_id == "residential-lettings"
+    assert {c.id for c in bp.capabilities} == _LETTINGS_LIVE_CAPS
+    assert not any(c.strategy_hint == "GENERATE" for c in bp.capabilities)

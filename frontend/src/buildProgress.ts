@@ -9,6 +9,89 @@ export const CLIENT_STALL_AFTER_S = 1800
  *  server's model_call_deadline_s when present. */
 export const CLIENT_MODEL_CALL_DEADLINE_S = 390
 
+export type LevelGradeName =
+  | 'SCAFFOLD'
+  | 'CODE_GREEN'
+  | 'STORE_GREEN'
+  | 'FOUNDING_CUSTOMER_READY'
+
+const CLAIMED_LEVELS = new Set<string>([
+  'SCAFFOLD',
+  'CODE_GREEN',
+  'STORE_GREEN',
+  'FOUNDING_CUSTOMER_READY',
+])
+
+/**
+ * Fail-closed glass grade. A false ``pilot_ready`` can never read as
+ * Store-green or founding-customer-ready, even if ``level_grade.level``
+ * overclaims. Missing grade falls back to cycle + pilot_ready.
+ */
+export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
+  if (!build) return null
+  const claimed = String(build.level_grade?.level || '').toUpperCase()
+  const ready = build.pilot_ready === true
+  if (!ready) {
+    if (claimed === 'STORE_GREEN' || claimed === 'FOUNDING_CUSTOMER_READY') {
+      return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
+    }
+    if (CLAIMED_LEVELS.has(claimed)) return claimed as LevelGradeName
+    if (build.state === 'succeeded') return 'CODE_GREEN'
+    if (build.state === 'failed' || build.state === 'stalled') return 'SCAFFOLD'
+    return null
+  }
+  if (
+    build.level_grade?.founding_customer_ready === true ||
+    claimed === 'FOUNDING_CUSTOMER_READY'
+  ) {
+    return 'FOUNDING_CUSTOMER_READY'
+  }
+  if (claimed === 'STORE_GREEN') return 'STORE_GREEN'
+  return 'STORE_GREEN'
+}
+
+export function hasSourcedLevel(build: BuildStatus | null | undefined): boolean {
+  return Boolean(build?.level_grade?.level)
+}
+
+export function levelGradeLabel(level: LevelGradeName, sourced = true): string {
+  if (!sourced) {
+    if (level === 'CODE_GREEN') return 'Code-cycle prototype'
+    if (level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY') return 'Pilot-ready'
+    return 'Scaffold'
+  }
+  switch (level) {
+    case 'SCAFFOLD':
+      return 'Scaffold'
+    case 'CODE_GREEN':
+      return 'Code-green (prototype)'
+    case 'STORE_GREEN':
+      return 'Store-green'
+    case 'FOUNDING_CUSTOMER_READY':
+      return 'Founding-customer-ready'
+  }
+}
+
+/** True only for a Store-green / founding zip — never CODE_GREEN. */
+export function isPilotZipReady(build: BuildStatus | null | undefined): boolean {
+  if (!build || build.pilot_ready !== true) return false
+  const level = honestLevel(build)
+  return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
+}
+
+export function threeGateEntries(
+  build: BuildStatus | null | undefined,
+): { name: string; verdict: string }[] | null {
+  const gates = build?.level_grade?.three_gate
+  if (!gates || typeof gates !== 'object') return null
+  const names = ['CODE', 'PRODUCT', 'STORE'] as const
+  if (!names.some((name) => name in gates)) return null
+  return names.map((name) => ({
+    name,
+    verdict: String(gates[name] || 'UNKNOWN').replace(/_/g, ' '),
+  }))
+}
+
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
  *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
  */
@@ -235,7 +318,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
     }
   }
-  if (build.state === 'succeeded' && build.pilot_ready !== true) {
+  if (build.state === 'succeeded' && !isPilotZipReady(build)) {
     return {
       label: 'Download code-cycle prototype (.zip)',
       disabled: false,
@@ -243,7 +326,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       title: 'Code-cycle prototype — not a Store-green / full-pilot zip',
     }
   }
-  if (build.state === 'succeeded' && build.pilot_ready === true) {
+  if (build.state === 'succeeded' && isPilotZipReady(build)) {
     return { label: 'Download platform export (.zip)', disabled: false, ghost: false }
   }
   return { label: 'Building…', disabled: true, ghost: false }

@@ -352,6 +352,14 @@ export type BuildStatus = {
   pilot_ready?: boolean
   /** True when the Floor will (or did) auto-open a pilot cycle after code SUCCESS. */
   auto_pilot?: boolean
+  /** Fail-closed founding-customer grade. SCAFFOLD when pilot_ready is false. */
+  level_grade?: {
+    level?: string
+    pilot_ready?: boolean
+    founding_customer_ready?: boolean
+    blockers?: string[]
+    three_gate?: Record<string, string>
+  }
   phases?: string[]
   completed?: string[]
   phases_done?: number

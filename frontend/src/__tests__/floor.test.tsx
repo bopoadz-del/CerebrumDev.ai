@@ -165,6 +165,34 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText(/The architect LLM did not draft this blueprint/)).toBeInTheDocument()
   })
 
+  it('labels a golden lettings draft as a golden blueprint, not template fallback', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'blueprint',
+        data: {
+          summary: 'Drafted from the golden residential-lettings blueprint.',
+          blueprint: {
+            product_name: 'Residential Lettings Platform',
+            vertical: 'residential_lettings',
+            summary: 'Factory golden for a residential-lettings platform.',
+            drafting_mode: 'golden_lettings',
+            capabilities: [
+              { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
+            ],
+          },
+        },
+      })
+    })
+    render(<Floor sessionId="sess_lettings" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'Build a platform for residential lettings' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText(/golden blueprint/)).toBeInTheDocument()
+    expect(screen.queryByText(/template fallback — no LLM/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/The architect LLM did not draft this blueprint/)).not.toBeInTheDocument()
+  })
+
   it('restores the feature list and coder takeover from the session product', async () => {
     getMock.mockResolvedValue({
       blueprint: LLM_BLUEPRINT,
@@ -249,6 +277,127 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('surfaces CODE_GREEN level_grade — never Finished / founding / Download ready', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        level_grade: {
+          level: 'CODE_GREEN',
+          pilot_ready: false,
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' },
+          blockers: ['pilot_ready is false'],
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_code_green" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByTestId('floor-gate-code')).toHaveTextContent('CODE PASS')
+    expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT NOT RUN')
+    expect(screen.getByTestId('floor-gate-store')).toHaveTextContent('STORE NOT RUN')
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+  })
+
+  it('surfaces FOUNDING_CUSTOMER_READY and keeps the gold export enabled', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          pilot_ready: true,
+          founding_customer_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          blockers: [],
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_founding" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Founding-customer-ready')
+    expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT PASS')
+    expect(screen.getByTestId('floor-gate-store')).toHaveTextContent('STORE PASS')
+    expect(screen.getByText(/Founding-customer-ready. Download ready./)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Continue to pilot' })).not.toBeInTheDocument()
+  })
+
+  it('does not gild a STORE_GREEN zip as founding-customer-ready', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        level_grade: {
+          level: 'STORE_GREEN',
+          pilot_ready: true,
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          blockers: ['handlers call the store over HTTP: viewing_management.py'],
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_store" goPlatforms={() => {}} />)
+    expect(await screen.findByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+  })
+
+  it('honesty-locks a founding claim when pilot_ready is false', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 10, agent_written: 4, templated: 6 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          pilot_ready: false,
+          founding_customer_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_lock" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
   })
 
   it('Continue to pilot sends continue when auto-pilot is blocked', async () => {
@@ -454,6 +603,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
     expect(failedExport).toBeDisabled()
+    expect(failedExport).toHaveAttribute('disabled')
     expect(failedExport).toHaveClass('ghost')
     expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
     const startNew = screen.getByRole('button', { name: 'Start a new product' })

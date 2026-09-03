@@ -19,9 +19,13 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  hasSourcedLevel,
+  honestLevel,
+  isPilotZipReady,
   stampBuildObservation,
   withClientStall,
 } from './buildProgress'
+import { LevelGradeStrip } from './levelGradeView'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
 /* -------------------------------- Platforms -------------------------------- */
@@ -138,7 +142,8 @@ export function Platforms({
   const authorship = liveBuild?.authorship
   const stalled = liveBuild?.state === 'stalled'
   const failed = liveBuild?.state === 'failed'
-  const pilotReady = liveBuild?.pilot_ready === true
+  const pilotReady = isPilotZipReady(liveBuild)
+  const level = honestLevel(liveBuild)
   const codeOnlySuccess = liveBuild?.state === 'succeeded' && !pilotReady
   const buildNote = (() => {
     if (!liveBuild) return null
@@ -148,6 +153,16 @@ export function Platforms({
     }
     if (liveBuild.state === 'stalled') {
       return `Build stalled — ${liveBuild.detail ?? 'no recent activity'}`
+    }
+    if (
+      liveBuild.state === 'succeeded' &&
+      hasSourcedLevel(liveBuild) &&
+      level === 'FOUNDING_CUSTOMER_READY'
+    ) {
+      return 'Founding-customer-ready — PRODUCT and STORE gates passed.'
+    }
+    if (liveBuild.state === 'succeeded' && hasSourcedLevel(liveBuild) && level === 'STORE_GREEN') {
+      return 'Store-green — not founding-customer-ready.'
     }
     if (liveBuild.state === 'succeeded' && !pilotReady) {
       return liveBuild.auto_pilot
@@ -221,16 +236,7 @@ export function Platforms({
               Pilot suite failed
             </span>
           )}
-          {codeOnlySuccess && (
-            <span className="status-pill" data-testid="platforms-prototype-pill">
-              Code-cycle prototype
-            </span>
-          )}
-          {pilotReady && (
-            <span className="status-pill status-pill-ready" data-testid="platforms-pilot-ready-pill">
-              Pilot-ready
-            </span>
-          )}
+          <LevelGradeStrip build={liveBuild} testIdPrefix="platforms" />
           <dl className="kv">
             <dt>Blueprint</dt>
             <dd>{bp?.product_name ?? '—'}</dd>
@@ -250,7 +256,7 @@ export function Platforms({
           {liveBuild?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
-                {formatFinishedAuthorship(authorship, { pilotReady: liveBuild.pilot_ready }) ??
+                {formatFinishedAuthorship(authorship, { pilotReady }) ??
                   (pilotReady
                     ? 'Coding agent finished. Download it from Your Platforms.'
                     : 'Code-cycle prototype. Not yet pilot-ready.')}
@@ -273,10 +279,12 @@ export function Platforms({
             </button>
           )}
           <button
+            type="button"
             className={exportBtn.ghost || stalled || failed ? 'ghost' : undefined}
             onClick={download}
             disabled={downloading || exportBtn.disabled || refreshing}
             title={exportBtn.title}
+            aria-disabled={downloading || exportBtn.disabled || refreshing || undefined}
           >
             {downloadLabel}
           </button>

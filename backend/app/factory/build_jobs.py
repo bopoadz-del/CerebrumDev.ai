@@ -210,6 +210,13 @@ def next_fresh_output(requested: Path | str) -> Path:
             return parent / f"{stem}__run{n}"
 
 
+def _with_level_grade(status: Dict[str, Any], output_dir: Path | str) -> Dict[str, Any]:
+    """Attach a fail-closed Level grade. Import late to avoid a cycle."""
+    from app.factory.build.level_grade import attach_level_grade
+
+    return attach_level_grade(status, output_dir)
+
+
 def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
     """Honest cycle label for the Floor: code SUCCESS is not pilot-ready."""
     payload = (getattr(terminal, "payload", None) or {}) if terminal else {}
@@ -356,30 +363,36 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
         payload = terminal.payload or {}
-        return {
-            "state": "succeeded",
-            "detail": terminal.detail,
-            "cycle": payload.get("cycle") or "code",
-            "outcome": payload.get("outcome"),
-            # Only a SUCCESS that closed a pilot cycle is Store-green / pilot-ready.
-            # Code-phase success must not be presented as a finished pilot.
-            "pilot_ready": ledger.pilot_ready(),
-            **progress,
-            **_authorship(output_dir),
-            "stale": False,
-        }
+        return _with_level_grade(
+            {
+                "state": "succeeded",
+                "detail": terminal.detail,
+                "cycle": payload.get("cycle") or "code",
+                "outcome": payload.get("outcome"),
+                # Only a SUCCESS that closed a pilot cycle is Store-green / pilot-ready.
+                # Code-phase success must not be presented as a finished pilot.
+                "pilot_ready": ledger.pilot_ready(),
+                **progress,
+                **_authorship(output_dir),
+                "stale": False,
+            },
+            output_dir,
+        )
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         payload = terminal.payload or {}
-        return {
-            "state": "failed",
-            "detail": terminal.detail,
-            "cycle": payload.get("cycle") or "code",
-            "outcome": payload.get("outcome"),
-            "pilot_ready": False,
-            "findings": list(payload.get("findings") or [])[:10],
-            **progress,
-            "stale": False,
-        }
+        return _with_level_grade(
+            {
+                "state": "failed",
+                "detail": terminal.detail,
+                "cycle": payload.get("cycle") or "code",
+                "outcome": payload.get("outcome"),
+                "pilot_ready": False,
+                "findings": list(payload.get("findings") or [])[:10],
+                **progress,
+                "stale": False,
+            },
+            output_dir,
+        )
     # Intra-phase activity. Without this a WRITER pass of ~16 agent calls
     # reports a frozen "2/5" for twenty minutes and a customer cannot tell
     # work from a hang.
@@ -397,31 +410,41 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     # Floor shows CODING AGENT STOPPED instead of "quiet for N min".
     overdue = _model_call_overdue(last_note, idle_s)
     if overdue:
-        return {
-            "state": "failed",
-            "detail": overdue,
-            "pilot_ready": False,
-            **progress,
-            **activity,
-            "stale": False,
-        }
+        return _with_level_grade(
+            {
+                "state": "failed",
+                "detail": overdue,
+                "pilot_ready": False,
+                **progress,
+                **activity,
+                "stale": False,
+            },
+            output_dir,
+        )
 
     # A build whose thread died (worker restart, OOM, redeploy) leaves the
     # ledger's last event as PHASE_STARTED forever, which read as "building"
     # for eternity. Age the file: no event for this long means nothing is
     # working on it, and saying so is the honest answer.
     if idle_s > _STALL_AFTER_S:
-        return {
-            "state": "stalled",
-            "detail": (
-                f"no build activity for {int(idle_s // 60)} min — the build "
-                "process is gone (restart or redeploy); generate again"
-            ),
-            **progress,
-            **activity,
-        }
+        return _with_level_grade(
+            {
+                "state": "stalled",
+                "detail": (
+                    f"no build activity for {int(idle_s // 60)} min — the build "
+                    "process is gone (restart or redeploy); generate again"
+                ),
+                "pilot_ready": False,
+                **progress,
+                **activity,
+            },
+            output_dir,
+        )
 
-    return {"state": "building", "detail": "build in progress", **progress, **activity}
+    return _with_level_grade(
+        {"state": "building", "detail": "build in progress", **progress, **activity},
+        output_dir,
+    )
 
 
 def is_build_complete(output_dir: Path | str) -> bool:

@@ -8,8 +8,12 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  honestLevel,
+  isPilotZipReady,
+  levelGradeLabel,
   phaseBarFraction,
   stampBuildObservation,
+  threeGateEntries,
   withClientStall,
 } from '../buildProgress'
 
@@ -234,6 +238,84 @@ describe('build progress copy', () => {
       label: 'Download platform export (.zip)',
       disabled: false,
       ghost: false,
+    })
+  })
+
+  it('honestLevel fail-closes Store-green / founding when pilot_ready is false', () => {
+    expect(
+      honestLevel({
+        state: 'succeeded',
+        cycle: 'code',
+        pilot_ready: false,
+        level_grade: {
+          level: 'CODE_GREEN',
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' },
+        },
+      }),
+    ).toBe('CODE_GREEN')
+    expect(
+      honestLevel({
+        state: 'succeeded',
+        cycle: 'pilot',
+        pilot_ready: true,
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      }),
+    ).toBe('FOUNDING_CUSTOMER_READY')
+    expect(
+      honestLevel({
+        state: 'succeeded',
+        cycle: 'pilot',
+        pilot_ready: false,
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+        },
+      }),
+    ).toBe('CODE_GREEN')
+    expect(
+      honestLevel({
+        state: 'failed',
+        cycle: 'pilot',
+        pilot_ready: false,
+        level_grade: { level: 'SCAFFOLD', three_gate: { PRODUCT: 'FAIL' } },
+      }),
+    ).toBe('SCAFFOLD')
+    expect(isPilotZipReady({ state: 'succeeded', pilot_ready: false, cycle: 'code' })).toBe(
+      false,
+    )
+    expect(
+      isPilotZipReady({
+        state: 'succeeded',
+        pilot_ready: true,
+        level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
+      }),
+    ).toBe(true)
+    expect(levelGradeLabel('CODE_GREEN')).toBe('Code-green (prototype)')
+    expect(levelGradeLabel('CODE_GREEN', false)).toBe('Code-cycle prototype')
+    expect(
+      threeGateEntries({
+        state: 'succeeded',
+        level_grade: { three_gate: { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' } },
+      }),
+    ).toEqual([
+      { name: 'CODE', verdict: 'PASS' },
+      { name: 'PRODUCT', verdict: 'NOT RUN' },
+      { name: 'STORE', verdict: 'NOT RUN' },
+    ])
+    expect(
+      exportAffordance({
+        state: 'succeeded',
+        pilot_ready: false,
+        level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
+      }),
+    ).toMatchObject({
+      label: 'Download code-cycle prototype (.zip)',
+      ghost: true,
     })
   })
 
