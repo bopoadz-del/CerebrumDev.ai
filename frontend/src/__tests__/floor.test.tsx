@@ -9,6 +9,7 @@ import { Floor } from '../App'
 const chatStreamMock = vi.fn()
 const awaitBuildMock = vi.fn()
 const getMock = vi.fn()
+const downloadMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -16,6 +17,7 @@ vi.mock('../api/factory', async (importOriginal) => {
     ...actual,
     chatStream: (...args: unknown[]) => chatStreamMock(...args),
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
+    downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
     product: {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
@@ -39,6 +41,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     chatStreamMock.mockReset()
     awaitBuildMock.mockReset()
     getMock.mockReset()
+    downloadMock.mockReset()
     getMock.mockResolvedValue({})
     awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
       const status = {
@@ -214,9 +217,61 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_done" goPlatforms={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
     expect(screen.getByText('Finished — 22 artifacts; 6 templated. Download ready.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('downloads the zip from the Floor after the coding agent finishes', async () => {
+    downloadMock.mockResolvedValue(undefined)
+    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
+      const status = {
+        state: 'succeeded',
+        authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+      }
+      onProgress?.(status)
+      return status
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_dl" goPlatforms={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_dl'))
+  })
+
+  it('does not offer Floor download while the coding agent is still writing', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      if (message === 'approve') {
+        onEvent({
+          event: 'generation',
+          data: {
+            summary: 'Build started.',
+            triggered_by: 'chat_llm',
+            generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+          },
+        })
+        return
+      }
+      onEvent({
+        event: 'blueprint',
+        data: { summary: 'Blueprint drafted.', blueprint: LLM_BLUEPRINT },
+      })
+    })
+    render(<Floor sessionId="sess_ui" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'Build me a vineyard management platform' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
   })
 
   it('clears coder takeover when a new blueprint is drafted after a runner', async () => {

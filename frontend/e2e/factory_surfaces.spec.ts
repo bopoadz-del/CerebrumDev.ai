@@ -154,6 +154,50 @@ test('Floor drafts a feature list and Approve & build starts the coding agent', 
   await expect(page.getByPlaceholder(/coding agent has taken over/i)).toBeDisabled()
 })
 
+test('Floor finished state offers the zip download on the generate surface', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'vineyard',
+          engine: 'runner',
+          inputs_hash: 'abc123',
+          output_dir: '/tmp/vineyard',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'vineyard',
+        build: {
+          state: 'succeeded',
+          authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByText('Finished — 13 artifacts; 6 templated. Download ready.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Open Your Platforms' })).toBeEnabled()
+})
+
 test('Your Platforms shows coder authorship and a zip download', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')

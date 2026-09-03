@@ -3,6 +3,7 @@ import {
   awaitBuild,
   chatEventText,
   chatStream,
+  downloadProductPackage,
   product,
   type BuildStatus,
   type ChatEvent,
@@ -297,6 +298,8 @@ export function Floor({
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
   const [coderActive, setCoderActive] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -451,11 +454,34 @@ export function Floor({
     [accessPaused, busy, sendCore],
   )
 
+  async function download() {
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      const status =
+        coderBuild?.state === 'succeeded'
+          ? coderBuild
+          : await awaitBuild(sessionId, setCoderBuild)
+      if (status.state === 'failed' || status.state === 'stalled') {
+        setDownloadError(
+          `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
+        )
+        return
+      }
+      await downloadProductPackage(sessionId)
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : 'export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   const coderBuilding =
     coderActive &&
     coderBuild?.state !== 'succeeded' &&
     coderBuild?.state !== 'failed' &&
     coderBuild?.state !== 'stalled'
+  const coderSucceeded = coderBuild?.state === 'succeeded'
 
   return (
     <div className="floor">
@@ -531,6 +557,14 @@ export function Floor({
                 'The feature list is approved. The coding agent is starting WRITER now.'}
             </p>
           )}
+          {coderSucceeded && (
+            <div className="card-actions">
+              <button type="button" onClick={() => void download()} disabled={downloading}>
+                {downloading ? 'Packing…' : 'Download platform export (.zip)'}
+              </button>
+            </div>
+          )}
+          {downloadError && <div className="error-box">{downloadError}</div>}
         </div>
       )}
       <form
