@@ -94,6 +94,7 @@ h3 { margin: 0 0 10px; }
   background: var(--gold); color: #1a1405;
   display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 18px;
+  flex-shrink: 0;
 }
 .brand-name { font-weight: 700; font-size: 14px; }
 .brand-sub { color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -101,11 +102,24 @@ h3 { margin: 0 0 10px; }
 .nav-btn {
   background: transparent; color: var(--dim); text-align: left;
   padding: 10px 12px; border-radius: 8px; font-weight: 500;
+  display: flex; align-items: center; gap: 10px;
+  width: 100%;
 }
 .nav-btn:hover:not(:disabled) { background: var(--panel-2); color: var(--text); }
 .nav-btn.active { background: var(--panel); color: var(--gold); }
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.nav-label { font-size: 14px; line-height: 1.2; }
+.nav-label-short { display: none; }
 .rail-foot { color: var(--dim); font-size: 11px; display: flex; align-items: center; gap: 6px; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
 
 main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .page { padding: 28px; overflow-y: auto; }
@@ -152,10 +166,51 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .kv-row { display: contents; }
 
 @media (max-width: 760px) {
-  .rail { width: 64px; }
-  .rail .brand-name, .rail .brand-sub, .rail-foot, .nav-btn { font-size: 0; }
-  .nav-btn::after { content: attr(label); font-size: 0; }
+  .shell { flex-direction: column; }
+  .rail {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { margin-bottom: 0; flex-shrink: 0; }
+  .brand-text { display: none; }
+  .rail nav {
+    flex-direction: row;
+    flex: 1;
+    min-width: 0;
+    justify-content: space-between;
+    gap: 2px;
+  }
+  .nav-btn {
+    flex: 1;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 2px;
+    text-align: center;
+  }
+  .nav-icon { width: auto; font-size: 16px; }
+  .nav-label-full { display: none; }
+  .nav-label-short {
+    display: block;
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+  }
+  .rail-foot { margin-left: 4px; flex-shrink: 0; }
+  .rail-foot-text { display: none; }
   .bubble { max-width: 92%; }
+  .page { padding: 18px 14px; }
+  .floor { padding: 18px 14px 0; }
+  .kv { grid-template-columns: 120px 1fr; }
 }
 
 /* ---- auth modes, notices, plans (market-readiness screens) ---- */

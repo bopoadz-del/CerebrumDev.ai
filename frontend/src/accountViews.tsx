@@ -274,11 +274,15 @@ export function Subscription() {
                 {view.currentPlan === 'factory' && <p className="plan-current">Current</p>}
                 <h4>Factory</h4>
                 <p className="dim">
-                  Deeper builds, more sessions, priority generation. Upgrade when you are ready.
+                  {view.currentPlan === 'factory'
+                    ? 'Deeper builds, more sessions, priority generation.'
+                    : 'Deeper builds, more sessions, priority generation. Upgrade when you are ready.'}
                 </p>
-                <button onClick={upgrade} disabled={busy}>
-                  {busy ? 'Working…' : 'Upgrade'}
-                </button>
+                {view.currentPlan !== 'factory' && (
+                  <button onClick={upgrade} disabled={busy}>
+                    {busy ? 'Working…' : 'Upgrade'}
+                  </button>
+                )}
               </div>
             </div>
             {subStatus === 'active' && (

@@ -11,7 +11,7 @@ import {
   isUnauthenticatedError,
   signOut,
 } from '../api/factory'
-import App from '../App'
+import App, { pathFromView, viewFromPath } from '../App'
 
 const {
   meMock,
@@ -300,5 +300,94 @@ describe('App boot', () => {
     expect(screen.getByText('Yes')).toBeInTheDocument()
     expect(screen.queryByText('No')).not.toBeInTheDocument()
     expect(screen.getByText('acct_boot')).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/account')
+  })
+
+  it('direct /account boot renders Account — not Factory Floor', async () => {
+    window.history.pushState(null, '', '/account')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Account' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Account' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('button', { name: 'Factory Floor' })).not.toHaveAttribute(
+      'aria-current',
+    )
+    expect(window.location.pathname).toBe('/account')
+  })
+
+  it('direct /subscription and /platforms boot to the matching views', async () => {
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    billingStatusMock.mockResolvedValue({
+      plan: 'trial',
+      subscription_status: 'trialing',
+      trial_days_left: 3,
+      entitled: true,
+      checkout_available: false,
+    })
+
+    window.history.pushState(null, '', '/subscription')
+    const sub = render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Subscription' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Subscription' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(window.location.pathname).toBe('/subscription')
+    sub.unmount()
+
+    window.history.pushState(null, '', '/platforms')
+    productGetMock.mockResolvedValue({})
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Your Platforms' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Your Platforms' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    )
+    expect(window.location.pathname).toBe('/platforms')
+  })
+
+  it('rail nav buttons expose icons, labels, and accessible names', async () => {
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Factory Floor' })
+    const nav = screen.getByRole('navigation', { name: 'Factory navigation' })
+    expect(nav).toBeInTheDocument()
+    for (const label of ['Factory Floor', 'Your Platforms', 'Subscription', 'Account']) {
+      const btn = screen.getByRole('button', { name: label })
+      expect(btn).toHaveAttribute('title', label)
+      expect(btn.querySelector('.nav-icon')).not.toBeNull()
+      expect(btn.querySelector('.nav-label-full')).toHaveTextContent(label)
+      expect(btn.textContent?.trim().length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('viewFromPath / pathFromView', () => {
+  it('round-trips signed-in shell routes', () => {
+    expect(viewFromPath('/account')).toBe('account')
+    expect(viewFromPath('/subscription')).toBe('subscription')
+    expect(viewFromPath('/platforms')).toBe('platforms')
+    expect(viewFromPath('/')).toBe('floor')
+    expect(viewFromPath('/login')).toBe('floor')
+    expect(pathFromView('account')).toBe('/account')
+    expect(pathFromView('subscription')).toBe('/subscription')
+    expect(pathFromView('platforms')).toBe('/platforms')
+    expect(pathFromView('floor')).toBe('/')
   })
 })

@@ -20,7 +20,26 @@ import { Account, Floor, Platforms, Subscription } from './factoryViews'
 export { AuthGate, VerifyEmailGate } from './authGates'
 export { Account, BlueprintCard, Floor, Platforms, Subscription } from './factoryViews'
 
-type View = 'floor' | 'platforms' | 'subscription' | 'account'
+export type View = 'floor' | 'platforms' | 'subscription' | 'account'
+
+const VIEW_PATHS: Record<View, string> = {
+  floor: '/',
+  platforms: '/platforms',
+  subscription: '/subscription',
+  account: '/account',
+}
+
+/** Map a browser pathname to the signed-in shell view (deep-link / reload safe). */
+export function viewFromPath(pathname: string): View {
+  if (pathname === '/account') return 'account'
+  if (pathname === '/subscription') return 'subscription'
+  if (pathname === '/platforms') return 'platforms'
+  return 'floor'
+}
+
+export function pathFromView(view: View): string {
+  return VIEW_PATHS[view]
+}
 
 /** Public auth URLs must not become a full-page "Factory unreachable" on a race. */
 export function isPublicAuthPath(pathname: string): boolean {
@@ -38,9 +57,18 @@ export function isSignedInAuthRedirectPath(pathname: string): boolean {
   return pathname === '/login' || pathname === '/register'
 }
 
+const NAV_ITEMS: { view: View; label: string; shortLabel: string; icon: string }[] = [
+  { view: 'floor', label: 'Factory Floor', shortLabel: 'Floor', icon: '⌂' },
+  { view: 'platforms', label: 'Your Platforms', shortLabel: 'Platforms', icon: '▣' },
+  { view: 'subscription', label: 'Subscription', shortLabel: 'Plan', icon: '◈' },
+  { view: 'account', label: 'Account', shortLabel: 'Account', icon: '○' },
+]
+
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
-  const [view, setView] = useState<View>('floor')
+  const [view, setView] = useState<View>(() =>
+    typeof window === 'undefined' ? 'floor' : viewFromPath(window.location.pathname),
+  )
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [bootError, setBootError] = useState<string | null>(null)
   const [needsEmailVerify, setNeedsEmailVerify] = useState(false)
@@ -50,6 +78,15 @@ export default function App() {
   const [accountMe, setAccountMe] = useState<AccountInfo | null>(null)
   const [accessPaused, setAccessPaused] = useState(false)
   const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
+
+  function go(next: View) {
+    setView(next)
+    setAlreadySignedInNotice(false)
+    const path = pathFromView(next)
+    if (typeof window !== 'undefined' && window.location.pathname !== path) {
+      window.history.pushState(null, '', path)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -86,7 +123,10 @@ export default function App() {
           setAuthed(true)
           if (isSignedInAuthRedirectPath(window.location.pathname)) {
             window.history.replaceState(null, '', '/')
+            setView('floor')
             setAlreadySignedInNotice(true)
+          } else {
+            setView(viewFromPath(window.location.pathname))
           }
         }
       } catch (e) {
@@ -135,6 +175,16 @@ export default function App() {
       cancelled = true
     }
   }, [sessionId])
+
+  useEffect(() => {
+    if (!authed || !sessionId) return
+    const onPopState = () => {
+      setView(viewFromPath(window.location.pathname))
+      setAlreadySignedInNotice(false)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [authed, sessionId])
 
   if (authed === null)
     return (
@@ -201,27 +251,36 @@ export default function App() {
     <div className="shell">
       <aside className="rail">
         <div className="brand">
-          <div className="brand-mark">C</div>
-          <div>
+          <div className="brand-mark" aria-hidden="true">
+            C
+          </div>
+          <div className="brand-text">
             <div className="brand-name">CerebrumDev.ai</div>
             <div className="brand-sub">the factory</div>
           </div>
         </div>
-        <nav>
-          <NavBtn label="Factory Floor" active={view === 'floor'} onClick={() => setView('floor')} />
-          <NavBtn label="Your Platforms" active={view === 'platforms'} onClick={() => setView('platforms')} />
-          <NavBtn label="Subscription" active={view === 'subscription'} onClick={() => setView('subscription')} />
-          <NavBtn label="Account" active={view === 'account'} onClick={() => setView('account')} />
+        <nav aria-label="Factory navigation">
+          {NAV_ITEMS.map((item) => (
+            <NavBtn
+              key={item.view}
+              label={item.label}
+              shortLabel={item.shortLabel}
+              icon={item.icon}
+              active={view === item.view}
+              onClick={() => go(item.view)}
+            />
+          ))}
         </nav>
         <div className="rail-foot">
-          <span className="dot" /> session {sessionId.slice(0, 12)}…
+          <span className="dot" aria-hidden="true" />
+          <span className="rail-foot-text">session {sessionId.slice(0, 12)}…</span>
         </div>
       </aside>
       <main>
         {view === 'floor' && (
           <Floor
             sessionId={sessionId}
-            goPlatforms={() => setView('platforms')}
+            goPlatforms={() => go('platforms')}
             accessPaused={accessPaused}
             notice={alreadySignedInNotice ? 'Already signed in.' : null}
           />
@@ -246,10 +305,35 @@ export default function App() {
   )
 }
 
-function NavBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function NavBtn({
+  label,
+  shortLabel,
+  icon,
+  active,
+  onClick,
+}: {
+  label: string
+  shortLabel: string
+  icon: string
+  active: boolean
+  onClick: () => void
+}) {
   return (
-    <button className={`nav-btn ${active ? 'active' : ''}`} onClick={onClick}>
-      {label}
+    <button
+      type="button"
+      className={`nav-btn ${active ? 'active' : ''}`}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      aria-current={active ? 'page' : undefined}
+    >
+      <span className="nav-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="nav-label nav-label-full">{label}</span>
+      <span className="nav-label nav-label-short" aria-hidden="true">
+        {shortLabel}
+      </span>
     </button>
   )
 }

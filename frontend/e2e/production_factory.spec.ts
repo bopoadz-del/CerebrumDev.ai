@@ -144,8 +144,16 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
 
   await page.getByRole('button', { name: 'Subscription' }).click()
   await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
-  await page.getByRole('button', { name: 'Upgrade' }).click()
+  const upgrade = page.getByRole('button', { name: 'Upgrade' })
+  const manage = page.getByRole('button', { name: 'Manage billing' })
+  // Trial still offers Upgrade; current Factory / Active must not.
+  if (await upgrade.isVisible().catch(() => false)) {
+    await expect(upgrade).toBeEnabled()
+    await upgrade.click()
+  } else {
+    await expect(manage).toBeVisible()
+    await expect(upgrade).toHaveCount(0)
+  }
   await expect(
     page.getByText(/Payments are not connected on this deployment yet|stripe/i).first(),
   ).toBeVisible({ timeout: 20_000 })
