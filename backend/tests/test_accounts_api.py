@@ -199,7 +199,8 @@ def test_password_reset_flow(client):
     assert ok.status_code == 200
 
     res = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
-    assert res.status_code == 403
+    # Revoked login token is not a user principal; 401 opens Sign in.
+    assert res.status_code == 401
 
     res = client.post(
         "/v1/auth/reset-password",
