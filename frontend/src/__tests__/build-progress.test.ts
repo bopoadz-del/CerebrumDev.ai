@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { BuildStatus } from '../api/factory'
 import {
+  CLIENT_STALL_AFTER_S,
+  eventAgeSeconds,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
   phaseBarFraction,
+  withClientStall,
 } from '../buildProgress'
 
 const cloner: BuildStatus = {
@@ -38,6 +41,33 @@ describe('build progress copy', () => {
     }
     expect(formatHeartbeat(quiet)).toMatch(/quiet/)
     expect(formatHeartbeat(quiet)).toMatch(/4 min/)
+  })
+
+  it('advances relative age from last_event_at so a frozen server snapshot cannot stall the ticker', () => {
+    const at = '2026-09-03T16:00:00.000Z'
+    const t0 = Date.parse(at)
+    const build: BuildStatus = {
+      ...cloner,
+      last_event_at: at,
+      last_event_age_s: 120, // stale snapshot that would stay "2 min ago"
+      stale: false,
+    }
+    expect(eventAgeSeconds(build, t0 + 120_000)).toBeCloseTo(120, 0)
+    expect(formatHeartbeat(build, t0 + 120_000)).toBe('still working · 2 min ago')
+    expect(formatHeartbeat(build, t0 + 420_000)).toMatch(/quiet for 7 min/)
+  })
+
+  it('promotes a forever-building snapshot to stalled after the stall window', () => {
+    const at = '2026-09-03T16:00:00.000Z'
+    const t0 = Date.parse(at)
+    const build: BuildStatus = {
+      ...cloner,
+      last_event_at: at,
+      last_event_age_s: 120,
+    }
+    const stalled = withClientStall(build, t0 + (CLIENT_STALL_AFTER_S + 60) * 1000)
+    expect(stalled?.state).toBe('stalled')
+    expect(stalled?.detail).toMatch(/no build activity/)
   })
 
   it('SUCCESS copy is finished, not hang-looking 22 of 28', () => {

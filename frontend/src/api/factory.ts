@@ -393,6 +393,38 @@ export async function awaitBuild(
   }
 }
 
+/**
+ * Keep polling across succeed → building (pilot reopen). Stops only on
+ * failed/stalled or abort. Floor/Platforms use this so a FINISHED banner
+ * cannot stay pinned while a pilot cycle is live.
+ */
+export async function watchBuildStatus(
+  sid: string,
+  onProgress: (s: BuildStatus) => void,
+  { intervalMs = 4000, signal }: { intervalMs?: number; signal?: AbortSignal } = {},
+): Promise<void> {
+  while (!signal?.aborted) {
+    const { build } = await product.buildStatus(sid)
+    if (signal?.aborted) return
+    onProgress(build)
+    if (build.state === 'failed' || build.state === 'stalled') return
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, intervalMs)
+      const onAbort = () => {
+        clearTimeout(t)
+        resolve()
+      }
+      if (signal) {
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+  }
+}
+
 export async function downloadProductPackage(sid: string): Promise<void> {
   const res = await fetch(`${API_BASE}/v1/sessions/${sid}/product/package`, {
     credentials: 'include',
