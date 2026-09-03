@@ -162,6 +162,8 @@ describe('Your Platforms — coding-agent build', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 10, agent_written: 6, templated: 4 },
       })
     })
@@ -169,6 +171,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByText('Finished — 6 artifacts; 4 templated')).toBeInTheDocument()
     expect(screen.queryByText(/6 of 10/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    expect(screen.getByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Pilot-ready')
   })
 
   it('says so when the coding agent wrote nothing', async () => {
@@ -176,6 +179,8 @@ describe('Your Platforms — coding-agent build', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: {
           artifacts: 8,
           agent_written: 0,
@@ -196,6 +201,8 @@ describe('Your Platforms — coding-agent build', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 3, agent_written: 3, templated: 0 },
       })
     })
@@ -205,6 +212,58 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByText('Finished — 3 artifacts; 0 templated')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Download platform export (.zip)' }))
     await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_ui'))
+  })
+
+  it('does not present a red pilot suite as a successful Download', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Cerebrum Residential Lettings Hub' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'pilot',
+        outcome: 'FAILED_BUDGET_SPENT',
+        pilot_ready: false,
+        detail:
+          'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+        findings: ['FAILED tests/test_smoke.py::test_every_capability_executes_end_to_end'],
+      })
+    })
+    awaitBuildMock.mockResolvedValue({
+      state: 'failed',
+      detail:
+        'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByTestId('platforms-failed-badge')).toHaveTextContent(/Build failed/)
+    expect(screen.getByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(
+      screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
+    ).not.toBeInTheDocument()
+    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(exportBtn).toHaveClass('ghost')
+    fireEvent.click(exportBtn)
+    expect(await screen.findByText(/will not be shipped/)).toBeInTheDocument()
+    expect(downloadMock).not.toHaveBeenCalled()
+  })
+
+  it('labels code-phase success as not pilot-ready', async () => {
+    getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        cycle: 'code',
+        pilot_ready: false,
+        authorship: { artifacts: 11, agent_written: 11, templated: 19 },
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText(/not pilot-ready/i)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Download code-phase export (.zip)' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('platforms-pilot-ready-pill')).not.toBeInTheDocument()
   })
 
   it('surfaces honest stalled UI instead of forever Building…', async () => {
@@ -237,7 +296,8 @@ describe('Your Platforms — coding-agent build', () => {
       detail: 'TESTER gate red',
     })
     render(<Platforms sessionId="sess_ui" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    expect(await screen.findByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
+    fireEvent.click(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' }))
     expect(await screen.findByText(/will not be shipped: TESTER gate red/)).toBeInTheDocument()
     expect(downloadMock).not.toHaveBeenCalled()
   })

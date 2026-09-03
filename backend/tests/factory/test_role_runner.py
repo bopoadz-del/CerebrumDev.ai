@@ -343,6 +343,14 @@ def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path):
     assert _phase_starts(runner.ledger, BuildRole.WRITER) == 3
     assert runner.ledger.rework_counts() == {"WRITER": 2}
 
+    # Platforms / Floor must see failed + pilot_ready false — never a success zip.
+    from app.factory.build_jobs import build_status
+
+    status = build_status(tmp_path / "build")
+    assert status["state"] == "failed"
+    assert status.get("pilot_ready") is False
+    assert status.get("outcome") == Outcome.FAILED_BUDGET_SPENT.value
+
 
 def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path):
     """Time runs out mid-build: FAILED_BUDGET_SPENT, not a partial success."""

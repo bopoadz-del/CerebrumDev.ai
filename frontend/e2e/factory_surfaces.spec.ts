@@ -183,6 +183,8 @@ test('Floor finished state offers the zip download on the generate surface', asy
         product_id: 'vineyard',
         build: {
           state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
           authorship: { artifacts: 19, agent_written: 13, templated: 6 },
         },
       }),
@@ -232,6 +234,8 @@ test('Your Platforms shows a loading skeleton — never empty-state — while pr
         product_id: 'vineyard',
         build: {
           state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
           authorship: { artifacts: 19, agent_written: 13, templated: 6 },
         },
       }),
@@ -277,6 +281,8 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
         product_id: 'vineyard',
         build: {
           state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
           authorship: { artifacts: 19, agent_written: 13, templated: 6 },
         },
       }),
@@ -291,6 +297,53 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
   await expect(page.getByText('runner', { exact: true })).toBeVisible()
   await expect(page.getByText('Finished — 13 artifacts; 6 templated')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+})
+
+test('Your Platforms shows Pilot suite failed — never a success Download — when TESTER is red', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Cerebrum Residential Lettings Hub', vertical: 'lettings' },
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          inputs_hash: 'b36090a4',
+          output_dir: '/tmp/residential-lettings',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'failed',
+          cycle: 'pilot',
+          outcome: 'FAILED_BUDGET_SPENT',
+          pilot_ready: false,
+          detail:
+            'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+          findings: ['FAILED tests/test_smoke.py::test_every_capability_executes_end_to_end'],
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-failed-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('platforms-failed-badge')).toContainText(/Build failed/)
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeVisible()
 })
 
 test('Floor hydrate of a pending draft does not flash a leftover coder-takeover banner', async ({ page }) => {

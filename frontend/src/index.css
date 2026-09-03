@@ -96,6 +96,31 @@ h3 { margin: 0 0 10px; }
   100% { background-position: -100% 0; }
 }
 
+.status-pill {
+  display: inline-block;
+  margin: 0 0 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.status-pill-failed {
+  background: rgba(229, 72, 77, 0.15);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+.status-pill-ready {
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid #34d399;
+  color: #34d399;
+}
+.findings-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
 /* shell */
 .shell { display: flex; height: 100%; }
 .rail {

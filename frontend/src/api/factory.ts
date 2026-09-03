@@ -346,6 +346,10 @@ export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled'
   detail?: string
   findings?: string[]
+  cycle?: string
+  outcome?: string
+  /** True only after a SUCCESS that closed a pilot cycle (Store-green). */
+  pilot_ready?: boolean
   phases?: string[]
   completed?: string[]
   phases_done?: number
