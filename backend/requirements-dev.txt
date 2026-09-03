@@ -11,4 +11,4 @@ pgvector>=0.2.5
 ruff>=0.16.4
 
 # Incremental typecheck. Scope is backend/mypy.ini (not the whole tree).
-mypy>=1.11
+mypy>=2.3.1
