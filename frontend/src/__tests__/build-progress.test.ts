@@ -104,6 +104,31 @@ describe('build progress copy', () => {
     expect(eventAgeSeconds(next, t0 + 65_000)).toBeCloseTo(10, 0)
   })
 
+  it('labels a handler-wave reset so 3/5 → 1/5 does not read as a regression', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const atThree = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'tenancy_application_pipeline',
+        phase_progress: { done: 3, total: 5, fraction: 0.6, stage: 'handlers' },
+      },
+      null,
+      t0,
+    )
+    expect(formatPhaseCounts(atThree)).toBe('3/5 handlers')
+    const wave = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'unit_registry_and_vacancy_tracking',
+        phase_progress: { done: 1, total: 5, fraction: 0.2, stage: 'handlers' },
+      },
+      atThree,
+      t0 + 60_000,
+    )
+    expect(wave.client_wave_reset).toBe(true)
+    expect(formatPhaseCounts(wave)).toBe('1/5 handlers (new pass)')
+  })
+
   it('promotes a forever-building snapshot to stalled after the stall window', () => {
     const at = '2026-09-03T16:00:00.000Z'
     const t0 = Date.parse(at)

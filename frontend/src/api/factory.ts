@@ -372,6 +372,11 @@ export type BuildStatus = {
   client_observed_at_ms?: number
   /** Client-only: ``last_event_age_s`` at ``client_observed_at_ms``. */
   client_base_age_s?: number
+  /**
+   * Client-only: phase_progress.done stepped down for the same stage
+   * (e.g. handlers 3/5 → 1/5 on a new WRITER pass).
+   */
+  client_wave_reset?: boolean
 }
 
 export async function awaitBuild(

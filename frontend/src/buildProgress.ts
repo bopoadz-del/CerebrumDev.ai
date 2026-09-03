@@ -36,7 +36,10 @@ export function formatPhaseCounts(build: BuildStatus): string | null {
   const progress = build.phase_progress
   if (progress && progress.total > 0) {
     const unit = progress.stage || 'items'
-    return `${progress.done}/${progress.total} ${unit}`
+    const base = `${progress.done}/${progress.total} ${unit}`
+    // WRITER can restart a handler/route wave at 1/N after finishing 3/N —
+    // label it so the drop does not read as a regression.
+    return build.client_wave_reset ? `${base} (new pass)` : base
   }
   if (
     typeof build.activity_done === 'number' &&
@@ -44,7 +47,8 @@ export function formatPhaseCounts(build: BuildStatus): string | null {
     build.activity_total > 0
   ) {
     const unit = build.activity_stage || 'items'
-    return `${build.activity_done}/${build.activity_total} ${unit}`
+    const base = `${build.activity_done}/${build.activity_total} ${unit}`
+    return build.client_wave_reset ? `${base} (new pass)` : base
   }
   return null
 }
@@ -66,6 +70,16 @@ export function stampBuildObservation(
     (prev!.last_event ?? null) === (next.last_event ?? null) &&
     (prev!.activity ?? null) === (next.activity ?? null)
 
+  const prevProgress = prev?.phase_progress
+  const nextProgress = next.phase_progress
+  const waveReset = Boolean(
+    prevProgress &&
+      nextProgress &&
+      (prevProgress.stage || '') === (nextProgress.stage || '') &&
+      prevProgress.total === nextProgress.total &&
+      nextProgress.done < prevProgress.done,
+  )
+
   if (sameEvent && typeof prev!.client_observed_at_ms === 'number') {
     return {
       ...next,
@@ -76,12 +90,14 @@ export function stampBuildObservation(
           : typeof prev!.last_event_age_s === 'number'
             ? prev!.last_event_age_s
             : next.last_event_age_s,
+      client_wave_reset: prev!.client_wave_reset,
     }
   }
   return {
     ...next,
     client_observed_at_ms: nowMs,
     client_base_age_s: next.last_event_age_s,
+    client_wave_reset: waveReset,
   }
 }
 
