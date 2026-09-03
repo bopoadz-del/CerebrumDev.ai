@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -331,7 +332,9 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         llm_result = None
         if platform_chat_llm.should_orchestrate(state, user_message):
             try:
-                decision = platform_chat_llm.decide(state, user_message)
+                decision = await asyncio.to_thread(
+                    platform_chat_llm.decide, state, user_message
+                )
                 decision = platform_chat_llm.coerce_explicit_approval(
                     decision, state, user_message
                 )

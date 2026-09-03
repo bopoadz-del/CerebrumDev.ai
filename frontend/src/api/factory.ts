@@ -365,6 +365,10 @@ export type BuildStatus = {
   last_event_age_s?: number
   next_phase?: BuildPhaseRef | null
   stale?: boolean
+  /** True while the last ledger NOTE is an in-flight coder LLM call. */
+  model_call_in_progress?: boolean
+  /** Wall-clock seconds the current coder LLM call may occupy. */
+  model_call_deadline_s?: number
   activity?: string
   activity_stage?: string
   activity_done?: number

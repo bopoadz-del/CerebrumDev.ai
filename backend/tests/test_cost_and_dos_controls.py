@@ -201,7 +201,10 @@ def capturing_llm(monkeypatch):
             "mock": False,
         },
     )
-    monkeypatch.setattr(product_architect.httpx, "Client", _CapturingClient)
+    def _post(url, json=None, headers=None, timeout=None):
+        return _CapturingClient().post(url, json=json, headers=headers)
+
+    monkeypatch.setattr("app.factory.llm_watchdog.httpx.post", _post)
     monkeypatch.setattr(product_architect, "dual_registered_ids", lambda: ["audit"])
     return _CapturingClient
 

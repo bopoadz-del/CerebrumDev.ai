@@ -104,7 +104,7 @@ def test_product_architect_omits_temperature_for_kimi(kimi_env):
         "choices": [{"message": {"content": "{}"}}]
     }
 
-    with patch.object(httpx.Client, "post", return_value=response) as mock_post:
+    with patch.object(httpx, "post", return_value=response) as mock_post:
         _llm_json_call([{"role": "user", "content": "build a thing"}])
 
     payload = mock_post.call_args.kwargs["json"]
@@ -120,7 +120,7 @@ def test_product_architect_includes_temperature_when_configured(kimi_env, monkey
         "choices": [{"message": {"content": "{}"}}]
     }
 
-    with patch.object(httpx.Client, "post", return_value=response) as mock_post:
+    with patch.object(httpx, "post", return_value=response) as mock_post:
         _llm_json_call([{"role": "user", "content": "build a thing"}])
 
     payload = mock_post.call_args.kwargs["json"]
