@@ -5,7 +5,7 @@ pytest-asyncio>=0.21.0
 # Steward factory kit tests import steward_runtime modules and exercise generated products.
 sqlalchemy>=2.0.30
 alembic>=1.13.0
-pgvector>=0.2.5
+pgvector>=0.5.0
 
 # Static analysis gate (pyflakes only -- see ruff.toml for why).
 ruff>=0.16.4
