@@ -154,6 +154,83 @@ test('Floor drafts a feature list and Approve & build starts the coding agent', 
   await expect(page.getByPlaceholder(/coding agent has taken over/i)).toBeDisabled()
 })
 
+test('Floor New session starts a clean workspace after a failed run', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'failed',
+          cycle: 'pilot',
+          outcome: 'FAILED_BUDGET_SPENT',
+          pilot_ready: false,
+          detail:
+            'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+        },
+      }),
+    })
+  })
+  const created: string[] = []
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    const method = route.request().method()
+    if (method === 'POST') {
+      created.push('sess_e2e_fresh')
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ session_id: 'sess_e2e_fresh' }),
+      })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ sessions: [{ session_id: 'sess_e2e_floor' }] }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_fresh/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ session_id: 'sess_e2e_fresh' }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible()
+  await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'New session' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Start a new product' }).click()
+  await expect.poll(() => created).toEqual(['sess_e2e_fresh'])
+  await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toHaveCount(0)
+  await expect(page.getByTestId('floor-failed-pill')).toHaveCount(0)
+  await expect(page.getByPlaceholder(/Try:/)).toBeEnabled()
+  await expect(page.getByText('session sess_e2e_fre…')).toBeVisible()
+})
+
 test('Floor finished state offers the zip download on the generate surface', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')

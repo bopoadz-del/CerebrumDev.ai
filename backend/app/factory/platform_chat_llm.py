@@ -49,12 +49,16 @@ does NOT start the coding agent yet. Never draft_platform on continue/resume \
 - start_coder: launch or resume the coding agent (WRITER). Call it when \
 (1) a blueprint is pending AND the user confirms (approve, go ahead, looks \
 good, build it, ship it, yes), OR (2) a coding run is in-flight, stalled, \
-or interrupted and the user says continue / resume / keep going. Do not \
-require a pending unapproved blueprint to resume. If the last run already \
-succeeded AND the product is pilot-ready, do NOT call start_coder — reply \
-that it finished. If code-phase 5/5 succeeded but it is NOT pilot-ready, \
-continue/resume MUST call start_coder to open a pilot cycle. Do not call a \
-code-cycle SUCCESS "finished" or "download ready".
+or interrupted (no RUN_FAILED) and the user says continue / resume / keep \
+going, OR (3) the last run FAILED (rework exhausted / TESTER still red) \
+and the user asks to continue or try again — that starts a FRESH workspace, \
+not a resume of the dead ledger. Do not require a pending unapproved \
+blueprint to resume. If the last run already succeeded AND the product is \
+pilot-ready, do NOT call start_coder — reply that it finished. If \
+code-phase 5/5 succeeded but it is NOT pilot-ready, continue/resume MUST \
+call start_coder to open a pilot cycle. Do not call a code-cycle SUCCESS \
+"finished" or "download ready". After a FAILED run a new brief MUST call \
+draft_platform (new product); do not treat that brief as a resume.
 - refine_blueprint: the user wants to change the pending blueprint. Set \
 "refine_message" to a command the factory already understands, e.g. \
 "add capability inventory", "remove capability audit", \
@@ -133,6 +137,14 @@ def _session_facts(state: Any) -> str:
             "call start_coder — that opens a pilot cycle on the same hash. "
             "Do not draft a new platform."
         )
+    elif platform_chat_flow.is_generation_terminal_failure(state):
+        lines.append(
+            "Last coding run FAILED (rework exhausted or TESTER still red). "
+            "That workspace is dead — do NOT resume it and do NOT say "
+            "'same blueprint hash — not starting over'. A new platform brief "
+            "MUST call draft_platform. continue / try again / start_coder "
+            "starts a FRESH workspace with a reset rework budget."
+        )
     elif platform_chat_flow.is_generation_resumable(state):
         point = platform_chat_flow._ledger_resume_point(state) or "the last phase"
         lines.append(
@@ -197,6 +209,7 @@ def coerce_explicit_approval(decision: Dict[str, Any], state: Any, message: str)
         platform_chat_flow.has_pending_blueprint(state)
         or platform_chat_flow.is_generation_resumable(state)
         or platform_chat_flow.is_generation_complete(state)
+        or platform_chat_flow.is_generation_terminal_failure(state)
     ):
         return {
             "action": "start_coder",

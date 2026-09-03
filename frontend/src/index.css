@@ -169,6 +169,9 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .page { padding: 28px; overflow-y: auto; }
 .already-signed-in { margin: 10px 0 0; }
 .page-head { margin-bottom: 20px; }
+.page-head-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.page-head-row h2 { margin: 0; }
+.page-head-row button.ghost { margin-left: 0; flex-shrink: 0; }
 .page-head p { margin: 6px 0 0; font-size: 13px; }
 
 /* floor chat */

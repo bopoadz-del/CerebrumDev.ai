@@ -411,6 +411,23 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
   })
 
+  it('offers New session on the Floor header', async () => {
+    const onNewSession = vi.fn()
+    render(
+      <Floor sessionId="sess_ui" goPlatforms={() => {}} onNewSession={onNewSession} />,
+    )
+    const btn = await screen.findByRole('button', { name: 'New session' })
+    expect(btn).toBeEnabled()
+    fireEvent.click(btn)
+    await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not show New session when the control is not provided', async () => {
+    render(<Floor sessionId="sess_ui" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument()
+  })
+
   it('shows Coding agent stopped — not finished Download — when TESTER is red', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
@@ -427,12 +444,19 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       blueprint_approved: true,
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
-    render(<Floor sessionId="sess_red" goPlatforms={() => {}} />)
+    const onNewSession = vi.fn()
+    render(
+      <Floor sessionId="sess_red" goPlatforms={() => {}} onNewSession={onNewSession} />,
+    )
     expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
     expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
     expect(screen.getByText(/rework budget of 3 exhausted/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    const startNew = screen.getByRole('button', { name: 'Start a new product' })
+    expect(startNew).toBeEnabled()
+    fireEvent.click(startNew)
+    await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
   })
 
   it('does not offer Floor download while the coding agent is still writing', async () => {

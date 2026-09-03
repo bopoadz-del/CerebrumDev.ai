@@ -18,10 +18,13 @@ Routing contract (this is law, the smoke tests enforce it):
      launches the WRITER coding agent. Regex approval ("approve") is the
      offline fallback when the LLM is unset or the call fails.
     4. Approval starts WRITER when a blueprint is pending. continue/resume
-     resumes an in-flight or interrupted run even after the blueprint is
-     already approved — a pending unapproved blueprint is not required.
-     After code-phase 5/5 SUCCESS, continue opens a pilot cycle on the
-     same workspace (pytest -m pilot + STORE ops), not a new product.
+     resumes an in-flight or interrupted (non-terminal) run even after the
+     blueprint is already approved — a pending unapproved blueprint is not
+     required. After code-phase 5/5 SUCCESS, continue opens a pilot cycle
+     on the same workspace (pytest -m pilot + STORE ops), not a new product.
+     A RUN_FAILED / rework-exhausted ledger is terminal: same-hash continue
+     or a new brief must start a fresh workspace (reset rework budget),
+     never a no-op resume of the dead run.
     5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
     6. Anything else falls through to the normal kit-configurator chat.
@@ -687,17 +690,45 @@ def is_generation_complete(state: Any) -> bool:
         return False
 
 
+def is_generation_terminal_failure(
+    state: Any, output_root: Optional[Path] = None
+) -> bool:
+    """True when the last coding run recorded RUN_FAILED (incl. rework exhausted).
+
+    A terminal failure is not an interrupted run. Resume would attach to a
+    dead ledger (TESTER still red, rework spent) and the Floor would stay
+    CODING AGENT STOPPED. Callers must start a fresh workspace instead.
+    """
+    st = _generation_status(state, output_root)
+    if st.get("state") == "failed":
+        return True
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return False
+    try:
+        from app.factory.build.ledger import EventKind
+
+        event = _ledger_for(out).terminal_event()
+        return event is not None and event.kind is EventKind.RUN_FAILED
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_generation_resumable(state: Any) -> bool:
-    """True when a coding run exists that is not finished SUCCESS.
+    """True when a coding run exists that is interrupted, not finished.
 
     Does not require a pending (unapproved) blueprint. After takeover the
     blueprint is approved and the runner workspace / ledger is the resume
     source — the same-hash path ``POST .../product/generate`` already uses.
+
+    A RUN_FAILED / rework-exhausted ledger is terminal, not resumable.
     """
     pd = getattr(state, "product_design", None)
     if not pd or not getattr(pd, "blueprint", None):
         return False
     if is_generation_complete(state):
+        return False
+    if is_generation_terminal_failure(state):
         return False
     gen = getattr(pd, "generation", None) or {}
     if not gen:
@@ -707,15 +738,20 @@ def is_generation_resumable(state: Any) -> bool:
         try:
             ledger = _ledger_for(out)
             if ledger.exists() and not ledger.succeeded():
+                from app.factory.build.ledger import EventKind
+
+                term = ledger.terminal_event()
+                if term is not None and term.kind is EventKind.RUN_FAILED:
+                    return False
                 return True
         except Exception:  # noqa: BLE001
             pass
         if (Path(out) / "build_ledger.jsonl").is_file():
-            return True
+            return not is_generation_terminal_failure(state)
         if Path(out).is_dir() and any(Path(out).iterdir()):
             return True
     st = _generation_status(state)
-    if st.get("state") in {"building", "stalled", "failed"}:
+    if st.get("state") in {"building", "stalled"}:
         return True
     if _artifacts_remain(st):
         return True
@@ -835,6 +871,100 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
     }
 
 
+def start_fresh_generation(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "regex_fresh",
+) -> Dict[str, Any]:
+    """Start a new auto-pilot cycle on a new workspace after a terminal failure.
+
+    Same blueprint hash is allowed — the previous RUN_FAILED / rework-
+    exhausted ledger is not a resume source. The new dir gets a reset
+    rework budget so #287 auto-pilot and #288 payload contracts can run.
+    """
+    pd = state.product_design
+    if not pd or not pd.blueprint:
+        raise ValueError("no blueprint drafted — describe the platform first")
+    if is_pilot_ready(state, output_root):
+        return already_complete_reply(state)
+    if has_running_build(state):
+        reply = running_build_reply(state)
+        reply["already_running"] = True
+        return reply
+
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    pd.blueprint_approved = True
+    if not pd.plan:
+        pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
+
+    live = _live_build_thread(bp.product_id)
+    if live is not None:
+        st = _generation_status(state, output_root)
+        return {
+            "ok": True,
+            "sse": "info",
+            "summary": (
+                f"The coding agent is still writing {bp.product_id}. "
+                "I did not start a second run."
+            ),
+            "stream_delta": True,
+            "already_running": True,
+            "generation": pd.generation,
+            "build": st,
+        }
+
+    from app.factory.build_jobs import next_fresh_output
+
+    prior = _generation_output_dir(state, output_root)
+    base = prior or _session_output(state.session_id, bp.product_id, output_root)
+    out = next_fresh_output(base)
+    prior_hash = (pd.generation or {}).get("inputs_hash")
+    result = generate_product(
+        bp,
+        out,
+        blocks_root=_blocks_root(),
+        cycle="code",
+        quota_account_id=getattr(state, "user_id", None),
+    )
+    if result.get("already_running"):
+        _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
+        reply = running_build_reply(state)
+        reply["already_running"] = True
+        return reply
+    _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
+    if prior_hash and result.get("inputs_hash") and result["inputs_hash"] != prior_hash:
+        logger.warning(
+            "fresh-start hash changed for %s: was %s now %s",
+            bp.product_id,
+            prior_hash[:12],
+            str(result["inputs_hash"])[:12],
+        )
+    pd.last_error = None
+    prior_dir = str(prior) if prior else None
+    new_dir = result.get("output_dir")
+    summary = (
+        f"Starting a fresh build for {result['product_id']} on a new workspace. "
+        "The previous run failed (rework exhausted or gates still red) and "
+        "will not be resumed — the rework budget is reset. This is not a "
+        "same-hash resume."
+    )
+    return {
+        "ok": True,
+        "sse": "generation",
+        "generation": pd.generation,
+        "plan": pd.plan,
+        "triggered_by": triggered_by,
+        "resumed": False,
+        "fresh": True,
+        "fresh_workspace": True,
+        "prior_output_dir": prior_dir,
+        "output_dir": new_dir,
+        "stream_delta": False,
+        "summary": summary,
+        "build": result.get("build"),
+    }
+
+
 def resume_generation(
     state: Any,
     output_root: Optional[Path] = None,
@@ -845,12 +975,22 @@ def resume_generation(
     Calls ``generate_product`` into the existing output dir. The runner
     sees the ledger, skips completed phases, and does not re-CLONER from
     zero when WRITER/TESTER already progressed.
+
+    A terminal RUN_FAILED is not resumed — that path starts a fresh
+    workspace so a dead ledger cannot swallow the request.
     """
     pd = state.product_design
     if not pd.blueprint:
         raise ValueError("no blueprint drafted — describe the platform first")
     if is_generation_complete(state):
         return already_complete_reply(state)
+    if is_generation_terminal_failure(state, output_root):
+        resume_by = (
+            "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
+        )
+        return start_fresh_generation(
+            state, output_root=output_root, triggered_by=resume_by
+        )
 
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
@@ -1036,6 +1176,9 @@ def start_or_resume_coder(
     Never requires a pending unapproved blueprint to resume. Code-phase
     SUCCESS is not the end: continue opens a pilot cycle on the same
     workspace. Only a Store-green SUCCESS refuses another run.
+
+    A RUN_FAILED / rework-exhausted ledger is terminal: continue or
+    start_coder starts a fresh workspace with a reset rework budget.
     """
     if has_pending_blueprint(state):
         return approve_and_generate(
@@ -1049,6 +1192,13 @@ def start_or_resume_coder(
         )
         return resume_pilot_cycle(
             state, output_root=output_root, triggered_by=resume_by
+        )
+    if is_generation_terminal_failure(state, output_root):
+        fresh_by = (
+            "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
+        )
+        return start_fresh_generation(
+            state, output_root=output_root, triggered_by=fresh_by
         )
     if is_generation_resumable(state):
         resume_by = (
