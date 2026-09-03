@@ -50,20 +50,64 @@ export function formatPhaseCounts(build: BuildStatus): string | null {
 }
 
 /**
+ * Stamp (or preserve) client observation metadata so a frozen server
+ * ``last_event_age_s`` still advances on the wall clock between polls.
+ * Re-stamp only when the ledger event identity changes.
+ */
+export function stampBuildObservation(
+  next: BuildStatus,
+  prev: BuildStatus | null | undefined,
+  nowMs = Date.now(),
+): BuildStatus {
+  const sameEvent =
+    Boolean(prev) &&
+    prev!.state === next.state &&
+    (prev!.last_event_at ?? null) === (next.last_event_at ?? null) &&
+    (prev!.last_event ?? null) === (next.last_event ?? null) &&
+    (prev!.activity ?? null) === (next.activity ?? null)
+
+  if (sameEvent && typeof prev!.client_observed_at_ms === 'number') {
+    return {
+      ...next,
+      client_observed_at_ms: prev!.client_observed_at_ms,
+      client_base_age_s:
+        typeof prev!.client_base_age_s === 'number'
+          ? prev!.client_base_age_s
+          : typeof prev!.last_event_age_s === 'number'
+            ? prev!.last_event_age_s
+            : next.last_event_age_s,
+    }
+  }
+  return {
+    ...next,
+    client_observed_at_ms: nowMs,
+    client_base_age_s: next.last_event_age_s,
+  }
+}
+
+/**
  * Relative age of the last ledger event. Prefer wall-clock from
- * ``last_event_at`` so the ticker advances between polls even when the
- * server snapshot of ``last_event_age_s`` is frozen.
+ * ``last_event_at``; otherwise advance a frozen ``last_event_age_s`` from
+ * the client observation stamp so "2 min ago" cannot stick for 5 wall minutes.
  */
 export function eventAgeSeconds(build: BuildStatus, nowMs = Date.now()): number | null {
-  let age = typeof build.last_event_age_s === 'number' ? build.last_event_age_s : null
+  const ages: number[] = []
   if (build.last_event_at) {
     const at = Date.parse(build.last_event_at)
     if (!Number.isNaN(at)) {
-      const fromTs = Math.max(0, (nowMs - at) / 1000)
-      age = age == null ? fromTs : Math.max(age, fromTs)
+      ages.push(Math.max(0, (nowMs - at) / 1000))
     }
   }
-  return age
+  if (
+    typeof build.client_base_age_s === 'number' &&
+    typeof build.client_observed_at_ms === 'number'
+  ) {
+    ages.push(build.client_base_age_s + Math.max(0, (nowMs - build.client_observed_at_ms) / 1000))
+  } else if (typeof build.last_event_age_s === 'number') {
+    ages.push(build.last_event_age_s)
+  }
+  if (ages.length === 0) return null
+  return Math.max(...ages)
 }
 
 export function formatHeartbeat(build: BuildStatus, nowMs = Date.now()): string | null {

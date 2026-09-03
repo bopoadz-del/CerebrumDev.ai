@@ -18,6 +18,7 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  stampBuildObservation,
   withClientStall,
 } from './buildProgress'
 import { LoadingSkeleton } from './LoadingSkeleton'
@@ -53,7 +54,7 @@ export function Platforms({ sessionId }: { sessionId: string }) {
           }
           if (opts?.initial) return
           const { build: nextBuild } = await product.buildStatus(sessionId)
-          setBuild(nextBuild)
+          setBuild((prev) => stampBuildObservation(nextBuild, prev))
         })
         .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
         .finally(() => {
@@ -78,7 +79,9 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     void watchBuildStatus(
       sessionId,
       (s) => {
-        if (!ac.signal.aborted) setBuild(s)
+        if (!ac.signal.aborted) {
+          setBuild((prev) => stampBuildObservation(s, prev))
+        }
       },
       { signal: ac.signal },
     ).catch((e) => {
@@ -103,10 +106,12 @@ export function Platforms({ sessionId }: { sessionId: string }) {
       const status =
         liveBuild?.state === 'succeeded'
           ? liveBuild
-          : await awaitBuild(sessionId, setBuild)
-      if (status.state === 'failed' || status.state === 'stalled') {
+          : await awaitBuild(sessionId, (s) =>
+              setBuild((prev) => stampBuildObservation(s, prev)),
+            )
+      if (!status || status.state === 'failed' || status.state === 'stalled') {
         setError(
-          `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
+          `The build did not pass its gates, so it will not be shipped: ${status?.detail ?? 'unknown reason'}`,
         )
         return
       }
@@ -124,7 +129,12 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     | undefined
   const gen = design?.generation
   const authorship = liveBuild?.authorship
-  const building = liveBuild?.state === 'building'
+  // Gen present but no status tick yet — keep Download disabled (Building…)
+  // so a click cannot race ahead of the watcher into awaitBuild(undefined).
+  const building =
+    liveBuild?.state === 'building' ||
+    liveBuild?.state === 'not_started' ||
+    (Boolean(gen) && !liveBuild)
   const stalled = liveBuild?.state === 'stalled'
   const buildNote = (() => {
     if (!liveBuild) return null

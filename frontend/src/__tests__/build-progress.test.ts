@@ -8,6 +8,7 @@ import {
   formatPhaseCounts,
   formatPhaseHeadline,
   phaseBarFraction,
+  stampBuildObservation,
   withClientStall,
 } from '../buildProgress'
 
@@ -55,6 +56,52 @@ describe('build progress copy', () => {
     expect(eventAgeSeconds(build, t0 + 120_000)).toBeCloseTo(120, 0)
     expect(formatHeartbeat(build, t0 + 120_000)).toBe('still working · 2 min ago')
     expect(formatHeartbeat(build, t0 + 420_000)).toMatch(/quiet for 7 min/)
+  })
+
+  it('advances a frozen last_event_age_s across polls via client observation stamp', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const poll1 = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'wrote handler tenancy_application_pipeline',
+        last_event_age_s: 120, // field recheck: stuck at "2 min ago"
+        last_event_at: null,
+      },
+      null,
+      t0,
+    )
+    // Same ledger event, same frozen age_s — must keep the first stamp.
+    const poll2 = stampBuildObservation(
+      {
+        ...cloner,
+        last_event: 'wrote handler tenancy_application_pipeline',
+        last_event_age_s: 120,
+        last_event_at: null,
+      },
+      poll1,
+      t0 + 60_000,
+    )
+    expect(poll2.client_observed_at_ms).toBe(t0)
+    expect(eventAgeSeconds(poll2, t0 + 300_000)).toBeCloseTo(420, 0) // 120 + 300s
+    expect(formatHeartbeat(poll2, t0 + 300_000)).toMatch(/quiet for 7 min/)
+    const stalled = withClientStall(poll2, t0 + (CLIENT_STALL_AFTER_S + 30) * 1000)
+    expect(stalled?.state).toBe('stalled')
+  })
+
+  it('re-stamps when the ledger event identity changes', () => {
+    const t0 = Date.parse('2026-09-03T16:00:00.000Z')
+    const first = stampBuildObservation(
+      { ...cloner, last_event: 'handler_a', last_event_age_s: 120 },
+      null,
+      t0,
+    )
+    const next = stampBuildObservation(
+      { ...cloner, last_event: 'handler_b', last_event_age_s: 5 },
+      first,
+      t0 + 60_000,
+    )
+    expect(next.client_observed_at_ms).toBe(t0 + 60_000)
+    expect(eventAgeSeconds(next, t0 + 65_000)).toBeCloseTo(10, 0)
   })
 
   it('promotes a forever-building snapshot to stalled after the stall window', () => {

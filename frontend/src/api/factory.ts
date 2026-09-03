@@ -364,6 +364,14 @@ export type BuildStatus = {
   activity_done?: number
   activity_total?: number
   authorship?: BuildAuthorship
+  /**
+   * Client-only: when this ledger event was first observed in the UI.
+   * Lets the heartbeat advance even if the server keeps returning a frozen
+   * ``last_event_age_s`` on every poll.
+   */
+  client_observed_at_ms?: number
+  /** Client-only: ``last_event_age_s`` at ``client_observed_at_ms``. */
+  client_base_age_s?: number
 }
 
 export async function awaitBuild(

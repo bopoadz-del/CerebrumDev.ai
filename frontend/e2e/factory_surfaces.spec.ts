@@ -198,6 +198,58 @@ test('Floor finished state offers the zip download on the generate surface', asy
   await expect(page.getByRole('button', { name: 'Open Your Platforms' })).toBeEnabled()
 })
 
+test('Your Platforms shows a loading skeleton — never empty-state — while product fetch is in flight', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  let releaseProduct: (() => void) | undefined
+  const productGate = new Promise<void>((resolve) => {
+    releaseProduct = resolve
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await productGate
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+        generation: {
+          product_id: 'vineyard',
+          engine: 'runner',
+          inputs_hash: 'abc123',
+          output_dir: '/tmp/vineyard',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'vineyard',
+        build: {
+          state: 'succeeded',
+          authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await page.getByRole('button', { name: 'Your Platforms' }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  await expect(page.getByTestId('loading-skeleton')).toBeVisible()
+  await expect(page.getByText('No platform built yet')).toHaveCount(0)
+  releaseProduct?.()
+  await expect(page.getByRole('heading', { name: 'vineyard' })).toBeVisible()
+  await expect(page.getByTestId('loading-skeleton')).toHaveCount(0)
+  await expect(page.getByText('No platform built yet')).toHaveCount(0)
+})
+
 test('Your Platforms shows coder authorship and a zip download', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')

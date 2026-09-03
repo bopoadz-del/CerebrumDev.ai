@@ -16,6 +16,7 @@ import {
   formatPhaseCounts,
   formatPhaseHeadline,
   phaseBarFraction,
+  stampBuildObservation,
   withClientStall,
 } from './buildProgress'
 
@@ -343,7 +344,9 @@ export function Floor({
     void watchBuildStatus(
       sessionId,
       (s) => {
-        if (!ac.signal.aborted) setCoderBuild(s)
+        if (!ac.signal.aborted) {
+          setCoderBuild((prev) => stampBuildObservation(s, prev))
+        }
       },
       { signal: ac.signal },
     ).catch(() => {})
@@ -401,7 +404,9 @@ export function Floor({
             if (engine === 'runner') {
               // Clear a prior FINISHED snapshot immediately so a pilot reopen
               // cannot keep "Download ready" pinned while Platforms is Building…
-              setCoderBuild({ state: 'building', detail: 'build in progress' })
+              setCoderBuild((prev) =>
+                stampBuildObservation({ state: 'building', detail: 'build in progress' }, prev),
+              )
               setCoderActive(true)
               setWatchEpoch((n) => n + 1)
             }
@@ -476,7 +481,9 @@ export function Floor({
       const status =
         liveCoderBuild?.state === 'succeeded'
           ? liveCoderBuild
-          : await awaitBuild(sessionId, setCoderBuild)
+          : await awaitBuild(sessionId, (s) =>
+              setCoderBuild((prev) => stampBuildObservation(s, prev)),
+            )
       if (status.state === 'failed' || status.state === 'stalled') {
         setDownloadError(
           `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,

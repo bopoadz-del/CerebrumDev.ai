@@ -201,8 +201,27 @@ describe('Your Platforms — coding-agent build', () => {
     })
     downloadMock.mockResolvedValue(undefined)
     render(<Platforms sessionId="sess_ui" />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    // Wait for the succeeded snapshot — Download stays "Building…" until then.
+    expect(await screen.findByText('Finished — 3 artifacts; 0 templated')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Download platform export (.zip)' }))
     await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_ui'))
+  })
+
+  it('surfaces honest stalled UI instead of forever Building…', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'stalled',
+        detail: 'no build activity for 40 min — the build process may be gone; generate again',
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText(/Build stalled — no build activity for 40 min/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeDisabled()
   })
 
   it('does not download a failed coding-agent build', async () => {
