@@ -166,7 +166,9 @@ def test_master_key_admin_access(client, monkeypatch):
 
 def test_me_requires_account_credential(client):
     res = client.get("/v1/auth/me")
-    assert res.status_code == 403
+    # 401 so the Floor SPA opens Sign in (403 was painted as unreachable).
+    assert res.status_code == 401
+    assert res.json()["detail"] == "Invalid or missing API key"
 
 
 def test_password_reset_flow(client):
@@ -197,7 +199,8 @@ def test_password_reset_flow(client):
     assert ok.status_code == 200
 
     res = client.get("/v1/auth/me", headers={"Authorization": f"Bearer {old_token}"})
-    assert res.status_code == 403
+    # Revoked login token is not a user principal; 401 opens Sign in.
+    assert res.status_code == 401
 
     res = client.post(
         "/v1/auth/reset-password",

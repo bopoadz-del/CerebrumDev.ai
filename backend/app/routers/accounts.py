@@ -238,7 +238,11 @@ async def logout(request: Request):
 
 @router.get("/me")
 async def me(principal: Principal = Depends(require_api_key)):
-    _require_user(principal)
+    # 401 (not 403): the Floor SPA boots Sign in on 401. With
+    # ALLOW_ANONYMOUS_DEV the dependency returns a `dev` principal, and a
+    # 403 here was painted as "Factory unreachable" instead of the auth form.
+    if principal.kind != "user" or not principal.account_id:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
     account = accounts_store.get_account(principal.account_id or "")
     if account is None:
         raise HTTPException(status_code=404, detail="Account not found")

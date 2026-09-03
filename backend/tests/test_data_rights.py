@@ -246,10 +246,11 @@ def test_delete_purges_only_the_deleted_account(client, chroma, storage):
     # Covers the in-memory cache, the disk snapshot and the Chroma rehydrate
     # path in one assertion: a purged session must not come back.
     assert session_store.get_session(a["session_id"]) is None
-    # A's credentials no longer authenticate.
-    assert client.get("/v1/auth/me", headers=_auth(a["token"])).status_code == 403
+    # A's credentials no longer authenticate. /me returns 401 (not 403) so
+    # the Floor SPA opens Sign in instead of "Factory unreachable".
+    assert client.get("/v1/auth/me", headers=_auth(a["token"])).status_code == 401
     assert (
-        client.get("/v1/auth/me", headers={"X-API-Key": a["api_key"]}).status_code == 403
+        client.get("/v1/auth/me", headers={"X-API-Key": a["api_key"]}).status_code == 401
     )
 
     # --- B: untouched -------------------------------------------------------
@@ -594,7 +595,8 @@ def test_retention_purges_expired_tokens_and_keeps_live_ones(client, storage):
     # Accounts themselves are untouched by a retention pass.
     assert _db_rows(a["account_id"])["accounts"] == 1
     assert client.get("/v1/auth/me", headers=_auth(b["login_token"])).status_code == 200
-    assert client.get("/v1/auth/me", headers=_auth(a["login_token"])).status_code == 403
+    # Expired token is not a user principal; 401 opens Sign in.
+    assert client.get("/v1/auth/me", headers=_auth(a["login_token"])).status_code == 401
 
 
 def test_retention_leaves_billing_state_alone(client, storage):
