@@ -2467,7 +2467,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("app") / "preconditions.py",
         render_preconditions_module(
-            sorted({str(b) for b in (ctx.state.get("vendored_blocks") or ())}),
+            # Use the roster captured at WRITER start — not a later state
+            # rewrite — so preconditions match the blocks this pass vendored.
+            sorted({str(b) for b in vendored}),
             product_name,
         ),
     )
