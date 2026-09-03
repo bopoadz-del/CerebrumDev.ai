@@ -44,7 +44,7 @@ from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
 from .core.auth import require_api_key, require_master_key, verify_production_auth
 from .core.cors_policy import cors_allow_origins
-from .core.metrics import metrics_response
+from .core.metrics import HttpMetricsMiddleware, metrics_response
 from .core.billing import require_entitled
 from .routers import (
     accounts,
@@ -181,6 +181,8 @@ app.add_middleware(
 # Outermost: 404s /docs in production (per-request, so tests can flip ENV)
 # and stamps security headers on every response, including CORS 403s.
 app.add_middleware(ProductionHttpSurfaceMiddleware)
+# Outermost of all: HTTP request count/latency/in-flight for Prometheus scrapes.
+app.add_middleware(HttpMetricsMiddleware)
 
 # Public account endpoints (register/login/verify carry no credential; me/keys
 # enforce their own account principal).
