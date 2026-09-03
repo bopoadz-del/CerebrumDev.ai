@@ -119,10 +119,25 @@ describe('Subscription', () => {
     const factoryCard = screen.getByRole('heading', { name: 'Factory' }).closest('.plan-card')
     expect(factoryCard).toHaveClass('highlight')
     expect(factoryCard).toHaveTextContent('Current')
-    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upgrade' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Manage billing' })).toBeInTheDocument()
     expect(
       screen.getByText(/Payments are not connected on this deployment yet/i),
     ).toBeInTheDocument()
+  })
+
+  it('does not offer Upgrade on the current active Factory plan', async () => {
+    statusMock.mockResolvedValue({
+      plan: 'factory',
+      subscription_status: 'active',
+      entitled: true,
+      checkout_available: false,
+    })
+    render(<Subscription />)
+    await screen.findByRole('heading', { name: 'Factory' })
+    expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Upgrade when you are ready/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled()
   })
 
   it('checkout failure states the truth plainly', async () => {

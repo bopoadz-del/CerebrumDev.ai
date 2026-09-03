@@ -231,6 +231,7 @@ test('Subscription and Account render plan and verified email', async ({ page })
 
   await page.getByRole('button', { name: 'Subscription' }).click()
   await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/subscription')
   await expect(page.getByText('Trial days left')).toBeVisible()
   await expect(page.getByText('trialing')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
@@ -247,6 +248,7 @@ test('Subscription and Account render plan and verified email', async ({ page })
 
   await page.getByRole('button', { name: 'Account' }).click()
   await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/account')
   await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
   await expect(page.getByText('acct_e2e_floor')).toBeVisible()
@@ -309,7 +311,8 @@ test('Factory / Active subscription does not present Trial as a second current p
   const factoryCard = page.locator('.plan-card[data-plan="factory"]')
   await expect(factoryCard).toHaveAttribute('aria-current', 'true')
   await expect(factoryCard.getByText('Current')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Upgrade' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Upgrade' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Manage billing' })).toBeVisible()
   await expect(page.getByText(/Payments are not connected on this deployment yet/i)).toBeVisible()
 })
 
@@ -326,4 +329,55 @@ test('signed-in /login and /register stay on Floor with a one-line notice', asyn
   await expect(page.getByText('Already signed in.')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Create your account' })).toHaveCount(0)
   expect(new URL(page.url()).pathname).toBe('/')
+})
+
+test('deep links /account /subscription /platforms render the matching views', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.goto('/account')
+  await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Account' })).toHaveAttribute('aria-current', 'page')
+  expect(new URL(page.url()).pathname).toBe('/account')
+
+  await page.goto('/subscription')
+  await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('button', { name: 'Subscription' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  expect(new URL(page.url()).pathname).toBe('/subscription')
+
+  await page.goto('/platforms')
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByRole('button', { name: 'Your Platforms' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  expect(new URL(page.url()).pathname).toBe('/platforms')
+})
+
+test('narrow viewport keeps nav icons and accessible labels (no blank pills)', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/subscription')
+  await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible({ timeout: 20_000 })
+
+  const nav = page.getByRole('navigation', { name: 'Factory navigation' })
+  await expect(nav).toBeVisible()
+  for (const label of ['Factory Floor', 'Your Platforms', 'Subscription', 'Account']) {
+    const btn = page.getByRole('button', { name: label })
+    await expect(btn).toBeVisible()
+    await expect(btn.locator('.nav-icon')).toBeVisible()
+    const box = await btn.boundingBox()
+    expect(box).not.toBeNull()
+    expect((box?.width ?? 0) > 0 && (box?.height ?? 0) > 0).toBeTruthy()
+    const text = (await btn.innerText()).trim()
+    expect(text.length).toBeGreaterThan(0)
+  }
+  await expect(page.getByRole('button', { name: 'Subscription' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
 })
