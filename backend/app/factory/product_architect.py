@@ -42,6 +42,31 @@ def steward_golden_path() -> Path:
     return _repo_root() / "blueprints" / "steward" / "steward.v1.yaml"
 
 
+def lettings_golden_path() -> Path:
+    return _repo_root() / "blueprints" / "lettings" / "residential_lettings.v1.yaml"
+
+
+def _wants_lettings(text: str, vertical_hint: Optional[str] = None) -> bool:
+    """True when the brief is the residential-lettings golden, not keyword fallback.
+
+    Keyword drafting of "build a platform for residential lettings" used to
+    emit a GENERATE ``residential_lettings_core`` stub plus mentioned
+    blocks — a thin scaffold. The golden YAML is the live capability roster.
+    """
+    hint = (vertical_hint or "").replace("-", "_").strip().lower()
+    if hint in {"residential_lettings", "lettings"}:
+        return True
+    return any(
+        key in (text or "")
+        for key in (
+            "residential letting",
+            "residential lettings",
+            "lettings platform",
+            "letting platform",
+        )
+    )
+
+
 # --- LLM drafting (gated, fail-safe) -----------------------------------------
 
 LLM_DRAFTING_ENV = "ARCHITECT_LLM_DRAFTING_ENABLED"
@@ -405,6 +430,7 @@ def draft_blueprint_from_brief(
     *,
     vertical_hint: Optional[str] = None,
     use_golden_steward: bool = True,
+    use_golden_lettings: bool = True,
     use_llm: Optional[bool] = None,
 ) -> ProductBlueprint:
     """Draft a ProductBlueprint from a user brief.
@@ -416,7 +442,9 @@ def draft_blueprint_from_brief(
     2. Golden steward blueprint for explicit steward intent ("steward",
        "private estate", "property readiness", or vertical_hint == "estate")
        — deterministic fallback after LLM failure.
-    3. Deterministic keyword drafting (always works, no keys needed).
+    3. Golden residential-lettings blueprint for lettings briefs (the live
+       capability roster). Keyword fallback of that brief is a thin scaffold.
+    4. Deterministic keyword drafting (always works, no keys needed).
     """
     if use_llm is None:
         use_llm = llm_drafting_enabled()
@@ -441,6 +469,12 @@ def draft_blueprint_from_brief(
     if use_golden_steward and (wants_steward or vertical_hint == "estate"):
         bp = load_blueprint(steward_golden_path())
         bp.drafting_mode = "golden_steward"
+        bp.drafting_note = fallback_note
+        return bp
+
+    if use_golden_lettings and _wants_lettings(text, vertical_hint):
+        bp = load_blueprint(lettings_golden_path())
+        bp.drafting_mode = "golden_lettings"
         bp.drafting_note = fallback_note
         return bp
 

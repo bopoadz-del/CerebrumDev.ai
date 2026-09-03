@@ -4,13 +4,14 @@ from __future__ import annotations
 
 
 from app.factory.paths import factory_repo_root
-from app.factory.product_architect import steward_golden_path
+from app.factory.product_architect import lettings_golden_path, steward_golden_path
 
 
 def test_factory_repo_root_finds_blueprints():
     root = factory_repo_root()
     assert (root / "blueprints").is_dir()
     assert steward_golden_path().is_file()
+    assert lettings_golden_path().is_file()
 
 
 def test_factory_repo_root_docker_layout(tmp_path, monkeypatch):

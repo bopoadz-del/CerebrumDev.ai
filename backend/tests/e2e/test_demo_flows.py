@@ -50,7 +50,12 @@ def test_d3_generate_platform_artifact(tmp_path, monkeypatch):
     blueprint = draft_blueprint_from_brief("Build a warehouse operations platform")
     assert blueprint is not None
     # Deterministic drafting must be disclosed, never masqueraded as an LLM draft.
-    assert getattr(blueprint, "drafting_mode", None) in {"architect_llm", "keyword_fallback", "golden_steward"}
+    assert getattr(blueprint, "drafting_mode", None) in {
+        "architect_llm",
+        "keyword_fallback",
+        "golden_steward",
+        "golden_lettings",
+    }
 
     out = tmp_path / "warehouse-export"
     result = generate_product(blueprint, out)
