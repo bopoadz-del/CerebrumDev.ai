@@ -112,8 +112,8 @@ describe('Subscription', () => {
       checkout_available: false,
     })
     render(<Subscription />)
-    expect(await screen.findByText('factory')).toBeInTheDocument()
-    expect(screen.getByText('active')).toBeInTheDocument()
+    expect(await screen.findByText('factory', { selector: 'dd' })).toBeInTheDocument()
+    expect(screen.getByText('active', { selector: 'dd' })).toBeInTheDocument()
     expect(screen.getByText('Active')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Trial' })).toBeNull()
     const factoryCard = screen.getByRole('heading', { name: 'Factory' }).closest('.plan-card')
