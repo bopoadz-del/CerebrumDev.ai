@@ -162,8 +162,8 @@ def test_session_facts_after_terminal_failure_allow_draft(tmp_path):
     facts = platform_chat_llm._session_facts(state)
     assert "FAILED" in facts
     assert "draft_platform" in facts
-    assert "do not draft" not in facts.lower()
-    assert "not starting over" not in facts.lower()
+    assert "FRESH workspace" in facts
+    assert "do not draft a new platform" not in facts.lower()
 
 
 def test_start_runner_build_rotates_off_a_failed_ledger(tmp_path, monkeypatch):
