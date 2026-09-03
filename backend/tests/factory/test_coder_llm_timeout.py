@@ -163,7 +163,10 @@ def _dribble_server(
                 except OSError:
                     break
                 threading.Thread(
-                    target=_serve_one, name="dribble-conn", daemon=True
+                    target=_serve_one,
+                    args=(conn,),
+                    name="dribble-conn",
+                    daemon=True,
                 ).start()
         finally:
             sock.close()
