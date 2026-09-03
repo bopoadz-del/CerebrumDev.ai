@@ -560,6 +560,8 @@ export function Floor({
   const coderSucceeded = liveCoderBuild?.state === 'succeeded'
   const coderFailed = liveCoderBuild?.state === 'failed'
   const coderPilotReady = isPilotZipReady(liveCoderBuild)
+  const coderTerminal =
+    liveCoderBuild?.state === 'failed' || liveCoderBuild?.state === 'stalled'
   const exportBtn = exportAffordance(liveCoderBuild)
   const latestGenerationIdx = (() => {
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
@@ -602,47 +604,52 @@ export function Floor({
         </p>
       </header>
       <div className="chat-scroll">
-        {msgs.map((m, i) => (
-          <div key={i} className={'bubble-row ' + m.role}>
-            <div className={'bubble ' + m.role + ' ' + (m.card ?? '')}>
-              {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
-              {m.card === 'blueprint' && m.blueprint && (
-                <BlueprintCard
-                  blueprint={m.blueprint}
-                  busy={busy || coderActive}
-                  accessPaused={accessPaused}
-                  onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
-                  onRefine={(text) => send(text)}
-                />
-              )}
-              {m.card === 'generation' && (
-                <div className="card-actions">
-                  {m.engine === 'runner' && (
-                    <span
-                      className="bp-drafting-mode architect_llm"
-                      title="The coding agent took over after you approved the feature list"
-                    >
-                      coding agent
-                    </span>
-                  )}
-                  {m.triggeredBy === 'chat_llm' && (
-                    <span
-                      className="bp-drafting-mode architect_llm"
-                      title="The Floor chat LLM called start_coder"
-                    >
-                      chat LLM
-                    </span>
-                  )}
-                  {i === latestGenerationIdx && (
-                    <button type="button" onClick={goPlatforms}>
-                      Open Your Platforms
-                    </button>
-                  )}
-                </div>
-              )}
+        {msgs.map((m, i) => {
+          // Terminal runs own the floor via the STOPPED/stalled panel.
+          // Hide teal "taken over" generation chrome so it cannot sit above it.
+          if (m.card === 'generation' && coderTerminal) return null
+          return (
+            <div key={i} className={'bubble-row ' + m.role}>
+              <div className={'bubble ' + m.role + ' ' + (m.card ?? '')}>
+                {m.text || (m.role === 'factory' && busy && i === msgs.length - 1 ? <span className="typing">…</span> : null)}
+                {m.card === 'blueprint' && m.blueprint && (
+                  <BlueprintCard
+                    blueprint={m.blueprint}
+                    busy={busy || coderActive}
+                    accessPaused={accessPaused}
+                    onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
+                    onRefine={(text) => send(text)}
+                  />
+                )}
+                {m.card === 'generation' && (
+                  <div className="card-actions">
+                    {m.engine === 'runner' && (
+                      <span
+                        className="bp-drafting-mode architect_llm"
+                        title="The coding agent took over after you approved the feature list"
+                      >
+                        coding agent
+                      </span>
+                    )}
+                    {m.triggeredBy === 'chat_llm' && (
+                      <span
+                        className="bp-drafting-mode architect_llm"
+                        title="The Floor chat LLM called start_coder"
+                      >
+                        chat LLM
+                      </span>
+                    )}
+                    {i === latestGenerationIdx && (
+                      <button type="button" onClick={goPlatforms}>
+                        Open Your Platforms
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
         <div ref={bottomRef} />
       </div>
       {coderActive && (
@@ -712,6 +719,9 @@ export function Floor({
               >
                 {exportAffordance(liveCoderBuild).label}
               </button>
+              <button type="button" className="ghost" onClick={goPlatforms}>
+                Open Your Platforms
+              </button>
             </div>
           )}
           {coderFailed && (
@@ -726,6 +736,9 @@ export function Floor({
                 title={exportAffordance(liveCoderBuild).title}
               >
                 {exportAffordance(liveCoderBuild).label}
+              </button>
+              <button type="button" className="ghost" onClick={goPlatforms}>
+                Open Your Platforms
               </button>
               {onNewSession && (
                 <button

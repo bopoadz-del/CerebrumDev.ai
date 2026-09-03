@@ -600,6 +600,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
     expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
     expect(screen.getByText(/rework budget of 3 exhausted/)).toBeInTheDocument()
+    expect(screen.queryByText(/taken over the floor/i)).not.toBeInTheDocument()
+    expect(screen.queryByText('coding agent')).not.toBeInTheDocument()
+    expect(screen.queryByText('chat LLM')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
     expect(failedExport).toBeDisabled()
@@ -665,6 +668,38 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
     expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+  })
+
+  it('does not gold-label Store-green or founding while COLLECTOR is still running', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        cycle: 'code',
+        pilot_ready: false,
+        current_phase: { id: 'COLLECTOR', label: 'Binding surveyor' },
+        phase_index: 1,
+        phase_total: 5,
+        last_event: 'collecting capabilities',
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'property-management', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_northbridge" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.getByText('COLLECTOR 1/5')).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('floor-pilot-ready-pill')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download code-cycle prototype (.zip)' })).not.toBeInTheDocument()
   })
 
   it('clears coder takeover when a new blueprint is drafted after a runner', async () => {
