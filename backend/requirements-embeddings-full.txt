@@ -5,7 +5,7 @@
 
 # sentence-transformers pulls torch and larger transformer models; use it when
 # you need models not available via fastembed's ONNX hub.
-sentence-transformers>=3.0.0
+sentence-transformers>=6.0.0
 
 # High-quality local PDF -> Markdown extraction (pulls torch + ~1.35 GB weights).
 marker-pdf>=2.0.0
