@@ -45,6 +45,12 @@ describe('Subscription', () => {
     expect(
       screen.getByText(/Payments are not connected on this deployment yet/i),
     ).toBeInTheDocument()
+    const trialCard = screen.getByRole('heading', { name: 'Trial' }).closest('.plan-card')
+    const factoryCard = screen.getByRole('heading', { name: 'Factory' }).closest('.plan-card')
+    expect(trialCard).toHaveClass('highlight')
+    expect(trialCard).toHaveTextContent('Current')
+    expect(factoryCard).not.toHaveClass('highlight')
+    expect(factoryCard).not.toHaveTextContent('Current')
   })
 
   it('labels an expired trial as expired + Paused, never still trialing', async () => {
@@ -61,6 +67,9 @@ describe('Subscription', () => {
     expect(screen.queryByText('trialing')).toBeNull()
     expect(screen.queryByText('Trial days left')).toBeNull()
     expect(screen.queryByText('Active')).toBeNull()
+    const trialCard = screen.getByRole('heading', { name: 'Trial' }).closest('.plan-card')
+    expect(trialCard).toHaveTextContent('Current')
+    expect(screen.queryByText('0')).toBeNull()
   })
 
   it('does not hang on Loading after a first-load fetch failure', async () => {
@@ -93,6 +102,27 @@ describe('Subscription', () => {
     render(<Subscription />)
     await screen.findByText('Trial days left')
     expect(screen.queryByText(/being connected/i)).toBeNull()
+  })
+
+  it('marks only Factory as current when the plan is already Factory / Active', async () => {
+    statusMock.mockResolvedValue({
+      plan: 'factory',
+      subscription_status: 'active',
+      entitled: true,
+      checkout_available: false,
+    })
+    render(<Subscription />)
+    expect(await screen.findByText('factory', { selector: 'dd' })).toBeInTheDocument()
+    expect(screen.getByText('active', { selector: 'dd' })).toBeInTheDocument()
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Trial' })).toBeNull()
+    const factoryCard = screen.getByRole('heading', { name: 'Factory' }).closest('.plan-card')
+    expect(factoryCard).toHaveClass('highlight')
+    expect(factoryCard).toHaveTextContent('Current')
+    expect(screen.getByRole('button', { name: 'Upgrade' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Payments are not connected on this deployment yet/i),
+    ).toBeInTheDocument()
   })
 
   it('checkout failure states the truth plainly', async () => {

@@ -259,11 +259,19 @@ export function Subscription() {
               <dd>{view.accessLabel}</dd>
             </dl>
             <div className="plan-cards">
-              <div className="plan-card">
-                <h4>Trial</h4>
-                <p className="dim">Full factory access while you evaluate. No card required.</p>
-              </div>
-              <div className="plan-card highlight">
+              {view.currentPlan === 'trial' && (
+                <div className="plan-card highlight" data-plan="trial" aria-current="true">
+                  <p className="plan-current">Current</p>
+                  <h4>Trial</h4>
+                  <p className="dim">Full factory access while you evaluate. No card required.</p>
+                </div>
+              )}
+              <div
+                className={`plan-card${view.currentPlan === 'factory' ? ' highlight' : ''}`}
+                data-plan="factory"
+                aria-current={view.currentPlan === 'factory' ? 'true' : undefined}
+              >
+                {view.currentPlan === 'factory' && <p className="plan-current">Current</p>}
                 <h4>Factory</h4>
                 <p className="dim">
                   Deeper builds, more sessions, priority generation. Upgrade when you are ready.
