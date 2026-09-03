@@ -7,6 +7,7 @@ import {
   getEmail,
   product,
   subscriptionDisplay,
+  watchBuildStatus,
   type AccountInfo,
   type BillingStatus,
   type BuildStatus,
@@ -17,63 +18,100 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  stampBuildObservation,
+  withClientStall,
 } from './buildProgress'
+import { LoadingSkeleton } from './LoadingSkeleton'
 
 /* -------------------------------- Platforms -------------------------------- */
 
 export function Platforms({ sessionId }: { sessionId: string }) {
   const [design, setDesign] = useState<ProductDesign | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [build, setBuild] = useState<BuildStatus | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
-  const refresh = useCallback(() => {
-    setError(null)
-    product
-      .get(sessionId)
-      .then(async (next) => {
-        setDesign(next)
-        // product GET does not carry live runner progress (phases / last event).
-        // Always re-fetch build-status when a generation exists — including while
-        // state === 'building'. Never POST generate from this button.
-        if (!next.generation) return
-        const { build } = await product.buildStatus(sessionId)
-        setBuild(build)
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
-  }, [sessionId])
+  const refresh = useCallback(
+    (opts?: { initial?: boolean }) => {
+      setError(null)
+      if (opts?.initial) setLoading(true)
+      else setRefreshing(true)
+      return product
+        .get(sessionId)
+        .then(async (next) => {
+          setDesign(next)
+          // product GET does not carry live runner progress (phases / last event).
+          // Refresh re-fetches build-status (including while building). Never POST
+          // generate from this button. Initial load skips build-status — the
+          // watchBuildStatus effect owns the live snapshot; a slow not_started
+          // reply must not clobber a succeeded/building tick from the watcher.
+          if (!next.generation) {
+            setBuild(null)
+            return
+          }
+          if (opts?.initial) return
+          const { build: nextBuild } = await product.buildStatus(sessionId)
+          setBuild((prev) => stampBuildObservation(nextBuild, prev))
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
+        .finally(() => {
+          setLoading(false)
+          setRefreshing(false)
+        })
+    },
+    [sessionId],
+  )
 
-  useEffect(refresh, [refresh])
+  useEffect(() => {
+    void refresh({ initial: true })
+  }, [refresh])
 
-  // Poll once a generation exists. Depend on a primitive so Refresh (new
-  // generation object identity) does not tear down the in-flight poll.
+  // Keep watching across succeed → building (pilot reopen). Depend on a
+  // primitive so Refresh (new generation object identity) does not tear down
+  // the in-flight poll.
   const watchingBuild = Boolean(design?.generation)
   useEffect(() => {
     if (!watchingBuild) return
-    let cancelled = false
-    void awaitBuild(sessionId, (s) => {
-      if (!cancelled) setBuild(s)
-    }).then((s) => {
-      if (!cancelled) setBuild(s)
-    }).catch((e) => {
-      if (!cancelled) setError(e instanceof Error ? e.message : 'build status failed')
+    const ac = new AbortController()
+    void watchBuildStatus(
+      sessionId,
+      (s) => {
+        if (!ac.signal.aborted) {
+          setBuild((prev) => stampBuildObservation(s, prev))
+        }
+      },
+      { signal: ac.signal },
+    ).catch((e) => {
+      if (!ac.signal.aborted) {
+        setError(e instanceof Error ? e.message : 'build status failed')
+      }
     })
-    return () => {
-      cancelled = true
-    }
+    return () => ac.abort()
   }, [watchingBuild, sessionId])
+
+  const liveBuild = withClientStall(build, nowMs)
+  useEffect(() => {
+    if (liveBuild?.state !== 'building') return
+    const id = window.setInterval(() => setNowMs(Date.now()), 5000)
+    return () => window.clearInterval(id)
+  }, [liveBuild?.state])
 
   async function download() {
     setDownloading(true)
     setError(null)
     try {
       const status =
-        build?.state === 'succeeded'
-          ? build
-          : await awaitBuild(sessionId, setBuild)
-      if (status.state === 'failed' || status.state === 'stalled') {
+        liveBuild?.state === 'succeeded'
+          ? liveBuild
+          : await awaitBuild(sessionId, (s) =>
+              setBuild((prev) => stampBuildObservation(s, prev)),
+            )
+      if (!status || status.state === 'failed' || status.state === 'stalled') {
         setError(
-          `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
+          `The build did not pass its gates, so it will not be shipped: ${status?.detail ?? 'unknown reason'}`,
         )
         return
       }
@@ -85,16 +123,29 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     }
   }
 
-  const bp = design?.blueprint as { product_name?: string; vertical?: string; capabilities?: unknown[] } | null | undefined
+  const bp = design?.blueprint as
+    | { product_name?: string; vertical?: string; capabilities?: unknown[] }
+    | null
+    | undefined
   const gen = design?.generation
-  const authorship = build?.authorship
-  const building = build?.state === 'building'
+  const authorship = liveBuild?.authorship
+  // Gen present but no status tick yet — keep Download disabled (Building…)
+  // so a click cannot race ahead of the watcher into awaitBuild(undefined).
+  const building =
+    liveBuild?.state === 'building' ||
+    liveBuild?.state === 'not_started' ||
+    (Boolean(gen) && !liveBuild)
+  const stalled = liveBuild?.state === 'stalled'
   const buildNote = (() => {
-    if (!build || build.state !== 'building') return null
-    const headline = formatPhaseHeadline(build)
-    const counts = formatPhaseCounts(build)
-    const last = build.last_event || build.activity
-    const heartbeat = formatHeartbeat(build)
+    if (!liveBuild) return null
+    if (liveBuild.state === 'stalled') {
+      return `Build stalled — ${liveBuild.detail ?? 'no recent activity'}`
+    }
+    if (liveBuild.state !== 'building') return null
+    const headline = formatPhaseHeadline(liveBuild)
+    const counts = formatPhaseCounts(liveBuild)
+    const last = liveBuild.last_event || liveBuild.activity
+    const heartbeat = formatHeartbeat(liveBuild, nowMs)
     const bits = [`Coding agent at work — ${headline}`]
     if (counts) bits.push(counts)
     if (last) bits.push(`last: ${last}`)
@@ -109,8 +160,14 @@ export function Platforms({ sessionId }: { sessionId: string }) {
         <p className="dim">What the factory built for you. Download the export and launch it anywhere.</p>
       </header>
       {error && <div className="error-box">{error}</div>}
-      {buildNote && <div className="panel dim">{buildNote}</div>}
-      {!gen ? (
+      {buildNote && (
+        <div className={'panel dim' + (stalled ? ' error-box' : '')} role="status">
+          {buildNote}
+        </div>
+      )}
+      {loading ? (
+        <LoadingSkeleton label="Loading platforms" />
+      ) : !gen ? (
         <div className="panel empty-state">
           <h3>No platform built yet</h3>
           <p className="dim">Go to the Factory Floor and describe what you need. Your build lands here.</p>
@@ -130,13 +187,19 @@ export function Platforms({ sessionId }: { sessionId: string }) {
             <dt>Blueprint</dt>
             <dd>{bp?.product_name ?? '—'}</dd>
             <dt>Engine</dt>
-            <dd>{typeof gen.engine === 'string' ? gen.engine : (build?.state === 'succeeded' ? 'runner' : '—')}</dd>
+            <dd>
+              {typeof gen.engine === 'string'
+                ? gen.engine
+                : liveBuild?.state === 'succeeded'
+                  ? 'runner'
+                  : '—'}
+            </dd>
             <dt>Inputs hash</dt>
             <dd className="mono">{gen.inputs_hash ?? '—'}</dd>
             <dt>Output</dt>
             <dd className="mono">{gen.output_dir ?? '—'}</dd>
           </dl>
-          {build?.state === 'succeeded' && authorship && (
+          {liveBuild?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
                 {formatFinishedAuthorship(authorship) ??
@@ -150,11 +213,17 @@ export function Platforms({ sessionId }: { sessionId: string }) {
                 )}
             </>
           )}
-          <button onClick={download} disabled={downloading || building}>
+          <button onClick={download} disabled={downloading || building || stalled || refreshing}>
             {building ? 'Building…' : downloading ? 'Packing…' : 'Download platform export (.zip)'}
           </button>
-          <button className="ghost" onClick={refresh}>
-            Refresh
+          <button
+            className="ghost"
+            type="button"
+            onClick={() => void refresh()}
+            disabled={refreshing}
+            aria-busy={refreshing || undefined}
+          >
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       )}
@@ -164,12 +233,14 @@ export function Platforms({ sessionId }: { sessionId: string }) {
 
 export function Subscription() {
   const [status, setStatus] = useState<BillingStatus | null>(null)
+  const [loading, setLoading] = useState(true)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const loadStatus = useCallback(() => {
     setError(null)
+    setLoading(true)
     billing
       .status()
       .then(setStatus)
@@ -177,6 +248,7 @@ export function Subscription() {
         setStatus(null)
         setError(e instanceof Error ? e.message : 'failed to load')
       })
+      .finally(() => setLoading(false))
   }, [])
 
   useEffect(loadStatus, [loadStatus])
@@ -241,73 +313,76 @@ export function Subscription() {
           </div>
         </div>
       )}
-      <div className="panel">
-        {status && view ? (
-          <>
-            <dl className="kv">
-              <dt>Plan</dt>
-              <dd className="capitalize">{view.planLabel}</dd>
-              <dt>Status</dt>
-              <dd className="capitalize">{view.statusLabel}</dd>
-              {view.showTrialDays && (
-                <>
-                  <dt>Trial days left</dt>
-                  <dd>{view.trialDaysLeft}</dd>
-                </>
-              )}
-              <dt>Factory access</dt>
-              <dd>{view.accessLabel}</dd>
-            </dl>
-            <div className="plan-cards">
-              {view.currentPlan === 'trial' && (
-                <div className="plan-card highlight" data-plan="trial" aria-current="true">
-                  <p className="plan-current">Current</p>
-                  <h4>Trial</h4>
-                  <p className="dim">Full factory access while you evaluate. No card required.</p>
-                </div>
-              )}
-              <div
-                className={`plan-card${view.currentPlan === 'factory' ? ' highlight' : ''}`}
-                data-plan="factory"
-                aria-current={view.currentPlan === 'factory' ? 'true' : undefined}
-              >
-                {view.currentPlan === 'factory' && <p className="plan-current">Current</p>}
-                <h4>Factory</h4>
-                <p className="dim">
-                  {view.currentPlan === 'factory'
-                    ? 'Deeper builds, more sessions, priority generation.'
-                    : 'Deeper builds, more sessions, priority generation. Upgrade when you are ready.'}
-                </p>
-                {view.currentPlan !== 'factory' && (
-                  <button onClick={upgrade} disabled={busy}>
-                    {busy ? 'Working…' : 'Upgrade'}
-                  </button>
+      {loading ? (
+        <LoadingSkeleton label="Loading subscription" lines={3} />
+      ) : (
+        <div className="panel">
+          {status && view ? (
+            <>
+              <dl className="kv">
+                <dt>Plan</dt>
+                <dd className="capitalize">{view.planLabel}</dd>
+                <dt>Status</dt>
+                <dd className="capitalize">{view.statusLabel}</dd>
+                {view.showTrialDays && (
+                  <>
+                    <dt>Trial days left</dt>
+                    <dd>{view.trialDaysLeft}</dd>
+                  </>
                 )}
+                <dt>Factory access</dt>
+                <dd>{view.accessLabel}</dd>
+              </dl>
+              <div className="plan-cards">
+                {view.currentPlan === 'trial' && (
+                  <div className="plan-card highlight" data-plan="trial" aria-current="true">
+                    <p className="plan-current">Current</p>
+                    <h4>Trial</h4>
+                    <p className="dim">Full factory access while you evaluate. No card required.</p>
+                  </div>
+                )}
+                <div
+                  className={`plan-card${view.currentPlan === 'factory' ? ' highlight' : ''}`}
+                  data-plan="factory"
+                  aria-current={view.currentPlan === 'factory' ? 'true' : undefined}
+                >
+                  {view.currentPlan === 'factory' && <p className="plan-current">Current</p>}
+                  <h4>Factory</h4>
+                  <p className="dim">
+                    Deeper builds, more sessions, priority generation.
+                    {view.currentPlan !== 'factory' ? ' Upgrade when you are ready.' : ''}
+                  </p>
+                  {view.currentPlan !== 'factory' && (
+                    <button onClick={upgrade} disabled={busy}>
+                      {busy ? 'Working…' : 'Upgrade'}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-            {subStatus === 'active' && (
-              <button className="ghost" onClick={manage} disabled={busy}>
-                Manage billing
-              </button>
-            )}
-            {status.checkout_available === false && (
-              <p className="dim note">
-                Payments are not connected on this deployment yet — the factory owner
-                links the Stripe account. Upgrade still says so instead of opening a
-                blank checkout.{" "}
-                {status.enforcement
-                  ? 'Billing enforcement is on for this deployment, so sessions and factory runs stop once a trial ends — until the owner connects Stripe or updates your subscription.'
-                  : 'Your current access is unaffected.'}
-              </p>
-            )}
-          </>
-        ) : error ? (
-          <p className="dim">Could not load subscription status.</p>
-        ) : (
-          <p className="dim">Loading…</p>
-        )}
-        {note && <p className="dim note">{note}</p>}
-      </div>
+              {subStatus === 'active' && (
+                <button className="ghost" onClick={manage} disabled={busy}>
+                  Manage billing
+                </button>
+              )}
+              {status.checkout_available === false && (
+                <p className="dim note">
+                  Payments are not connected on this deployment yet — the factory owner
+                  links the Stripe account. Upgrade still says so instead of opening a
+                  blank checkout.{" "}
+                  {status.enforcement
+                    ? 'Billing enforcement is on for this deployment, so sessions and factory runs stop once a trial ends — until the owner connects Stripe or updates your subscription.'
+                    : 'Your current access is unaffected.'}
+                </p>
+              )}
+            </>
+          ) : error ? (
+            <p className="dim">Could not load subscription status.</p>
+          ) : (
+            <p className="dim">Could not load subscription status.</p>
+          )}
+          {note && <p className="dim note">{note}</p>}
+        </div>
+      )}
     </div>
   )
 }

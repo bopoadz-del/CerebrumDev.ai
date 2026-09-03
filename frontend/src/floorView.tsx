@@ -3,7 +3,9 @@ import {
   awaitBuild,
   chatEventText,
   chatStream,
+  downloadProductPackage,
   product,
+  watchBuildStatus,
   type BuildStatus,
   type ChatEvent,
   type ProductDesign,
@@ -14,6 +16,8 @@ import {
   formatPhaseCounts,
   formatPhaseHeadline,
   phaseBarFraction,
+  stampBuildObservation,
+  withClientStall,
 } from './buildProgress'
 
 interface Capability {
@@ -176,10 +180,10 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
   )
 }
 
-function CoderProgress({ build }: { build: BuildStatus }) {
+function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) {
   const headline = formatPhaseHeadline(build)
   const counts = formatPhaseCounts(build)
-  const heartbeat = formatHeartbeat(build)
+  const heartbeat = formatHeartbeat(build, nowMs)
   const last = build.last_event || build.activity
   const next = build.next_phase?.id
   const fraction = phaseBarFraction(build)
@@ -297,6 +301,10 @@ export function Floor({
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
   const [coderActive, setCoderActive] = useState(false)
+  const [watchEpoch, setWatchEpoch] = useState(0)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -332,18 +340,25 @@ export function Floor({
 
   useEffect(() => {
     if (!coderActive) return
-    let cancelled = false
-    void awaitBuild(sessionId, (s) => {
-      if (!cancelled) setCoderBuild(s)
-    })
-      .then((s) => {
-        if (!cancelled) setCoderBuild(s)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [coderActive, sessionId])
+    const ac = new AbortController()
+    void watchBuildStatus(
+      sessionId,
+      (s) => {
+        if (!ac.signal.aborted) {
+          setCoderBuild((prev) => stampBuildObservation(s, prev))
+        }
+      },
+      { signal: ac.signal },
+    ).catch(() => {})
+    return () => ac.abort()
+  }, [coderActive, sessionId, watchEpoch])
+
+  const liveCoderBuild = withClientStall(coderBuild, nowMs)
+  useEffect(() => {
+    if (liveCoderBuild?.state !== 'building') return
+    const id = window.setInterval(() => setNowMs(Date.now()), 5000)
+    return () => window.clearInterval(id)
+  }, [liveCoderBuild?.state])
 
   const sendCore = useCallback(
     async (message: string) => {
@@ -386,7 +401,15 @@ export function Floor({
             const summary = d?.summary ?? 'Platform generated.'
             const engine = d?.generation?.engine
             const triggeredBy = d?.triggered_by ?? d?.generation?.triggered_by
-            if (engine === 'runner') setCoderActive(true)
+            if (engine === 'runner') {
+              // Clear a prior FINISHED snapshot immediately so a pilot reopen
+              // cannot keep "Download ready" pinned while Platforms is Building…
+              setCoderBuild((prev) =>
+                stampBuildObservation({ state: 'building', detail: 'build in progress' }, prev),
+              )
+              setCoderActive(true)
+              setWatchEpoch((n) => n + 1)
+            }
             setMsgs((m) => [
               ...m.slice(0, -1),
               { role: 'factory', text: summary, card: 'generation', engine, triggeredBy },
@@ -451,11 +474,42 @@ export function Floor({
     [accessPaused, busy, sendCore],
   )
 
+  async function download() {
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      const status =
+        liveCoderBuild?.state === 'succeeded'
+          ? liveCoderBuild
+          : await awaitBuild(sessionId, (s) =>
+              setCoderBuild((prev) => stampBuildObservation(s, prev)),
+            )
+      if (status.state === 'failed' || status.state === 'stalled') {
+        setDownloadError(
+          `The build did not pass its gates, so it will not be shipped: ${status.detail ?? 'unknown reason'}`,
+        )
+        return
+      }
+      await downloadProductPackage(sessionId)
+    } catch (e) {
+      setDownloadError(e instanceof Error ? e.message : 'export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   const coderBuilding =
     coderActive &&
-    coderBuild?.state !== 'succeeded' &&
-    coderBuild?.state !== 'failed' &&
-    coderBuild?.state !== 'stalled'
+    liveCoderBuild?.state !== 'succeeded' &&
+    liveCoderBuild?.state !== 'failed' &&
+    liveCoderBuild?.state !== 'stalled'
+  const coderSucceeded = liveCoderBuild?.state === 'succeeded'
+  const latestGenerationIdx = (() => {
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      if (msgs[i].card === 'generation') return i
+    }
+    return -1
+  })()
 
   return (
     <div className="floor">
@@ -509,7 +563,11 @@ export function Floor({
                       chat LLM
                     </span>
                   )}
-                  <button onClick={goPlatforms}>Open Your Platforms</button>
+                  {i === latestGenerationIdx && (
+                    <button type="button" onClick={goPlatforms}>
+                      Open Your Platforms
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -518,19 +576,37 @@ export function Floor({
         <div ref={bottomRef} />
       </div>
       {coderActive && (
-        <div className={'coder-takeover' + (coderBuild?.stale ? ' stale' : '')} role="status">
+        <div
+          className={
+            'coder-takeover' +
+            (liveCoderBuild?.stale || liveCoderBuild?.state === 'stalled' ? ' stale' : '')
+          }
+          role="status"
+        >
           <h3>
-            {coderBuild?.state === 'succeeded' ? 'Coding agent finished' : 'Coding agent has taken over'}
+            {liveCoderBuild?.state === 'succeeded'
+              ? 'Coding agent finished'
+              : liveCoderBuild?.state === 'stalled'
+                ? 'Coding agent stalled'
+                : 'Coding agent has taken over'}
           </h3>
-          <KernelStrip build={coderBuild} />
-          {coderBuild && coderBuild.state === 'building' ? (
-            <CoderProgress build={coderBuild} />
+          <KernelStrip build={liveCoderBuild} />
+          {liveCoderBuild && liveCoderBuild.state === 'building' ? (
+            <CoderProgress build={liveCoderBuild} nowMs={nowMs} />
           ) : (
             <p>
-              {coderTakeoverNote(coderBuild) ??
+              {coderTakeoverNote(liveCoderBuild) ??
                 'The feature list is approved. The coding agent is starting WRITER now.'}
             </p>
           )}
+          {coderSucceeded && (
+            <div className="card-actions">
+              <button type="button" onClick={() => void download()} disabled={downloading}>
+                {downloading ? 'Packing…' : 'Download platform export (.zip)'}
+              </button>
+            </div>
+          )}
+          {downloadError && <div className="error-box">{downloadError}</div>}
         </div>
       )}
       <form
