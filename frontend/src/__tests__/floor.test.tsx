@@ -165,6 +165,34 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText(/The architect LLM did not draft this blueprint/)).toBeInTheDocument()
   })
 
+  it('labels a golden lettings draft as a golden blueprint, not template fallback', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'blueprint',
+        data: {
+          summary: 'Drafted from the golden residential-lettings blueprint.',
+          blueprint: {
+            product_name: 'Residential Lettings Platform',
+            vertical: 'residential_lettings',
+            summary: 'Factory golden for a residential-lettings platform.',
+            drafting_mode: 'golden_lettings',
+            capabilities: [
+              { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
+            ],
+          },
+        },
+      })
+    })
+    render(<Floor sessionId="sess_lettings" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'Build a platform for residential lettings' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText(/golden blueprint/)).toBeInTheDocument()
+    expect(screen.queryByText(/template fallback — no LLM/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/The architect LLM did not draft this blueprint/)).not.toBeInTheDocument()
+  })
+
   it('restores the feature list and coder takeover from the session product', async () => {
     getMock.mockResolvedValue({
       blueprint: LLM_BLUEPRINT,

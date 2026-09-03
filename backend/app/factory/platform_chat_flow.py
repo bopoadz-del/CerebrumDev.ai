@@ -406,12 +406,18 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
 
     capabilities = [c.id for c in bp.capabilities]
     blocks = sorted({b for c in bp.capabilities for b in c.block_ids})
-    source = "golden_steward" if bp.product_id == "cerebrum-steward" else "drafted"
+    if bp.product_id == "cerebrum-steward":
+        source = "golden_steward"
+    elif bp.drafting_mode == "golden_lettings":
+        source = "golden_lettings"
+    else:
+        source = "drafted"
     # Say who drafted it. A dead LLM key must not look identical to a
     # working architect.
     mode_labels = {
         "architect_llm": "Drafted by the architect LLM.",
         "golden_steward": "Drafted from the golden steward blueprint.",
+        "golden_lettings": "Drafted from the golden residential-lettings blueprint.",
         "keyword_fallback": "Drafted by deterministic templates (no LLM).",
     }
     mode_line = mode_labels.get(bp.drafting_mode or "", "")

@@ -400,6 +400,11 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   color: #7dd3a0;
   border-color: #2f5c43;
 }
+.bp-drafting-mode.golden_steward,
+.bp-drafting-mode.golden_lettings {
+  color: #9ec5e8;
+  border-color: #2f4c6a;
+}
 .coder-takeover {
   border: 1px solid #2f5c43;
   background: #102018;

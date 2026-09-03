@@ -339,9 +339,13 @@ def draft_product(
             "ok": True,
             "blueprint": state.product_design.blueprint,
             "yaml": blueprint_to_yaml(bp),
-            "source": "golden_steward"
-            if bp.product_id == "cerebrum-steward"
-            else "drafted",
+            "source": (
+                "golden_steward"
+                if bp.product_id == "cerebrum-steward"
+                else "golden_lettings"
+                if bp.drafting_mode == "golden_lettings"
+                else "drafted"
+            ),
         }
     except Exception as exc:  # noqa: BLE001
         _raise_product_error(session_id, state, exc)
