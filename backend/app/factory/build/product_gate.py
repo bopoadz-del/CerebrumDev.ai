@@ -92,17 +92,31 @@ def _value(cls, name):
     if allowed:
         return allowed[0]
     kind = _ann(cls, name)
-    if kind in ("int", "float"):
+    kind_l = kind.lower().replace("datetime.", "").replace(" ", "")
+    if kind in ("int", "float") or kind_l in ("int", "float"):
         low, high = con.get("min"), con.get("max")
         if low is not None:
             return low
         if high is not None:
             return high if high < 1 else 1
         return 1
-    if kind == "bool":
+    if kind == "bool" or kind_l == "bool":
         return False
     if "email" in name.lower():
         return "sample@example.com"
+    fmt = str(con.get("format") or "").lower().replace("-", "")
+    n = name.lower()
+    if (
+        kind_l in ("datetime", "timestamp")
+        or fmt in ("datetime", "timestamp", "iso8601")
+        or n.endswith("_at")
+        or n.endswith("_datetime")
+    ):
+        return "2026-09-03T10:00:00"
+    if kind_l == "date" or fmt == "date" or n.endswith("_date"):
+        return "2026-09-03"
+    if kind_l == "time" or fmt == "time" or n.endswith("_time") or n == "time":
+        return "10:00:00"
     return "sample"
 
 

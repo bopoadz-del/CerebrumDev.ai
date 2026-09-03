@@ -258,13 +258,35 @@ def test_the_probe_payload_matches_the_writer_probe_s():
         return ns["_payload"]
 
     class Model:
-        FIELDS = ["name", "count", "active", "contact_email", "status"]
-        CONSTRAINTS = {"status": {"allowed_values": ["draft", "live"]},
-                       "count": {"min": 3}}
-        __annotations__ = {"name": "str", "count": "int", "active": "bool",
-                           "contact_email": "str", "status": "str"}
+        FIELDS = [
+            "name",
+            "count",
+            "active",
+            "contact_email",
+            "status",
+            "scheduled_time",
+            "duration_minutes",
+        ]
+        CONSTRAINTS = {
+            "status": {"allowed_values": ["draft", "live"]},
+            "count": {"min": 3},
+            "scheduled_time": {"format": "time"},
+        }
+        __annotations__ = {
+            "name": "str",
+            "count": "int",
+            "active": "bool",
+            "contact_email": "str",
+            "status": "str",
+            "scheduled_time": "str",
+            "duration_minutes": "int",
+        }
 
-    assert lift_payload(ROUND_TRIP_PROBE)(Model) == lift_payload(writer_src)(Model)
+    writer_payload = lift_payload(writer_src)(Model)
+    assert lift_payload(ROUND_TRIP_PROBE)(Model) == writer_payload
+    assert writer_payload["scheduled_time"] == "10:00:00"
+    assert writer_payload["scheduled_time"] != "sample"
+    assert writer_payload["duration_minutes"] == 1
 
 
 def test_a_returned_record_counts_only_when_it_carries_a_supplied_value():

@@ -722,6 +722,22 @@ enforced later, so a restriction that matters must appear in this spec.
 """
 
 _ALLOWED_FIELD_TYPES = {"str", "int", "float", "bool"}
+#: LLM/SQL spellings that are ISO-text columns, not dropped fields.
+#: Stored as str with a format hint so the probe/emitter sample a real time.
+_TEMPORAL_TYPE_ALIASES = {
+    "datetime": "datetime",
+    "date": "date",
+    "time": "time",
+    "timestamp": "datetime",
+}
+#: SQL / verbose spellings the model often emits instead of str|int|float|bool.
+_SQL_TYPE_ALIASES = {
+    "text": "str",
+    "string": "str",
+    "integer": "int",
+    "boolean": "bool",
+    "real": "float",
+}
 #: Guard rails on agent-declared vocabularies. A field with one allowed value
 #: is a constant, not an enum; an unbounded list is usually a hallucinated
 #: free-text field.
@@ -817,16 +833,22 @@ def generate_model_spec(
         ftype = str(item.get("type") or "str").strip()
         if not name.isidentifier() or name in {"id", "self"} or name.startswith("_"):
             continue
+        format_hint = _TEMPORAL_TYPE_ALIASES.get(ftype.lower())
+        if format_hint:
+            ftype = "str"
+        else:
+            ftype = _SQL_TYPE_ALIASES.get(ftype.lower(), ftype)
         if ftype not in _ALLOWED_FIELD_TYPES:
             continue
-        fields.append(
-            {
-                "name": name,
-                "type": ftype,
-                "required": bool(item.get("required", True)),
-                **_clean_constraints(item, ftype),
-            }
-        )
+        field = {
+            "name": name,
+            "type": ftype,
+            "required": bool(item.get("required", True)),
+            **_clean_constraints(item, ftype),
+        }
+        if format_hint:
+            field["format"] = format_hint
+        fields.append(field)
 
     # Dedupe, keeping first occurrence, and cap the width.
     seen, unique = set(), []

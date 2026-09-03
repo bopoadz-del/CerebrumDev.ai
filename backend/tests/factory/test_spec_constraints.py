@@ -24,11 +24,12 @@ from app.factory.blueprint import load_blueprint
 from app.factory.build.roles import (
     _constraints_of,
     _field_default,
+    _render_models,
     _sample_payload,
     _sample_value,
 )
 from app.factory.build.runner import RoleRunner
-from app.factory.coder import _clean_constraints, describe_fields
+from app.factory.coder import _clean_constraints, describe_fields, generate_model_spec
 
 ROOT = Path(__file__).resolve().parents[3]
 FIELD_OPS = ROOT / "blueprints/examples/field_ops.yaml"
@@ -55,6 +56,19 @@ def test_an_email_field_samples_an_address_not_the_word_sample():
     assert "@" in _sample_value({"name": "guest_email", "type": "str"})
     assert "@" in _sample_value({"name": "email", "type": "str", "format": "email"})
     assert _sample_value({"name": "tasting_note", "type": "str"}) == "sample"
+
+
+def test_appointment_time_fields_sample_iso_not_the_word_sample():
+    """Live veterinary-care: scheduled_time='sample' is not a time."""
+    assert _sample_value({"name": "scheduled_time", "type": "str"}) == "10:00:00"
+    assert _sample_value({"name": "appointment_date", "type": "str"}) == "2026-09-03"
+    assert _sample_value({"name": "created_at", "type": "str"}) == "2026-09-03T10:00:00"
+    assert _sample_value({"name": "visit", "type": "datetime"}) == "2026-09-03T10:00:00"
+    assert _sample_value({"name": "when", "type": "str", "format": "datetime"}) == (
+        "2026-09-03T10:00:00"
+    )
+    assert _sample_value({"name": "service_type", "type": "str"}) == "sample"
+    assert _sample_value({"name": "duration_minutes", "type": "int", "min": 1}) == 1
 
 
 def test_coder_route_that_saves_the_handle_envelope_is_rewritten_to_payload():
@@ -100,9 +114,65 @@ def test_the_dataclass_default_is_itself_valid():
     assert _field_default({"name": "s", "type": "str", "allowed_values": ["a", "b"]}) == "'a'"
     assert _field_default({"name": "n", "type": "int", "min": 3}) == "3"
     assert _field_default({"name": "n", "type": "int"}) == "0"
+    assert _field_default({"name": "scheduled_time", "type": "str"}) == "'10:00:00'"
+
+
+def test_datetime_typed_field_renders_as_compilable_str():
+    """LLM type=datetime must not emit `scheduled_time: datetime` (NameError)."""
+    spec = {
+        "end_to_end_appointment_workflow": {
+            "entity": "appointment",
+            "fields": [
+                {"name": "scheduled_time", "type": "datetime"},
+                {"name": "duration_minutes", "type": "integer"},
+                {"name": "status", "type": "TEXT"},
+                {"name": "service_type", "type": "str"},
+            ],
+        }
+    }
+    src = _render_models(spec)
+    assert "scheduled_time: str =" in src
+    assert "scheduled_time: datetime" not in src
+    assert "duration_minutes: int =" in src
+    ns: dict = {}
+    exec(compile(src, "<models>", "exec"), ns)
+    cls = ns["MODELS"]["end_to_end_appointment_workflow"]
+    row = cls()
+    assert row.scheduled_time == "2026-09-03T10:00:00"
 
 
 # -- the spec validator ---------------------------------------------------
+
+
+def test_coder_keeps_datetime_fields_as_iso_text(monkeypatch):
+    """A new-domain LLM spec that says type=datetime must not drop the field."""
+    from app.factory import coder as coder_mod
+
+    monkeypatch.setattr(
+        coder_mod,
+        "_llm_code_call",
+        lambda _messages: (
+            '{"entity": "appointment", "fields": ['
+            '{"name": "scheduled_time", "type": "datetime", "required": true},'
+            '{"name": "duration_minutes", "type": "int", "required": true, "min": 1},'
+            '{"name": "status", "type": "str", "required": true},'
+            '{"name": "service_type", "type": "TEXT", "required": true}'
+            "]}",
+            "stub",
+        ),
+    )
+    spec = generate_model_spec(
+        capability_id="end_to_end_appointment_workflow",
+        description="book a clinic appointment",
+        product_name="Manchester Vet Clinic",
+        vertical="veterinary-care",
+    )
+    by_name = {f["name"]: f for f in spec["fields"]}
+    assert "scheduled_time" in by_name
+    assert by_name["scheduled_time"]["type"] == "str"
+    assert by_name["scheduled_time"]["format"] == "datetime"
+    assert by_name["duration_minutes"]["type"] == "int"
+    assert by_name["service_type"]["type"] == "str"
 
 
 def test_a_vocabulary_is_accepted_and_deduped():
