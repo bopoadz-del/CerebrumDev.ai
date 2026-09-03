@@ -70,9 +70,9 @@ export function levelGradeLabel(level: LevelGradeName, sourced = true): string {
   }
 }
 
-/** True only for a Store-green / founding zip — never CODE_GREEN. */
+/** True only for a Store-green / founding zip — never CODE_GREEN or in-flight. */
 export function isPilotZipReady(build: BuildStatus | null | undefined): boolean {
-  if (!build || build.pilot_ready !== true) return false
+  if (!build || build.state !== 'succeeded' || build.pilot_ready !== true) return false
   const level = honestLevel(build)
   return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
 }
@@ -298,7 +298,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   title?: string
 } {
   if (!build || build.state === 'building' || build.state === 'not_started') {
-    return { label: 'Building…', disabled: true, ghost: false }
+    return { label: 'Building…', disabled: true, ghost: true }
   }
   if (build.state === 'stalled') {
     return {
@@ -327,7 +327,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   if (build.state === 'succeeded' && isPilotZipReady(build)) {
     return { label: 'Download platform export (.zip)', disabled: false, ghost: false }
   }
-  return { label: 'Building…', disabled: true, ghost: false }
+  return { label: 'Building…', disabled: true, ghost: true }
 }
 
 export function phaseBarFraction(build: BuildStatus): number | null {

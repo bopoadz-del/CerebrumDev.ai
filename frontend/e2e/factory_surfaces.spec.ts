@@ -221,6 +221,8 @@ test('Floor New session starts a clean workspace after a failed run', async ({ p
   await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible()
   await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
+  await expect(page.getByText(/taken over the floor/i)).toHaveCount(0)
+  await expect(page.locator('.bp-drafting-mode', { hasText: 'coding agent' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'New session' })).toBeEnabled()
   await page.getByRole('button', { name: 'Start a new product' }).click()
