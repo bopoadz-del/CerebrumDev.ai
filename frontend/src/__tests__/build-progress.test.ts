@@ -239,6 +239,29 @@ describe('build progress copy', () => {
       disabled: false,
       ghost: false,
     })
+    expect(exportAffordance({ state: 'building' })).toEqual({
+      label: 'Building…',
+      disabled: true,
+      ghost: true,
+    })
+    expect(
+      exportAffordance({
+        state: 'building',
+        pilot_ready: true,
+        level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
+      }),
+    ).toEqual({
+      label: 'Building…',
+      disabled: true,
+      ghost: true,
+    })
+    expect(
+      isPilotZipReady({
+        state: 'building',
+        pilot_ready: true,
+        level_grade: { level: 'STORE_GREEN', founding_customer_ready: false },
+      }),
+    ).toBe(false)
   })
 
   it('honestLevel fail-closes Store-green / founding when pilot_ready is false', () => {

@@ -100,7 +100,41 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByText('runner')).toBeInTheDocument()
     expect(await screen.findByText(/Coding agent at work — WRITER 3\/5/)).toBeInTheDocument()
     expect(screen.getByText(/2\/4 handlers/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Building…' })).toBeDisabled()
+    const building = screen.getByRole('button', { name: 'Building…' })
+    expect(building).toBeDisabled()
+    expect(building).toHaveClass('ghost')
+  })
+
+  it('does not gold-label founding while the coding agent is still at COLLECTOR', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Northbridge Lettings Desk', vertical: 'property-management' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        cycle: 'code',
+        pilot_ready: false,
+        current_phase: { id: 'COLLECTOR', label: 'Binding surveyor' },
+        phase_index: 1,
+        phase_total: 5,
+        last_event: 'collecting capabilities',
+        level_grade: {
+          level: 'STORE_GREEN',
+          founding_customer_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByText(/Coding agent at work — COLLECTOR 1\/5/)).toBeInTheDocument()
+    expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('platforms-pilot-ready-pill')).not.toBeInTheDocument()
+    const building = screen.getByRole('button', { name: 'Building…' })
+    expect(building).toBeDisabled()
+    expect(building).toHaveClass('ghost')
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
   })
 
   it('refresh shows Refreshing… then re-fetches product + build-status', async () => {
