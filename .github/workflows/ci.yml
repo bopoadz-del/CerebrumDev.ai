@@ -13,6 +13,27 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fail-closed twin for the #244 class: a requirements.txt / package.json
+  # bump with no lock delta. Automerge arms `gh pr merge --auto` and does
+  # not inspect lockfiles — a red CI check is what blocks the merge.
+  # Lock-only and manifest+lock are OK. This job is not continue-on-error.
+  lockfile-consistency:
+    name: Lockfile consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Fail if a manifest moved without its lockfile
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+          python3 scripts/check_lockfile_consistency.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head HEAD
+
   backend:
     name: Backend (pytest)
     runs-on: ubuntu-latest
@@ -24,6 +45,18 @@ jobs:
       ENV: test
     steps:
       - uses: actions/checkout@v7
+
+      # Same twin, on the already-required "Backend (pytest)" check, so a
+      # newly named job is not the only gate while branch protection catches up.
+      - name: Fail if a manifest moved without its lockfile
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename' \
+            | python3 scripts/check_lockfile_consistency.py --stdin
 
       - uses: actions/setup-python@v7
         with:
