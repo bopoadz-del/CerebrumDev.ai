@@ -77,6 +77,11 @@ def _session_state_summary(state) -> str:
             lines.append(f"Output dir: {gen.get('output_dir')}.")
         if platform_chat_flow.is_generation_complete(state):
             lines.append("Last coding run finished successfully.")
+        elif platform_chat_flow.is_generation_terminal_failure(state):
+            lines.append(
+                "Last coding run FAILED (rework exhausted or gates still red). "
+                "A new brief starts a new product; continue starts a fresh workspace."
+            )
         elif platform_chat_flow.is_generation_resumable(state):
             lines.append(
                 "Coding run is incomplete and can be resumed with continue/resume."
@@ -265,10 +270,12 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             platform_chat_flow.has_pending_blueprint(state)
             or platform_chat_flow.is_generation_resumable(state)
             or platform_chat_flow.is_generation_complete(state)
+            or platform_chat_flow.is_generation_terminal_failure(state)
         ):
             if (
                 platform_chat_flow.has_pending_blueprint(state)
                 or platform_chat_flow.is_generation_resumable(state)
+                or platform_chat_flow.is_generation_terminal_failure(state)
                 or (
                     platform_chat_flow.is_generation_complete(state)
                     and not platform_chat_flow.is_pilot_ready(state)
@@ -295,6 +302,25 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         # continue/resume is handled above so a dead worker thread can restart.
         if platform_chat_flow.has_running_build(state):
             result = platform_chat_flow.running_build_reply(state)
+            state.chat_history.append({"role": "assistant", "content": result["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            async for ev in _yield_platform_result(result):
+                yield ev
+            return
+
+        # A terminal RUN_FAILED / rework-exhausted workspace must not swallow
+        # a new brief as a same-hash resume. Draft a new product instead;
+        # continue/resume (handled above) starts a fresh workspace.
+        if (
+            platform_chat_flow.is_generation_terminal_failure(state)
+            and platform_chat_flow.should_handle_platform_message(user_message)
+            and not platform_chat_flow.is_resume_request(user_message)
+            and not platform_chat_flow.is_pilot_request(user_message)
+            and not platform_chat_flow.is_approval(user_message)
+            and not platform_chat_flow.has_pending_blueprint(state)
+        ):
+            result = platform_chat_flow.draft_from_chat(state, user_message)
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
@@ -546,6 +572,7 @@ def _chat_starts_generation(state: SessionState, message: str) -> bool:
         platform_chat_flow.has_pending_blueprint(state)
         or platform_chat_flow.is_generation_resumable(state)
         or platform_chat_flow.is_generation_complete(state)
+        or platform_chat_flow.is_generation_terminal_failure(state)
     ):
         return True
     return False

@@ -279,10 +279,20 @@ export default function App() {
       <main>
         {view === 'floor' && (
           <Floor
+            key={sessionId}
             sessionId={sessionId}
             goPlatforms={() => go('platforms')}
             accessPaused={accessPaused}
             notice={alreadySignedInNotice ? 'Already signed in.' : null}
+            onNewSession={
+              accessPaused
+                ? undefined
+                : async () => {
+                    const created = await sessions.create()
+                    setSessionId(created.session_id)
+                    go('floor')
+                  }
+            }
           />
         )}
         {view === 'platforms' && (

@@ -309,11 +309,13 @@ export function Floor({
   goPlatforms,
   accessPaused = false,
   notice = null,
+  onNewSession,
 }: {
   sessionId: string
   goPlatforms: () => void
   accessPaused?: boolean
   notice?: string | null
+  onNewSession?: () => void | Promise<void>
 }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([
     {
@@ -328,6 +330,8 @@ export function Floor({
   const [watchEpoch, setWatchEpoch] = useState(0)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [newSessionBusy, setNewSessionBusy] = useState(false)
+  const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const bottomRef = useRef<HTMLDivElement>(null)
 
@@ -498,6 +502,19 @@ export function Floor({
     [accessPaused, busy, sendCore],
   )
 
+  async function startNewSession() {
+    if (!onNewSession || newSessionBusy || accessPaused) return
+    setNewSessionBusy(true)
+    setNewSessionError(null)
+    try {
+      await onNewSession()
+    } catch (e) {
+      setNewSessionError(e instanceof Error ? e.message : 'Could not start a new session')
+    } finally {
+      setNewSessionBusy(false)
+    }
+  }
+
   async function download() {
     setDownloading(true)
     setDownloadError(null)
@@ -540,7 +557,20 @@ export function Floor({
   return (
     <div className="floor">
       <header className="page-head">
-        <h2>Factory Floor</h2>
+        <div className="page-head-row">
+          <h2>Factory Floor</h2>
+          {onNewSession && (
+            <button
+              type="button"
+              className="ghost"
+              data-testid="floor-new-session"
+              disabled={busy || newSessionBusy || accessPaused}
+              onClick={() => void startNewSession()}
+            >
+              {newSessionBusy ? 'Starting…' : 'New session'}
+            </button>
+          )}
+        </div>
         {notice && (
           <div className="notice-box already-signed-in" role="status">
             {notice}
@@ -662,9 +692,21 @@ export function Floor({
               <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
                 Pilot suite failed
               </span>
+              {onNewSession && (
+                <button
+                  type="button"
+                  className="ghost"
+                  data-testid="floor-new-product"
+                  disabled={busy || newSessionBusy || accessPaused}
+                  onClick={() => void startNewSession()}
+                >
+                  Start a new product
+                </button>
+              )}
             </div>
           )}
           {downloadError && <div className="error-box">{downloadError}</div>}
+          {newSessionError && <div className="error-box">{newSessionError}</div>}
         </div>
       )}
       <form

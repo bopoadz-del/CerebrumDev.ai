@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import threading
 from pathlib import Path
@@ -141,6 +142,30 @@ def _event_age_s(ts: str, fallback_s: float) -> float:
 
 def _ledger_path(output_dir: Path | str) -> Path:
     return Path(output_dir) / "build_ledger.jsonl"
+
+
+_RUN_SUFFIX_RE = re.compile(r"__run(\d+)$")
+
+
+def next_fresh_output(requested: Path | str) -> Path:
+    """Sibling workspace that does not reuse a terminal-failed ledger.
+
+    ``sessions/{id}/{product_id}`` is the first run. After RUN_FAILED the
+    same path would resume a dead ledger (exhausted rework, TESTER still
+    red) and the Floor would stay stopped. ``{product_id}__run2`` is a
+    new auto-pilot cycle with a reset budget.
+    """
+    requested = Path(requested)
+    parent = requested.parent
+    stem = _RUN_SUFFIX_RE.sub("", requested.name)
+    n = 1
+    while True:
+        candidate = parent / (stem if n == 1 else f"{stem}__run{n}")
+        if not _ledger_path(candidate).is_file():
+            return candidate
+        n += 1
+        if n > 10_000:
+            return parent / f"{stem}__run{n}"
 
 
 def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
@@ -504,6 +529,7 @@ def start_runner_build(
     # first ledger write. The runner sees an existing ledger with a matching
     # inputs_hash and resumes into it rather than starting a second run.
     ledger = BuildLedger(_ledger_path(out))
+    fresh_workspace = False
     if ledger.exists():
         status = build_status(out)
         if status.get("state") == "building":
@@ -517,6 +543,20 @@ def start_runner_build(
                 "cycle": resolved,
                 "already_running": True,
             }
+        if status.get("state") == "failed":
+            # A terminal RUN_FAILED / rework-exhausted ledger is not a
+            # resume source. Same-hash generate would otherwise attach to
+            # the dead run and the Floor would stay CODING AGENT STOPPED.
+            fresh = next_fresh_output(out)
+            logger.info(
+                "terminal ledger at %s; starting fresh workspace at %s",
+                out,
+                fresh,
+            )
+            out = fresh
+            out.mkdir(parents=True, exist_ok=True)
+            ledger = BuildLedger(_ledger_path(out))
+            fresh_workspace = True
 
     if not ledger.exists():
         ledger.start_run(
@@ -543,4 +583,5 @@ def start_runner_build(
         "build": build_status(out),
         "cycle": resolved,
         "already_running": False,
+        "fresh_workspace": fresh_workspace,
     }

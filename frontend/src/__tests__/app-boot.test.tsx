@@ -251,6 +251,22 @@ describe('App boot', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
     expect(screen.getByPlaceholderText('Factory access is paused')).toBeDisabled()
     expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument()
+  })
+
+  it('shows New session on Floor and switches to the created session', async () => {
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    createMock.mockResolvedValue({ session_id: 'sess_fresh' })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'New session' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    expect(await screen.findByText(/session sess_fresh/)).toBeInTheDocument()
   })
 
   it('signed-in visit to /login stays on Floor with an already-signed-in notice', async () => {

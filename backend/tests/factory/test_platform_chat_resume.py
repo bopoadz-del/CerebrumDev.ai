@@ -370,21 +370,22 @@ def test_pilot_request_positive():
     assert not platform_chat_flow.is_pilot_request("build me a hotel platform")
 
 
-def test_resume_after_failed_auto_pilot_stays_on_pilot_cycle(tmp_path, monkeypatch):
-    """A failed Store-green cycle must not resume as a fresh code pass."""
+def test_interrupted_pilot_without_terminal_still_resumes_as_pilot(tmp_path, monkeypatch):
+    """An open (non-terminal) Store-green cycle still resumes as pilot."""
     state = _state_with_approved_run(tmp_path, succeeded=True)
     out = Path(state.product_design.generation["output_dir"])
     ledger = BuildLedger(out / "build_ledger.jsonl")
     ledger.open_pilot_cycle()
     ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
-    ledger.append(EventKind.GATE_FAILED, role=BuildRole.TESTER, detail="pilot red")
-    ledger.append(EventKind.RUN_FAILED, detail="pilot TESTER red")
 
     assert platform_chat_flow._resume_cycle(state) == "pilot"
+    assert platform_chat_flow.is_generation_resumable(state)
+    assert not platform_chat_flow.is_generation_terminal_failure(state)
     captured = {}
 
     def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
         captured["cycle"] = cycle
+        captured["out"] = str(output_dir)
         return {
             "engine": "runner",
             "output_dir": str(output_dir),
@@ -397,4 +398,7 @@ def test_resume_after_failed_auto_pilot_stays_on_pilot_cycle(tmp_path, monkeypat
     monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
     result = platform_chat_flow.resume_generation(state)
     assert captured["cycle"] == "pilot"
+    assert captured["out"] == str(out)
     assert result.get("already_complete") is not True
+    assert result.get("resumed") is True
+    assert result.get("fresh") is not True
