@@ -28,6 +28,7 @@ import ast
 import json
 import logging
 import os
+import time as _wall_time
 from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
@@ -262,7 +263,11 @@ def _anthropic_text(data: Dict[str, Any]) -> str:
     return text
 
 
-def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
+def _llm_code_call(
+    messages: List[Dict[str, str]],
+    *,
+    deadline_mono: Optional[float] = None,
+) -> tuple[str, str]:
     """Text completion against the factory LLM.
 
     Returns ``(text, model_used)`` -- the model that ACTUALLY answered, not
@@ -272,8 +277,15 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     stamped with the primary's name: provenance that names the wrong author
     is worse than none, because it is trusted.
 
+    ``deadline_mono`` is a ``time.monotonic()`` instant shared across
+    fallback legs (and the validation retry). Without it, three 150s
+    legs plus a second ``_llm_code_call`` can outrun the Floor's
+    ``attempt_wall_s()`` (480s live) while one calling-NOTE is in flight.
+
     Raises CoderError on failure.
     """
+    if deadline_mono is None:
+        deadline_mono = _wall_time.monotonic() + _attempt_wall_s()
     from app.core.llm_config import get_factory_fallback_leg
 
     from .product_architect import get_factory_llm_config
@@ -340,6 +352,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                 headers=headers,
                 timeout=_call_timeout_s(),
                 post=httpx.post,
+                deadline_mono=deadline_mono,
             )
             resp.raise_for_status()
             return _anthropic_text(resp.json())
@@ -374,6 +387,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
             headers=headers,
             timeout=_call_timeout_s(),
             post=httpx.post,
+            deadline_mono=deadline_mono,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -677,12 +691,15 @@ def _call_validate_retry(
     is another model call judged by the same gate, and a second rejection
     raises exactly as before.
     """
-    raw, model_used = _llm_code_call(messages)
+    deadline_mono = _wall_time.monotonic() + _attempt_wall_s()
+    raw, model_used = _llm_code_call(messages, deadline_mono=deadline_mono)
     try:
         return (
             _validate_body(_strip_fences(raw), capability_id, block_ids),
             model_used,
         )
+    except CoderTimeout:
+        raise
     except CoderError as exc:
         retry = messages + [
             {"role": "assistant", "content": raw},
@@ -696,7 +713,7 @@ def _call_validate_retry(
                 ),
             },
         ]
-        raw, model_used = _llm_code_call(retry)
+        raw, model_used = _llm_code_call(retry, deadline_mono=deadline_mono)
         return (
             _validate_body(_strip_fences(raw), capability_id, block_ids),
             model_used,

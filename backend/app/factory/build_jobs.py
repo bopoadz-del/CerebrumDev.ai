@@ -148,11 +148,17 @@ def _model_call_overdue(last_note: Any, idle_s: float) -> Optional[str]:
     if not fields:
         return None
     deadline = float(fields["model_call_deadline_s"])
-    if idle_s <= deadline:
+    # Prefer the calling NOTE's own age. A later ledger event (or a
+    # touched file mtime) must not reset the wall — that is how the
+    # Floor can keep saying "may still be running" past the deadline
+    # while WRITER is stuck in one model call.
+    note_age = _event_age_s(getattr(last_note, "ts", "") or "", idle_s)
+    age = max(float(idle_s), float(note_age))
+    if age <= deadline:
         return None
     what = getattr(last_note, "detail", None) or "coder LLM call"
     return (
-        f"coder LLM timed out after {int(idle_s)}s "
+        f"coder LLM timed out after {int(age)}s "
         f"(deadline {int(deadline)}s) — {what}"
     )
 

@@ -4,7 +4,9 @@ import type { BuildAuthorship, BuildStatus } from './api/factory'
 export const CLIENT_STALE_AFTER_S = 180
 /** Match backend build_jobs._STALL_AFTER_S — process likely gone. */
 export const CLIENT_STALL_AFTER_S = 1800
-/** Match backend llm_watchdog.attempt_wall_s default (120s × 3 legs + 30s). */
+/** Match backend llm_watchdog.attempt_wall_s default (120s × 3 legs + 30s).
+ *  Production often sets FACTORY_CODER_TIMEOUT_S=150 → 480s; prefer the
+ *  server's model_call_deadline_s when present. */
 export const CLIENT_MODEL_CALL_DEADLINE_S = 390
 
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
@@ -155,12 +157,12 @@ export function formatHeartbeat(build: BuildStatus, nowMs = Date.now()): string 
         ? CLIENT_MODEL_CALL_DEADLINE_S
         : null
   if (inCall && deadline != null && age != null && age >= deadline) {
-    return `coder LLM timed out after ${Math.round(age)}s — the model call did not finish`
+    return `coder LLM timed out after ${Math.round(age)}s (deadline ${Math.round(deadline)}s) — the model call did not finish`
   }
-  if (inCall && stale) {
+  if (inCall && stale && (deadline == null || age == null || age < deadline)) {
     return ago
-      ? `quiet for ${ago.replace(' ago', '')} — model call may still be running (bounded ${Math.round(deadline ?? CLIENT_MODEL_CALL_DEADLINE_S)}s)`
-      : 'quiet — model call may still be running'
+      ? `quiet for ${ago.replace(' ago', '')} — model call still inside ${Math.round(deadline ?? CLIENT_MODEL_CALL_DEADLINE_S)}s watchdog`
+      : 'quiet — model call still inside watchdog'
   }
   if (stale) {
     return ago
@@ -193,7 +195,7 @@ export function withClientStall(
       detail:
         build.detail && build.detail.includes('timed out')
           ? build.detail
-          : `coder LLM timed out after ${Math.round(age)}s — the model call did not finish`,
+          : `coder LLM timed out after ${Math.round(age)}s (deadline ${Math.round(deadline)}s) — the model call did not finish`,
     }
   }
   if (age == null || age < CLIENT_STALL_AFTER_S) return build
