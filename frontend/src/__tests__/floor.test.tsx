@@ -205,6 +205,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
       })
     })
@@ -227,6 +229,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 19, agent_written: 13, templated: 6 },
       })
     })
@@ -245,6 +249,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
         onProgress({
           state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
           authorship: { artifacts: 30, agent_written: 11, templated: 19 },
         })
       })
@@ -276,7 +282,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_pilot" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code phase finished' })).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
     })
@@ -292,6 +298,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
         onProgress({
           state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
           authorship: { artifacts: 30, agent_written: 11, templated: 19 },
         })
       })
@@ -323,7 +331,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_dup" goPlatforms={() => {}} />)
     // Wait for the succeeded snapshot — otherwise coderActive+null build
     // briefly disables the composer (pilot reopen race).
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code phase finished' })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
@@ -331,6 +339,30 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await screen.findByText('Opening pilot cycle.')
     expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
+  })
+
+  it('shows Coding agent stopped — not finished Download — when TESTER is red', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'pilot',
+        outcome: 'FAILED_BUDGET_SPENT',
+        pilot_ready: false,
+        detail:
+          'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_red" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(screen.getByText(/rework budget of 3 exhausted/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
   })
 
   it('does not offer Floor download while the coding agent is still writing', async () => {
@@ -368,6 +400,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 19, agent_written: 13, templated: 6 },
       })
     })

@@ -136,10 +136,20 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     liveBuild?.state === 'not_started' ||
     (Boolean(gen) && !liveBuild)
   const stalled = liveBuild?.state === 'stalled'
+  const failed = liveBuild?.state === 'failed'
+  const pilotReady = liveBuild?.pilot_ready === true
+  const codeOnlySuccess = liveBuild?.state === 'succeeded' && !pilotReady
   const buildNote = (() => {
     if (!liveBuild) return null
+    if (liveBuild.state === 'failed') {
+      const detail = liveBuild.detail ?? 'build did not pass its gates'
+      return `Build failed — ${detail}`
+    }
     if (liveBuild.state === 'stalled') {
       return `Build stalled — ${liveBuild.detail ?? 'no recent activity'}`
+    }
+    if (liveBuild.state === 'succeeded' && !pilotReady) {
+      return 'Code phase finished — not pilot-ready. Continue on the Factory Floor for the pilot cycle.'
     }
     if (liveBuild.state !== 'building') return null
     const headline = formatPhaseHeadline(liveBuild)
@@ -152,6 +162,13 @@ export function Platforms({ sessionId }: { sessionId: string }) {
     if (heartbeat) bits.push(heartbeat)
     return bits.join(' · ')
   })()
+  const downloadLabel = (() => {
+    if (building) return 'Building…'
+    if (downloading) return 'Packing…'
+    if (failed) return 'Export (.zip) — pilot suite failed'
+    if (codeOnlySuccess) return 'Download code-phase export (.zip)'
+    return 'Download platform export (.zip)'
+  })()
 
   return (
     <div className="page">
@@ -161,8 +178,19 @@ export function Platforms({ sessionId }: { sessionId: string }) {
       </header>
       {error && <div className="error-box">{error}</div>}
       {buildNote && (
-        <div className={'panel dim' + (stalled ? ' error-box' : '')} role="status">
+        <div
+          className={'panel dim' + (stalled || failed ? ' error-box' : '')}
+          role="status"
+          data-testid={failed ? 'platforms-failed-badge' : undefined}
+        >
           {buildNote}
+          {failed && liveBuild?.findings && liveBuild.findings.length > 0 && (
+            <ul className="findings-list">
+              {liveBuild.findings.slice(0, 5).map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
       {loading ? (
@@ -183,6 +211,16 @@ export function Platforms({ sessionId }: { sessionId: string }) {
       ) : (
         <div className="panel">
           <h3>{gen.product_id}</h3>
+          {failed && (
+            <span className="status-pill status-pill-failed" data-testid="platforms-failed-pill">
+              Pilot suite failed
+            </span>
+          )}
+          {pilotReady && (
+            <span className="status-pill status-pill-ready" data-testid="platforms-pilot-ready-pill">
+              Pilot-ready
+            </span>
+          )}
           <dl className="kv">
             <dt>Blueprint</dt>
             <dd>{bp?.product_name ?? '—'}</dd>
@@ -190,7 +228,7 @@ export function Platforms({ sessionId }: { sessionId: string }) {
             <dd>
               {typeof gen.engine === 'string'
                 ? gen.engine
-                : liveBuild?.state === 'succeeded'
+                : liveBuild?.state === 'succeeded' || failed
                   ? 'runner'
                   : '—'}
             </dd>
@@ -202,8 +240,11 @@ export function Platforms({ sessionId }: { sessionId: string }) {
           {liveBuild?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
-                {formatFinishedAuthorship(authorship) ??
-                  'Coding agent finished. Download it from Your Platforms.'}
+                {pilotReady
+                  ? (formatFinishedAuthorship(authorship) ??
+                    'Coding agent finished. Download it from Your Platforms.')
+                  : (formatFinishedAuthorship(authorship) ?? 'Code phase finished.') +
+                    ' Pilot cycle still required before this is Store-green.'}
               </p>
               {authorship.coder_failures &&
                 Object.keys(authorship.coder_failures).length > 0 && (
@@ -213,8 +254,17 @@ export function Platforms({ sessionId }: { sessionId: string }) {
                 )}
             </>
           )}
-          <button onClick={download} disabled={downloading || building || stalled || refreshing}>
-            {building ? 'Building…' : downloading ? 'Packing…' : 'Download platform export (.zip)'}
+          <button
+            className={failed ? 'ghost' : undefined}
+            onClick={download}
+            disabled={downloading || building || stalled || refreshing}
+            title={
+              failed
+                ? 'Pilot suite failed — export is not pilot-ready and will be refused by the server'
+                : undefined
+            }
+          >
+            {downloadLabel}
           </button>
           <button
             className="ghost"

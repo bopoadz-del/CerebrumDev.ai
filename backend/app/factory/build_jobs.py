@@ -243,18 +243,28 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     }
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
+        payload = terminal.payload or {}
         return {
             "state": "succeeded",
             "detail": terminal.detail,
+            "cycle": payload.get("cycle") or "code",
+            "outcome": payload.get("outcome"),
+            # Only a SUCCESS that closed a pilot cycle is Store-green / pilot-ready.
+            # Code-phase success must not be presented as a finished pilot.
+            "pilot_ready": ledger.pilot_ready(),
             **progress,
             **_authorship(output_dir),
             "stale": False,
         }
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
+        payload = terminal.payload or {}
         return {
             "state": "failed",
             "detail": terminal.detail,
-            "findings": list((terminal.payload or {}).get("findings") or [])[:10],
+            "cycle": payload.get("cycle") or "code",
+            "outcome": payload.get("outcome"),
+            "pilot_ready": False,
+            "findings": list(payload.get("findings") or [])[:10],
             **progress,
             "stale": False,
         }

@@ -219,8 +219,17 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (!build) return null
   if (build.state === 'succeeded') {
     const finished = formatFinishedAuthorship(build.authorship)
-    if (finished?.startsWith('Finished')) return finished + '. Download ready.'
-    return finished ?? 'Coding agent finished. Download it from Your Platforms.'
+    if (build.pilot_ready) {
+      if (finished?.startsWith('Finished')) return finished + '. Download ready.'
+      return finished ?? 'Coding agent finished. Download it from Your Platforms.'
+    }
+    if (finished?.startsWith('Finished')) {
+      return finished + '. Code phase only — continue on the Floor for the pilot cycle.'
+    }
+    return (
+      finished ??
+      'Code phase finished. Continue on the Floor for the pilot cycle before this is Store-green.'
+    )
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -504,6 +513,8 @@ export function Floor({
     liveCoderBuild?.state !== 'failed' &&
     liveCoderBuild?.state !== 'stalled'
   const coderSucceeded = liveCoderBuild?.state === 'succeeded'
+  const coderFailed = liveCoderBuild?.state === 'failed'
+  const coderPilotReady = liveCoderBuild?.pilot_ready === true
   const latestGenerationIdx = (() => {
     for (let i = msgs.length - 1; i >= 0; i -= 1) {
       if (msgs[i].card === 'generation') return i
@@ -579,16 +590,24 @@ export function Floor({
         <div
           className={
             'coder-takeover' +
-            (liveCoderBuild?.stale || liveCoderBuild?.state === 'stalled' ? ' stale' : '')
+            (liveCoderBuild?.stale ||
+            liveCoderBuild?.state === 'stalled' ||
+            liveCoderBuild?.state === 'failed'
+              ? ' stale'
+              : '')
           }
           role="status"
         >
           <h3>
             {liveCoderBuild?.state === 'succeeded'
-              ? 'Coding agent finished'
+              ? coderPilotReady
+                ? 'Coding agent finished'
+                : 'Code phase finished'
               : liveCoderBuild?.state === 'stalled'
                 ? 'Coding agent stalled'
-                : 'Coding agent has taken over'}
+                : liveCoderBuild?.state === 'failed'
+                  ? 'Coding agent stopped'
+                  : 'Coding agent has taken over'}
           </h3>
           <KernelStrip build={liveCoderBuild} />
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (
@@ -601,9 +620,25 @@ export function Floor({
           )}
           {coderSucceeded && (
             <div className="card-actions">
-              <button type="button" onClick={() => void download()} disabled={downloading}>
-                {downloading ? 'Packing…' : 'Download platform export (.zip)'}
+              <button
+                type="button"
+                className={coderPilotReady ? undefined : 'ghost'}
+                onClick={() => void download()}
+                disabled={downloading}
+              >
+                {downloading
+                  ? 'Packing…'
+                  : coderPilotReady
+                    ? 'Download platform export (.zip)'
+                    : 'Download code-phase export (.zip)'}
               </button>
+            </div>
+          )}
+          {coderFailed && (
+            <div className="card-actions">
+              <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
+                Pilot suite failed
+              </span>
             </div>
           )}
           {downloadError && <div className="error-box">{downloadError}</div>}
