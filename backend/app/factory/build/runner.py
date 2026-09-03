@@ -179,6 +179,7 @@ class RoleRunner:
         subprocess_runner: Optional[Callable[..., Any]] = None,
         clock: Callable[[], float] = time.monotonic,
         cycle: str = "code",
+        auto_pilot: bool = False,
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -206,6 +207,10 @@ class RoleRunner:
         self._deadline: Optional[float] = None
         resolved = (cycle or "code").strip().lower()
         self.cycle = "pilot" if resolved == "pilot" else "code"
+        #: Floor ``_run`` passes True when a factory coder key is set.
+        #: Direct RoleRunner callers (tests, CLI helpers) stay code-only
+        #: unless they opt in — a keyed CI stub must not open Store-green.
+        self.auto_pilot = bool(auto_pilot)
 
     # -- gate plumbing ---------------------------------------------------
 
@@ -413,6 +418,57 @@ class RoleRunner:
             ledger_path=str(self.ledger.path),
         )
 
+    def _should_auto_open_pilot(self) -> bool:
+        """True when code-phase 5/5 must continue into a Store-green cycle."""
+        return self.cycle != "pilot" and bool(self.auto_pilot)
+
+    def _grant_pilot_budget(self) -> None:
+        """Give the auto-opened pilot cycle its own wall and rework room.
+
+        Floor ``_run`` used to pass a 30 min / 1-rework budget sized for the
+        code phase alone. Continuing into pilot on that leftover (~15 min
+        after a thin WRITER) is how a Store-green run dies as SUCCESS.
+        """
+        from app.factory.build.auto_pilot import (
+            AUTO_PILOT_MAX_REWORK,
+            PILOT_MIN_REMAINING_S,
+        )
+
+        remaining = None
+        if self._deadline is not None:
+            remaining = self._deadline - self.clock()
+        if remaining is None or remaining < PILOT_MIN_REMAINING_S:
+            add = PILOT_MIN_REMAINING_S - (remaining or 0.0)
+            if self._deadline is None:
+                self._deadline = self.clock() + PILOT_MIN_REMAINING_S
+            else:
+                self._deadline += add
+            new_wall = (self.budget.wall_clock_s or 0.0) + add
+        else:
+            new_wall = self.budget.wall_clock_s
+        self.budget = BuildBudget(
+            max_rework=max(int(self.budget.max_rework), AUTO_PILOT_MAX_REWORK),
+            wall_clock_s=new_wall,
+            phase_wall_clock_s=self.budget.phase_wall_clock_s,
+        )
+
+    def _open_auto_pilot(self) -> None:
+        """Reopen TESTER + STORE_MANAGER without writing a code SUCCESS."""
+        self.ledger.append(
+            EventKind.NOTE,
+            detail=(
+                "code-phase SUCCESS; auto-opening Store-green cycle "
+                "(factory LLM configured)"
+            ),
+            payload={"cycle": "pilot", "auto_pilot": True},
+        )
+        self.ledger.open_pilot_cycle(
+            reason="code-phase SUCCESS; auto-opening Store-green cycle"
+        )
+        self.cycle = "pilot"
+        self.state["build_cycle"] = "pilot"
+        self._grant_pilot_budget()
+
     # -- the run ---------------------------------------------------------
 
     def run(self) -> BuildOutcome:
@@ -462,129 +518,147 @@ class RoleRunner:
         collected: list[str] = []
 
         index = 0
-        while index < len(BUILD_PHASES):
-            role = BUILD_PHASES[index]
-            if role in done:
-                index += 1
-                continue
+        while True:
+            while index < len(BUILD_PHASES):
+                role = BUILD_PHASES[index]
+                if role in done:
+                    index += 1
+                    continue
 
-            if deadline is not None and self.clock() >= deadline:
-                return self._finish(
-                    Outcome.FAILED_BUDGET_SPENT,
-                    f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
-                    f"before {role.value} completed",
-                    phase=role,
-                    rework=rework_used,
-                )
+                if deadline is not None and self.clock() >= deadline:
+                    return self._finish(
+                        Outcome.FAILED_BUDGET_SPENT,
+                        f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
+                        f"before {role.value} completed",
+                        phase=role,
+                        rework=rework_used,
+                    )
 
-            try:
-                assert_phase_order(role, done)
-                verdict = self._run_phase(role, work_list)
-            except AuthorityError as exc:
-                self.ledger.append(
-                    EventKind.PHASE_ABORTED, role=role, detail=f"lane violation: {exc}"
-                )
-                return self._finish(
-                    Outcome.FAILED_AUTHORITY,
-                    f"{role.value} wrote outside its lane: {exc}",
-                    phase=role,
-                    rework=rework_used,
-                )
-            except RoleError as exc:
+                try:
+                    assert_phase_order(role, done)
+                    verdict = self._run_phase(role, work_list)
+                except AuthorityError as exc:
+                    self.ledger.append(
+                        EventKind.PHASE_ABORTED,
+                        role=role,
+                        detail=f"lane violation: {exc}",
+                    )
+                    return self._finish(
+                        Outcome.FAILED_AUTHORITY,
+                        f"{role.value} wrote outside its lane: {exc}",
+                        phase=role,
+                        rework=rework_used,
+                    )
+                except RoleError as exc:
+                    if _collect_all_enabled():
+                        finding = f"{role.value}: role error: {exc}"
+                        collected.append(finding)
+                        self.ledger.append(
+                            EventKind.NOTE,
+                            role=role,
+                            detail=f"COLLECT-ALL: halt suppressed — {finding}",
+                            payload={"collect_all": True, "finding": finding},
+                        )
+                        done.add(role)
+                        work_list = ()
+                        index += 1
+                        continue
+                    self.ledger.append(
+                        EventKind.PHASE_ABORTED, role=role, detail=str(exc)
+                    )
+                    return self._finish(
+                        Outcome.FAILED_ROLE_ERROR,
+                        f"{role.value} failed: {exc}",
+                        phase=role,
+                        rework=rework_used,
+                    )
+
+                if verdict.ok:
+                    done.add(role)
+                    work_list = ()
+                    index += 1
+                    continue
+
+                # Gate failed. In collect-all mode every failed gate is a
+                # recorded finding, never a halt: the phase is marked done so
+                # later phases still run and ONE instrumented run surfaces the
+                # complete list. No rework rounds either — a single linear pass.
                 if _collect_all_enabled():
-                    finding = f"{role.value}: role error: {exc}"
-                    collected.append(finding)
+                    header = (
+                        f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}"
+                    )
+                    collected.append(header)
+                    collected.extend(f"{role.value}: {f}" for f in verdict.findings)
                     self.ledger.append(
                         EventKind.NOTE,
                         role=role,
-                        detail=f"COLLECT-ALL: halt suppressed — {finding}",
-                        payload={"collect_all": True, "finding": finding},
+                        detail=f"COLLECT-ALL: halt suppressed — {header}",
+                        payload={
+                            "collect_all": True,
+                            "gate": verdict.gate,
+                            "findings": list(verdict.findings),
+                        },
                     )
                     done.add(role)
                     work_list = ()
                     index += 1
                     continue
+
+                # Only the TESTER sends work back to the WRITER;
+                # every other failed gate is terminal, because there is no role
+                # positioned to act on its findings.
+                if role is not REWORK_SOURCE:
+                    return self._finish(
+                        Outcome.FAILED_GATE,
+                        f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}",
+                        phase=role,
+                        rework=rework_used,
+                        findings=verdict.findings,
+                    )
+
+                if rework_used >= self.budget.max_rework:
+                    return self._finish(
+                        Outcome.FAILED_BUDGET_SPENT,
+                        f"rework budget of {self.budget.max_rework} exhausted; "
+                        f"{REWORK_SOURCE.value} gate still failing: {verdict.detail}",
+                        phase=role,
+                        rework=rework_used,
+                        findings=verdict.findings,
+                    )
+
+                rework_used += 1
+                work_list = tuple(verdict.findings)
                 self.ledger.append(
-                    EventKind.PHASE_ABORTED, role=role, detail=str(exc)
+                    EventKind.REWORK,
+                    role=REWORK_TARGET,
+                    detail=f"round {rework_used}: {verdict.detail}",
+                    payload={"findings": list(verdict.findings)},
                 )
+                # Send the WRITER back round. Its earlier pass no longer counts.
+                done.discard(REWORK_TARGET)
+                index = BUILD_PHASES.index(REWORK_TARGET)
+
+            if collected:
                 return self._finish(
-                    Outcome.FAILED_ROLE_ERROR,
-                    f"{role.value} failed: {exc}",
-                    phase=role,
+                    Outcome.COLLECT_ALL_REPORT,
+                    f"collect-all: all phases ran; {len(collected)} finding(s) "
+                    "recorded — instrument report, not a clean pass",
                     rework=rework_used,
+                    findings=collected,
                 )
 
-            if verdict.ok:
-                done.add(role)
+            # Code-phase 5/5 is not Store-green. When a factory coder key is
+            # configured, open a pilot cycle on the same workspace instead of
+            # writing SUCCESS and parking the Floor on a thin prototype.
+            if self.cycle != "pilot" and self._should_auto_open_pilot():
+                self._open_auto_pilot()
+                deadline = self._deadline
+                rework_used = 0
                 work_list = ()
-                index += 1
+                done = self.ledger.completed_roles()
+                index = BUILD_PHASES.index(BuildRole.TESTER)
                 continue
-
-            # Gate failed. In collect-all mode every failed gate is a
-            # recorded finding, never a halt: the phase is marked done so
-            # later phases still run and ONE instrumented run surfaces the
-            # complete list. No rework rounds either — a single linear pass.
-            if _collect_all_enabled():
-                header = f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}"
-                collected.append(header)
-                collected.extend(f"{role.value}: {f}" for f in verdict.findings)
-                self.ledger.append(
-                    EventKind.NOTE,
-                    role=role,
-                    detail=f"COLLECT-ALL: halt suppressed — {header}",
-                    payload={
-                        "collect_all": True,
-                        "gate": verdict.gate,
-                        "findings": list(verdict.findings),
-                    },
-                )
-                done.add(role)
-                work_list = ()
-                index += 1
-                continue
-
-            # Only the TESTER sends work back to the WRITER;
-            # every other failed gate is terminal, because there is no role
-            # positioned to act on its findings.
-            if role is not REWORK_SOURCE:
-                return self._finish(
-                    Outcome.FAILED_GATE,
-                    f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}",
-                    phase=role,
-                    rework=rework_used,
-                    findings=verdict.findings,
-                )
-
-            if rework_used >= self.budget.max_rework:
-                return self._finish(
-                    Outcome.FAILED_BUDGET_SPENT,
-                    f"rework budget of {self.budget.max_rework} exhausted; "
-                    f"{REWORK_SOURCE.value} gate still failing: {verdict.detail}",
-                    phase=role,
-                    rework=rework_used,
-                    findings=verdict.findings,
-                )
-
-            rework_used += 1
-            work_list = tuple(verdict.findings)
-            self.ledger.append(
-                EventKind.REWORK,
-                role=REWORK_TARGET,
-                detail=f"round {rework_used}: {verdict.detail}",
-                payload={"findings": list(verdict.findings)},
-            )
-            # Send the WRITER back round. Its earlier pass no longer counts.
-            done.discard(REWORK_TARGET)
-            index = BUILD_PHASES.index(REWORK_TARGET)
-
-        if collected:
-            return self._finish(
-                Outcome.COLLECT_ALL_REPORT,
-                f"collect-all: all phases ran; {len(collected)} finding(s) "
-                "recorded — instrument report, not a clean pass",
-                rework=rework_used,
-                findings=collected,
-            )
+            break
 
         # THE VERDICT LINE (owner's ruling 1, 2026-09-01).
         #

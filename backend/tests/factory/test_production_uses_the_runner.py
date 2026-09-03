@@ -63,8 +63,11 @@ def test_the_runner_is_the_default_engine():
 
 
 def test_production_floor_budget_is_a_code_phase(monkeypatch):
-    """Floor Approve gates a 20–30 min coder pass, not a 2-hour Store-green
-    platform. Three WRITER reworks of 20 min each is the path this refuses."""
+    """Without a factory key the Floor still gates a 20–30 min code pass.
+
+    When the coder is keyed, ``factory_auto_pilot_enabled`` grows this to
+    the 2-hour Store-green budget (see test_auto_pilot).
+    """
     from app.factory import build_jobs
 
     monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)

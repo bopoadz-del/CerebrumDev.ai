@@ -350,6 +350,8 @@ export type BuildStatus = {
   outcome?: string
   /** True only after a SUCCESS that closed a pilot cycle (Store-green). */
   pilot_ready?: boolean
+  /** True when the Floor will (or did) auto-open a pilot cycle after code SUCCESS. */
+  auto_pilot?: boolean
   phases?: string[]
   completed?: string[]
   phases_done?: number
@@ -386,7 +388,7 @@ export type BuildStatus = {
 export async function awaitBuild(
   sid: string,
   onProgress?: (s: BuildStatus) => void,
-  { intervalMs = 4000, timeoutMs = 45 * 60 * 1000 } = {},
+  { intervalMs = 4000, timeoutMs = 180 * 60 * 1000 } = {},
 ): Promise<BuildStatus> {
   const deadline = Date.now() + timeoutMs
   for (;;) {

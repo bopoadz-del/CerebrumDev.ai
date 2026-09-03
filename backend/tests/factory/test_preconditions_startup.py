@@ -368,19 +368,23 @@ def test_the_writer_renders_the_module_from_the_blocks_it_vendored(
     """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
+    import app.factory.build.block_obligations as obligations
     import app.factory.build.roles_handlers as handlers
     from app.factory.build.authority import BuildRole
     from app.factory.build.roles import RoleContext, run_writer
     from app.factory.build.workspace import RoleWorkspace
 
     seen = {}
+    calls: list[list[str]] = []
 
     def spy(block_ids, product_name="platform"):
+        calls.append(list(block_ids))
         seen["block_ids"] = list(block_ids)
         seen["product_name"] = product_name
         return "# rendered by the spy\n"
 
     monkeypatch.setattr(handlers, "render_preconditions_module", spy)
+    monkeypatch.setattr(obligations, "render_preconditions_module", spy)
 
     class _Cap:
         capability_id = "alpha_cap"
@@ -406,6 +410,7 @@ def test_the_writer_renders_the_module_from_the_blocks_it_vendored(
         )
     )
     assert result.ok, result.detail
+    assert calls == [["storage", "team"]], calls
     assert seen["block_ids"] == ["storage", "team"]
     assert seen["product_name"] == "Lettings Manager"
     assert ws.read_text("app/preconditions.py") == "# rendered by the spy\n"

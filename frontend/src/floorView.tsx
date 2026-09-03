@@ -215,21 +215,36 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
   )
 }
 
+function coderTakeoverHeading(build: BuildStatus | null): string {
+  if (build?.state === 'succeeded') {
+    return build.pilot_ready
+      ? 'Coding agent finished'
+      : 'Code-cycle prototype ready'
+  }
+  return 'Coding agent has taken over'
+}
+
 function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (!build) return null
   if (build.state === 'succeeded') {
-    const finished = formatFinishedAuthorship(build.authorship)
+    const finished = formatFinishedAuthorship(build.authorship, {
+      pilotReady: build.pilot_ready,
+    })
     if (build.pilot_ready) {
       if (finished?.startsWith('Finished')) return finished + '. Download ready.'
       return finished ?? 'Coding agent finished. Download it from Your Platforms.'
     }
-    if (finished?.startsWith('Finished')) {
-      return finished + '. Code phase only — continue on the Floor for the pilot cycle.'
+    if (finished) {
+      return (
+        finished +
+        (build.auto_pilot
+          ? '. Download is a code-cycle prototype — the pilot cycle should open automatically.'
+          : '. Download is a code-cycle prototype — continue to open a pilot cycle.')
+      )
     }
-    return (
-      finished ??
-      'Code phase finished. Continue on the Floor for the pilot cycle before this is Store-green.'
-    )
+    return build.auto_pilot
+      ? 'Code-cycle 5/5 passed. Not yet pilot-ready. The pilot cycle should open automatically.'
+      : 'Code-cycle 5/5 passed. Not yet pilot-ready. Continue to open a pilot cycle.'
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -600,9 +615,7 @@ export function Floor({
         >
           <h3>
             {liveCoderBuild?.state === 'succeeded'
-              ? coderPilotReady
-                ? 'Coding agent finished'
-                : 'Code phase finished'
+              ? coderTakeoverHeading(liveCoderBuild)
               : liveCoderBuild?.state === 'stalled'
                 ? 'Coding agent stalled'
                 : liveCoderBuild?.state === 'failed'
@@ -620,6 +633,16 @@ export function Floor({
           )}
           {coderSucceeded && (
             <div className="card-actions">
+              {!coderPilotReady && (
+                <button
+                  type="button"
+                  data-testid="continue-to-pilot"
+                  onClick={() => void send('continue')}
+                  disabled={busy || accessPaused}
+                >
+                  Continue to pilot
+                </button>
+              )}
               <button
                 type="button"
                 className={coderPilotReady ? undefined : 'ghost'}
@@ -630,7 +653,7 @@ export function Floor({
                   ? 'Packing…'
                   : coderPilotReady
                     ? 'Download platform export (.zip)'
-                    : 'Download code-phase export (.zip)'}
+                    : 'Download code-cycle prototype (.zip)'}
               </button>
             </div>
           )}

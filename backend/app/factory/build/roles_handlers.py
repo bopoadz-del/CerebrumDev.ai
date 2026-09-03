@@ -2089,6 +2089,20 @@ async def run_capability(capability_id: str, payload: Dict[str, Any]) -> Dict[st
 '''
 
 
+def _writer_block_roster(state: Dict[str, Any]) -> tuple:
+    """Block ids this WRITER pass may emit preconditions for.
+
+    Frozen at entry so later handler/domain/supply-chain work cannot expand
+    the roster to the whole vendor mirror (CI saw analytics..workflow).
+    A mapping is treated as id→path (kit_pack shape), not as 'use every key
+    of RESOURCE_OBLIGATIONS / the factory shelf'.
+    """
+    raw = (state or {}).get("vendored_blocks") or ()
+    if isinstance(raw, dict):
+        raw = raw.keys()
+    return tuple(sorted({str(b) for b in raw if b}))
+
+
 def run_writer(ctx: RoleContext) -> RoleResult:
     """Platform manufacturer: dispatch runtime plus one handler per capability.
 
@@ -2108,6 +2122,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     A pilot cycle without a coder key must not replace agent-written
     handlers with the deterministic template. Adapter patches already ran.
     """
+    writer_roster = _writer_block_roster(ctx.state)
     if (
         str(ctx.state.get("build_cycle") or "") == "pilot"
         and ctx.work_list
@@ -2467,7 +2482,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("app") / "preconditions.py",
         render_preconditions_module(
-            sorted({str(b) for b in (ctx.state.get("vendored_blocks") or ())}),
+            list(writer_roster),
             product_name,
         ),
     )

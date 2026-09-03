@@ -40,14 +40,16 @@ BUILD_ENGINE_ENV = "FACTORY_BUILD_ENGINE"
 RUNNER = "runner"
 TEMPLATE = "template"
 
-#: Wall-clock ceiling for a production Floor build. The factory gates the
-#: coder's *code phase* (20–30 min), not a Store-green platform (hours).
+#: Wall-clock ceiling for a production Floor build. Code-only stays a
+#: 20–30 min coder pass. When the factory LLM is configured the run
+#: auto-continues into a Store-green (pilot) cycle and uses the 2-hour
+#: combined budget — that is the production-grade path, not a refuse.
 BUILD_WALL_CLOCK_ENV = "FACTORY_BUILD_WALL_CLOCK_S"
 BUILD_REWORK_ENV = "FACTORY_BUILD_MAX_REWORK"
 BUILD_PHASE_WALL_ENV = "FACTORY_PHASE_WALL_CLOCK_S"
 
-#: Defaults: one WRITER pass (~25 min phase cap) inside a 30 min Floor run.
-#: Three 20-minute rework rounds is the two-hour path this gate refuses.
+#: Code-only Floor run: one WRITER pass (~25 min phase cap) inside 30 min.
+#: Auto-pilot / explicit pilot: 2 hours and 3 WRITER reworks.
 _DEFAULT_WALL_CLOCK_S = 1800.0
 _DEFAULT_MAX_REWORK = 1
 _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
@@ -69,21 +71,36 @@ def build_engine() -> str:
     return TEMPLATE if raw in {TEMPLATE, "legacy", "generator"} else RUNNER
 
 
-def _wall_clock_s() -> float:
-    try:
-        return float(os.getenv(BUILD_WALL_CLOCK_ENV, str(int(_DEFAULT_WALL_CLOCK_S))))
-    except ValueError:
-        return _DEFAULT_WALL_CLOCK_S
+def _uses_pilot_budget(cycle: str = "code", auto_pilot: bool = False) -> bool:
+    return auto_pilot or (cycle or "code").strip().lower() == "pilot"
 
 
-def _max_rework(cycle: str = "code") -> int:
+def _wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
+    raw = os.getenv(BUILD_WALL_CLOCK_ENV)
+    if raw is not None:
+        try:
+            return float(raw)
+        except ValueError:
+            pass
+    if _uses_pilot_budget(cycle, auto_pilot):
+        from app.factory.build.auto_pilot import AUTO_PILOT_WALL_CLOCK_S
+
+        return AUTO_PILOT_WALL_CLOCK_S
+    return _DEFAULT_WALL_CLOCK_S
+
+
+def _max_rework(cycle: str = "code", auto_pilot: bool = False) -> int:
     raw = os.getenv(BUILD_REWORK_ENV)
     if raw is not None:
         try:
             return max(0, int(raw))
         except ValueError:
             pass
-    return 3 if cycle == "pilot" else _DEFAULT_MAX_REWORK
+    if _uses_pilot_budget(cycle, auto_pilot):
+        from app.factory.build.auto_pilot import AUTO_PILOT_MAX_REWORK
+
+        return AUTO_PILOT_MAX_REWORK
+    return _DEFAULT_MAX_REWORK
 
 
 def _phase_wall_clock_s() -> float:
@@ -124,6 +141,32 @@ def _event_age_s(ts: str, fallback_s: float) -> float:
 
 def _ledger_path(output_dir: Path | str) -> Path:
     return Path(output_dir) / "build_ledger.jsonl"
+
+
+def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
+    """Honest cycle label for the Floor: code SUCCESS is not pilot-ready."""
+    payload = (getattr(terminal, "payload", None) or {}) if terminal else {}
+    cycle = str(payload.get("cycle") or "").strip().lower()
+    try:
+        if ledger.pilot_ready():
+            cycle = "pilot"
+        elif ledger.pilot_cycle_open():
+            cycle = "pilot"
+        elif not cycle:
+            cycle = "code"
+    except Exception:  # noqa: BLE001
+        cycle = cycle or "code"
+    try:
+        ready = bool(ledger.pilot_ready())
+    except Exception:  # noqa: BLE001
+        ready = bool(payload.get("pilot_ready"))
+    try:
+        from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+
+        auto = bool(factory_auto_pilot_enabled())
+    except Exception:  # noqa: BLE001
+        auto = False
+    return {"cycle": cycle or "code", "pilot_ready": ready, "auto_pilot": auto}
 
 
 def _authorship(output_dir: Path | str) -> Dict[str, Any]:
@@ -240,6 +283,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "phases_total": len(phases),
         "phases_done": sum(1 for p in phases if p in completed),
         **monitor,
+        **_cycle_fields(ledger, terminal),
     }
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
@@ -377,19 +421,22 @@ def _run(
     blocks_root: Optional[Path],
     cycle: str = "code",
 ) -> None:
+    from app.factory.build.auto_pilot import factory_auto_pilot_enabled
     from app.factory.build.runner import BuildBudget, RoleRunner
 
+    auto = cycle == "code" and factory_auto_pilot_enabled()
     try:
         runner = RoleRunner(
             blueprint,
             output_dir,
             blocks_root=blocks_root,
             budget=BuildBudget(
-                max_rework=_max_rework(cycle),
-                wall_clock_s=_wall_clock_s(),
+                max_rework=_max_rework(cycle, auto_pilot=auto),
+                wall_clock_s=_wall_clock_s(cycle, auto_pilot=auto),
                 phase_wall_clock_s=_phase_wall_clock_s(),
             ),
             cycle=cycle,
+            auto_pilot=auto if cycle == "code" else False,
         )
         outcome = runner.run()
         logger.info(

@@ -142,13 +142,25 @@ describe('build progress copy', () => {
     expect(stalled?.detail).toMatch(/no build activity/)
   })
 
-  it('SUCCESS copy is finished, not hang-looking 22 of 28', () => {
+  it('SUCCESS copy is finished only when pilot-ready, not hang-looking 22 of 28', () => {
     expect(
-      formatFinishedAuthorship({ artifacts: 28, agent_written: 22, templated: 6 }),
+      formatFinishedAuthorship(
+        { artifacts: 28, agent_written: 22, templated: 6 },
+        { pilotReady: true },
+      ),
     ).toBe('Finished — 22 artifacts; 6 templated')
     expect(
       formatFinishedAuthorship({ artifacts: 28, agent_written: 22, templated: 6 }),
+    ).toBe('Code-cycle prototype — 22 artifacts; 6 templated. Not yet pilot-ready')
+    expect(
+      formatFinishedAuthorship({ artifacts: 28, agent_written: 22, templated: 6 }),
     ).not.toMatch(/22 of 28/)
+    expect(
+      formatFinishedAuthorship(
+        { artifacts: 28, agent_written: 22, templated: 6 },
+        { pilotReady: false },
+      ),
+    ).not.toMatch(/Finished/)
   })
 
   it('falls back to completed+1 when the API has no current_phase yet', () => {

@@ -485,6 +485,21 @@ def approve_and_generate(
     # download, so the runner engine gets its own honest message.
     if result.get("engine") == "runner":
         caps = len((pd.plan or {}).get("capabilities", []) or [])
+        from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+
+        if factory_auto_pilot_enabled():
+            expect = (
+                "This is a Store-green run: code cycle, then a pilot cycle "
+                "(pytest -m pilot and WRITER rework) on the same workspace. "
+                "Watch it here — Finished / Download ready unlocks only when "
+                "the platform is pilot-ready."
+            )
+        else:
+            expect = (
+                "This is a code-cycle pass (pytest -m 'not pilot'). "
+                "A SUCCESS here is a prototype, not pilot-ready. "
+                "The download will be labeled as a code-cycle prototype."
+            )
         return {
             "ok": True,
             "generation": pd.generation,
@@ -493,10 +508,8 @@ def approve_and_generate(
             "summary": (
                 f"{trigger_line}Build started for {result['product_id']}: the coding agent "
                 "has taken over the floor and is "
-                f"writing {caps} capability(ies) against the real block contracts, "
-                "then a test phase has to pass before anything ships. This takes "
-                "minutes, not seconds. Watch it here — the download "
-                "unlocks only when the build passes its gates."
+                f"writing {caps} capability(ies) against the real block contracts. "
+                + expect
             ),
         }
 
@@ -745,6 +758,26 @@ def _record_generation(
     }
 
 
+def _resume_cycle(state: Any, output_root: Optional[Path] = None) -> str:
+    """Resume a failed/open pilot as pilot, not as a fresh code cycle."""
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return "code"
+    try:
+        ledger = _ledger_for(out)
+        if ledger.pilot_ready():
+            return "code"
+        if ledger.pilot_cycle_open():
+            return "pilot"
+        from app.factory.build.ledger import EventKind
+
+        if any(e.kind is EventKind.PILOT_OPENED for e in ledger.events()):
+            return "pilot"
+    except Exception:  # noqa: BLE001
+        return "code"
+    return "code"
+
+
 def is_pilot_ready(state: Any, output_root: Optional[Path] = None) -> bool:
     """True only after a SUCCESS that closed a Store-green / pilot cycle."""
     out = _generation_output_dir(state, output_root)
@@ -852,7 +885,7 @@ def resume_generation(
         bp,
         out,
         blocks_root=_blocks_root(),
-        cycle="code",
+        cycle=_resume_cycle(state, output_root),
         quota_account_id=getattr(state, "user_id", None),
     )
     if result.get("already_running"):

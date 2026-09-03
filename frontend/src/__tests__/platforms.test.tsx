@@ -196,6 +196,50 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByText(/Coder skip: Factory architect requires KIMI_API_KEY/)).toBeInTheDocument()
   })
 
+  it('labels a code-cycle SUCCESS as a prototype download', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(
+      await screen.findByText('Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('platforms-pilot-ready-pill')).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-prototype-pill')).toHaveTextContent('Code-cycle prototype')
+  })
+
+  it('offers Continue to pilot on Factory Floor when auto-pilot is blocked', async () => {
+    const goFloor = vi.fn()
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        auto_pilot: false,
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+      })
+    })
+    render(<Platforms sessionId="sess_ui" goFloor={goFloor} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue to pilot on Factory Floor' }))
+    expect(goFloor).toHaveBeenCalled()
+  })
+
   it('downloads only after the build succeeds', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
@@ -261,7 +305,7 @@ describe('Your Platforms — coding-agent build', () => {
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByText(/not pilot-ready/i)).toBeInTheDocument()
     expect(
-      screen.getByRole('button', { name: 'Download code-phase export (.zip)' }),
+      screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' }),
     ).toBeInTheDocument()
     expect(screen.queryByTestId('platforms-pilot-ready-pill')).not.toBeInTheDocument()
   })

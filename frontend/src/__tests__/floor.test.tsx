@@ -201,7 +201,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
-  it('SUCCESS takeover heading is finished, not hang-looking 22 of 28', async () => {
+  it('SUCCESS takeover heading is finished only when pilot-ready', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
@@ -222,6 +222,76 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('code-cycle SUCCESS is a prototype, not Finished / Download ready', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'code',
+        authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_proto" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(
+      screen.getByText(/Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
+    expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('Continue to pilot sends continue when auto-pilot is blocked', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'generation',
+        data: {
+          summary: 'Opening pilot cycle for residential-lettings on the same workspace/hash.',
+          triggered_by: 'chat_llm',
+          generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+        },
+      })
+    })
+    watchBuildMock
+      .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          auto_pilot: false,
+          authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+        })
+      })
+      .mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'building',
+          phases_done: 2,
+          phases_total: 5,
+          current_phase: { id: 'TESTER', label: 'Acceptance inspector' },
+          phase_index: 4,
+          phase_total: 5,
+        })
+      })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_cta" goPlatforms={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue to pilot' }))
+    await waitFor(() => expect(chatStreamMock).toHaveBeenCalledWith('sess_cta', 'continue', expect.any(Function)))
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
   })
 
   it('downloads the zip from the Floor after the coding agent finishes', async () => {
@@ -282,7 +352,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_pilot" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code phase finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
     })
@@ -331,7 +401,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_dup" goPlatforms={() => {}} />)
     // Wait for the succeeded snapshot — otherwise coderActive+null build
     // briefly disables the composer (pilot reopen race).
-    expect(await screen.findByRole('heading', { name: 'Code phase finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },

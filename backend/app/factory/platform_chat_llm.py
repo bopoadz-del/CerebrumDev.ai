@@ -51,7 +51,10 @@ does NOT start the coding agent yet. Never draft_platform on continue/resume \
 good, build it, ship it, yes), OR (2) a coding run is in-flight, stalled, \
 or interrupted and the user says continue / resume / keep going. Do not \
 require a pending unapproved blueprint to resume. If the last run already \
-succeeded, do NOT call start_coder — reply that it finished.
+succeeded AND the product is pilot-ready, do NOT call start_coder — reply \
+that it finished. If code-phase 5/5 succeeded but it is NOT pilot-ready, \
+continue/resume MUST call start_coder to open a pilot cycle. Do not call a \
+code-cycle SUCCESS "finished" or "download ready".
 - refine_blueprint: the user wants to change the pending blueprint. Set \
 "refine_message" to a command the factory already understands, e.g. \
 "add capability inventory", "remove capability audit", \
