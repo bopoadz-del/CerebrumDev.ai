@@ -5,6 +5,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Subscription } from '../App'
+import { paymentsNotConnectedNote } from '../accountViews'
 
 const statusMock = vi.fn()
 const checkoutMock = vi.fn()
@@ -147,6 +148,39 @@ describe('Subscription', () => {
     expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Upgrade when you are ready/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled()
+  })
+
+  it('does not mention Upgrade in payments honesty when Factory is already current', async () => {
+    statusMock.mockResolvedValue({
+      plan: 'factory',
+      subscription_status: 'active',
+      entitled: true,
+      checkout_available: false,
+    })
+    render(<Subscription />)
+    expect(
+      await screen.findByText(/Payments are not connected on this deployment yet/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Upgrade still says so/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Your current access is unaffected/i)).toBeInTheDocument()
+  })
+
+  it('keeps Upgrade honesty copy on trial while the Upgrade button is shown', async () => {
+    render(<Subscription />)
+    expect(await screen.findByRole('button', { name: 'Upgrade' })).toBeInTheDocument()
+    expect(screen.getByText(/Upgrade still says so instead of opening a blank checkout/i)).toBeInTheDocument()
+    expect(screen.getByText(/Payments are not connected on this deployment yet/i)).toBeInTheDocument()
+  })
+
+  it('paymentsNotConnectedNote mentions Upgrade only when that button is shown', () => {
+    expect(paymentsNotConnectedNote({ showUpgrade: true })).toMatch(
+      /Upgrade still says so instead of opening a blank checkout/,
+    )
+    expect(paymentsNotConnectedNote({ showUpgrade: false })).not.toMatch(/Upgrade/)
+    expect(paymentsNotConnectedNote({ showUpgrade: false })).toMatch(
+      /Payments are not connected on this deployment yet/,
+    )
   })
 
   it('checkout failure states the truth plainly', async () => {

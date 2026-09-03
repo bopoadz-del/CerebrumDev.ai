@@ -348,6 +348,7 @@ test('Subscription and Account render plan and verified email', async ({ page })
   await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
   await expect(page.getByText('acct_e2e_floor')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send password reset' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
 })
 
@@ -410,6 +411,36 @@ test('Factory / Active subscription does not present Trial as a second current p
   await expect(page.getByRole('button', { name: 'Upgrade' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Manage billing' })).toBeVisible()
   await expect(page.getByText(/Payments are not connected on this deployment yet/i)).toBeVisible()
+  await expect(page.getByText(/Upgrade still says so/i)).toHaveCount(0)
+  await expect(page.getByText(/Your current access is unaffected/i)).toBeVisible()
+})
+
+test('Account Send password reset posts forgot-password for the signed-in email', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  const forgotPosts: { email?: string }[] = []
+  await page.route('**/v1/auth/forgot-password', async (route) => {
+    const posted = route.request().postDataJSON() as { email?: string }
+    forgotPosts.push(posted)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        message: 'If the email is registered, a reset link follows.',
+      }),
+    })
+  })
+  await page.goto('/account')
+  await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('e2e.floor@factory.dev')).toBeVisible()
+  await page.getByRole('button', { name: 'Send password reset' }).click()
+  await expect(page.getByText('If the email is registered, a reset link follows.')).toBeVisible()
+  expect(forgotPosts).toEqual([{ email: 'e2e.floor@factory.dev' }])
+  await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0)
 })
 
 test('signed-in /login and /register stay on Floor with a one-line notice', async ({ page }) => {

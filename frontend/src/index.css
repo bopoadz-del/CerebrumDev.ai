@@ -318,6 +318,17 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   flex: 1;
 }
 
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+.account-actions button.ghost,
+.account-actions button.danger {
+  margin-left: 0;
+}
+
 /* blueprint card in chat */
 .blueprint-card {
   margin-top: 12px;
