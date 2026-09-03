@@ -707,7 +707,9 @@ def _call_validate_retry(
     is another model call judged by the same gate, and a second rejection
     raises exactly as before.
     """
-    token = _attempt_deadline.set(_wall_time.monotonic() + _attempt_wall_s())
+    token = None
+    if _attempt_deadline.get() is None:
+        token = _attempt_deadline.set(_wall_time.monotonic() + _attempt_wall_s())
     try:
         raw, model_used = _llm_code_call(messages)
         try:
@@ -736,7 +738,8 @@ def _call_validate_retry(
                 model_used,
             )
     finally:
-        _attempt_deadline.reset(token)
+        if token is not None:
+            _attempt_deadline.reset(token)
 
 
 _PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """

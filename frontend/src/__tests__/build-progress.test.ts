@@ -91,6 +91,17 @@ describe('build progress copy', () => {
     expect(formatHeartbeat(liveOvershoot)).toMatch(/coder LLM timed out after 1965s/)
     expect(formatHeartbeat(liveOvershoot)).toMatch(/deadline 480s/)
     expect(formatHeartbeat(liveOvershoot)).not.toMatch(/may still be running/)
+
+    // Live sess_ab446de: 1085s elapsed vs 480s deadline (~2.3× after #297).
+    const liveCloseOvershoot: BuildStatus = {
+      ...calling,
+      last_event_age_s: 1085,
+      model_call_deadline_s: 480,
+      stale: true,
+    }
+    expect(formatHeartbeat(liveCloseOvershoot)).toMatch(/coder LLM timed out after 1085s/)
+    expect(formatHeartbeat(liveCloseOvershoot)).toMatch(/deadline 480s/)
+    expect(formatHeartbeat(liveCloseOvershoot)).not.toMatch(/may still be running/)
     const failed = withClientStall(overdue)
     expect(failed?.state).toBe('failed')
     expect(failed?.detail).toMatch(/coder LLM timed out/)
