@@ -1789,6 +1789,24 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
     return True
 
 
+def _note_model_call(ctx: RoleContext, what: str, **payload: Any) -> None:
+    """Ledger NOTE that a coder LLM call is in flight — not progress.
+
+    ``done`` is left to the caller so a hung call cannot look like a
+    finished handler. ``model_call`` + ``deadline_s`` let build_status
+    fail the Floor once the watchdog wall is exceeded instead of climbing
+    "quiet for N min — model call may still be running".
+    """
+    from app.factory.coder import _attempt_wall_s
+
+    ctx.note(
+        f"calling coder LLM for {what}",
+        model_call=True,
+        deadline_s=_attempt_wall_s(),
+        **payload,
+    )
+
+
 def _coder_body(
     ctx: RoleContext,
     cap: Any,
@@ -1807,12 +1825,23 @@ def _coder_body(
     own required payload fields, and the suite -- which builds payloads from
     the spec -- rejects the handler for demanding fields no caller sends.
     """
-    from app.factory.coder import CoderError, coder_enabled, generate_platform_handler
+    from app.factory.coder import (
+        CoderError,
+        CoderTimeout,
+        coder_enabled,
+        generate_platform_handler,
+    )
 
     if not coder_enabled():
         return None
     if _budget_too_low(ctx, "handler"):
         return None
+    _note_model_call(
+        ctx,
+        cap.capability_id,
+        stage="coder",
+        capability=cap.capability_id,
+    )
     try:
         result = generate_platform_handler(
             capability_id=cap.capability_id,
@@ -1827,6 +1856,11 @@ def _coder_body(
             previous_attempt=previous_attempt,
             vendored_roster=sorted(ctx.state.get("vendored_blocks", ())),
         )
+    except CoderTimeout as exc:
+        ctx.state.setdefault("coder_failures", {})[cap.capability_id] = str(exc)
+        raise RoleError(
+            f"coder LLM timed out writing handler {cap.capability_id}: {exc}"
+        ) from exc
     except CoderError as exc:
         # Degraded output is acceptable; invisible degradation is not.
         ctx.state.setdefault("coder_failures", {})[cap.capability_id] = str(exc)
@@ -1840,12 +1874,23 @@ def _record_failure(ctx: RoleContext, key: str, exc: Exception) -> None:
 
 def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
     """Let the agent design the schema. None means fall back to the template."""
-    from app.factory.coder import CoderError, coder_enabled, generate_model_spec
+    from app.factory.coder import (
+        CoderError,
+        CoderTimeout,
+        coder_enabled,
+        generate_model_spec,
+    )
 
     if not coder_enabled():
         return None
     if _budget_too_low(ctx, "model spec"):
         return None
+    _note_model_call(
+        ctx,
+        f"model spec {cap.capability_id}",
+        stage="coder",
+        capability=cap.capability_id,
+    )
     try:
         return generate_model_spec(
             capability_id=cap.capability_id,
@@ -1853,6 +1898,11 @@ def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
             product_name=getattr(ctx.blueprint, "product_name", "platform"),
             vertical=getattr(ctx.blueprint, "vertical", "product"),
         )
+    except CoderTimeout as exc:
+        _record_failure(ctx, f"model:{cap.capability_id}", exc)
+        raise RoleError(
+            f"coder LLM timed out writing model spec {cap.capability_id}: {exc}"
+        ) from exc
     except CoderError as exc:
         _record_failure(ctx, f"model:{cap.capability_id}", exc)
         return None

@@ -4,6 +4,8 @@ import type { BuildAuthorship, BuildStatus } from './api/factory'
 export const CLIENT_STALE_AFTER_S = 180
 /** Match backend build_jobs._STALL_AFTER_S — process likely gone. */
 export const CLIENT_STALL_AFTER_S = 1800
+/** Match backend llm_watchdog.attempt_wall_s default (120s × 3 legs + 30s). */
+export const CLIENT_MODEL_CALL_DEADLINE_S = 390
 
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
  *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
@@ -145,10 +147,28 @@ export function formatHeartbeat(build: BuildStatus, nowMs = Date.now()): string 
           ? `${Math.round(age)}s ago`
           : `${Math.round(age / 60)} min ago`
   const stale = Boolean(build.stale) || (age != null && age >= CLIENT_STALE_AFTER_S)
+  const inCall = Boolean(build.model_call_in_progress)
+  const deadline =
+    typeof build.model_call_deadline_s === 'number'
+      ? build.model_call_deadline_s
+      : inCall
+        ? CLIENT_MODEL_CALL_DEADLINE_S
+        : null
+  if (inCall && deadline != null && age != null && age >= deadline) {
+    return `coder LLM timed out after ${Math.round(age)}s — the model call did not finish`
+  }
+  if (inCall && stale) {
+    return ago
+      ? `quiet for ${ago.replace(' ago', '')} — model call may still be running (bounded ${Math.round(deadline ?? CLIENT_MODEL_CALL_DEADLINE_S)}s)`
+      : 'quiet — model call may still be running'
+  }
   if (stale) {
     return ago
-      ? `quiet for ${ago.replace(' ago', '')} — model call may still be running`
-      : 'quiet — model call may still be running'
+      ? `quiet for ${ago.replace(' ago', '')} — no new progress`
+      : 'quiet — no new progress'
+  }
+  if (inCall) {
+    return ago ? `waiting on coder LLM · ${ago}` : 'waiting on coder LLM'
   }
   return ago ? `still working · ${ago}` : 'still working'
 }
@@ -160,6 +180,22 @@ export function withClientStall(
 ): BuildStatus | null {
   if (!build || build.state !== 'building') return build
   const age = eventAgeSeconds(build, nowMs)
+  const deadline =
+    typeof build.model_call_deadline_s === 'number'
+      ? build.model_call_deadline_s
+      : build.model_call_in_progress
+        ? CLIENT_MODEL_CALL_DEADLINE_S
+        : null
+  if (build.model_call_in_progress && deadline != null && age != null && age >= deadline) {
+    return {
+      ...build,
+      state: 'failed',
+      detail:
+        build.detail && build.detail.includes('timed out')
+          ? build.detail
+          : `coder LLM timed out after ${Math.round(age)}s — the model call did not finish`,
+    }
+  }
   if (age == null || age < CLIENT_STALL_AFTER_S) return build
   return {
     ...build,

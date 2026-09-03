@@ -22,7 +22,6 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import httpx
 import yaml
 
 from app.core.llm_config import get_factory_llm_config
@@ -217,11 +216,17 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             # (kimi-k2.x) reject any explicit temperature other than 1.
             if cfg.get("temperature") is not None:
                 payload["temperature"] = cfg["temperature"]
-            with httpx.Client(timeout=120.0) as client:
-                resp = client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                return json.loads(content)
+            from app.factory.llm_watchdog import call_timeout_s, post_with_deadline
+
+            resp = post_with_deadline(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=call_timeout_s(),
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            return json.loads(content)
 
         try:
             return _try(cfg["model"])

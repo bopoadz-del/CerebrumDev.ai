@@ -34,6 +34,12 @@ import httpx
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .build.authority import kernel_seat_brief
+from .llm_watchdog import (
+    attempt_wall_s,
+    call_timeout_s,
+    is_timeout_error,
+    post_with_deadline,
+)
 
 logger = logging.getLogger("cerebrumdev.factory.coder")
 
@@ -57,6 +63,10 @@ def code_cli_command(default: str = "kimi") -> str:
 
 class CoderError(RuntimeError):
     """The coder LLM could not produce a handler. Never fabricate instead."""
+
+
+class CoderTimeout(CoderError):
+    """The coder LLM exceeded the wall-clock watchdog. Never hang the WRITER."""
 
 
 def coder_enabled() -> bool:
@@ -172,16 +182,19 @@ ANTHROPIC_VERSION = "2023-06-01"
 #: (observed once per five routes on a live kimi-k2.7-code build).
 #: Override with FACTORY_CODER_MAX_TOKENS.
 def _call_timeout_s() -> float:
-    """Per-call ceiling for one coder request.
+    """Per-attempt ceiling for one coder HTTP request.
 
-    Reasoning models legitimately take a minute or more, but an unbounded
-    wait multiplied by retries and two model legs is how a build hangs.
-    Override with FACTORY_CODER_TIMEOUT_S.
+    Reasoning models legitimately take a minute or more, but an idle-only
+    httpx timeout is not a deadline: a streaming model never trips it.
+    ``llm_watchdog`` enforces a wall-clock join. Override with
+    FACTORY_CODER_TIMEOUT_S.
     """
-    try:
-        return max(30.0, float(os.getenv("FACTORY_CODER_TIMEOUT_S", "120")))
-    except ValueError:
-        return 120.0
+    return call_timeout_s()
+
+
+def _attempt_wall_s() -> float:
+    """One handler/model-spec call including alternate-model retries."""
+    return attempt_wall_s()
 
 
 def code_max_tokens() -> int:
@@ -321,7 +334,13 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     def _try(leg: Dict[str, Any], model: str) -> str:
         if leg.get("provider") == "claude":
             url, payload, headers = _anthropic_request(leg, messages, model)
-            resp = httpx.post(url, json=payload, headers=headers, timeout=120.0)
+            resp = post_with_deadline(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=_call_timeout_s(),
+                post=httpx.post,
+            )
             resp.raise_for_status()
             return _anthropic_text(resp.json())
 
@@ -349,7 +368,13 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
         temperature = leg.get("temperature")
         if temperature is not None:
             payload["temperature"] = temperature
-        resp = httpx.post(url, json=payload, headers=headers, timeout=_call_timeout_s())
+        resp = post_with_deadline(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=_call_timeout_s(),
+            post=httpx.post,
+        )
         resp.raise_for_status()
         data = resp.json()
         choice = data["choices"][0]
@@ -406,19 +431,23 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                 last = exc
                 if attempt < 2:
                     _time.sleep(_retry_after_s(exc))
-            # ReadTimeout is deliberately NOT retried. It means the model did
-            # not answer within the call timeout; a retry costs the same wait
-            # again for the same likely outcome. Retrying it turned one slow
-            # artifact into up to 18 minutes (3 attempts x 2 model legs x
-            # 180s) and left a production build stuck in the WRITER for 39
-            # minutes with no way to see why. Connection failures are the
-            # genuinely transient case.
+            # ReadTimeout / watchdog is deliberately NOT retried on the SAME
+            # model here. The caller tries an alternate configured model
+            # once; looping the free-tier slug just spends the same wait
+            # again. Connection failures are the genuinely transient case.
             except (httpx.ConnectError, httpx.ConnectTimeout,
                     httpx.RemoteProtocolError) as exc:
                 last = exc
                 if attempt < 2:
                     _time.sleep(2 * (attempt + 1))
         raise last
+
+    def _timeout_or_fail(
+        message: str, cause: BaseException, timed_out: bool
+    ) -> None:
+        if timed_out:
+            raise CoderTimeout(f"coder LLM timed out: {message}") from cause
+        raise CoderError(f"coder LLM failed: {message}") from cause
 
     if not primary_usable:
         # The leg is the only thing there is. No primary to fall back FROM, so
@@ -427,6 +456,21 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
         try:
             return _try_with_connect_retries(cross, cross["model"]), cross["model"]
         except Exception as only:  # noqa: BLE001
+            if is_timeout_error(only):
+                try:
+                    return (
+                        _try_with_connect_retries(cross, cross["model"]),
+                        cross["model"],
+                    )
+                except Exception as retry:  # noqa: BLE001
+                    _timeout_or_fail(
+                        f"{cross['model']} (the only configured leg; no "
+                        f"primary credentials) after retry "
+                        f"({type(only).__name__}: {only}; "
+                        f"{type(retry).__name__}: {retry})",
+                        retry,
+                        is_timeout_error(retry),
+                    )
             raise CoderError(
                 f"coder LLM failed on {cross['model']} (the only configured "
                 f"leg; no primary credentials): "
@@ -452,6 +496,22 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
             legs.append((cross, cross["model"]))
 
         if not legs:
+            # No alternate model configured: retry the same call once, then
+            # fail closed. Do not loop the free-tier slug forever.
+            if is_timeout_error(first):
+                try:
+                    return (
+                        _try_with_connect_retries(primary_leg, cfg["model"]),
+                        cfg["model"],
+                    )
+                except Exception as retry:  # noqa: BLE001
+                    _timeout_or_fail(
+                        f"{cfg['model']} after retry "
+                        f"({type(first).__name__}: {first}; "
+                        f"{type(retry).__name__}: {retry})",
+                        retry,
+                        is_timeout_error(retry),
+                    )
             raise CoderError(
                 f"coder LLM failed: {type(first).__name__}: {first}"
             ) from first
@@ -463,11 +523,13 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
         # starved token budget. coder_failures is often the only record
         # anyone sees, so it has to carry the reason.
         reasons = [f"primary {cfg['model']} ({type(first).__name__}: {first})"]
+        timed_out = is_timeout_error(first)
         for leg, model in legs:
             try:
                 text = _try_with_connect_retries(leg, model)
             except Exception as exc:  # noqa: BLE001
                 reasons.append(f"fallback {model} ({type(exc).__name__}: {exc})")
+                timed_out = timed_out and is_timeout_error(exc)
                 continue
             if leg is not primary_leg:
                 logger.warning(
@@ -477,7 +539,10 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                     cfg["model"],
                 )
             return text, model
-        raise CoderError("coder LLM failed on " + " and ".join(reasons))
+        joined = " and ".join(reasons)
+        if timed_out:
+            raise CoderTimeout("coder LLM timed out on " + joined)
+        raise CoderError("coder LLM failed on " + joined)
 
 
 #: Cap on a server-stated Retry-After. The coder already runs under a build

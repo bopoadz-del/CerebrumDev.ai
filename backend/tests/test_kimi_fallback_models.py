@@ -129,13 +129,13 @@ def test_product_architect_retries_with_fallback_model(factory_env):
 
     calls = []
 
-    def fake_post(self, url, *, json=None, headers=None):
+    def fake_post(url, json=None, headers=None, timeout=None):
         calls.append(json["model"])
         if json["model"] == "kimi-k2.7-code":
             return primary_resp
         return fallback_resp
 
-    with patch.object(httpx.Client, "post", fake_post):
+    with patch.object(httpx, "post", fake_post):
         result = _llm_json_call([{"role": "user", "content": "build"}])
 
     assert calls == ["kimi-k2.7-code", "kimi-k2.5-code"]

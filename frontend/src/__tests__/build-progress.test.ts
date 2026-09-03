@@ -42,6 +42,41 @@ describe('build progress copy', () => {
     }
     expect(formatHeartbeat(quiet)).toMatch(/quiet/)
     expect(formatHeartbeat(quiet)).toMatch(/4 min/)
+    expect(formatHeartbeat(quiet)).toMatch(/no new progress/)
+    expect(formatHeartbeat(quiet)).not.toMatch(/may still be running/)
+  })
+
+  it('bounds an in-flight coder call and does not claim handler progress', () => {
+    const calling: BuildStatus = {
+      ...cloner,
+      last_event: 'calling coder LLM for clinical_treatment_notes',
+      last_event_age_s: 12,
+      model_call_in_progress: true,
+      model_call_deadline_s: 390,
+      phase_progress: undefined,
+    }
+    expect(formatHeartbeat(calling)).toMatch(/waiting on coder LLM/)
+    expect(formatHeartbeat(calling)).not.toMatch(/still working/)
+    expect(formatPhaseCounts(calling)).toBeNull()
+
+    const staleCall: BuildStatus = {
+      ...calling,
+      stale: true,
+      last_event_age_s: 240,
+    }
+    expect(formatHeartbeat(staleCall)).toMatch(/may still be running/)
+    expect(formatHeartbeat(staleCall)).toMatch(/bounded 390s/)
+
+    const overdue: BuildStatus = {
+      ...calling,
+      last_event_age_s: 400,
+      stale: true,
+    }
+    expect(formatHeartbeat(overdue)).toMatch(/coder LLM timed out/)
+    expect(formatHeartbeat(overdue)).not.toMatch(/may still be running/)
+    const failed = withClientStall(overdue)
+    expect(failed?.state).toBe('failed')
+    expect(failed?.detail).toMatch(/coder LLM timed out/)
   })
 
   it('advances relative age from last_event_at so a frozen server snapshot cannot stall the ticker', () => {

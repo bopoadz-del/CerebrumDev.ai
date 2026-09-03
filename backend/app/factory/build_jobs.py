@@ -56,13 +56,15 @@ _DEFAULT_MAX_REWORK = 1
 _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
 
 #: A build with no ledger event for this long has no process behind it. The
-#: longest legitimate gap is one coder call (up to ~3 min on a reasoning
-#: model, x2 legs x retries), so this is set well above that.
+#: longest legitimate gap is one coder call (watchdog × fallback legs), so
+#: this is set well above that. An in-flight model_call NOTE uses a tighter
+#: bound — see ``_model_call_overdue``.
 _STALL_AFTER_S = 1800.0
 
 #: Quieter than a dead process: one coder call can sit in the model for
 #: ~2–3 min with no NOTE. Past this the UI says "quiet" so a customer can
-#: tell a long model call from a frozen 2/5 with no name.
+#: tell a long model call from a frozen 2/5 with no name. "may still be
+#: running" is only honest while a model_call NOTE is inside its deadline.
 _STALE_AFTER_S = 180.0
 
 
@@ -119,6 +121,40 @@ def _phase_ref(role: Any) -> Dict[str, str]:
 
     resolved = role if hasattr(role, "value") else BuildRole(role)
     return {"id": resolved.value, "label": role_contract(resolved).title}
+
+
+def _model_call_fields(last_note: Any) -> Dict[str, Any]:
+    """Surface an in-flight coder call so the Floor can bound 'quiet' copy."""
+    payload = (getattr(last_note, "payload", None) or {}) if last_note else {}
+    if not payload.get("model_call"):
+        return {}
+    try:
+        from app.factory.llm_watchdog import attempt_wall_s
+
+        deadline = float(payload.get("deadline_s") or attempt_wall_s())
+    except (TypeError, ValueError):
+        from app.factory.llm_watchdog import attempt_wall_s
+
+        deadline = attempt_wall_s()
+    return {
+        "model_call_in_progress": True,
+        "model_call_deadline_s": round(deadline, 1),
+    }
+
+
+def _model_call_overdue(last_note: Any, idle_s: float) -> Optional[str]:
+    """Concrete timeout detail when a calling-NOTE outlived its watchdog wall."""
+    fields = _model_call_fields(last_note)
+    if not fields:
+        return None
+    deadline = float(fields["model_call_deadline_s"])
+    if idle_s <= deadline:
+        return None
+    what = getattr(last_note, "detail", None) or "coder LLM call"
+    return (
+        f"coder LLM timed out after {int(idle_s)}s "
+        f"(deadline {int(deadline)}s) — {what}"
+    )
 
 
 def _event_age_s(ts: str, fallback_s: float) -> float:
@@ -290,6 +326,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "last_event_at": last_any.ts if last_any else None,
         "last_event_age_s": round(idle_s, 1),
         "stale": idle_s > _STALE_AFTER_S,
+        **_model_call_fields(last_note),
     }
     if last_note is not None:
         payload = last_note.payload or {}
@@ -347,6 +384,20 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
             "activity_stage": (last_note.payload or {}).get("stage"),
             "activity_done": (last_note.payload or {}).get("done"),
             "activity_total": (last_note.payload or {}).get("total"),
+        }
+
+    # A calling-NOTE that outlived the watchdog wall means the WRITER thread
+    # is stuck in a model call that will never complete. Fail now so the
+    # Floor shows CODING AGENT STOPPED instead of "quiet for N min".
+    overdue = _model_call_overdue(last_note, idle_s)
+    if overdue:
+        return {
+            "state": "failed",
+            "detail": overdue,
+            "pilot_ready": False,
+            **progress,
+            **activity,
+            "stale": False,
         }
 
     # A build whose thread died (worker restart, OOM, redeploy) leaves the

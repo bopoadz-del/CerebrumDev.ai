@@ -313,9 +313,10 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
         },
     )
 
-    with pytest.raises(coder.CoderError):
+    with pytest.raises(coder.CoderTimeout) as exc:
         coder._llm_code_call([{"role": "user", "content": "u"}])
 
+    assert "coder LLM timed out" in str(exc.value)
     # One attempt per model leg, not three.
     assert len(calls) == 2, calls
     # And the per-call wait is bounded and configurable.
