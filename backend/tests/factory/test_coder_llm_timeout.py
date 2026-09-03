@@ -57,8 +57,9 @@ def test_watchdog_fires_when_httpx_never_returns(monkeypatch):
     _arm_kimi(monkeypatch, fallback_model=None)
 
     def _hang(url, json=None, headers=None, timeout=None):
-        time.sleep(8)
-        raise AssertionError("watchdog should have released the caller")
+        # time.sleep is no-op'd by _arm_kimi (connect-retry backoff).
+        threading.Event().wait(8)
+        raise AssertionError("caller was not released")
 
     monkeypatch.setattr(coder.httpx, "post", _hang)
 
@@ -92,8 +93,8 @@ def test_hung_post_aborts_near_deadline_when_join_ignores_timeout(monkeypatch):
     timeout_s = 0.25
 
     def _hang(url, json=None, headers=None, timeout=None):  # noqa: ARG001
-        time.sleep(hang_s)
-        raise AssertionError("watchdog should have released the caller")
+        threading.Event().wait(hang_s)
+        raise AssertionError("caller was not released")
 
     started = time.monotonic()
     with pytest.raises(httpx.ReadTimeout) as exc:
@@ -184,8 +185,10 @@ def test_stacked_legs_cannot_outrun_attempt_wall(monkeypatch):
     )
 
     def _hang(url, json=None, headers=None, timeout=None):  # noqa: ARG001
-        time.sleep(2.0)
-        raise AssertionError("attempt wall should have released the caller")
+        # Must not use time.sleep: _arm_kimi no-ops it for connect-retry
+        # backoff, which made this test a false pass on the old join path.
+        threading.Event().wait(2.0)
+        raise httpx.ReadTimeout("model still open")
 
     monkeypatch.setattr(coder.httpx, "post", _hang)
 
@@ -203,7 +206,7 @@ def test_stacked_legs_cannot_outrun_attempt_wall(monkeypatch):
 def test_validate_retry_does_not_swallow_coder_timeout(monkeypatch):
     calls = []
 
-    def _boom(messages, deadline_mono=None):  # noqa: ARG001
+    def _boom(messages):  # noqa: ARG001
         calls.append(1)
         raise coder.CoderTimeout("coder LLM timed out on primary after retry")
 
