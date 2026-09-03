@@ -240,7 +240,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent finished/)
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: 'build me a tasting room for a family winery' },
