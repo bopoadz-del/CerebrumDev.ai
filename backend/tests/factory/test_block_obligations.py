@@ -112,23 +112,45 @@ def test_unassigned_blocks_impose_nothing():
 # -- resource obligation --------------------------------------------------
 
 
-def test_crew_dashboard_gets_told_to_create_the_team_first():
+def test_crew_dashboard_gets_told_where_the_team_id_comes_from():
     """The live failure: 'team: Team access denied' -- for the owner.
 
-    Mutation killed: naming the block without naming create_team/team_id,
-    which is the whole content of the fix.
+    REWRITTEN for R1c (2026-09-01). The instruction genuinely changed: the
+    platform now creates the team at STARTUP (app/preconditions.py), so
+    telling the handler to call create_team first would produce a second
+    team and a race over which id the handlers read. What must survive is
+    the part that prevents the bug -- the id comes from the block, never
+    from a domain value like payload['primary_crew'] -- and the handler must
+    be told exactly where to read it.
+
+    Mutation killed: leaving the old "call create_team FIRST" prose in place
+    after the startup step landed, so two rules contradict each other and
+    the coder follows the wrong one.
     """
     text = describe_resource_obligations(["team", "document_engine"])
-    assert "create_team" in text
     assert "team_id" in text
     assert "get_team_context" in text
-    # The instruction that actually prevents the bug: the id comes from the
-    # result, never from a domain value like payload['primary_crew'].
-    assert "never a domain value" in text
-    # Ordering is the other half. Knowing the id exists is useless if the
-    # coder calls get_team_context before create_team.
-    assert "FIRST" in text
+    # The instruction that actually prevents the bug, unchanged in substance.
+    assert "never pass a domain value" in text
     assert "mint their own id" in text
+    # Where the id now comes from, and the explicit stop on the old advice.
+    assert "from app.preconditions import resource_id" in text
+    assert "resource_id('team')" in text
+    assert "Do NOT call create_team yourself" in text
+
+
+def test_the_per_record_obligation_still_says_do_it_yourself_and_first():
+    """R1c moved ONLY the platform-scoped obligation to startup. storage's
+    ensure inputs are the caller's file, so a boot step would have to invent
+    one (F18) -- the handler still owns it, and still owns the ordering.
+
+    Mutation killed: applying the startup prose to every obligation, which
+    leaves a handler waiting for a stored file the platform never stores.
+    """
+    text = describe_resource_obligations(["storage"])
+    assert "FIRST" in text
+    assert "resource_id" not in text
+    assert "ALREADY created" not in text
 
 
 def test_storage_obligation_is_stated_because_it_fails_quietly():
