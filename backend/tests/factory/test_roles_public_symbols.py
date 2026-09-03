@@ -94,6 +94,13 @@ _PRE_SPLIT_SYMBOLS = (
 )
 
 
+def test_templated_readme_uses_venv_not_system_pip():
+    readme = roles_handlers._templated_readme("Parks Desk", ["crew"], ["team"])
+    assert "python3 -m venv .venv" in readme
+    assert ".venv/bin/pip install -r requirements.txt" in readme
+    assert "\npip install -r requirements.txt\n" not in readme
+
+
 def test_pre_split_roles_symbols_still_resolve():
     missing = [name for name in _PRE_SPLIT_SYMBOLS if not hasattr(roles, name)]
     assert missing == [], f"roles.py facade dropped symbols: {missing}"
