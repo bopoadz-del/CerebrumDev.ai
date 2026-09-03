@@ -1,5 +1,10 @@
 import type { BuildAuthorship, BuildStatus } from './api/factory'
 
+/** Match backend build_jobs._STALE_AFTER_S — quiet model call vs frozen UI. */
+export const CLIENT_STALE_AFTER_S = 180
+/** Match backend build_jobs._STALL_AFTER_S — process likely gone. */
+export const CLIENT_STALL_AFTER_S = 1800
+
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
  *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
  */
@@ -38,7 +43,10 @@ export function formatPhaseCounts(build: BuildStatus): string | null {
   const progress = build.phase_progress
   if (progress && progress.total > 0) {
     const unit = progress.stage || 'items'
-    return `${progress.done}/${progress.total} ${unit}`
+    const base = `${progress.done}/${progress.total} ${unit}`
+    // WRITER can restart a handler/route wave at 1/N after finishing 3/N —
+    // label it so the drop does not read as a regression.
+    return build.client_wave_reset ? `${base} (new pass)` : base
   }
   if (
     typeof build.activity_done === 'number' &&
@@ -46,14 +54,88 @@ export function formatPhaseCounts(build: BuildStatus): string | null {
     build.activity_total > 0
   ) {
     const unit = build.activity_stage || 'items'
-    return `${build.activity_done}/${build.activity_total} ${unit}`
+    const base = `${build.activity_done}/${build.activity_total} ${unit}`
+    return build.client_wave_reset ? `${base} (new pass)` : base
   }
   return null
 }
 
-export function formatHeartbeat(build: BuildStatus): string | null {
+/**
+ * Stamp (or preserve) client observation metadata so a frozen server
+ * ``last_event_age_s`` still advances on the wall clock between polls.
+ * Re-stamp only when the ledger event identity changes.
+ */
+export function stampBuildObservation(
+  next: BuildStatus,
+  prev: BuildStatus | null | undefined,
+  nowMs = Date.now(),
+): BuildStatus {
+  const sameEvent =
+    Boolean(prev) &&
+    prev!.state === next.state &&
+    (prev!.last_event_at ?? null) === (next.last_event_at ?? null) &&
+    (prev!.last_event ?? null) === (next.last_event ?? null) &&
+    (prev!.activity ?? null) === (next.activity ?? null)
+
+  const prevProgress = prev?.phase_progress
+  const nextProgress = next.phase_progress
+  const waveReset = Boolean(
+    prevProgress &&
+      nextProgress &&
+      (prevProgress.stage || '') === (nextProgress.stage || '') &&
+      prevProgress.total === nextProgress.total &&
+      nextProgress.done < prevProgress.done,
+  )
+
+  if (sameEvent && typeof prev!.client_observed_at_ms === 'number') {
+    return {
+      ...next,
+      client_observed_at_ms: prev!.client_observed_at_ms,
+      client_base_age_s:
+        typeof prev!.client_base_age_s === 'number'
+          ? prev!.client_base_age_s
+          : typeof prev!.last_event_age_s === 'number'
+            ? prev!.last_event_age_s
+            : next.last_event_age_s,
+      client_wave_reset: prev!.client_wave_reset,
+    }
+  }
+  return {
+    ...next,
+    client_observed_at_ms: nowMs,
+    client_base_age_s: next.last_event_age_s,
+    client_wave_reset: waveReset,
+  }
+}
+
+/**
+ * Relative age of the last ledger event. Prefer wall-clock from
+ * ``last_event_at``; otherwise advance a frozen ``last_event_age_s`` from
+ * the client observation stamp so "2 min ago" cannot stick for 5 wall minutes.
+ */
+export function eventAgeSeconds(build: BuildStatus, nowMs = Date.now()): number | null {
+  const ages: number[] = []
+  if (build.last_event_at) {
+    const at = Date.parse(build.last_event_at)
+    if (!Number.isNaN(at)) {
+      ages.push(Math.max(0, (nowMs - at) / 1000))
+    }
+  }
+  if (
+    typeof build.client_base_age_s === 'number' &&
+    typeof build.client_observed_at_ms === 'number'
+  ) {
+    ages.push(build.client_base_age_s + Math.max(0, (nowMs - build.client_observed_at_ms) / 1000))
+  } else if (typeof build.last_event_age_s === 'number') {
+    ages.push(build.last_event_age_s)
+  }
+  if (ages.length === 0) return null
+  return Math.max(...ages)
+}
+
+export function formatHeartbeat(build: BuildStatus, nowMs = Date.now()): string | null {
   if (build.state !== 'building') return null
-  const age = build.last_event_age_s
+  const age = eventAgeSeconds(build, nowMs)
   const ago =
     age == null
       ? null
@@ -62,12 +144,31 @@ export function formatHeartbeat(build: BuildStatus): string | null {
         : age < 60
           ? `${Math.round(age)}s ago`
           : `${Math.round(age / 60)} min ago`
-  if (build.stale) {
+  const stale = Boolean(build.stale) || (age != null && age >= CLIENT_STALE_AFTER_S)
+  if (stale) {
     return ago
       ? `quiet for ${ago.replace(' ago', '')} — model call may still be running`
       : 'quiet — model call may still be running'
   }
   return ago ? `still working · ${ago}` : 'still working'
+}
+
+/** Promote a forever-"building" snapshot to stalled when the ledger is dead. */
+export function withClientStall(
+  build: BuildStatus | null,
+  nowMs = Date.now(),
+): BuildStatus | null {
+  if (!build || build.state !== 'building') return build
+  const age = eventAgeSeconds(build, nowMs)
+  if (age == null || age < CLIENT_STALL_AFTER_S) return build
+  return {
+    ...build,
+    state: 'stalled',
+    detail:
+      build.detail && build.detail !== 'build in progress'
+        ? build.detail
+        : `no build activity for ${Math.round(age / 60)} min — the build process may be gone; generate again`,
+  }
 }
 
 export function phaseBarFraction(build: BuildStatus): number | null {

@@ -346,6 +346,10 @@ export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled'
   detail?: string
   findings?: string[]
+  cycle?: string
+  outcome?: string
+  /** True only after a SUCCESS that closed a pilot cycle (Store-green). */
+  pilot_ready?: boolean
   phases?: string[]
   completed?: string[]
   phases_done?: number
@@ -364,8 +368,19 @@ export type BuildStatus = {
   activity_done?: number
   activity_total?: number
   authorship?: BuildAuthorship
-  cycle?: 'code' | 'pilot' | string
-  pilot_ready?: boolean
+  /**
+   * Client-only: when this ledger event was first observed in the UI.
+   * Lets the heartbeat advance even if the server keeps returning a frozen
+   * ``last_event_age_s`` on every poll.
+   */
+  client_observed_at_ms?: number
+  /** Client-only: ``last_event_age_s`` at ``client_observed_at_ms``. */
+  client_base_age_s?: number
+  /**
+   * Client-only: phase_progress.done stepped down for the same stage
+   * (e.g. handlers 3/5 → 1/5 on a new WRITER pass).
+   */
+  client_wave_reset?: boolean
 }
 
 export async function awaitBuild(
@@ -392,6 +407,38 @@ export async function awaitBuild(
       return { ...build, state: 'failed', detail: 'build timed out client-side' }
     }
     await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
+/**
+ * Keep polling across succeed → building (pilot reopen). Stops only on
+ * failed/stalled or abort. Floor/Platforms use this so a FINISHED banner
+ * cannot stay pinned while a pilot cycle is live.
+ */
+export async function watchBuildStatus(
+  sid: string,
+  onProgress: (s: BuildStatus) => void,
+  { intervalMs = 4000, signal }: { intervalMs?: number; signal?: AbortSignal } = {},
+): Promise<void> {
+  while (!signal?.aborted) {
+    const { build } = await product.buildStatus(sid)
+    if (signal?.aborted) return
+    onProgress(build)
+    if (build.state === 'failed' || build.state === 'stalled') return
+    await new Promise<void>((resolve) => {
+      const t = setTimeout(resolve, intervalMs)
+      const onAbort = () => {
+        clearTimeout(t)
+        resolve()
+      }
+      if (signal) {
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
   }
 }
 

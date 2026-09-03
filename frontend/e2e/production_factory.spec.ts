@@ -141,6 +141,8 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
   await expect(page.getByText('Email verified')).toBeVisible()
   await expect(page.getByText('Yes')).toBeVisible()
   if (liveEmail) await expect(page.getByText(liveEmail)).toBeVisible()
+  // Visible only — do not click: live forgot-password must not fire for this account.
+  await expect(page.getByRole('button', { name: 'Send password reset' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Subscription' }).click()
   await expect(page.getByRole('heading', { name: 'Subscription' })).toBeVisible()
@@ -153,6 +155,7 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
   } else {
     await expect(manage).toBeVisible()
     await expect(upgrade).toHaveCount(0)
+    await expect(page.getByText(/Upgrade still says so/i)).toHaveCount(0)
   }
   await expect(
     page.getByText(/Payments are not connected on this deployment yet|stripe/i).first(),

@@ -9,6 +9,8 @@ import type { AccountInfo } from '../api/factory'
 
 const meMock = vi.fn()
 const resendMock = vi.fn()
+const forgotPasswordMock = vi.fn()
+const resetPasswordMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -19,6 +21,8 @@ vi.mock('../api/factory', async (importOriginal) => {
       ...actual.auth,
       me: (...args: unknown[]) => meMock(...args),
       resendVerification: (...args: unknown[]) => resendMock(...args),
+      forgotPassword: (...args: unknown[]) => forgotPasswordMock(...args),
+      resetPassword: (...args: unknown[]) => resetPasswordMock(...args),
     },
   }
 })
@@ -27,6 +31,8 @@ describe('Account verified settling', () => {
   beforeEach(() => {
     meMock.mockReset()
     resendMock.mockReset()
+    forgotPasswordMock.mockReset()
+    resetPasswordMock.mockReset()
   })
 
   it('does not render Yes or No until /me settles, and keeps the Account row', async () => {
@@ -107,5 +113,48 @@ describe('Account verified settling', () => {
     await waitFor(() => expect(resendMock).toHaveBeenCalled())
     expect(screen.getByPlaceholderText('verification token')).toHaveValue('cdv_from_account')
     expect(screen.getByText('SMTP not configured')).toBeInTheDocument()
+  })
+})
+
+describe('Account password reset', () => {
+  beforeEach(() => {
+    meMock.mockReset()
+    forgotPasswordMock.mockReset()
+    resetPasswordMock.mockReset()
+    meMock.mockResolvedValue({
+      email: 'owner@factory.dev',
+      email_verified: true,
+      account_id: 'acct_settled',
+    })
+  })
+
+  it('offers Send password reset for the signed-in email', async () => {
+    render(<Account onLogout={() => {}} />)
+    expect(await screen.findByText('owner@factory.dev')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Send password reset' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+
+  it('posts forgot-password for the current email and shows success without resetting', async () => {
+    forgotPasswordMock.mockResolvedValue({
+      ok: true,
+      message: 'If the email is registered, a reset link follows.',
+    })
+    render(<Account onLogout={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Send password reset' }))
+    await waitFor(() => expect(forgotPasswordMock).toHaveBeenCalledWith('owner@factory.dev'))
+    expect(screen.getByText('If the email is registered, a reset link follows.')).toBeInTheDocument()
+    expect(resetPasswordMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    expect(screen.getByText('owner@factory.dev')).toBeInTheDocument()
+  })
+
+  it('surfaces a forgot-password API error without changing the session', async () => {
+    forgotPasswordMock.mockRejectedValue(new Error('rate limited'))
+    render(<Account onLogout={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Send password reset' }))
+    expect(await screen.findByText('rate limited')).toBeInTheDocument()
+    expect(resetPasswordMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
   })
 })

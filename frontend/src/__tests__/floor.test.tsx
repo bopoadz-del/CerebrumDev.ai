@@ -8,7 +8,9 @@ import { Floor } from '../App'
 
 const chatStreamMock = vi.fn()
 const awaitBuildMock = vi.fn()
+const watchBuildMock = vi.fn()
 const getMock = vi.fn()
+const downloadMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -16,6 +18,8 @@ vi.mock('../api/factory', async (importOriginal) => {
     ...actual,
     chatStream: (...args: unknown[]) => chatStreamMock(...args),
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
+    watchBuildStatus: (...args: unknown[]) => watchBuildMock(...args),
+    downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
     product: {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
@@ -38,10 +42,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
   beforeEach(() => {
     chatStreamMock.mockReset()
     awaitBuildMock.mockReset()
+    watchBuildMock.mockReset()
     getMock.mockReset()
+    downloadMock.mockReset()
     getMock.mockResolvedValue({})
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
-      const status = {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
         state: 'building',
         activity: 'wrote handler payments',
         last_event: 'wrote handler payments',
@@ -54,9 +60,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
         phase_progress: { done: 7, total: 7, fraction: 1, stage: 'handlers' },
         last_event_age_s: 8,
         stale: false,
-      }
-      onProgress?.(status)
-      return status
+      })
     })
   })
 
@@ -135,7 +139,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open Your Platforms' }))
     expect(goPlatforms).toHaveBeenCalled()
     expect(chatStreamMock).toHaveBeenCalledWith('sess_ui', 'approve', expect.any(Function))
-    expect(awaitBuildMock).toHaveBeenCalled()
+    expect(watchBuildMock).toHaveBeenCalled()
   })
 
   it('labels keyword fallback when the architect LLM did not draft', async () => {
@@ -198,15 +202,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
   })
 
   it('SUCCESS takeover heading is finished only when pilot-ready', async () => {
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
-      const status = {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
         state: 'succeeded',
         pilot_ready: true,
         cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
-      }
-      onProgress?.(status)
-      return status
+      })
     })
     getMock.mockResolvedValue({
       blueprint: LLM_BLUEPRINT,
@@ -216,21 +218,20 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_done" goPlatforms={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
     expect(screen.getByText('Finished — 22 artifacts; 6 templated. Download ready.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
   it('code-cycle SUCCESS is a prototype, not Finished / Download ready', async () => {
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
-      const status = {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
         state: 'succeeded',
         pilot_ready: false,
         cycle: 'code',
         authorship: { artifacts: 24, agent_written: 11, templated: 13 },
-      }
-      onProgress?.(status)
-      return status
+      })
     })
     getMock.mockResolvedValue({
       blueprint: LLM_BLUEPRINT,
@@ -247,14 +248,186 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
   })
 
-  it('clears coder takeover when a new blueprint is drafted after a runner', async () => {
-    awaitBuildMock.mockImplementation(async (_sid: string, onProgress?: (s: object) => void) => {
-      const status = {
+  it('downloads the zip from the Floor after the coding agent finishes', async () => {
+    downloadMock.mockResolvedValue(undefined)
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
         state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
         authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_dl" goPlatforms={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Download platform export (.zip)' }))
+    await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_dl'))
+  })
+
+  it('replaces FINISHED with TAKEN OVER when a pilot generation event arrives', async () => {
+    watchBuildMock
+      .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          authorship: { artifacts: 30, agent_written: 11, templated: 19 },
+        })
+      })
+      .mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'building',
+          phases_done: 2,
+          phases_total: 5,
+          current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+          phase_index: 3,
+          phase_total: 5,
+          last_event: 'wrote handler tenancy_application_pipeline',
+          last_event_age_s: 12,
+        })
+      })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'generation',
+        data: {
+          summary: 'Opening pilot cycle for residential-lettings on the same workspace/hash.',
+          triggered_by: 'chat_llm',
+          generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+        },
+      })
+    })
+    render(<Floor sessionId="sess_pilot" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Writing your platform/)).toBeInTheDocument()
+  })
+
+  it('keeps only one Open Your Platforms CTA after a second generation card', async () => {
+    watchBuildMock
+      .mockImplementationOnce(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          authorship: { artifacts: 30, agent_written: 11, templated: 19 },
+        })
+      })
+      .mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+        onProgress({
+          state: 'building',
+          phases_done: 2,
+          phases_total: 5,
+          current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+          phase_index: 3,
+          phase_total: 5,
+        })
+      })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'generation',
+        data: {
+          summary: 'Opening pilot cycle.',
+          triggered_by: 'chat_llm',
+          generation: { engine: 'runner', triggered_by: 'chat_llm' },
+        },
+      })
+    })
+    render(<Floor sessionId="sess_dup" goPlatforms={() => {}} />)
+    // Wait for the succeeded snapshot — otherwise coderActive+null build
+    // briefly disables the composer (pilot reopen race).
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Opening pilot cycle.')
+    expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
+  })
+
+  it('shows Coding agent stopped — not finished Download — when TESTER is red', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'pilot',
+        outcome: 'FAILED_BUDGET_SPENT',
+        pilot_ready: false,
+        detail:
+          'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_red" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(screen.getByText(/rework budget of 3 exhausted/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+  })
+
+  it('does not offer Floor download while the coding agent is still writing', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      if (message === 'approve') {
+        onEvent({
+          event: 'generation',
+          data: {
+            summary: 'Build started.',
+            triggered_by: 'chat_llm',
+            generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+          },
+        })
+        return
       }
-      onProgress?.(status)
-      return status
+      onEvent({
+        event: 'blueprint',
+        data: { summary: 'Blueprint drafted.', blueprint: LLM_BLUEPRINT },
+      })
+    })
+    render(<Floor sessionId="sess_ui" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'Build me a vineyard management platform' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
+    expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+  })
+
+  it('clears coder takeover when a new blueprint is drafted after a runner', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+      })
     })
     getMock.mockResolvedValue({
       blueprint: LLM_BLUEPRINT,
@@ -268,7 +441,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: 'build me a tasting room for a family winery' },

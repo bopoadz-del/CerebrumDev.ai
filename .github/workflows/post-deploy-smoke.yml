@@ -4,7 +4,8 @@ name: Post-deploy smoke
 # A red unit job on a PR must not be this workflow.
 #
 # Render already has SMOKE_GATE_TOKEN. GitHub Actions often does not.
-# The script waits for /health and /ready (Render bounce, ~5 min) then:
+# The script waits for /health status=ok, /ready status=ready, and (when
+# GITHUB_SHA is set) /version git_sha matching this commit, then:
 #   - token/email set → full gated factory checks; fail the job on DEAD
 #   - SMOKE_GATE_TOKEN unset (and no SMOKE_EMAIL+PASSWORD) → unauthenticated
 #     health/ready/version only, PASS with a notice that gated checks skipped

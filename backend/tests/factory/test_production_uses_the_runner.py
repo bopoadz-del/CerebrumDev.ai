@@ -113,9 +113,12 @@ def test_generate_product_routes_to_the_runner(tmp_path, monkeypatch):
 
 
 def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
-    """The artifact the customer receives must be a platform, not a parts
-    list: local dispatch, per-capability handlers, real persistence, its own
-    suite, and a lockfile pinning what was cloned.
+    """The artifact the customer receives must be a FULL platform repo.
+
+    Workspace + download zip both carry the 14-class contract (README,
+    app entrypoints, frontend, kits, product-dna, vendored blocks,
+    release gate) plus local dispatch and a lockfile. A parts list
+    (app/ + vendor/ only) is not a delivered platform.
 
     Every one of these was ABSENT from the physically downloaded product.
     """
@@ -166,6 +169,37 @@ def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
     gate = (out / "scripts" / "release_gate.py").read_text(encoding="utf-8")
     assert "blocks.lock.json" in gate, "the gate does not audit block provenance"
     assert "coder LLM" in gate, "the gate does not report agent authorship"
+
+    # The customer download is this zip — not the on-disk workspace. A parts
+    # list that only exists on disk is not a delivered platform.
+    import zipfile
+
+    from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES
+    from app.routers.session_product import zip_generated_product
+
+    zpath = zip_generated_product(out, tmp_path / "pilot-export")
+    names = zipfile.ZipFile(zpath).namelist()
+    for rel in FOURTEEN_ARTIFACT_CLASSES:
+        prefix = rel.rstrip("/")
+        assert any(n == prefix or n.startswith(prefix + "/") for n in names), (
+            f"{rel} missing from the download zip"
+        )
+    for rel in (
+        "README.md",
+        "Dockerfile",
+        "requirements.txt",
+        "blocks.lock.json",
+        "app/main.py",
+        "frontend/src/App.tsx",
+        "scripts/release_gate.py",
+        "product-dna/checksum_manifest.json",
+    ):
+        assert rel in names, f"{rel} missing from the download zip"
+    assert any(n.startswith("kits/") and n.endswith("manifest.json") for n in names), (
+        "kits/ pack manifests missing from the download zip"
+    )
+    assert any(n.startswith("vendor/blocks/") for n in names)
+    assert not any("__pycache__" in n for n in names)
 
 
 def test_status_is_read_from_the_ledger_not_process_memory(tmp_path):

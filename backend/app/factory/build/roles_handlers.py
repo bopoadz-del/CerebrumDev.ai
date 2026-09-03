@@ -2076,12 +2076,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         from app.factory.coder import coder_enabled
 
         if not coder_enabled():
+            # Do not report ok=True: that would re-enter TESTER with identical
+            # handlers and burn the rework budget on a no-op loop.
             vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
             return RoleResult(
-                ok=True,
+                ok=False,
                 detail=(
-                    "pilot rework skipped — no coder key; keeping existing "
-                    f"{len(ctx.plan.capabilities)} handler(s)"
+                    "pilot rework requires a coder key; cannot regenerate failing "
+                    f"handlers ({len(ctx.plan.capabilities)} capability(ies) unchanged)"
                 ),
                 vendored_blocks=tuple(vendored),
             )
@@ -2602,12 +2604,18 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     them. GET /v1/gates describes this coverage; it does not run the suite.
 
     On a pilot cycle the suite is already on disk. Rewriting it against an
-    empty in-memory spec (worker restart) would change payloads and hide
-    the agent's own cases. Keep the files; the gate runs ``pytest -m pilot``.
+    empty in-memory spec (worker restart / first pilot TESTER pass) would
+    change payloads and hide the agent's own cases — keep the files then.
+
+    On pilot *rework* (``work_list`` set after a red PRODUCT suite) WRITER
+    may have regenerated handlers and ``model_specs``. Keeping the frozen
+    code-phase payloads then burns the rework budget against stale probes.
+    Re-emit the suite from the current specs so ``pytest -m pilot`` matches
+    the workspace under test.
     """
     if str(ctx.state.get("build_cycle") or "") == "pilot":
         existing = Path("tests") / "test_smoke.py"
-        if ctx.workspace.exists(existing):
+        if ctx.workspace.exists(existing) and not ctx.work_list:
             return RoleResult(
                 ok=True,
                 detail=(
@@ -2965,11 +2973,17 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             cases=len(admitted),
         )
 
-    detail = (
-        f"code-phase suite written for {len(caps)} capability(ies): import, "
-        "dispatch load, handle() mapping, persistence, route JSON; "
-        "Store-backed execute-all is @pytest.mark.pilot"
-    )
+    if str(ctx.state.get("build_cycle") or "") == "pilot" and ctx.work_list:
+        detail = (
+            f"pilot rework: suite refreshed from model_specs for {len(caps)} "
+            "capability(ies); gate will run pytest -m pilot"
+        )
+    else:
+        detail = (
+            f"code-phase suite written for {len(caps)} capability(ies): import, "
+            "dispatch load, handle() mapping, persistence, route JSON; "
+            "Store-backed execute-all is @pytest.mark.pilot"
+        )
     if admitted:
         detail += f"; coding agent added {len(admitted)} domain case(s)"
     return RoleResult(

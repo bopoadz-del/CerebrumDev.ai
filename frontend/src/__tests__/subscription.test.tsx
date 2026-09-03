@@ -5,6 +5,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Subscription } from '../App'
+import { paymentsNotConnectedNote } from '../accountViews'
 
 const statusMock = vi.fn()
 const checkoutMock = vi.fn()
@@ -72,11 +73,20 @@ describe('Subscription', () => {
     expect(screen.queryByText('0')).toBeNull()
   })
 
+  it('shows a loading skeleton — never bare Loading… text — on first paint', () => {
+    statusMock.mockImplementation(() => new Promise(() => {}))
+    render(<Subscription />)
+    expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument()
+    expect(screen.getByLabelText('Loading subscription')).toBeInTheDocument()
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+  })
+
   it('does not hang on Loading after a first-load fetch failure', async () => {
     statusMock.mockRejectedValue(new TypeError('Failed to fetch'))
     render(<Subscription />)
     expect(await screen.findByText('Failed to fetch')).toBeInTheDocument()
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
     expect(screen.getByText('Could not load subscription status.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
@@ -138,6 +148,39 @@ describe('Subscription', () => {
     expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Upgrade when you are ready/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Manage billing' })).toBeEnabled()
+  })
+
+  it('does not mention Upgrade in payments honesty when Factory is already current', async () => {
+    statusMock.mockResolvedValue({
+      plan: 'factory',
+      subscription_status: 'active',
+      entitled: true,
+      checkout_available: false,
+    })
+    render(<Subscription />)
+    expect(
+      await screen.findByText(/Payments are not connected on this deployment yet/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/Upgrade still says so/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upgrade' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Your current access is unaffected/i)).toBeInTheDocument()
+  })
+
+  it('keeps Upgrade honesty copy on trial while the Upgrade button is shown', async () => {
+    render(<Subscription />)
+    expect(await screen.findByRole('button', { name: 'Upgrade' })).toBeInTheDocument()
+    expect(screen.getByText(/Upgrade still says so instead of opening a blank checkout/i)).toBeInTheDocument()
+    expect(screen.getByText(/Payments are not connected on this deployment yet/i)).toBeInTheDocument()
+  })
+
+  it('paymentsNotConnectedNote mentions Upgrade only when that button is shown', () => {
+    expect(paymentsNotConnectedNote({ showUpgrade: true })).toMatch(
+      /Upgrade still says so instead of opening a blank checkout/,
+    )
+    expect(paymentsNotConnectedNote({ showUpgrade: false })).not.toMatch(/Upgrade/)
+    expect(paymentsNotConnectedNote({ showUpgrade: false })).toMatch(
+      /Payments are not connected on this deployment yet/,
+    )
   })
 
   it('checkout failure states the truth plainly', async () => {

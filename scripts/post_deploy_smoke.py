@@ -15,13 +15,18 @@ Verified-principal options (public email verification stays fail-closed):
     SMOKE_EMAIL + SMOKE_PASSWORD
     SMOKE_EMAIL_2 + SMOKE_PASSWORD_2  — optional isolation peer
 
-If no verified-principal secret is set, the script waits for /health and
-/ready, checks /version, and PASSES with a GitHub notice that gated
-factory checks were skipped. Do not invent or commit a token. A missing
-GitHub Actions secret must not fail the whole master pipeline.
+If no verified-principal secret is set, the script waits for /health,
+/ready, and (when GITHUB_SHA is set) a matching /version git_sha, then
+PASSES with a GitHub notice that gated factory checks were skipped. Do
+not invent or commit a token. A missing GitHub Actions secret must not
+fail the whole master pipeline.
 
-The script waits up to SMOKE_READY_WAIT_S (default 300) for /health and
-/ready after a Render bounce before any gated check.
+The script waits up to SMOKE_READY_WAIT_S (default 300) after a Render
+bounce before any unauthenticated or gated check. Ready means /health
+HTTP 200 and status=="ok", /ready HTTP 200 and status=="ready", and —
+when GITHUB_SHA is set — /version git_sha matching that SHA (full or
+unique prefix). Local runs with GITHUB_SHA unset keep the health/ready
+wait and do not SHA-gate.
 
 Exit code 0 = all checks that ran pass. Prints a LIVE/DEAD line per kernel.
 """
@@ -133,40 +138,113 @@ def _mapping(body):
     return body if isinstance(body, dict) else {}
 
 
-def surface_is_ready(health_status, health_body, ready_status, ready_body):
-    """True when /health and /ready both answer ready (post-bounce)."""
-    health_ok = health_status == 200
+def expected_git_sha(explicit=None):
+    """GITHUB_SHA when set (Actions), else empty. Explicit overrides env."""
+    if explicit is not None:
+        return str(explicit).strip()
+    return os.environ.get("GITHUB_SHA", "").strip()
+
+
+def git_sha_matches(live_sha, expected_sha):
+    """True when live /version git_sha matches expected (full or unique prefix).
+
+    Empty expected_sha is not a gate (local run). Prefix match requires the
+    shorter side to be at least 7 hex chars — git's default short SHA.
+    """
+    expected = (expected_sha or "").strip().lower()
+    if not expected:
+        return True
+    live = (live_sha or "").strip().lower()
+    if not live:
+        return False
+    if live == expected:
+        return True
+    shorter, longer = (live, expected) if len(live) <= len(expected) else (expected, live)
+    return len(shorter) >= 7 and longer.startswith(shorter)
+
+
+def surface_is_ready(
+    health_status,
+    health_body,
+    ready_status,
+    ready_body,
+    version_status=None,
+    version_body=None,
+    expected_sha="",
+):
+    """True when /health, /ready, and (when SHA-gated) /version are live.
+
+    Health must be HTTP 200 with status==\"ok\". Ready must be HTTP 200 with
+    status==\"ready\". When expected_sha is non-empty, /version must be HTTP
+    200 and git_sha must match (full or unique prefix). Empty expected_sha
+    skips the SHA gate so 4-arg callers and local runs stay health/ready only.
+    """
+    health_ok = health_status == 200 and _mapping(health_body).get("status") == "ok"
     ready_ok = ready_status == 200 and _mapping(ready_body).get("status") == "ready"
-    return bool(health_ok and ready_ok)
+    if not (health_ok and ready_ok):
+        return False
+    want = (expected_sha or "").strip()
+    if not want:
+        return True
+    if version_status != 200:
+        return False
+    live = _mapping(version_body).get("git_sha") or ""
+    return git_sha_matches(live, want)
 
 
-def wait_for_ready(timeout_s=None, interval_s=None, req_fn=None, sleeper=None):
-    """Poll /health and /ready until ready, or until timeout_s.
+def wait_for_ready(
+    timeout_s=None, interval_s=None, req_fn=None, sleeper=None, expected_sha=None
+):
+    """Poll /health, /ready, and (when SHA-gated) /version until ready.
 
     Returns True if the surface became ready. Records a DEAD check on timeout.
-    ``req_fn`` / ``sleeper`` are injectable for tests.
+    ``req_fn`` / ``sleeper`` / ``expected_sha`` are injectable for tests.
+    When ``expected_sha`` is None, GITHUB_SHA is read from the environment.
     """
     timeout = ready_wait_seconds() if timeout_s is None else timeout_s
     interval = ready_interval_seconds() if interval_s is None else interval_s
     probe = req if req_fn is None else req_fn
     pause = time.sleep if sleeper is None else sleeper
+    want_sha = expected_git_sha(expected_sha)
     deadline = time.monotonic() + timeout
     attempt = 0
-    last_h, last_r = (0, {}), (0, {})
+    last_h, last_r, last_v = (0, {}), (0, {}), (0, {})
     while True:
         attempt += 1
         last_h = probe("GET", "/health", retries=0)
         last_r = probe("GET", "/ready", retries=0)
+        last_v = (0, {})
+        if want_sha:
+            last_v = probe("GET", "/version", retries=0)
         hs, hb = last_h
         rs, rb = last_r
-        if surface_is_ready(hs, hb, rs, rb):
-            print(f"surface ready after {attempt} probe(s) (health={hs} ready={rs})")
+        vs, vb = last_v
+        if surface_is_ready(hs, hb, rs, rb, vs, vb, want_sha):
+            extra = ""
+            if want_sha:
+                sha = _mapping(vb).get("git_sha") or ""
+                extra = f" sha={sha[:12] if sha else None}"
+            print(
+                f"surface ready after {attempt} probe(s) "
+                f"(health={hs} ready={rs}{extra})"
+            )
             return True
         remaining = deadline - time.monotonic()
-        ready_status = _mapping(rb).get("status") if not isinstance(rb, (bytes, bytearray)) else None
+        health_status = (
+            _mapping(hb).get("status") if not isinstance(hb, (bytes, bytearray)) else None
+        )
+        ready_status = (
+            _mapping(rb).get("status") if not isinstance(rb, (bytes, bytearray)) else None
+        )
+        live_sha = _mapping(vb).get("git_sha") if want_sha else None
+        sha_bit = ""
+        if want_sha:
+            sha_bit = f" sha={str(live_sha)[:12] if live_sha else None}"
+        paths = "/health+/ready" + ("+/version" if want_sha else "")
         print(
-            f"  waiting for /health+/ready: health={hs} ready={rs} "
-            f"status={ready_status} remaining={max(0, int(remaining))}s"
+            f"  waiting for {paths}: health={hs} health_status={health_status} "
+            f"ready={rs} status={ready_status}{sha_bit} "
+            f"remaining={max(0, int(remaining))}s"
         )
         if remaining <= 0:
             break
@@ -176,7 +254,8 @@ def wait_for_ready(timeout_s=None, interval_s=None, req_fn=None, sleeper=None):
     check(
         "health/ready wait",
         False,
-        f"timeout {timeout}s last health={last_h[0]} ready={last_r[0]}",
+        f"timeout {timeout}s last health={last_h[0]} ready={last_r[0]}"
+        + (f" sha={(_mapping(last_v[1]).get('git_sha') or '')[:12] or None}" if want_sha else ""),
     )
     return False
 
