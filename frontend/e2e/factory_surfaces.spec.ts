@@ -549,7 +549,9 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(page.getByTestId('platforms-failed-pill')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('platforms-failed-badge')).toContainText(/Build failed/)
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeVisible()
+  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
 })
 
 test('Floor hydrate of a pending draft does not flash a leftover coder-takeover banner', async ({ page }) => {

@@ -115,6 +115,53 @@ h3 { margin: 0 0 10px; }
   border: 1px solid #34d399;
   color: #34d399;
 }
+.status-pill-prototype {
+  background: rgba(158, 197, 232, 0.12);
+  border: 1px solid #4a6f8f;
+  color: #9ec5e8;
+}
+.status-pill-store {
+  background: rgba(240, 208, 128, 0.12);
+  border: 1px solid #8a7030;
+  color: #f0d080;
+}
+.level-grade-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.level-grade-strip .status-pill {
+  margin: 0;
+}
+.three-gate {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.gate-chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.gate-chip.gate-pass {
+  color: #7dd3a0;
+  border-color: #2f5c43;
+}
+.gate-chip.gate-fail {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.gate-chip.gate-notrun {
+  color: #c4b08a;
+  border-color: #8a7030;
+}
 .findings-list {
   margin: 8px 0 0;
   padding-left: 18px;
