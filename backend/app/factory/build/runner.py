@@ -586,8 +586,42 @@ class RoleRunner:
                 findings=collected,
             )
 
+        # THE VERDICT LINE (owner's ruling 1, 2026-09-01).
+        #
+        # "all phase gates passed" was a claim nobody could check. The
+        # code-phase suite runs ``pytest -m "not pilot"`` and
+        # ``@pytest.mark.pilot`` is the marker on the only tests that
+        # exercise a business action -- so the sentence meant "everything
+        # except the tests that check the product works passed", and
+        # residential-lettings shipped a booting 216-file zip that could not
+        # persist one record while every gate was green.
+        #
+        # Three gates now, each named WITH ITS SCOPE, and a gate that did not
+        # run says so rather than being folded into a pass.
+        # The gates themselves ran as phases; this sentence only has to stop
+        # overclaiming what they covered. PRODUCT is the pilot cycle's TESTER
+        # gate (see gates.gate_tester_contract), so reaching here on the
+        # pilot cycle means it passed -- and reaching here on the code cycle
+        # means it never ran, which must be said rather than implied.
+        from app.factory.build.product_gate import GATE_SCOPES
+
+        code_line = "CODE PASS — %s" % GATE_SCOPES["CODE"]
+        if self.cycle != "pilot":
+            return self._finish(
+                Outcome.SUCCESS,
+                "; ".join((
+                    code_line,
+                    "PRODUCT NOT RUN — %s" % GATE_SCOPES["PRODUCT"],
+                    "STORE NOT RUN — %s" % GATE_SCOPES["STORE"],
+                )),
+                rework=rework_used,
+            )
         return self._finish(
             Outcome.SUCCESS,
-            "all phase gates passed",
+            "; ".join((
+                code_line,
+                "PRODUCT PASS — %s" % GATE_SCOPES["PRODUCT"],
+                "STORE PASS — %s" % GATE_SCOPES["STORE"],
+            )),
             rework=rework_used,
         )
