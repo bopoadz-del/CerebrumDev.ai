@@ -554,6 +554,110 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(refused).toBeDisabled()
 })
 
+test('Floor CODE_GREEN level_grade never says Finished or founding-ready', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'code',
+          authorship: { artifacts: 24, agent_written: 11, templated: 13 },
+          level_grade: {
+            level: 'CODE_GREEN',
+            pilot_ready: false,
+            founding_customer_ready: false,
+            three_gate: { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' },
+          },
+        },
+      }),
+    })
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Code-cycle prototype ready' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByTestId('floor-prototype-pill')).toContainText('Code-green (prototype)')
+  await expect(page.getByTestId('floor-gate-product')).toContainText('PRODUCT NOT RUN')
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByText(/Download ready/)).toHaveCount(0)
+  await expect(page.getByText(/Founding-customer-ready/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
+})
+
+test('Your Platforms FOUNDING_CUSTOMER_READY shows founding chip and gold export', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Cerebrum Residential Lettings Hub', vertical: 'lettings' },
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          inputs_hash: 'b36090a4',
+          output_dir: '/tmp/residential-lettings',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+          level_grade: {
+            level: 'FOUNDING_CUSTOMER_READY',
+            pilot_ready: true,
+            founding_customer_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        },
+      }),
+    })
+  })
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toContainText('Founding-customer-ready', {
+    timeout: 20_000,
+  })
+  await expect(page.getByTestId('platforms-gate-product')).toContainText('PRODUCT PASS')
+  await expect(page.getByTestId('platforms-gate-store')).toContainText('STORE PASS')
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+})
+
 test('Floor hydrate of a pending draft does not flash a leftover coder-takeover banner', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')
