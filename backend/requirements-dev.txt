@@ -1,6 +1,6 @@
 -r requirements.txt
 pytest>=7.0.0
-pytest-asyncio>=0.21.0
+pytest-asyncio>=1.4.0
 
 # Steward factory kit tests import steward_runtime modules and exercise generated products.
 sqlalchemy>=2.0.30
