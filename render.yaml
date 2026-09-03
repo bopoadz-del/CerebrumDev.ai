@@ -248,6 +248,8 @@ services:
         destination: /index.html
     # Intended-state. This blueprint is not applied (see file header); paste
     # the same headers in the static-site dashboard until a blueprint sync.
+    # Twin: frontend/public/_headers (published with the Vite dist) and
+    # frontend/vite.config.ts preview.headers.
     headers:
       - path: /*
         name: X-Content-Type-Options

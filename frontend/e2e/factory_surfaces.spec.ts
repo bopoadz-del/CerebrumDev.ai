@@ -272,4 +272,6 @@ test('paused Factory access hard-disables Floor Send and does not offer Approve 
 
   await page.getByRole('button', { name: 'Subscription' }).click()
   await expect(page.getByText('Paused')).toBeVisible()
+  await expect(page.getByText('expired')).toBeVisible()
+  await expect(page.getByText('trialing')).toHaveCount(0)
 })

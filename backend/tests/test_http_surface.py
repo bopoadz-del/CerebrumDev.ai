@@ -94,3 +94,17 @@ def test_render_yaml_declares_frontend_security_headers():
     )
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
+
+
+def test_frontend_public_headers_declare_csp_frame_ancestors_hsts():
+    """M14 twin: published _headers even when the Render blueprint is not synced."""
+    from pathlib import Path
+
+    text = (
+        Path(__file__).resolve().parents[2] / "frontend" / "public" / "_headers"
+    ).read_text(encoding="utf-8")
+    assert "default-src 'self'" in text
+    assert "frame-ancestors 'none'" in text
+    assert "Strict-Transport-Security" in text
+    assert "X-Content-Type-Options" in text
+    assert "X-Frame-Options" in text

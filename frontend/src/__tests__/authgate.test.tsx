@@ -3,7 +3,7 @@
  * from the live client (market-readiness audit, gap #1).
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthGate } from '../App'
 
 vi.mock('../api/factory', async (importOriginal) => {
@@ -30,9 +30,20 @@ vi.mock('../api/factory', async (importOriginal) => {
 })
 
 describe('AuthGate', () => {
+  beforeEach(() => {
+    window.history.pushState(null, '', '/')
+  })
+
   it('shows sign-in by default', () => {
     render(<AuthGate onAuthed={() => {}} />)
     expect(screen.getByRole('button', { name: 'Enter the factory' })).toBeInTheDocument()
+  })
+
+  it('opens the register form on /register instead of sign-in', () => {
+    window.history.pushState(null, '', '/register')
+    render(<AuthGate onAuthed={() => {}} />)
+    expect(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create your account' })).toBeInTheDocument()
   })
 
   it('exposes password reset and email verification entry points', () => {

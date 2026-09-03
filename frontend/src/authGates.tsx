@@ -125,12 +125,22 @@ export function VerifyEmailGate({
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset' | 'verify'
 
+function authModeFromPath(pathname: string): AuthMode {
+  if (pathname === '/register') return 'register'
+  if (pathname === '/forgot-password') return 'forgot'
+  if (pathname === '/reset-password') return 'reset'
+  if (pathname === '/verify-email') return 'verify'
+  return 'login'
+}
+
 export function AuthGate({
   onAuthed,
 }: {
   onAuthed: (info?: { devVerificationToken?: string }) => void
 }) {
-  const [mode, setMode] = useState<AuthMode>('login')
+  const [mode, setMode] = useState<AuthMode>(() =>
+    typeof window === 'undefined' ? 'login' : authModeFromPath(window.location.pathname),
+  )
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [token, setToken] = useState('')
