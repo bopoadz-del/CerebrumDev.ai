@@ -175,6 +175,14 @@ describe('App boot', () => {
     expect(screen.getByRole('button', { name: 'Create your account' })).toBeInTheDocument()
   })
 
+  it('does not full-page-error a proxy 502 on /register', async () => {
+    window.history.pushState(null, '', '/register')
+    meMock.mockRejectedValue(new ApiError(502, 'Bad Gateway'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
+  })
+
   it('still shows Factory unreachable for a persistent Failed to fetch on the floor', async () => {
     meMock.mockRejectedValue(new TypeError('Failed to fetch'))
     render(<App />)

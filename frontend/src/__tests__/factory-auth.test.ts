@@ -3,6 +3,8 @@ import {
   clearSession,
   factoryAccessPaused,
   getEmail,
+  ApiError,
+  isTransientBootError,
   isTransientNetworkError,
   setSession,
   subscriptionDisplay,
@@ -64,6 +66,14 @@ describe('isTransientNetworkError', () => {
     )
     expect(isTransientNetworkError(new Error('backend down'))).toBe(false)
     expect(isTransientNetworkError({ name: 'AbortError', message: 'aborted' })).toBe(false)
+  })
+
+  it('treats gateway 5xx as a boot race so /register is not unreachable', () => {
+    expect(isTransientBootError(new TypeError('Failed to fetch'))).toBe(true)
+    expect(isTransientBootError(new ApiError(502, 'Bad Gateway'))).toBe(true)
+    expect(isTransientBootError(new ApiError(503, 'backend down'))).toBe(true)
+    expect(isTransientBootError(new ApiError(401, 'unauthorized'))).toBe(false)
+    expect(isTransientBootError(new ApiError(403, 'email_not_verified'))).toBe(false)
   })
 })
 

@@ -8,7 +8,7 @@ import {
   factoryAccessPaused,
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
-  isTransientNetworkError,
+  isTransientBootError,
   sessions,
   setSession,
   signOut,
@@ -90,7 +90,7 @@ export default function App() {
             setBootError(null)
             setNeedsEmailVerify(true)
             setAuthed(true)
-          } else if (isTransientNetworkError(e) && isPublicAuthPath(window.location.pathname)) {
+          } else if (isTransientBootError(e) && isPublicAuthPath(window.location.pathname)) {
             clearSession()
             setNeedsEmailVerify(false)
             setSessionId(null)

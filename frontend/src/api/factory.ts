@@ -46,6 +46,12 @@ export function isTransientNetworkError(err: unknown): boolean {
   return false
 }
 
+/** Cold-load races: browser fetch failure or a proxy/gateway 5xx after retries. */
+export function isTransientBootError(err: unknown): boolean {
+  if (isTransientNetworkError(err)) return true
+  return err instanceof ApiError && (err.status === 502 || err.status === 503 || err.status === 504)
+}
+
 function isRetryableFetch(method: string, err: unknown): boolean {
   if (isTransientNetworkError(err)) return true
   if (
