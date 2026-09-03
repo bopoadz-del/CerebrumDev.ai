@@ -28,7 +28,7 @@ export default defineConfig({
       'Referrer-Policy': 'no-referrer',
       'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
       'Content-Security-Policy':
-        "default-src 'self'; frame-ancestors 'none'; connect-src 'self' https://api.cerebrum-dev.com",
+        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; connect-src 'self' https://api.cerebrum-dev.com https://*.ingest.sentry.io; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
     },
   },
   test: {

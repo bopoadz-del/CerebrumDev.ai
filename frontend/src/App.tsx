@@ -8,6 +8,7 @@ import {
   factoryAccessPaused,
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
+  isTransientBootError,
   sessions,
   setSession,
   signOut,
@@ -20,6 +21,17 @@ export { AuthGate, VerifyEmailGate } from './authGates'
 export { Account, BlueprintCard, Floor, Platforms, Subscription } from './factoryViews'
 
 type View = 'floor' | 'platforms' | 'subscription' | 'account'
+
+/** Public auth URLs must not become a full-page "Factory unreachable" on a race. */
+export function isPublicAuthPath(pathname: string): boolean {
+  return (
+    pathname === '/register' ||
+    pathname === '/login' ||
+    pathname === '/forgot-password' ||
+    pathname === '/reset-password' ||
+    pathname === '/verify-email'
+  )
+}
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
@@ -78,6 +90,12 @@ export default function App() {
             setBootError(null)
             setNeedsEmailVerify(true)
             setAuthed(true)
+          } else if (isTransientBootError(e) && isPublicAuthPath(window.location.pathname)) {
+            clearSession()
+            setNeedsEmailVerify(false)
+            setSessionId(null)
+            setBootError(null)
+            setAuthed(false)
           } else {
             setBootError(e instanceof Error ? e.message : 'backend unreachable')
             setAuthed(true)

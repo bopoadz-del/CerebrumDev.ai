@@ -47,7 +47,7 @@ describe('Subscription', () => {
     ).toBeInTheDocument()
   })
 
-  it('labels Factory access Paused from the entitled flag', async () => {
+  it('labels an expired trial as expired + Paused, never still trialing', async () => {
     statusMock.mockResolvedValue({
       plan: 'trial',
       subscription_status: 'trialing',
@@ -57,7 +57,36 @@ describe('Subscription', () => {
     })
     render(<Subscription />)
     expect(await screen.findByText('Paused')).toBeInTheDocument()
+    expect(screen.getByText('expired')).toBeInTheDocument()
+    expect(screen.queryByText('trialing')).toBeNull()
+    expect(screen.queryByText('Trial days left')).toBeNull()
     expect(screen.queryByText('Active')).toBeNull()
+  })
+
+  it('does not hang on Loading after a first-load fetch failure', async () => {
+    statusMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    render(<Subscription />)
+    expect(await screen.findByText('Failed to fetch')).toBeInTheDocument()
+    expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+    expect(screen.getByText('Could not load subscription status.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('Retry after a first-load billing failure paints a live trial', async () => {
+    statusMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({
+        plan: 'trial',
+        subscription_status: 'trialing',
+        trial_days_left: 3,
+        entitled: true,
+        checkout_available: false,
+      })
+    render(<Subscription />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('Trial days left')).toBeInTheDocument()
+    expect(screen.getByText('trialing')).toBeInTheDocument()
+    expect(screen.queryByText('Failed to fetch')).not.toBeInTheDocument()
   })
 
   it('never uses hand-waving "being connected" copy', async () => {

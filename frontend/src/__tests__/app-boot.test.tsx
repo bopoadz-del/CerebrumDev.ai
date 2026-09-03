@@ -76,6 +76,7 @@ describe('boot error classes', () => {
 
 describe('App boot', () => {
   beforeEach(() => {
+    window.history.pushState(null, '', '/')
     meMock.mockReset()
     verifyEmailMock.mockReset()
     resendMock.mockReset()
@@ -163,6 +164,31 @@ describe('App boot', () => {
     expect(screen.getByText('backend down')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Verify your email' })).not.toBeInTheDocument()
     expect(screen.queryByText('Domain store unreachable')).not.toBeInTheDocument()
+  })
+
+  it('does not full-page-error a Failed to fetch race on /register', async () => {
+    window.history.pushState(null, '', '/register')
+    meMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create your account' })).toBeInTheDocument()
+  })
+
+  it('does not full-page-error a proxy 502 on /register', async () => {
+    window.history.pushState(null, '', '/register')
+    meMock.mockRejectedValue(new ApiError(502, 'Bad Gateway'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
+  })
+
+  it('still shows Factory unreachable for a persistent Failed to fetch on the floor', async () => {
+    meMock.mockRejectedValue(new TypeError('Failed to fetch'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory unreachable' })).toBeInTheDocument()
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
 
   it('keeps Floor open and toasts when the domain store is 503', async () => {

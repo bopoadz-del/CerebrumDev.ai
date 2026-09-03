@@ -29,6 +29,44 @@ export function isDomainStoreUnreachable(err: unknown): boolean {
   return /domain store unreachable/i.test(err.message)
 }
 
+/**
+ * Browser/network races ("Failed to fetch") — not an HTTP status.
+ * First paint after a cold HTML load hits these intermittently; a 401/403/5xx
+ * is a real API answer and is not a race.
+ */
+export function isTransientNetworkError(err: unknown): boolean {
+  if (err instanceof ApiError) return false
+  if (typeof err === 'object' && err && (err as { name?: string }).name === 'AbortError') {
+    return false
+  }
+  if (err instanceof TypeError) return true
+  if (err instanceof Error) {
+    return /failed to fetch|networkerror|network request failed|load failed/i.test(err.message)
+  }
+  return false
+}
+
+/** Cold-load races: browser fetch failure or a proxy/gateway 5xx after retries. */
+export function isTransientBootError(err: unknown): boolean {
+  if (isTransientNetworkError(err)) return true
+  return err instanceof ApiError && (err.status === 502 || err.status === 503 || err.status === 504)
+}
+
+function isRetryableFetch(method: string, err: unknown): boolean {
+  if (isTransientNetworkError(err)) return true
+  if (
+    err instanceof ApiError &&
+    (err.status === 502 || err.status === 503 || err.status === 504) &&
+    (method === 'GET' || method === 'HEAD')
+  ) {
+    return true
+  }
+  return false
+}
+
+/** Two retries after the first attempt. Tests use 0ms so suites stay fast. */
+const RETRY_DELAYS_MS = import.meta.env.MODE === 'test' ? [0, 0] : [200, 600]
+
 export function getEmail(): string | null {
   return localStorage.getItem(EMAIL_KEY)
 }
@@ -52,7 +90,7 @@ export async function signOut(): Promise<void> {
   }
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function reqOnce<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   const res = await fetch(`${API_BASE}${path}`, {
     method,
@@ -73,6 +111,22 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
     throw new ApiError(res.status, typeof msg === 'string' ? msg : JSON.stringify(msg))
   }
   return data as T
+}
+
+async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+  let last: unknown
+  const attempts = RETRY_DELAYS_MS.length + 1
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await reqOnce<T>(method, path, body)
+    } catch (e) {
+      last = e
+      if (i === attempts - 1 || !isRetryableFetch(method, e)) throw e
+      const wait = RETRY_DELAYS_MS[i] ?? 0
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+    }
+  }
+  throw last
 }
 
 // --- Auth ------------------------------------------------------------------
@@ -363,6 +417,62 @@ export function factoryAccessPaused(
   status: Pick<BillingStatus, 'entitled'> | null | undefined,
 ): boolean {
   return status?.entitled === false
+}
+
+export function trialDaysLeft(status: BillingStatus): number | null {
+  if (typeof status.trial_days_left === 'number') return status.trial_days_left
+  if (!status.trial_ends_at) return null
+  const end = Date.parse(status.trial_ends_at)
+  if (Number.isNaN(end)) return null
+  return Math.max(0, Math.ceil((end - Date.now()) / 86_400_000))
+}
+
+export type SubscriptionDisplay = {
+  planLabel: string
+  statusLabel: string
+  showTrialDays: boolean
+  trialDaysLeft: number | null
+  accessLabel: 'Active' | 'Paused'
+}
+
+/**
+ * One coherent read of /v1/billing/status.
+ * The store keeps subscription_status='trialing' after the clock runs out
+ * (entitled=false, trial_days_left=0). Do not paint that as a live trial.
+ */
+export function subscriptionDisplay(status: BillingStatus): SubscriptionDisplay {
+  const raw = String(status.subscription_status ?? status.status ?? 'none')
+    .toLowerCase()
+    .replace(/_/g, ' ')
+  const days = trialDaysLeft(status)
+  const paused = factoryAccessPaused(status)
+  const planFromApi = status.plan ? String(status.plan) : ''
+  const expiredTrial = raw === 'trialing' && status.entitled === false
+
+  if (expiredTrial) {
+    return {
+      planLabel: planFromApi || 'trial',
+      statusLabel: 'expired',
+      showTrialDays: false,
+      trialDaysLeft: days,
+      accessLabel: 'Paused',
+    }
+  }
+
+  let planLabel = planFromApi
+  if (!planLabel) {
+    if (raw === 'active') planLabel = 'factory'
+    else if (raw === 'trialing') planLabel = 'trial'
+    else planLabel = raw
+  }
+
+  return {
+    planLabel,
+    statusLabel: raw,
+    showTrialDays: raw === 'trialing' && days !== null && days > 0,
+    trialDaysLeft: days,
+    accessLabel: paused ? 'Paused' : 'Active',
+  }
 }
 
 export const billing = {

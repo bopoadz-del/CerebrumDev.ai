@@ -6,7 +6,7 @@ import {
   downloadProductPackage,
   getEmail,
   product,
-  factoryAccessPaused,
+  subscriptionDisplay,
   type AccountInfo,
   type BillingStatus,
   type BuildStatus,
@@ -162,26 +162,24 @@ export function Platforms({ sessionId }: { sessionId: string }) {
   )
 }
 
-function trialDaysLeft(status: BillingStatus): number | null {
-  if (typeof status.trial_days_left === 'number') return status.trial_days_left
-  if (!status.trial_ends_at) return null
-  const end = Date.parse(status.trial_ends_at)
-  if (Number.isNaN(end)) return null
-  return Math.max(0, Math.ceil((end - Date.now()) / 86_400_000))
-}
-
 export function Subscription() {
   const [status, setStatus] = useState<BillingStatus | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
+  const loadStatus = useCallback(() => {
+    setError(null)
     billing
       .status()
       .then(setStatus)
-      .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
+      .catch((e) => {
+        setStatus(null)
+        setError(e instanceof Error ? e.message : 'failed to load')
+      })
   }, [])
+
+  useEffect(loadStatus, [loadStatus])
 
   async function upgrade() {
     setBusy(true)
@@ -224,8 +222,8 @@ export function Subscription() {
     }
   }
 
-  const days = status ? trialDaysLeft(status) : null
-  const subStatus = (status?.subscription_status ?? status?.status ?? 'trialing') as string
+  const view = status ? subscriptionDisplay(status) : null
+  const subStatus = view?.statusLabel ?? ''
 
   return (
     <div className="page">
@@ -233,23 +231,32 @@ export function Subscription() {
         <h2>Subscription</h2>
         <p className="dim">Your plan decides how deep the factory builds for you.</p>
       </header>
-      {error && <div className="error-box">{error}</div>}
+      {error && (
+        <div className="error-box">
+          {error}
+          <div>
+            <button className="ghost" type="button" onClick={loadStatus}>
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
       <div className="panel">
-        {status ? (
+        {status && view ? (
           <>
             <dl className="kv">
               <dt>Plan</dt>
-              <dd className="capitalize">{String(status.plan ?? 'trial')}</dd>
+              <dd className="capitalize">{view.planLabel}</dd>
               <dt>Status</dt>
-              <dd className="capitalize">{subStatus.replace(/_/g, ' ')}</dd>
-              {days !== null && subStatus === 'trialing' && (
+              <dd className="capitalize">{view.statusLabel}</dd>
+              {view.showTrialDays && (
                 <>
                   <dt>Trial days left</dt>
-                  <dd>{days}</dd>
+                  <dd>{view.trialDaysLeft}</dd>
                 </>
               )}
               <dt>Factory access</dt>
-              <dd>{factoryAccessPaused(status) ? 'Paused' : 'Active'}</dd>
+              <dd>{view.accessLabel}</dd>
             </dl>
             <div className="plan-cards">
               <div className="plan-card">
@@ -282,6 +289,8 @@ export function Subscription() {
               </p>
             )}
           </>
+        ) : error ? (
+          <p className="dim">Could not load subscription status.</p>
         ) : (
           <p className="dim">Loading…</p>
         )}
@@ -307,6 +316,7 @@ export function Account({
   const [verifyToken, setVerifyToken] = useState('')
   const [note, setNote] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -327,6 +337,7 @@ export function Account({
     e.preventDefault()
     setNote(null)
     setError(null)
+    setBusy(true)
     try {
       await auth.verifyEmail(verifyToken)
       setNote('Email verified.')
@@ -334,6 +345,39 @@ export function Account({
       setMe(m)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'verification failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resend() {
+    setNote(null)
+    setError(null)
+    setBusy(true)
+    try {
+      const res = await auth.resendVerification()
+      if (res.already_verified) {
+        setNote('Email already verified.')
+        const m = await auth.me()
+        setMe(m)
+        return
+      }
+      const v = res.verification
+      if (v?.dev_verification_token) {
+        setVerifyToken(v.dev_verification_token)
+        setNote(
+          v.note ??
+            'SMTP is not configured on this deployment — the verification token is filled in below.',
+        )
+      } else if (v?.email_sent) {
+        setNote('Verification email sent. Check your inbox.')
+      } else {
+        setNote(v?.note ?? 'Could not send a verification email.')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'resend failed')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -352,16 +396,23 @@ export function Account({
           <dd className="mono">{me?.account_id ? String(me.account_id) : '—'}</dd>
         </dl>
         {me && me.email_verified === false && (
-          <form className="verify-row" onSubmit={verify}>
-            <input
-              type="text"
-              required
-              placeholder="verification token"
-              value={verifyToken}
-              onChange={(e) => setVerifyToken(e.target.value)}
-            />
-            <button type="submit">Verify email</button>
-          </form>
+          <>
+            <form className="verify-row" onSubmit={verify}>
+              <input
+                type="text"
+                required
+                placeholder="verification token"
+                value={verifyToken}
+                onChange={(e) => setVerifyToken(e.target.value)}
+              />
+              <button type="submit" disabled={busy}>
+                {busy ? 'Working…' : 'Verify email'}
+              </button>
+            </form>
+            <button type="button" className="ghost" disabled={busy} onClick={() => void resend()}>
+              Resend verification email
+            </button>
+          </>
         )}
         {note && <p className="dim note">{note}</p>}
         {error && <div className="error-box">{error}</div>}
