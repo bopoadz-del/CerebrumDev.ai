@@ -210,7 +210,7 @@ class ProductGenerator:
             + "- **Blocks commit:** `" + self.blocks_commit + "`\n\n"
             + "## Quickstart (clone-and-test)\n\n"
             + "```bash\n"
-            + "python3 -m pip install -r requirements.txt\n"
+            + "python3 -m pip install -r requirements.txt -r requirements-dev.txt\n"
             + "PYTHONPATH=. uvicorn app.main:app --port 8000\n"
             + "```\n\n"
             + "Open `http://127.0.0.1:8000/` — the **universal console**: every\n"

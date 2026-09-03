@@ -1608,10 +1608,11 @@ platform runs with the factory switched off (`{NETWORK_POSTURE}`).
 ## Run it
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 uvicorn app.main:app --reload      # GET /health -> 200; GET /v1/jobs -> kernel JDs
 python -m pytest tests -m "not pilot"   # factory code-phase gate
 python -m pytest tests                   # includes Store-backed @pytest.mark.pilot
+# or: python scripts/release_gate.py
 ```
 
 Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.
@@ -1852,8 +1853,9 @@ def _coder_readme(
                         "Write a concise README.md for a generated business platform. "
                         "Markdown only, no code fences around the whole document. "
                         "Cover: what it does, its capabilities, how to run it "
-                        "(pip install -r requirements.txt; uvicorn app.main:app; "
-                        "GET /health and GET /v1/jobs), "
+                        "(pip install -r requirements.txt -r requirements-dev.txt; "
+                        "uvicorn app.main:app; GET /health and GET /v1/jobs; "
+                        "pytest tests -m \"not pilot\"), "
                         "and that it runs fully offline with blocks vendored into "
                         "vendor/blocks/ and no call back to any store. Do not invent "
                         "an HTTP table — a kernel-jobs section is appended for you."

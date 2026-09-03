@@ -63,6 +63,7 @@ def test_readme_has_clone_and_test_sections(generated):
     assert "## Feature-to-block map" in readme
     assert "## Honesty notes" in readme
     assert "release_gate.py" in readme
+    assert "requirements-dev.txt" in readme
 
 
 def test_readme_carries_honesty_labels(generated):
