@@ -20,8 +20,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.block_inputs import (
     align_spec_to_handler_fields,
     handler_required_fields,
