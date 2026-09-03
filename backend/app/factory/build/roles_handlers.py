@@ -1608,10 +1608,11 @@ platform runs with the factory switched off (`{NETWORK_POSTURE}`).
 ## Run it
 
 ```bash
-pip install -r requirements.txt
-uvicorn app.main:app --reload      # GET /health -> 200; GET /v1/jobs -> kernel JDs
-python -m pytest tests -m "not pilot"   # factory code-phase gate
-python -m pytest tests                   # includes Store-backed @pytest.mark.pilot
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/uvicorn app.main:app --reload      # GET /health -> 200; GET /v1/jobs -> kernel JDs
+.venv/bin/python -m pytest tests -m "not pilot"   # factory code-phase gate
+.venv/bin/python -m pytest tests                   # includes Store-backed @pytest.mark.pilot
 ```
 
 Data lands in `$STORAGE_PATH/platform.db` (default `./data`), stdlib sqlite3.

@@ -63,6 +63,11 @@ def test_readme_has_clone_and_test_sections(generated):
     assert "## Feature-to-block map" in readme
     assert "## Honesty notes" in readme
     assert "release_gate.py" in readme
+    # Ubuntu 24.04 / PEP 668: system pip refuses -- a stranger following
+    # `python3 -m pip install -r requirements.txt` cannot clone-and-test.
+    assert "python3 -m venv .venv" in readme
+    assert ".venv/bin/pip install -r requirements.txt" in readme
+    assert "python3 -m pip install -r requirements.txt" not in readme
 
 
 def test_readme_carries_honesty_labels(generated):
