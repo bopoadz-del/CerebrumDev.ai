@@ -8,6 +8,7 @@ import {
   clearSession,
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
+  isUnauthenticatedError,
   signOut,
 } from '../api/factory'
 import App from '../App'
@@ -71,6 +72,17 @@ describe('boot error classes', () => {
     expect(isEmailNotVerifiedError(new ApiError(503, 'Domain store unreachable'))).toBe(false)
     expect(isEmailNotVerifiedError(new ApiError(401, 'unauthorized'))).toBe(false)
     expect(isEmailNotVerifiedError(new Error('email_not_verified'))).toBe(false)
+  })
+
+  it('treats missing-session 401/403 as Sign in, not Factory unreachable', () => {
+    expect(isUnauthenticatedError(new ApiError(401, 'Invalid or missing API key'))).toBe(true)
+    expect(
+      isUnauthenticatedError(
+        new ApiError(403, 'This endpoint requires an account credential (login token or API key)'),
+      ),
+    ).toBe(true)
+    expect(isUnauthenticatedError(new ApiError(403, 'email_not_verified'))).toBe(false)
+    expect(isUnauthenticatedError(new ApiError(503, 'backend down'))).toBe(false)
   })
 
   it('matches domain-store 503 and ignores a dead API', () => {
@@ -163,6 +175,16 @@ describe('App boot', () => {
     expect(screen.getByRole('button', { name: 'Enter the factory' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
     expect(listMock).not.toHaveBeenCalled()
+  })
+
+  it('shows sign-in for legacy /me 403 credential-required (not Factory unreachable)', async () => {
+    meMock.mockRejectedValue(
+      new ApiError(403, 'This endpoint requires an account credential (login token or API key)'),
+    )
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory unreachable' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
   })
 
   it('still shows Factory unreachable when the API is actually down', async () => {

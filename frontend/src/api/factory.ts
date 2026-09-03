@@ -23,6 +23,19 @@ export function isEmailNotVerifiedError(err: unknown): boolean {
   return err.message === 'email_not_verified' || err.message.includes('email_not_verified')
 }
 
+/**
+ * Boot must open Sign in — not "Factory unreachable".
+ * /v1/auth/me returns 401 when there is no user session. Older builds (and
+ * ALLOW_ANONYMOUS_DEV + `_require_user`) answered 403 with a credential
+ * detail; treat that the same so a cold visit never looks like a dead API.
+ */
+export function isUnauthenticatedError(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false
+  if (err.status === 401) return true
+  if (err.status !== 403 || isEmailNotVerifiedError(err)) return false
+  return /requires an account credential|invalid or missing api key/i.test(err.message)
+}
+
 /** Optional Cerebrum-Blocks store: 503 must not look like a dead Factory. */
 export function isDomainStoreUnreachable(err: unknown): boolean {
   if (!(err instanceof ApiError) || err.status !== 503) return false

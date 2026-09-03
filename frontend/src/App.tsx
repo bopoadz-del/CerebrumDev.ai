@@ -9,6 +9,7 @@ import {
   isDomainStoreUnreachable,
   isEmailNotVerifiedError,
   isTransientBootError,
+  isUnauthenticatedError,
   sessions,
   setSession,
   signOut,
@@ -91,7 +92,7 @@ export default function App() {
         }
       } catch (e) {
         if (!cancelled) {
-          if (e instanceof ApiError && e.status === 401) {
+          if (isUnauthenticatedError(e)) {
             clearSession()
             setNeedsEmailVerify(false)
             setSessionId(null)
