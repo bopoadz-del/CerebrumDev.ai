@@ -46,25 +46,62 @@ def lettings_golden_path() -> Path:
     return _repo_root() / "blueprints" / "lettings" / "residential_lettings.v1.yaml"
 
 
+_LETTINGS_HINTS = frozenset({"residential_lettings", "lettings", "letting"})
+_LETTINGS_STEWARD_EXCLUSIONS = ("steward", "private estate", "property readiness")
+# One of these is enough. Branded Floor briefs say "Lettings Desk" / "lettings
+# CRM", not "lettings platform" — the #294 matcher missed those and the
+# keyword path then extracted property-management from "property portfolio".
+_LETTINGS_STRONG = (
+    "residential letting",
+    "residential lettings",
+    "lettings platform",
+    "letting platform",
+    "lettings desk",
+    "letting desk",
+    "lettings crm",
+    "letting crm",
+    "lettings hub",
+    "lettings agency",
+    "letting agency",
+    "tenancy application",
+)
+# Singular "letting" is ordinary English ("letting users…"). Require a
+# domain companion so we do not steal unrelated briefs.
+_LETTINGS_COMPANIONS = (
+    "landlord",
+    "tenant",
+    "tenancy",
+    "viewing",
+    "rent collection",
+    "property portfolio",
+)
+
+
 def _wants_lettings(text: str, vertical_hint: Optional[str] = None) -> bool:
     """True when the brief is the residential-lettings golden, not keyword fallback.
 
     Keyword drafting of "build a platform for residential lettings" used to
     emit a GENERATE ``residential_lettings_core`` stub plus mentioned
     blocks — a thin scaffold. The golden YAML is the live capability roster.
+
+    Branded / longer briefs (Northbridge Lettings Desk, Leeds landlords and
+    tenants, lettings CRM) must match too. Steward intent is excluded so
+    "private estate steward" still reaches the steward golden.
     """
     hint = (vertical_hint or "").replace("-", "_").strip().lower()
-    if hint in {"residential_lettings", "lettings"}:
+    if hint in _LETTINGS_HINTS:
         return True
-    return any(
-        key in (text or "")
-        for key in (
-            "residential letting",
-            "residential lettings",
-            "lettings platform",
-            "letting platform",
-        )
-    )
+    blob = (text or "").lower()
+    if any(key in blob for key in _LETTINGS_STEWARD_EXCLUSIONS):
+        return False
+    if any(key in blob for key in _LETTINGS_STRONG):
+        return True
+    # Plural "lettings" is the UK vertical noun (Northbridge Lettings).
+    if re.search(r"\blettings\b", blob):
+        return True
+    if re.search(r"\bletting\b", blob) and any(c in blob for c in _LETTINGS_COMPANIONS):
+        return True
+    return False
 
 
 # --- LLM drafting (gated, fail-safe) -----------------------------------------
@@ -436,16 +473,27 @@ def draft_blueprint_from_brief(
     """Draft a ProductBlueprint from a user brief.
 
     Order of preference:
-    1. LLM drafting when a factory API key is configured, or when
+    1. Golden residential-lettings blueprint for lettings briefs (the live
+       capability roster). This wins over the LLM: a keyed Floor drafted
+       branded lettings briefs as a property-management GENERATE stub.
+    2. LLM drafting when a factory API key is configured, or when
        ARCHITECT_LLM_DRAFTING_ENABLED / ``use_llm=True`` forces it —
-       fail-safe: any error falls through to (2).
-    2. Golden steward blueprint for explicit steward intent ("steward",
+       fail-safe: any error falls through to (3). Steward still reaches the
+       LLM first so "estate" alone does not short-circuit (see
+       test_draft_routing).
+    3. Golden steward blueprint for explicit steward intent ("steward",
        "private estate", "property readiness", or vertical_hint == "estate")
        — deterministic fallback after LLM failure.
-    3. Golden residential-lettings blueprint for lettings briefs (the live
-       capability roster). Keyword fallback of that brief is a thin scaffold.
     4. Deterministic keyword drafting (always works, no keys needed).
     """
+    text = (brief or "").lower()
+    # Lettings golden is first-choice, not an LLM fallback. Production is
+    # keyed; LLM-first routing is how Northbridge became property-management.
+    if use_golden_lettings and _wants_lettings(text, vertical_hint):
+        bp = load_blueprint(lettings_golden_path())
+        bp.drafting_mode = "golden_lettings"
+        return bp
+
     if use_llm is None:
         use_llm = llm_drafting_enabled()
     fallback_note = "LLM drafting disabled" if not use_llm else None
@@ -462,19 +510,12 @@ def draft_blueprint_from_brief(
             logger.warning("LLM drafting failed, falling back: %s", exc)
             fallback_note = f"LLM drafting failed ({type(exc).__name__}); deterministic fallback used"
 
-    text = (brief or "").lower()
     wants_steward = any(
         k in text for k in ("steward", "private estate", "property readiness")
     )
     if use_golden_steward and (wants_steward or vertical_hint == "estate"):
         bp = load_blueprint(steward_golden_path())
         bp.drafting_mode = "golden_steward"
-        bp.drafting_note = fallback_note
-        return bp
-
-    if use_golden_lettings and _wants_lettings(text, vertical_hint):
-        bp = load_blueprint(lettings_golden_path())
-        bp.drafting_mode = "golden_lettings"
         bp.drafting_note = fallback_note
         return bp
 
