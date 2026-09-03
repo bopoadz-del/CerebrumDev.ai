@@ -25,9 +25,11 @@ answers ``execution_error``, it does not crash the product.
 from __future__ import annotations
 
 import ast
+import contextvars
 import json
 import logging
 import os
+import time as _wall_time
 from typing import Any, Dict, List, Optional, Sequence
 
 import httpx
@@ -39,6 +41,13 @@ from .llm_watchdog import (
     call_timeout_s,
     is_timeout_error,
     post_with_deadline,
+)
+
+#: Shared wall for one calling-NOTE (fallback legs + validation retry).
+#: A kwarg on ``_llm_code_call`` would break the many test stubs that
+#: only accept ``messages``.
+_attempt_deadline: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
+    "factory_coder_attempt_deadline", default=None
 )
 
 logger = logging.getLogger("cerebrumdev.factory.coder")
@@ -272,8 +281,27 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     stamped with the primary's name: provenance that names the wrong author
     is worse than none, because it is trusted.
 
+    The attempt wall is a contextvar so fallback legs (and the validation
+    retry) share one ``attempt_wall_s()`` deadline. Without that, three
+    150s legs plus a second ``_llm_code_call`` can outrun the Floor's
+    480s live wall while one calling-NOTE is in flight.
+
     Raises CoderError on failure.
     """
+    token = None
+    if _attempt_deadline.get() is None:
+        token = _attempt_deadline.set(_wall_time.monotonic() + _attempt_wall_s())
+    try:
+        return _llm_code_call_impl(messages)
+    finally:
+        if token is not None:
+            _attempt_deadline.reset(token)
+
+
+def _llm_code_call_impl(messages: List[Dict[str, str]]) -> tuple[str, str]:
+    deadline_mono = _attempt_deadline.get()
+    if deadline_mono is None:
+        deadline_mono = _wall_time.monotonic() + _attempt_wall_s()
     from app.core.llm_config import get_factory_fallback_leg
 
     from .product_architect import get_factory_llm_config
@@ -340,6 +368,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
                 headers=headers,
                 timeout=_call_timeout_s(),
                 post=httpx.post,
+                deadline_mono=deadline_mono,
             )
             resp.raise_for_status()
             return _anthropic_text(resp.json())
@@ -374,6 +403,7 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
             headers=headers,
             timeout=_call_timeout_s(),
             post=httpx.post,
+            deadline_mono=deadline_mono,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -677,30 +707,36 @@ def _call_validate_retry(
     is another model call judged by the same gate, and a second rejection
     raises exactly as before.
     """
-    raw, model_used = _llm_code_call(messages)
+    token = _attempt_deadline.set(_wall_time.monotonic() + _attempt_wall_s())
     try:
-        return (
-            _validate_body(_strip_fences(raw), capability_id, block_ids),
-            model_used,
-        )
-    except CoderError as exc:
-        retry = messages + [
-            {"role": "assistant", "content": raw},
-            {
-                "role": "user",
-                "content": (
-                    "Your code was rejected by a static gate:\n"
-                    f"{exc}\n"
-                    "Emit the corrected body now, following every rule in the "
-                    "system message."
-                ),
-            },
-        ]
-        raw, model_used = _llm_code_call(retry)
-        return (
-            _validate_body(_strip_fences(raw), capability_id, block_ids),
-            model_used,
-        )
+        raw, model_used = _llm_code_call(messages)
+        try:
+            return (
+                _validate_body(_strip_fences(raw), capability_id, block_ids),
+                model_used,
+            )
+        except CoderTimeout:
+            raise
+        except CoderError as exc:
+            retry = messages + [
+                {"role": "assistant", "content": raw},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your code was rejected by a static gate:\n"
+                        f"{exc}\n"
+                        "Emit the corrected body now, following every rule in the "
+                        "system message."
+                    ),
+                },
+            ]
+            raw, model_used = _llm_code_call(retry)
+            return (
+                _validate_body(_strip_fences(raw), capability_id, block_ids),
+                model_used,
+            )
+    finally:
+        _attempt_deadline.reset(token)
 
 
 _PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """

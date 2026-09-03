@@ -2,14 +2,19 @@
 
 Live sess_3f3115ba6d764102 sat in WRITER with "quiet for 14+ min — model
 call may still be running" because httpx's idle read timeout never fired
-on a streaming/keepalive completion. These tests pin the wall-clock
-watchdog, the alternate-model retry, the terminal message, and the Floor
-status that must not claim progress while the call is in flight.
+on a streaming/keepalive completion. #291 added a daemon-thread join;
+live sess_97a1bc6525924e8b still waited 1965s against a 480s attempt
+wall because join was waited without cancelling the socket. These tests
+pin the hard wall-clock abort, the alternate-model retry, the terminal
+message, and the Floor status that must not claim progress while the
+call is in flight.
 """
 
 from __future__ import annotations
 
 import json
+import socket
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 import httpx
@@ -20,6 +25,7 @@ from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.roles import RoleContext, RoleError
 from app.factory.build_jobs import build_status
+from app.factory.llm_watchdog import post_with_deadline
 
 
 def _kimi_cfg(**overrides):
@@ -51,8 +57,9 @@ def test_watchdog_fires_when_httpx_never_returns(monkeypatch):
     _arm_kimi(monkeypatch, fallback_model=None)
 
     def _hang(url, json=None, headers=None, timeout=None):
-        time.sleep(8)
-        raise AssertionError("watchdog should have released the caller")
+        # time.sleep is no-op'd by _arm_kimi (connect-retry backoff).
+        threading.Event().wait(8)
+        raise AssertionError("caller was not released")
 
     monkeypatch.setattr(coder.httpx, "post", _hang)
 
@@ -63,6 +70,153 @@ def test_watchdog_fires_when_httpx_never_returns(monkeypatch):
 
     assert elapsed < 3.0, elapsed
     assert "coder LLM timed out" in str(exc.value)
+
+
+def test_hung_post_aborts_near_deadline_when_join_ignores_timeout(monkeypatch):
+    """1965s > 480s class: join-without-cancel must not pin the caller.
+
+    #291's watchdog did ``worker.join(timeout)`` and raised only after
+    join returned. If join waits for the worker anyway (GIL-holding C
+    in httpx/ssl, anyio portal, or a join that ignores its timeout),
+    the WRITER burns until the upstream drops — live, 1965s vs 480s.
+    Simulate that join by ignoring the timeout; Event.wait + cancel
+    must still release the caller near the deadline, not ~4× late.
+    """
+    orig_join = threading.Thread.join
+
+    def _join_without_cancel(self, timeout=None):  # noqa: ARG001
+        return orig_join(self, None)
+
+    monkeypatch.setattr(threading.Thread, "join", _join_without_cancel)
+
+    hang_s = 2.0
+    timeout_s = 0.25
+
+    def _hang(url, json=None, headers=None, timeout=None):  # noqa: ARG001
+        threading.Event().wait(hang_s)
+        raise AssertionError("caller was not released")
+
+    started = time.monotonic()
+    with pytest.raises(httpx.ReadTimeout) as exc:
+        post_with_deadline(
+            "https://example.invalid/v1/chat/completions",
+            json={"model": "primary"},
+            timeout=timeout_s,
+            post=_hang,
+        )
+    elapsed = time.monotonic() - started
+
+    # Not 4× the deadline (1.0s) and not the full hang (2.0s).
+    assert elapsed < timeout_s + 0.8, elapsed
+    assert elapsed < hang_s / 2, elapsed
+    assert "watchdog fired" in str(exc.value)
+
+
+def _dribble_server(hold_s: float, interval_s: float = 0.05) -> int:
+    """HTTP/1.1 chunked dribble that resets an idle read timeout."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(1)
+    port = sock.getsockname()[1]
+
+    def _serve() -> None:
+        try:
+            sock.settimeout(hold_s + 2.0)
+            conn, _ = sock.accept()
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Transfer-Encoding: chunked\r\n"
+                b"\r\n"
+            )
+            end = time.monotonic() + hold_s
+            while time.monotonic() < end:
+                try:
+                    conn.sendall(b"1\r\n \r\n")
+                except OSError:
+                    break
+                time.sleep(interval_s)
+            try:
+                conn.sendall(b"0\r\n\r\n")
+            except OSError:
+                pass
+            conn.close()
+        except OSError:
+            pass
+        finally:
+            sock.close()
+
+    threading.Thread(target=_serve, name="dribble-http", daemon=True).start()
+    return port
+
+
+def test_watchdog_aborts_streaming_dribble_near_deadline():
+    """Idle httpx timeout resets on each chunk; the wall clock must not."""
+    port = _dribble_server(hold_s=3.0)
+    timeout_s = 0.3
+    started = time.monotonic()
+    with pytest.raises(httpx.ReadTimeout) as exc:
+        post_with_deadline(
+            f"http://127.0.0.1:{port}/",
+            json={"model": "primary"},
+            timeout=timeout_s,
+        )
+    elapsed = time.monotonic() - started
+    assert elapsed < timeout_s + 0.8, elapsed
+    assert "watchdog" in str(exc.value).lower()
+
+
+def test_stacked_legs_cannot_outrun_attempt_wall(monkeypatch):
+    """One calling-NOTE's _llm_code_call must stay inside attempt_wall_s()."""
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "0.2")
+    monkeypatch.setattr("app.factory.llm_watchdog.MODEL_CALL_GRACE_S", 0.15)
+    monkeypatch.setattr("app.factory.coder.MODEL_CALL_GRACE_S", 0.15, raising=False)
+    _arm_kimi(monkeypatch)
+    monkeypatch.setattr(
+        "app.core.llm_config.get_factory_fallback_leg",
+        lambda: {
+            "provider": "openrouter",
+            "model": "free",
+            "base_url": "https://example.invalid/v1",
+            "api_key": "test-key-not-real",
+            "is_free": True,
+        },
+    )
+
+    def _hang(url, json=None, headers=None, timeout=None):  # noqa: ARG001
+        # Must not use time.sleep: _arm_kimi no-ops it for connect-retry
+        # backoff, which made this test a false pass on the old join path.
+        threading.Event().wait(2.0)
+        raise httpx.ReadTimeout("model still open")
+
+    monkeypatch.setattr(coder.httpx, "post", _hang)
+
+    started = time.monotonic()
+    with pytest.raises(coder.CoderTimeout):
+        coder._llm_code_call([{"role": "user", "content": "u"}])
+    elapsed = time.monotonic() - started
+    # attempt_wall = 0.2 * 3 + 0.15 = 0.75s. 3 × 2s hang would be 6s;
+    # 3 × 0.2s posts without a shared wall is still fine — the live
+    # failure was posts that ignored their own timeout. Bound well
+    # under 4× the wall (3.0s).
+    assert elapsed < 1.6, elapsed
+
+
+def test_validate_retry_does_not_swallow_coder_timeout(monkeypatch):
+    calls = []
+
+    def _boom(messages):  # noqa: ARG001
+        calls.append(1)
+        raise coder.CoderTimeout("coder LLM timed out on primary after retry")
+
+    monkeypatch.setattr(coder, "_llm_code_call", _boom)
+    with pytest.raises(coder.CoderTimeout):
+        coder._call_validate_retry(
+            [{"role": "user", "content": "u"}],
+            "class_and_event_scheduling",
+        )
+    assert calls == [1]
 
 
 def test_timeout_retries_the_alternate_configured_model(monkeypatch):
@@ -260,6 +414,52 @@ def test_overdue_model_call_fails_the_build_status(tmp_path):
     assert status["state"] == "failed", status
     assert "coder LLM timed out" in status["detail"]
     assert "clinical_treatment_notes" in status["detail"]
+    assert status["pilot_ready"] is False
+
+
+def test_overdue_uses_calling_note_age_not_a_later_event(tmp_path):
+    """A later ledger event must not reset the 480s wall (1965s class)."""
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="makers", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="calling coder LLM for class_and_event_scheduling",
+        payload={
+            "stage": "coder",
+            "model_call": True,
+            "deadline_s": 480,
+        },
+    )
+    stale_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=1965)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = stale_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text(
+        "\n".join(aged) + "\n", encoding="utf-8"
+    )
+    # Fresh event after the calling NOTE — used to reset idle_s.
+    ledger.append(
+        EventKind.PHASE_STARTED,
+        role=BuildRole.WRITER,
+        detail="heartbeat",
+    )
+
+    status = build_status(out)
+    assert status["state"] == "failed", status
+    assert "deadline 480s" in status["detail"], status
+    assert "class_and_event_scheduling" in status["detail"]
+    elapsed_s = int(status["detail"].split("after ", 1)[1].split("s", 1)[0])
+    assert 1964 <= elapsed_s <= 1975, status["detail"]
     assert status["pilot_ready"] is False
 
 
