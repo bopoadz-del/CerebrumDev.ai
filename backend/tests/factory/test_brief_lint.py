@@ -66,6 +66,17 @@ def test_mutation_planted_unsourced_line_is_rejected():
     assert any("orphan line" in e for e in result.errors)
 
 
+def test_mutation_invented_scope_line_is_rejected():
+    compiled = _compiled()
+    compiled.text = (
+        compiled.text
+        + "\nInvent READS=loyalty_points the customer never declared on block.json.\n"
+    )
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("orphan line" in e for e in result.errors)
+
+
 def test_unfilled_template_slot_is_rejected():
     compiled = _compiled()
     compiled.text = compiled.text + "\n{{ORPHAN_SLOT}}\n"

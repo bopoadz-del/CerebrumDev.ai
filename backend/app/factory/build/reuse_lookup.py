@@ -1,23 +1,33 @@
-"""STEP 0 REUSE lookup — Blocks registry HTTP, feature-detected.
+"""STEP 0 REUSE lookup — exact-id Blocks registry HTTP, feature-detected.
 
-Contract (Blocks #106, may still be merging):
+Contract (Cerebrum-Blocks #106; L2.2 report-only until flip):
 
-    GET /v1/registry/blocks/{id}   — preferred
-    GET /v1/registry/reuse/{id}    — fallback path
+    GET /v1/registry/blocks/{block_id}   — canonical
+    GET /v1/registry/reuse/{block_id}    — STEP 0 alias
 
-Always 200 when the surface exists. Body carries ``present`` or ``reuse``
-as true|false, and optional ``reads`` / ``writes`` / ``never`` /
-``acceptance``. Until main has it, this client feature-detects: 404,
-connect errors, and an unset ``CEREBRUM_API_URL`` fall back to the local
-dual-registry id set. The compiler never invents presence.
+Auth-gated, always HTTP 200. Absent is not a 404:
+
+    present: {"present": true, "reuse": true, "id": "...",
+              "reads": [...], "writes": [...], "never": [...],
+              "acceptance": [...], "manifest": {...}}
+    absent:  {"present": false, "id": "...", "reuse": false}
+
+Exact case-sensitive store id (``document_engine``, not ``DocumentEngine``).
+
+Until Blocks lands, this client feature-detects: 404, connect errors, and
+an unset ``CEREBRUM_API_URL`` fall back to the local dual-registry id set
+plus on-disk ``block.json``. The compiler never invents presence or scopes.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from urllib.parse import quote
 
 import httpx
 
@@ -26,6 +36,7 @@ logger = logging.getLogger("cerebrumdev.factory.reuse_lookup")
 BLOCKS_PATH = "/v1/registry/blocks/{id}"
 REUSE_PATH = "/v1/registry/reuse/{id}"
 PROBE_TIMEOUT_S = 3.0
+L2_KEYS = ("reads", "writes", "never", "acceptance")
 
 #: Feature-detect cache. Blocks #106 may still be merging; one failed
 #: probe means the surface is unavailable for the rest of the process.
@@ -41,6 +52,7 @@ class ReuseRecord:
     writes: List[str] = field(default_factory=list)
     never: List[str] = field(default_factory=list)
     acceptance: List[str] = field(default_factory=list)
+    scope_declared: bool = False
     raw: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -52,11 +64,18 @@ class ReuseRecord:
             "writes": list(self.writes),
             "never": list(self.never),
             "acceptance": list(self.acceptance),
+            "scope_declared": self.scope_declared,
         }
 
 
 def store_base_url() -> str:
     return (os.getenv("CEREBRUM_API_URL") or "").strip().rstrip("/")
+
+
+def reset_http_surface_cache() -> None:
+    """Tests only — drop the process-wide feature-detect cache."""
+    global _http_surface
+    _http_surface = None
 
 
 def _auth_headers() -> Dict[str, str]:
@@ -77,23 +96,215 @@ def _as_str_list(value: Any) -> List[str]:
     return []
 
 
+def _scope_layers(payload: Mapping[str, Any]) -> List[Mapping[str, Any]]:
+    layers: List[Mapping[str, Any]] = [payload]
+    scope = payload.get("scope")
+    if isinstance(scope, dict):
+        layers.append(scope)
+    manifest = payload.get("manifest")
+    if isinstance(manifest, dict):
+        layers.append(manifest)
+        inner = manifest.get("scope")
+        if isinstance(inner, dict):
+            layers.append(inner)
+    return layers
+
+
+def extract_l2_fields(payload: Any) -> Tuple[Dict[str, List[str]], bool]:
+    """Pull reads/writes/never/acceptance. Keys missing → not declared.
+
+    First declaring layer wins (body, then ``scope``, then ``manifest``).
+    An empty list that is actually present on the JSON is declared-empty,
+    not an invitation to invent from another layer or from code.
+    """
+    out = {key: [] for key in L2_KEYS}
+    declared = False
+    if not isinstance(payload, Mapping):
+        return out, False
+    layers = _scope_layers(payload)
+    for key in L2_KEYS:
+        for layer in layers:
+            if key in layer:
+                declared = True
+                out[key] = _as_str_list(layer.get(key))
+                break
+    return out, declared
+
+
 def parse_reuse_body(block_id: str, data: Any, *, source: str) -> ReuseRecord:
-    """Interpret a 200 body. Missing keys mean 'not present', never assumed."""
+    """Interpret a 200 body. Never assume presence; never invent L2.2 scopes.
+
+    * ``present: false`` / ``reuse: false`` is absent (the always-200 miss).
+    * ``present: true`` / ``reuse: true`` is present.
+    * A raw ``block.json`` 200 with a matching exact ``id`` is present.
+    * An ``id`` that does not match the requested id (case-sensitive) is absent.
+    """
     payload = data if isinstance(data, dict) else {}
-    flag = payload.get("present")
-    if flag is None:
-        flag = payload.get("reuse")
-    present = bool(flag) if flag is not None else False
-    scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+    bid = str(block_id)
+    body_id = payload.get("id")
+    if body_id is not None and str(body_id) != bid:
+        return ReuseRecord(
+            block_id=bid,
+            present=False,
+            source=source,
+            raw=dict(payload),
+        )
+    present_flag = payload.get("present")
+    reuse_flag = payload.get("reuse")
+    if present_flag is False or reuse_flag is False:
+        present = False
+    elif present_flag is True or reuse_flag is True:
+        present = True
+    elif body_id is not None and str(body_id) == bid:
+        present = True
+    else:
+        present = False
+    fields, declared = extract_l2_fields(payload) if present else ({k: [] for k in L2_KEYS}, False)
     return ReuseRecord(
-        block_id=block_id,
+        block_id=bid,
         present=present,
         source=source,
-        reads=_as_str_list(payload.get("reads") or scope.get("reads")),
-        writes=_as_str_list(payload.get("writes") or scope.get("writes")),
-        never=_as_str_list(payload.get("never") or scope.get("never")),
-        acceptance=_as_str_list(payload.get("acceptance") or scope.get("acceptance")),
+        reads=fields["reads"],
+        writes=fields["writes"],
+        never=fields["never"],
+        acceptance=fields["acceptance"],
+        scope_declared=declared,
         raw=dict(payload),
+    )
+
+
+def local_block_json_candidates(
+    block_id: str,
+    *,
+    blocks_root: Optional[Path] = None,
+) -> List[Path]:
+    """Exact-id paths only. Directory name is the store id (case-sensitive)."""
+    bid = str(block_id).strip()
+    if not bid:
+        return []
+    out: List[Path] = []
+    roots: List[Path] = []
+    if blocks_root is not None:
+        roots.append(Path(blocks_root))
+    env = (os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH") or "").strip()
+    if env:
+        roots.append(Path(env))
+    seen: Set[str] = set()
+    for root in roots:
+        path = (Path(root) / "block_registry" / bid / "block.json").resolve()
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            out.append(path)
+    mirror = (
+        Path(__file__).resolve().parents[1] / "vendor_blocks_mirror" / bid / "block.json"
+    )
+    out.append(mirror)
+    return out
+
+
+def load_local_block_json(
+    block_id: str,
+    *,
+    blocks_root: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """Read on-disk block.json for an exact store id. None if absent or mismatched."""
+    bid = str(block_id).strip()
+    if not bid:
+        return None
+    for path in local_block_json_candidates(bid, blocks_root=blocks_root):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        file_id = data.get("id")
+        if file_id is not None and str(file_id) != bid:
+            continue
+        return data
+    return None
+
+
+def reuse_payload_for(
+    block_id: str,
+    *,
+    local_ids: Optional[Iterable[str]] = None,
+    blocks_root: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """Always-200 body used by the Factory stub (and tests). Never 404."""
+    bid = str(block_id).strip()
+    known = {str(x) for x in (local_ids or ()) if str(x).strip()}
+    local = load_local_block_json(bid, blocks_root=blocks_root)
+    present = bid in known or local is not None
+    if not present:
+        return {"present": False, "id": bid, "reuse": False}
+    fields, declared = extract_l2_fields(local or {})
+    body: Dict[str, Any] = {"present": True, "reuse": True, "id": bid}
+    if declared:
+        body["reads"] = fields["reads"]
+        body["writes"] = fields["writes"]
+        body["never"] = fields["never"]
+        body["acceptance"] = fields["acceptance"]
+    if local:
+        body["manifest"] = local
+    return body
+
+
+def _overlay_local_scope(
+    record: ReuseRecord,
+    *,
+    blocks_root: Optional[Path] = None,
+) -> ReuseRecord:
+    """When HTTP says present but L2.2 keys are missing, harvest local block.json."""
+    if not record.present or record.scope_declared:
+        return record
+    local = load_local_block_json(record.block_id, blocks_root=blocks_root)
+    if not local:
+        return record
+    fields, declared = extract_l2_fields(local)
+    if not declared:
+        return record
+    return ReuseRecord(
+        block_id=record.block_id,
+        present=True,
+        source=f"{record.source}+local_block_json",
+        reads=fields["reads"],
+        writes=fields["writes"],
+        never=fields["never"],
+        acceptance=fields["acceptance"],
+        scope_declared=True,
+        raw=record.raw,
+    )
+
+
+def _local_reuse_record(
+    bid: str,
+    known: Set[str],
+    *,
+    blocks_root: Optional[Path] = None,
+) -> ReuseRecord:
+    local = load_local_block_json(bid, blocks_root=blocks_root)
+    if local is not None:
+        fields, declared = extract_l2_fields(local)
+        return ReuseRecord(
+            block_id=bid,
+            present=True,
+            source="local_block_json",
+            reads=fields["reads"],
+            writes=fields["writes"],
+            never=fields["never"],
+            acceptance=fields["acceptance"],
+            scope_declared=declared,
+            raw=dict(local),
+        )
+    in_known = bid in known
+    return ReuseRecord(
+        block_id=bid,
+        present=in_known,
+        source="local_dual_registry" if in_known else "absent",
     )
 
 
@@ -114,10 +325,11 @@ def lookup_reuse_http(block_id: str, *, base_url: Optional[str] = None) -> Optio
     if not root or not str(block_id).strip():
         return None
     bid = str(block_id).strip()
+    encoded = quote(bid, safe="")
     saw_connection = False
     for path, label in (
-        (BLOCKS_PATH.format(id=bid), "registry/blocks"),
-        (REUSE_PATH.format(id=bid), "registry/reuse"),
+        (BLOCKS_PATH.format(id=encoded), "registry/blocks"),
+        (REUSE_PATH.format(id=encoded), "registry/reuse"),
     ):
         resp = _get(root + path)
         if resp is None:
@@ -151,19 +363,16 @@ def lookup_reuse(
     local_ids: Optional[Iterable[str]] = None,
     base_url: Optional[str] = None,
     http_get=None,
+    blocks_root: Optional[Path] = None,
 ) -> ReuseRecord:
-    """HTTP first when the surface exists; else local dual-registry membership."""
+    """HTTP first when the surface exists; else local exact-id + block.json."""
     bid = str(block_id).strip()
     known = {str(x) for x in (local_ids or ()) if str(x).strip()}
     getter = http_get or lookup_reuse_http
     remote = getter(bid, base_url=base_url) if base_url or store_base_url() else None
     if remote is not None:
-        return remote
-    return ReuseRecord(
-        block_id=bid,
-        present=bid in known,
-        source="local_dual_registry" if bid in known else "absent",
-    )
+        return _overlay_local_scope(remote, blocks_root=blocks_root)
+    return _local_reuse_record(bid, known, blocks_root=blocks_root)
 
 
 def resolve_store_presence(
@@ -172,6 +381,7 @@ def resolve_store_presence(
     local_ids: Optional[Iterable[str]] = None,
     base_url: Optional[str] = None,
     http_get=None,
+    blocks_root: Optional[Path] = None,
 ) -> Dict[str, ReuseRecord]:
     """Map each claimed id to a ReuseRecord. Never invent presence."""
     out: Dict[str, ReuseRecord] = {}
@@ -180,7 +390,11 @@ def resolve_store_presence(
         if not name or name in out:
             continue
         out[name] = lookup_reuse(
-            name, local_ids=local_ids, base_url=base_url, http_get=http_get
+            name,
+            local_ids=local_ids,
+            base_url=base_url,
+            http_get=http_get,
+            blocks_root=blocks_root,
         )
     return out
 

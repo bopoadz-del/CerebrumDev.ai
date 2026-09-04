@@ -99,6 +99,14 @@ TEMPLATE_STATIC_NEEDLES = (
     "not in store",
     "schema-enforced",
     "offline platform",
+    "do not invent scopes",
+    "not declared on block.json",
+    "pre-flip",
+    "block scopes",
+    "block-level acceptance",
+    "report-only",
+    "l2.2",
+    "inventing reads/writes/never/acceptance",
 )
 
 

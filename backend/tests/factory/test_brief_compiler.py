@@ -176,3 +176,95 @@ def test_reuse_http_present_false_is_a_named_missing_id():
     )
     assert compiled.missing_reuse == ["event_bus"]
     assert compiled.reuse_records["event_bus"]["present"] is False
+    with pytest.raises(InventoryHalt, match="event_bus"):
+        verify_inventory(compiled)
+
+
+def test_reuse_http_l2_fields_appear_in_brief_when_declared():
+    from app.factory.build.reuse_lookup import ReuseRecord
+
+    def fake_get(block_id, base_url=None):
+        return ReuseRecord(
+            block_id=block_id,
+            present=True,
+            source="registry/blocks",
+            reads=["topic"],
+            writes=["event"],
+            never=["channel"],
+            acceptance=["publish succeeds"],
+            scope_declared=True,
+        )
+
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("appointment_scheduling", ["event_bus"], "REUSE")),
+        store_ids={"event_bus"},
+        reuse_http_get=fake_get,
+    )
+    verify_inventory(compiled)
+    assert "topic" in compiled.text
+    assert "publish succeeds" in compiled.text
+    assert not any(
+        "event_bus" in line and "pre-flip" in line
+        for line in compiled.text.splitlines()
+    )
+    assert any(
+        "event_bus" in line and "READS=" in line and "topic" in line
+        for line in compiled.text.splitlines()
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
+def test_preflip_block_json_says_scopes_not_declared():
+    """Vendor-mirror block.json has no L2.2 keys — brief must say so, not invent."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("automated_reminders", ["notification"], "REUSE")),
+        store_ids={"notification"},
+    )
+    verify_inventory(compiled)
+    assert compiled.reuse_records["notification"]["present"] is True
+    assert compiled.reuse_records["notification"]["scope_declared"] is False
+    assert compiled.reuse_records["notification"]["reads"] == []
+    assert "not declared on block.json (pre-flip)" in compiled.text
+    assert "do not invent scopes" in compiled.text
+    # Must not invent a clinic/reminder scope the mirror never declared.
+    assert "appointment_slot" not in compiled.text
+    assert "sms_body" not in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
+def test_compiler_does_not_invent_scopes_when_http_omits_l2():
+    from app.factory.build.reuse_lookup import ReuseRecord
+
+    def fake_get(block_id, base_url=None):
+        return ReuseRecord(
+            block_id=block_id,
+            present=True,
+            source="registry/blocks",
+            scope_declared=False,
+        )
+
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("automated_reminders", ["notification"], "REUSE")),
+        store_ids={"notification"},
+        reuse_http_get=fake_get,
+    )
+    assert "not declared on block.json (pre-flip)" in compiled.text
+    rec = compiled.reuse_records["notification"]
+    assert rec["reads"] == []
+    assert rec["writes"] == []
+    assert rec["never"] == []
+    assert rec["acceptance"] == []
+
+
+def test_case_sensitive_claimed_reuse_does_not_match_folded_id():
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("docs", ["DocumentEngine"], "REUSE")),
+        store_ids={"document_engine"},
+    )
+    assert compiled.missing_reuse == ["DocumentEngine"]
+    with pytest.raises(InventoryHalt, match="DocumentEngine"):
+        verify_inventory(compiled)

@@ -483,6 +483,7 @@ def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, An
     compiled = compile_brief(
         bp,
         plan,
+        blocks_root=_blocks_root(),
         chat_turns=turns,
         brief=str(getattr(state.product_design, "brief", "") or ""),
         intake=getattr(state.product_design, "intake_blueprint", None),

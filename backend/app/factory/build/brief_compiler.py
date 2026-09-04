@@ -306,6 +306,48 @@ def _section_lines(*parts: str) -> str:
     return "\n".join(part for part in parts if part is not None)
 
 
+PREFLIP_SCOPE = (
+    "READS/WRITES/NEVER/ACCEPTANCE not declared on block.json (pre-flip) "
+    "— do not invent scopes"
+)
+
+
+def _record_as_dict(rec: Any) -> Dict[str, Any]:
+    if rec is None:
+        return {}
+    if isinstance(rec, dict):
+        return rec
+    if hasattr(rec, "to_dict"):
+        return rec.to_dict()
+    return {}
+
+
+def scope_line_for(block_id: str, rec: Any) -> str:
+    """One BUILD line per verified id. Inventing scopes is forbidden."""
+    data = _record_as_dict(rec)
+    if data.get("scope_declared"):
+        return (
+            f"- {block_id} READS={data.get('reads') or ['(none)']} "
+            f"WRITES={data.get('writes') or ['(none)']} "
+            f"NEVER={data.get('never') or ['(none)']} "
+            f"ACCEPTANCE={data.get('acceptance') or ['(none)']}"
+        )
+    return f"- {block_id}: {PREFLIP_SCOPE}"
+
+
+def acceptance_line_for(block_id: str, rec: Any) -> str:
+    """ACCEPTANCE cut: pull block.json acceptance or name the pre-flip gap."""
+    data = _record_as_dict(rec)
+    if data.get("scope_declared"):
+        acc = data.get("acceptance") or []
+        detail = ", ".join(str(a) for a in acc) if acc else "(none declared)"
+        return f"- {block_id}: {detail}  [check:block_acceptance]"
+    return (
+        f"- {block_id}: not declared on block.json (pre-flip) — "
+        f"do not invent scopes  [check:block_acceptance]"
+    )
+
+
 def render_slot_bodies(
     *,
     blueprint: Any,
@@ -418,17 +460,20 @@ def render_slot_bodies(
         "Three tests per block are already owned by the harness (TESTER is not an LLM role).",
         "Scope READS / WRITES / NEVER explicitly in each handler you author.",
         f"Budget wall: {int(budget_s)}s (FACTORY_CODER_BUDGET_S / staged wall).",
+        "",
+        "Block scopes (from block.json; report-only until L2.2 flip — do not invent):",
     ]
+    packed_reuse = {
+        bid: (rec if isinstance(rec, dict) else rec.to_dict())
+        for bid, rec in dict(reuse_records or {}).items()
+    }
+    seen_scope: Set[str] = set()
     for item in inventory:
-        if item.reads or item.writes or item.never:
-            do_lines.append(
-                f"- {item.capability_id} READS={item.reads or ['(none)']} "
-                f"WRITES={item.writes or ['(none)']} NEVER={item.never or ['(none)']}"
-            )
-        if item.acceptance:
-            do_lines.append(
-                f"- {item.capability_id} block acceptance: {item.acceptance}"
-            )
+        for bid in item.verified_present:
+            if bid in seen_scope:
+                continue
+            seen_scope.add(bid)
+            do_lines.append(scope_line_for(bid, packed_reuse.get(bid)))
     findings = [str(item) for item in (work_list or []) if str(item).strip()]
     if findings:
         do_lines += [
@@ -447,15 +492,11 @@ def render_slot_bodies(
             "Block contracts (invoke only actions they support):",
             json.dumps(dict(contracts), indent=2, sort_keys=True),
         ]
-    if reuse_records:
-        scoped = {
-            bid: rec if isinstance(rec, dict) else rec.to_dict()
-            for bid, rec in dict(reuse_records).items()
-        }
+    if packed_reuse:
         do_lines += [
             "",
             "REUSE records (present/reuse + reads/writes/never/acceptance):",
-            json.dumps(scoped, indent=2, sort_keys=True),
+            json.dumps(packed_reuse, indent=2, sort_keys=True),
         ]
     if domain_pack:
         packed = {
@@ -483,6 +524,13 @@ def render_slot_bodies(
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
         "Do not treat thin SUCCESS / templates-only / stubbed capabilities as done.",
+        "",
+        "Block-level acceptance (from block.json, report-only until flip):",
+        "\n".join(
+            acceptance_line_for(bid, packed_reuse.get(bid))
+            for bid in seen_scope
+        )
+        or "- (no verified REUSE blocks)  [check:block_acceptance]",
     )
 
     forbidden = _section_lines(
@@ -491,6 +539,7 @@ def render_slot_bodies(
         "- reserved-keyword fields (action inside the payload dict, id as a domain field)",
         "- unlisted blocks (ids not in the Store registry / inventory)",
         "- assuming a REUSE id is present when STEP 0 flagged it missing",
+        "- inventing READS/WRITES/NEVER/ACCEPTANCE when block.json has not declared them",
         "- one handle() / one spec / one route at a time — this brief is the whole job",
         "- weakening honesty or exporting when the pilot suite is red",
     )
@@ -622,6 +671,7 @@ def compile_brief(
         claimed,
         local_ids=known,
         http_get=(lambda *_a, **_k: None) if skip_http else reuse_http_get,
+        blocks_root=blocks_root,
     )
     # HTTP present=true counts as verified even if the local shelf lagged.
     for bid, rec in records.items():
