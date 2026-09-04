@@ -629,22 +629,36 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         if result.via == "skipped":
             result.blocker = NAMED_BLOCKER_CLI
     else:
-        detail = cli_unavailable_detail()
-        logger.error("%s", OWNER_GATED_CLI_LOG)
-        _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] {detail}")
-        ctx.note(
-            f"{NAMED_BLOCKER_CLI} — coding session never opened",
-            stage="dispatch",
-            source="brief dispatch",
-            done=0,
-            total=1,
-        )
-        result = DispatchResult(
-            via="unavailable",
-            ok=False,
-            detail=detail,
-            blocker=NAMED_BLOCKER_CLI,
-        )
+        from app.factory.coder import coder_enabled
+
+        if not coder_enabled():
+            _append_log(
+                root / LOG_REL,
+                f"[{NAMED_BLOCKER_CLI}] coder disabled — templates will author the workspace",
+            )
+            result = DispatchResult(
+                via="skipped",
+                ok=False,
+                detail="coder disabled — templates will author the workspace",
+                blocker=NAMED_BLOCKER_CLI,
+            )
+        else:
+            detail = cli_unavailable_detail()
+            logger.error("%s", OWNER_GATED_CLI_LOG)
+            _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] {detail}")
+            ctx.note(
+                f"{NAMED_BLOCKER_CLI} — coding session never opened",
+                stage="dispatch",
+                source="brief dispatch",
+                done=0,
+                total=1,
+            )
+            result = DispatchResult(
+                via="unavailable",
+                ok=False,
+                detail=detail,
+                blocker=NAMED_BLOCKER_CLI,
+            )
 
     receipt = {
         "via": result.via,

@@ -383,6 +383,8 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 and result.get("sse") != "error"
             ):
                 require_within_limit(getattr(state, "user_id", None), "generation")
+            if result.get("ok") and not result.get("sse"):
+                result = {**result, "sse": "generation"}
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
