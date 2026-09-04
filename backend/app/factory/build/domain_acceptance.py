@@ -427,6 +427,8 @@ def sample_payload(capability_id: str) -> Dict[str, Any]:
         ftype = field.get("type") or "str"
         if allowed:
             payload[name] = allowed[0]
+        elif str(name).lower() == "status" or str(name).lower().endswith("_status"):
+            payload[name] = "open"
         elif ftype == "int":
             payload[name] = int(field["min"]) if field.get("min") is not None else 1
         elif ftype == "float":

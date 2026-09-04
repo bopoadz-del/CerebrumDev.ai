@@ -137,27 +137,69 @@ ENVELOPE_REFERENCE_FIELD: Dict[str, Any] = {
     "required": True,
 }
 
+#: Fallback ``status`` vocabulary. LLM appointment / availability specs
+#: (sess_5dfb4a3, sess_1fd1d54c) declared scheduled/completed/cancelled —
+#: or a bare str that sampled as ``sample`` — while the route
+#: ``_constraint_guard`` / coder handler refused anything outside this set.
+ENVELOPE_STATUS_VALUES: tuple[str, ...] = ("open", "in_progress", "closed")
+
+
+def is_envelope_status_field(name: Optional[str]) -> bool:
+    return str(name or "").strip().lower() == "status"
+
+
+def is_envelope_status_vocab(values: Optional[Sequence[Any]]) -> bool:
+    return list(values or []) == list(ENVELOPE_STATUS_VALUES)
+
+
+def normalize_envelope_status_field(field: Dict[str, Any]) -> bool:
+    """Rewrite a ``status`` column to the factory envelope vocabulary.
+
+    Returns True when ``allowed_values`` changed. Does not add a status
+    column that the spec never declared — only agrees the existing one
+    with the guard PRODUCT actually runs.
+    """
+    if not is_envelope_status_field(field.get("name")):
+        return False
+    if is_envelope_status_vocab(field.get("allowed_values")):
+        return False
+    field["allowed_values"] = list(ENVELOPE_STATUS_VALUES)
+    field.setdefault("type", "str")
+    return True
+
 
 def ensure_record_envelope(
     spec: Optional[Dict[str, Any]],
 ) -> tuple:
-    """Ensure the factory envelope field ``reference`` is on the spec.
+    """Ensure the factory envelope ``reference`` + ``status`` vocab.
 
-    Returns ``(spec, added_names)``. Idempotent. Does not invent domain
-    columns — only the envelope the fallback path and PRODUCT samples share.
+    Returns ``(spec, added_names)``. Idempotent. Adds ``reference`` when
+    missing. When a ``status`` column already exists, its allowed_values
+    become ``open|in_progress|closed`` so schema samples and
+    ``_constraint_guard`` cannot disagree (live sess_1fd1d54c after #311
+    mined the handler but left the LLM list on the spec the route used).
     """
     if not spec:
         return spec, []
     fields = [dict(f) for f in (spec.get("fields") or []) if isinstance(f, dict)]
     have = {str(f.get("name")) for f in fields if f.get("name")}
-    if "reference" in have:
+    added: List[str] = []
+    status_changed = False
+    if "reference" not in have:
+        fields.append(dict(ENVELOPE_REFERENCE_FIELD))
+        added.append("reference")
+    for field in fields:
+        if normalize_envelope_status_field(field):
+            status_changed = True
+    if not added and not status_changed:
         return spec, []
     out = dict(spec)
-    out["fields"] = fields + [dict(ENVELOPE_REFERENCE_FIELD)]
-    notes = list(out.get("envelope_fields") or [])
-    notes.append("reference")
-    out["envelope_fields"] = notes
-    return out, ["reference"]
+    out["fields"] = fields
+    if added:
+        notes = list(out.get("envelope_fields") or [])
+        notes.extend(added)
+        out["envelope_fields"] = notes
+    return out, added
 
 
 def schema_obligations_for(block_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:

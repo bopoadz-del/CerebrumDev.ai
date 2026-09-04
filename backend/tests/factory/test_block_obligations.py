@@ -17,6 +17,7 @@ import pytest
 from app.factory.build.block_obligations import (
     BlockObligationError,
     DISTRIBUTIONS,
+    ENVELOPE_STATUS_VALUES,
     RESOURCE_OBLIGATIONS,
     SCHEMA_OBLIGATIONS,
     assert_feedable,
@@ -119,6 +120,29 @@ def test_ensure_record_envelope_adds_reference_when_llm_spec_omits_it():
     again, added_again = ensure_record_envelope(enveloped)
     assert added_again == []
     assert [f["name"] for f in again["fields"]] == names
+
+
+def test_ensure_record_envelope_rewrites_llm_status_vocab():
+    """sess_1fd1d54c: envelope kept scheduled; route guard used factory."""
+    spec = {
+        "entity": "appointment",
+        "fields": [
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["scheduled", "completed", "cancelled"],
+            },
+            {"name": "reference", "type": "str", "required": True},
+        ],
+    }
+    out, added = ensure_record_envelope(spec)
+    assert added == []
+    by_name = {f["name"]: f for f in out["fields"]}
+    assert by_name["status"]["allowed_values"] == list(ENVELOPE_STATUS_VALUES)
+    again, added_again = ensure_record_envelope(out)
+    assert added_again == []
+    assert again["fields"] == out["fields"]
 
 
 def test_unassigned_blocks_impose_nothing():

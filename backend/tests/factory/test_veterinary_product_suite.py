@@ -42,9 +42,11 @@ from pathlib import Path
 
 from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
+    extract_capability_route_source,
     prepare_block_input,
 )
 from app.factory.build.block_obligations import (
+    ENVELOPE_STATUS_VALUES,
     augment_model_spec,
     ensure_record_envelope,
 )
@@ -478,6 +480,11 @@ def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
 
     Caps on the run: appointment_scheduling (this class), plus
     client_pet_records, staff_dashboard, visit_notes, automated_reminders.
+
+    #311 aligned the handler after the fact. sess_1fd1d54c on tip a626167
+    showed that is too late: the envelope itself must rewrite the LLM list
+    so ``_constraint_guard`` and ``_sample_payload`` agree before TESTER
+    bakes the accept-payload.
     """
     llm = {
         "entity": "appointment",
@@ -492,7 +499,6 @@ def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
             },
         ],
     }
-    llm, _ = ensure_record_envelope(llm)
     stale = _sample_payload(llm)
     assert stale["status"] == "scheduled"
     refused = _run_guard(
@@ -510,6 +516,12 @@ def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
     assert refused.get("ok") is False
     assert _LIVE_STATUS_ERROR in refused.get("error", "")
 
+    llm, _ = ensure_record_envelope(llm)
+    sample = _sample_payload(llm)
+    assert sample["status"] == "open"
+    accepted = _run_guard(llm, sample)
+    assert accepted.get("ok") is True, (sample, accepted)
+
     handler = (
         "def handle(payload):\n"
         "    if payload.get('status') not in ('open', 'in_progress', 'closed'):\n"
@@ -517,8 +529,7 @@ def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
         f"'{_LIVE_STATUS_ERROR}'}}\n"
         "    return {'ok': True}\n"
     )
-    aligned, changed = align_spec_to_handler_source(llm, handler)
-    assert "status" in changed
+    aligned, _changed = align_spec_to_handler_source(llm, handler)
     sample = _sample_payload(aligned)
     assert sample["status"] == "open"
     accepted = _run_guard(aligned, sample)
@@ -611,3 +622,174 @@ def test_sess_5dfb4a3_product_detail_names_live_status_and_bytes_classes():
     bytes_detail = classify_suite_red(bytes_findings)
     assert "not JSON serializable" in bytes_detail
     assert _LIVE_BYTES_ERROR in bytes_detail
+
+
+def _llm_appointment_status_spec():
+    return {
+        "entity": "appointment",
+        "fields": [
+            {"name": "pet_name", "type": "str", "required": True},
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["scheduled", "completed", "cancelled"],
+            },
+        ],
+    }
+
+
+def test_sess_1fd1d54c_route_factory_status_wins_over_llm_schema_sample():
+    """#311 mined the handler; tip a626167 still failed on the route.
+
+    Live assertion (sess_1fd1d54c, VetCare Hub / veterinary-care):
+
+        appointment_scheduling rejected a payload built from its own schema:
+        status must be one of: open, in_progress, closed
+
+    The handler had no mineable ``not in (...)`` check. The refuse was
+    ``_constraint_guard`` baked into ``app/routes.py`` with the factory
+    envelope. Schema-sample used the LLM list (scheduled). Intersection
+    empty through the rework budget.
+    """
+    llm = _llm_appointment_status_spec()
+    handler = "def handle(payload):\n    return {'ok': True}\n"
+    factory_spec = {
+        **llm,
+        "fields": [
+            {**f, "allowed_values": list(_FACTORY_STATUS)}
+            if f.get("name") == "status"
+            else f
+            for f in llm["fields"]
+        ],
+    }
+    route = _constraint_guard(factory_spec) + "\n    return {'ok': True}\n"
+
+    aligned_handler_only, changed = align_spec_to_handler_source(llm, handler)
+    assert "status" not in changed
+    stale = _sample_payload(aligned_handler_only)
+    assert stale["status"] == "scheduled"
+    refused = _run_guard(factory_spec, stale)
+    assert refused.get("ok") is False
+    assert _LIVE_STATUS_ERROR in refused.get("error", "")
+    assert (
+        "appointment_scheduling rejected a payload built from its own schema: "
+        + _LIVE_STATUS_ERROR
+    )
+
+    aligned, changed = align_spec_to_handler_source(llm, handler + "\n" + route)
+    assert "status" in changed
+    sample = _sample_payload(aligned)
+    assert sample["status"] == "open"
+    assert _run_guard(factory_spec, sample).get("ok") is True
+    assert list(
+        next(f for f in aligned["fields"] if f["name"] == "status")["allowed_values"]
+    ) == list(ENVELOPE_STATUS_VALUES)
+
+
+def test_sess_1fd1d54c_veterinarian_availability_same_status_class():
+    """UI truncated a second capability starting with veterinarian_…"""
+    llm = {
+        "entity": "availability",
+        "fields": [
+            {"name": "veterinarian_name", "type": "str", "required": True},
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["scheduled", "booked", "blocked"],
+            },
+        ],
+    }
+    stale = _sample_payload(llm)
+    assert stale["status"] == "scheduled"
+    enveloped, added = ensure_record_envelope(llm)
+    assert "reference" in added
+    sample = _sample_payload(enveloped)
+    assert sample["status"] == "open"
+    assert sample["veterinarian_name"]
+    accepted = _run_guard(enveloped, sample)
+    assert accepted.get("ok") is True, (sample, accepted)
+    from app.factory.build.data_lifecycle import sample_for_spec
+
+    lifecycle = sample_for_spec(
+        {"fields": [{"name": "status", "type": "str", "required": True}]},
+        placeholder="s10-row",
+    )
+    assert lifecycle["status"] == "open"
+    assert lifecycle["status"] != "s10-row"
+
+
+def test_sess_1fd1d54c_tester_bakes_open_from_route_constraints(tmp_path):
+    """TESTER late-align must read routes.py, not only the handler."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext, run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    class _Cap:
+        def __init__(self, cid):
+            self.capability_id = cid
+            self.block_ids = ()
+
+    class _Plan:
+        capabilities = (_Cap("appointment_scheduling"),)
+
+    class _Blueprint:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary-care"
+
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        "def handle(payload):\n    return {'ok': True}\n",
+        encoding="utf-8",
+    )
+    routes = (
+        "# --- appointment_scheduling (coder LLM) ---\n"
+        "async def appointment_scheduling_create(payload):\n"
+        + _constraint_guard(
+            {
+                "fields": [
+                    {
+                        "name": "status",
+                        "allowed_values": list(_FACTORY_STATUS),
+                    }
+                ]
+            }
+        )
+        + "\n    return {'ok': True}\n"
+        "# --- veterinarian_availability_tracking (coder LLM) ---\n"
+        "async def veterinarian_availability_tracking_create(payload):\n"
+        "    return {'ok': True}\n"
+    )
+    (root / "app" / "routes.py").write_text(routes, encoding="utf-8")
+    sliced = extract_capability_route_source(routes, "appointment_scheduling")
+    assert "appointment_scheduling" in sliced
+    assert "veterinarian_availability_tracking" not in sliced
+
+    ws = RoleWorkspace(BuildRole.TESTER, root)
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=(
+            "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload\n"
+            "E   AssertionError: appointment_scheduling rejected a payload "
+            f"built from its own schema: {_LIVE_STATUS_ERROR}",
+        ),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": {
+                "appointment_scheduling": _llm_appointment_status_spec(),
+            },
+        },
+    )
+    assert run_tester(ctx).ok
+    baked = ws.read_text(Path("tests") / "test_routes.py")
+    assert "'status': 'open'" in baked
+    assert "'status': 'scheduled'" not in baked
+    assert "test_every_capability_route_accepts_payload" in baked
