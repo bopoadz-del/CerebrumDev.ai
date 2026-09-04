@@ -29,10 +29,11 @@ class RoleContext:
     #: Carried forward between phases (gaps from COLLECTOR, blocks from CLONER).
     state: Dict[str, Any] = field(default_factory=dict)
     #: Monotonic deadline for this role pass, set by the runner to the
-    #: earlier of the whole-build wall and the per-phase wall (default 25
-    #: min). The coder yields to the deterministic template once too little
-    #: remains for a call to finish -- without this a slow model runs the
-    #: WRITER for the two hours a Store-green platform would take.
+    #: earlier of the whole-build wall and the per-phase wall (25 min on
+    #: a code-only pass; 90 min on Store-green / auto-pilot). The coder
+    #: yields to the deterministic template once too little remains for
+    #: one call to finish. A Store-green WRITER is supposed to spend most
+    #: of the 2-hour coding budget — the 25-minute cap is code-only.
     deadline: Optional[float] = None
     #: Optional progress sink, wired by the runner to a ledger NOTE. Roles
     #: stay ledger-unaware; without it ``note()`` is a no-op, so a role is

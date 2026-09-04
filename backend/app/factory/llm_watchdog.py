@@ -30,6 +30,13 @@ This helper:
   thread so ``SSL_read`` unblocks without taking the SSL lock
 * honours an optional monotonic ``deadline`` so stacked legs cannot
   outrun ``attempt_wall_s()``
+
+The 510s live abort (sess MakersHub Leeds, SHA da47307) was this wall
+firing at production ``FACTORY_CODER_TIMEOUT_S=150`` × 3 + 30s grace.
+That band is a hang detector leftover, not a coding budget. Production
+defaults are 20 min per HTTP post and 40 min per calling-NOTE; a truly
+hung/dribbling socket still dies at those walls. The Store-green build
+wall (2 hours) is the coding budget.
 """
 
 from __future__ import annotations
@@ -46,10 +53,23 @@ import httpx
 logger = logging.getLogger("cerebrumdev.factory.llm_watchdog")
 
 CODER_TIMEOUT_ENV = "FACTORY_CODER_TIMEOUT_S"
-DEFAULT_CALL_TIMEOUT_S = 120.0
+ATTEMPT_WALL_ENV = "FACTORY_CODER_ATTEMPT_WALL_S"
+#: One HTTP post. 120s / live 150s was the hang-detect leftover that
+#: aborted WRITER at ~510s (150 × 3 legs + 30s) while kimi-k2.7-code was
+#: still writing a handler. A real GENERATE body needs many minutes;
+#: 20 min is a hang abort, not a "finish the handler" race.
+DEFAULT_CALL_TIMEOUT_S = 1200.0
+#: One calling-NOTE: one real generation + one alternate-model retry.
+#: Not ``timeout × 3`` — stacking three 20 min hangs would eat the
+#: 2-hour Store-green wall on a single capability.
+DEFAULT_ATTEMPT_WALL_S = 2400.0
+#: Live Render leftover ``FACTORY_CODER_TIMEOUT_S=120`` / ``150`` must
+#: not keep killing pilots. Sub-minute values stay honoured for tests.
+LEGACY_TIMEOUT_BAND_MIN_S = 60.0
+LEGACY_TIMEOUT_BAND_MAX_S = 180.0
 #: One _llm_code_call may try primary + same-endpoint fallback +
 #: cross-provider. Plus a small grace so status polling does not race the
-#: last attempt.
+#: last attempt. Used for test-scale walls only.
 MAX_LEGS = 3
 MODEL_CALL_GRACE_S = 30.0
 #: Caller must be released within this much of the deadline. Live 1965s
@@ -61,23 +81,42 @@ WATCHDOG_OVERSHOOT_GRACE_S = 8.0
 def call_timeout_s() -> float:
     """Per-attempt ceiling for one coder HTTP request.
 
-    Override with FACTORY_CODER_TIMEOUT_S. An explicit value is honoured
-    (minimum 0.05s) so tests can use a short deadline; the unset default
-    is 120s — long enough for a reasoning model, short enough that a hang
-    cannot look like "still working".
+    Override with FACTORY_CODER_TIMEOUT_S. Sub-minute values (tests) and
+    values above the old hang-detect band are honoured. Live leftover
+    120s / 150s is treated as unset so a dashboard pin cannot keep
+    aborting WRITER at ~510s.
     """
     raw = os.getenv(CODER_TIMEOUT_ENV, "").strip()
     if not raw:
         return DEFAULT_CALL_TIMEOUT_S
     try:
-        return max(0.05, float(raw))
+        value = float(raw)
     except ValueError:
         return DEFAULT_CALL_TIMEOUT_S
+    if LEGACY_TIMEOUT_BAND_MIN_S <= value <= LEGACY_TIMEOUT_BAND_MAX_S:
+        return DEFAULT_CALL_TIMEOUT_S
+    return max(0.05, value)
 
 
 def attempt_wall_s() -> float:
-    """Ceiling for one coder call including alternate-model retries."""
-    return call_timeout_s() * MAX_LEGS + MODEL_CALL_GRACE_S
+    """Ceiling for one coder call including one alternate-model retry.
+
+    Test-scale per-attempt timeouts keep the historical ``× 3 legs +
+    grace`` formula so stacked-leg tests stay tight. Production uses a
+    40-minute calling-NOTE wall — long enough to write a handler, short
+    enough that a hung socket cannot occupy the 2-hour pilot budget.
+    """
+    raw = os.getenv(ATTEMPT_WALL_ENV, "").strip()
+    if raw:
+        try:
+            return max(0.05, float(raw))
+        except ValueError:
+            pass
+    per = call_timeout_s()
+    stacked = per * MAX_LEGS + MODEL_CALL_GRACE_S
+    if per < LEGACY_TIMEOUT_BAND_MIN_S:
+        return stacked
+    return max(DEFAULT_ATTEMPT_WALL_S, per + MODEL_CALL_GRACE_S)
 
 
 def is_timeout_error(exc: BaseException) -> bool:

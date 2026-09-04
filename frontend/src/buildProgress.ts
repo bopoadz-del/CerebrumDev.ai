@@ -4,10 +4,10 @@ import type { BuildAuthorship, BuildStatus } from './api/factory'
 export const CLIENT_STALE_AFTER_S = 180
 /** Match backend build_jobs._STALL_AFTER_S — process likely gone. */
 export const CLIENT_STALL_AFTER_S = 1800
-/** Match backend llm_watchdog.attempt_wall_s default (120s × 3 legs + 30s).
- *  Production often sets FACTORY_CODER_TIMEOUT_S=150 → 480s; prefer the
- *  server's model_call_deadline_s when present. */
-export const CLIENT_MODEL_CALL_DEADLINE_S = 390
+/** Match backend llm_watchdog.attempt_wall_s production default (40 min).
+ *  The old 390s / 480s figures (120 or 150 × 3 legs + 30s) aborted live
+ *  WRITER at ~510s. Prefer the server's model_call_deadline_s when present. */
+export const CLIENT_MODEL_CALL_DEADLINE_S = 2400
 
 export type LevelGradeName =
   | 'SCAFFOLD'
@@ -280,6 +280,11 @@ export function withClientStall(
           ? build.detail
           : `coder LLM timed out after ${Math.round(age)}s (deadline ${Math.round(deadline)}s) — the model call did not finish`,
     }
+  }
+  // A 20–40 min handler write is still coding. Do not stall the Floor
+  // at 30 min while the calling-NOTE is inside its watchdog wall.
+  if (build.model_call_in_progress && deadline != null && age != null && age < deadline) {
+    return build
   }
   if (age == null || age < CLIENT_STALL_AFTER_S) return build
   return {

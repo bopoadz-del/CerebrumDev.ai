@@ -120,10 +120,11 @@ def _collect_all_enabled() -> bool:
 class BuildBudget:
     """Bounds on a run. Exhausting a bound ends the build as a failure.
 
-    ``wall_clock_s`` is the whole build. ``phase_wall_clock_s`` caps *each*
-    role (especially WRITER coder calls) so a code phase cannot sit in the
-    model for the two hours a Store-green platform would take. ``0``
-    disables that bound.
+    ``wall_clock_s`` is the whole build (2 hours on Store-green).
+    ``phase_wall_clock_s`` caps *each* role. The 25-minute default is the
+    code-only gate; a keyed auto-pilot / explicit pilot pass uses 90
+    minutes so WRITER can do real coding instead of aborting at ~510s
+    into the first handler. ``0`` disables that bound.
     """
 
     max_rework: int = 3

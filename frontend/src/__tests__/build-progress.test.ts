@@ -105,6 +105,27 @@ describe('build progress copy', () => {
     const failed = withClientStall(overdue)
     expect(failed?.state).toBe('failed')
     expect(failed?.detail).toMatch(/coder LLM timed out/)
+
+    // Live MakersHub Leeds ~510s vs the old 480s wall. Production default
+    // is 40 min — 510s is still coding, not STOPPED.
+    const live510: BuildStatus = {
+      ...calling,
+      last_event_age_s: 510,
+      stale: true,
+      model_call_deadline_s: undefined,
+    }
+    expect(formatHeartbeat(live510)).toMatch(/still inside 2400s watchdog/)
+    expect(formatHeartbeat(live510)).not.toMatch(/timed out/)
+    expect(withClientStall(live510)?.state).toBe('building')
+
+    const longWrite: BuildStatus = {
+      ...calling,
+      last_event_age_s: 2100,
+      stale: true,
+      model_call_deadline_s: 2400,
+    }
+    expect(formatHeartbeat(longWrite)).toMatch(/still inside 2400s watchdog/)
+    expect(withClientStall(longWrite)?.state).toBe('building')
   })
 
   it('advances relative age from last_event_at so a frozen server snapshot cannot stall the ticker', () => {
