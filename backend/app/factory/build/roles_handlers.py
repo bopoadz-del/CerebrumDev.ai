@@ -29,6 +29,7 @@ from app.factory.build.block_inputs import (
     sanitize_python_identifier,
 )
 from app.factory.build.block_obligations import (
+    BlockObligationError,
     assert_feedable,
     augment_model_spec,
     dependency_obligations,
@@ -895,7 +896,15 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         )
 
     if runtime_blocks:
-        runtime_files, lazy_foreign = _vendor_runtime_slice(ctx, runtime_blocks)
+        try:
+            runtime_files, lazy_foreign = _vendor_runtime_slice(ctx, runtime_blocks)
+        except BlockObligationError as exc:
+            # Fail-closed is unchanged: an unknown import still refuses the
+            # build. Convert to RoleError so RoleRunner records RUN_FAILED
+            # with the missing module instead of the thread dying as
+            # "build thread crashed" (live sess_d1cb9d51c5354bea /
+            # CEREBRUMDEV-BACKEND-A).
+            raise RoleError(str(exc)) from exc
         lock["runtime"] = {
             "source": "cerebrum-blocks",
             "commit": _runtime_pin(Path(ctx.blocks_root)),

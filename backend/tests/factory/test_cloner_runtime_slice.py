@@ -312,6 +312,26 @@ def test_an_unresolvable_runtime_import_fails_the_clone_loudly(tmp_path):
     with pytest.raises(RoleError, match="does_not_exist"):
         _clone(tmp_path, store)
 
+
+def test_unknown_vendored_import_fails_cloner_as_role_error(tmp_path):
+    """Live sess_d1cb9d51c5354bea / CEREBRUMDEV-BACKEND-A.
+
+    ``dependency_obligations`` still fail-closes on an unrecorded import.
+    That used to escape ``run_cloner`` as BlockObligationError and crash
+    the build thread ("Build failed — build thread crashed"). Converted to
+    RoleError so the Floor shows the missing module.
+    """
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        "import totally_unknown_factory_pkg\n" + _GREETING,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RoleError, match="totally_unknown_factory_pkg") as exc:
+        _clone(tmp_path, store)
+    assert "DISTRIBUTIONS" in str(exc.value)
+
+
 def test_the_slice_follows_what_the_block_needs_not_where_it_came_from(tmp_path):
     """The runtime-slice decision was gated on blocks_root being set, and the
     factory's OWN vendor mirror contains real Store shims (audit/, capture/).

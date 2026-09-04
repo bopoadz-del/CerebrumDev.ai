@@ -512,6 +512,10 @@ DISTRIBUTIONS: Dict[str, str] = {
     "psycopg2": "psycopg2-binary",
     "pydantic": "pydantic",
     "pypdf": "pypdf",
+    # Legacy import name still used by Store document_engine (Cerebrum-Blocks
+    # #105). Live sess_d1cb9d51c5354bea / CEREBRUMDEV-BACKEND-A crashed CLONER
+    # because only the modern ``pypdf`` key was recorded.
+    "PyPDF2": "PyPDF2",
     "pytesseract": "pytesseract",
     "sentence_transformers": "sentence-transformers",
     "shapely": "shapely",
