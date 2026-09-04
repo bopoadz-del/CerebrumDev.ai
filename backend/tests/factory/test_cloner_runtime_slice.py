@@ -661,3 +661,132 @@ def test_cloner_emits_store_unwired_adapter_contracts(tmp_path):
     storage = (cerebrum / "storage.py").read_text(encoding="utf-8")
     assert "Store-unwired aiofiles" in storage
 
+
+def _document_engine_shim() -> str:
+    return (
+        "from app.blocks import get_block\n"
+        "def run(**kwargs):\n"
+        "    return get_block('document_engine')\n"
+    )
+
+
+def test_cloner_copies_document_engine_parsers_package(tmp_path):
+    """Live sess_a69c8ce: No module named vendor.cerebrum.blocks.document_engine.parsers."""
+    store = _faux_store(tmp_path)
+    init = (store / "app" / "blocks" / "__init__.py").read_text(encoding="utf-8")
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        init.replace(
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),',
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),\n'
+            '    "document_engine": ("app.blocks.document_engine", "DocumentEngineBlock"),',
+        ),
+        encoding="utf-8",
+    )
+    pkg = store / "app" / "blocks" / "document_engine"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "from app.core.universal_base import UniversalBlock\n"
+        "from app.blocks.document_engine.parsers import Parser\n"
+        "class DocumentEngineBlock(UniversalBlock):\n"
+        "    async def execute(self, input_data, params):\n"
+        "        return {'status': 'ok', 'text': Parser().extract_text()}\n",
+        encoding="utf-8",
+    )
+    (pkg / "parsers" / "__init__.py").parent.mkdir()
+    (pkg / "parsers" / "__init__.py").write_text(
+        "class Parser:\n"
+        "    def extract_text(self):\n"
+        "        return 'ok'\n",
+        encoding="utf-8",
+    )
+    reg = store / "block_registry" / "document_engine"
+    reg.mkdir()
+    (reg / "block.json").write_text(
+        json.dumps({"id": "document_engine"}), encoding="utf-8"
+    )
+    (reg / "block.py").write_text(_document_engine_shim(), encoding="utf-8")
+
+    ws, result = _clone(tmp_path, store, block_ids=("document_engine",))
+    assert result.ok, result.detail
+    parsers = (
+        ws.destination
+        / "vendor"
+        / "cerebrum"
+        / "blocks"
+        / "document_engine"
+        / "parsers"
+        / "__init__.py"
+    )
+    assert parsers.is_file(), "CLONER must copy the parsers package"
+    probe = textwrap.dedent(
+        """
+        from vendor.cerebrum.blocks.document_engine.parsers import Parser
+        assert Parser().extract_text() == "ok"
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_cloner_converts_document_engine_module_to_parsers_package(tmp_path):
+    """Store file document_engine.py that imports .parsers becomes a package."""
+    store = _faux_store(tmp_path)
+    init = (store / "app" / "blocks" / "__init__.py").read_text(encoding="utf-8")
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        init.replace(
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),',
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),\n'
+            '    "document_engine": ("app.blocks.document_engine", "DocumentEngineBlock"),',
+        ),
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "document_engine.py").write_text(
+        "from app.core.universal_base import UniversalBlock\n"
+        "from app.blocks.document_engine.parsers import Parser\n"
+        "class DocumentEngineBlock(UniversalBlock):\n"
+        "    async def execute(self, input_data, params):\n"
+        "        return {'status': 'ok', 'parser': Parser}\n",
+        encoding="utf-8",
+    )
+    reg = store / "block_registry" / "document_engine"
+    reg.mkdir()
+    (reg / "block.json").write_text(
+        json.dumps({"id": "document_engine"}), encoding="utf-8"
+    )
+    (reg / "block.py").write_text(_document_engine_shim(), encoding="utf-8")
+
+    ws, result = _clone(tmp_path, store, block_ids=("document_engine",))
+    assert result.ok, result.detail
+    assert not (ws.destination / "vendor" / "cerebrum" / "blocks" / "document_engine.py").is_file()
+    parsers = (
+        ws.destination
+        / "vendor"
+        / "cerebrum"
+        / "blocks"
+        / "document_engine"
+        / "parsers"
+        / "__init__.py"
+    )
+    assert parsers.is_file()
+    assert "Store-unwired document_engine.parsers" in parsers.read_text(encoding="utf-8")
+    probe = textwrap.dedent(
+        """
+        from vendor.cerebrum.blocks.document_engine.parsers import Parser
+        assert Parser().extract_text() == ""
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+

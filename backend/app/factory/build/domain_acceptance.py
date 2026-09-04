@@ -205,7 +205,13 @@ def enqueue(
     return item
 
 
+def _as_item_id(item_id: Any) -> int:
+    """Queue ids are integers. JSON / sqlite / FastAPI may hand us a str."""
+    return int(item_id)
+
+
 def get(item_id: int) -> Dict[str, Any] | None:
+    item_id = _as_item_id(item_id)
     conn = connect()
     try:
         row = conn.execute(
@@ -226,6 +232,7 @@ def list_all() -> List[Dict[str, Any]]:
 
 
 def claim_pending(item_id: int) -> Dict[str, Any] | None:
+    item_id = _as_item_id(item_id)
     conn = connect()
     try:
         cur = conn.execute(
@@ -247,6 +254,7 @@ def mark(
     *,
     from_status: str | None = None,
 ) -> Dict[str, Any] | None:
+    item_id = _as_item_id(item_id)
     conn = connect()
     try:
         if from_status is None:
@@ -302,6 +310,11 @@ def remember(key: str, entity: str, record_id: int) -> None:
 
 def _row(row: Any) -> Dict[str, Any]:
     item = dict(row)
+    if item.get("id") is not None:
+        try:
+            item["id"] = int(item["id"])
+        except (TypeError, ValueError):
+            pass
     raw_payload = item.get("payload")
     if isinstance(raw_payload, str):
         try:

@@ -242,18 +242,23 @@ def prepare_block_input(
     action: Optional[str] = None,
     roster: Sequence[str] = (),
     product_name: str = "platform",
+    entity: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Return a payload the named block can accept for ``action``.
 
     ``domain`` is the caller's capability record (or an already-built block
     input). Missing block-contract keys are derived; existing keys win.
+    ``entity`` is the capability's store table — used so database query
+    does not invent a ``records`` table Alembic never created.
     """
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
     if bid == "notification":
         return _for_notification(data, roster)
     if bid == "workflow":
-        return _for_workflow(data, roster)
+        return _for_workflow(
+            data, roster, product_name=product_name, entity=entity
+        )
     if bid == "team":
         return _for_team(data, product_name=product_name)
     if bid == "document_engine":
@@ -263,7 +268,9 @@ def prepare_block_input(
     if bid == "event_bus":
         return _for_event_bus(data)
     if bid == "database":
-        return _for_database(data)
+        return _for_database(data, entity=entity)
+    if bid == "queue":
+        return _for_queue(data)
     return data
 
 
@@ -290,7 +297,13 @@ def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, 
     return out
 
 
-def _for_workflow(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
+def _for_workflow(
+    data: Dict[str, Any],
+    roster: Sequence[str],
+    *,
+    product_name: str = "platform",
+    entity: Optional[str] = None,
+) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
     if isinstance(steps, list) and steps:
@@ -299,7 +312,21 @@ def _for_workflow(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]
     built: List[Dict[str, Any]] = []
     for block in peers[:3]:
         # workflow reads step.get("block"); "block_id" is ignored (live miss).
-        built.append({"block": block, "input": dict(data)})
+        # Nested prepare: raw domain JSON forwarded as step input is how
+        # live veterinary-care PRODUCT failed (database/table, event_bus
+        # notify, document_engine parser) inside the workflow result.
+        built.append(
+            {
+                "block": block,
+                "input": prepare_block_input(
+                    block,
+                    data,
+                    roster=roster,
+                    product_name=product_name,
+                    entity=entity,
+                ),
+            }
+        )
     if not built:
         # Capability bound only to workflow: still supply a well-formed step
         # list so the block's required-field check is not the failure mode.
@@ -470,6 +497,8 @@ def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
     Live automated_reminders forwarded the capability JSON; the Store
     event_bus raised ``RuntimeError: topic required``. Map a domain name
     (reminder_type / event / …) or a record summary onto ``topic``.
+    Live PRODUCT then failed notify: topic alone is not a notification
+    payload — also supply ``payload`` / ``data`` / ``message``.
     """
     out = dict(data)
     inner = out.get("input") if isinstance(out.get("input"), dict) else {}
@@ -485,10 +514,125 @@ def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             topic = _topic_from_domain(data)
     out["topic"] = str(topic).strip()
+    if not isinstance(out.get("payload"), dict):
+        scalars = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP_REQUIRED_NAMES
+            and isinstance(value, (str, int, float, bool))
+        }
+        out["payload"] = scalars or {"topic": out["topic"]}
+    out.setdefault("data", dict(out["payload"]))
+    out.setdefault("event", out["topic"])
+    if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
+        out["message"] = _summary_message(data)
+    if not out.get("channel"):
+        out["channel"] = "mcp"
     return out
 
 
-def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
+_QUEUE_INT_KEYS = (
+    "id",
+    "priority",
+    "delay",
+    "delay_seconds",
+    "timeout",
+    "visibility_timeout",
+    "attempts",
+    "max_attempts",
+    "retry_count",
+    "item_id",
+)
+
+
+def _coerce_int(value: Any) -> Optional[int]:
+    """Coerce digit strings / floats to int. Leave domain labels alone."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
+
+
+_QUEUE_COMPARE_KEYS = (
+    "priority",
+    "delay",
+    "delay_seconds",
+    "timeout",
+    "visibility_timeout",
+    "attempts",
+    "max_attempts",
+    "retry_count",
+)
+
+
+def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Store queue blocks refuse str where they declared int (live PRODUCT)."""
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    for key in _QUEUE_INT_KEYS:
+        raw = out[key] if key in out else inner.get(key)
+        if raw is None:
+            continue
+        coerced = _coerce_int(raw)
+        if coerced is not None:
+            out[key] = coerced
+    # FastAPI work_queue_process(item_id: int) and Store queue.get(id: int)
+    # both refuse the domain label "id-1"; a digit string becomes the item id.
+    if out.get("item_id") is None:
+        aliased = _coerce_int(out.get("id"))
+        if aliased is not None:
+            out["item_id"] = aliased
+    elif out.get("id") is None:
+        aliased = _coerce_int(out.get("item_id"))
+        if aliased is not None:
+            out["id"] = aliased
+    # Live sess_a69c8ce: Store queue does ``priority > n``; ``"sample"`` /
+    # ``"id-1"`` from ``_sample_value`` is not a digit string so it survived
+    # coerce and raised TypeError. Comparison keys become 0; non-numeric
+    # ids are dropped from the queue record (kept only in payload).
+    for key in _QUEUE_COMPARE_KEYS:
+        if key in out and _coerce_int(out[key]) is None:
+            out[key] = 0
+    for key in ("id", "item_id"):
+        if key in out and _coerce_int(out[key]) is None:
+            out.pop(key)
+    if "payload" not in out and "item" not in out:
+        out["payload"] = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP_REQUIRED_NAMES
+            and key not in {"payload", "item", "input"}
+            and isinstance(value, (str, int, float, bool))
+        }
+    out.setdefault("priority", 0)
+    return out
+
+
+def _usable_table_name(value: Any) -> Optional[str]:
+    if isinstance(value, str) and re.match(r"^[A-Za-z_][\w]*$", value.strip()):
+        return value.strip()
+    return None
+
+
+_SQL_RECORDS_TABLE = re.compile(
+    r"\b(FROM|INTO|UPDATE|JOIN|TABLE)\s+records\b",
+    re.IGNORECASE,
+)
+
+
+def _retarget_records_sql(sql: str, entity: str) -> str:
+    """Rewrite leftover ``FROM records`` SQL onto the capability entity."""
+    return _SQL_RECORDS_TABLE.sub(lambda match: f"{match.group(1)} {entity}", sql)
+
+
+def _for_database(
+    data: Dict[str, Any], *, entity: Optional[str] = None
+) -> Dict[str, Any]:
     """Satisfy ``missing sql or table`` from the domain record.
 
     The factory's Store-unwired query adapter
@@ -496,31 +640,47 @@ def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
     ``Query failed: missing sql or table`` when the handler omitted both.
     A domain record is not SQL; map it onto ``table`` + ``values`` the way
     notification maps onto channel/message.
+
+    Live veterinary-care PRODUCT (sess_66a387b5c9b0495c / sess_a69c8ce):
+    defaulting ``table=records`` passed WRITER then failed PRODUCT with
+    ``no such table: records``. Alembic creates the capability entity.
+    A leftover ``table=records`` or ``SELECT * FROM records`` from #306
+    is retargeted onto ``entity`` when the handler wrapper supplies it.
     """
     out = dict(data)
     inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     for key in ("sql", "table", "table_name", "values"):
         if key not in out and key in inner:
             out[key] = inner[key]
+    entity_table = _usable_table_name(entity)
     sql = out.get("sql")
     if isinstance(sql, str) and sql.strip():
+        if entity_table and _SQL_RECORDS_TABLE.search(sql):
+            out["sql"] = _retarget_records_sql(sql, entity_table)
+            out["table"] = entity_table
         return out
-    table = out.get("table") or out.get("table_name")
-    if not (isinstance(table, str) and table.strip()):
+    table = _usable_table_name(out.get("table") or out.get("table_name"))
+    if table == "records" and entity_table:
+        table = entity_table
+    if not table:
         for key in ("entity", "table", "table_name"):
-            cand = out.get(key) or inner.get(key)
-            if isinstance(cand, str) and re.match(r"^[A-Za-z_][\w]*$", cand):
-                table = cand
+            table = _usable_table_name(out.get(key) or inner.get(key))
+            if table and table != "records":
                 break
-        else:
-            table = "records"
-    out["table"] = str(table).strip()
+            if table == "records" and entity_table:
+                table = entity_table
+                break
+    if not table:
+        table = entity_table
+    if not table:
+        table = "records"
+    out["table"] = table
     if not isinstance(out.get("values"), dict):
         values = {
             key: value
             for key, value in data.items()
             if key not in _SKIP_REQUIRED_NAMES
-            and key not in {"sql", "table", "table_name", "values", "input"}
+            and key not in {"sql", "table", "table_name", "values", "input", "entity"}
             and isinstance(value, (str, int, float, bool))
         }
         if values:
@@ -835,6 +995,18 @@ import re
 import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+_QUEUE_INT_KEYS = (
+    "id",
+    "priority",
+    "delay",
+    "delay_seconds",
+    "timeout",
+    "visibility_timeout",
+    "attempts",
+    "max_attempts",
+    "retry_count",
+    "item_id",
+)
 _DOC_PATH_KEYS = (
     "file_path",
     "pdf_path",
@@ -912,13 +1084,16 @@ def prepare_block_input(
     action: Optional[str] = None,
     roster: Sequence[str] = (),
     product_name: str = "platform",
+    entity: Optional[str] = None,
 ) -> Dict[str, Any]:
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
     if bid == "notification":
         return _for_notification(data, roster)
     if bid == "workflow":
-        return _for_workflow(data, roster)
+        return _for_workflow(
+            data, roster, product_name=product_name, entity=entity
+        )
     if bid == "team":
         return _for_team(data, product_name=product_name)
     if bid == "document_engine":
@@ -928,7 +1103,9 @@ def prepare_block_input(
     if bid == "event_bus":
         return _for_event_bus(data)
     if bid == "database":
-        return _for_database(data)
+        return _for_database(data, entity=entity)
+    if bid == "queue":
+        return _for_queue(data)
     return data
 
 
@@ -956,14 +1133,20 @@ def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, 
     return out
 
 
-def _for_workflow(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
+def _for_workflow(data: Dict[str, Any], roster: Sequence[str], *, product_name: str = "platform", entity: Optional[str] = None) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
     if isinstance(steps, list) and steps:
         return out
     peers = [b for b in roster if b and b != "workflow"]
     built: List[Dict[str, Any]] = [
-        {"block": block, "input": dict(data)} for block in peers[:3]
+        {
+            "block": block,
+            "input": prepare_block_input(
+                block, data, roster=roster, product_name=product_name, entity=entity
+            ),
+        }
+        for block in peers[:3]
     ]
     if not built:
         built.append({"block": "workflow", "input": dict(data)})
@@ -1110,34 +1293,121 @@ def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             topic = _topic_from_domain(data)
     out["topic"] = str(topic).strip()
+    if not isinstance(out.get("payload"), dict):
+        scalars = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP and isinstance(value, (str, int, float, bool))
+        }
+        out["payload"] = scalars or {"topic": out["topic"]}
+    out.setdefault("data", dict(out["payload"]))
+    out.setdefault("event", out["topic"])
+    if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
+        out["message"] = _summary_message(data)
+    if not out.get("channel"):
+        out["channel"] = "mcp"
     return out
 
 
-def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
+def _coerce_int(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
+
+
+def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    for key in _QUEUE_INT_KEYS:
+        raw = out[key] if key in out else inner.get(key)
+        if raw is None:
+            continue
+        coerced = _coerce_int(raw)
+        if coerced is not None:
+            out[key] = coerced
+    if out.get("item_id") is None:
+        aliased = _coerce_int(out.get("id"))
+        if aliased is not None:
+            out["item_id"] = aliased
+    elif out.get("id") is None:
+        aliased = _coerce_int(out.get("item_id"))
+        if aliased is not None:
+            out["id"] = aliased
+    for key in ("priority", "delay", "delay_seconds", "timeout", "visibility_timeout", "attempts", "max_attempts", "retry_count"):
+        if key in out and _coerce_int(out[key]) is None:
+            out[key] = 0
+    for key in ("id", "item_id"):
+        if key in out and _coerce_int(out[key]) is None:
+            out.pop(key)
+    if "payload" not in out and "item" not in out:
+        out["payload"] = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP
+            and key not in {"payload", "item", "input"}
+            and isinstance(value, (str, int, float, bool))
+        }
+    out.setdefault("priority", 0)
+    return out
+
+
+def _usable_table_name(value):
+    if isinstance(value, str) and re.match(r"^[A-Za-z_][\\w]*$", value.strip()):
+        return value.strip()
+    return None
+
+
+_SQL_RECORDS_TABLE = re.compile(
+    r"\\b(FROM|INTO|UPDATE|JOIN|TABLE)\\s+records\\b",
+    re.IGNORECASE,
+)
+
+
+def _retarget_records_sql(sql, entity):
+    return _SQL_RECORDS_TABLE.sub(lambda match: f"{match.group(1)} {entity}", sql)
+
+
+def _for_database(data: Dict[str, Any], *, entity: Optional[str] = None) -> Dict[str, Any]:
     out = dict(data)
     inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     for key in ("sql", "table", "table_name", "values"):
         if key not in out and key in inner:
             out[key] = inner[key]
+    entity_table = _usable_table_name(entity)
     sql = out.get("sql")
     if isinstance(sql, str) and sql.strip():
+        if entity_table and _SQL_RECORDS_TABLE.search(sql):
+            out["sql"] = _retarget_records_sql(sql, entity_table)
+            out["table"] = entity_table
         return out
-    table = out.get("table") or out.get("table_name")
-    if not (isinstance(table, str) and table.strip()):
+    table = _usable_table_name(out.get("table") or out.get("table_name"))
+    if table == "records" and entity_table:
+        table = entity_table
+    if not table:
         for key in ("entity", "table", "table_name"):
-            cand = out.get(key) or inner.get(key)
-            if isinstance(cand, str) and re.match(r"^[A-Za-z_][\\w]*$", cand):
-                table = cand
+            table = _usable_table_name(out.get(key) or inner.get(key))
+            if table and table != "records":
                 break
-        else:
-            table = "records"
-    out["table"] = str(table).strip()
+            if table == "records" and entity_table:
+                table = entity_table
+                break
+    if not table:
+        table = entity_table
+    if not table:
+        table = "records"
+    out["table"] = table
     if not isinstance(out.get("values"), dict):
         values = {
             key: value
             for key, value in data.items()
             if key not in _SKIP
-            and key not in {"sql", "table", "table_name", "values", "input"}
+            and key not in {"sql", "table", "table_name", "values", "input", "entity"}
             and isinstance(value, (str, int, float, bool))
         }
         if values:

@@ -19,6 +19,7 @@ from app.factory.blueprint import load_blueprint
 from app.factory.build.domain_acceptance import (
     OUTCOMES,
     reject_lotdesk_domain,
+    render_work_queue,
 )
 from app.factory.build.roles import _coder_route_body
 from app.factory.build.runner import RoleRunner
@@ -96,6 +97,15 @@ def test_role_runner_emits_kernel_domain_ops_and_queue(built):
     )
     assert "work_queue" in baseline
     assert "idempotency" in baseline
+
+
+def test_work_queue_source_coerces_item_ids():
+    """Live PRODUCT: FastAPI / JSON handed str ids into get/claim/mark."""
+    src = render_work_queue()
+    assert "def _as_item_id" in src
+    assert "return int(item_id)" in src
+    assert "item_id = _as_item_id(item_id)" in src
+    assert 'item["id"] = int(item["id"])' in src
 
 
 def test_coder_route_body_stays_none_and_pilot_patch_is_absent():
