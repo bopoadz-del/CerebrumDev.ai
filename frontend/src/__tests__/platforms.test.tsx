@@ -13,6 +13,7 @@ const generateMock = vi.fn()
 const awaitBuildMock = vi.fn()
 const watchBuildMock = vi.fn()
 const downloadMock = vi.fn()
+const getHealthMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -27,6 +28,7 @@ vi.mock('../api/factory', async (importOriginal) => {
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
     watchBuildStatus: (...args: unknown[]) => watchBuildMock(...args),
     downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
+    getHealth: (...args: unknown[]) => getHealthMock(...args),
   }
 })
 
@@ -45,6 +47,10 @@ describe('Your Platforms — coding-agent build', () => {
     awaitBuildMock.mockReset()
     watchBuildMock.mockReset()
     downloadMock.mockReset()
+    getHealthMock.mockReset()
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: { available: true, credentials_file_present: true },
+    })
     buildStatusMock.mockResolvedValue({ ok: true, build: { state: 'not_started' } })
     watchBuildMock.mockImplementation(async () => {})
   })
@@ -90,6 +96,7 @@ describe('Your Platforms — coding-agent build', () => {
     )
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
     expect(watchBuildMock).not.toHaveBeenCalled()
   })
 
@@ -302,6 +309,8 @@ describe('Your Platforms — coding-agent build', () => {
     expect(refused).toBeDisabled()
     expect(refused).toHaveAttribute('disabled')
     expect(refused).toHaveClass('ghost')
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
   it('says so when the coding agent wrote nothing', async () => {
@@ -421,6 +430,35 @@ describe('Your Platforms — coding-agent build', () => {
     expect(exportBtn).toHaveAttribute('disabled')
     fireEvent.click(exportBtn)
     expect(downloadMock).not.toHaveBeenCalled()
+    expect(awaitBuildMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
+    expect(screen.queryByText(/Download the export and launch it anywhere/i)).not.toBeInTheDocument()
+  })
+
+  it('names missing Kimi Code CLI credentials from /health on Platforms', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: true,
+        blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+      },
+    })
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({ state: 'failed', pilot_ready: false, detail: 'CLI credentials missing' })
+    })
+    render(<Platforms sessionId="sess_creds" />)
+    const banner = await screen.findByTestId('platforms-factory-cli-status')
+    expect(banner).toHaveTextContent('Kimi Code CLI credentials missing')
+    expect(banner).toHaveTextContent('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
+    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
+    expect(banner).toHaveTextContent('config.toml')
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
   it('labels code-phase success as not pilot-ready', async () => {
@@ -483,5 +521,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(exportBtn).toHaveClass('ghost')
     fireEvent.click(exportBtn)
     expect(downloadMock).not.toHaveBeenCalled()
+    expect(awaitBuildMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
   })
 })

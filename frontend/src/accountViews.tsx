@@ -22,9 +22,11 @@ import {
   hasSourcedLevel,
   honestLevel,
   isPilotZipReady,
+  platformsLeadCopy,
   stampBuildObservation,
   withClientStall,
 } from './buildProgress'
+import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import { LevelGradeStrip } from './levelGradeView'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
@@ -44,6 +46,7 @@ export function Platforms({
   const [downloading, setDownloading] = useState(false)
   const [build, setBuild] = useState<BuildStatus | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const cliHonesty = useFactoryCodeCliHonesty()
 
   const refresh = useCallback(
     (opts?: { initial?: boolean }) => {
@@ -110,30 +113,6 @@ export function Platforms({
     return () => window.clearInterval(id)
   }, [liveBuild?.state])
 
-  async function download() {
-    setDownloading(true)
-    setError(null)
-    try {
-      const status =
-        liveBuild?.state === 'succeeded'
-          ? liveBuild
-          : await awaitBuild(sessionId, (s) =>
-              setBuild((prev) => stampBuildObservation(s, prev)),
-            )
-      if (!status || status.state === 'failed' || status.state === 'stalled') {
-        setError(
-          `The build did not pass its gates, so it will not be shipped: ${status?.detail ?? 'unknown reason'}`,
-        )
-        return
-      }
-      await downloadProductPackage(sessionId)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'export failed')
-    } finally {
-      setDownloading(false)
-    }
-  }
-
   const bp = design?.blueprint as
     | { product_name?: string; vertical?: string; capabilities?: unknown[] }
     | null
@@ -184,13 +163,42 @@ export function Platforms({
     liveBuild ?? (gen ? { state: 'building' } : null),
   )
   const downloadLabel = downloading ? 'Packing…' : exportBtn.label
+  const leadCopy = platformsLeadCopy(liveBuild, Boolean(gen))
+
+  async function download() {
+    if (exportBtn.disabled) return
+    setDownloading(true)
+    setError(null)
+    try {
+      const status =
+        liveBuild?.state === 'succeeded'
+          ? liveBuild
+          : await awaitBuild(sessionId, (s) =>
+              setBuild((prev) => stampBuildObservation(s, prev)),
+            )
+      if (!status || status.state === 'failed' || status.state === 'stalled') {
+        setError(
+          `The build did not pass its gates, so it will not be shipped: ${status?.detail ?? 'unknown reason'}`,
+        )
+        return
+      }
+      await downloadProductPackage(sessionId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'export failed')
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   return (
     <div className="page">
       <header className="page-head">
         <h2>Your Platforms</h2>
-        <p className="dim">What the factory built for you. Download the export and launch it anywhere.</p>
+        <p className="dim" data-testid="platforms-lead">
+          {leadCopy}
+        </p>
       </header>
+      <FactoryCodeCliStatus message={cliHonesty} testId="platforms-factory-cli-status" />
       {error && <div className="error-box">{error}</div>}
       {buildNote && (
         <div

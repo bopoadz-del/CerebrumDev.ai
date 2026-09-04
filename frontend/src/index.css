@@ -135,6 +135,12 @@ h3 { margin: 0 0 10px; }
 .level-grade-strip .status-pill {
   margin: 0;
 }
+.factory-cli-status .status-pill {
+  margin: 0 0 8px;
+}
+.factory-cli-status p {
+  margin: 0;
+}
 .three-gate {
   display: inline-flex;
   flex-wrap: wrap;

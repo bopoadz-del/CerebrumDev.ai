@@ -12,6 +12,7 @@ const watchBuildMock = vi.fn()
 const getMock = vi.fn()
 const downloadMock = vi.fn()
 const coderControlMock = vi.fn()
+const getHealthMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -21,6 +22,7 @@ vi.mock('../api/factory', async (importOriginal) => {
     awaitBuild: (...args: unknown[]) => awaitBuildMock(...args),
     watchBuildStatus: (...args: unknown[]) => watchBuildMock(...args),
     downloadProductPackage: (...args: unknown[]) => downloadMock(...args),
+    getHealth: (...args: unknown[]) => getHealthMock(...args),
     product: {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
@@ -49,6 +51,10 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     downloadMock.mockReset()
     coderControlMock.mockReset()
     coderControlMock.mockResolvedValue({ ok: true, control: { action: 'pause' } })
+    getHealthMock.mockReset()
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: { available: true, credentials_file_present: true },
+    })
     getMock.mockResolvedValue({})
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
@@ -582,6 +588,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_ui" goPlatforms={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('floor-factory-cli-status')).not.toBeInTheDocument()
   })
 
   it('shows Coding agent stopped — not finished Download — when TESTER is red', async () => {
@@ -620,6 +627,23 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(startNew).toBeEnabled()
     fireEvent.click(startNew)
     await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
+  })
+
+  it('names missing Kimi Code CLI credentials from /health on the Floor', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: false,
+        blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+      },
+    })
+    render(<Floor sessionId="sess_creds" goPlatforms={() => {}} />)
+    const banner = await screen.findByTestId('floor-factory-cli-status')
+    expect(banner).toHaveTextContent('Kimi Code CLI credentials missing')
+    expect(banner).toHaveTextContent('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
+    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
+    expect(banner).toHaveTextContent('config.toml')
+    expect(screen.queryByTestId('floor-factory-cli-status')).toHaveTextContent(/Kimi Code CLI credentials/)
   })
 
   it('does not offer a ready Download when the coding agent stalled', async () => {
