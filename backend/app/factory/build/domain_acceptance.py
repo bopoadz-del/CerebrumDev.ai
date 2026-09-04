@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from app.factory.build.data_lifecycle import (
     IDEMPOTENCY_TABLE,
     WORK_QUEUE_TABLE,
-    first_entity_sample,
+    sample_for_spec,
 )
 from app.factory.build.lotdesk_gate import inspect_path, resolve_lotdesk_fixture
 
@@ -334,7 +334,16 @@ def _row(row: Any) -> Dict[str, Any]:
 def render_domain_ops(specs: Dict[str, Dict[str, Any]]) -> str:
     compact = compact_specs(specs)
     cap_id = first_capability_id(specs)
-    entity, sample = first_entity_sample(specs)
+    cap_spec = compact.get(cap_id) or {}
+    # SAMPLE must be the DEFAULT capability's columns. first_entity_sample
+    # is first *table* (sorted by entity name). Live VetCare Hub
+    # sess_5dfb4a3: DEFAULT client_pet_records / pet_record, first table
+    # availability — create_persists compared pet_record rows to an
+    # availability SAMPLE and PRODUCT stayed red through rework.
+    entity = str(
+        cap_spec.get("entity") or (cap_id.replace("-", "_") if cap_id else "")
+    )
+    sample = sample_for_spec(cap_spec, placeholder="s10-row")
     return f'''"""S12 domain outcomes performed through execute_action.
 
 CRUD, list, queue process, refusal, idempotency, unauthorized, and

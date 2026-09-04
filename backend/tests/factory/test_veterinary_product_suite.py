@@ -19,6 +19,17 @@ payloads against Store blocks / Alembic / domain_acceptance and reported:
 5. Queue str/int type error
 6. event_bus notification errors
 
+sess_5dfb4a317c8f4516 (tip e86f197, after #308/#309/#310) then failed
+PRODUCT on a fresh VetCare Hub. Live build-status findings (not hunches):
+
+7. ``appointment_scheduling`` accept-payload:
+   ``status must be one of: open, in_progress, closed``
+8. ``test_every_capability_executes_end_to_end``:
+   ``TypeError: Object of type bytes is not JSON serializable``
+9. Floor banner only showed ``suite is red`` (findings were on the
+   verdict). Caps: client_pet_records, appointment_scheduling,
+   staff_dashboard, visit_notes, automated_reminders.
+
 These tests lock the factory construction that would have caught that
 PRODUCT red without a live run. They do not weaken honesty: unrepaired
 domain JSON still fails the live Store refusals, and export stays refused
@@ -29,11 +40,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.factory.build.block_inputs import prepare_block_input
+from app.factory.build.block_inputs import (
+    align_spec_to_handler_source,
+    prepare_block_input,
+)
 from app.factory.build.block_obligations import (
     augment_model_spec,
     ensure_record_envelope,
 )
+from app.factory.build.data_lifecycle import first_entity_sample
+from app.factory.build.domain_acceptance import (
+    first_capability_id,
+    render_domain_ops,
+)
+from app.factory.build.gates import classify_suite_red, suite_assertion_classes
 from app.factory.build.offline_adapters import (
     DOC_PARSE_UNWIRED_MARKER,
     DOC_PARSERS_PACKAGE_MARKER,
@@ -46,7 +66,7 @@ from app.factory.build.offline_adapters import (
     emit_vector_search_sklearn,
     needs_document_engine_parsers_package,
 )
-from app.factory.build.roles import _constraint_guard, _sample_payload
+from app.factory.build.roles import _constraint_guard, _sample_payload, _sample_value
 
 #: The four capabilities named on the live Floor / suite.
 _VETCARE_CAPS = (
@@ -108,6 +128,41 @@ _VETCARE_CAPS = (
             "query": "vaccination",
             "pet_name": "Nala",
         },
+    ),
+    # sess_5dfb4a317c8f4516 (2026-09-04 tip e86f197): WRITER last seen
+    # calling the coder for this capability, then PRODUCT stayed red.
+    (
+        "client_pet_records",
+        "pet_record",
+        ["document_engine", "database", "workflow"],
+        {
+            "pet_name": "Nala",
+            "owner_name": "Lee",
+            "notes": "annual exam",
+        },
+    ),
+)
+
+#: Alphabetically-first cap is client_pet_records; alphabetically-first
+#: entity is availability. That split is the sess_5dfb4a3 S12 miss.
+_SESS_5DFB4A3_CAPS = (
+    (
+        "client_pet_records",
+        "pet_record",
+        ["document_engine", "database"],
+        {"pet_name": "Nala", "owner_name": "Lee"},
+    ),
+    (
+        "veterinarian_availability_tracking",
+        "availability",
+        ["database", "team"],
+        {"veterinarian_name": "Dr Lee", "service_date": "2026-09-10"},
+    ),
+    (
+        "vaccination_reminders",
+        "reminder",
+        ["event_bus", "notification"],
+        {"pet_name": "Nala", "reminder_type": "vaccination"},
     ),
 )
 
@@ -279,3 +334,280 @@ def test_sess_a69c8ce_parsers_package_and_sklearn_stubs():
     src = "from sklearn.feature_extraction.text import TfidfVectorizer\n"
     assert SKLEARN_UNWIRED_MARKER in emit_vector_search_sklearn(src)
     assert SKLEARN_UNWIRED_MARKER in emit_runtime_module("vector_search", src)
+
+
+def _sess_5dfb4a3_specs() -> dict:
+    specs = {}
+    for cid, entity, _blocks, domain in _SESS_5DFB4A3_CAPS:
+        specs[cid], _ = ensure_record_envelope(_llm_spec(entity, domain))
+    return specs
+
+
+def _assign_from_source(src: str, name: str):
+    import ast
+
+    tree = ast.parse(src)
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if getattr(target, "id", None) == name:
+                return ast.literal_eval(node.value)
+    raise AssertionError(f"{name} not assigned in rendered source")
+
+
+def test_sess_5dfb4a3_s12_sample_follows_default_capability_not_first_entity():
+    """Live PRODUCT class: S12 SAMPLE was the first *table*, not DEFAULT.
+
+    client_pet_records sorts first as a capability id; availability sorts
+    first as an entity. first_entity_sample still returns the availability
+    row (S10 lifecycle inserts a table). domain_ops SAMPLE must be the
+    pet_record row perform_all actually writes, or create_persists stays
+    red through the rework budget.
+    """
+    specs = _sess_5dfb4a3_specs()
+    assert first_capability_id(specs) == "client_pet_records"
+    first_entity, first_sample = first_entity_sample(specs)
+    assert first_entity == "availability"
+    assert "veterinarian_name" in first_sample
+    assert "pet_name" not in first_sample
+
+    src = render_domain_ops(specs)
+    assert _assign_from_source(src, "DEFAULT_CAPABILITY") == "client_pet_records"
+    assert _assign_from_source(src, "DEFAULT_ENTITY") == "pet_record"
+    sample = _assign_from_source(src, "SAMPLE")
+    assert sample["pet_name"] == "s10-row"
+    assert sample["owner_name"] == "s10-row"
+    assert "reference" in sample
+    assert "veterinarian_name" not in sample
+    # Old SAMPLE vs the row create actually persists: create_persists red.
+    persisted = {"id": 1, **sample}
+    assert all(persisted.get(k) == sample[k] for k in sample)
+    assert not all(persisted.get(k) == first_sample[k] for k in first_sample)
+
+
+def test_sess_5dfb4a3_product_detail_names_create_persists_not_just_suite_is_red():
+    """Floor banner is verdict.detail only — 'suite is red' hid the class."""
+    findings = [
+        "FAILED tests/test_domain_acceptance.py::"
+        "test_ten_business_outcomes_are_performed_through_the_kernel",
+        "E   AssertionError: {'ok': False, 'failed': ['create_persists'], "
+        "'capability_id': 'client_pet_records'}",
+    ]
+    detail = classify_suite_red(findings)
+    assert detail.startswith("suite is red: domain acceptance: create_persists")
+    assert "create_persists" in detail
+    assert "client_pet_records" in detail
+    assert suite_assertion_classes(findings) == [
+        "domain acceptance: create_persists"
+    ]
+
+
+def test_sess_5dfb4a3_accept_payload_records_list_shape_instead_of_keyerror(tmp_path):
+    """Hard-coded listed.json()['items'] aborted the whole pilot test."""
+    from pathlib import Path
+
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext, run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    class _Cap:
+        def __init__(self, cid):
+            self.capability_id = cid
+            self.block_ids = ()
+
+    class _Plan:
+        capabilities = tuple(_Cap(cid) for cid, *_ in _SESS_5DFB4A3_CAPS)
+
+    class _Blueprint:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary-care"
+
+    root = tmp_path / "ws"
+    (root / "app" / "actions").mkdir(parents=True)
+    ws = RoleWorkspace(BuildRole.TESTER, root)
+    specs = _sess_5dfb4a3_specs()
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=("PRODUCT (pilot-marked suite): suite is red",),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": specs,
+        },
+    )
+    result = run_tester(ctx)
+    assert result.ok, result.detail
+    routes = ws.read_text(Path("tests") / "test_routes.py")
+    assert "def _listed(payload):" in routes
+    assert 'listed.json()["items"]' not in routes
+    assert "list refused:" in routes
+    assert "client_pet_records" in routes
+
+    start = routes.index("def _listed(payload):")
+    end = routes.index("\ndef test_health():")
+    ns: dict = {}
+    exec(routes[start:end], ns)  # noqa: S102 — lock the emitted helper
+    listed = ns["_listed"]
+    assert listed({"ok": False, "error": "unknown query field(s): stale"}) == []
+    assert listed({"records": [{"id": 1}]}) == [{"id": 1}]
+    assert listed({"items": [{"id": 2}]}) == [{"id": 2}]
+
+    keyerror_findings = [
+        "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload",
+        "E   KeyError: 'items'",
+    ]
+    detail = classify_suite_red(keyerror_findings)
+    assert "accept-payload list shape (KeyError: 'items')" in detail
+    assert suite_assertion_classes(keyerror_findings) == [
+        "accept-payload list shape (KeyError: 'items')"
+    ]
+
+
+_FACTORY_STATUS = ("open", "in_progress", "closed")
+_LIVE_STATUS_ERROR = "status must be one of: open, in_progress, closed"
+_LIVE_BYTES_ERROR = "Object of type bytes is not JSON serializable"
+
+
+def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
+    """Live accept-payload: LLM status vocab lost to the factory envelope.
+
+    Caps on the run: appointment_scheduling (this class), plus
+    client_pet_records, staff_dashboard, visit_notes, automated_reminders.
+    """
+    llm = {
+        "entity": "appointment",
+        "fields": [
+            {"name": "pet_name", "type": "str", "required": True},
+            {"name": "appointment_date", "type": "str", "required": True},
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["scheduled", "completed", "cancelled"],
+            },
+        ],
+    }
+    llm, _ = ensure_record_envelope(llm)
+    stale = _sample_payload(llm)
+    assert stale["status"] == "scheduled"
+    refused = _run_guard(
+        {
+            **llm,
+            "fields": [
+                {**f, "allowed_values": list(_FACTORY_STATUS)}
+                if f.get("name") == "status"
+                else f
+                for f in llm["fields"]
+            ],
+        },
+        stale,
+    )
+    assert refused.get("ok") is False
+    assert _LIVE_STATUS_ERROR in refused.get("error", "")
+
+    handler = (
+        "def handle(payload):\n"
+        "    if payload.get('status') not in ('open', 'in_progress', 'closed'):\n"
+        "        return {'ok': False, 'error': "
+        f"'{_LIVE_STATUS_ERROR}'}}\n"
+        "    return {'ok': True}\n"
+    )
+    aligned, changed = align_spec_to_handler_source(llm, handler)
+    assert "status" in changed
+    sample = _sample_payload(aligned)
+    assert sample["status"] == "open"
+    accepted = _run_guard(aligned, sample)
+    assert accepted.get("ok") is True, (sample, accepted)
+
+
+def test_sess_5dfb4a3_bare_status_samples_open_not_the_word_sample():
+    field = {"name": "status", "type": "str", "required": True}
+    assert _sample_payload({"fields": [field]})["status"] == "open"
+    assert _sample_value(field) == "open"
+    assert _sample_value({"name": "job_status", "type": "str"}) == "open"
+
+
+def test_sess_5dfb4a3_e2e_smoke_dumps_bytes_without_typeerror(tmp_path):
+    """Live smoke: document_engine / visit_notes results include PDF bytes."""
+    import json
+    from pathlib import Path
+
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext, run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    class _Cap:
+        def __init__(self, cid):
+            self.capability_id = cid
+            self.block_ids = ()
+
+    class _Plan:
+        capabilities = (_Cap("visit_notes"), _Cap("client_pet_records"))
+
+    class _Blueprint:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary-care"
+
+    root = tmp_path / "ws"
+    (root / "app" / "actions").mkdir(parents=True)
+    ws = RoleWorkspace(BuildRole.TESTER, root)
+    specs = {
+        "visit_notes": ensure_record_envelope(
+            _llm_spec("visit_note", {"notes": "annual exam"})
+        )[0],
+        "client_pet_records": ensure_record_envelope(
+            _llm_spec("pet_record", {"pet_name": "Nala"})
+        )[0],
+    }
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=("PRODUCT (pilot-marked suite): suite is red",),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": specs,
+        },
+    )
+    assert run_tester(ctx).ok
+    smoke = ws.read_text(Path("tests") / "test_smoke.py")
+    assert "test_every_capability_executes_end_to_end" in smoke
+    assert "_json.dumps(out, default=str)" in smoke
+    assert "_json.dumps(out)" not in smoke.replace("_json.dumps(out, default=str)", "")
+
+    out = {
+        "ok": True,
+        "capability": "visit_notes",
+        "results": {"document_engine": {"content": b"%PDF-1.1\n"}},
+    }
+    dumped = json.dumps(out, default=str)
+    assert '"ok": true' in dumped.lower() or '"ok": True' in dumped or "ok" in dumped
+
+
+def test_sess_5dfb4a3_product_detail_names_live_status_and_bytes_classes():
+    status_findings = [
+        "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload",
+        "E   AssertionError: appointment_scheduling rejected a payload "
+        f"built from its own schema: {_LIVE_STATUS_ERROR}",
+    ]
+    status_detail = classify_suite_red(status_findings)
+    assert "schema sample refused" in status_detail
+    assert "status vocabulary" in status_detail
+    assert "appointment_scheduling" in status_detail
+    assert _LIVE_STATUS_ERROR in status_detail
+
+    bytes_findings = [
+        "ERROR tests/test_smoke.py::test_every_capability_executes_end_to_end",
+        f"E   TypeError: {_LIVE_BYTES_ERROR}",
+    ]
+    bytes_detail = classify_suite_red(bytes_findings)
+    assert "not JSON serializable" in bytes_detail
+    assert _LIVE_BYTES_ERROR in bytes_detail

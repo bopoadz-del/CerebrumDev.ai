@@ -115,6 +115,73 @@ def _real_run(argv: List[str], *, cwd: Path, timeout: float) -> subprocess.Compl
     )
 
 
+# -- suite failure classes (Floor banner is verdict.detail only) ---------
+
+#: Needles the PRODUCT / TESTER banner must name. Live VetCare Hub
+#: sess_5dfb4a3 showed only "suite is red" while pytest had a concrete
+#: class — rework then regenerated every handler because findings named
+#: no capability.
+_SUITE_ASSERTION_CLASSES: tuple[tuple[str, str], ...] = (
+    ("KeyError: 'items'", "accept-payload list shape (KeyError: 'items')"),
+    ('KeyError: "items"', "accept-payload list shape (KeyError: 'items')"),
+    (
+        "rejected a payload built from its own schema",
+        "schema sample refused",
+    ),
+    (
+        "status must be one of",
+        "schema sample refused (status vocabulary)",
+    ),
+    (
+        "not JSON serializable",
+        "e2e handle() result not JSON serializable",
+    ),
+    (
+        "Object of type bytes",
+        "e2e handle() result not JSON serializable",
+    ),
+    (
+        "accepted a record but persisted nothing",
+        "accept-payload persisted nothing",
+    ),
+    ("create_persists", "domain acceptance: create_persists"),
+    ("list_only_persisted", "domain acceptance: list_only_persisted"),
+    ("queue_item_processed", "domain acceptance: queue_item_processed"),
+    ("Missing required field", "Missing required field"),
+    ("no such table", "no such table"),
+    ("No module named", "missing module"),
+)
+
+
+def suite_assertion_classes(findings: List[str], raw: str = "") -> List[str]:
+    """Stable labels for the pytest lines a red PRODUCT suite produced."""
+    blob = "\n".join(findings) + "\n" + (raw or "")
+    seen: List[str] = []
+    for needle, label in _SUITE_ASSERTION_CLASSES:
+        if needle in blob and label not in seen:
+            seen.append(label)
+    return seen
+
+
+def classify_suite_red(findings: List[str], raw: str = "") -> str:
+    """PRODUCT / Floor detail must name the assertion class, not only 'red'."""
+    classes = suite_assertion_classes(findings, raw)
+    failed = next((ln.strip() for ln in findings if ln.startswith("FAILED")), "")
+    err = next((ln.strip() for ln in findings if ln.startswith("E ")), "")
+    snippet = " ".join(part for part in (failed, err) if part) or next(
+        (ln.strip() for ln in findings if ln.strip()), ""
+    )
+    if snippet and len(snippet) > 240:
+        snippet = snippet[:237] + "..."
+    if classes and snippet:
+        return "suite is red: " + "; ".join(classes[:3]) + " — " + snippet
+    if classes:
+        return "suite is red: " + "; ".join(classes[:3])
+    if snippet:
+        return "suite is red: " + snippet
+    return "suite is red"
+
+
 # -- individual gates ----------------------------------------------------
 
 
@@ -294,14 +361,20 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
                 or ["pytest produced no output"],
                 payload={"returncode": proc.returncode, "infrastructure": True},
             )
+        classified_findings = findings or [ln for ln in output if ln.strip()][-8:]
         return GateResult(
             ok=False,
             gate=gate_name,
-            detail="suite is red",
+            detail=classify_suite_red(classified_findings, raw),
             # Never report a failure with nothing to act on: fall back to the
             # output tail so a rework round has something concrete.
-            findings=findings or [ln for ln in output if ln.strip()][-8:],
-            payload={"returncode": proc.returncode},
+            findings=classified_findings,
+            payload={
+                "returncode": proc.returncode,
+                "assertion_classes": suite_assertion_classes(
+                    classified_findings, raw
+                ),
+            },
         )
     return GateResult(
         ok=True,

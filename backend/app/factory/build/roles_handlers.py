@@ -3040,6 +3040,12 @@ def _sample_value(field: Dict[str, Any]) -> Any:
             return True
         if name.endswith("_count") or name in {"capacity", "quantity", "login_count"}:
             return 1
+        # Factory envelope default. A bare ``status`` used to sample as
+        # "sample", which the fallback / coder guard rejects with
+        # ``status must be one of: open, in_progress, closed``
+        # (sess_5dfb4a3 appointment_scheduling).
+        if name == "status" or name.endswith("_status"):
+            return "open"
     ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
@@ -3275,10 +3281,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             '    elif out.get("ok") is False:',
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get('error')))",
-            "    elif '\\\"status\\\": \\\"error\\\"' in _json.dumps(out) or "
-            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out):",
+            "    elif '\\\"status\\\": \\\"error\\\"' in "
+            "_json.dumps(out, default=str) or "
+            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out, default=str):",
             f"        failures.append('{name} reported ok around a failed block "
-            "call: ' + _json.dumps(out)[:300])",
+            "call: ' + _json.dumps(out, default=str)[:300])",
         ]
     if caps:
         smoke.append('    assert not failures, "; ".join(failures)')
@@ -3358,6 +3365,26 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "from app.main import app",
         "",
         "client = TestClient(app)",
+        "",
+        "",
+        "def _listed(payload):",
+        '    """Same list shapes as PRODUCT round-trip (_listed / _listed_records).',
+        "",
+        "    Hard-coding listed.json()['items'] KeyError'd when GET answered",
+        "    {ok: False} or {records: [...]} — pytest then reported only",
+        "    'suite is red' with no capability id (sess_5dfb4a3 class).",
+        '    """',
+        "    if isinstance(payload, list):",
+        "        return payload",
+        "    if not isinstance(payload, dict):",
+        "        return []",
+        '    if payload.get("ok") is False:',
+        "        return []",
+        '    for key in ("items", "records", "results", "data", "rows"):',
+        "        value = payload.get(key)",
+        "        if isinstance(value, list):",
+        "            return value",
+        "    return []",
         "",
         "",
         "def test_health():",
@@ -3464,21 +3491,28 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 "own schema: ' + str(resp.json().get('error')))",
                 "    else:",
                 f'        listed = client.get("/v1/{name}")',
+                "        listed_body = listed.json() if listed.content else {}",
                 "        if listed.status_code != 200:",
                 f"            failures.append('{name} list: HTTP '"
                 " + str(listed.status_code))",
-                '        elif not listed.json()["items"]:',
-                f"            failures.append('{name} accepted a record but "
-                "persisted nothing')",
+                '        elif isinstance(listed_body, dict) and '
+                'listed_body.get("ok") is False:',
+                f"            failures.append('{name} list refused: '"
+                " + str(listed_body.get('error') or listed_body)[:200])",
                 "        else:",
-                '            item_id = listed.json()["items"][0]["id"]',
-                f'            got = client.get(f"/v1/{name}/{{item_id}}")',
-                "            if got.status_code != 200:",
-                f"                failures.append('{name} get: HTTP '"
+                "            rows = _listed(listed_body)",
+                "            if not rows:",
+                f"                failures.append('{name} accepted a record but "
+                "persisted nothing')",
+                "            else:",
+                '                item_id = rows[0].get("id")',
+                f'                got = client.get(f"/v1/{name}/{{item_id}}")',
+                "                if got.status_code != 200:",
+                f"                    failures.append('{name} get: HTTP '"
                 " + str(got.status_code))",
-                f'            missing = client.get("/v1/{name}/999999")',
-                "            if missing.status_code != 404:",
-                f"                failures.append('{name} missing id: HTTP '"
+                f'                missing = client.get("/v1/{name}/999999")',
+                "                if missing.status_code != 404:",
+                f"                    failures.append('{name} missing id: HTTP '"
                 " + str(missing.status_code) + ' (expected 404)')",
                 "",
             ]

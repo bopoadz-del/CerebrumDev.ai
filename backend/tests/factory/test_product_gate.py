@@ -160,6 +160,29 @@ def test_a_red_pilot_suite_names_that_half_and_stops(tmp_path):
     assert len(calls) == 1, "the round-trip must not run after a red suite"
 
 
+def test_a_red_pilot_suite_names_the_assertion_class_in_detail(tmp_path):
+    """sess_5dfb4a3: Floor showed only 'suite is red'. Findings had the class."""
+
+    def runner(argv):
+        return _Proc(
+            1,
+            stdout=(
+                "FAILED tests/test_domain_acceptance.py::"
+                "test_ten_business_outcomes_are_performed_through_the_kernel\n"
+                "E   AssertionError: {'ok': False, 'failed': ['create_persists']}\n"
+                "1 failed\n"
+            ),
+        )
+
+    ctx, _ = _ctx(tmp_path, runner)
+    res = gate_product(ctx)
+    assert not res.ok
+    assert "domain acceptance: create_persists" in res.detail
+    assert res.payload.get("assertion_classes") == [
+        "domain acceptance: create_persists"
+    ]
+
+
 def test_a_red_round_trip_names_that_half(tmp_path):
     ctx, _ = _ctx(tmp_path, _suite_then_trip(
         0, "GATE-MISS: unit_registry: POST reported success and unit holds 0 row(s)\n"
