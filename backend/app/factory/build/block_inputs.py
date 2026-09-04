@@ -77,6 +77,50 @@ _SKIP_REQUIRED_NAMES = frozenset(
 )
 
 
+def split_execute_action(
+    payload: Any,
+    *,
+    action: Optional[str] = None,
+    default_action: Optional[str] = None,
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Lift ``action`` out of the payload; return ``(keyword, clean_record)``.
+
+    Live makerspace-management (sess_39b5fec2abd346a5, 2026-09-04): every
+    capability called ``execute(block, {..., "action": ...})`` with no
+    ``action=`` keyword. ``app/dispatch.py`` routes payload keys into the
+    block's record and reads the operation only from ``action=``, so the
+    blocks answered ``Unknown action: None`` or ``unknown field(s): action``
+    and WRITER halted on ``every capability wrote a payload its blocks
+    refuse``.
+
+    Preference: explicit ``action=`` / positional, then a string buried in
+    the payload (or its ``input`` envelope), then the block's default.
+    ``action`` is never a block record field — always strip it.
+    """
+    data = dict(payload) if isinstance(payload, dict) else (
+        {} if payload is None else {"value": payload}
+    )
+    inner = data.get("input") if isinstance(data.get("input"), dict) else {}
+
+    def _usable(value: Any) -> Optional[str]:
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    resolved = (
+        _usable(action)
+        or _usable(data.get("action"))
+        or _usable(inner.get("action"))
+        or _usable(default_action)
+    )
+    data.pop("action", None)
+    if isinstance(data.get("input"), dict):
+        cleaned = dict(data["input"])
+        cleaned.pop("action", None)
+        data["input"] = cleaned
+    return resolved, data
+
+
 def prepare_block_input(
     block_id: str,
     domain: Any,
@@ -90,7 +134,7 @@ def prepare_block_input(
     ``domain`` is the caller's capability record (or an already-built block
     input). Missing block-contract keys are derived; existing keys win.
     """
-    data = dict(domain) if isinstance(domain, dict) else {"value": domain}
+    _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
     if bid == "notification":
         return _for_notification(data, roster)
@@ -280,7 +324,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _DOC_PATH_KEYS = (
     "file_path",
@@ -313,6 +357,36 @@ _SKIP = frozenset(
 )
 
 
+def split_execute_action(
+    payload: Any,
+    *,
+    action: Optional[str] = None,
+    default_action: Optional[str] = None,
+) -> Tuple[Optional[str], Dict[str, Any]]:
+    data = dict(payload) if isinstance(payload, dict) else (
+        {} if payload is None else {"value": payload}
+    )
+    inner = data.get("input") if isinstance(data.get("input"), dict) else {}
+
+    def _usable(value):
+        if isinstance(value, str) and value.strip():
+            return value
+        return None
+
+    resolved = (
+        _usable(action)
+        or _usable(data.get("action"))
+        or _usable(inner.get("action"))
+        or _usable(default_action)
+    )
+    data.pop("action", None)
+    if isinstance(data.get("input"), dict):
+        cleaned = dict(data["input"])
+        cleaned.pop("action", None)
+        data["input"] = cleaned
+    return resolved, data
+
+
 def prepare_block_input(
     block_id: str,
     domain: Any,
@@ -321,7 +395,7 @@ def prepare_block_input(
     roster: Sequence[str] = (),
     product_name: str = "platform",
 ) -> Dict[str, Any]:
-    data = dict(domain) if isinstance(domain, dict) else {"value": domain}
+    _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
     if bid == "notification":
         return _for_notification(data, roster)

@@ -60,6 +60,9 @@ F1_HALT = "a capability route reported success over a failed block"
 #: Probe / Floor text when every capability declares unused BLOCK_IDS (F11).
 F11_HALT = "a capability declares block(s) it never invokes"
 
+#: Probe / Floor text when every capability's blocks refuse the coder payload.
+CONTRACT_HALT = "every capability wrote a payload its blocks refuse"
+
 #: Probe / Floor text when import, Alembic, or sqlite DDL crashes the probe.
 SCHEMA_SQL_HALT = "workspace schema or migration failed"
 
@@ -803,6 +806,8 @@ def banner_detail(findings: list[str]) -> str:
         return next(ln for ln in usable if _is_schema_line(ln))
     if any(F11_HALT in ln or _is_f11_line(ln) for ln in usable):
         return F11_HALT
+    if any(CONTRACT_HALT in ln or _is_contract_line(ln) for ln in usable):
+        return CONTRACT_HALT
     if any(_is_f1_line(ln) for ln in usable):
         return F1_HALT
     return usable[0]

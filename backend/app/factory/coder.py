@@ -704,7 +704,57 @@ def _validate_body(
                     "BLOCK_IDS must be passed to execute() (iterating "
                     "BLOCK_IDS also satisfies this)."
                 )
+
+    # Live makerspace-management (sess_39b5fec2abd346a5): the coder buried
+    # the operation inside the payload dict. Dispatch reads action= only;
+    # every capability then failed writer_behaviour. Reject here so the
+    # model gets one bounded retry instead of a halted WRITER phase.
+    if _execute_payload_carries_action(tree):
+        raise CoderError(
+            f"coder output for {capability_id} puts 'action' inside the "
+            "execute() payload. Pass the operation only as action= "
+            "(e.g. execute(block_id, record, "
+            "action=BLOCK_DEFAULT_ACTIONS.get(block_id))). "
+            "app/dispatch.py reads the operation only from the action= "
+            "keyword; a payload 'action' key is answered "
+            "'Unknown action: None' or 'unknown field(s): action'."
+        )
     return indented
+
+
+def _dict_literal_has_action_key(node: ast.AST) -> bool:
+    """True when a dict literal (or dict() call) sets an 'action' key."""
+    if isinstance(node, ast.Dict):
+        return any(
+            isinstance(key, ast.Constant) and key.value == "action"
+            for key in node.keys
+        )
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        if node.func.id != "dict":
+            return False
+        return any(kw.arg == "action" for kw in (node.keywords or []) if kw.arg)
+    return False
+
+
+def _execute_payload_carries_action(tree: ast.AST) -> bool:
+    """True when an execute() call puts 'action' inside its payload argument."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        is_execute = (
+            (isinstance(func, ast.Name) and func.id == "execute")
+            or (isinstance(func, ast.Attribute) and func.attr == "execute")
+        )
+        if not is_execute:
+            continue
+        payload_node = node.args[1] if len(node.args) >= 2 else None
+        for kw in node.keywords or []:
+            if kw.arg == "payload":
+                payload_node = kw.value
+        if payload_node is not None and _dict_literal_has_action_key(payload_node):
+            return True
+    return False
 
 
 def _call_validate_retry(
@@ -776,6 +826,13 @@ Contract:
   and the input fields its schema REQUIRES). The dict you pass as `payload`
   becomes the block's input: build it so every required input field is
   present, mapped or derived from the caller's payload.
+- NEVER put "action" inside the payload dict. app/dispatch.py routes
+  payload keys into the block's record and reads the operation ONLY from
+  the action= keyword. A payload "action" key is answered
+  "Unknown action: None" or "unknown field(s): action" and the WRITER
+  gate halts the whole build. Always write:
+      execute(block_id, record, action=BLOCK_DEFAULT_ACTIONS.get(block_id))
+  or another action= keyword that matches the block's contract.
 - The caller knows NOTHING about blocks. NEVER require a block-specific
   field (like "steps" or "channel") from the caller's payload -- CONSTRUCT
   it inside the handler from the domain data the capability does have.

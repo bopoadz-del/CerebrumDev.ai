@@ -91,3 +91,47 @@ def test_prompt_states_the_rule_the_gate_enforces():
 
     assert "EVERY id in BLOCK_IDS" in _PLATFORM_SYSTEM
     assert "whose output the capability needs" not in _PLATFORM_SYSTEM
+
+
+def test_prompt_forbids_action_inside_the_payload():
+    """Live makerspace: the prompt must state the dispatch contract."""
+    from app.factory.coder import _PLATFORM_SYSTEM
+
+    assert 'NEVER put "action" inside the payload dict' in _PLATFORM_SYSTEM
+    assert "action=BLOCK_DEFAULT_ACTIONS.get(block_id)" in _PLATFORM_SYSTEM
+
+
+def test_action_inside_execute_payload_is_rejected():
+    """Regression: the exact makerspace coder shape must fail statically."""
+    body = (
+        "body = dict(payload)\n"
+        "body['action'] = 'render'\n"
+        "res = execute('dashboard', {'action': 'render', 'name': payload.get('name')})\n"
+        "return {'ok': True, 'capability': CAPABILITY_ID, 'res': res}\n"
+    )
+    with pytest.raises(CoderError) as exc:
+        _validate_body(body, "dashboards_and_reports", ["dashboard"])
+    assert "puts 'action' inside the execute() payload" in str(exc.value)
+    assert "action=" in str(exc.value)
+
+
+def test_merged_dict_with_action_key_is_rejected():
+    body = (
+        "res = execute(BLOCK_IDS[0], {**payload, 'action': 'insert'})\n"
+        "return {'ok': True, 'capability': CAPABILITY_ID, 'res': res}\n"
+    )
+    with pytest.raises(CoderError) as exc:
+        _validate_body(body, "equipment_inventory_and_maintenance", ["database"])
+    assert "puts 'action' inside the execute() payload" in str(exc.value)
+
+
+def test_action_as_keyword_is_accepted():
+    body = (
+        "results = {}\n"
+        "for block_id in BLOCK_IDS:\n"
+        "    results[block_id] = execute(\n"
+        "        block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id)\n"
+        "    )\n"
+        "return {'ok': True, 'capability': CAPABILITY_ID, 'results': results}\n"
+    )
+    assert _validate_body(body, "dashboards_and_reports", ["dashboard", "analytics"])
