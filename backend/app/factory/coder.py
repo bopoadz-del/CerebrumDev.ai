@@ -1056,7 +1056,12 @@ def generate_model_spec(
         len(unique),
         model_used,
     )
-    return {"entity": entity, "fields": unique[:8], "model": model_used}
+    from app.factory.build.block_obligations import ensure_record_envelope
+
+    spec, _added = ensure_record_envelope(
+        {"entity": entity, "fields": unique[:8], "model": model_used}
+    )
+    return spec
 
 
 def get_factory_llm_config_model() -> str:

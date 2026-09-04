@@ -68,11 +68,20 @@ def test_notification_does_not_overwrite_caller_supplied_fields():
 def test_workflow_payload_has_steps_built_from_roster():
     domain = {"reference": "T1", "status": "open"}
     out = prepare_block_input(
-        "workflow", domain, roster=["workflow", "database", "notification"]
+        "workflow",
+        domain,
+        roster=["workflow", "database", "notification"],
+        entity="pet_record",
     )
     assert isinstance(out["steps"], list) and out["steps"]
     assert out["steps"][0]["block"] == "database"
     assert "block_id" not in out["steps"][0]
+    # Nested prepare: database step must not inherit raw domain JSON
+    # (live PRODUCT: workflow result error → no such table records).
+    assert out["steps"][0]["input"]["table"] == "pet_record"
+    assert out["steps"][1]["block"] == "notification"
+    assert out["steps"][1]["input"]["channel"] == "mcp"
+    assert out["steps"][1]["input"]["message"]
 
 
 def test_workflow_keeps_explicit_steps():
@@ -241,6 +250,44 @@ def test_database_synthesizes_table_from_domain_record():
     assert _refuse_like_live("database", out)["status"] == "ok"
 
 
+def test_database_uses_capability_entity_not_records():
+    """Live sess_66a387b: table=records is not an Alembic entity table."""
+    domain = {"pet_name": "Nala", "status": "open"}
+    out = prepare_block_input("database", domain, entity="pet_record")
+    assert out["table"] == "pet_record"
+    assert out["table"] != "records"
+    assert out["values"]["pet_name"] == "Nala"
+
+
+def test_event_bus_carries_payload_and_channel():
+    """Live PRODUCT: topic alone still failed notify (payload/message/channel)."""
+    out = prepare_block_input(
+        "event_bus",
+        {"pet_name": "Rex", "appointment_date": "2026-09-10", "reminder_type": "vaccination"},
+        product_name="VetCare Hub",
+    )
+    assert out["topic"] == "vaccination"
+    assert out["event"] == "vaccination"
+    assert out["channel"] == "mcp"
+    assert out["payload"]["pet_name"] == "Rex"
+    assert out["data"]["pet_name"] == "Rex"
+    assert isinstance(out["message"], str) and out["message"]
+
+
+def test_queue_coerces_numeric_strings():
+    """Live PRODUCT: Store queue / work_queue refused str where they want int."""
+    out = prepare_block_input(
+        "queue",
+        {"id": "42", "priority": "1", "delay": "0", "label": "id-1"},
+    )
+    assert out["id"] == 42
+    assert out["item_id"] == 42
+    assert out["priority"] == 1
+    assert out["delay"] == 0
+    assert out["label"] == "id-1"
+    assert "id-1" not in {out["id"], out["priority"], out["item_id"]}
+
+
 def test_database_keeps_caller_sql():
     out = prepare_block_input("database", {"sql": "SELECT 1", "status": "open"})
     assert out["sql"] == "SELECT 1"
@@ -273,8 +320,24 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
         assert _refuse_like_live(bid, emitted)["status"] == "ok", (bid, emitted)
         if bid == "event_bus":
             assert factory["topic"] and emitted["topic"]
+            assert factory["channel"] == emitted["channel"] == "mcp"
+            assert factory["payload"] and emitted["payload"]
         if bid == "database":
             assert factory["table"] == emitted["table"] == "records"
+    entity_factory = prepare_block_input(
+        "database", domain, product_name="VetCare Hub", entity="pet_record"
+    )
+    entity_emitted = mod.prepare_block_input(
+        "database", domain, product_name="VetCare Hub", entity="pet_record"
+    )
+    assert entity_factory["table"] == entity_emitted["table"] == "pet_record"
+    queue_domain = {"id": "7", "priority": "2", "label": "id-1"}
+    queue_factory = prepare_block_input("queue", queue_domain)
+    queue_emitted = mod.prepare_block_input("queue", queue_domain)
+    assert queue_factory["id"] == queue_emitted["id"] == 7
+    assert queue_factory["item_id"] == queue_emitted["item_id"] == 7
+    assert queue_factory["priority"] == queue_emitted["priority"] == 2
+    assert queue_factory["label"] == queue_emitted["label"] == "id-1"
         if bid == "document_engine":
             assert Path(factory["pdf_path"]).is_file()
             assert Path(emitted["pdf_path"]).is_file()

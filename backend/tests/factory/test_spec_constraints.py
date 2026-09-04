@@ -173,6 +173,9 @@ def test_coder_keeps_datetime_fields_as_iso_text(monkeypatch):
     assert by_name["scheduled_time"]["format"] == "datetime"
     assert by_name["duration_minutes"]["type"] == "int"
     assert by_name["service_type"]["type"] == "str"
+    # Live sess_66a387b: LLM veterinary-care specs omitted the factory envelope.
+    assert "reference" in by_name
+    assert by_name["reference"]["required"] is True
 
 
 def test_reserved_keyword_field_names_render_and_round_trip():
@@ -245,6 +248,7 @@ def test_generate_model_spec_sanitizes_keyword_and_illegal_names(monkeypatch):
     assert "class_" in names
     assert "pet_name" in names
     assert "status" in names
+    assert "reference" in names
     src = _render_models({"secure_multi_user_dashboard": spec})
     exec(compile(src, "<models>", "exec"), {})
 

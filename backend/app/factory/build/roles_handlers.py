@@ -31,6 +31,7 @@ from app.factory.build.block_obligations import (
     augment_model_spec,
     dependency_obligations,
     describe_resource_obligations,
+    ensure_record_envelope,
     render_preconditions_module,
     render_dependency_lines,
 )
@@ -892,6 +893,7 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        )\n"
         "        prepared = _prepare_block_input(\n"
         "            block_id, data, action=action, roster=BLOCK_IDS,\n"
+        "            entity=ENTITY,\n"
         "        )\n"
         "        if isinstance(prepared, dict):\n"
         "            prepared = dict(prepared)\n"
@@ -932,7 +934,9 @@ def _handler_module(
     source: str,
     default_actions: Optional[Dict[str, str]] = None,
     field_names: Optional[Sequence[str]] = None,
+    entity: Optional[str] = None,
 ) -> str:
+    entity_name = entity or str(capability_id or "record").replace("-", "_")
     return f'''"""Handler for capability {capability_id}.
 
 Written by the factory WRITER role ({source}). Blocks are invoked through the
@@ -946,6 +950,7 @@ from typing import Any, Dict
 from app.dispatch import execute
 
 CAPABILITY_ID = "{capability_id}"
+ENTITY = {entity_name!r}
 BLOCK_IDS = {list(block_ids)!r}
 #: Each block's declared default action (from its block.json). Blocks are
 #: action-dispatched; calling one with no action is answered with an error.
@@ -2322,6 +2327,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             # produced it may predate the block assignment it is reused with.
             _kept = [b for b in cap.block_ids if b in vendored]
             specs[cid] = augment_model_spec(previous_specs[cid], _kept)
+            specs[cid], _envelope = ensure_record_envelope(specs[cid])
             assert_feedable(cid, _kept, specs[cid])
             sources[f"model:{cid}"] = previous_sources.get(
                 f"model:{cid}", "unchanged from previous round"
@@ -2336,6 +2342,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         # handlers were written, with no zip.
         _assigned = [b for b in cap.block_ids if b in vendored]
         spec = augment_model_spec(spec, _assigned)
+        spec, _envelope = ensure_record_envelope(spec)
         assert_feedable(cid, _assigned, spec)
         specs[cid] = spec
         sources[f"model:{cid}"] = (
@@ -2411,6 +2418,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                     for f in ((specs.get(cid) or {}).get("fields") or [])
                     if isinstance(f, dict) and f.get("name")
                 ],
+                entity=str((specs.get(cid) or {}).get("entity") or name),
             ),
         )
         sources[cid] = source
@@ -2442,6 +2450,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         specs[cid], changed = align_spec_to_handler_source(
             specs[cid], ctx.workspace.read_text(handler_rel)
         )
+        specs[cid], env_added = ensure_record_envelope(specs[cid])
+        changed = list(changed) + list(env_added)
         if not changed:
             continue
         aligned_specs = True
@@ -3002,6 +3012,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             specs.get(cid) or {},
             ctx.workspace.read_text(handler_rel),
         )
+        specs[cid], _env = ensure_record_envelope(specs[cid])
     entities = {
         cap.capability_id.replace("-", "_"): specs.get(cap.capability_id, {}).get(
             "entity", cap.capability_id.replace("-", "_")

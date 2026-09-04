@@ -126,6 +126,40 @@ class BlockObligationError(ValueError):
     """A capability declares a block its schema cannot feed."""
 
 
+#: Factory record envelope. The deterministic fallback spec always carried
+#: ``reference``; LLM veterinary-care specs (sess_66a387b5c9b0495c) omitted
+#: it, so PRODUCT ``_constraint_guard`` / Store contracts refused
+#: schema-built payloads for pet_records_management, appointment_scheduling,
+#: automated_reminders, and veterinarian_availability_tracking.
+ENVELOPE_REFERENCE_FIELD: Dict[str, Any] = {
+    "name": "reference",
+    "type": "str",
+    "required": True,
+}
+
+
+def ensure_record_envelope(
+    spec: Optional[Dict[str, Any]],
+) -> tuple:
+    """Ensure the factory envelope field ``reference`` is on the spec.
+
+    Returns ``(spec, added_names)``. Idempotent. Does not invent domain
+    columns — only the envelope the fallback path and PRODUCT samples share.
+    """
+    if not spec:
+        return spec, []
+    fields = [dict(f) for f in (spec.get("fields") or []) if isinstance(f, dict)]
+    have = {str(f.get("name")) for f in fields if f.get("name")}
+    if "reference" in have:
+        return spec, []
+    out = dict(spec)
+    out["fields"] = fields + [dict(ENVELOPE_REFERENCE_FIELD)]
+    notes = list(out.get("envelope_fields") or [])
+    notes.append("reference")
+    out["envelope_fields"] = notes
+    return out, ["reference"]
+
+
 def schema_obligations_for(block_ids: Sequence[str]) -> Dict[str, Dict[str, Any]]:
     return {b: SCHEMA_OBLIGATIONS[b] for b in block_ids or () if b in SCHEMA_OBLIGATIONS}
 

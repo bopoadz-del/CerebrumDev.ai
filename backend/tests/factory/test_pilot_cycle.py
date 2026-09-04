@@ -21,13 +21,17 @@ from app.factory.build.authority import (
 )
 from app.factory.build.offline_adapters import (
     AIOFILES_MARKER,
+    DOC_PARSE_UNWIRED_MARKER,
     ENSURE_READY_MARKER,
     MCP_OFFLINE_MARKER,
+    QUERY_CREATE_MARKER,
     QUERY_UNWIRED_MARKER,
     emit_database_insert,
     emit_database_query,
+    emit_document_engine_parse,
     emit_instantiate_ready,
     emit_notification_mcp,
+    emit_runtime_module,
     emit_storage_aiofiles,
 )
 from app.factory.build.roles import RoleContext, run_tester, run_writer
@@ -100,6 +104,20 @@ def test_cloner_emission_contains_database_insert_and_query_contracts():
     out = emit_database_query(query)
     assert QUERY_UNWIRED_MARKER in out
     assert "SELECT * FROM" in out
+    assert QUERY_CREATE_MARKER in out
+    assert "no such table" in out
+
+
+def test_document_engine_parse_is_store_unwired_not_a_real_pdf_lib():
+    """Live sess_66a387b: PRODUCT died on Missing PDF parser package."""
+    src = "def parse(self, data):\n    import pypdf\n    return pypdf.PdfReader(data)\n"
+    out = emit_document_engine_parse(src)
+    assert DOC_PARSE_UNWIRED_MARKER in out
+    assert "pypdf" in out
+    assert "pdfplumber" in out
+    assert "Store-unwired document parse" in out
+    assert emit_runtime_module("document_engine", src) == out
+    assert emit_document_engine_parse(out) == out
 
 
 def test_cloner_emission_contains_storage_aiofiles_contract():

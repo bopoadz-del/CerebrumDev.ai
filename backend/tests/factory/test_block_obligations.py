@@ -25,6 +25,7 @@ from app.factory.build.block_obligations import (
     dependency_obligations,
     describe_resource_obligations,
     distribution_for,
+    ensure_record_envelope,
     render_dependency_lines,
     resource_obligations_for,
     schema_obligations_for,
@@ -100,6 +101,24 @@ def test_a_block_with_no_obligation_changes_nothing():
     spec = _spec("a", "b")
     assert augment_model_spec(spec, ["workflow", "auth"]) is spec
     assert audit_capability("cap", ["workflow", "auth"], spec) == []
+
+
+def test_ensure_record_envelope_adds_reference_when_llm_spec_omits_it():
+    """Live sess_66a387b: veterinary-care LLM specs omitted ``reference``.
+
+    PRODUCT then refused schema-built payloads. Envelope is not a block
+    obligation — augment_model_spec still changes nothing for workflow-only.
+    """
+    spec = _spec("pet_name", "appointment_date")
+    assert augment_model_spec(spec, ["workflow"]) is spec
+    enveloped, added = ensure_record_envelope(spec)
+    assert added == ["reference"]
+    names = [f["name"] for f in enveloped["fields"]]
+    assert names[:2] == ["pet_name", "appointment_date"]
+    assert "reference" in names
+    again, added_again = ensure_record_envelope(enveloped)
+    assert added_again == []
+    assert [f["name"] for f in again["fields"]] == names
 
 
 def test_unassigned_blocks_impose_nothing():
