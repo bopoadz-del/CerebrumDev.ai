@@ -129,6 +129,18 @@ _SUITE_ASSERTION_CLASSES: tuple[tuple[str, str], ...] = (
         "schema sample refused",
     ),
     (
+        "status must be one of",
+        "schema sample refused (status vocabulary)",
+    ),
+    (
+        "not JSON serializable",
+        "e2e handle() result not JSON serializable",
+    ),
+    (
+        "Object of type bytes",
+        "e2e handle() result not JSON serializable",
+    ),
+    (
         "accepted a record but persisted nothing",
         "accept-payload persisted nothing",
     ),

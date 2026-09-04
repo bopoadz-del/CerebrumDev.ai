@@ -148,6 +148,8 @@ def _value(cls, name):
         return "2026-09-03"
     if kind_l == "time" or fmt == "time" or n.endswith("_time") or n == "time":
         return "10:00:00"
+    if n == "status" or n.endswith("_status"):
+        return "open"
     return "sample"
 
 

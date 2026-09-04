@@ -813,7 +813,12 @@ def _merge_field_contract(
         field["type"] = ctype
         changed = True
     allowed = contract.get("allowed_values")
-    if allowed and not field.get("allowed_values"):
+    # Handler-mined vocab is the runtime guard. Live sess_5dfb4a3:
+    # appointment_scheduling LLM spec said scheduled/completed (or bare
+    # str → sample="sample") while the coder handler enforced the factory
+    # envelope ``open, in_progress, closed``. Keeping the LLM list left
+    # accept-payload red through the rework budget.
+    if allowed and list(field.get("allowed_values") or []) != list(allowed):
         field["allowed_values"] = list(allowed)
         changed = True
     if contract.get("min") is not None and field.get("min") is None:

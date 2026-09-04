@@ -20,13 +20,15 @@ payloads against Store blocks / Alembic / domain_acceptance and reported:
 6. event_bus notification errors
 
 sess_5dfb4a317c8f4516 (tip e86f197, after #308/#309/#310) then failed
-PRODUCT on a fresh VetCare Hub that included ``client_pet_records``:
+PRODUCT on a fresh VetCare Hub. Live build-status findings (not hunches):
 
-7. S12 ``SAMPLE`` was ``first_entity_sample`` (first *table*) while
-   ``perform_all`` writes ``DEFAULT_CAPABILITY`` (first *cap id*) —
-   ``create_persists`` stayed red through the rework budget
-8. accept-payload ``listed.json()["items"]`` KeyError / Floor banner
-   only said ``suite is red``
+7. ``appointment_scheduling`` accept-payload:
+   ``status must be one of: open, in_progress, closed``
+8. ``test_every_capability_executes_end_to_end``:
+   ``TypeError: Object of type bytes is not JSON serializable``
+9. Floor banner only showed ``suite is red`` (findings were on the
+   verdict). Caps: client_pet_records, appointment_scheduling,
+   staff_dashboard, visit_notes, automated_reminders.
 
 These tests lock the factory construction that would have caught that
 PRODUCT red without a live run. They do not weaken honesty: unrepaired
@@ -38,7 +40,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.factory.build.block_inputs import prepare_block_input
+from app.factory.build.block_inputs import (
+    align_spec_to_handler_source,
+    prepare_block_input,
+)
 from app.factory.build.block_obligations import (
     augment_model_spec,
     ensure_record_envelope,
@@ -61,7 +66,7 @@ from app.factory.build.offline_adapters import (
     emit_vector_search_sklearn,
     needs_document_engine_parsers_package,
 )
-from app.factory.build.roles import _constraint_guard, _sample_payload
+from app.factory.build.roles import _constraint_guard, _sample_payload, _sample_value
 
 #: The four capabilities named on the live Floor / suite.
 _VETCARE_CAPS = (
@@ -461,3 +466,148 @@ def test_sess_5dfb4a3_accept_payload_records_list_shape_instead_of_keyerror(tmp_
     assert suite_assertion_classes(keyerror_findings) == [
         "accept-payload list shape (KeyError: 'items')"
     ]
+
+
+_FACTORY_STATUS = ("open", "in_progress", "closed")
+_LIVE_STATUS_ERROR = "status must be one of: open, in_progress, closed"
+_LIVE_BYTES_ERROR = "Object of type bytes is not JSON serializable"
+
+
+def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
+    """Live accept-payload: LLM status vocab lost to the factory envelope.
+
+    Caps on the run: appointment_scheduling (this class), plus
+    client_pet_records, staff_dashboard, visit_notes, automated_reminders.
+    """
+    llm = {
+        "entity": "appointment",
+        "fields": [
+            {"name": "pet_name", "type": "str", "required": True},
+            {"name": "appointment_date", "type": "str", "required": True},
+            {
+                "name": "status",
+                "type": "str",
+                "required": True,
+                "allowed_values": ["scheduled", "completed", "cancelled"],
+            },
+        ],
+    }
+    llm, _ = ensure_record_envelope(llm)
+    stale = _sample_payload(llm)
+    assert stale["status"] == "scheduled"
+    refused = _run_guard(
+        {
+            **llm,
+            "fields": [
+                {**f, "allowed_values": list(_FACTORY_STATUS)}
+                if f.get("name") == "status"
+                else f
+                for f in llm["fields"]
+            ],
+        },
+        stale,
+    )
+    assert refused.get("ok") is False
+    assert _LIVE_STATUS_ERROR in refused.get("error", "")
+
+    handler = (
+        "def handle(payload):\n"
+        "    if payload.get('status') not in ('open', 'in_progress', 'closed'):\n"
+        "        return {'ok': False, 'error': "
+        f"'{_LIVE_STATUS_ERROR}'}}\n"
+        "    return {'ok': True}\n"
+    )
+    aligned, changed = align_spec_to_handler_source(llm, handler)
+    assert "status" in changed
+    sample = _sample_payload(aligned)
+    assert sample["status"] == "open"
+    accepted = _run_guard(aligned, sample)
+    assert accepted.get("ok") is True, (sample, accepted)
+
+
+def test_sess_5dfb4a3_bare_status_samples_open_not_the_word_sample():
+    field = {"name": "status", "type": "str", "required": True}
+    assert _sample_payload({"fields": [field]})["status"] == "open"
+    assert _sample_value(field) == "open"
+    assert _sample_value({"name": "job_status", "type": "str"}) == "open"
+
+
+def test_sess_5dfb4a3_e2e_smoke_dumps_bytes_without_typeerror(tmp_path):
+    """Live smoke: document_engine / visit_notes results include PDF bytes."""
+    import json
+    from pathlib import Path
+
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext, run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    class _Cap:
+        def __init__(self, cid):
+            self.capability_id = cid
+            self.block_ids = ()
+
+    class _Plan:
+        capabilities = (_Cap("visit_notes"), _Cap("client_pet_records"))
+
+    class _Blueprint:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary-care"
+
+    root = tmp_path / "ws"
+    (root / "app" / "actions").mkdir(parents=True)
+    ws = RoleWorkspace(BuildRole.TESTER, root)
+    specs = {
+        "visit_notes": ensure_record_envelope(
+            _llm_spec("visit_note", {"notes": "annual exam"})
+        )[0],
+        "client_pet_records": ensure_record_envelope(
+            _llm_spec("pet_record", {"pet_name": "Nala"})
+        )[0],
+    }
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=("PRODUCT (pilot-marked suite): suite is red",),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": specs,
+        },
+    )
+    assert run_tester(ctx).ok
+    smoke = ws.read_text(Path("tests") / "test_smoke.py")
+    assert "test_every_capability_executes_end_to_end" in smoke
+    assert "_json.dumps(out, default=str)" in smoke
+    assert "_json.dumps(out)" not in smoke.replace("_json.dumps(out, default=str)", "")
+
+    out = {
+        "ok": True,
+        "capability": "visit_notes",
+        "results": {"document_engine": {"content": b"%PDF-1.1\n"}},
+    }
+    dumped = json.dumps(out, default=str)
+    assert '"ok": true' in dumped.lower() or '"ok": True' in dumped or "ok" in dumped
+
+
+def test_sess_5dfb4a3_product_detail_names_live_status_and_bytes_classes():
+    status_findings = [
+        "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload",
+        "E   AssertionError: appointment_scheduling rejected a payload "
+        f"built from its own schema: {_LIVE_STATUS_ERROR}",
+    ]
+    status_detail = classify_suite_red(status_findings)
+    assert "schema sample refused" in status_detail
+    assert "status vocabulary" in status_detail
+    assert "appointment_scheduling" in status_detail
+    assert _LIVE_STATUS_ERROR in status_detail
+
+    bytes_findings = [
+        "ERROR tests/test_smoke.py::test_every_capability_executes_end_to_end",
+        f"E   TypeError: {_LIVE_BYTES_ERROR}",
+    ]
+    bytes_detail = classify_suite_red(bytes_findings)
+    assert "not JSON serializable" in bytes_detail
+    assert _LIVE_BYTES_ERROR in bytes_detail

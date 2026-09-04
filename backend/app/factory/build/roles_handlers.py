@@ -3040,6 +3040,12 @@ def _sample_value(field: Dict[str, Any]) -> Any:
             return True
         if name.endswith("_count") or name in {"capacity", "quantity", "login_count"}:
             return 1
+        # Factory envelope default. A bare ``status`` used to sample as
+        # "sample", which the fallback / coder guard rejects with
+        # ``status must be one of: open, in_progress, closed``
+        # (sess_5dfb4a3 appointment_scheduling).
+        if name == "status" or name.endswith("_status"):
+            return "open"
     ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
@@ -3275,10 +3281,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             '    elif out.get("ok") is False:',
             f"        failures.append('{name} rejected a payload built from its own "
             "schema: ' + str(out.get('error')))",
-            "    elif '\\\"status\\\": \\\"error\\\"' in _json.dumps(out) or "
-            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out):",
+            "    elif '\\\"status\\\": \\\"error\\\"' in "
+            "_json.dumps(out, default=str) or "
+            "'\\\"status\\\": \\\"failed\\\"' in _json.dumps(out, default=str):",
             f"        failures.append('{name} reported ok around a failed block "
-            "call: ' + _json.dumps(out)[:300])",
+            "call: ' + _json.dumps(out, default=str)[:300])",
         ]
     if caps:
         smoke.append('    assert not failures, "; ".join(failures)')
