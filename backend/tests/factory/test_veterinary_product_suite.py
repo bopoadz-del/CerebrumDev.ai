@@ -140,7 +140,11 @@ def test_veterinary_product_prepare_repairs_live_product_symptoms():
             "event_bus", payload, product_name="VetCare Hub", roster=roster
         )
         assert isinstance(bus["topic"], str) and bus["topic"]
-        assert bus["channel"] == "mcp"
+        # Domain reminder `channel` (email/sms/…) is left alone; only a
+        # missing channel is filled with mcp (live notify miss).
+        assert isinstance(bus.get("channel"), str) and bus["channel"]
+        if "channel" not in domain:
+            assert bus["channel"] == "mcp"
         assert isinstance(bus.get("payload"), dict)
         assert isinstance(bus.get("message"), str) and bus["message"]
 
@@ -168,11 +172,13 @@ def test_veterinary_product_prepare_repairs_live_product_symptoms():
         if "database" in by_block:
             assert by_block["database"]["table"] == entity
         if "event_bus" in by_block:
-            assert by_block["event_bus"]["channel"] == "mcp"
+            assert by_block["event_bus"].get("channel")
             assert by_block["event_bus"]["message"]
         if "notification" in by_block:
-            assert by_block["notification"]["channel"] == "mcp"
+            assert by_block["notification"].get("channel")
             assert by_block["notification"]["message"]
+            if "channel" not in domain:
+                assert by_block["notification"]["channel"] == "mcp"
         if "queue" in by_block:
             assert isinstance(by_block["queue"].get("priority"), int)
 

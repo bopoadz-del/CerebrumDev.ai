@@ -324,6 +324,11 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
             assert factory["payload"] and emitted["payload"]
         if bid == "database":
             assert factory["table"] == emitted["table"] == "records"
+        if bid == "document_engine":
+            assert Path(factory["pdf_path"]).is_file()
+            assert Path(emitted["pdf_path"]).is_file()
+        if bid == "team":
+            assert factory["team_id"] == emitted["team_id"] == "team_4f473e37589a69bb"
     entity_factory = prepare_block_input(
         "database", domain, product_name="VetCare Hub", entity="pet_record"
     )
@@ -338,11 +343,6 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
     assert queue_factory["item_id"] == queue_emitted["item_id"] == 7
     assert queue_factory["priority"] == queue_emitted["priority"] == 2
     assert queue_factory["label"] == queue_emitted["label"] == "id-1"
-        if bid == "document_engine":
-            assert Path(factory["pdf_path"]).is_file()
-            assert Path(emitted["pdf_path"]).is_file()
-        if bid == "team":
-            assert factory["team_id"] == emitted["team_id"] == "team_4f473e37589a69bb"
 
 
 # -- property_reference_code / sample ↔ handler alignment -----------------
