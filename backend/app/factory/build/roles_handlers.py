@@ -3189,7 +3189,9 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         if route_src:
             parts.append(route_src)
         if not parts:
-            specs[cid], _env = ensure_record_envelope(specs.get(cid) or {})
+            existing = specs.get(cid)
+            if isinstance(existing, dict) and existing:
+                specs[cid], _env = ensure_record_envelope(existing)
             continue
         specs[cid], _changed = align_spec_to_handler_source(
             specs.get(cid) or {},
