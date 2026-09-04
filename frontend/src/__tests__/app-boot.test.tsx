@@ -22,6 +22,7 @@ const {
   domainsListMock,
   productGetMock,
   billingStatusMock,
+  getHealthMock,
 } = vi.hoisted(() => ({
   meMock: vi.fn(),
   verifyEmailMock: vi.fn(),
@@ -31,6 +32,7 @@ const {
   domainsListMock: vi.fn(),
   productGetMock: vi.fn(),
   billingStatusMock: vi.fn(),
+  getHealthMock: vi.fn(),
 }))
 
 vi.mock('../api/factory', async (importOriginal) => {
@@ -62,6 +64,7 @@ vi.mock('../api/factory', async (importOriginal) => {
       ...actual.billing,
       status: (...args: unknown[]) => billingStatusMock(...args),
     },
+    getHealth: (...args: unknown[]) => getHealthMock(...args),
   }
 })
 
@@ -106,6 +109,10 @@ describe('App boot', () => {
     productGetMock.mockResolvedValue({})
     billingStatusMock.mockReset()
     billingStatusMock.mockResolvedValue({ entitled: true })
+    getHealthMock.mockReset()
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: { available: true, credentials_file_present: true },
+    })
     ;(clearSession as ReturnType<typeof vi.fn>).mockClear()
     ;(signOut as ReturnType<typeof vi.fn>).mockClear()
   })

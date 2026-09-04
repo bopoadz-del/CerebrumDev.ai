@@ -1,4 +1,9 @@
-import type { BuildAuthorship, BuildStatus } from './api/factory'
+import type {
+  BuildAuthorship,
+  BuildStatus,
+  FactoryCodeCliProbe,
+} from './api/factory'
+import { FACTORY_CODE_CLI_CREDENTIALS_MISSING } from './api/factory'
 
 /** Match backend build_jobs._STALE_AFTER_S — quiet model call vs frozen UI. */
 export const CLIENT_STALE_AFTER_S = 180
@@ -295,6 +300,56 @@ export function withClientStall(
         ? build.detail
         : `no build activity for ${Math.round(age / 60)} min — the build process may be gone; generate again`,
   }
+}
+
+/**
+ * Platforms page-head. Never invite a successful Download when the zip
+ * is failed, stalled, in-flight, missing, or not pilot-ready.
+ */
+export function platformsLeadCopy(
+  build: BuildStatus | null | undefined,
+  hasGeneration: boolean,
+): string {
+  if (!hasGeneration) {
+    return 'What the factory built for you. A downloadable export appears here only after a pilot-ready run succeeds.'
+  }
+  if (!build || build.state === 'building' || build.state === 'not_started' || build.state === 'unknown') {
+    return 'The coding agent is writing this platform. Export stays closed until a pilot-ready run succeeds.'
+  }
+  if (build.state === 'failed') {
+    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+  }
+  if (build.state === 'stalled') {
+    return 'The last build stalled. Download unavailable — build stalled. Export is refused until a fresh run succeeds.'
+  }
+  if (build.state === 'succeeded' && !isPilotZipReady(build)) {
+    return 'A code-cycle prototype is on this page. This is not a full-pilot export — do not treat it as launch-ready.'
+  }
+  return 'What the factory built for you. Download the export and launch it anywhere.'
+}
+
+const MISSING_KIMI_CLI_CREDS =
+  'Kimi Code CLI credentials are missing (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
+  'Set KIMI_CODE_API_KEY so boot writes ~/.kimi-code/config.toml. ' +
+  'The CLI binary can be present while credentials_file_present is false — ' +
+  'CEREBRUM_LLM_API_KEY and HTTP architect keys do not authenticate the Kimi Code CLI.'
+
+/**
+ * Operator copy from GET /health factory_code_cli. Named blocker wins;
+ * credentials_file_present=false also fires unless Kimi credentials are
+ * explicitly not required (Claude login).
+ */
+export function factoryCodeCliHonesty(
+  probe: FactoryCodeCliProbe | null | undefined,
+): string | null {
+  if (!probe) return null
+  if (probe.blocker === FACTORY_CODE_CLI_CREDENTIALS_MISSING) {
+    return MISSING_KIMI_CLI_CREDS
+  }
+  if (probe.credentials_file_present === false && probe.requires_kimi_credentials !== false) {
+    return MISSING_KIMI_CLI_CREDS
+  }
+  return null
 }
 
 /** Honest export CTA. Gold "Download platform export" is only for Store-green. */

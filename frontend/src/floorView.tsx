@@ -10,6 +10,7 @@ import {
   type ChatEvent,
   type ProductDesign,
 } from './api/factory'
+import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import {
   exportAffordance,
   formatFinishedAuthorship,
@@ -384,6 +385,7 @@ export function Floor({
   const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const [controlBusy, setControlBusy] = useState(false)
+  const cliHonesty = useFactoryCodeCliHonesty()
   const bottomRef = useRef<HTMLDivElement>(null)
   // Approve appends a pending factory bubble before the generation SSE.
   // The msgs-sync effect must not treat that leftover blueprint card as
@@ -618,6 +620,7 @@ export function Floor({
   }
 
   async function download() {
+    if (exportAffordance(liveCoderBuild).disabled) return
     setDownloading(true)
     setDownloadError(null)
     try {
@@ -691,6 +694,7 @@ export function Floor({
           daily chat and exports. Answers are grounding-checked: when a claim can't be
           verified it is withheld, not invented.
         </p>
+        <FactoryCodeCliStatus message={cliHonesty} testId="floor-factory-cli-status" />
       </header>
       <div className="chat-scroll">
         {msgs.map((m, i) => {

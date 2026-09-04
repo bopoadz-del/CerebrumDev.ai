@@ -599,3 +599,28 @@ export const billing = {
 export const domains = {
   list: () => req<{ domains?: unknown[] }>('GET', '/v1/domains/'),
 }
+
+/** Named /health blocker when Kimi Code CLI is on PATH but config.toml is missing. */
+export const FACTORY_CODE_CLI_CREDENTIALS_MISSING = 'FACTORY_CODE_CLI_CREDENTIALS_MISSING'
+
+export type FactoryCodeCliProbe = {
+  command?: string | null
+  available?: boolean
+  resolved?: string | null
+  credentials_file_present?: boolean
+  requires_cli?: boolean
+  requires_kimi_credentials?: boolean
+  blocker?: string | null
+  error?: string
+}
+
+export type HealthStatus = {
+  status?: string
+  factory_code_cli?: FactoryCodeCliProbe
+  [k: string]: unknown
+}
+
+/** Public /health — operators read factory_code_cli.blocker from here. */
+export function getHealth(): Promise<HealthStatus> {
+  return req<HealthStatus>('GET', '/health')
+}

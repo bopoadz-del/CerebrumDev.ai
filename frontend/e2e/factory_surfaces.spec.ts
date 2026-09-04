@@ -141,6 +141,24 @@ async function mockVerifiedFactory(
       }),
     })
   })
+  await page.route('**/health', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/health') {
+      await route.fallback()
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ok',
+        factory_code_cli: {
+          available: true,
+          credentials_file_present: true,
+          requires_kimi_credentials: true,
+        },
+      }),
+    })
+  })
 }
 
 function sse(event: string, data: unknown): string {
@@ -615,6 +633,9 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
   await expect(refused).toBeVisible()
   await expect(refused).toBeDisabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Download unavailable — build failed/)
+  await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
+  await expect(page.getByText(/Download the export and launch it anywhere/i)).toHaveCount(0)
 })
 
 test('Floor CODE_GREEN level_grade never says Finished or founding-ready', async ({ page }) => {
@@ -1211,4 +1232,46 @@ test('narrow viewport keeps nav icons and accessible labels (no blank pills)', a
     'aria-current',
     'page',
   )
+})
+
+test('Floor and Platforms name FACTORY_CODE_CLI_CREDENTIALS_MISSING from /health', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/health')
+  await page.route('**/health', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/health') {
+      await route.fallback()
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ok',
+        factory_code_cli: {
+          available: true,
+          credentials_file_present: false,
+          requires_kimi_credentials: true,
+          blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  const floorBanner = page.getByTestId('floor-factory-cli-status')
+  await expect(floorBanner).toBeVisible({ timeout: 20_000 })
+  await expect(floorBanner).toContainText('Kimi Code CLI credentials missing')
+  await expect(floorBanner).toContainText('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
+  await expect(floorBanner).toContainText('KIMI_CODE_API_KEY')
+  await expect(floorBanner).toContainText('config.toml')
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  const platformsBanner = page.getByTestId('platforms-factory-cli-status')
+  await expect(platformsBanner).toBeVisible()
+  await expect(platformsBanner).toContainText('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
+  await expect(platformsBanner).toContainText('KIMI_CODE_API_KEY')
+  await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
 })

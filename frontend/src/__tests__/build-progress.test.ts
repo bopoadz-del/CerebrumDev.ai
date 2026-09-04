@@ -4,6 +4,7 @@ import {
   CLIENT_STALL_AFTER_S,
   eventAgeSeconds,
   exportAffordance,
+  factoryCodeCliHonesty,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -12,6 +13,7 @@ import {
   isPilotZipReady,
   levelGradeLabel,
   phaseBarFraction,
+  platformsLeadCopy,
   stampBuildObservation,
   threeGateEntries,
   withClientStall,
@@ -245,6 +247,57 @@ describe('build progress copy', () => {
         { pilotReady: false },
       ),
     ).not.toMatch(/Finished/)
+  })
+
+  it('platformsLeadCopy never invites Download when export is not pilot-ready', () => {
+    expect(platformsLeadCopy(null, false)).not.toMatch(/Download the export/i)
+    expect(platformsLeadCopy({ state: 'building' }, true)).not.toMatch(/Download the export/i)
+    expect(platformsLeadCopy({ state: 'failed', pilot_ready: false }, true)).toMatch(
+      /Download unavailable — build failed/,
+    )
+    expect(platformsLeadCopy({ state: 'failed', pilot_ready: false }, true)).not.toMatch(
+      /Download the export/i,
+    )
+    expect(platformsLeadCopy({ state: 'stalled' }, true)).toMatch(/Download unavailable — build stalled/)
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: false }, true)).not.toMatch(
+      /Download the export/i,
+    )
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).toMatch(
+      /Download the export/,
+    )
+  })
+
+  it('factoryCodeCliHonesty names Kimi Code CLI credentials, not a vague credentials string', () => {
+    expect(factoryCodeCliHonesty(null)).toBeNull()
+    expect(
+      factoryCodeCliHonesty({
+        available: true,
+        credentials_file_present: true,
+      }),
+    ).toBeNull()
+    expect(
+      factoryCodeCliHonesty({
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: false,
+      }),
+    ).toBeNull()
+    const named = factoryCodeCliHonesty({
+      available: true,
+      credentials_file_present: false,
+      blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+    })
+    expect(named).toMatch(/Kimi Code CLI credentials are missing/)
+    expect(named).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
+    expect(named).toMatch(/KIMI_CODE_API_KEY/)
+    expect(named).toMatch(/config\.toml/)
+    const fileOnly = factoryCodeCliHonesty({
+      available: true,
+      credentials_file_present: false,
+      requires_kimi_credentials: true,
+    })
+    expect(fileOnly).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
+    expect(fileOnly).toMatch(/KIMI_CODE_API_KEY/)
   })
 
   it('gold Download is only for a Store-green success', () => {
