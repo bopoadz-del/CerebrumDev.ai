@@ -14,6 +14,7 @@ from app.factory.build.authority import kernel_seat_brief
 from app.factory.build.level_grade import Level
 from app.factory.build.product_gate import GATE_SCOPES
 from app.factory.build.schema_accept import schema_accept_brief_contract
+from app.factory.build.workflow_accept import workflow_accept_brief_contract
 
 #: Shared system brief for every WRITER / rework coder call.
 CODING_AGENT_BRIEF = f"""
@@ -50,6 +51,7 @@ Contracts you must honour on every capability you write:
   invent a second, stricter contract the spec cannot express.
 - Offline platform: no network, no HTTP store callbacks, channel "mcp" only.
 - {schema_accept_brief_contract()}
+- {workflow_accept_brief_contract()}
 
 This brief is the horizon. The user message is the compiled whole-job brief
 (TARGET / STEP 0 INVENTORY / DO / ACCEPTANCE) — not one handle(), one spec,

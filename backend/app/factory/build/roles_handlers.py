@@ -2693,16 +2693,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         elif (
             use_brief_dispatch
             and dispatch
-            and dispatch.via == "cli"
             and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
             and ctx.workspace.exists(handler_rel)
         ):
-            # FACTORY_CODE_CLI already wrote the module the brief asked for.
-            # Overwriting it with the fallback envelope template is how
-            # every capability then refused a payload built from the
-            # replacement model (VetCare sess_91553364089d4970).
+            # FACTORY_CODE_CLI / oneshot harvest already wrote the module
+            # the brief asked for. Overwriting it with the fallback
+            # envelope template is how brief-driven workflow steps died
+            # (VetCare sess_91553364089d4970 schema-accept; sess_e94ddfa
+            # event_bus step_N).
             sources[cid] = (
-                f"coder CLI ({dispatch.model})" if dispatch.model else "FACTORY_CODE_CLI"
+                f"coder CLI ({dispatch.model})" if dispatch.model
+                else ("FACTORY_CODE_CLI" if dispatch.via == "cli" else "harvested workspace handler")
             )
             ctx.note(
                 f"kept CLI handler {cid} ({sources[cid]})",

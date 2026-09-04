@@ -26,6 +26,10 @@ from app.factory.build.schema_accept import (
     schema_accept_acceptance_line,
     schema_accept_rules_text,
 )
+from app.factory.build.workflow_accept import (
+    workflow_accept_acceptance_line,
+    workflow_accept_rules_text,
+)
 from app.factory.build.intake_blueprint import (
     field_source_index,
     intake_from_product_blueprint,
@@ -464,6 +468,8 @@ def render_slot_bodies(
         "",
         schema_accept_rules_text(),
         "",
+        workflow_accept_rules_text(),
+        "",
         "Three tests per block are already owned by the harness (TESTER is not an LLM role).",
         "Scope READS / WRITES / NEVER explicitly in each handler you author.",
         f"Budget wall: {int(budget_s)}s (FACTORY_CODER_BUDGET_S / staged wall).",
@@ -524,6 +530,7 @@ def render_slot_bodies(
         "- own gates green  [check:gates]",
         "- one-record round-trip per capability (POST creates, GET returns it)  [check:round_trip]",
         schema_accept_acceptance_line(),
+        workflow_accept_acceptance_line(),
         "- the domain pack's domain_acceptance_conditions hold  [check:domain_acceptance]",
         f"- envelope vocab {', '.join(ENVELOPE_STATUS_VALUES)} enforced by schema, not prose  [check:envelope_schema]",
         f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:product_gate]",
@@ -549,6 +556,7 @@ def render_slot_bodies(
         "- assuming a REUSE id is present when STEP 0 flagged it missing",
         "- inventing READS/WRITES/NEVER/ACCEPTANCE when block.json has not declared them",
         "- inventing a stricter accept-contract than the spec (writer_behaviour schema-accept)",
+        "- forwarding the PRODUCT schema sample as an event_bus workflow step input",
         "- one handle() / one spec / one route at a time — this brief is the whole job",
         "- weakening honesty or exporting when the pilot suite is red",
     )

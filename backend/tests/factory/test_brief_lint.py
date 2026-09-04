@@ -77,6 +77,55 @@ def test_mutation_invented_scope_line_is_rejected():
     assert any("orphan line" in e for e in result.errors)
 
 
+def test_mutation_drops_event_bus_workflow_accept_when_declared():
+    """Fail-closed: a VetCare-shaped brief must keep the PRODUCT contract."""
+    from app.factory.build.brief_compiler import compile_brief
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap(
+                "reminders_and_notifications",
+                ["notification", "workflow", "event_bus"],
+                "COMPOSE",
+            )
+        ),
+        store_ids={"notification", "workflow", "event_bus"},
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace(
+        "test_every_capability_route_accepts_payload", "some_other_route_test"
+    )
+    compiled.text = compiled.text.replace("[check:event_bus_workflow]", "")
+    compiled.text = compiled.text.replace("event_bus_workflow", "event_bus_other")
+    compiled.text = compiled.text.replace("workflow: step_N (event_bus): error", "")
+    compiled.text = compiled.text.replace(
+        "schema sample refused (event_bus workflow step)", ""
+    )
+    compiled.text = compiled.text.replace("never the raw schema sample", "")
+    compiled.text = compiled.text.replace("channel=mcp", "channel=email")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
+
+
 def test_mutation_drops_writer_behaviour_acceptance():
     compiled = _compiled()
     compiled.text = compiled.text.replace(
