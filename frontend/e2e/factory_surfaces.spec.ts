@@ -887,12 +887,17 @@ test('Floor 510s coder call inside the 40 min wall stays Building — never STOP
   await page.goto('/')
   await expect(page.getByTestId('floor-coder-takeover')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+  await expect(page.getByText(/still inside 2400s watchdog/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toHaveCount(0)
   await expect(page.getByText(/coder LLM timed out/)).toHaveCount(0)
   await expectNoGoldFinished(page)
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   const building = page.getByRole('button', { name: 'Building…' })
   await expect(building).toBeVisible()
   await expect(building).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
 })
 
 test('Floor overdue coder call is STOPPED and Platforms refuses export', async ({ page }) => {
