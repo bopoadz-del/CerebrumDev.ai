@@ -92,6 +92,10 @@ def sample_for_spec(
         ftype = field.get("type") or "str"
         if field.get("allowed_values"):
             sample[name] = field["allowed_values"][0]
+        elif str(name).lower() == "status" or str(name).lower().endswith("_status"):
+            # Same envelope default as ``_sample_value``. Bare status used
+            # to emit the S10/S12 placeholder, which PRODUCT refused.
+            sample[name] = "open"
         elif ftype == "int":
             sample[name] = int(field["min"]) if field.get("min") is not None else 1
         elif ftype == "float":

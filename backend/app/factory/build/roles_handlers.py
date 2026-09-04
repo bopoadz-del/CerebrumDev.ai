@@ -25,11 +25,13 @@ from app.factory.build.offline_adapters import (
 )
 from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
+    extract_capability_route_source,
     render_block_inputs_module,
     sanitize_python_identifier,
 )
 from app.factory.build.block_obligations import (
     BlockObligationError,
+    ENVELOPE_STATUS_VALUES,
     assert_feedable,
     augment_model_spec,
     dependency_obligations,
@@ -1163,7 +1165,7 @@ def _fallback_spec(cap: Any) -> Dict[str, Any]:
                 "name": "status",
                 "type": "str",
                 "required": True,
-                "allowed_values": ["open", "in_progress", "closed"],
+                "allowed_values": list(ENVELOPE_STATUS_VALUES),
             },
             {
                 "name": "quantity",
@@ -2640,14 +2642,32 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 spec,
                 previous_attempt=previous_routes.get(cid) if ctx.work_list else None,
             )
-            body, route_source = authored or (
-                _templated_route_body(spec),
+            raw_body, route_source = authored or (
+                None,
                 "kernel execute_action template",
             )
-            if authored:
+            if authored and raw_body is not None:
+                # #311 mined the handler only. Live sess_1fd1d54c: the
+                # refuse was the route (coder-invented factory status
+                # after an LLM scheduled list). Align from handler +
+                # raw route BEFORE baking ``_constraint_guard`` so the
+                # prepended vocab and the schema sample agree.
+                handler_rel = Path("app") / "actions" / f"{cid.replace('-', '_')}.py"
+                runtime_src = raw_body
+                if ctx.workspace.exists(handler_rel):
+                    runtime_src = (
+                        ctx.workspace.read_text(handler_rel) + "\n" + raw_body
+                    )
+                specs[cid], _changed = align_spec_to_handler_source(
+                    specs[cid], runtime_src
+                )
+                specs[cid], _env = ensure_record_envelope(specs[cid])
+                spec = specs[cid]
                 # Coder bodies skip field constraints; the tasting-room
                 # TESTER then failed agent "reject" cases the route accepted.
-                body = _constraint_guard(spec) + "\n" + body
+                body = _constraint_guard(spec) + "\n" + raw_body
+            else:
+                body = _templated_route_body(spec)
         body = _ensure_route_persists_payload(body)
         route_bodies[cid] = body
         name = cid.replace("-", "_")
@@ -3148,16 +3168,34 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     }
     # Late align: coder rework may have rewritten handlers after WRITER's
     # first align, or left vocab/type on the handler that the spec never
-    # declared. Re-mine on-disk handlers so _sample_payload matches the
-    # body TESTER is about to exercise (live VetConnect miss).
+    # declared. Re-mine on-disk handlers AND the route (``_constraint_guard``
+    # + coder body) so _sample_payload matches the body TESTER is about
+    # to exercise. #311 mined the handler only; sess_1fd1d54c's refuse
+    # lived on the route.
+    previous_routes = dict(ctx.state.get("route_bodies") or {})
+    routes_text = ""
+    routes_rel = Path("app") / "routes.py"
+    if ctx.workspace.exists(routes_rel):
+        routes_text = ctx.workspace.read_text(routes_rel)
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
         handler_rel = Path("app") / "actions" / f"{cid.replace('-', '_')}.py"
-        if not ctx.workspace.exists(handler_rel):
+        parts: List[str] = []
+        if ctx.workspace.exists(handler_rel):
+            parts.append(ctx.workspace.read_text(handler_rel))
+        route_src = previous_routes.get(cid) or extract_capability_route_source(
+            routes_text, cid
+        )
+        if route_src:
+            parts.append(route_src)
+        if not parts:
+            existing = specs.get(cid)
+            if isinstance(existing, dict) and existing:
+                specs[cid], _env = ensure_record_envelope(existing)
             continue
         specs[cid], _changed = align_spec_to_handler_source(
             specs.get(cid) or {},
-            ctx.workspace.read_text(handler_rel),
+            "\n".join(parts),
         )
         specs[cid], _env = ensure_record_envelope(specs[cid])
     entities = {

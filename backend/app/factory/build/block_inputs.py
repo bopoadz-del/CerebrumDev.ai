@@ -33,12 +33,19 @@ by ``create_team``) which is replaced by the platform precondition id.
 
 from __future__ import annotations
 
+import ast
 import json
 import keyword
 import os
 import re
 import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+
+from app.factory.build.block_obligations import (
+    ENVELOPE_STATUS_VALUES,
+    is_envelope_status_field,
+    is_envelope_status_vocab,
+)
 
 #: Path-like keys document_engine (and SCHEMA_OBLIGATIONS) accept.
 _DOC_PATH_KEYS = (
@@ -189,6 +196,13 @@ _ISINSTANCE_INT = re.compile(
     + r""")['\"][^,]*,\s*int""",
 )
 _VALUE_TOKEN = re.compile(r"""['\"]([^'\"]+)['\"]|([A-Za-z][\w-]*)""")
+
+#: ``_constraint_guard`` bakes ``constraints = {'status': {'allowed_values': [...]}}``.
+#: #311 mined ``payload.get('status') not in (...)`` on the handler; the live
+#: refuse (sess_1fd1d54c) was this literal on the route.
+_CONSTRAINTS_ASSIGN = re.compile(
+    r"constraints\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
+)
 
 
 def split_execute_action(
@@ -782,6 +796,73 @@ def _parse_value_list(raw: str) -> List[str]:
     return values
 
 
+def _assign_allowed_values(slot: Dict[str, Any], values: Sequence[str]) -> None:
+    """Copy mined vocab onto a contract. Envelope status wins over LLM lists."""
+    incoming = list(values)
+    if not incoming:
+        return
+    current = slot.get("allowed_values")
+    if is_envelope_status_field(slot.get("name")):
+        if is_envelope_status_vocab(current) and not is_envelope_status_vocab(incoming):
+            return
+        if is_envelope_status_vocab(incoming):
+            incoming = list(ENVELOPE_STATUS_VALUES)
+    slot["allowed_values"] = incoming
+    slot.setdefault("type", "str")
+
+
+def extract_capability_route_source(routes_text: str, capability_id: str) -> str:
+    """Slice of ``app/routes.py`` for one capability (guard + coder body)."""
+    text = routes_text or ""
+    cid = str(capability_id or "")
+    name = cid.replace("-", "_")
+    start = -1
+    for marker in (f"# --- {cid} ", f"# --- {name} "):
+        start = text.find(marker)
+        if start >= 0:
+            break
+    if start < 0:
+        match = re.search(
+            rf"async def {re.escape(name)}_create\(",
+            text,
+        )
+        if not match:
+            return ""
+        start = match.start()
+    rest = text[start:]
+    nxt = re.search(r"\n# --- ", rest[4:])
+    if nxt:
+        return rest[: nxt.start() + 4]
+    return rest
+
+
+def _mine_constraints_literal(
+    text: str,
+    touch,
+) -> None:
+    """Read baked ``constraints = {...}`` from a route / handler body."""
+    for match in _CONSTRAINTS_ASSIGN.finditer(text or ""):
+        try:
+            parsed = ast.literal_eval(match.group(1))
+        except (ValueError, SyntaxError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        for name, rules in parsed.items():
+            if not isinstance(rules, dict):
+                continue
+            slot = touch(name)
+            if not slot:
+                continue
+            allowed = rules.get("allowed_values")
+            if isinstance(allowed, (list, tuple)) and allowed:
+                _assign_allowed_values(slot, [str(v) for v in allowed])
+            if rules.get("min") is not None:
+                slot.setdefault("min", rules["min"])
+            if rules.get("max") is not None:
+                slot.setdefault("max", rules["max"])
+
+
 def _inferred_field_shape(name: str) -> Dict[str, Any]:
     """Type hint from a handler-required name when the body has no type check.
 
@@ -813,14 +894,21 @@ def _merge_field_contract(
         field["type"] = ctype
         changed = True
     allowed = contract.get("allowed_values")
-    # Handler-mined vocab is the runtime guard. Live sess_5dfb4a3:
-    # appointment_scheduling LLM spec said scheduled/completed (or bare
-    # str → sample="sample") while the coder handler enforced the factory
-    # envelope ``open, in_progress, closed``. Keeping the LLM list left
-    # accept-payload red through the rework budget.
+    # Handler/route-mined vocab is the runtime guard. Live sess_5dfb4a3
+    # and sess_1fd1d54c: appointment_scheduling LLM spec said
+    # scheduled/completed (or bare str → sample="sample") while the
+    # route ``_constraint_guard`` / coder handler enforced the factory
+    # envelope ``open, in_progress, closed``. Envelope status already on
+    # the field must not be overwritten by a later LLM list.
     if allowed and list(field.get("allowed_values") or []) != list(allowed):
-        field["allowed_values"] = list(allowed)
-        changed = True
+        current = field.get("allowed_values")
+        fname = str(field.get("name") or "")
+        if is_envelope_status_field(fname) and is_envelope_status_vocab(current):
+            if not is_envelope_status_vocab(allowed):
+                allowed = None
+        if allowed:
+            field["allowed_values"] = list(allowed)
+            changed = True
     if contract.get("min") is not None and field.get("min") is None:
         field["min"] = contract["min"]
         changed = True
@@ -874,15 +962,15 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
         slot = _touch(_match_field_name(match))
         values = _parse_value_list(match.group("values"))
         if slot and values:
-            slot["allowed_values"] = values
-            slot.setdefault("type", "str")
+            _assign_allowed_values(slot, values)
 
     for match in _GET_NOT_IN.finditer(text):
         slot = _touch(match.group(1))
         values = _parse_value_list(match.group(2))
         if slot and values:
-            slot["allowed_values"] = values
-            slot.setdefault("type", "str")
+            _assign_allowed_values(slot, values)
+
+    _mine_constraints_literal(text, _touch)
 
     for match in _MUST_BE_BOOL.finditer(text):
         slot = _touch(_match_field_name(match))
