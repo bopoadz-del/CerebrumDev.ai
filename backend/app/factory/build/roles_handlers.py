@@ -278,21 +278,66 @@ def _rewrite_runtime_imports(text: str) -> str:
 
 
 def _rewrite_shim_constructors(text: str) -> str:
-    """Live tasting-room CLONER shipped shims that do ``block_cls()``.
+    """Rewrite Store block construction that omits HAL/config.
 
-    DatabaseBlock.__init__ requires ``hal_block`` and ``config``. Instantiating
-    with ``None`` then died on ``hal_block.cursor()`` in TESTER.
+    Kit shims used ``block_cls()``. Live sess_f1fe691 (VetCare Hub) PRODUCT
+    then failed inside the Store *workflow* runtime, not the kit shim:
+
+        workflow: step_0 (database): DatabaseBlock.__init__() missing 2
+        required positional arguments: 'hal_block' and 'config'
+
+    That module constructs children via ``get_block(...)()``, a name
+    assigned from ``get_block``, or ``DatabaseBlock()`` after the
+    Store-host ``_create_block_instance`` import fails. Only shims were
+    rewritten; the runtime slice was not.
     """
-    if not re.search(r"\bblock_cls\s*\(\s*\)", text):
+    if not text:
         return text
-    rewritten = re.sub(
+    original = text
+    text = re.sub(
+        r"get_block\(([^()\n]+)\)\s*\(\s*\)",
+        r"_instantiate_store_block(get_block(\1))",
+        text,
+    )
+    assigned = {
+        match.group(1)
+        for match in re.finditer(r"(?m)^[ \t]*(\w+)\s*=\s*get_block\(", text)
+        if match.group(1) not in {"_instantiate_store_block", "get_block"}
+    }
+    for name in assigned:
+        text = re.sub(
+            rf"\b{re.escape(name)}\s*\(\s*\)",
+            f"_instantiate_store_block({name})",
+            text,
+        )
+    text = re.sub(
         r"\bblock_cls\s*\(\s*\)",
         "_instantiate_store_block(block_cls)",
         text,
     )
-    if "def _instantiate_store_block" not in rewritten:
-        rewritten = _INSTANTIATE_HELPER.lstrip("\n") + "\n" + rewritten
-    return rewritten
+    text = re.sub(
+        r"\b([A-Z]\w*Block)\s*\(\s*\)",
+        r"_instantiate_store_block(\1)",
+        text,
+    )
+    if text == original:
+        return text
+    if "def _instantiate_store_block" not in text:
+        text = _INSTANTIATE_HELPER.lstrip("\n") + "\n" + text
+    return text
+
+
+def _prepare_cloned_python(text: str) -> str:
+    """HAL DI + result-key access on every vendored .py (shim or runtime)."""
+    from app.factory.build.offline_adapters import (
+        emit_result_key_access,
+        emit_store_host_di,
+    )
+
+    text = _rewrite_shim_constructors(text)
+    text = emit_result_key_access(text)
+    text = emit_store_host_di(text)
+    return emit_instantiate_ready(text)
 
 
 def _store_block_defs(blocks_root: Path) -> Dict[str, tuple]:
@@ -669,6 +714,11 @@ def _vendor_runtime_slice(
         written.append(rel.as_posix())
         shipped[rel.as_posix()] = text
 
+    def _emit_store_module(mod: str, source: str) -> str:
+        return _prepare_cloned_python(
+            emit_runtime_module(mod, _rewrite_runtime_imports(source))
+        )
+
     base = Path("vendor") / "cerebrum"
     _write(
         base / "__init__.py",
@@ -705,7 +755,7 @@ def _vendor_runtime_slice(
                 source = py.read_text(encoding="utf-8", errors="replace")
                 _write(
                     base / "blocks" / mod / rel_inner,
-                    emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+                    _emit_store_module(mod, source),
                 )
             parsers_init = (
                 ctx.workspace.workspace / base / "blocks" / mod / "parsers" / "__init__.py"
@@ -724,7 +774,7 @@ def _vendor_runtime_slice(
                 source = sibling.read_text(encoding="utf-8", errors="replace")
                 _write(
                     base / "blocks" / f"{mod}.py",
-                    emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+                    _emit_store_module(mod, source),
                 )
             continue
         if not py_file.is_file():
@@ -739,11 +789,11 @@ def _vendor_runtime_slice(
             source = shadow.read_text(encoding="utf-8", errors="replace")
             _write(
                 base / "blocks" / f"{mod}.py",
-                emit_runtime_module(emit_mod, _rewrite_runtime_imports(source)),
+                _emit_store_module(emit_mod, source),
             )
             continue
         source = py_file.read_text(encoding="utf-8", errors="replace")
-        rewritten = emit_runtime_module(mod, _rewrite_runtime_imports(source))
+        rewritten = _emit_store_module(mod, source)
         if needs_document_engine_parsers_package(rewritten):
             # A module file cannot host a .parsers submodule. Convert to a
             # package so ``vendor.cerebrum.blocks.document_engine.parsers``
@@ -766,8 +816,9 @@ def _vendor_runtime_slice(
             if "__pycache__" in py.parts:
                 continue
             rel = shim_dir / py.relative_to(ctx.workspace.workspace / shim_dir)
-            text = _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
-            text = emit_instantiate_ready(_rewrite_shim_constructors(text))
+            text = _prepare_cloned_python(
+                _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
+            )
             lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
             ctx.workspace.write_text(rel, text)
             shipped[rel.as_posix()] = text

@@ -35,7 +35,9 @@ from app.factory.build.offline_adapters import (
     emit_instantiate_ready,
     emit_notification_mcp,
     emit_runtime_module,
+    emit_result_key_access,
     emit_storage_aiofiles,
+    emit_store_host_di,
     emit_vector_search_sklearn,
     needs_document_engine_parsers_package,
 )
@@ -75,6 +77,24 @@ def test_cloner_emission_contains_sqlite_init_contract():
     out = emit_instantiate_ready(shim)
     assert ENSURE_READY_MARKER in out
     assert "return _ensure_store_block_ready(call())" in out
+
+
+def test_cloner_emission_rewrites_result_key_and_store_host_di():
+    """Live sess_f1fe691: RuntimeError: 'result' + DatabaseBlock HAL miss."""
+    src = (
+        "        try:\n"
+        "            from app.dependencies import _create_block_instance\n"
+        "            inst = _create_block_instance(block_cls)\n"
+        "        except ImportError:\n"
+        "            inst = block_cls()\n"
+        "        return envelope['result']\n"
+    )
+    keyed = emit_result_key_access(src)
+    assert 'envelope.get("result", envelope)' in keyed
+    di = emit_store_host_di(keyed)
+    assert "from app.dependencies import _create_block_instance" not in di
+    assert "def _create_block_instance" in di
+    assert "def _instantiate_store_block" in di
 
 
 def test_cloner_emission_contains_notification_mcp_contract():

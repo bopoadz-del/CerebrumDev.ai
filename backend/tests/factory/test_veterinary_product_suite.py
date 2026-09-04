@@ -143,6 +143,15 @@ _VETCARE_CAPS = (
             "notes": "annual exam",
         },
     ),
+    (
+        "clinic_dashboard",
+        "dashboard",
+        ["dashboard", "analytics"],
+        {
+            "clinic_name": "VetCare Hub",
+            "metric": "visits",
+        },
+    ),
 )
 
 #: Alphabetically-first cap is client_pet_records; alphabetically-first
@@ -196,7 +205,9 @@ def test_llm_veterinary_specs_fail_product_guard_until_envelope():
         sample = _sample_payload(raw)
         assert "reference" not in sample
         enveloped, added = ensure_record_envelope(raw)
-        assert added == ["reference"], cid
+        assert "reference" in added, cid
+        if "status" not in domain:
+            assert "status" in added, cid
         refused = _run_guard(enveloped, sample)
         assert refused.get("ok") is False, (cid, sample, refused)
         assert "reference" in refused.get("error", ""), (cid, refused)
@@ -211,6 +222,7 @@ def test_veterinary_product_prepare_repairs_live_product_symptoms():
         enveloped, _ = ensure_record_envelope(_llm_spec(entity, domain))
         payload = _sample_payload(enveloped)
         assert payload["reference"]
+        assert payload["status"] == "open"
 
         db = prepare_block_input("database", payload, entity=entity, roster=roster)
         assert db["table"] == entity
@@ -793,3 +805,54 @@ def test_sess_1fd1d54c_tester_bakes_open_from_route_constraints(tmp_path):
     assert "'status': 'open'" in baked
     assert "'status': 'scheduled'" not in baked
     assert "test_every_capability_route_accepts_payload" in baked
+
+
+def test_sess_f1fe691_clinic_dashboard_envelope_adds_status():
+    """Live clinic_dashboard: Missing required field: status.
+
+    #312 rewrote an existing status vocabulary. The LLM clinic_dashboard
+    spec omitted the column, so the schema sample never sent status.
+    """
+    raw = _llm_spec("dashboard", {"clinic_name": "VetCare Hub", "metric": "visits"})
+    stale = _sample_payload(raw)
+    assert "status" not in stale
+    enveloped, added = ensure_record_envelope(raw)
+    assert "status" in added
+    sample = _sample_payload(enveloped)
+    assert sample["status"] == "open"
+    almost = {k: v for k, v in sample.items() if k != "status"}
+    refused = _run_guard(enveloped, almost)
+    assert refused.get("ok") is False
+    assert refused.get("error") == "Missing required field: status"
+    accepted = _run_guard(enveloped, sample)
+    assert accepted.get("ok") is True, (sample, accepted)
+    dash = prepare_block_input("dashboard", {"clinic_name": "VetCare Hub"})
+    assert dash["status"] == "open"
+
+
+def test_sess_f1fe691_reminders_result_key_is_not_required_on_envelope():
+    """Live automated_reminders: RuntimeError: 'result'."""
+    from app.factory.build.offline_adapters import emit_result_key_access
+    from app.factory.build.roles import _rewrite_shim_constructors
+
+    shim = (
+        "envelope = {'status': 'ok'}\n"
+        "if envelope.get('status') == 'error':\n"
+        "    raise RuntimeError(envelope['result'])\n"
+        "return envelope['result']\n"
+    )
+    out = emit_result_key_access(shim)
+    assert 'envelope.get("result", envelope)' in out
+    assert "envelope['result']" not in out
+
+    workflow = (
+        "output = {'status': 'success'}\n"
+        "step = output['result']\n"
+    )
+    rewritten = emit_result_key_access(workflow)
+    assert 'output.get("result", output)' in rewritten
+
+    # Constructor rewrite must not invent a cause — only rewrite zero-arg
+    # Store construction that produces the live TypeError.
+    live = "instance = DatabaseBlock()\n"
+    assert "_instantiate_store_block(DatabaseBlock)" in _rewrite_shim_constructors(live)

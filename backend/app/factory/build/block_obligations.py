@@ -143,6 +143,13 @@ ENVELOPE_REFERENCE_FIELD: Dict[str, Any] = {
 #: ``_constraint_guard`` / coder handler refused anything outside this set.
 ENVELOPE_STATUS_VALUES: tuple[str, ...] = ("open", "in_progress", "closed")
 
+ENVELOPE_STATUS_FIELD: Dict[str, Any] = {
+    "name": "status",
+    "type": "str",
+    "required": True,
+    "allowed_values": list(ENVELOPE_STATUS_VALUES),
+}
+
 
 def is_envelope_status_field(name: Optional[str]) -> bool:
     return str(name or "").strip().lower() == "status"
@@ -171,13 +178,14 @@ def normalize_envelope_status_field(field: Dict[str, Any]) -> bool:
 def ensure_record_envelope(
     spec: Optional[Dict[str, Any]],
 ) -> tuple:
-    """Ensure the factory envelope ``reference`` + ``status`` vocab.
+    """Ensure the factory envelope ``reference`` + ``status``.
 
     Returns ``(spec, added_names)``. Idempotent. Adds ``reference`` when
-    missing. When a ``status`` column already exists, its allowed_values
-    become ``open|in_progress|closed`` so schema samples and
-    ``_constraint_guard`` cannot disagree (live sess_1fd1d54c after #311
-    mined the handler but left the LLM list on the spec the route used).
+    missing. Adds ``status`` when missing (live sess_f1fe691 clinic_dashboard
+    refused schema-sample with ``Missing required field: status`` — #312
+    only rewrote an existing status vocabulary). When a ``status`` column
+    already exists, its allowed_values become ``open|in_progress|closed``
+    so schema samples and ``_constraint_guard`` cannot disagree.
     """
     if not spec:
         return spec, []
@@ -188,6 +196,9 @@ def ensure_record_envelope(
     if "reference" not in have:
         fields.append(dict(ENVELOPE_REFERENCE_FIELD))
         added.append("reference")
+    if "status" not in have:
+        fields.append(dict(ENVELOPE_STATUS_FIELD))
+        added.append("status")
     for field in fields:
         if normalize_envelope_status_field(field):
             status_changed = True
