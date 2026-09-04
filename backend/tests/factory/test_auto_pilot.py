@@ -19,11 +19,14 @@ import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.build.auto_pilot import (
+    AUTO_PILOT_CEILING_S,
     AUTO_PILOT_MAX_REWORK,
+    AUTO_PILOT_STAGE_2_S,
     AUTO_PILOT_WALL_CLOCK_S,
     factory_auto_pilot_enabled,
     factory_llm_ready,
 )
+from app.factory.build.budget_inspect import STAGE_1_S, STAGE_2_S
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.runner import BuildBudget, RoleRunner
@@ -103,16 +106,26 @@ def test_floor_budget_stays_a_code_phase_without_auto_pilot(monkeypatch):
     assert _phase_wall_clock_s() == 1500.0
 
 
-def test_floor_budget_grows_for_auto_pilot_and_explicit_pilot(monkeypatch):
+def test_floor_budget_starts_stage_1_not_a_silent_2h(monkeypatch):
     monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
     monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
     monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
+    assert AUTO_PILOT_WALL_CLOCK_S == STAGE_1_S == 1800.0
+    assert AUTO_PILOT_STAGE_2_S == STAGE_2_S == 2700.0
+    assert AUTO_PILOT_CEILING_S == 7200.0
     assert _wall_clock_s(auto_pilot=True) == AUTO_PILOT_WALL_CLOCK_S
+    assert _wall_clock_s(auto_pilot=True) != AUTO_PILOT_CEILING_S
     assert _max_rework(auto_pilot=True) == AUTO_PILOT_MAX_REWORK
     assert _phase_wall_clock_s(auto_pilot=True) == 5400.0
     assert _wall_clock_s(cycle="pilot") == AUTO_PILOT_WALL_CLOCK_S
     assert _max_rework(cycle="pilot") == AUTO_PILOT_MAX_REWORK
     assert _phase_wall_clock_s(cycle="pilot") == 5400.0
+
+
+def test_leftover_2h_build_wall_is_honoured_not_slashed(monkeypatch):
+    monkeypatch.setenv("FACTORY_BUILD_WALL_CLOCK_S", "7200")
+    assert _wall_clock_s(auto_pilot=True) == 7200.0
+    assert _wall_clock_s() == 7200.0
 
 
 def test_legacy_25min_phase_wall_does_not_cap_a_pilot_writer(monkeypatch):

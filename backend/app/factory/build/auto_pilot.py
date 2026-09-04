@@ -19,12 +19,16 @@ import os
 AUTO_PILOT_ENV = "FACTORY_AUTO_PILOT"
 KEYED_PATH_CI_ENV = "KEYED_PATH_CI"
 
-#: Combined Floor wall when the run will continue into a Store-green cycle.
-#: The code-only default (30 min) is what produced the 13.7 min SUCCESS.
-AUTO_PILOT_WALL_CLOCK_S = 7200.0
+#: Stage-1 Floor wall when a keyed run will continue toward Store-green.
+#: Start ~30 min, hard-stop, inspect, then maybe 45 min. Not a silent 2h.
+AUTO_PILOT_WALL_CLOCK_S = 1800.0
+AUTO_PILOT_STAGE_2_S = 2700.0
+#: Last-resort ceiling. Never granted without an inspect that asked for it.
+AUTO_PILOT_CEILING_S = 7200.0
 AUTO_PILOT_MAX_REWORK = 3
-#: Minimum remaining wall granted when a code cycle auto-opens pilot mid-run.
-PILOT_MIN_REMAINING_S = 5400.0
+#: When a code cycle auto-opens pilot, do not jump remaining to 90 min.
+#: Stay on the current staged wall; inspect-and-ramp owns extra time.
+PILOT_MIN_REMAINING_S = 0.0
 
 
 def _truthy(raw: str) -> bool:
