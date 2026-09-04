@@ -211,14 +211,14 @@ export function Platforms({
       {loading ? (
         <LoadingSkeleton label="Loading platforms" />
       ) : !gen ? (
-        <div className="panel empty-state">
+        <div className="panel empty-state" data-testid="platforms-empty-state">
           <h3>No platform built yet</h3>
           <p className="dim">Go to the Factory Floor and describe what you need. Your build lands here.</p>
           {design?.blueprint && !design.blueprint_approved && (
             <p className="dim">A blueprint is drafted on the floor — approve it to build.</p>
           )}
           {bp && (
-            <p className="dim">
+            <p className="dim" data-testid="platforms-draft-hint">
               Draft: <strong>{bp.product_name}</strong> ({bp.vertical})
             </p>
           )}

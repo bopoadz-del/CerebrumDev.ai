@@ -16,6 +16,67 @@ const BLUEPRINT = {
   ],
 }
 
+const LETTINGS_BLUEPRINT = {
+  product_name: 'Residential Lettings Platform',
+  vertical: 'residential_lettings',
+  summary: 'Factory golden for a residential-lettings platform.',
+  drafting_mode: 'golden_lettings',
+  drafting_note: 'Drafted from the golden residential-lettings blueprint.',
+  capabilities: [
+    {
+      id: 'unit_registry_and_vacancy_tracking',
+      description: 'Register a residential unit and track vacancy.',
+      strategy_hint: 'REUSE',
+      block_ids: ['analytics'],
+    },
+    {
+      id: 'viewing_management',
+      description: 'Record a viewing and notify the assigned team.',
+      strategy_hint: 'COMPOSE',
+      block_ids: ['team', 'workflow', 'notification'],
+    },
+    {
+      id: 'maintenance_issue_tracking',
+      description: 'Raise a maintenance issue against a unit.',
+      strategy_hint: 'REUSE',
+      block_ids: ['team'],
+    },
+    {
+      id: 'tenancy_application_pipeline',
+      description: 'Record a tenancy application and attach documents.',
+      strategy_hint: 'COMPOSE',
+      block_ids: ['team', 'document_engine'],
+    },
+  ],
+}
+
+const LETTINGS_BUILDING = {
+  ok: true,
+  product_id: 'residential-lettings',
+  build: {
+    state: 'building',
+    phases_done: 2,
+    phases_total: 5,
+    current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+    phase_index: 3,
+    phase_total: 5,
+    next_phase: { id: 'TESTER', label: 'Acceptance inspector' },
+    phase_progress: { done: 2, total: 4, fraction: 0.5, stage: 'handlers' },
+    last_event: 'wrote handler viewing_management',
+    last_event_age_s: 8,
+    stale: false,
+    activity: 'wrote handler viewing_management',
+    completed: ['COLLECTOR', 'CLONER'],
+  },
+}
+
+async function expectNoGoldFinished(page: Page) {
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByText(/Download ready/)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+}
+
 async function mockVerifiedFactory(
   page: Page,
   billing?: {
@@ -658,6 +719,171 @@ test('Your Platforms FOUNDING_CUSTOMER_READY shows founding chip and gold export
   await expect(page.getByTestId('platforms-gate-product')).toContainText('PRODUCT PASS')
   await expect(page.getByTestId('platforms-gate-store')).toContainText('STORE PASS')
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+})
+
+test('Floor and Your Platforms name a pending golden residential_lettings draft — never a gold Download', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: LETTINGS_BLUEPRINT,
+        blueprint_approved: false,
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('bp-drafting-mode')).toHaveText(/golden blueprint/i)
+  await expect(page.getByText('Residential Lettings Platform')).toBeVisible()
+  await expect(page.locator('.bp-vertical')).toHaveText('residential_lettings')
+  await expect(page.locator('.bp-strategy.REUSE')).toHaveCount(2)
+  await expect(page.locator('.bp-strategy.COMPOSE')).toHaveCount(2)
+  await expect(page.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
+  await expectNoGoldFinished(page)
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  await expect(page.getByTestId('platforms-empty-state')).toBeVisible()
+  await expect(page.getByText('No platform built yet')).toBeVisible()
+  await expect(page.getByTestId('platforms-draft-hint')).toContainText(
+    'Draft: Residential Lettings Platform (residential_lettings)',
+  )
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Building…' })).toHaveCount(0)
+})
+
+test('Floor keeps coding chrome after golden lettings Approve before the first status poll', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  let approved = false
+  let releaseChat: (() => void) | undefined
+  const chatGate = new Promise<void>((resolve) => {
+    releaseChat = resolve
+  })
+  let releaseStatus: (() => void) | undefined
+  const statusGate = new Promise<void>((resolve) => {
+    releaseStatus = resolve
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(
+        approved
+          ? {
+              blueprint: LETTINGS_BLUEPRINT,
+              blueprint_approved: true,
+              generation: {
+                product_id: 'residential-lettings',
+                engine: 'runner',
+                triggered_by: 'chat_llm',
+              },
+            }
+          : {
+              blueprint: LETTINGS_BLUEPRINT,
+              blueprint_approved: false,
+            },
+      ),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/chat', async (route) => {
+    approved = true
+    await chatGate
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body:
+        sse('generation', {
+          summary:
+            'The chat LLM started the coding agent. Build started for residential-lettings: the coding agent has taken over the floor and is writing 4 capability(ies).',
+          triggered_by: 'chat_llm',
+          generation: {
+            engine: 'runner',
+            product_id: 'residential-lettings',
+            triggered_by: 'chat_llm',
+          },
+        }) + sse('done', ''),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await statusGate
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(LETTINGS_BUILDING),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'Approve & build' })).toBeEnabled({
+    timeout: 20_000,
+  })
+  await page.getByRole('button', { name: 'Approve & build' }).click()
+  await expect(page.getByTestId('floor-coder-takeover')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+  await expectNoGoldFinished(page)
+  releaseChat?.()
+  await expect(page.getByText('coding agent', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('floor-coder-takeover')).toBeVisible()
+  await expectNoGoldFinished(page)
+  releaseStatus?.()
+  await expect(page.getByText('WRITER', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+  await expectNoGoldFinished(page)
+})
+
+test('Your Platforms stays Building after golden lettings Approve — never a gold Download', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: LETTINGS_BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(LETTINGS_BUILDING),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('floor-coder-takeover')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+  await expectNoGoldFinished(page)
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  await expect(page.getByTestId('platforms-empty-state')).toHaveCount(0)
+  await expect(page.getByText('No platform built yet')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  const building = page.getByRole('button', { name: 'Building…' })
+  await expect(building).toBeVisible()
+  await expect(building).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByText(/Download ready/)).toHaveCount(0)
 })
 
 test('Floor hydrate of a pending draft does not flash a leftover coder-takeover banner', async ({ page }) => {

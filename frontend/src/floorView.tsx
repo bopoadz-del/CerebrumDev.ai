@@ -81,6 +81,7 @@ export function BlueprintCard({
         {blueprint.drafting_mode && (
           <span
             className={'bp-drafting-mode ' + blueprint.drafting_mode}
+            data-testid="bp-drafting-mode"
             title={blueprint.drafting_note ?? undefined}
           >
             {blueprint.drafting_mode === 'architect_llm'
@@ -347,6 +348,10 @@ export function Floor({
   const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
   const bottomRef = useRef<HTMLDivElement>(null)
+  // Approve appends a pending factory bubble before the generation SSE.
+  // The msgs-sync effect must not treat that leftover blueprint card as
+  // "still drafting" and tear down coding chrome before the first poll.
+  const approveHoldRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -370,6 +375,7 @@ export function Floor({
   useEffect(() => {
     const latest = latestProductCard(msgs)
     if (latest?.card === 'blueprint') {
+      if (approveHoldRef.current) return
       setCoderActive(false)
       setCoderBuild(null)
       return
@@ -402,7 +408,8 @@ export function Floor({
   }, [liveCoderBuild?.state])
 
   const sendCore = useCallback(
-    async (message: string) => {
+    async (message: string): Promise<{ runnerStarted: boolean }> => {
+      let runnerStarted = false
       setMsgs((m) => [...m, { role: 'user', text: message }, { role: 'factory', text: '' }])
       try {
         await chatStream(sessionId, message, (ev: ChatEvent) => {
@@ -445,6 +452,7 @@ export function Floor({
             if (engine === 'runner') {
               // Clear a prior FINISHED snapshot immediately so a pilot reopen
               // cannot keep "Download ready" pinned while Platforms is Building…
+              runnerStarted = true
               setCoderBuild((prev) =>
                 stampBuildObservation({ state: 'building', detail: 'build in progress' }, prev),
               )
@@ -480,6 +488,7 @@ export function Floor({
           { role: 'factory', text: e instanceof Error ? e.message : 'chat failed', card: 'error' },
         ])
       }
+      return { runnerStarted }
     },
     [sessionId],
   )
@@ -502,14 +511,32 @@ export function Floor({
   const approveWithSelection = useCallback(
     async (excludedIds: string[]) => {
       if (busy || accessPaused) return
+      approveHoldRef.current = true
       setBusy(true)
+      // Mount coding chrome immediately so the Floor cannot flash an empty
+      // composer / hide takeover while chat SSE and the first status poll
+      // are still in flight.
+      setCoderActive(true)
+      setCoderBuild((prev) =>
+        stampBuildObservation({ state: 'building', detail: 'build in progress' }, prev),
+      )
+      let runnerStarted = false
       try {
         for (const id of excludedIds) {
-          await sendCore('remove capability ' + id)
+          const removed = await sendCore('remove capability ' + id)
+          runnerStarted = runnerStarted || removed.runnerStarted
         }
-        await sendCore('approve')
+        const approved = await sendCore('approve')
+        runnerStarted = runnerStarted || approved.runnerStarted
+      } catch {
+        runnerStarted = false
       } finally {
+        approveHoldRef.current = false
         setBusy(false)
+        if (!runnerStarted) {
+          setCoderActive(false)
+          setCoderBuild(null)
+        }
       }
     },
     [accessPaused, busy, sendCore],
@@ -663,6 +690,7 @@ export function Floor({
               : '')
           }
           role="status"
+          data-testid="floor-coder-takeover"
         >
           <h3>
             {liveCoderBuild?.state === 'succeeded'

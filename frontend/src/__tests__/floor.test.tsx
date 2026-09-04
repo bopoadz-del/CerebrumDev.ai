@@ -639,6 +639,71 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(exportBtn).toHaveClass('ghost')
   })
 
+  it('keeps coding chrome after Approve while generation SSE and status poll are pending', async () => {
+    let releaseApprove: (() => void) | undefined
+    const approveGate = new Promise<void>((resolve) => {
+      releaseApprove = resolve
+    })
+    chatStreamMock.mockImplementation(
+      async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+        if (message === 'approve') {
+          await approveGate
+          onEvent({
+            event: 'generation',
+            data: {
+              summary: 'Build started for residential-lettings.',
+              triggered_by: 'chat_llm',
+              generation: {
+                engine: 'runner',
+                product_id: 'residential-lettings',
+                triggered_by: 'chat_llm',
+              },
+            },
+          })
+          return
+        }
+        onEvent({
+          event: 'blueprint',
+          data: {
+            summary: 'Drafted from the golden residential-lettings blueprint.',
+            blueprint: {
+              product_name: 'Residential Lettings Platform',
+              vertical: 'residential_lettings',
+              summary: 'Factory golden for a residential-lettings platform.',
+              drafting_mode: 'golden_lettings',
+              capabilities: [
+                { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
+              ],
+            },
+          },
+        })
+      },
+    )
+    watchBuildMock.mockImplementation(async () => new Promise(() => {}))
+    getMock.mockResolvedValue({
+      blueprint: {
+        product_name: 'Residential Lettings Platform',
+        vertical: 'residential_lettings',
+        drafting_mode: 'golden_lettings',
+        capabilities: [
+          { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
+        ],
+      },
+      blueprint_approved: false,
+    })
+    render(<Floor sessionId="sess_hold" goPlatforms={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve & build' }))
+    expect(await screen.findByTestId('floor-coder-takeover')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    releaseApprove?.()
+    expect(await screen.findByText('coding agent')).toBeInTheDocument()
+    expect(screen.getByTestId('floor-coder-takeover')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+  })
+
   it('does not offer Floor download while the coding agent is still writing', async () => {
     chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
       if (message === 'approve') {
