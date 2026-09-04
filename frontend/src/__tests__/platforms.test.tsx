@@ -73,6 +73,26 @@ describe('Your Platforms — coding-agent build', () => {
     expect(watchBuildMock).not.toHaveBeenCalled()
   })
 
+  it('empty state names a pending golden residential_lettings draft — never a gold Download', async () => {
+    getMock.mockResolvedValue({
+      blueprint: {
+        product_name: 'Residential Lettings Platform',
+        vertical: 'residential_lettings',
+        drafting_mode: 'golden_lettings',
+      },
+      blueprint_approved: false,
+    })
+    render(<Platforms sessionId="sess_lettings" />)
+    expect(await screen.findByTestId('platforms-empty-state')).toBeInTheDocument()
+    expect(screen.getByText('No platform built yet')).toBeInTheDocument()
+    expect(screen.getByTestId('platforms-draft-hint')).toHaveTextContent(
+      'Draft: Residential Lettings Platform (residential_lettings)',
+    )
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
+    expect(watchBuildMock).not.toHaveBeenCalled()
+  })
+
   it('auto-polls and shows the coding agent at work', async () => {
     getMock.mockResolvedValue({
       generation: GENERATION,
