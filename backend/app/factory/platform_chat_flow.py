@@ -531,14 +531,15 @@ def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, An
 def _cli_unavailable_reply(pd: Any, exc: BaseException) -> Dict[str, Any]:
     """Fail-closed named class — coding session never opened, no takeover."""
     detail = str(exc)
+    blocker = getattr(exc, "blocker", NAMED_BLOCKER_CLI)
     pd.last_error = detail
     logger.error("%s", detail)
     return {
         "ok": False,
         "sse": "error",
-        "blocker": NAMED_BLOCKER_CLI,
+        "blocker": blocker,
         "summary": (
-            f"{NAMED_BLOCKER_CLI} — coding session never opened. {detail}"
+            f"{blocker} — coding session never opened. {detail}"
         ),
         "blueprint_approved": bool(getattr(pd, "blueprint_approved", False)),
         "stream_delta": False,

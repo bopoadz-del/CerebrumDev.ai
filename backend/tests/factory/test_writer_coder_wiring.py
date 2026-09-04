@@ -178,6 +178,39 @@ def test_writer_halts_when_cli_missing_without_oneshot(
         assert data.get("blocker") == NAMED_BLOCKER_CLI
 
 
+def test_writer_halts_when_kimi_credentials_missing(
+    blueprint, tmp_path, monkeypatch
+):
+    """Keyed brief path with kimi on PATH but no config.toml must not fake WRITER progress."""
+    from app.factory.build.coder_session import NAMED_BLOCKER_CLI_CREDS
+
+    script = tmp_path / "kimi"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.cli_available",
+        lambda command=None: True,
+    )
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or _oneshot_payload(),
+    )
+    outcome = RoleRunner(blueprint, tmp_path / "build").run()
+    assert outcome.ok is False
+    assert NAMED_BLOCKER_CLI_CREDS in (outcome.detail or "")
+    assert oneshot == []
+    receipt = tmp_path / "build" / "docs" / "coder_receipt.json"
+    if receipt.is_file():
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        assert data.get("blocker") == NAMED_BLOCKER_CLI_CREDS
+
+
 def test_a_coder_failure_ships_the_template_and_records_why(
     blueprint, tmp_path, monkeypatch
 ):

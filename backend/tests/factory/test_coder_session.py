@@ -13,7 +13,9 @@ from app.factory.build.coder_session import (
     CONTROL_PAUSE,
     CONTROL_STOP,
     NAMED_BLOCKER_CLI,
+    NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_STOPPED,
+    CodeCliCredentialsMissing,
     CodeCliUnavailable,
     DispatchResult,
     _has_brief_workflow_steps,
@@ -22,12 +24,14 @@ from app.factory.build.coder_session import (
     brief_dispatch_enabled,
     brief_requires_cli,
     cli_available,
+    cli_credentials_ok,
     cli_unavailable_detail,
     dispatch_compiled_brief,
     ensure_code_cli_credentials,
     harvest_cli_artifacts,
     http_oneshot_enabled,
     probe_code_cli,
+    raise_if_cli_session_unready,
     read_control,
     read_log_tail,
     resolve_code_cli,
@@ -487,3 +491,193 @@ def test_cli_available_sees_an_executable(tmp_path, monkeypatch):
     assert cli_available() is True
     monkeypatch.setenv("FACTORY_CODE_CLI", "/no/such/coder")
     assert cli_available() is False
+
+
+def _fake_kimi(tmp_path: Path) -> Path:
+    script = tmp_path / "kimi"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
+def _require_cli(monkeypatch) -> None:
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+
+
+def test_dispatch_kimi_without_config_toml_fail_closed(tmp_path, monkeypatch):
+    """Binary on PATH + no config.toml must not open a WRITER CLI session."""
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    monkeypatch.delenv("KIMI_CODE_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_CODE_KEY", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ran = []
+    monkeypatch.setattr(
+        "app.factory.build.coder_session._run_cli_session",
+        lambda *a, **kw: ran.append(True) or DispatchResult(via="cli", ok=True, detail="nope"),
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.via == "unavailable"
+    assert result.blocker == NAMED_BLOCKER_CLI_CREDS
+    assert NAMED_BLOCKER_CLI_CREDS in result.detail
+    assert "credentials_file_present=false" in result.detail
+    assert oneshot == []
+    assert ran == [], "missing credentials must not start FACTORY_CODE_CLI"
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_CREDS
+    log = read_log_tail(tmp_path / "build")
+    assert NAMED_BLOCKER_CLI_CREDS in log
+    assert "falling back to HTTP oneshot" not in log
+
+
+def test_dispatch_kimi_with_config_toml_credentials_ok(tmp_path, monkeypatch):
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        "[providers.kimi]\ntype = \"kimi\"\napi_key = \"sk-test-not-real\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert result.blocker is None
+    assert oneshot == []
+    assert cli_credentials_ok() is True
+
+
+def test_probe_code_cli_reports_credentials_missing(tmp_path, monkeypatch):
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "empty-kimi-home"))
+    probe = probe_code_cli()
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is False
+    assert probe["requires_cli"] is True
+    assert probe["requires_kimi_credentials"] is True
+    assert probe["blocker"] == NAMED_BLOCKER_CLI_CREDS
+    assert NAMED_BLOCKER_CLI_CREDS in probe["error"]
+
+
+def test_probe_code_cli_credentials_ok_when_config_present(tmp_path, monkeypatch):
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text("[providers.kimi]\n", encoding="utf-8")
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    probe = probe_code_cli()
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is True
+    assert "blocker" not in probe
+
+
+def test_claude_cli_does_not_require_kimi_config(tmp_path, monkeypatch):
+    script = tmp_path / "claude"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    assert cli_credentials_ok() is True
+    raise_if_cli_session_unready()
+    probe = probe_code_cli()
+    assert probe["available"] is True
+    assert probe["requires_kimi_credentials"] is False
+    assert "blocker" not in probe
+
+
+def test_env_test_template_path_skips_credentials_gate(tmp_path, monkeypatch):
+    """ENV=test without REQUIRE_CLI mutation must not refuse generate-start."""
+    script = _fake_kimi(tmp_path)
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    assert brief_requires_cli() is False
+    raise_if_cli_session_unready()
+    probe = probe_code_cli()
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is False
+    assert probe["requires_cli"] is False
+    assert "blocker" not in probe
+
+
+def test_start_runner_build_refuses_when_credentials_missing(tmp_path, monkeypatch):
+    from app.factory.build_jobs import start_runner_build
+    from app.factory.blueprint import load_blueprint
+
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    root = Path(__file__).resolve().parents[3]
+    bp = load_blueprint(root / "blueprints/examples/runner_smoke.yaml")
+    with pytest.raises(CodeCliCredentialsMissing, match=NAMED_BLOCKER_CLI_CREDS):
+        start_runner_build(bp, tmp_path / "out")
+    assert not (tmp_path / "out" / "build_ledger.jsonl").exists()
+
+
+def test_approve_and_generate_names_credentials_class_without_takeover(
+    tmp_path, monkeypatch
+):
+    from app.factory import platform_chat_flow
+    from app.models.session import ProductDesignState, SessionState
+
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    root = Path(__file__).resolve().parents[3]
+    from app.factory.blueprint import load_blueprint
+
+    bp = load_blueprint(root / "blueprints/examples/runner_smoke.yaml")
+    state = SessionState(
+        session_id="sess_cli_creds_missing",
+        user_id="test-user",
+        product_design=ProductDesignState(
+            blueprint=bp.model_dump(mode="json"),
+            blueprint_approved=False,
+        ),
+    )
+    result = platform_chat_flow.approve_and_generate(state, output_root=tmp_path)
+    assert result["ok"] is False
+    assert result["sse"] == "error"
+    assert result["blocker"] == NAMED_BLOCKER_CLI_CREDS
+    assert NAMED_BLOCKER_CLI_CREDS in result["summary"]
+    assert "never opened" in result["summary"]
+    assert "taken over" not in result["summary"].lower()
+    assert state.product_design.generation is None
+    assert NAMED_BLOCKER_CLI_CREDS in (state.product_design.last_error or "")
