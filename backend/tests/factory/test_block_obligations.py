@@ -355,6 +355,27 @@ def test_the_four_dependencies_that_shipped_undeclared_are_all_covered():
         assert distribution_for(module) == dist
 
 
+def test_pypdf2_legacy_import_has_a_recorded_distribution():
+    """Live sess_d1cb9d51c5354bea / CEREBRUMDEV-BACKEND-A (2026-09-04).
+
+    Store ``document_engine`` still imports the legacy name ``PyPDF2``.
+    DISTRIBUTIONS already mapped ``pypdf`` -> ``pypdf`` but not ``PyPDF2``,
+    so CLONER raised BlockObligationError and the build thread crashed
+    (Sentry CEREBRUMDEV-BACKEND-A).
+
+    Mutation killed: adding only the modern ``pypdf`` key and leaving the
+    legacy import unrecorded.
+    """
+    assert distribution_for("PyPDF2") == "PyPDF2"
+    assert distribution_for("pypdf") == "pypdf"
+    obligations = dependency_obligations(
+        {"vendor/cerebrum/blocks/document_engine.py": "import PyPDF2\n"}
+    )
+    assert "PyPDF2" in obligations
+    assert obligations["PyPDF2"]["module"] == "PyPDF2"
+    assert obligations["PyPDF2"]["reach"] == "module"
+
+
 # -- end to end: the obligation must reach requirements.txt ---------------
 #
 # The unit tests above prove the scanner and the renderer. This proves the
