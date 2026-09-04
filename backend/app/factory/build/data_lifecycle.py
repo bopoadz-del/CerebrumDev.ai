@@ -74,13 +74,20 @@ def columns_map(specs: Dict[str, Dict[str, Any]]) -> Dict[str, List[str]]:
     }
 
 
-def first_entity_sample(specs: Dict[str, Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
-    """A deterministic row the generated lifecycle tests can insert."""
-    if not specs:
-        return "", {}
-    spec = table_specs(specs)[0]
+def sample_for_spec(
+    spec: Dict[str, Any] | None, *, placeholder: str = "s10-row"
+) -> Dict[str, Any]:
+    """A deterministic row from one capability/table spec.
+
+    S10 lifecycle tests insert the first *table*. S12 domain acceptance
+    must insert the DEFAULT capability's own columns — those two are not
+    the same order (live sess_5dfb4a3: ``client_pet_records`` / pet_record
+    vs alphabetically-first entity ``availability``).
+    """
     sample: Dict[str, Any] = {}
-    for field in spec["fields"]:
+    for field in (spec or {}).get("fields") or []:
+        if not isinstance(field, dict) or not field.get("name"):
+            continue
         name = field["name"]
         ftype = field.get("type") or "str"
         if field.get("allowed_values"):
@@ -92,8 +99,16 @@ def first_entity_sample(specs: Dict[str, Dict[str, Any]]) -> Tuple[str, Dict[str
         elif ftype == "bool":
             sample[name] = True
         else:
-            sample[name] = "s10-row"
-    return spec["entity"], sample
+            sample[name] = placeholder
+    return sample
+
+
+def first_entity_sample(specs: Dict[str, Dict[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+    """A deterministic row the generated lifecycle tests can insert."""
+    if not specs:
+        return "", {}
+    spec = table_specs(specs)[0]
+    return spec["entity"], sample_for_spec(spec, placeholder="s10-row")
 
 
 def render_store(specs: Dict[str, Dict[str, Any]]) -> str:

@@ -380,7 +380,8 @@ def test_a_genuinely_red_suite_still_reports_red_with_findings(tmp_path):
         GateContext(workspace=tmp_path, role=BuildRole.TESTER, runner=_red)
     )
     assert result.ok is False
-    assert result.detail == "suite is red"
+    assert result.detail.startswith("suite is red")
+    assert "FAILED tests/test_probe.py::test_x" in result.detail
     assert not result.payload.get("infrastructure")
     assert any("FAILED" in f for f in result.findings)
 
