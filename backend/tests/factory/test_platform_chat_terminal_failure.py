@@ -169,6 +169,7 @@ def test_session_facts_after_terminal_failure_allow_draft(tmp_path):
 def test_start_runner_build_rotates_off_a_failed_ledger(tmp_path, monkeypatch):
     from app.factory.blueprint import CapabilitySpec, ProductBlueprint
 
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     dead = tmp_path / "residential-lettings"
     dead.mkdir()
     ledger = BuildLedger(dead / "build_ledger.jsonl")

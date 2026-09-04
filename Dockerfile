@@ -48,6 +48,10 @@ COPY backend/scripts /app/scripts
 RUN mkdir -p /app/backend && ln -s /app/app /app/backend/app
 COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 
+# FACTORY_CODE_CLI (kimi / claude) is NOT installed in this image. A keyed
+# Floor without that binary on PATH fail-closes FACTORY_CODE_CLI_UNAVAILABLE.
+# Owner installs the CLI on the host or mounts it; KIMI_CODE_API_KEY at boot
+# writes ~/.kimi-code/config.toml only. Do not treat this comment as a deploy.
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is

@@ -151,17 +151,19 @@ message role, and a reply of typed content blocks. Those are the three things
 an OpenAI-shaped port silently gets wrong, so they are asserted by a
 request-shape test.
 
-**Agentic coding CLI.** The factory can hand coding work to a CLI agent. The
-seam is deliberately shallow — run a command, read its result — so no CLI's
-internals are depended on:
+**Agentic coding CLI.** Production Floor C-BRIEF hands the one compiled brief
+to this CLI. The seam is shallow — run a command, read its result:
 
 ```bash
 FACTORY_CODE_CLI=claude    # Claude Code CLI as the agentic coder
-FACTORY_CODE_CLI=kimi      # Kimi CLI (default)
+FACTORY_CODE_CLI=kimi      # Kimi CLI (default name; binary must be on PATH)
 ```
 
-`KIMI_CODE_CLI` is still honoured so existing deployments keep working;
-`FACTORY_CODE_CLI` takes precedence when both are set.
+`KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. A keyed Floor
+without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE` (no HTTP
+oneshot, no fake WRITER takeover). CLI credentials are `KIMI_CODE_API_KEY`
+→ `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`.
+See `docs/factory/KIMI_ENV_SETUP.md`. Render dashboard values stay owner-gated.
 
 ### Running the tests: the factory coder changes the results
 

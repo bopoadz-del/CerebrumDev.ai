@@ -546,6 +546,7 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
     lockfile, the dispatch runtime or the tests.
     """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_HTTP_ONESHOT", "1")
     counter = {"n": 0}
 
     def varying(**kwargs):

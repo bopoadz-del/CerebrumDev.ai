@@ -1,8 +1,10 @@
 """One-session coder dispatch + owner Pause/Stop control.
 
-The WRITER compiles one brief, then this module hands it to FACTORY_CODE_CLI
-(or a single HTTP oneshot when the CLI is not on PATH). Per-capability
-handle() shots are not this path.
+The WRITER compiles one brief, then this module hands it to FACTORY_CODE_CLI.
+A keyed production Floor must have that binary (or fail-closed with
+``FACTORY_CODE_CLI_UNAVAILABLE``) BEFORE it claims the coding agent has
+taken over. HTTP oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``);
+it is not a ≥2h agentic session.
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
 stop terminates the session. Owner eyes are the monitor.
@@ -32,15 +34,74 @@ CONTROL_PAUSE = "pause"
 CONTROL_STOP = "stop"
 
 BRIEF_DISPATCH_ENV = "FACTORY_BRIEF_DISPATCH"
+BRIEF_HTTP_ONESHOT_ENV = "FACTORY_BRIEF_HTTP_ONESHOT"
 NAMED_BLOCKER_CLI = "FACTORY_CODE_CLI_UNAVAILABLE"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
+
+#: One-line operator note. Dashboard clicks stay owner-gated.
+OWNER_GATED_CLI_LOG = (
+    "FACTORY_CODE_CLI / KIMI_CODE_API_KEY owner-gated on Render — not claimed set"
+)
+
+
+class CodeCliUnavailable(RuntimeError):
+    """Operator/config class: FACTORY_CODE_CLI is not on the factory host."""
+
+    blocker = NAMED_BLOCKER_CLI
 
 
 def brief_dispatch_enabled() -> bool:
     """Default ON. FACTORY_BRIEF_DISPATCH=0 restores per-capability shots."""
     raw = os.getenv(BRIEF_DISPATCH_ENV, "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
+
+
+def http_oneshot_enabled() -> bool:
+    """CI/dev escape only. Production Floor must not set this."""
+    raw = os.getenv(BRIEF_HTTP_ONESHOT_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def brief_requires_cli() -> bool:
+    """Keyed brief path must dispatch via FACTORY_CODE_CLI.
+
+    Unkeyed / ``FACTORY_CODER_ENABLED=0`` still uses honest templates.
+    ``FACTORY_BRIEF_HTTP_ONESHOT=1`` keeps the CI oneshot contract.
+    ``ENV=test`` does not refuse at generate-start unless
+    ``FACTORY_BRIEF_REQUIRE_CLI=1`` (the mutation). Production
+    (``ENV=production``) and keyed non-test hosts fail-closed.
+    """
+    if not brief_dispatch_enabled():
+        return False
+    if http_oneshot_enabled():
+        return False
+    from app.factory.coder import coder_enabled
+
+    if not coder_enabled():
+        return False
+    require = os.getenv("FACTORY_BRIEF_REQUIRE_CLI", "").strip().lower()
+    if require in {"0", "false", "no", "off"}:
+        return False
+    if require in {"1", "true", "yes", "on"}:
+        return True
+    return os.getenv("ENV", "").strip().lower() != "test"
+
+
+def cli_unavailable_detail(command: Optional[str] = None) -> str:
+    """Named-class operator text. Names the env, not a dashboard click."""
+    from app.factory.coder import CODE_CLI_ENV, LEGACY_CODE_CLI_ENV, code_cli_command
+
+    cli = (command or code_cli_command()).strip() or "kimi"
+    return (
+        f"{NAMED_BLOCKER_CLI}: {cli!r} is not an executable on this host. "
+        f"Set {CODE_CLI_ENV} (wins) or {LEGACY_CODE_CLI_ENV} to the agentic "
+        "coder binary (`kimi` or `claude`, or an absolute path) and provide "
+        "CLI credentials (KIMI_CODE_API_KEY writes ~/.kimi-code/config.toml; "
+        "Claude uses its own login). HTTP oneshot is not a FACTORY_CODE_CLI "
+        f"session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
+        f"{OWNER_GATED_CLI_LOG}."
+    )
 
 
 def coder_artifact_paths(root: Path) -> Dict[str, Path]:
@@ -145,16 +206,90 @@ def wait_if_paused(
         sleep(poll_s)
 
 
-def cli_available(command: Optional[str] = None) -> bool:
+def resolve_code_cli(command: Optional[str] = None) -> Optional[str]:
+    """Absolute path or PATH name that ``cli_available`` would accept."""
     from app.factory.coder import code_cli_command
 
     cli = (command or code_cli_command()).strip()
     if not cli:
-        return False
-    path = Path(cli)
+        return None
+    path = Path(cli).expanduser()
     if path.is_file() and os.access(path, os.X_OK):
-        return True
-    return shutil.which(cli) is not None
+        return str(path)
+    found = shutil.which(cli)
+    if found:
+        return found
+    name = path.name if path.name else cli
+    extras = [
+        Path("/usr/local/bin") / name,
+        Path("/usr/bin") / name,
+        Path("/app/.local/bin") / name,
+        Path.home() / ".local" / "bin" / name,
+    ]
+    for candidate in extras:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def cli_available(command: Optional[str] = None) -> bool:
+    return resolve_code_cli(command) is not None
+
+
+def probe_code_cli() -> Dict[str, Any]:
+    """Health / operator view of FACTORY_CODE_CLI (binary, not workbench flag)."""
+    from app.factory.coder import code_cli_command
+
+    command = code_cli_command()
+    resolved = resolve_code_cli(command)
+    home = Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code"))
+    creds = home / "config.toml"
+    probe: Dict[str, Any] = {
+        "command": command,
+        "available": bool(resolved),
+        "resolved": resolved,
+        "credentials_file_present": creds.is_file(),
+        "requires_cli": brief_requires_cli(),
+    }
+    if not resolved:
+        probe["blocker"] = NAMED_BLOCKER_CLI
+        probe["error"] = cli_unavailable_detail(command)
+    return probe
+
+
+def ensure_code_cli_credentials() -> Dict[str, Any]:
+    """Write ~/.kimi-code/config.toml from KIMI_CODE_API_KEY when present.
+
+    Does not install the binary. Skipped (one-line log) when the secret is
+    unset — owner-gated stays owner-gated.
+    """
+    key = (
+        os.getenv("KIMI_CODE_API_KEY", "").strip()
+        or os.getenv("KIMI_CODE_KEY", "").strip()
+    )
+    home = Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code"))
+    dest = home / "config.toml"
+    if not key:
+        logger.info(OWNER_GATED_CLI_LOG)
+        return {"ok": False, "wrote": False, "reason": "KIMI_CODE_API_KEY unset"}
+    if dest.is_file() and "[providers.kimi]" in dest.read_text(encoding="utf-8"):
+        return {"ok": True, "wrote": False, "path": str(dest), "reason": "already present"}
+    home.mkdir(parents=True, exist_ok=True)
+    base_url = os.getenv("KIMI_CODE_BASE_URL", "https://api.moonshot.ai/v1").strip()
+    block = (
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        f'api_key = "{key}"\n'
+        f'base_url = "{base_url}"\n'
+    )
+    existing = dest.read_text(encoding="utf-8") if dest.is_file() else ""
+    text = existing
+    if text and not text.endswith("\n"):
+        text += "\n"
+    text = text + ("\n" if text else "") + block
+    dest.write_text(text, encoding="utf-8")
+    logger.info("wrote Kimi Code CLI credentials to %s (binary still required)", dest)
+    return {"ok": True, "wrote": True, "path": str(dest)}
 
 
 @dataclass
@@ -225,7 +360,7 @@ def _run_cli_session(
 
     root = _workspace_root(ctx)
     log_path = root / LOG_REL
-    cli = code_cli_command()
+    cli = resolve_code_cli() or code_cli_command()
     brief_arg = f"@{BRIEF_REL.as_posix()}"
     cmd = [cli, "--prompt", brief_arg, "--add-dir", "."]
     _append_log(log_path, f"$ {' '.join(cmd)}")
@@ -484,11 +619,32 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                     "[harvest] CLI workspace "
                     f"specs={sorted(harvested_specs)} kept_handlers={kept}",
                 )
-    else:
-        _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] falling back to HTTP oneshot or templates")
+    elif http_oneshot_enabled():
+        _append_log(
+            root / LOG_REL,
+            f"[{NAMED_BLOCKER_CLI}] {BRIEF_HTTP_ONESHOT_ENV}=1 — "
+            "HTTP oneshot (CI/dev escape, not a FACTORY_CODE_CLI session)",
+        )
         result = _http_oneshot(ctx, compiled)
         if result.via == "skipped":
             result.blocker = NAMED_BLOCKER_CLI
+    else:
+        detail = cli_unavailable_detail()
+        logger.error("%s", OWNER_GATED_CLI_LOG)
+        _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] {detail}")
+        ctx.note(
+            f"{NAMED_BLOCKER_CLI} — coding session never opened",
+            stage="dispatch",
+            source="brief dispatch",
+            done=0,
+            total=1,
+        )
+        result = DispatchResult(
+            via="unavailable",
+            ok=False,
+            detail=detail,
+            blocker=NAMED_BLOCKER_CLI,
+        )
 
     receipt = {
         "via": result.via,

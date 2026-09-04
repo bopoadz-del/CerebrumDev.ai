@@ -147,6 +147,14 @@ async def _lifespan(app: FastAPI):
     # only one that can read /app/storage at all. See core/backup_scheduler.py.
     app.state.backup_task = backup_scheduler.start()
     try:
+        from app.factory.build.coder_session import ensure_code_cli_credentials
+
+        ensure_code_cli_credentials()
+    except Exception:  # noqa: BLE001 — boot must not die on owner-gated CLI setup
+        logging.getLogger("cerebrumdev.factory.coder_session").exception(
+            "FACTORY_CODE_CLI credential wire failed (owner-gated)"
+        )
+    try:
         yield
     finally:
         task = getattr(app.state, "backup_task", None)
@@ -397,6 +405,9 @@ async def health():
     storage = _probe_storage()
     redis = _probe_redis()
     kimi = _probe_kimi_cli()
+    from app.factory.build.coder_session import probe_code_cli
+
+    factory_cli = probe_code_cli()
     return {
         "status": "ok" if storage.get("ok") else "degraded",
         "storage": storage,
@@ -407,6 +418,7 @@ async def health():
         # flag is on AND the CLI actually answers.
         "kimi_workbench_enabled": bool(kimi["flag_enabled"] and kimi["cli_ok"]),
         "kimi_workbench": kimi,
+        "factory_code_cli": factory_cli,
         "sentry": _probe_sentry(),
     }
 

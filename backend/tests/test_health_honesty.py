@@ -8,6 +8,21 @@ import app.main as main
 
 
 @pytest.mark.asyncio
+async def test_health_reports_factory_code_cli_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(tmp_path / "no-such-coder"))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is False
+    assert probe["blocker"] == "FACTORY_CODE_CLI_UNAVAILABLE"
+    assert probe["requires_cli"] is True
+
+
+@pytest.mark.asyncio
 async def test_health_kimi_flag_without_binary_is_not_capability(tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")
