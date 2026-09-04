@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -25,12 +23,6 @@ from app.factory.build.coder_session import (
 )
 from app.factory.build.roles_models import RoleContext
 from app.factory.build.workspace import RoleWorkspace
-from app.factory.blueprint import load_blueprint
-from app.factory.product_architect import plan_blueprint
-
-
-ROOT = Path(__file__).resolve().parents[3]
-SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 class _Cap:

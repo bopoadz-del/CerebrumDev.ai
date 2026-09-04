@@ -14,12 +14,11 @@ import json
 import logging
 import os
 import shutil
-import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 logger = logging.getLogger("cerebrumdev.factory.coder_session")
 
