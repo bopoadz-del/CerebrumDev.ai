@@ -267,6 +267,7 @@ def prepare_block_input(
     roster: Sequence[str] = (),
     product_name: str = "platform",
     entity: Optional[str] = None,
+    default_actions: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Return a payload the named block can accept for ``action``.
 
@@ -274,6 +275,10 @@ def prepare_block_input(
     input). Missing block-contract keys are derived; existing keys win.
     ``entity`` is the capability's store table — used so database query
     does not invent a ``records`` table Alembic never created.
+    ``default_actions`` is each block's harvested default (from block.json);
+    workflow children receive it as ``step.action`` because the Store
+    workflow calls ``execute(input, {})`` and otherwise drops the action
+    factory dispatch would have passed.
     """
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
@@ -281,7 +286,11 @@ def prepare_block_input(
         return _for_notification(data, roster)
     if bid == "workflow":
         return _for_workflow(
-            data, roster, product_name=product_name, entity=entity
+            data,
+            roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
         )
     if bid == "team":
         return _for_team(data, product_name=product_name)
@@ -390,16 +399,95 @@ def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, 
     return out
 
 
+_STEP_BLOCK_KEYS = ("block", "block_id", "name")
+
+
+def _workflow_step_block(step: Dict[str, Any]) -> str:
+    """Store workflow reads ``step.get("block")``; coder steps use block_id."""
+    for key in _STEP_BLOCK_KEYS:
+        value = step.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _step_action(block_id: str, default_actions: Optional[Dict[str, str]]) -> Optional[str]:
+    if not default_actions:
+        return None
+    action = default_actions.get(block_id)
+    return action if isinstance(action, str) and action.strip() else None
+
+
+def _shape_workflow_steps(
+    steps: Sequence[Any],
+    roster: Sequence[str],
+    *,
+    product_name: str,
+    entity: Optional[str],
+    default_actions: Optional[Dict[str, str]],
+    fallback_domain: Dict[str, Any],
+) -> List[Any]:
+    """Prepare each existing step's input. Do not return coder steps as-is.
+
+    Live sess_4fba2a2865044a82 (VetCare Hub / appointment_scheduling):
+    PRODUCT ``test_every_capability_route_accepts_payload`` refused
+
+        workflow: step_1 (event_bus): error
+
+    after #314. The handler (coder) built ``steps`` from the schema sample
+    and ``_for_workflow`` used to return that list unchanged, so event_bus
+    never received topic / mcp channel / payload. The Store workflow
+    records a child refusal as status=error (often without the inner
+    message), which is exactly the live banner string.
+    """
+    shaped: List[Any] = []
+    for step in steps:
+        if not isinstance(step, dict):
+            shaped.append(step)
+            continue
+        item = dict(step)
+        bid = _workflow_step_block(item)
+        if not bid:
+            shaped.append(item)
+            continue
+        raw = item.get("input")
+        payload = raw if isinstance(raw, dict) else fallback_domain
+        item["block"] = bid
+        item["input"] = prepare_block_input(
+            bid,
+            payload,
+            roster=roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
+        )
+        if not item.get("action"):
+            action = _step_action(bid, default_actions)
+            if action:
+                item["action"] = action
+        shaped.append(item)
+    return shaped
+
+
 def _for_workflow(
     data: Dict[str, Any],
     roster: Sequence[str],
     *,
     product_name: str = "platform",
     entity: Optional[str] = None,
+    default_actions: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
     if isinstance(steps, list) and steps:
+        out["steps"] = _shape_workflow_steps(
+            steps,
+            roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
+            fallback_domain=data,
+        )
         return out
     peers = [b for b in roster if b and b != "workflow"]
     built: List[Dict[str, Any]] = []
@@ -408,18 +496,21 @@ def _for_workflow(
         # Nested prepare: raw domain JSON forwarded as step input is how
         # live veterinary-care PRODUCT failed (database/table, event_bus
         # notify, document_engine parser) inside the workflow result.
-        built.append(
-            {
-                "block": block,
-                "input": prepare_block_input(
-                    block,
-                    data,
-                    roster=roster,
-                    product_name=product_name,
-                    entity=entity,
-                ),
-            }
-        )
+        step: Dict[str, Any] = {
+            "block": block,
+            "input": prepare_block_input(
+                block,
+                data,
+                roster=roster,
+                product_name=product_name,
+                entity=entity,
+                default_actions=default_actions,
+            ),
+        }
+        action = _step_action(block, default_actions)
+        if action:
+            step["action"] = action
+        built.append(step)
     if not built:
         # Capability bound only to workflow: still supply a well-formed step
         # list so the block's required-field check is not the failure mode.
@@ -1256,6 +1347,7 @@ def prepare_block_input(
     roster: Sequence[str] = (),
     product_name: str = "platform",
     entity: Optional[str] = None,
+    default_actions: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
@@ -1263,7 +1355,11 @@ def prepare_block_input(
         return _for_notification(data, roster)
     if bid == "workflow":
         return _for_workflow(
-            data, roster, product_name=product_name, entity=entity
+            data,
+            roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
         )
     if bid == "team":
         return _for_team(data, product_name=product_name)
@@ -1338,21 +1434,97 @@ def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, 
     return out
 
 
-def _for_workflow(data: Dict[str, Any], roster: Sequence[str], *, product_name: str = "platform", entity: Optional[str] = None) -> Dict[str, Any]:
+def _workflow_step_block(step):
+    for key in ("block", "block_id", "name"):
+        value = step.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _step_action(block_id, default_actions):
+    if not default_actions:
+        return None
+    action = default_actions.get(block_id)
+    return action if isinstance(action, str) and action.strip() else None
+
+
+def _shape_workflow_steps(
+    steps,
+    roster,
+    *,
+    product_name,
+    entity,
+    default_actions,
+    fallback_domain,
+):
+    shaped = []
+    for step in steps:
+        if not isinstance(step, dict):
+            shaped.append(step)
+            continue
+        item = dict(step)
+        bid = _workflow_step_block(item)
+        if not bid:
+            shaped.append(item)
+            continue
+        raw = item.get("input")
+        payload = raw if isinstance(raw, dict) else fallback_domain
+        item["block"] = bid
+        item["input"] = prepare_block_input(
+            bid,
+            payload,
+            roster=roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
+        )
+        if not item.get("action"):
+            action = _step_action(bid, default_actions)
+            if action:
+                item["action"] = action
+        shaped.append(item)
+    return shaped
+
+
+def _for_workflow(
+    data: Dict[str, Any],
+    roster: Sequence[str],
+    *,
+    product_name: str = "platform",
+    entity: Optional[str] = None,
+    default_actions: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     out = dict(data)
     steps = out.get("steps")
     if isinstance(steps, list) and steps:
+        out["steps"] = _shape_workflow_steps(
+            steps,
+            roster,
+            product_name=product_name,
+            entity=entity,
+            default_actions=default_actions,
+            fallback_domain=data,
+        )
         return out
     peers = [b for b in roster if b and b != "workflow"]
-    built: List[Dict[str, Any]] = [
-        {
+    built: List[Dict[str, Any]] = []
+    for block in peers[:3]:
+        step = {
             "block": block,
             "input": prepare_block_input(
-                block, data, roster=roster, product_name=product_name, entity=entity
+                block,
+                data,
+                roster=roster,
+                product_name=product_name,
+                entity=entity,
+                default_actions=default_actions,
             ),
         }
-        for block in peers[:3]
-    ]
+        action = _step_action(block, default_actions)
+        if action:
+            step["action"] = action
+        built.append(step)
     if not built:
         built.append({"block": "workflow", "input": dict(data)})
     out["steps"] = built

@@ -423,7 +423,11 @@ def emit_store_host_di(text: str) -> str:
 def emit_runtime_module(module_name: str, text: str) -> str:
     """Apply the emission transform that belongs to one vendored Store module."""
     name = module_name.rsplit(".", 1)[-1]
-    if name == "notification":
+    if name in ("notification", "event_bus"):
+        # event_bus notify reuses the Store notification MCP import.
+        # Applying the same offline fallback is a no-op when the pattern
+        # is absent. Live sess_4fba2a2: workflow step_1 (event_bus): error
+        # after #314 rewrote channel=sample → mcp and the notify path ran.
         return emit_notification_mcp(text)
     if name == "database":
         return emit_database_query(emit_database_insert(text))
