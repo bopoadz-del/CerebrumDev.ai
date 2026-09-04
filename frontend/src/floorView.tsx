@@ -45,7 +45,11 @@ interface ChatMsg {
     capabilities?: Capability[]
     drafting_mode?: string
     drafting_note?: string
+    roles?: string[]
+    users?: string[]
+    done_when?: string[]
   }
+  plainLanguage?: string
 }
 
 function humanize(id: string): string {
@@ -100,6 +104,20 @@ export function BlueprintCard({
         </p>
       )}
       {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
+      {(blueprint.users?.length || blueprint.roles?.length) ? (
+        <p className="bp-summary dim" data-testid="bp-plain-who">
+          {blueprint.users?.length ? 'For: ' + blueprint.users.join(', ') : ''}
+          {blueprint.users?.length && blueprint.roles?.length ? ' · ' : ''}
+          {blueprint.roles?.length ? 'Roles: ' + blueprint.roles.join(', ') : ''}
+        </p>
+      ) : null}
+      {blueprint.done_when && blueprint.done_when.length > 0 && (
+        <ul className="bp-caps" data-testid="bp-done-when">
+          {blueprint.done_when.map((item) => (
+            <li key={item}>Done when: {item}</li>
+          ))}
+        </ul>
+      )}
       <h4>Capabilities ({caps.length})</h4>
       {!accessPaused && (
         <p className="bp-pick-hint dim">Tick what the platform should include, then approve.</p>
@@ -159,7 +177,7 @@ const KERNEL_JOBS: Record<string, { title: string; agent: boolean }> = {
   COLLECTOR: { title: 'Binding surveyor', agent: true },
   CLONER: { title: 'Block stocker', agent: false },
   WRITER: { title: 'Platform manufacturer', agent: true },
-  TESTER: { title: 'Acceptance inspector', agent: true },
+  TESTER: { title: 'Acceptance inspector', agent: false },
   STORE_MANAGER: { title: 'Store registrar', agent: false },
 }
 
@@ -217,6 +235,11 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
       {counts && <p className="coder-counts">{counts}</p>}
       {last && <p className="coder-last">Last: {last}</p>}
       {heartbeat && <p className="coder-heartbeat">{heartbeat}</p>}
+      {(build.coder_log || build.coder_log_present) && (
+        <pre className="coder-session-log" data-testid="floor-coder-log">
+          {build.coder_log || 'Coder session starting…'}
+        </pre>
+      )}
     </div>
   )
 }
@@ -291,7 +314,20 @@ function hydrateFromDesign(design: ProductDesign): {
       text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and when you approve the feature list the coding agent takes over and writes it.',
     },
   ]
-  const bp = design.blueprint as ChatMsg['blueprint'] | null | undefined
+  const rawBp = design.blueprint as ChatMsg['blueprint'] | null | undefined
+  const intake = design.intake_blueprint as {
+    roles?: { value?: string[] }
+    users?: { value?: string[] }
+    done_when?: { value?: string[] }
+  } | null | undefined
+  const bp = rawBp
+    ? {
+        ...rawBp,
+        roles: rawBp.roles ?? intake?.roles?.value,
+        users: rawBp.users ?? intake?.users?.value,
+        done_when: rawBp.done_when ?? intake?.done_when?.value,
+      }
+    : rawBp
   const gen = design.generation
   const pendingDraft = Boolean(bp && !design.blueprint_approved)
   if (pendingDraft && bp) {
@@ -347,6 +383,7 @@ export function Floor({
   const [newSessionBusy, setNewSessionBusy] = useState(false)
   const [newSessionError, setNewSessionError] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(() => Date.now())
+  const [controlBusy, setControlBusy] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   // Approve appends a pending factory bubble before the generation SSE.
   // The msgs-sync effect must not treat that leftover blueprint card as
@@ -436,8 +473,23 @@ export function Floor({
             const d = (typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data) as {
               summary?: string
               blueprint?: ChatMsg['blueprint']
+              intake_blueprint?: {
+                roles?: { value?: string[] }
+                users?: { value?: string[] }
+                done_when?: { value?: string[] }
+              }
+              plain_language?: string
             }
             const summary = d?.summary ?? 'Blueprint drafted.'
+            const intake = d?.intake_blueprint
+            const merged = d?.blueprint
+              ? {
+                  ...d.blueprint,
+                  roles: intake?.roles?.value,
+                  users: intake?.users?.value,
+                  done_when: intake?.done_when?.value,
+                }
+              : d?.blueprint
             setCoderActive(false)
             setCoderBuild(null)
             setMsgs((m) => [
@@ -446,7 +498,8 @@ export function Floor({
                 role: 'factory',
                 text: summary,
                 card: 'blueprint',
-                blueprint: d?.blueprint,
+                blueprint: merged,
+                plainLanguage: d?.plain_language,
               },
             ])
           } else if (ev.event === 'generation') {
@@ -713,7 +766,54 @@ export function Floor({
           <LevelGradeStrip build={liveCoderBuild} testIdPrefix="floor" />
           <KernelStrip build={liveCoderBuild} />
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (
-            <CoderProgress build={liveCoderBuild} nowMs={nowMs} />
+            <>
+              <CoderProgress build={liveCoderBuild} nowMs={nowMs} />
+              <div className="card-actions coder-monitor-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  data-testid="floor-coder-pause"
+                  disabled={controlBusy || liveCoderBuild.coder_control === 'pause'}
+                  onClick={() => {
+                    setControlBusy(true)
+                    void product
+                      .coderControl(sessionId, 'pause')
+                      .finally(() => setControlBusy(false))
+                  }}
+                >
+                  {liveCoderBuild.coder_control === 'pause' ? 'Paused' : 'Pause'}
+                </button>
+                {liveCoderBuild.coder_control === 'pause' && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    data-testid="floor-coder-resume"
+                    disabled={controlBusy}
+                    onClick={() => {
+                      setControlBusy(true)
+                      void product
+                        .coderControl(sessionId, 'resume')
+                        .finally(() => setControlBusy(false))
+                    }}
+                  >
+                    Resume
+                  </button>
+                )}
+                <button
+                  type="button"
+                  data-testid="floor-coder-stop"
+                  disabled={controlBusy || liveCoderBuild.coder_control === 'stop'}
+                  onClick={() => {
+                    setControlBusy(true)
+                    void product
+                      .coderControl(sessionId, 'stop')
+                      .finally(() => setControlBusy(false))
+                  }}
+                >
+                  Stop
+                </button>
+              </div>
+            </>
           ) : (
             <p>
               {coderTakeoverNote(liveCoderBuild) ??

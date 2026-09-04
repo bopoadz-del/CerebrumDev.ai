@@ -58,6 +58,7 @@ from .routers import (
     factory_drive,
     session_product,
     delivery_standard,
+    registry_reuse,
     resend_verification,
 )
 from .resident_engineer.router import router as resident_engineer_router
@@ -207,6 +208,15 @@ app.include_router(
     prefix="/v1/factory/delivery-standard",
     tags=["delivery-standard"],
     dependencies=[Depends(require_entitled)],
+)
+# Blocks #106 contract stub — always 200, exact-id REUSE. Live Blocks
+# (CEREBRUM_API_URL) wins when that surface exists; this is the in-repo
+# feature-detect target so C-BRIEF does not wait on the Blocks merge.
+app.include_router(
+    registry_reuse.router,
+    prefix="/v1/registry",
+    tags=["registry"],
+    dependencies=[Depends(require_api_key)],
 )
 app.include_router(
     session_product.router,

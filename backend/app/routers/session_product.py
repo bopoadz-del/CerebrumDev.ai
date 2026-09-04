@@ -4,6 +4,7 @@ POST /v1/sessions/{id}/product/draft
 POST /v1/sessions/{id}/product/plan
 POST /v1/sessions/{id}/product/approve
 POST /v1/sessions/{id}/product/generate
+POST /v1/sessions/{id}/product/coder-control
 POST /v1/sessions/{id}/product/pilot
 GET  /v1/sessions/{id}/product
 GET  /v1/sessions/{id}/product/package   (export the generated platform zip)
@@ -61,6 +62,10 @@ class GenerateBody(BaseModel):
 
 class ModeBody(BaseModel):
     mode: Literal["kit", "product"]
+
+
+class CoderControlBody(BaseModel):
+    action: Literal["pause", "stop", "resume"]
 
 
 def _require_session(session_id: str, principal: Principal):
@@ -208,7 +213,9 @@ def get_product_design(
         "blueprint": pd.blueprint,
         "blueprint_yaml": yaml_text,
         "plan": pd.plan,
+        "intake_blueprint": pd.intake_blueprint,
         "blueprint_approved": pd.blueprint_approved,
+        "brief_lint": pd.brief_lint,
         "generation": pd.generation,
         "last_error": pd.last_error,
     }
@@ -304,6 +311,30 @@ def get_build_status(
         "product_id": gen.get("product_id"),
         "build": build_status(Path(gen["output_dir"])),
     }
+
+
+@router.post("/{session_id}/product/coder-control")
+def set_coder_control(
+    session_id: str,
+    body: CoderControlBody,
+    principal: Principal = Depends(require_api_key),
+) -> Dict[str, Any]:
+    """Owner Pause / Stop / Resume for the live coder session.
+
+    Writes ``docs/coder_control.json`` in the product workspace. The
+    dispatcher polls it; this is not a role write.
+    """
+    from app.factory.build.coder_session import write_control
+
+    state = _require_session(session_id, principal)
+    gen = state.product_design.generation
+    if not gen or not gen.get("output_dir"):
+        raise HTTPException(status_code=409, detail="no build workspace — start a generate first")
+    out = Path(gen["output_dir"])
+    if not out.is_dir():
+        raise HTTPException(status_code=404, detail="generated product not found on disk")
+    control = write_control(out, body.action)
+    return {"ok": True, "control": control}
 
 
 @router.post("/{session_id}/product/mode")
@@ -453,6 +484,15 @@ def generate_approved_product(
     blocks_root = resolve_blocks_root()
     try:
         bp = ProductBlueprint.model_validate(state.product_design.blueprint)
+        from app.factory.platform_chat_flow import _compile_and_lint_approved
+
+        gated = _compile_and_lint_approved(state, bp)
+        if not gated["lint"].ok:
+            raise HTTPException(
+                status_code=400,
+                detail="BRIEF_LINT_REJECTED — session never opens: "
+                + "; ".join(gated["lint"].errors),
+            )
         if not state.product_design.plan:
             state.product_design.plan = plan_blueprint(bp, blocks_root=blocks_root).to_dict()
         # A caller-supplied output_dir is a recursive-delete target inside the

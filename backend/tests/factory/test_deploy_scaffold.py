@@ -130,6 +130,7 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "docs/sbom.cdx.json",
         "docs/permissions.json",
         "docs/domain_pack.json",
+        "docs/coder_brief.md",
         "frontend/src/App.tsx",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)

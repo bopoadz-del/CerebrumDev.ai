@@ -523,6 +523,23 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .coder-next {
   margin-left: 8px;
 }
+.coder-session-log {
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  background: #0a120e;
+  border: 1px solid #1e3328;
+  border-radius: 6px;
+  color: #b7c9bc;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.coder-monitor-actions {
+  margin-top: 8px;
+}
 .coder-bar {
   height: 6px;
   background: #1a2a20;

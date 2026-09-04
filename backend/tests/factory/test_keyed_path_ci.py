@@ -41,6 +41,27 @@ def _keyed_stub(monkeypatch):
         },
     )
     monkeypatch.setattr(
+        "app.factory.build.coder_session.cli_available",
+        lambda command=None: False,
+    )
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: {
+            "specs": {
+                cid: {
+                    "entity": cid.replace("-", "_"),
+                    "fields": [{"name": "reference", "type": "str", "required": True}],
+                }
+                for cid in (kw.get("capabilities") or [])
+            },
+            "handlers": {
+                cid: invoking_handler_body({"agent": True})
+                for cid in (kw.get("capabilities") or [])
+            },
+            "model": "ci-keyed-stub",
+        },
+    )
+    monkeypatch.setattr(
         "app.factory.coder.generate_route_body",
         lambda **kw: {
             "body": (
@@ -96,22 +117,30 @@ def test_keyed_process_env_matches_production_when_ci_sets_it():
 def test_writer_takes_the_coder_entry_point_when_keyed(tmp_path, monkeypatch):
     calls = []
 
-    def fake_coder(**kwargs):
+    def fake_oneshot(**kwargs):
         calls.append(kwargs)
-        # The stub stands in for coder output, so it must invoke the blocks
-        # the WRITER bound to this capability. A body that returns a canned
-        # dict while BLOCK_IDS is non-empty is F11 — a declared block that is
-        # never called — and the WRITER gate refuses it, correctly.
+        caps = list(kwargs.get("capabilities") or [])
         return {
-            "body": invoking_handler_body({"agent": True}),
+            "specs": {
+                cid: {
+                    "entity": cid.replace("-", "_"),
+                    "fields": [{"name": "reference", "type": "str", "required": True}],
+                }
+                for cid in caps
+            },
+            "handlers": {
+                cid: invoking_handler_body({"agent": True})
+                for cid in caps
+            },
             "model": "ci-keyed-stub",
         }
 
-    monkeypatch.setattr("app.factory.coder.generate_platform_handler", fake_coder)
+    monkeypatch.setattr("app.factory.coder.generate_from_compiled_brief", fake_oneshot)
     out = tmp_path / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()
-    assert calls, "keyed path must ask the coding agent"
+    assert calls, "keyed path must dispatch the compiled brief once"
+    assert len(calls) == 1
     headers = [
         p.read_text(encoding="utf-8")
         for p in (out / "app" / "actions").glob("*.py")

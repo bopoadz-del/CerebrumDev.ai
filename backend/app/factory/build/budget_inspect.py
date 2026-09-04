@@ -57,7 +57,7 @@ def inspect_build(
 
         if cap and stage in {"handlers", "routes", "models", "coder"}:
             current_capability = cap
-            if source.startswith("coder LLM"):
+            if source.startswith("coder LLM") or source.startswith("coder CLI"):
                 if cap not in caps_written:
                     caps_written.append(cap)
             elif source and (
@@ -281,7 +281,11 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     sources = prov.get("artifact_sources") or {}
-    agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+    agent = sorted(
+        k
+        for k, v in sources.items()
+        if str(v).startswith("coder LLM") or str(v).startswith("coder CLI")
+    )
     return {
         "agent_artifacts": agent,
         "coder_failures": prov.get("coder_failures") or {},

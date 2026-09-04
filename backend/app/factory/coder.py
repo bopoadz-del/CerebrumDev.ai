@@ -1455,3 +1455,84 @@ def propose_domain_test_cases(
         raise CoderError("tester proposed no usable domain cases")
     logger.info("coder proposed %d tester domain case(s) via %s", len(cases), model_used)
     return {"cases": cases, "model": model_used}
+
+
+_WHOLE_JOB_SYSTEM = writer_system_brief() + """
+
+You are given ONE compiled brief for the whole platform (TARGET, STEP 0
+INVENTORY, DO, ACCEPTANCE, FORBIDDEN). This is the entire job — not one
+handle() at a time.
+
+Return ONLY a JSON object, no prose and no markdown fences:
+{
+  "specs": {
+    "<capability_id>": {
+      "entity": "<snake_case singular>",
+      "fields": [
+        {"name": "<snake_case>", "type": "str|int|float|bool", "required": true,
+         "allowed_values": ["open", "in_progress", "closed"]}
+      ]
+    }
+  },
+  "handlers": {
+    "<capability_id>": "<column-zero Python statements for handle() body>"
+  }
+}
+
+Rules:
+- Include every capability id you were given. Do not invent extra ids.
+- Handler bodies obey the same contract as a single handle() shot:
+  execute() every BLOCK_IDS entry, action= keyword only, no imports,
+  return a dict with capability=CAPABILITY_ID.
+- status fields use the envelope vocabulary open|in_progress|closed.
+- Do not claim REUSE for a block id that STEP 0 flagged missing.
+"""
+
+
+def generate_from_compiled_brief(
+    *,
+    brief: str,
+    capabilities: List[str],
+    product_name: str,
+    vertical: str,
+) -> Dict[str, Any]:
+    """One HTTP call for the whole compiled brief. Not a per-capability loop."""
+    known = [str(c).strip() for c in capabilities if str(c).strip()]
+    user = (
+        f"Platform: {product_name} (vertical: {vertical})\n"
+        f"Capability ids you must cover: {known!r}\n\n"
+        "COMPILED BRIEF:\n"
+        f"{brief}\n\n"
+        "Return the specs+handlers JSON now."
+    )
+    data, model_used = _llm_json_object(
+        [
+            {"role": "system", "content": _WHOLE_JOB_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "compiled-brief oneshot",
+    )
+    specs: Dict[str, Any] = {}
+    handlers: Dict[str, str] = {}
+    raw_specs = data.get("specs") or {}
+    raw_handlers = data.get("handlers") or {}
+    if not isinstance(raw_specs, dict):
+        raw_specs = {}
+    if not isinstance(raw_handlers, dict):
+        raw_handlers = {}
+    for cid in known:
+        spec = raw_specs.get(cid)
+        if isinstance(spec, dict) and spec.get("entity"):
+            specs[cid] = spec
+        body = raw_handlers.get(cid)
+        if isinstance(body, str) and body.strip():
+            handlers[cid] = _validate_body(_strip_fences(body), cid)
+    if not specs and not handlers:
+        raise CoderError("compiled-brief oneshot returned no specs or handlers")
+    logger.info(
+        "coder oneshot wrote %d spec(s) and %d handler(s) via %s",
+        len(specs),
+        len(handlers),
+        model_used,
+    )
+    return {"specs": specs, "handlers": handlers, "model": model_used}

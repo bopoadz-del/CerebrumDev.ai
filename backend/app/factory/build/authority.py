@@ -111,12 +111,16 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         role=BuildRole.COLLECTOR,
         title="Binding surveyor",
         mandate=(
-            "Resolve each capability's declared block ids into harvestable "
-            "contracts. Name every capability with no block as an explicit gap "
-            "so the WRITER authors that logic — never drop it from the plan. "
-            "Consult the coding agent for a report-only endorse/mismatch review "
-            "of each binding. Do not invent block ids, do not mutate the plan, "
-            "and write nothing."
+            "Emit intake_blueprint.v1 (COLLECTOR output IS that object — "
+            "vertical, capabilities with customer words + normalized id, "
+            "roles/users, data sources, integrations, constraints, done_when, "
+            "each field carrying the chat turn it came from). Resolve each "
+            "capability's declared block ids into harvestable contracts. Name "
+            "every capability with no block as an explicit gap so the WRITER "
+            "authors that logic — never drop it from the plan. Consult the "
+            "coding agent for a report-only endorse/mismatch review of each "
+            "binding. Do not invent block ids, do not mutate the plan, and "
+            "write nothing."
         ),
         agent=AgentSeat.CONSULT,
         http_routes=("GET /v1/catalog",),
@@ -204,6 +208,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "docs/permissions.json"),
             (LaneRoot.WORKSPACE, "docs/domain_pack.json"),
             (LaneRoot.WORKSPACE, "docs/package_identity.json"),
+            (LaneRoot.WORKSPACE, "docs/coder_brief.md"),
+            (LaneRoot.WORKSPACE, "docs/coder_session.log"),
+            (LaneRoot.WORKSPACE, "docs/coder_control.json"),
+            (LaneRoot.WORKSPACE, "docs/coder_receipt.json"),
+            (LaneRoot.WORKSPACE, "docs/intake_blueprint.json"),
             (LaneRoot.WORKSPACE, "frontend/**"),
         ),
         # Deliberately NOT tests/** — a writer that can edit the tests that
@@ -220,12 +229,12 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             "produced (imports, dispatch load, models, routes answer JSON, "
             "handle() returns a mapping) and bounce those failures for another "
             "writer pass. Store-backed execute-all is pilot coverage, not this "
-            "gate. Consult the coding agent for extra domain cases; admit them "
-            "only as mutations of spec-derived payloads. Never patch app/. "
+            "gate. The harness's acceptance IS the tester — do not consult "
+            "the coding agent for extra cases. Never patch app/. "
             "Never run the suite over HTTP — GET /v1/gates describes coverage "
             "only."
         ),
-        agent=AgentSeat.CONSULT,
+        agent=AgentSeat.NONE,
         http_routes=("GET /v1/gates",),
         write_lanes=((LaneRoot.WORKSPACE, "tests/**"),),
         gate="code-phase suite green (pytest -m 'not pilot')",

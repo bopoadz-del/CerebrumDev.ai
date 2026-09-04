@@ -203,7 +203,7 @@ def test_each_kernel_has_a_distinct_job_title_and_http_surface():
     assert role_contract(BuildRole.COLLECTOR).agent is AgentSeat.CONSULT
     assert role_contract(BuildRole.CLONER).agent is AgentSeat.NONE
     assert role_contract(BuildRole.WRITER).agent is AgentSeat.MANUFACTURE
-    assert role_contract(BuildRole.TESTER).agent is AgentSeat.CONSULT
+    assert role_contract(BuildRole.TESTER).agent is AgentSeat.NONE
     assert role_contract(BuildRole.STORE_MANAGER).agent is AgentSeat.NONE
     roster = jobs_manifest()
     assert [j["kernel"] for j in roster] == [p.value for p in BUILD_PHASES]

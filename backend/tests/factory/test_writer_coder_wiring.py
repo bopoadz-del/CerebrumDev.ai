@@ -42,6 +42,10 @@ def _coder_on(monkeypatch):
     """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setattr(
+        "app.factory.build.coder_session.cli_available",
+        lambda command=None: False,
+    )
+    monkeypatch.setattr(
         "app.factory.coder.generate_model_spec",
         lambda **kw: {
             "entity": kw["capability_id"].replace("-", "_"),
@@ -93,31 +97,54 @@ def _headers(out: Path) -> dict:
     }
 
 
+def _oneshot_payload(model: str = "test-model-1", marker=None):
+    body = invoking_handler_body(marker if marker is not None else {"agent": True})
+    return {
+        "specs": {
+            "analytics_surface": {
+                "entity": "analytics_surface",
+                "fields": [{"name": "reference", "type": "str", "required": True}],
+            },
+            "dashboard_surface": {
+                "entity": "dashboard_surface",
+                "fields": [{"name": "reference", "type": "str", "required": True}],
+            },
+        },
+        "handlers": {
+            "analytics_surface": body,
+            "dashboard_surface": body,
+        },
+        "model": model,
+    }
+
+
 def test_the_writer_uses_the_coding_agent_when_one_is_configured(
     blueprint, tmp_path, monkeypatch
 ):
     calls = []
 
-    def fake_coder(**kwargs):
+    def fake_oneshot(**kwargs):
         calls.append(kwargs)
-        return {
-            "body": invoking_handler_body({"agent": True}),
-            "model": "test-model-1",
-        }
+        return _oneshot_payload()
 
-    monkeypatch.setattr("app.factory.coder.generate_platform_handler", fake_coder)
+    monkeypatch.setattr("app.factory.coder.generate_from_compiled_brief", fake_oneshot)
+    monkeypatch.setattr("app.factory.build.coder_session.cli_available", lambda command=None: False)
+    per_cap = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_platform_handler",
+        lambda **kw: per_cap.append(kw) or {"body": "    return {}", "model": "x"},
+    )
 
     out = tmp_path / "build"
     outcome = RoleRunner(blueprint, out).run()
     assert outcome.ok, outcome.to_dict()
 
-    assert len(calls) == 2, "one coder call per capability"
-    assert {c["capability_id"] for c in calls} == {
-        "analytics_surface",
-        "dashboard_surface",
-    }
-    # The coder is told which blocks it may drive.
-    assert all("analytics" in c["block_ids"] or "dashboard" in c["block_ids"] for c in calls)
+    assert len(calls) == 1, "one compiled-brief dispatch, not one shot per capability"
+    assert "analytics_surface" in calls[0]["capabilities"]
+    assert "dashboard_surface" in calls[0]["capabilities"]
+    assert "TARGET" in calls[0]["brief"]
+    assert "STEP 0 INVENTORY" in calls[0]["brief"]
+    assert per_cap == [], "per-capability handle() shots are retired on the brief path"
 
     for name, text in _headers(out).items():
         assert "coder LLM (test-model-1)" in text, name
@@ -130,10 +157,11 @@ def test_a_coder_failure_ships_the_template_and_records_why(
     """Degraded output is acceptable; invisible degradation is not."""
     from app.factory.coder import CoderError
 
-    def failing_coder(**kwargs):
+    def failing_oneshot(**kwargs):
         raise CoderError("model refused")
 
-    monkeypatch.setattr("app.factory.coder.generate_platform_handler", failing_coder)
+    monkeypatch.setattr("app.factory.build.coder_session.cli_available", lambda command=None: False)
+    monkeypatch.setattr("app.factory.coder.generate_from_compiled_brief", failing_oneshot)
 
     out = tmp_path / "build"
     runner = RoleRunner(blueprint, out)
@@ -145,8 +173,8 @@ def test_a_coder_failure_ships_the_template_and_records_why(
         assert "coder LLM" not in text, name
 
     failures = runner.state.get("coder_failures", {})
-    assert set(failures) == {"analytics_surface", "dashboard_surface"}
-    assert "model refused" in failures["analytics_surface"]
+    assert "brief_dispatch" in failures
+    assert "model refused" in failures["brief_dispatch"]
 
     # Only the handler coder failed, so only the handlers fall back. The other
     # artifact classes have their own coder calls and are unaffected -- the
@@ -154,7 +182,9 @@ def test_a_coder_failure_ships_the_template_and_records_why(
     sources = runner.state["artifact_sources"]
     for cap_id in ("analytics_surface", "dashboard_surface"):
         assert sources[cap_id] == "deterministic contract template", cap_id
-        assert sources[f"model:{cap_id}"].startswith("coder LLM")
+        # Brief-path oneshot failed: models fall back to the template too.
+        # Per-cap generate_model_spec is retired when FACTORY_BRIEF_DISPATCH=1.
+        assert "template" in sources[f"model:{cap_id}"].lower(), cap_id
         # Routes are kernel-owned (U12). An LLM body would bypass execute_action.
         assert sources[f"route:{cap_id}"] == "kernel execute_action template"
 
@@ -178,11 +208,12 @@ def test_rework_findings_are_handed_to_the_coder(blueprint, tmp_path, monkeypatc
     """A second attempt must be told what failed, not guess from scratch."""
     seen = []
 
-    def fake_coder(**kwargs):
-        seen.append(list(kwargs.get("work_list") or []))
-        return {"body": invoking_handler_body(), "model": "m"}
+    def fake_oneshot(**kwargs):
+        seen.append(kwargs.get("brief") or "")
+        return _oneshot_payload(model="m", marker={})
 
-    monkeypatch.setattr("app.factory.coder.generate_platform_handler", fake_coder)
+    monkeypatch.setattr("app.factory.build.coder_session.cli_available", lambda command=None: False)
+    monkeypatch.setattr("app.factory.coder.generate_from_compiled_brief", fake_oneshot)
 
     from app.factory.build.roles import ROLE_IMPLEMENTATIONS, RoleResult
 
@@ -199,11 +230,12 @@ def test_rework_findings_are_handed_to_the_coder(blueprint, tmp_path, monkeypatc
     )
     runner.run()
 
-    # First writer pass has no findings; the rework pass carries the gate's.
-    assert seen[0] == []
-    rework_lists = [w for w in seen if w]
-    assert rework_lists, "the rework pass must receive the tester's findings"
-    assert any("tester produced no test files" in item for item in rework_lists[0])
+    # First writer pass has no findings; the rework pass carries the gate's
+    # in the compiled whole-job brief.
+    assert seen, "the coding agent must receive the compiled brief"
+    assert "tester produced no test files" not in seen[0]
+    rework_briefs = [b for b in seen[1:] if "tester produced no test files" in b]
+    assert rework_briefs, "the rework pass must receive the tester's findings in the brief"
 
 
 def test_coder_output_still_passes_the_validation_gate(monkeypatch):
