@@ -25,6 +25,9 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
     assert "action=" in brief
     assert "writer_behaviour" in brief
     assert "no capability accepted its own schema" in brief
+    assert "test_every_capability_route_accepts_payload" in brief
+    assert "workflow: step_N (event_bus): error" in brief
+    assert "channel=mcp" in brief
     assert "EVERY id in BLOCK_IDS" in brief
     assert "Finished" in brief or "finished product" in lowered
 
