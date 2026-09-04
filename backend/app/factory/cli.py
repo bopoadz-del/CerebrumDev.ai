@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         "--phase-wall-clock",
         type=float,
         default=1500.0,
-        help="seconds each role may spend (0 disables; Floor default 25 min)",
+        help="seconds each role may spend (0 disables; code-only Floor 25 min, Store-green 90 min)",
     )
     p_build.add_argument(
         "--cycle",

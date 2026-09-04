@@ -50,15 +50,18 @@ BUILD_REWORK_ENV = "FACTORY_BUILD_MAX_REWORK"
 BUILD_PHASE_WALL_ENV = "FACTORY_PHASE_WALL_CLOCK_S"
 
 #: Code-only Floor run: one WRITER pass (~25 min phase cap) inside 30 min.
-#: Auto-pilot / explicit pilot: 2 hours and 3 WRITER reworks.
+#: Auto-pilot / explicit pilot: 2 hours and 3 WRITER reworks. The 90 min
+#: phase cap lets WRITER occupy most of that coding budget; the old 25
+#: min cap aborted a Store-green writer long before a pilot zip.
 _DEFAULT_WALL_CLOCK_S = 1800.0
 _DEFAULT_MAX_REWORK = 1
 _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
+_DEFAULT_PILOT_PHASE_WALL_CLOCK_S = 5400.0
 
-#: A build with no ledger event for this long has no process behind it. The
-#: longest legitimate gap is one coder call (watchdog × fallback legs), so
-#: this is set well above that. An in-flight model_call NOTE uses a tighter
-#: bound — see ``_model_call_overdue``.
+#: A build with no ledger event for this long has no process behind it.
+#: An in-flight model_call NOTE is NOT a dead process — skip this stall
+#: while the calling-NOTE is still inside its deadline (20–40 min writes
+#: are legitimate). Overdue calls use ``_model_call_overdue``.
 _STALL_AFTER_S = 1800.0
 
 #: Quieter than a dead process: one coder call can sit in the model for
@@ -106,13 +109,30 @@ def _max_rework(cycle: str = "code", auto_pilot: bool = False) -> int:
     return _DEFAULT_MAX_REWORK
 
 
-def _phase_wall_clock_s() -> float:
-    try:
-        return float(
-            os.getenv(BUILD_PHASE_WALL_ENV, str(int(_DEFAULT_PHASE_WALL_CLOCK_S)))
-        )
-    except ValueError:
-        return _DEFAULT_PHASE_WALL_CLOCK_S
+def _phase_wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
+    """Per-role cap. Code-only stays 25 min; Store-green uses 90 min.
+
+    A dashboard leftover of 1500s must not cap a keyed auto-pilot WRITER
+    — that is how a 2-hour coding run died after the first handler wave.
+    Explicit ``0`` still disables the bound. Values above the code-only
+    default are honoured as an operator override.
+    """
+    raw = os.getenv(BUILD_PHASE_WALL_ENV)
+    configured: Optional[float] = None
+    if raw is not None:
+        try:
+            configured = float(raw)
+        except ValueError:
+            configured = None
+    if _uses_pilot_budget(cycle, auto_pilot):
+        if configured == 0:
+            return 0.0
+        if configured is None or configured <= _DEFAULT_PHASE_WALL_CLOCK_S:
+            return _DEFAULT_PILOT_PHASE_WALL_CLOCK_S
+        return configured
+    if configured is not None:
+        return configured
+    return _DEFAULT_PHASE_WALL_CLOCK_S
 
 
 def _phase_ref(role: Any) -> Dict[str, str]:
@@ -426,7 +446,10 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     # ledger's last event as PHASE_STARTED forever, which read as "building"
     # for eternity. Age the file: no event for this long means nothing is
     # working on it, and saying so is the honest answer.
-    if idle_s > _STALL_AFTER_S:
+    # An in-flight coder call inside its deadline is work, not a dead
+    # process — stalling at 30 min would abort a legitimate 40 min write.
+    in_flight_call = bool(_model_call_fields(last_note))
+    if idle_s > _STALL_AFTER_S and not in_flight_call:
         return _with_level_grade(
             {
                 "state": "stalled",
@@ -538,7 +561,9 @@ def _run(
             budget=BuildBudget(
                 max_rework=_max_rework(cycle, auto_pilot=auto),
                 wall_clock_s=_wall_clock_s(cycle, auto_pilot=auto),
-                phase_wall_clock_s=_phase_wall_clock_s(),
+                phase_wall_clock_s=_phase_wall_clock_s(
+                    cycle, auto_pilot=auto
+                ),
             ),
             cycle=cycle,
             auto_pilot=auto if cycle == "code" else False,

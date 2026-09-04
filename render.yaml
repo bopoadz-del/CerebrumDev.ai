@@ -205,11 +205,15 @@ services:
       # live Blueprint — the dashboard is source of truth.
       - key: BILLING_ENFORCEMENT
         value: "false"
-      # Coder budget per generation, in seconds. Code default is 120 with a
-      # 30s floor (coder.py:182). Live on the service but undeclared here
-      # until now.
+      # Per-HTTP hang abort for the factory coder. 120 / live 150 was the
+      # leftover that aborted WRITER at ~510s (150 × 3 + 30). Code remaps
+      # that band to 1200s even if the dashboard still has 120/150.
+      # 20 min is a hung-socket abort, not the 2-hour Store-green budget.
       - key: FACTORY_CODER_TIMEOUT_S
-        value: "120"
+        value: "1200"
+      # One calling-NOTE wall (one generation + one alternate retry).
+      - key: FACTORY_CODER_ATTEMPT_WALL_S
+        value: "2400"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage

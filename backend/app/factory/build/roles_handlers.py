@@ -1776,9 +1776,10 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
         return False
     from app.factory.coder import _call_timeout_s
 
-    # Two model legs plus a repair retry have to fit, or the call cannot
-    # finish inside the build.
-    needed = _call_timeout_s() * 2 + 30
+    # One successful post has to finish inside the remaining phase wall.
+    # Requiring two full legs here skipped every handler once the
+    # per-attempt timeout grew past the old 25-minute code-phase cap.
+    needed = _call_timeout_s() + 30
     if left > needed:
         return False
     ctx.state.setdefault("coder_failures", {})[what] = (

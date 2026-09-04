@@ -840,6 +840,112 @@ test('Floor keeps coding chrome after golden lettings Approve before the first s
   await expectNoGoldFinished(page)
 })
 
+test('Floor 510s coder call inside the 40 min wall stays Building — never STOPPED or Download', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: LETTINGS_BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'building',
+          cycle: 'pilot',
+          pilot_ready: false,
+          current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+          phase_index: 3,
+          phase_total: 5,
+          last_event: 'calling coder LLM for tenancy_application_pipeline',
+          last_event_age_s: 510,
+          model_call_in_progress: true,
+          model_call_deadline_s: 2400,
+          stale: true,
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('floor-coder-takeover')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toHaveCount(0)
+  await expect(page.getByText(/coder LLM timed out/)).toHaveCount(0)
+  await expectNoGoldFinished(page)
+  const building = page.getByRole('button', { name: 'Building…' })
+  await expect(building).toBeVisible()
+  await expect(building).toBeDisabled()
+})
+
+test('Floor overdue coder call is STOPPED and Platforms refuses export', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: LETTINGS_BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'failed',
+          cycle: 'pilot',
+          pilot_ready: false,
+          detail:
+            'coder LLM timed out after 510s (deadline 480s) — calling coder LLM for class_and_event_scheduling',
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Building…' })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+})
+
 test('Your Platforms stays Building after golden lettings Approve — never a gold Download', async ({
   page,
 }) => {

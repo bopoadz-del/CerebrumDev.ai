@@ -606,6 +606,113 @@ def test_overdue_1085s_vs_480s_fails_the_build_status(tmp_path):
     assert status["pilot_ready"] is False
 
 
+def test_legacy_150s_timeout_is_not_the_production_wall(monkeypatch):
+    """Live 510s abort: FACTORY_CODER_TIMEOUT_S=150 × 3 + 30 = 480s.
+
+    That leftover hang-detect band must not keep killing WRITER. Sub-minute
+    test values stay short so the watchdog tests remain tight.
+    """
+    from app.factory import llm_watchdog as wd
+
+    monkeypatch.delenv("FACTORY_CODER_TIMEOUT_S", raising=False)
+    monkeypatch.delenv("FACTORY_CODER_ATTEMPT_WALL_S", raising=False)
+    assert wd.call_timeout_s() == wd.DEFAULT_CALL_TIMEOUT_S
+    assert wd.attempt_wall_s() == wd.DEFAULT_ATTEMPT_WALL_S
+    assert wd.DEFAULT_CALL_TIMEOUT_S >= 1200.0
+    assert wd.DEFAULT_ATTEMPT_WALL_S >= 2400.0
+    assert wd.DEFAULT_ATTEMPT_WALL_S > 510.0
+
+    for leftover in ("120", "150"):
+        monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", leftover)
+        assert wd.call_timeout_s() == wd.DEFAULT_CALL_TIMEOUT_S, leftover
+        assert wd.attempt_wall_s() == wd.DEFAULT_ATTEMPT_WALL_S, leftover
+
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "0.2")
+    assert wd.call_timeout_s() == 0.2
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "1800")
+    assert wd.call_timeout_s() == 1800.0
+    assert wd.attempt_wall_s() >= 1830.0
+
+
+def test_in_flight_call_at_510s_is_still_building(tmp_path):
+    """Live MakersHub Leeds: Floor showed STOPPED at ~510s. That age is
+    still inside the 40-minute calling-NOTE wall — Building, not failed.
+    """
+    from app.factory import llm_watchdog as wd
+
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="makers", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="calling coder LLM for class_and_event_scheduling",
+        payload={
+            "stage": "coder",
+            "model_call": True,
+            "deadline_s": wd.DEFAULT_ATTEMPT_WALL_S,
+        },
+    )
+    aged_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=510)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = aged_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+    status = build_status(out)
+    assert status["state"] == "building", status
+    assert status["model_call_in_progress"] is True
+    assert status["model_call_deadline_s"] == wd.DEFAULT_ATTEMPT_WALL_S
+    assert status.get("pilot_ready") is not True
+
+
+def test_in_flight_call_does_not_stall_before_the_watchdog_wall(tmp_path):
+    """_STALL_AFTER_S is 30 min. A 35-min handler write inside a 40-min
+    wall must stay Building — stall means process gone, not 'still coding'.
+    """
+    from app.factory import llm_watchdog as wd
+
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="lettings", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="calling coder LLM for tenancy_application_pipeline",
+        payload={
+            "stage": "coder",
+            "model_call": True,
+            "deadline_s": wd.DEFAULT_ATTEMPT_WALL_S,
+        },
+    )
+    aged_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=2100)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = aged_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+    status = build_status(out)
+    assert status["state"] == "building", status
+    assert "timed out" not in str(status.get("detail") or "")
+    assert status["pilot_ready"] is not True
+
+
 def test_generic_coder_error_still_templates(monkeypatch):
     """Timeout is fatal; a refused/empty completion still ships the template."""
     from app.factory.build import roles_handlers

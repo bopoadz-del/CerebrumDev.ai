@@ -193,10 +193,10 @@ ANTHROPIC_VERSION = "2023-06-01"
 def _call_timeout_s() -> float:
     """Per-attempt ceiling for one coder HTTP request.
 
-    Reasoning models legitimately take a minute or more, but an idle-only
-    httpx timeout is not a deadline: a streaming model never trips it.
-    ``llm_watchdog`` enforces a wall-clock join. Override with
-    FACTORY_CODER_TIMEOUT_S.
+    Reasoning models legitimately take many minutes to emit a handler.
+    An idle-only httpx timeout is not a deadline: a streaming model
+    never trips it. ``llm_watchdog`` enforces a wall-clock abort.
+    Override with FACTORY_CODER_TIMEOUT_S (legacy 120/150 is remapped).
     """
     return call_timeout_s()
 
@@ -282,9 +282,9 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     is worse than none, because it is trusted.
 
     The attempt wall is a contextvar so fallback legs (and the validation
-    retry) share one ``attempt_wall_s()`` deadline. Without that, three
-    150s legs plus a second ``_llm_code_call`` can outrun the Floor's
-    480s live wall while one calling-NOTE is in flight.
+    retry) share one ``attempt_wall_s()`` deadline. Without that, stacked
+    legs plus a second ``_llm_code_call`` can outrun the Floor's calling-NOTE
+    wall while one model_call NOTE is in flight.
 
     Raises CoderError on failure.
     """

@@ -30,6 +30,7 @@ from app.factory.build.runner import BuildBudget, RoleRunner
 from app.factory.build.roles_handlers import _writer_block_roster
 from app.factory.build_jobs import (
     _max_rework,
+    _phase_wall_clock_s,
     _wall_clock_s,
     build_status,
 )
@@ -93,16 +94,39 @@ def test_keyed_path_ci_does_not_auto_open_pilot(monkeypatch):
     assert factory_auto_pilot_enabled() is False
 
 
-def test_floor_budget_stays_a_code_phase_without_auto_pilot():
+def test_floor_budget_stays_a_code_phase_without_auto_pilot(monkeypatch):
+    monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
+    monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
+    monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
     assert _wall_clock_s() == 1800.0
     assert _max_rework() == 1
+    assert _phase_wall_clock_s() == 1500.0
 
 
-def test_floor_budget_grows_for_auto_pilot_and_explicit_pilot():
+def test_floor_budget_grows_for_auto_pilot_and_explicit_pilot(monkeypatch):
+    monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
+    monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
+    monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
     assert _wall_clock_s(auto_pilot=True) == AUTO_PILOT_WALL_CLOCK_S
     assert _max_rework(auto_pilot=True) == AUTO_PILOT_MAX_REWORK
+    assert _phase_wall_clock_s(auto_pilot=True) == 5400.0
     assert _wall_clock_s(cycle="pilot") == AUTO_PILOT_WALL_CLOCK_S
     assert _max_rework(cycle="pilot") == AUTO_PILOT_MAX_REWORK
+    assert _phase_wall_clock_s(cycle="pilot") == 5400.0
+
+
+def test_legacy_25min_phase_wall_does_not_cap_a_pilot_writer(monkeypatch):
+    """Dashboard leftover FACTORY_PHASE_WALL_CLOCK_S=1500 is the code-only
+    cap. A Store-green WRITER must keep the 90-minute coding window.
+    """
+    monkeypatch.setenv("FACTORY_PHASE_WALL_CLOCK_S", "1500")
+    assert _phase_wall_clock_s() == 1500.0
+    assert _phase_wall_clock_s(auto_pilot=True) == 5400.0
+    assert _phase_wall_clock_s(cycle="pilot") == 5400.0
+    monkeypatch.setenv("FACTORY_PHASE_WALL_CLOCK_S", "0")
+    assert _phase_wall_clock_s(cycle="pilot") == 0.0
+    monkeypatch.setenv("FACTORY_PHASE_WALL_CLOCK_S", "6600")
+    assert _phase_wall_clock_s(cycle="pilot") == 6600.0
 
 
 def test_build_status_exposes_code_cycle_as_not_pilot_ready(tmp_path):
@@ -208,6 +232,9 @@ def test_floor_run_stays_code_only_without_auto_pilot(monkeypatch, tmp_path):
             return BuildOutcome(outcome=Outcome.SUCCESS)
 
     monkeypatch.setenv("FACTORY_AUTO_PILOT", "0")
+    monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
+    monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
+    monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
     monkeypatch.setattr("app.factory.build.runner.RoleRunner", _FakeRunner)
     from app.factory.build_jobs import _run
 
@@ -217,6 +244,7 @@ def test_floor_run_stays_code_only_without_auto_pilot(monkeypatch, tmp_path):
     assert captured["auto_pilot"] is False
     assert captured["budget"].wall_clock_s == 1800.0
     assert captured["budget"].max_rework == 1
+    assert captured["budget"].phase_wall_clock_s == 1500.0
 
 
 def test_floor_run_opts_into_auto_pilot_when_enabled(monkeypatch, tmp_path):
@@ -235,6 +263,9 @@ def test_floor_run_opts_into_auto_pilot_when_enabled(monkeypatch, tmp_path):
             return BuildOutcome(outcome=Outcome.SUCCESS)
 
     monkeypatch.setenv("FACTORY_AUTO_PILOT", "1")
+    monkeypatch.delenv("FACTORY_BUILD_WALL_CLOCK_S", raising=False)
+    monkeypatch.delenv("FACTORY_BUILD_MAX_REWORK", raising=False)
+    monkeypatch.delenv("FACTORY_PHASE_WALL_CLOCK_S", raising=False)
     monkeypatch.setattr("app.factory.build.runner.RoleRunner", _FakeRunner)
     from app.factory.build_jobs import _run
 
@@ -245,6 +276,7 @@ def test_floor_run_opts_into_auto_pilot_when_enabled(monkeypatch, tmp_path):
     assert captured["cycle"] == "code"
     assert captured["budget"].wall_clock_s == AUTO_PILOT_WALL_CLOCK_S
     assert captured["budget"].max_rework == AUTO_PILOT_MAX_REWORK
+    assert captured["budget"].phase_wall_clock_s == 5400.0
 
 
 def test_code_only_success_still_exists_without_auto_pilot(tmp_path):

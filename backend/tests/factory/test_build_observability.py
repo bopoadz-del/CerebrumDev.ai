@@ -454,10 +454,11 @@ def test_release_gate_template_passes_this_interpreter_not_a_set():
 
 
 def test_phase_wall_clock_caps_the_writer_deadline(tmp_path):
-    """A 2-hour build wall must not let WRITER sit in the model for 2 hours.
+    """An explicit per-phase cap still binds RoleContext.deadline.
 
-    The per-phase cap is the code-phase gate (20–30 min). RoleContext.deadline
-    is the earlier of the remaining build wall and that phase cap.
+    Production Store-green uses a 90-minute phase default so WRITER can
+    code; this test pins that an operator-set 30s cap still wins over the
+    2-hour build wall.
     """
     import time as _time
 
