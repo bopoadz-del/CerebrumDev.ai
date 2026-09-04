@@ -1811,7 +1811,16 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
     Records the skip so the artifact's provenance says the agent was not
     used and why -- an artifact quietly templated because time ran out is
     exactly the invisible degradation the factory refuses.
+
+    A stage-inspect hard-stop must not stub remaining capabilities as a
+    thin SUCCESS: raise so the run fails closed with the inspect snapshot.
     """
+    halt = (ctx.state or {}).get("stage_halt")
+    if isinstance(halt, dict) and halt.get("decision") == "hard_stop":
+        raise RoleError(
+            halt.get("reason")
+            or f"stage inspect hard-stop before {what}"
+        )
     left = ctx.coder_time_left()
     if left is None:
         return False

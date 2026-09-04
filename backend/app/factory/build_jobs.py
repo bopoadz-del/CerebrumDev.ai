@@ -42,17 +42,17 @@ RUNNER = "runner"
 TEMPLATE = "template"
 
 #: Wall-clock ceiling for a production Floor build. Code-only stays a
-#: 20–30 min coder pass. When the factory LLM is configured the run
-#: auto-continues into a Store-green (pilot) cycle and uses the 2-hour
-#: combined budget — that is the production-grade path, not a refuse.
+#: 20–30 min coder pass. Keyed auto-pilot starts the same ~30 min stage,
+#: hard-stops, inspects, and may bump to ~45 min. An explicit leftover
+#: 2h env is honoured (never slashed) but is not the default path.
 BUILD_WALL_CLOCK_ENV = "FACTORY_BUILD_WALL_CLOCK_S"
 BUILD_REWORK_ENV = "FACTORY_BUILD_MAX_REWORK"
 BUILD_PHASE_WALL_ENV = "FACTORY_PHASE_WALL_CLOCK_S"
 
 #: Code-only Floor run: one WRITER pass (~25 min phase cap) inside 30 min.
-#: Auto-pilot / explicit pilot: 2 hours and 3 WRITER reworks. The 90 min
-#: phase cap lets WRITER occupy most of that coding budget; the old 25
-#: min cap aborted a Store-green writer long before a pilot zip.
+#: Auto-pilot / explicit pilot: start 30 min, inspect, optional 45 min,
+#: 3 WRITER reworks. Phase cap stays 90 min so a leftover high wall is
+#: not clipped by the old 25 min abort.
 _DEFAULT_WALL_CLOCK_S = 1800.0
 _DEFAULT_MAX_REWORK = 1
 _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
@@ -339,7 +339,15 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
 
     last_any = events[-1] if events else None
     notes = [e for e in events if e.kind is EventKind.NOTE]
-    last_note = notes[-1] if notes else None
+    inspects = [
+        e
+        for e in notes
+        if (e.payload or {}).get("budget_inspect")
+        or (e.payload or {}).get("kind") == "budget_inspect"
+    ]
+    last_inspect = (inspects[-1].payload or {}) if inspects else None
+    activity_notes = [e for e in notes if e not in inspects]
+    last_note = activity_notes[-1] if activity_notes else None
     try:
         import time
 
@@ -380,6 +388,8 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         **monitor,
         **_cycle_fields(ledger, terminal),
     }
+    if last_inspect:
+        progress["budget_inspect"] = last_inspect
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
         payload = terminal.payload or {}

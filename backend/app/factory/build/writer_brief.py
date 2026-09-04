@@ -1,0 +1,55 @@
+"""The one gated coding-agent brief.
+
+The Factory coder (Kimi HTTP or an agentic CLI) is not a swarm of tiny
+product stories. Each handle()/spec/route packet is a task. The *system*
+context is this single brief: gates, contracts, and what done means.
+
+``pilot_ready`` is the exit. Code-cycle SUCCESS, templates-only handlers,
+and stubbed capabilities are not a finished product.
+"""
+
+from __future__ import annotations
+
+from app.factory.build.authority import kernel_seat_brief
+from app.factory.build.level_grade import Level
+from app.factory.build.product_gate import GATE_SCOPES
+
+#: Shared system brief for every WRITER / rework coder call.
+CODING_AGENT_BRIEF = f"""
+FACTORY CODING-AGENT BRIEF (one prompt — this is the product story)
+
+You are manufacturing a full pilot repo, not a thin scaffold.
+
+Exit condition — the run is DONE only when ALL of these are true:
+- the PRODUCT gate passes (pytest -m pilot on the booted product)
+- the STORE gate passes
+- the ledger records pilot_ready=true
+- the level grade is {Level.STORE_GREEN.value} or {Level.FOUNDING_CUSTOMER_READY.value}
+
+Three gates (fail-closed; a gate that did not run is NOT a pass):
+- CODE → {Level.CODE_GREEN.value}: {GATE_SCOPES["CODE"]}
+- PRODUCT → {Level.STORE_GREEN.value} (with STORE): {GATE_SCOPES["PRODUCT"]}
+- STORE → {Level.FOUNDING_CUSTOMER_READY.value} when founding files + contracts hold: {GATE_SCOPES["STORE"]}
+
+{Level.CODE_GREEN.value} (code-cycle SUCCESS, pilot_ready=false) is a prototype, not Finished.
+Do not treat templates-only output, stub handlers, skipped capabilities, or
+pilot_ready=false as a finished product. Thin SUCCESS is a failure to finish.
+
+Contracts you must honour on every capability you write:
+- Blocks are action-dispatched. Pass action= as a keyword, never inside the
+  payload dict. Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).
+- Call execute() for EVERY id in BLOCK_IDS. A declared block that is never
+  invoked fails the WRITER behaviour gate and halts the build.
+- Validate only the capability's own fields. Construct block inputs; do not
+  demand block-specific keys from the caller.
+- Offline platform: no network, no HTTP store callbacks, channel "mcp" only.
+
+This brief is the horizon. The user message is one micro-task (one handle(),
+one spec, or one route). A stage wall may hard-stop you so the factory can
+inspect what was achieved; that stop is not permission to ship a scaffold.
+""".strip()
+
+
+def writer_system_brief() -> str:
+    """Seat JD plus the one gated brief. This is what the coder receives."""
+    return kernel_seat_brief("WRITER") + "\n\n" + CODING_AGENT_BRIEF + "\n"

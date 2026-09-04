@@ -30,11 +30,13 @@ class RoleContext:
     state: Dict[str, Any] = field(default_factory=dict)
     #: Monotonic deadline for this role pass, set by the runner to the
     #: earlier of the whole-build wall and the per-phase wall (25 min on
-    #: a code-only pass; 90 min on Store-green / auto-pilot). The coder
-    #: yields to the deterministic template once too little remains for
-    #: one call to finish. A Store-green WRITER is supposed to spend most
-    #: of the 2-hour coding budget — the 25-minute cap is code-only.
+    #: a code-only pass; staged 30→45 min on Store-green / auto-pilot).
+    #: The coder yields once too little remains for one call. A leftover
+    #: high wall is honoured; the default path is stop-and-inspect.
     deadline: Optional[float] = None
+    #: Live deadline box shared with the runner so a mid-phase inspect
+    #: ramp updates ``coder_time_left`` without restarting the role.
+    deadline_box: Optional[Dict[str, Any]] = None
     #: Optional progress sink, wired by the runner to a ledger NOTE. Roles
     #: stay ledger-unaware; without it ``note()`` is a no-op, so a role is
     #: testable without a ledger. Exists because a WRITER pass that takes
@@ -45,11 +47,16 @@ class RoleContext:
 
     def coder_time_left(self) -> Optional[float]:
         """Seconds of build budget remaining, or None when unbounded."""
-        if self.deadline is None:
+        deadline = self.deadline
+        if self.deadline_box is not None:
+            boxed = self.deadline_box.get("at")
+            if boxed is not None:
+                deadline = boxed
+        if deadline is None:
             return None
         import time as _time
 
-        return self.deadline - _time.monotonic()
+        return deadline - _time.monotonic()
 
     def note(self, detail: str, **payload: Any) -> None:
         if self.progress is None:

@@ -36,6 +36,7 @@ import httpx
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .build.authority import kernel_seat_brief
+from .build.writer_brief import writer_system_brief
 from .llm_watchdog import (
     attempt_wall_s,
     call_timeout_s,
@@ -88,10 +89,12 @@ def coder_enabled() -> bool:
 
 
 CODER_BUDGET_ENV = "FACTORY_CODER_BUDGET_S"
-#: Template-generator loop across ALL GENERATE capabilities. The old
-#: 300s default stubbed remaining caps after five minutes — a thin
-#: scaffold with ``pilot_ready`` false. Match the Store-green wall.
-DEFAULT_CODER_BUDGET_S = 7200.0
+#: Template-generator loop across ALL GENERATE capabilities. Default is
+#: stage 1 (~30 min), not a silent 2h burn. Leftover 300s still remaps
+#: up so it cannot stub remaining caps after five minutes.
+DEFAULT_CODER_BUDGET_S = 1800.0
+#: Last-resort ceiling. Never the default; honour an explicit leftover.
+CODER_BUDGET_CEILING_S = 7200.0
 #: Live leftover ``FACTORY_CODER_BUDGET_S=300`` (and the same "hold the
 #: worker" band) must not keep stubbing a multi-capability pilot.
 #: ``0`` still disables. Sub-minute values stay honoured for tests.
@@ -103,9 +106,9 @@ def coder_budget_s() -> float:
     """Total wall-clock the coder may spend across one generation (seconds).
 
     The template generator still runs the GENERATE loop in-request.
-    Production Floor uses the role runner (2-hour wall / 90-minute phase).
-    This budget must not be the 300s leftover that stubbed remaining
-    capabilities and left ``pilot_ready`` false. ``0`` disables it.
+    Production Floor uses the role runner (staged 30 min → inspect → 45 min).
+    Leftover 300s remaps to stage 1, not a silent 2h. Explicit 7200 is
+    honoured (do not slash an in-flight leftover). ``0`` disables it.
     """
     raw = os.getenv(CODER_BUDGET_ENV, "").strip()
     if not raw:
@@ -807,7 +810,7 @@ def _call_validate_retry(
             _attempt_deadline.reset(token)
 
 
-_PLATFORM_SYSTEM = kernel_seat_brief("WRITER") + """
+_PLATFORM_SYSTEM = writer_system_brief() + """
 
 You write ONE Python function body for a generated business platform.
 
@@ -867,7 +870,7 @@ Contract:
 """
 
 
-_SPEC_SYSTEM = kernel_seat_brief("WRITER") + """
+_SPEC_SYSTEM = writer_system_brief() + """
 
 You design the data model for one capability of a business platform.
 
@@ -1059,7 +1062,7 @@ def get_factory_llm_config_model() -> str:
     return get_factory_llm_config().get("model", "unknown")
 
 
-_ROUTE_SYSTEM = kernel_seat_brief("WRITER") + """
+_ROUTE_SYSTEM = writer_system_brief() + """
 
 You write ONE Python function body for an API route in a generated platform.
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import time
@@ -38,6 +39,8 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence
+
+logger = logging.getLogger("cerebrumdev.factory.runner")
 
 from app.factory.build.authority import (
     BUILD_PHASES,
@@ -120,15 +123,14 @@ def _collect_all_enabled() -> bool:
 class BuildBudget:
     """Bounds on a run. Exhausting a bound ends the build as a failure.
 
-    ``wall_clock_s`` is the whole build (2 hours on Store-green).
-    ``phase_wall_clock_s`` caps *each* role. The 25-minute default is the
-    code-only gate; a keyed auto-pilot / explicit pilot pass uses 90
-    minutes so WRITER can do real coding instead of aborting at ~510s
-    into the first handler. ``0`` disables that bound.
+    ``wall_clock_s`` is the whole build. Default is stage 1 (~30 min);
+    inspect-and-ramp may extend to 45 min. A leftover 2h wall is honoured
+    but is not the default. ``phase_wall_clock_s`` caps *each* role.
+    ``0`` disables that bound.
     """
 
     max_rework: int = 3
-    wall_clock_s: float = 7200.0
+    wall_clock_s: float = 1800.0
     phase_wall_clock_s: float = 1500.0
 
     def deadline_from(self, started: float) -> Optional[float]:
@@ -206,6 +208,10 @@ class RoleRunner:
         #: Set by run(); roles read it to stop starting coder calls
         #: that cannot finish inside the build's wall clock.
         self._deadline: Optional[float] = None
+        self._deadline_box: Dict[str, Any] = {"at": None}
+        self._run_started: Optional[float] = None
+        self._inspects_done: set = set()
+        self._stage_halt: Optional[Dict[str, Any]] = None
         resolved = (cycle or "code").strip().lower()
         self.cycle = "pilot" if resolved == "pilot" else "code"
         #: Floor ``_run`` passes True when a factory coder key is set.
@@ -307,6 +313,7 @@ class RoleRunner:
             resume_point() and the terminal-event readers are untouched -- a
             progress line can never be mistaken for a gate result.
             """
+            self._maybe_stage_inspect()
             self.ledger.append(EventKind.NOTE, role=role, detail=detail, payload=payload)
 
         deadline = self._deadline
@@ -318,6 +325,7 @@ class RoleRunner:
                 if deadline is None
                 else min(deadline, phase_deadline)
             )
+        self._deadline_box["at"] = deadline
         ctx = RoleContext(
             role=role,
             workspace=ws,
@@ -328,6 +336,7 @@ class RoleRunner:
             state=self.state,
             progress=_progress,
             deadline=deadline,
+            deadline_box=self._deadline_box,
         )
         result = self.roles[role](ctx)
         if not result.ok:
@@ -423,35 +432,99 @@ class RoleRunner:
         """True when code-phase 5/5 must continue into a Store-green cycle."""
         return self.cycle != "pilot" and bool(self.auto_pilot)
 
-    def _grant_pilot_budget(self) -> None:
-        """Give the auto-opened pilot cycle its own wall and rework room.
+    def _emit_inspect(self, snapshot: Dict[str, Any], *, reason: str) -> None:
+        """Append an inspect snapshot as a NOTE — never a verdict."""
+        detail = str(snapshot.get("reason") or f"budget inspect ({reason})")
+        payload = dict(snapshot)
+        payload["budget_inspect"] = True
+        payload["inspect_reason"] = reason
+        self.ledger.append(EventKind.NOTE, detail=detail, payload=payload)
+        logger.info("factory budget inspect (%s): %s", reason, detail)
 
-        Floor ``_run`` used to pass a 30 min / 1-rework budget sized for the
-        code phase alone. Continuing into pilot on that leftover (~15 min
-        after a thin WRITER) is how a Store-green run dies as SUCCESS.
-        """
-        from app.factory.build.auto_pilot import (
-            AUTO_PILOT_MAX_REWORK,
-            PILOT_MIN_REMAINING_S,
+    def _stage_inspect(self, *, reason: str, stage: str) -> Dict[str, Any]:
+        from app.factory.build.budget_inspect import inspect_build, inspect_decision
+
+        elapsed = 0.0
+        if self._run_started is not None:
+            elapsed = self.clock() - self._run_started
+        snap = inspect_build(self.ledger, self.workspace, self.state)
+        decided = inspect_decision(
+            elapsed_s=elapsed,
+            current_wall_s=float(self.budget.wall_clock_s or 0.0),
+            snapshot=snap,
+            stage=stage,
         )
+        self._emit_inspect(decided, reason=reason)
+        return decided
 
-        remaining = None
+    def _extend_wall(self, new_wall: float) -> None:
+        """Lengthen the build wall and the live role deadline. Never shrink."""
+        old_wall = float(self.budget.wall_clock_s or 0.0)
+        if new_wall <= old_wall:
+            return
+        add = new_wall - old_wall
         if self._deadline is not None:
-            remaining = self._deadline - self.clock()
-        if remaining is None or remaining < PILOT_MIN_REMAINING_S:
-            add = PILOT_MIN_REMAINING_S - (remaining or 0.0)
-            if self._deadline is None:
-                self._deadline = self.clock() + PILOT_MIN_REMAINING_S
-            else:
-                self._deadline += add
-            new_wall = (self.budget.wall_clock_s or 0.0) + add
-        else:
-            new_wall = self.budget.wall_clock_s
+            self._deadline += add
+        elif self._run_started is not None:
+            self._deadline = self._run_started + new_wall
+        boxed = self._deadline_box.get("at")
+        if boxed is not None:
+            self._deadline_box["at"] = boxed + add
+        elif self._deadline is not None:
+            self._deadline_box["at"] = self._deadline
         self.budget = BuildBudget(
-            max_rework=max(int(self.budget.max_rework), AUTO_PILOT_MAX_REWORK),
+            max_rework=self.budget.max_rework,
             wall_clock_s=new_wall,
             phase_wall_clock_s=self.budget.phase_wall_clock_s,
         )
+        logger.info(
+            "factory budget ramp: wall %.0fs → %.0fs (deadline live)",
+            old_wall,
+            new_wall,
+        )
+
+    def _maybe_stage_inspect(self) -> Optional[Dict[str, Any]]:
+        """Hard-stop inspect at ~30 min and ~45 min. No silent 2h bump."""
+        from app.factory.build.budget_inspect import STAGE_1_S, STAGE_2_S
+
+        if self._run_started is None:
+            return None
+        elapsed = self.clock() - self._run_started
+        stage = None
+        mark = None
+        if elapsed + 0.01 >= STAGE_1_S and "stage_1" not in self._inspects_done:
+            stage, mark = "stage_1", STAGE_1_S
+        elif elapsed + 0.01 >= STAGE_2_S and "stage_2" not in self._inspects_done:
+            stage, mark = "stage_2", STAGE_2_S
+        if stage is None:
+            return None
+        self._inspects_done.add(stage)
+        decided = self._stage_inspect(reason=f"{stage}_{int(mark)}s", stage=stage)
+        new_wall = decided.get("next_wall_s")
+        if new_wall:
+            self._extend_wall(float(new_wall))
+        elif decided.get("decision") == "hard_stop":
+            self._stage_halt = decided
+            self.state["stage_halt"] = decided
+        return decided
+
+    def _grant_pilot_budget(self) -> None:
+        """Keep rework room for the pilot cycle. Do not jump the wall to 2h.
+
+        Extra time is inspect-and-ramp only. A leftover high wall is left
+        alone (never slashed).
+        """
+        from app.factory.build.auto_pilot import AUTO_PILOT_MAX_REWORK
+
+        self.budget = BuildBudget(
+            max_rework=max(int(self.budget.max_rework), AUTO_PILOT_MAX_REWORK),
+            wall_clock_s=self.budget.wall_clock_s,
+            phase_wall_clock_s=self.budget.phase_wall_clock_s,
+        )
+        snap = self._stage_inspect(reason="pilot_opened", stage="pilot_open")
+        # Pilot-open inspect is informational. Stage-1/2 hard-stops own ramps.
+        if snap.get("decision") == "hard_stop" and not snap.get("progressing"):
+            logger.info("pilot open inspect: no extra wall — %s", snap.get("reason"))
 
     def _open_auto_pilot(self) -> None:
         """Reopen TESTER + STORE_MANAGER without writing a code SUCCESS."""
@@ -475,7 +548,9 @@ class RoleRunner:
     def run(self) -> BuildOutcome:
         started = self.clock()
         deadline = self.budget.deadline_from(started)
+        self._run_started = started
         self._deadline = deadline
+        self._deadline_box["at"] = deadline
         inputs_hash = blueprint_hash(self.blueprint)
 
         # Refuse to continue a run whose blueprint changed underneath it.
@@ -526,14 +601,46 @@ class RoleRunner:
                     index += 1
                     continue
 
-                if deadline is not None and self.clock() >= deadline:
+                self._maybe_stage_inspect()
+                deadline = self._deadline
+                if self._stage_halt:
+                    halt = self._stage_halt
                     return self._finish(
                         Outcome.FAILED_BUDGET_SPENT,
-                        f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
-                        f"before {role.value} completed",
+                        (
+                            f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
+                            f"before {role.value} completed; "
+                            + str(halt.get("reason") or "stage stop after inspect")
+                        ),
                         phase=role,
                         rework=rework_used,
+                        findings=list(halt.get("pilot_ready_blockers") or [])
+                        + list(halt.get("contract_misses") or [])[:8],
                     )
+                if deadline is not None and self.clock() >= deadline:
+                    snap = self._stage_inspect(
+                        reason="wall_reached", stage="wall"
+                    )
+                    new_wall = snap.get("next_wall_s")
+                    if new_wall:
+                        self._extend_wall(float(new_wall))
+                        deadline = self._deadline
+                    else:
+                        return self._finish(
+                            Outcome.FAILED_BUDGET_SPENT,
+                            (
+                                f"wall-clock budget of {self.budget.wall_clock_s:g}s "
+                                f"spent before {role.value} completed"
+                                + (
+                                    f"; {snap.get('reason')}"
+                                    if snap.get("reason")
+                                    else ""
+                                )
+                            ),
+                            phase=role,
+                            rework=rework_used,
+                            findings=list(snap.get("pilot_ready_blockers") or []),
+                        )
 
                 try:
                     assert_phase_order(role, done)
@@ -572,6 +679,21 @@ class RoleRunner:
                         f"{role.value} failed: {exc}",
                         phase=role,
                         rework=rework_used,
+                    )
+
+                if self._stage_halt:
+                    halt = self._stage_halt
+                    return self._finish(
+                        Outcome.FAILED_BUDGET_SPENT,
+                        (
+                            f"wall-clock budget of {self.budget.wall_clock_s:g}s spent "
+                            f"before {role.value} completed; "
+                            + str(halt.get("reason") or "stage stop after inspect")
+                        ),
+                        phase=role,
+                        rework=rework_used,
+                        findings=list(halt.get("pilot_ready_blockers") or [])
+                        + list(halt.get("contract_misses") or [])[:8],
                     )
 
                 if verdict.ok:
