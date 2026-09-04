@@ -759,6 +759,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_northbridge" goPlatforms={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+    // Watch snapshot paints one tick after takeover chrome; wait for it
+    // the same way the WRITER takeover test waits for "Writing your platform".
+    expect(await screen.findByText(/Writing your platform/)).toBeInTheDocument()
     expect(screen.getByText('COLLECTOR 1/5')).toBeInTheDocument()
     expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
