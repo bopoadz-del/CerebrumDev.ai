@@ -120,7 +120,15 @@ def test_mutation_drops_event_bus_workflow_accept_when_declared():
         "schema sample refused (event_bus workflow step)", ""
     )
     compiled.text = compiled.text.replace("never the raw schema sample", "")
+    compiled.text = compiled.text.replace("not the raw schema sample", "")
     compiled.text = compiled.text.replace("channel=mcp", "channel=email")
+    compiled.text = compiled.text.replace('"channel": "mcp"', '"channel": "email"')
+    compiled.text = compiled.text.replace("action=publish", "action=notify")
+    compiled.text = compiled.text.replace('"action": "publish"', '"action": "notify"')
+    compiled.text = compiled.text.replace("payload dict", "payload blob")
+    compiled.text = compiled.text.replace("input.topic", "input.subject")
+    compiled.text = compiled.text.replace("input.message", "input.body")
+    compiled.text = compiled.text.replace("'input': payload", "'input': record")
     result = lint_brief(compiled)
     assert result.ok is False
     assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)

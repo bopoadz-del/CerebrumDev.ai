@@ -23,6 +23,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
+from app.factory.build.workflow_accept import (
+    handler_has_prepared_event_bus_step,
+    handler_satisfies_event_bus_contract,
+)
+
 logger = logging.getLogger("cerebrumdev.factory.coder_session")
 
 BRIEF_REL = Path("docs") / "coder_brief.md"
@@ -619,16 +624,20 @@ def _has_brief_workflow_steps(text: str) -> bool:
 def _is_keepable_handler(text: str) -> bool:
     """CLI / oneshot wrote a complete capability module, not a fragment.
 
-    Brief-driven workflow steps must survive the fallback envelope even
-    when the module omitted CAPABILITY_ID (FACTORY_CODE_CLI often writes
-    handle() + execute("workflow") without the factory header).
+    Prepared brief-driven event_bus steps must survive the fallback
+    envelope even when the module omitted CAPABILITY_ID. Unprepared
+    ``{'block': 'event_bus', 'input': payload}`` must NOT be kept —
+    that is how PRODUCT ``workflow: step_N (event_bus): error`` locked
+    in after #318 (sess_a4690fb3336c42fb).
     """
     blob = text or ""
     if "def handle(" not in blob:
         return False
+    if not handler_satisfies_event_bus_contract(blob):
+        return False
     if "CAPABILITY_ID" in blob:
         return True
-    return _has_brief_workflow_steps(blob)
+    return handler_has_prepared_event_bus_step(blob) or _has_brief_workflow_steps(blob)
 
 
 def _merge_workspace_harvest(
@@ -648,9 +657,11 @@ def _merge_workspace_harvest(
             "[harvest] workspace "
             f"specs={sorted(harvested_specs)} kept_handlers={merged}",
         )
-    # Same-session CLI: prefer on-disk workflow steps over a thin JSON
-    # body. Do not do this for HTTP oneshot — leftover files from a red
-    # PRODUCT round would pin the failing handler and block rework.
+    # Same-session CLI: prefer on-disk PREPARED workflow steps over a
+    # thin / unprepared JSON body. Unprepared disk steps are not kept —
+    # the factory wrapper must run prepare_block_input. Do not do this
+    # for HTTP oneshot — leftover files from a red PRODUCT round would
+    # pin the failing handler and block rework.
     if result.via != "cli":
         return
     for cid in list(result.handlers):
@@ -663,7 +674,14 @@ def _merge_workspace_harvest(
         except OSError:
             continue
         body = result.handlers.get(cid) or ""
-        if _has_brief_workflow_steps(disk) and not _has_brief_workflow_steps(body):
+        disk_prepared = handler_satisfies_event_bus_contract(
+            disk
+        ) and (
+            handler_has_prepared_event_bus_step(disk)
+            or _has_brief_workflow_steps(disk)
+        )
+        body_prepared = handler_has_prepared_event_bus_step(body)
+        if disk_prepared and not body_prepared:
             result.handlers.pop(cid, None)
             if cid not in result.kept_handler_ids:
                 result.kept_handler_ids.append(cid)
