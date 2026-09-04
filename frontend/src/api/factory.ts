@@ -288,7 +288,9 @@ export interface ProductDesign {
   blueprint?: Record<string, unknown> | null
   blueprint_yaml?: string | null
   plan?: Record<string, unknown> | null
+  intake_blueprint?: Record<string, unknown> | null
   blueprint_approved?: boolean
+  brief_lint?: Record<string, unknown> | null
   generation?: {
     output_dir?: string
     inputs_hash?: string
@@ -319,6 +321,12 @@ export const product = {
     req<{ ok: boolean; product_id?: string; build: BuildStatus }>(
       'GET',
       `/v1/sessions/${sid}/product/build-status`,
+    ),
+  coderControl: (sid: string, action: 'pause' | 'stop' | 'resume') =>
+    req<{ ok: boolean; control: { action: string } }>(
+      'POST',
+      `/v1/sessions/${sid}/product/coder-control`,
+      { action },
     ),
 }
 
@@ -382,6 +390,20 @@ export type BuildStatus = {
   activity_done?: number
   activity_total?: number
   authorship?: BuildAuthorship
+  /** Owner Pause / Stop / Resume for the live coder session. */
+  coder_control?: 'run' | 'pause' | 'stop' | string
+  /** Tail of docs/coder_session.log — the live coder session. */
+  coder_log?: string
+  coder_brief_present?: boolean
+  coder_log_present?: boolean
+  coder_receipt?: {
+    via?: string
+    ok?: boolean
+    detail?: string
+    blocker?: string | null
+    model?: string
+  }
+  brief_dispatch?: string | null
   /**
    * Client-only: when this ledger event was first observed in the UI.
    * Lets the heartbeat advance even if the server keeps returning a frozen

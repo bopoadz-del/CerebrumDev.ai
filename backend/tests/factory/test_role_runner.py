@@ -194,6 +194,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
         "docs/deploy.json",
         "docs/domain_acceptance.json",
         "docs/domain_pack.json",
+        "docs/coder_brief.md",
         "app/domain_ops.py",
         "app/work_queue.py",
         "README.md",
@@ -556,6 +557,24 @@ def test_coder_nondeterminism_is_confined_to_the_handlers(
             "model": "stub-coder",
         }
 
+    def varying_oneshot(**kwargs):
+        counter["n"] += 1
+        caps = list(kwargs.get("capabilities") or [])
+        body = invoking_handler_body({"run": counter["n"]})
+        return {
+            "specs": {
+                cid: {
+                    "entity": cid.replace("-", "_"),
+                    "fields": [{"name": "reference", "type": "str", "required": True}],
+                }
+                for cid in caps
+            },
+            "handlers": {cid: body for cid in caps},
+            "model": "stub-coder",
+        }
+
+    monkeypatch.setattr("app.factory.build.coder_session.cli_available", lambda command=None: False)
+    monkeypatch.setattr("app.factory.coder.generate_from_compiled_brief", varying_oneshot)
     monkeypatch.setattr("app.factory.coder.generate_platform_handler", varying)
     # Every other coder entry point is stubbed *stably*, so the only source of
     # variation is the handler -- and no entry point reaches a live API.

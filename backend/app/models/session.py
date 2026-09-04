@@ -44,9 +44,11 @@ class ProductDesignState(BaseModel):
     brief: str = ""
     blueprint: Optional[Dict[str, Any]] = None
     plan: Optional[Dict[str, Any]] = None
+    intake_blueprint: Optional[Dict[str, Any]] = None
     blueprint_approved: bool = False
     generation: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
+    brief_lint: Optional[Dict[str, Any]] = None
 
 
 class SessionState(BaseModel):

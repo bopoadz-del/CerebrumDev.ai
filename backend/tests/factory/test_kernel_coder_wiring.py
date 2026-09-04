@@ -1,9 +1,8 @@
-"""COLLECTOR and TESTER consult the coding agent; CLONER does not.
+"""COLLECTOR may consult the coding agent; TESTER does not.
 
-The WRITER already asks the agent for artifacts. These tests pin the kernel
-expansions: collector review is report-only (gaps unchanged), tester extras
-are admitted only as mutations of spec-derived payloads, and a coder-off
-build still manufactures without network.
+The harness's acceptance IS the tester. These tests pin collector review
+as report-only (gaps unchanged) and that TESTER no longer asks the LLM
+for extra domain cases.
 """
 
 from __future__ import annotations
@@ -89,6 +88,9 @@ def test_collector_records_agent_reviews_without_inventing_gaps(tmp_path, monkey
     }
     assert "coding agent reviewed" in result.detail
     assert ctx.workspace.written == []  # COLLECTOR stays read-only
+    intake = result.notes.get("intake_blueprint") or {}
+    assert intake.get("schema_version") == "intake_blueprint.v1"
+    assert {c["id"] for c in intake.get("capabilities") or []} >= {"retail_core", "loyalty"}
 
 
 def test_collector_without_coder_stays_deterministic(tmp_path, monkeypatch):
@@ -123,32 +125,11 @@ def test_payload_constraint_violations_match_the_spec():
     assert "status" in _payload_constraint_violations({"status": "nope", "qty": 1}, spec)
     assert "qty" in _payload_constraint_violations({"status": "open", "qty": -1}, spec)
 
-def test_tester_admits_only_payload_mutations(tmp_path, monkeypatch):
+def test_tester_does_not_consult_the_llm(tmp_path, monkeypatch):
+    called = []
     monkeypatch.setattr(
         "app.factory.coder.propose_domain_test_cases",
-        lambda **kw: {
-            "cases": [
-                {
-                    "capability_id": "retail_core",
-                    "payload": {"reference": "other"},
-                    "expect": "accept",
-                    "reason": "another valid reference",
-                },
-                {
-                    "capability_id": "retail_core",
-                    "payload": {"reference": "sample", "invented": True},
-                    "expect": "reject",
-                    "reason": "new key — must drop",
-                },
-                {
-                    "capability_id": "not_a_cap",
-                    "payload": {"reference": "x"},
-                    "expect": "accept",
-                    "reason": "unknown capability",
-                },
-            ],
-            "model": "stub-tester",
-        },
+        lambda **kw: called.append(kw) or {"cases": [], "model": "nope"},
     )
     spec = {
         "retail_core": {
@@ -164,15 +145,8 @@ def test_tester_admits_only_payload_mutations(tmp_path, monkeypatch):
     )
     result = run_tester(ctx)
     assert result.ok
-    admitted = result.notes["agent_domain_cases"]
-    assert len(admitted) == 1
-    assert admitted[0]["payload"] == {"reference": "other"}
-    domain = (tmp_path / "build" / "tests" / "agent_domain_cases.py").read_text(
-        encoding="utf-8"
-    )
-    assert "test_agent_domain_cases" in domain
-    assert "invented" not in domain
-    # Live TESTER: tests/test_agent_domain.py was collected and failed pytest.
+    assert called == []
+    assert result.notes["agent_domain_cases"] == []
+    assert not (tmp_path / "build" / "tests" / "agent_domain_cases.py").exists()
     assert not (tmp_path / "build" / "tests" / "test_agent_domain.py").exists()
-    # Kernel suite still exists — extras cannot replace it.
     assert (tmp_path / "build" / "tests" / "test_routes.py").is_file()

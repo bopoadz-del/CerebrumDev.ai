@@ -132,6 +132,22 @@ def run_collector(ctx: RoleContext) -> RoleResult:
             mismatches=mismatch_n,
         )
 
+    intake: Dict[str, Any] = {}
+    try:
+        from app.factory.build.brief_compiler import synthesize_domain_pack
+        from app.factory.build.intake_blueprint import intake_from_product_blueprint
+
+        pack = synthesize_domain_pack(ctx.blueprint, ctx.plan)
+        turns = list((ctx.state or {}).get("chat_turns") or [])
+        intake = intake_from_product_blueprint(
+            ctx.blueprint, plan=ctx.plan, chat_turns=turns, domain_pack=pack
+        )
+        ctx.state["intake_blueprint"] = intake
+        detail += "; intake_blueprint.v1 emitted"
+    except Exception as exc:  # noqa: BLE001 — collector still reports gaps
+        ctx.state.setdefault("coder_failures", {})["COLLECTOR.intake"] = str(exc)
+        ctx.note(f"intake blueprint failed: {exc}", stage="collector")
+
     return RoleResult(
         ok=True,
         detail=detail,
@@ -142,6 +158,7 @@ def run_collector(ctx: RoleContext) -> RoleResult:
             "gaps": gaps,
             "agent_binding_reviews": reviews,
             "agent_binding_model": review_model,
+            "intake_blueprint": intake,
         },
     )
 
@@ -2473,6 +2490,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 
     A pilot cycle without a coder key must not replace agent-written
     handlers with the deterministic template. Adapter patches already ran.
+
+    C-BRIEF: compile ONE gated brief and dispatch it once (FACTORY_CODE_CLI
+    or a single HTTP oneshot). Per-capability handle() shots stay behind
+    FACTORY_BRIEF_DISPATCH=0. Inventory is checked against the Store
+    registry before any handler is written.
     """
     writer_roster = _writer_block_roster(ctx.state)
     if (
@@ -2493,6 +2515,47 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 ),
                 vendored_blocks=tuple(vendored),
             )
+    from app.factory.build.brief_compiler import (
+        InventoryHalt,
+        compile_brief_from_ctx,
+        verify_inventory,
+    )
+    from app.factory.build.brief_lint import BriefLintError, lint_or_raise
+    from app.factory.build.coder_session import (
+        brief_dispatch_enabled,
+        dispatch_compiled_brief,
+        write_brief_artifacts,
+    )
+
+    try:
+        compiled_brief = compile_brief_from_ctx(ctx)
+        verify_inventory(compiled_brief)
+        lint_or_raise(compiled_brief)
+    except InventoryHalt as exc:
+        raise RoleError(str(exc)) from exc
+    except BriefLintError as exc:
+        raise RoleError(str(exc)) from exc
+    if compiled_brief.intake:
+        ctx.state["intake_blueprint"] = compiled_brief.intake
+        ctx.workspace.write_text(
+            Path("docs") / "intake_blueprint.json",
+            json.dumps(compiled_brief.intake, indent=2, sort_keys=True) + "\n",
+        )
+    write_brief_artifacts(ctx, compiled_brief)
+    dispatch = None
+    use_brief_dispatch = brief_dispatch_enabled()
+    if use_brief_dispatch:
+        dispatch = dispatch_compiled_brief(ctx, compiled_brief)
+        ctx.note(
+            f"brief dispatch via {dispatch.via}: {dispatch.detail}",
+            stage="dispatch",
+            source=f"coder {'CLI' if dispatch.via == 'cli' else 'LLM'} ({dispatch.model})"
+            if dispatch.ok
+            else "brief dispatch",
+            done=1,
+            total=1,
+        )
+
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     _vendor_product_kernel(ctx)
     ctx.workspace.write_text(Path("app") / "kernel_bridge.py", _render_kernel_bridge())
@@ -2529,7 +2592,22 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 f"model:{cid}", "unchanged from previous round"
             )
             continue
-        spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
+        if use_brief_dispatch and dispatch and cid in (dispatch.specs or {}):
+            spec = dispatch.specs[cid]
+            specs[cid] = spec
+            specs[cid], _envelope = ensure_record_envelope(specs[cid])
+            _kept = [b for b in cap.block_ids if b in vendored]
+            specs[cid] = augment_model_spec(specs[cid], _kept)
+            specs[cid], _envelope = ensure_record_envelope(specs[cid])
+            assert_feedable(cid, _kept, specs[cid])
+            sources[f"model:{cid}"] = (
+                f"coder LLM ({dispatch.model})" if dispatch.model else "compiled-brief oneshot"
+            )
+            continue
+        if use_brief_dispatch:
+            spec = _fallback_spec(cap)
+        else:
+            spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
         # IF YOU ASSIGN IT, YOU FEED IT. A block whose precondition only the
         # caller can meet obligates this spec to carry a field for it; the
         # agent still owns the design, this only closes what it left open.
@@ -2597,7 +2675,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             if ctx.work_list and ctx.workspace.exists(handler_rel)
             else None
         )
-        authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
+        if use_brief_dispatch and dispatch and cid in (dispatch.handlers or {}):
+            authored = (
+                dispatch.handlers[cid],
+                f"coder LLM ({dispatch.model})" if dispatch.model else "compiled-brief oneshot",
+            )
+        elif use_brief_dispatch:
+            authored = None
+        else:
+            authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
         body, source = authored or (_templated_body(usable), fallback_source)
 
         default_actions = {
@@ -2953,13 +3039,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "network_posture": POSTURE_ID,
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
+                "brief_dispatch": dict(ctx.state.get("brief_dispatch") or {}),
                 "kernel_agents": {
                     "COLLECTOR": {
                         "reviews": list(ctx.state.get("agent_binding_reviews") or []),
                         "model": ctx.state.get("agent_binding_model") or "",
                     },
                     "WRITER": {"artifacts": by_coder},
-                    "TESTER": "consults the coding agent after this file is written",
+                    "TESTER": "harness acceptance — not an LLM role",
                     "CLONER": "deterministic — no agent",
                     "STORE_MANAGER": "deterministic — no agent",
                 },
@@ -3197,9 +3284,8 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     scans are ``@pytest.mark.pilot`` — a complete platform as designed is
     a later phase, not this gate.
 
-    Extra coding-agent cases are mutations of spec payloads. They are
-    written as ``tests/agent_domain_cases.py`` so pytest does not collect
-    them. GET /v1/gates describes this coverage; it does not run the suite.
+    The harness's acceptance IS the tester. TESTER is not an LLM role.
+    GET /v1/gates describes this coverage; it does not run the suite.
 
     On a pilot cycle the suite is already on disk. Rewriting it against an
     empty in-memory spec (worker restart / first pilot TESTER pass) would
@@ -3622,17 +3708,8 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         Path("tests") / "test_routes.py", "\n".join(route_lines) + "\n"
     )
 
-    admitted, case_model = _tester_agent_cases(ctx, specs)
-    if admitted:
-        ctx.workspace.write_text(
-            Path("tests") / "agent_domain_cases.py",
-            _render_agent_domain_tests(admitted),
-        )
-        ctx.note(
-            f"coding agent added {len(admitted)} tester domain case(s)",
-            stage="tester",
-            cases=len(admitted),
-        )
+    admitted: List[Dict[str, Any]] = []
+    case_model = ""
 
     if str(ctx.state.get("build_cycle") or "") == "pilot" and ctx.work_list:
         detail = (

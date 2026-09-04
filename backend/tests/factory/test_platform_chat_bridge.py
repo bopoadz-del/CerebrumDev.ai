@@ -165,6 +165,42 @@ def test_approve_and_generate_produces_product(tmp_path):
     assert not platform_chat_flow.has_pending_blueprint(state)  # approved now
 
 
+def test_approve_lint_failure_never_opens_the_session(tmp_path, monkeypatch):
+    """Approve compiles+lints; a rejected brief does not start generate."""
+    state = _fresh_state()
+    platform_chat_flow.draft_from_chat(
+        state, "build me a platform for private estates"
+    )
+
+    class _Bad:
+        ok = False
+        errors = ["unresolved block id: planted"]
+
+        def to_dict(self):
+            return {"ok": False, "errors": self.errors}
+
+    monkeypatch.setattr(
+        platform_chat_flow,
+        "_compile_and_lint_approved",
+        lambda state, bp: {
+            "lint": _Bad(),
+            "plan": type("P", (), {"to_dict": lambda self: {}})(),
+            "plain_language": "",
+        },
+    )
+    started = []
+    monkeypatch.setattr(
+        platform_chat_flow,
+        "generate_product",
+        lambda *a, **k: started.append(1) or {"ok": True},
+    )
+    result = platform_chat_flow.approve_and_generate(state, output_root=tmp_path)
+    assert result["ok"] is False
+    assert "BRIEF_LINT_REJECTED" in result["summary"]
+    assert started == []
+    assert state.product_design.generation is None
+
+
 def test_approve_without_draft_raises():
     state = _fresh_state()
     with pytest.raises(ValueError, match="no blueprint"):

@@ -49,9 +49,10 @@ Contracts you must honour on every capability you write:
   invent a second, stricter contract the spec cannot express.
 - Offline platform: no network, no HTTP store callbacks, channel "mcp" only.
 
-This brief is the horizon. The user message is one micro-task (one handle(),
-one spec, or one route). A stage wall may hard-stop you so the factory can
-inspect what was achieved; that stop is not permission to ship a scaffold.
+This brief is the horizon. The user message is the compiled whole-job brief
+(TARGET / STEP 0 INVENTORY / DO / ACCEPTANCE) — not one handle(), one spec,
+or one route. A stage wall may hard-stop you so the factory can inspect
+what was achieved; that stop is not permission to ship a scaffold.
 """.strip()
 
 

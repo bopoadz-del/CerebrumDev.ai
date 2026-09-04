@@ -380,6 +380,8 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
                 "stage": payload.get("stage"),
             }
 
+    from app.factory.build.coder_session import session_status
+
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
@@ -387,6 +389,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "phases_done": sum(1 for p in phases if p in completed),
         **monitor,
         **_cycle_fields(ledger, terminal),
+        **session_status(Path(output_dir)),
     }
     if last_inspect:
         progress["budget_inspect"] = last_inspect

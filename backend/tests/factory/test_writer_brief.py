@@ -28,7 +28,7 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
 
 
 def test_handler_spec_and_route_share_the_same_brief():
-    """Per-capability packets stay micro-tasks; the system context is one brief."""
+    """Leftover per-cap packets still share the one system brief (FACTORY_BRIEF_DISPATCH=0)."""
     brief = writer_system_brief()
     assert brief in _PLATFORM_SYSTEM
     assert brief in _SPEC_SYSTEM

@@ -11,6 +11,7 @@ const awaitBuildMock = vi.fn()
 const watchBuildMock = vi.fn()
 const getMock = vi.fn()
 const downloadMock = vi.fn()
+const coderControlMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -23,6 +24,7 @@ vi.mock('../api/factory', async (importOriginal) => {
     product: {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
+      coderControl: (...args: unknown[]) => coderControlMock(...args),
     },
   }
 })
@@ -45,6 +47,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     watchBuildMock.mockReset()
     getMock.mockReset()
     downloadMock.mockReset()
+    coderControlMock.mockReset()
+    coderControlMock.mockResolvedValue({ ok: true, control: { action: 'pause' } })
     getMock.mockResolvedValue({})
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
@@ -60,6 +64,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
         phase_progress: { done: 7, total: 7, fraction: 1, stage: 'handlers' },
         last_event_age_s: 8,
         stale: false,
+        coder_log: 'dispatching compiled brief via FACTORY_CODE_CLI\nSTEP 0 inventory ok\n',
+        coder_log_present: true,
+        coder_control: 'run',
       })
     })
   })
@@ -849,5 +856,26 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByRole('button', { name: /Approve & build/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
     expect(screen.getByText('Factory access is paused.')).toBeInTheDocument()
+  })
+
+  it('streams the coder session log and Pause/Stop call coder-control', async () => {
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_monitor" goPlatforms={() => {}} />)
+    expect(await screen.findByTestId('floor-coder-log')).toBeInTheDocument()
+    expect(screen.getByTestId('floor-coder-log')).toHaveTextContent('STEP 0 inventory ok')
+    expect(screen.getByTestId('floor-coder-pause')).toBeEnabled()
+    expect(screen.getByTestId('floor-coder-stop')).toBeEnabled()
+    fireEvent.click(screen.getByTestId('floor-coder-pause'))
+    await waitFor(() =>
+      expect(coderControlMock).toHaveBeenCalledWith('sess_monitor', 'pause'),
+    )
+    fireEvent.click(screen.getByTestId('floor-coder-stop'))
+    await waitFor(() =>
+      expect(coderControlMock).toHaveBeenCalledWith('sess_monitor', 'stop'),
+    )
   })
 })

@@ -404,6 +404,30 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
     pd.last_error = None
     pd.mode = "product"
 
+    from app.factory.build.intake_blueprint import (
+        chat_turns_from_session,
+        intake_from_product_blueprint,
+        render_plain_language,
+    )
+    from app.factory.build.brief_compiler import synthesize_domain_pack
+
+    turns = chat_turns_from_session(state)
+    if not turns and message.strip():
+        turns = [{"turn": 1, "role": "user", "text": message.strip()}]
+    try:
+        intake = intake_from_product_blueprint(
+            bp,
+            plan=None,
+            chat_turns=turns,
+            brief=message,
+            domain_pack=synthesize_domain_pack(bp, type("P", (), {"capabilities": bp.capabilities})()),
+        )
+        pd.intake_blueprint = intake
+        plain = render_plain_language(intake)
+    except Exception:  # noqa: BLE001 — draft must still park the product blueprint
+        pd.intake_blueprint = None
+        plain = ""
+
     capabilities = [c.id for c in bp.capabilities]
     blocks = sorted({b for c in bp.capabilities for b in c.block_ids})
     if bp.product_id == "cerebrum-steward":
@@ -437,6 +461,68 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
         "blueprint": pd.blueprint,
         "yaml": blueprint_to_yaml(bp),
         "summary": summary,
+        "intake_blueprint": pd.intake_blueprint,
+        "plain_language": plain,
+    }
+
+
+def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, Any]:
+    """Approve is the only Floor event that opens compile → lint → session.
+
+    Spend-gated by construction: a rejected brief never starts generate.
+    """
+    from app.factory.build.brief_compiler import compile_brief, verify_inventory
+    from app.factory.build.brief_lint import lint_brief
+    from app.factory.build.intake_blueprint import (
+        chat_turns_from_session,
+        render_plain_language,
+    )
+
+    plan = plan_blueprint(bp, blocks_root=_blocks_root())
+    turns = chat_turns_from_session(state)
+    compiled = compile_brief(
+        bp,
+        plan,
+        chat_turns=turns,
+        brief=str(getattr(state.product_design, "brief", "") or ""),
+        intake=getattr(state.product_design, "intake_blueprint", None),
+    )
+    from app.factory.build.brief_compiler import InventoryHalt
+
+    try:
+        verify_inventory(compiled)
+    except InventoryHalt as exc:
+        pd = state.product_design
+        pd.intake_blueprint = compiled.intake
+        pd.brief_lint = {
+            "ok": False,
+            "errors": [str(exc)],
+            "checks": {"inventory_halt": True},
+        }
+        pd.plan = plan.to_dict()
+        class _Halt:
+            ok = False
+            errors = [str(exc)]
+
+            def to_dict(self):
+                return pd.brief_lint
+
+        return {
+            "compiled": compiled,
+            "lint": _Halt(),
+            "plan": plan,
+            "plain_language": render_plain_language(compiled.intake),
+        }
+    lint = lint_brief(compiled)
+    pd = state.product_design
+    pd.intake_blueprint = compiled.intake
+    pd.brief_lint = lint.to_dict()
+    pd.plan = plan.to_dict()
+    return {
+        "compiled": compiled,
+        "lint": lint,
+        "plan": plan,
+        "plain_language": render_plain_language(compiled.intake),
     }
 
 
@@ -445,7 +531,7 @@ def approve_and_generate(
     output_root: Optional[Path] = None,
     triggered_by: str = "regex_approve",
 ) -> Dict[str, Any]:
-    """Approve the pending blueprint, plan it, and generate the product.
+    """Approve the pending blueprint, compile+lint the brief, then generate.
 
     Mutates state.product_design exactly like POST /product/approve +
     /product/generate. Returns the generation payload.
@@ -453,6 +539,9 @@ def approve_and_generate(
     ``triggered_by`` is provenance for the chat door: ``chat_llm`` when the
     Floor LLM called start_coder, ``regex_approve`` when the offline keyword
     path ran. The coding agent still lives only in WRITER.
+
+    Approve is the only event that opens compile → lint → coder session.
+    A BRIEF_LINT_REJECTED brief never starts generate.
     """
     pd = state.product_design
     if not pd.blueprint:
@@ -460,8 +549,23 @@ def approve_and_generate(
 
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
+    gated = _compile_and_lint_approved(state, bp)
+    lint = gated["lint"]
+    if not lint.ok:
+        pd.last_error = "BRIEF_LINT_REJECTED: " + "; ".join(lint.errors)
+        return {
+            "ok": False,
+            "sse": "error",
+            "summary": (
+                "Brief rejected — coding session never opened. "
+                + pd.last_error
+            ),
+            "brief_lint": lint.to_dict(),
+            "plain_language": gated.get("plain_language"),
+            "blueprint_approved": True,
+        }
     if not pd.plan:
-        pd.plan = plan_blueprint(bp, blocks_root=_blocks_root()).to_dict()
+        pd.plan = gated["plan"].to_dict()
 
     if has_running_build(state) or _live_build_thread(bp.product_id) is not None:
         reply = running_build_reply(state)
