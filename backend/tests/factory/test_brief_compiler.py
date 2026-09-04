@@ -85,6 +85,9 @@ def test_compiled_brief_has_the_gated_shape():
     assert "writer_behaviour" in text
     assert "no capability accepted its own schema" in text
     assert "[check:writer_behaviour]" in text
+    assert "test_every_capability_route_accepts_payload" in text
+    assert "workflow: step_N (event_bus): error" in text
+    assert "[check:event_bus_workflow]" in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert "llm_writes_brief: never" in load_brief_template()
 
@@ -154,6 +157,8 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
     assert "clinic_intake" in compiled.text
     assert "writer_behaviour" in compiled.text
     assert "no capability accepted its own schema" in compiled.text
+    assert "test_every_capability_route_accepts_payload" in compiled.text
+    assert "workflow: step_N (event_bus): error" in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert any(item.capability_id == "clinic_intake" and item.is_gap for item in compiled.inventory)
     assert compiled.missing_reuse == []

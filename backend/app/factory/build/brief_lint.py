@@ -10,6 +10,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
+from app.factory.build.workflow_accept import (
+    declares_event_bus_workflow,
+    workflow_accept_needles,
+)
+
 SLOT_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
 HEADING_RE = re.compile(r"^(=+|CUT \d|TARGET|STEP 0|DO\b|ACCEPTANCE|FORBIDDEN|# )")
 BUDGET_RE = re.compile(r"\b(?:budget|wall)[^\n]{0,40}?(\d+)\s*s\b", re.I)
@@ -25,6 +30,11 @@ EXECUTABLE_ACCEPTANCE = (
     ("accepted its own schema", "writer_behaviour"),
     ("own FIELDS/CONSTRAINTS", "writer_behaviour"),
     ("schema-accept", "writer_behaviour"),
+    ("event_bus_workflow", "event_bus_workflow"),
+    ("event_bus workflow", "event_bus_workflow"),
+    ("test_every_capability_route_accepts_payload", "event_bus_workflow"),
+    ("step_N (event_bus)", "event_bus_workflow"),
+    ("never the raw schema sample", "event_bus_workflow"),
     ("domain_acceptance_conditions", "domain_acceptance"),
     ("domain pack", "domain_acceptance"),
     ("envelope vocab", "envelope_schema"),
@@ -71,6 +81,13 @@ TEMPLATE_STATIC_NEEDLES = (
     "accepted its own schema",
     "own fields/constraints",
     "schema-accept",
+    "event_bus_workflow",
+    "event_bus workflow",
+    "test_every_capability_route_accepts_payload",
+    "step_n (event_bus)",
+    "never the raw schema sample",
+    "schema sample refused",
+    "accept-payload",
     "the domain pack",
     "envelope vocab",
     "product gate:",
@@ -287,6 +304,20 @@ def lint_brief(
             "acceptance missing writer_behaviour schema-accept "
             "(no capability accepted its own schema)"
         )
+
+    if declares_event_bus_workflow(compiled):
+        blob = text.lower()
+        missing_needles = [
+            needle
+            for needle in workflow_accept_needles()
+            if needle.lower() not in blob
+        ]
+        if missing_needles:
+            errors.append(
+                "brief dropped event_bus / accept-payload workflow contract "
+                "(capability declares workflow + event_bus): "
+                + ", ".join(missing_needles[:4])
+            )
 
     budget_s = getattr(compiled, "budget_s", None)
     if budget_s in (None, "", 0, 0.0) and not BUDGET_RE.search(text):

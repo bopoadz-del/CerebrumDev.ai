@@ -12,6 +12,10 @@ from app.factory.build.coder_session import (
     CONTROL_STOP,
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_STOPPED,
+    DispatchResult,
+    _has_brief_workflow_steps,
+    _is_keepable_handler,
+    _merge_workspace_harvest,
     brief_dispatch_enabled,
     cli_available,
     dispatch_compiled_brief,
@@ -153,6 +157,65 @@ def test_specs_from_models_source_reads_fields_and_constraints():
         f for f in specs["appointment_scheduling"]["fields"] if f["name"] == "status"
     )
     assert status["allowed_values"] == ["open", "closed"]
+
+
+def test_harvest_keeps_brief_driven_workflow_steps_without_capability_id(tmp_path):
+    """#317 keepable required CAPABILITY_ID; CLI workflow modules often omit it."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "reminders_and_notifications.py").write_text(
+        "def handle(payload):\n"
+        "    steps = [{'block': 'event_bus', 'input': payload}]\n"
+        "    return execute('workflow', {'steps': steps})\n",
+        encoding="utf-8",
+    )
+    (actions / "clinic_intake.py").write_text(
+        "# fragment — not a keepable handler\nreturn {}\n",
+        encoding="utf-8",
+    )
+    assert _has_brief_workflow_steps(
+        (actions / "reminders_and_notifications.py").read_text(encoding="utf-8")
+    )
+    assert _is_keepable_handler(
+        (actions / "reminders_and_notifications.py").read_text(encoding="utf-8")
+    )
+    specs, kept = harvest_cli_artifacts(
+        root, ["reminders_and_notifications", "clinic_intake"]
+    )
+    assert kept == ["reminders_and_notifications"]
+    assert specs == {}
+
+
+def test_harvest_oneshot_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
+    """HTTP oneshot envelope must not replace brief-driven event_bus steps."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "reminders_and_notifications.py").write_text(
+        "def handle(payload):\n"
+        "    steps = [\n"
+        "        {'block': 'notification', 'input': payload},\n"
+        "        {'block': 'event_bus', 'input': payload},\n"
+        "    ]\n"
+        "    return execute('workflow', {'steps': steps}, action='run')\n",
+        encoding="utf-8",
+    )
+    result = DispatchResult(
+        via="http_oneshot",
+        ok=True,
+        detail="oneshot",
+        handlers={
+            "reminders_and_notifications": (
+                "return {'ok': True, 'capability': 'reminders_and_notifications'}"
+            )
+        },
+    )
+    _merge_workspace_harvest(
+        result, root, ["reminders_and_notifications"]
+    )
+    assert "reminders_and_notifications" in result.kept_handler_ids
+    assert "reminders_and_notifications" not in result.handlers
 
 
 def test_harvest_cli_artifacts_keeps_handle_modules(tmp_path):

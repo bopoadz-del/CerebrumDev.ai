@@ -385,9 +385,78 @@ def _http_oneshot(ctx: Any, compiled: Any) -> DispatchResult:
     )
 
 
+_WORKFLOW_STEP_TOKENS = (
+    '"steps"',
+    "'steps'",
+    "steps =",
+    'execute("workflow"',
+    "execute('workflow'",
+    'execute("event_bus"',
+    "execute('event_bus'",
+    '"block": "event_bus"',
+    "'block': 'event_bus'",
+    '"block_id": "event_bus"',
+    "'block_id': 'event_bus'",
+)
+
+
+def _has_brief_workflow_steps(text: str) -> bool:
+    """True when a handler constructs workflow / event_bus steps."""
+    blob = text or ""
+    if "event_bus" not in blob and "workflow" not in blob:
+        return False
+    return any(token in blob for token in _WORKFLOW_STEP_TOKENS)
+
+
 def _is_keepable_handler(text: str) -> bool:
-    """CLI wrote a complete capability module, not a fragment."""
-    return "def handle(" in (text or "") and "CAPABILITY_ID" in (text or "")
+    """CLI / oneshot wrote a complete capability module, not a fragment.
+
+    Brief-driven workflow steps must survive the fallback envelope even
+    when the module omitted CAPABILITY_ID (FACTORY_CODE_CLI often writes
+    handle() + execute("workflow") without the factory header).
+    """
+    blob = text or ""
+    if "def handle(" not in blob:
+        return False
+    if "CAPABILITY_ID" in blob:
+        return True
+    return _has_brief_workflow_steps(blob)
+
+
+def _merge_workspace_harvest(
+    result: DispatchResult,
+    root: Path,
+    capability_ids: Sequence[str],
+) -> None:
+    """Keep workspace specs/handlers; do not let the envelope overwrite them."""
+    harvested_specs, kept = harvest_cli_artifacts(root, capability_ids)
+    if harvested_specs:
+        result.specs.update(harvested_specs)
+    merged = list(dict.fromkeys([*result.kept_handler_ids, *kept]))
+    result.kept_handler_ids = merged
+    if harvested_specs or kept:
+        _append_log(
+            root / LOG_REL,
+            "[harvest] workspace "
+            f"specs={sorted(harvested_specs)} kept_handlers={merged}",
+        )
+    # Prefer a keepable on-disk workflow handler over an oneshot body that
+    # never named event_bus steps — wrapping that body is the envelope
+    # rewrite that dropped brief-driven steps (sess_e94ddfa797ea4a45).
+    for cid in list(result.handlers):
+        name = str(cid).replace("-", "_")
+        path = Path(root) / "app" / "actions" / f"{name}.py"
+        if not path.is_file():
+            continue
+        try:
+            disk = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        body = result.handlers.get(cid) or ""
+        if _has_brief_workflow_steps(disk) and not _has_brief_workflow_steps(body):
+            result.handlers.pop(cid, None)
+            if cid not in result.kept_handler_ids:
+                result.kept_handler_ids.append(cid)
 
 
 def specs_from_models_source(text: str) -> Dict[str, Any]:
@@ -472,23 +541,15 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     if cli_available():
         result = _run_cli_session(ctx, compiled, timeout_s=timeout_s)
         if result.ok:
-            harvested_specs, kept = harvest_cli_artifacts(
-                root, list(compiled.capabilities)
-            )
-            if harvested_specs:
-                result.specs.update(harvested_specs)
-            result.kept_handler_ids = list(kept)
-            if harvested_specs or kept:
-                _append_log(
-                    root / LOG_REL,
-                    "[harvest] CLI workspace "
-                    f"specs={sorted(harvested_specs)} kept_handlers={kept}",
-                )
+            _merge_workspace_harvest(result, root, list(compiled.capabilities))
     else:
         _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] falling back to HTTP oneshot or templates")
         result = _http_oneshot(ctx, compiled)
         if result.via == "skipped":
             result.blocker = NAMED_BLOCKER_CLI
+        # Oneshot / template fallback still harvests workspace files so
+        # brief-driven workflow steps survive the envelope rewrite.
+        _merge_workspace_harvest(result, root, list(compiled.capabilities))
 
     receipt = {
         "via": result.via,
