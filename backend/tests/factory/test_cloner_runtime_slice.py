@@ -734,6 +734,128 @@ def test_cloner_copies_document_engine_parsers_package(tmp_path):
     assert proc.returncode == 0, proc.stderr
 
 
+_DOC_ENGINE_WRAPPER = '''\
+from app.core.universal_base import UniversalBlock
+
+
+class DocumentEngineBlock(UniversalBlock):
+    async def execute(self, input_data, params):
+        return {"status": "ok", "result": {"engine": "wrapper"}}
+'''
+
+_DOC_ENGINE_SHADOW_INIT = '''\
+"""Package that shadows document_engine.py (Cerebrum-Blocks layout)."""
+import importlib.util
+from pathlib import Path
+
+_BLOCK_MODULE_NAME = "app.blocks.document_engine_block"
+_WRAPPER = Path(__file__).resolve().parent.parent / "document_engine.py"
+_spec = importlib.util.spec_from_file_location(_BLOCK_MODULE_NAME, _WRAPPER)
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+DocumentEngineBlock = _mod.DocumentEngineBlock
+'''
+
+
+def _document_engine_shadow_store(root: Path) -> Path:
+    """Store checkout with the live package+wrapper shadow layout.
+
+    Cerebrum-Blocks ships ``app/blocks/document_engine.py`` next to a
+    ``document_engine/`` package whose ``__init__`` importlib-loads the
+    sibling file under the synthetic name ``app.blocks.document_engine_block``.
+    Live sess_000f9a85d339422f died in CLONER because the regex closure
+    then demanded a module that is not on disk.
+    """
+    store = _faux_store(root)
+    init = (store / "app" / "blocks" / "__init__.py").read_text(encoding="utf-8")
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        init.replace(
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),',
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),\n'
+            '    "document_engine": ("app.blocks.document_engine", "DocumentEngineBlock"),',
+        ),
+        encoding="utf-8",
+    )
+    blocks = store / "app" / "blocks"
+    (blocks / "document_engine.py").write_text(_DOC_ENGINE_WRAPPER, encoding="utf-8")
+    pkg = blocks / "document_engine"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(_DOC_ENGINE_SHADOW_INIT, encoding="utf-8")
+    reg = store / "block_registry" / "document_engine"
+    reg.mkdir()
+    (reg / "block.json").write_text(
+        json.dumps({"id": "document_engine"}), encoding="utf-8"
+    )
+    (reg / "block.py").write_text(_document_engine_shim(), encoding="utf-8")
+    return store
+
+
+def test_document_engine_package_shadow_does_not_fail_cloner(tmp_path):
+    """Live sess_000f9a85d339422f: CLONER RoleError for document_engine_block.
+
+    The Store has the wrapper file and the shadowing package; the synthetic
+    importlib name is not a missing block. Closure and vendor must succeed
+    and keep the package ``__init__`` load of ``../document_engine.py``
+    working after rewrite.
+    """
+    from app.factory.build.roles import _closure_over_runtime, _store_block_defs
+
+    store = _document_engine_shadow_store(tmp_path)
+    defs = _store_block_defs(store)
+    block_mods, core_mods = _closure_over_runtime(store, ["document_engine"], defs)
+    assert "document_engine" in block_mods
+    assert "document_engine_block" in block_mods
+    assert "universal_base" in core_mods
+
+    ws, result = _clone(tmp_path, store, block_ids=("document_engine",))
+    assert result.ok, result.detail
+
+    cerebrum = ws.destination / "vendor" / "cerebrum" / "blocks"
+    assert (cerebrum / "document_engine" / "__init__.py").is_file()
+    assert (cerebrum / "document_engine.py").is_file(), (
+        "package __init__ loads ../document_engine.py; the wrapper must ship"
+    )
+    assert (cerebrum / "document_engine_block.py").is_file(), (
+        "synthetic importlib name must resolve to a vendored module file"
+    )
+    pkg_init = (cerebrum / "document_engine" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    assert "document_engine_block" in pkg_init
+    assert "document_engine.py" in pkg_init
+
+    probe = textwrap.dedent(
+        """
+        import os
+        for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+            os.environ.pop(var, None)
+        from vendor.cerebrum.blocks.document_engine import DocumentEngineBlock
+        assert DocumentEngineBlock.__name__ == "DocumentEngineBlock"
+        import vendor.cerebrum.blocks.document_engine_block as alias
+        assert alias.DocumentEngineBlock.__name__ == "DocumentEngineBlock"
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+
+
+def test_unmapped_synthetic_block_name_still_fails_closed(tmp_path):
+    """A ``*_block`` import with no shadowing package must still fail loudly."""
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        "from app.blocks.ghost_block import Ghost\n" + _GREETING,
+        encoding="utf-8",
+    )
+    with pytest.raises(RoleError, match="ghost_block"):
+        _clone(tmp_path, store)
+
+
 def test_cloner_converts_document_engine_module_to_parsers_package(tmp_path):
     """Store file document_engine.py that imports .parsers becomes a package."""
     store = _faux_store(tmp_path)
