@@ -1486,6 +1486,11 @@ Rules:
   return a dict with capability=CAPABILITY_ID.
 - status fields use the envelope vocabulary open|in_progress|closed.
 - Do not claim REUSE for a block id that STEP 0 flagged missing.
+- Every handler MUST accept a payload built from its own spec FIELDS +
+  CONSTRAINTS (WRITER writer_behaviour baseline). Declare every required
+  field and vocabulary on the spec. Do not return ok:false before
+  execute() on that sample. A second, stricter contract the spec cannot
+  express fails the gate: no capability accepted its own schema.
 """
 
 

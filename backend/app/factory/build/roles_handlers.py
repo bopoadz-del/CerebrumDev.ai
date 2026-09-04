@@ -2680,6 +2680,29 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 dispatch.handlers[cid],
                 f"coder LLM ({dispatch.model})" if dispatch.model else "compiled-brief oneshot",
             )
+        elif (
+            use_brief_dispatch
+            and dispatch
+            and dispatch.via == "cli"
+            and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
+            and ctx.workspace.exists(handler_rel)
+        ):
+            # FACTORY_CODE_CLI already wrote the module the brief asked for.
+            # Overwriting it with the fallback envelope template is how
+            # every capability then refused a payload built from the
+            # replacement model (VetCare sess_91553364089d4970).
+            sources[cid] = (
+                f"coder CLI ({dispatch.model})" if dispatch.model else "FACTORY_CODE_CLI"
+            )
+            ctx.note(
+                f"kept CLI handler {cid} ({sources[cid]})",
+                stage="handlers",
+                capability=cid,
+                source=sources[cid],
+                done=len([k for k in sources if k in set(cap_ids)]),
+                total=len(cap_ids),
+            )
+            continue
         elif use_brief_dispatch:
             authored = None
         else:

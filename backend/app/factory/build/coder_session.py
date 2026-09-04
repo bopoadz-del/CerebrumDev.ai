@@ -18,7 +18,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.coder_session")
 
@@ -164,6 +164,7 @@ class DispatchResult:
     detail: str
     specs: Dict[str, Any] = field(default_factory=dict)
     handlers: Dict[str, str] = field(default_factory=dict)
+    kept_handler_ids: List[str] = field(default_factory=list)
     model: str = ""
     blocker: Optional[str] = None
     receipt: Dict[str, Any] = field(default_factory=dict)
@@ -176,6 +177,7 @@ class DispatchResult:
             "model": self.model,
             "blocker": self.blocker,
             "handler_ids": sorted(self.handlers),
+            "kept_handler_ids": sorted(self.kept_handler_ids),
             "spec_ids": sorted(self.specs),
             "receipt": dict(self.receipt),
         }
@@ -383,6 +385,82 @@ def _http_oneshot(ctx: Any, compiled: Any) -> DispatchResult:
     )
 
 
+def _is_keepable_handler(text: str) -> bool:
+    """CLI wrote a complete capability module, not a fragment."""
+    return "def handle(" in (text or "") and "CAPABILITY_ID" in (text or "")
+
+
+def specs_from_models_source(text: str) -> Dict[str, Any]:
+    """Read MODELS / FIELDS / CONSTRAINTS the CLI (or factory) wrote.
+
+    Used so FACTORY_CODE_CLI domain specs are not discarded in favour of
+    the fallback envelope — that mismatch is how every capability then
+    refused a payload built from the overwritten model.
+    """
+    if not (text or "").strip():
+        return {}
+    ns: Dict[str, Any] = {}
+    try:
+        exec(compile(text, "models.py", "exec"), ns)  # noqa: S102 — workspace artifact
+    except Exception:  # noqa: BLE001 — harvest must not fail the role
+        return {}
+    models = ns.get("MODELS")
+    if not isinstance(models, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for cap_id, cls in models.items():
+        names = list(getattr(cls, "FIELDS", None) or [])
+        constraints = dict(getattr(cls, "CONSTRAINTS", None) or {})
+        fields = []
+        for name in names:
+            field: Dict[str, Any] = {
+                "name": str(name),
+                "type": "str",
+                "required": True,
+            }
+            extra = constraints.get(name)
+            if isinstance(extra, dict):
+                field.update(extra)
+            fields.append(field)
+        entity = getattr(cls, "ENTITY", None) or str(cap_id)
+        out[str(cap_id)] = {
+            "entity": str(entity).replace("-", "_"),
+            "fields": fields,
+            "model": None,
+        }
+    return out
+
+
+def harvest_cli_artifacts(
+    root: Path,
+    capability_ids: Sequence[str],
+) -> tuple:
+    """Collect CLI-written specs + keepable handler ids from the workspace."""
+    root = Path(root)
+    specs: Dict[str, Any] = {}
+    models_py = root / "app" / "models.py"
+    if models_py.is_file():
+        try:
+            specs = specs_from_models_source(
+                models_py.read_text(encoding="utf-8")
+            )
+        except OSError:
+            specs = {}
+    kept: List[str] = []
+    for cid in capability_ids:
+        name = str(cid).replace("-", "_")
+        path = root / "app" / "actions" / f"{name}.py"
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _is_keepable_handler(text):
+            kept.append(str(cid))
+    return specs, kept
+
+
 def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     """Hand the compiled brief to the agentic coder. One session."""
     root = _workspace_root(ctx)
@@ -393,6 +471,19 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
 
     if cli_available():
         result = _run_cli_session(ctx, compiled, timeout_s=timeout_s)
+        if result.ok:
+            harvested_specs, kept = harvest_cli_artifacts(
+                root, list(compiled.capabilities)
+            )
+            if harvested_specs:
+                result.specs.update(harvested_specs)
+            result.kept_handler_ids = list(kept)
+            if harvested_specs or kept:
+                _append_log(
+                    root / LOG_REL,
+                    "[harvest] CLI workspace "
+                    f"specs={sorted(harvested_specs)} kept_handlers={kept}",
+                )
     else:
         _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI}] falling back to HTTP oneshot or templates")
         result = _http_oneshot(ctx, compiled)
@@ -416,6 +507,8 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         "inventory_gaps": [
             item.capability_id for item in compiled.inventory if item.is_gap
         ],
+        "harvested_spec_ids": sorted(result.specs),
+        "kept_handler_ids": list(result.kept_handler_ids),
     }
     result.receipt = receipt
     try:

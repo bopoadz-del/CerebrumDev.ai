@@ -21,6 +21,10 @@ EXECUTABLE_ACCEPTANCE = (
     ("own gates green", "gates"),
     ("one-record round-trip", "round_trip"),
     ("round-trip per capability", "round_trip"),
+    ("writer_behaviour", "writer_behaviour"),
+    ("accepted its own schema", "writer_behaviour"),
+    ("own FIELDS/CONSTRAINTS", "writer_behaviour"),
+    ("schema-accept", "writer_behaviour"),
     ("domain_acceptance_conditions", "domain_acceptance"),
     ("domain pack", "domain_acceptance"),
     ("envelope vocab", "envelope_schema"),
@@ -63,6 +67,10 @@ TEMPLATE_STATIC_NEEDLES = (
     "the product boots",
     "own gates green",
     "one-record round-trip",
+    "writer_behaviour",
+    "accepted its own schema",
+    "own fields/constraints",
+    "schema-accept",
     "the domain pack",
     "envelope vocab",
     "product gate:",
@@ -272,6 +280,12 @@ def lint_brief(
         errors.append(
             "acceptance line without executable check: "
             + "; ".join(unchecked[:5])
+        )
+    acceptance = _acceptance_section(text).lower()
+    if "writer_behaviour" not in acceptance and "own fields/constraints" not in acceptance:
+        errors.append(
+            "acceptance missing writer_behaviour schema-accept "
+            "(no capability accepted its own schema)"
         )
 
     budget_s = getattr(compiled, "budget_s", None)

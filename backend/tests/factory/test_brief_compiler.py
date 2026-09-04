@@ -82,6 +82,9 @@ def test_compiled_brief_has_the_gated_shape():
     assert "Budget wall:" in text
     assert TEMPLATE_REVISION in text
     assert "READS" in text and "WRITES" in text and "NEVER" in text
+    assert "writer_behaviour" in text
+    assert "no capability accepted its own schema" in text
+    assert "[check:writer_behaviour]" in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert "llm_writes_brief: never" in load_brief_template()
 
@@ -149,6 +152,9 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
     assert "VetCare Hub" in compiled.text
     assert "appointment_scheduling" in compiled.text
     assert "clinic_intake" in compiled.text
+    assert "writer_behaviour" in compiled.text
+    assert "no capability accepted its own schema" in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert any(item.capability_id == "clinic_intake" and item.is_gap for item in compiled.inventory)
     assert compiled.missing_reuse == []
 
