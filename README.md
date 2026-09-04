@@ -156,14 +156,16 @@ to this CLI. The seam is shallow — run a command, read its result:
 
 ```bash
 FACTORY_CODE_CLI=claude    # Claude Code CLI as the agentic coder
-FACTORY_CODE_CLI=kimi      # Kimi CLI (default name; binary must be on PATH)
+FACTORY_CODE_CLI=kimi      # Kimi CLI (default; production image ships /usr/local/bin/kimi)
 ```
 
-`KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. A keyed Floor
+`KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. The production
+`Dockerfile` installs the official Kimi Code CLI at `/usr/local/bin/kimi`
+(pin `KIMI_CODE_VERSION`; see `docs/factory/KIMI_ENV_SETUP.md`). A keyed Floor
 without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE` (no HTTP
 oneshot, no fake WRITER takeover). CLI credentials are `KIMI_CODE_API_KEY`
 → `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`.
-See `docs/factory/KIMI_ENV_SETUP.md`. Render dashboard values stay owner-gated.
+Render dashboard values stay owner-gated.
 
 ### Running the tests: the factory coder changes the results
 

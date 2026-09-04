@@ -13,11 +13,13 @@ See [Kimi Code config files](https://www.kimi.com/code/docs/en/kimi-code-cli/con
 ## Production Floor (C-BRIEF)
 
 A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CLI`
-(default name `kimi`; `KIMI_CODE_CLI` still honoured). The production image does
-**not** ship that binary. If the coder is on and the executable is missing,
-dispatch fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE` — no HTTP oneshot, no
-"coding agent has taken over" / WRITER progress that cannot deliver a real
-session. `GET /health` → `factory_code_cli` reports the probe.
+(default name `kimi`; `KIMI_CODE_CLI` still honoured). The production image
+(`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`.
+If the coder is on and the executable is still missing, dispatch fail-closes
+as `FACTORY_CODE_CLI_UNAVAILABLE` — no HTTP oneshot, no "coding agent has
+taken over" / WRITER progress that cannot deliver a real session.
+`GET /health` → `factory_code_cli` reports the probe (`available` is true
+when `kimi` resolves; credentials are a separate `credentials_file_present`).
 
 Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 
@@ -32,6 +34,29 @@ Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 
 `CEREBRUM_LLM_API_KEY` / `KIMI_API_KEY` arm the architect / HTTP coder. They do
 **not** install or authenticate `FACTORY_CODE_CLI`.
+
+## Production image install (`./Dockerfile`)
+
+Render `cerebrumdev-backend` is built from the repo-root `Dockerfile`. That
+image installs the **official** Kimi Code CLI (standalone glibc binary; no
+Node.js) via the documented installer, pinned with `KIMI_CODE_VERSION`:
+
+| Item | Value |
+|------|--------|
+| Docs | https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started |
+| Installer | https://code.kimi.com/kimi-code/install.sh |
+| Pin | `ARG KIMI_CODE_VERSION=0.41.0` (`KIMI_VERSION` on the installer) |
+| Install dir | `KIMI_INSTALL_DIR=/usr/local` → **`/usr/local/bin/kimi`** |
+| Verify | `which kimi` and `kimi --version` inside the image |
+
+Bump the pin by changing `KIMI_CODE_VERSION` (and rebuild). Do **not** commit
+API keys; `KIMI_CODE_API_KEY` stays owner-gated on the Render dashboard and
+writes `$HOME/.kimi-code/config.toml` (or `$KIMI_CODE_HOME/config.toml`) at
+boot. `HOME=/app` in this image, so the default config home is
+`/app/.kimi-code`.
+
+A missing or wrong `FACTORY_CODE_CLI` still fail-closes. Baking the binary
+does not disable that gate.
 
 ## Kimi Code (CLI)
 

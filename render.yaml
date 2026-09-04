@@ -223,9 +223,10 @@ services:
       - key: FACTORY_CODER_BUDGET_S
         value: "7200"
       # Owner-gated FACTORY_CODE_CLI + KIMI_CODE_API_KEY. This blueprint is
-      # not applied; the dashboard is source of truth. Declaring the keys
-      # here does not install the binary and does not claim they are set.
-      # A keyed Floor without the executable fail-closes
+      # not applied; the dashboard is source of truth. The production image
+      # installs official `kimi` at /usr/local/bin/kimi; the dashboard still
+      # owns FACTORY_CODE_CLI=kimi and KIMI_CODE_API_KEY (not in git).
+      # A keyed Floor without the executable still fail-closes
       # FACTORY_CODE_CLI_UNAVAILABLE (no HTTP oneshot takeover).
       - key: FACTORY_CODE_CLI
         sync: false
