@@ -172,6 +172,28 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "blueprint does not pin BACKUP_SCHEDULE_ENABLED on the web service"
         )
 
+    def test_production_image_installs_official_kimi_code_cli(self):
+        """FACTORY_CODE_CLI=kimi must resolve in the Render image.
+
+        Live tip 98b2bc7 fail-closed FACTORY_CODE_CLI_UNAVAILABLE because
+        `kimi` was not an executable on the host. The production Dockerfile
+        installs the official Kimi Code CLI (docs + install.sh), pinned, at
+        /usr/local/bin/kimi. This is a text contract on the Dockerfile; CI
+        `docker run` asserts `which kimi` / `kimi --version`. Do not replace
+        the official installer with a stub binary. Do not weaken the
+        missing-CLI fail-closed path.
+        """
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "https://code.kimi.com/kimi-code/install.sh" in dockerfile
+        assert "KIMI_CODE_VERSION" in dockerfile
+        assert "KIMI_INSTALL_DIR=/usr/local" in dockerfile
+        assert "/usr/local/bin/kimi" in dockerfile
+        assert "kimi --version" in dockerfile
+        assert "is NOT installed" not in dockerfile
+        docs = (REPO_ROOT / "docs/factory/KIMI_ENV_SETUP.md").read_text(encoding="utf-8")
+        assert "/usr/local/bin/kimi" in docs
+        assert "KIMI_CODE_VERSION" in docs
+
     def test_production_image_plants_s0_factory_source_in_the_workdir(self):
         """S0 fingerprints repo-relative paths from factory_repo_root()=/app.
 

@@ -9,7 +9,7 @@ WORKDIR /app
 # omit the gpg binary even when gnupg is listed, which failed CI in ~20s.
 # SQLAlchemy fallback in app.core.backup still covers a mismatch if apt pins drift.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ cmake git ca-certificates curl util-linux \
+    build-essential gcc g++ cmake git ca-certificates curl util-linux bash \
     && mkdir -p /usr/share/keyrings \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       -o /usr/share/keyrings/pgdg.asc \
@@ -26,6 +26,26 @@ COPY backend/requirements.lock backend/requirements.txt backend/requirements-mar
 # Do NOT install requirements-marker.txt in production images.
 # marker-pdf is local-only; see README for details.
 RUN pip install --no-cache-dir -r requirements.lock
+
+# Official Kimi Code CLI (FACTORY_CODE_CLI=kimi). Standalone glibc binary;
+# no Node.js. Pin via KIMI_CODE_VERSION. Docs + installer:
+#   https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started
+#   https://code.kimi.com/kimi-code/install.sh
+#   KIMI_VERSION=… KIMI_INSTALL_DIR=/usr/local  →  /usr/local/bin/kimi
+# Credentials stay out of the image: KIMI_CODE_API_KEY writes
+# ~/.kimi-code/config.toml at boot (see docs/factory/KIMI_ENV_SETUP.md).
+ARG KIMI_CODE_VERSION=0.41.0
+RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh \
+      -o /tmp/kimi-code-install.sh \
+    && KIMI_VERSION="${KIMI_CODE_VERSION}" \
+       KIMI_INSTALL_DIR=/usr/local \
+       KIMI_NO_MODIFY_PATH=1 \
+       KIMI_CODE_HOME=/tmp/kimi-code-home \
+       bash /tmp/kimi-code-install.sh \
+    && rm -f /tmp/kimi-code-install.sh \
+    && rm -rf /tmp/kimi-code-home /root/.kimi-code \
+    && test -x /usr/local/bin/kimi \
+    && /usr/local/bin/kimi --version
 
 COPY backend/app /app/app
 # Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
@@ -48,10 +68,10 @@ COPY backend/scripts /app/scripts
 RUN mkdir -p /app/backend && ln -s /app/app /app/backend/app
 COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 
-# FACTORY_CODE_CLI (kimi / claude) is NOT installed in this image. A keyed
-# Floor without that binary on PATH fail-closes FACTORY_CODE_CLI_UNAVAILABLE.
-# Owner installs the CLI on the host or mounts it; KIMI_CODE_API_KEY at boot
-# writes ~/.kimi-code/config.toml only. Do not treat this comment as a deploy.
+# FACTORY_CODE_CLI=kimi resolves to /usr/local/bin/kimi (installed above).
+# A keyed Floor still fail-closes FACTORY_CODE_CLI_UNAVAILABLE if the
+# executable is missing (wrong FACTORY_CODE_CLI, deleted binary, etc.).
+# KIMI_CODE_API_KEY at boot writes ~/.kimi-code/config.toml only.
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is
