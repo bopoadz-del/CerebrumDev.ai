@@ -932,3 +932,135 @@ def test_cloner_converts_document_engine_module_to_parsers_package(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
 
+
+def test_cloner_rewrites_workflow_child_constructors_and_result_key(tmp_path):
+    """Live sess_f1fe691: workflow step_0 constructed DatabaseBlock().
+
+    PRODUCT accept-payload:
+        appointment_scheduling rejected a payload built from its own schema:
+        workflow: step_0 (database): DatabaseBlock.__init__() missing 2
+        required positional arguments: 'hal_block' and 'config'
+
+    The kit shim rewrite only matched ``block_cls()``. The Store workflow
+    module used ``get_block(name)()`` / ``DatabaseBlock()`` after the
+    Store-host ``_create_block_instance`` import failed, and then
+    ``envelope["result"]`` (automated_reminders ``RuntimeError: 'result'``).
+    """
+    store = _faux_store(tmp_path)
+    init = (store / "app" / "blocks" / "__init__.py").read_text(encoding="utf-8")
+    (store / "app" / "blocks" / "__init__.py").write_text(
+        init.replace(
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),',
+            '"farewell": ("app.blocks.farewell", "FarewellBlock"),\n'
+            '    "database": ("app.blocks.database", "DatabaseBlock"),\n'
+            '    "workflow": ("app.blocks.workflow", "WorkflowBlock"),',
+        ),
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "database.py").write_text(
+        textwrap.dedent(
+            """
+            class DatabaseBlock:
+                def __init__(self, hal_block, config):
+                    self.hal_block = hal_block
+                    self.config = config
+
+                async def execute(self, input_data, params):
+                    return {"status": "ok", "inserted": True}
+            """
+        ),
+        encoding="utf-8",
+    )
+    (store / "app" / "blocks" / "workflow.py").write_text(
+        textwrap.dedent(
+            """
+            from app.blocks import get_block
+
+            class WorkflowBlock:
+                def __init__(self, hal_block, config):
+                    self.hal_block = hal_block
+                    self.config = config
+
+                async def execute(self, input_data, params):
+                    results = []
+                    for i, step in enumerate((input_data or {}).get("steps") or []):
+                        name = step.get("block")
+                        try:
+                            from app.dependencies import _create_block_instance
+                            inst = _create_block_instance(get_block(name))
+                        except ImportError:
+                            inst = get_block(name)()
+                        envelope = await inst.execute(step.get("input") or {}, {})
+                        results.append({
+                            "step_id": f"step_{i}",
+                            "block": name,
+                            "status": "success",
+                            "result": envelope["result"],
+                        })
+                    return {"status": "success", "results": results}
+            """
+        ),
+        encoding="utf-8",
+    )
+    for bid in ("database", "workflow"):
+        reg = store / "block_registry" / bid
+        reg.mkdir()
+        (reg / "block.json").write_text(json.dumps({"id": bid}), encoding="utf-8")
+        (reg / "block.py").write_text(
+            textwrap.dedent(
+                f"""
+                import asyncio
+                from app.blocks import get_block
+
+                def run(**kwargs):
+                    block_cls = get_block({bid!r})
+                    instance = block_cls()
+                    envelope = asyncio.run(
+                        instance.execute(kwargs.get("input", kwargs), {{}})
+                    )
+                    return envelope.get("result", envelope)
+                """
+            ),
+            encoding="utf-8",
+        )
+
+    ws, result = _clone(tmp_path, store, block_ids=("database", "workflow"))
+    assert result.ok, result.detail
+    workflow = (
+        ws.destination / "vendor" / "cerebrum" / "blocks" / "workflow.py"
+    ).read_text(encoding="utf-8")
+    assert "_instantiate_store_block(get_block(name))" in workflow
+    assert "get_block(name)()" not in workflow
+    assert 'envelope.get("result", envelope)' in workflow
+    assert 'envelope["result"]' not in workflow
+    assert "def _create_block_instance" in workflow
+    assert "from app.dependencies import _create_block_instance" not in workflow
+    assert "_OfflineHal" in workflow
+
+    probe = textwrap.dedent(
+        """
+        import importlib.util, json, os, pathlib, tempfile
+        os.environ["STORAGE_PATH"] = tempfile.mkdtemp()
+        for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
+            os.environ.pop(var, None)
+        path = pathlib.Path("vendor/blocks/workflow/block.py")
+        spec = importlib.util.spec_from_file_location("vendored_workflow", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.run(input={"steps": [{"block": "database", "input": {"table": "appointment"}}]})
+        print(json.dumps(out, default=str))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    body = json.loads(proc.stdout.strip())
+    assert body.get("status") == "success"
+    assert body["results"][0]["block"] == "database"
+    assert "hal_block" not in str(body)
+

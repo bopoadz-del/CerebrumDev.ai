@@ -113,10 +113,11 @@ def test_ensure_record_envelope_adds_reference_when_llm_spec_omits_it():
     spec = _spec("pet_name", "appointment_date")
     assert augment_model_spec(spec, ["workflow"]) is spec
     enveloped, added = ensure_record_envelope(spec)
-    assert added == ["reference"]
+    assert added == ["reference", "status"]
     names = [f["name"] for f in enveloped["fields"]]
     assert names[:2] == ["pet_name", "appointment_date"]
     assert "reference" in names
+    assert "status" in names
     again, added_again = ensure_record_envelope(enveloped)
     assert added_again == []
     assert [f["name"] for f in again["fields"]] == names

@@ -285,6 +285,8 @@ def prepare_block_input(
         return _for_database(data, entity=entity)
     if bid == "queue":
         return _for_queue(data)
+    if bid == "dashboard":
+        return _for_dashboard(data)
     return data
 
 
@@ -296,6 +298,22 @@ def _summary_message(data: Dict[str, Any]) -> str:
     ]
     text = "; ".join(parts).strip()
     return (text or "platform notification")[:500]
+
+
+def _for_dashboard(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Satisfy dashboard ``status`` from the factory envelope.
+
+    Live sess_f1fe691 clinic_dashboard: schema-sample omitted ``status``
+    and the route/block answered ``Missing required field: status``.
+    """
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    status = out.get("status") if out.get("status") is not None else inner.get("status")
+    if not (isinstance(status, str) and status.strip()):
+        out["status"] = "open"
+    elif not out.get("status"):
+        out["status"] = status
+    return out
 
 
 def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
@@ -1199,6 +1217,8 @@ def prepare_block_input(
         return _for_database(data, entity=entity)
     if bid == "queue":
         return _for_queue(data)
+    if bid == "dashboard":
+        return _for_dashboard(data)
     return data
 
 
@@ -1209,6 +1229,17 @@ def _summary_message(data: Dict[str, Any]) -> str:
         if isinstance(value, (str, int, float, bool)) and key not in _SKIP
     ]
     return (("; ".join(parts)).strip() or "platform notification")[:500]
+
+
+def _for_dashboard(data: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    status = out.get("status") if out.get("status") is not None else inner.get("status")
+    if not (isinstance(status, str) and status.strip()):
+        out["status"] = "open"
+    elif not out.get("status"):
+        out["status"] = status
+    return out
 
 
 def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:

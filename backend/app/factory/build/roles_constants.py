@@ -142,6 +142,26 @@ def _instantiate_store_block(block_cls):
         except TypeError as exc:
             attempts.append(exc)
     raise attempts[-1]
+
+
+def _create_block_instance(block_or_name, *args, **kwargs):
+    """Store host DI. Generated platforms have no app.dependencies host.
+
+    Live sess_f1fe691 (VetCare Hub): workflow step_0 (database) raised
+    DatabaseBlock.__init__() missing 2 required positional arguments:
+    'hal_block' and 'config' after the Store-host import failed and the
+    fallback constructed DatabaseBlock() with no HAL.
+    """
+    target = block_or_name
+    if isinstance(target, str):
+        try:
+            from vendor.cerebrum.blocks import get_block as _gb
+        except ImportError:
+            from app.blocks import get_block as _gb
+        target = _gb(target)
+    if isinstance(target, type):
+        return _instantiate_store_block(target)
+    return _ensure_store_block_ready(target)
 '''
 
 _DISPATCH_RUNTIME = '''"""Local block dispatch. No network, no store, no callback.

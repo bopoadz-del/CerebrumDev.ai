@@ -17,6 +17,8 @@ AIOFILES_MARKER = "Store-unwired aiofiles"
 DOC_PARSE_UNWIRED_MARKER = "Store-unwired document parse"
 DOC_PARSERS_PACKAGE_MARKER = "vendor.cerebrum.blocks.document_engine.parsers"
 SKLEARN_UNWIRED_MARKER = "Store-unwired sklearn"
+RESULT_KEY_MARKER = '.get("result"'
+STORE_HOST_DI_MARKER = "def _create_block_instance"
 
 #: Written as ``vendor/cerebrum/blocks/document_engine/parsers/__init__.py``
 #: when the Store module imports a parsers subpackage the flat slice missed.
@@ -373,6 +375,49 @@ def emit_storage_aiofiles(text: str) -> str:
             1,
         )
     return text
+
+
+_RESULT_KEY_SUB = re.compile(
+    r"""\b(envelope|result|output|data|response|payload)\s*\[\s*['\"]result['\"]\s*\]"""
+)
+_DEPENDENCIES_IMPORT = re.compile(
+    r"^([ \t]*)from app\.dependencies import _create_block_instance[^\n]*\n",
+    re.MULTILINE,
+)
+
+
+def emit_result_key_access(text: str) -> str:
+    """Do not KeyError a missing ``result`` on a block envelope.
+
+    Live sess_f1fe691 automated_reminders: ``RuntimeError: 'result'``.
+    Kit shims / workflow steps did ``envelope["result"]`` (or wrapped that
+    KeyError as RuntimeError). event_bus / notification execute() often
+    returns a status envelope with no ``result`` key.
+    """
+    if not text:
+        return text
+    return _RESULT_KEY_SUB.sub(r'\1.get("result", \1)', text)
+
+
+def emit_store_host_di(text: str) -> str:
+    """Map Store-host ``_create_block_instance`` onto factory HAL construct.
+
+    Generated platforms have no Store ``app.dependencies``. A lazy import
+    failed and workflow fell back to ``DatabaseBlock()`` — the live
+    ``hal_block`` / ``config`` TypeError. Drop the host import so the
+    injected helper is used instead. Do not emit ``app/dependencies.py``:
+    notification's offline MCP path is an ImportError fallback.
+    """
+    if not text or "app.dependencies" not in text:
+        return text
+    stripped = _DEPENDENCIES_IMPORT.sub("", text)
+    if "def _create_block_instance" in stripped:
+        return stripped
+    from app.factory.build.roles_constants import _INSTANTIATE_HELPER
+
+    if "def _instantiate_store_block" not in stripped:
+        stripped = _INSTANTIATE_HELPER.lstrip("\n") + "\n" + stripped
+    return stripped
 
 
 def emit_runtime_module(module_name: str, text: str) -> str:
