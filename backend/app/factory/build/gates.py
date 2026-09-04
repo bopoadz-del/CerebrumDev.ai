@@ -154,9 +154,13 @@ def suite_assertion_classes(findings: List[str], raw: str = "") -> List[str]:
 def classify_suite_red(findings: List[str], raw: str = "") -> str:
     """PRODUCT / Floor detail must name the assertion class, not only 'red'."""
     classes = suite_assertion_classes(findings, raw)
-    snippet = next((ln.strip() for ln in findings if ln.strip()), "")
-    if snippet and len(snippet) > 200:
-        snippet = snippet[:197] + "..."
+    failed = next((ln.strip() for ln in findings if ln.startswith("FAILED")), "")
+    err = next((ln.strip() for ln in findings if ln.startswith("E ")), "")
+    snippet = " ".join(part for part in (failed, err) if part) or next(
+        (ln.strip() for ln in findings if ln.strip()), ""
+    )
+    if snippet and len(snippet) > 240:
+        snippet = snippet[:237] + "..."
     if classes and snippet:
         return "suite is red: " + "; ".join(classes[:3]) + " — " + snippet
     if classes:

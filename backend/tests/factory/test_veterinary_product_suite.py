@@ -154,7 +154,7 @@ _SESS_5DFB4A3_CAPS = (
         {"veterinarian_name": "Dr Lee", "service_date": "2026-09-10"},
     ),
     (
-        "automated_reminders",
+        "vaccination_reminders",
         "reminder",
         ["event_bus", "notification"],
         {"pet_name": "Nala", "reminder_type": "vaccination"},
