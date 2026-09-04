@@ -301,6 +301,7 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
         calls.append(timeout)
         raise httpx.ReadTimeout("model did not answer")
 
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "30")
     monkeypatch.setattr(coder.httpx, "post", _timeout)
     monkeypatch.setattr(
         "app.factory.product_architect.get_factory_llm_config",
