@@ -107,6 +107,7 @@ def test_cloner_emission_contains_notification_mcp_contract():
     out = emit_notification_mcp(src)
     assert MCP_OFFLINE_MARKER in out
     assert "offline" in out
+    assert emit_runtime_module("event_bus", src) == out
 
 
 def test_cloner_emission_contains_database_insert_and_query_contracts():

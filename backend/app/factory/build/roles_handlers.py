@@ -1089,6 +1089,7 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        prepared = _prepare_block_input(\n"
         "            block_id, data, action=action, roster=BLOCK_IDS,\n"
         "            entity=ENTITY,\n"
+        "            default_actions=BLOCK_DEFAULT_ACTIONS,\n"
         "        )\n"
         "        if isinstance(prepared, dict):\n"
         "            prepared = dict(prepared)\n"

@@ -947,3 +947,75 @@ def test_sess_67fe60f_product_detail_names_unknown_channel_class():
     assert "notification channel" in detail
     assert "automated_reminders" in detail
     assert _LIVE_CHANNEL_ERROR in detail
+
+
+_LIVE_EVENT_BUS_STEP_ERROR = "workflow: step_1 (event_bus): error"
+_SESS_4FBA2A2_ROSTER = ["database", "event_bus", "queue"]
+
+
+def test_sess_4fba2a2_appointment_schema_sample_through_coder_workflow_steps():
+    """Live sess_4fba2a2865044a82: TESTER sample → workflow → event_bus error.
+
+    Floor / Platforms (tip 6b6e1e5, after #314):
+
+        appointment_scheduling rejected a payload built from its own schema:
+        workflow: step_1 (event_bus): error
+
+    The coder handler already had a ``steps`` list, so prepare used to
+    forward the schema sample into event_bus unchanged.
+    """
+    llm = {
+        "entity": "appointment",
+        "fields": [
+            {"name": "pet_name", "type": "str", "required": True},
+            {"name": "appointment_date", "type": "str", "required": True},
+            {"name": "veterinarian_name", "type": "str", "required": True},
+        ],
+    }
+    enveloped, _ = ensure_record_envelope(llm)
+    sample = _sample_payload(enveloped)
+    assert sample["status"] == "open"
+    assert sample["pet_name"]
+
+    stale_steps = [
+        {"block": "database", "input": dict(sample)},
+        {"block": "event_bus", "input": dict(sample)},
+        {"block": "queue", "input": dict(sample)},
+    ]
+    stale_bus = stale_steps[1]["input"]
+    assert not stale_bus.get("topic")
+    assert stale_bus.get("channel") in (None, "email", "sample")
+
+    flow = prepare_block_input(
+        "workflow",
+        {"steps": stale_steps},
+        roster=_SESS_4FBA2A2_ROSTER + ["workflow"],
+        entity="appointment",
+        product_name="VetCare Hub",
+        default_actions={"event_bus": "publish"},
+    )
+    by_block = {step["block"]: step for step in flow["steps"]}
+    bus = by_block["event_bus"]["input"]
+    assert by_block["event_bus"]["action"] == "publish"
+    assert isinstance(bus["topic"], str) and bus["topic"]
+    assert bus["channel"] in STORE_NOTIFICATION_CHANNELS
+    assert bus["channel"] == "mcp"
+    assert isinstance(bus.get("payload"), dict)
+    assert bus["payload"]["pet_name"] == sample["pet_name"]
+    assert isinstance(bus.get("message"), str) and bus["message"]
+    assert by_block["database"]["input"]["table"] == "appointment"
+
+
+def test_sess_4fba2a2_product_detail_names_event_bus_workflow_step():
+    findings = [
+        "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload",
+        "E   AssertionError: appointment_scheduling rejected a payload "
+        f"built from its own schema: {_LIVE_EVENT_BUS_STEP_ERROR}",
+        "E   assert not ['appointment_scheduling rejected a payload built "
+        f"from its own schema: {_LIVE_EVENT_BUS_STEP_ERROR}']",
+    ]
+    detail = classify_suite_red(findings)
+    assert "schema sample refused" in detail
+    assert "event_bus workflow step" in detail
+    assert "appointment_scheduling" in detail
+    assert _LIVE_EVENT_BUS_STEP_ERROR in detail

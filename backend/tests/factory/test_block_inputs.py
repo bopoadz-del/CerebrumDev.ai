@@ -136,7 +136,12 @@ def test_workflow_payload_has_steps_built_from_roster():
 def test_workflow_keeps_explicit_steps():
     steps = [{"block": "team", "input": {"user_id": "u1"}}]
     out = prepare_block_input("workflow", {"steps": steps}, roster=["workflow", "team"])
-    assert out["steps"] == steps
+    assert len(out["steps"]) == 1
+    assert out["steps"][0]["block"] == "team"
+    assert out["steps"][0]["input"]["user_id"] == "u1"
+    # Existing coder-built steps must still be prepared (sess_4fba2a2).
+    assert isinstance(out["steps"][0]["input"]["name"], str)
+    assert out["steps"][0]["input"]["name"]
 
 
 # -- team -----------------------------------------------------------------
@@ -341,6 +346,100 @@ def test_event_bus_rewrites_sample_channel_to_mcp():
     assert isinstance(out["payload"], dict)
 
 
+def _event_bus_like_live_sess_4fba2a2(payload):
+    """Store event_bus as PRODUCT saw it after #314.
+
+    Missing topic used to raise ``topic required``. After #314 a schema
+    sample may carry ``channel=email`` (not ``sample``); the notify path
+    then runs and the Store workflow records only ``status=error``.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    topic = data.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return {"status": "error", "error": "error"}
+    channel = str(data.get("channel") or "").strip().lower()
+    if channel == "sample":
+        return {"status": "error", "error": "Unknown channel: sample"}
+    if channel == "email":
+        to = data.get("to") or data.get("email")
+        if not (isinstance(to, str) and "@" in to):
+            return {"status": "error"}
+    if channel and channel not in STORE_NOTIFICATION_CHANNELS:
+        return {"status": "error", "error": f"Unknown channel: {channel}"}
+    if not isinstance(data.get("payload"), dict) and not (
+        isinstance(data.get("message"), str) and data.get("message")
+    ):
+        return {"status": "error"}
+    return {"status": "ok", "block": "event_bus"}
+
+
+def test_sess_4fba2a2_coder_built_workflow_steps_prepare_event_bus():
+    """Live appointment_scheduling: coder steps forwarded the schema sample.
+
+    sess_4fba2a2865044a82 / VetCare Hub on tip 6b6e1e5 (#314):
+
+        appointment_scheduling rejected a payload built from its own schema:
+        workflow: step_1 (event_bus): error
+    """
+    sample = {
+        "pet_name": "Rex",
+        "appointment_date": "2026-09-10",
+        "veterinarian_name": "Dr Lee",
+        "status": "open",
+        "reference": "APT-1",
+        "channel": "email",
+    }
+    stale = {
+        "steps": [
+            {"block": "database", "input": dict(sample)},
+            {"block": "event_bus", "input": dict(sample)},
+            {"block": "queue", "input": dict(sample)},
+        ]
+    }
+    assert _event_bus_like_live_sess_4fba2a2(stale["steps"][1]["input"])[
+        "status"
+    ] == "error"
+
+    out = prepare_block_input(
+        "workflow",
+        stale,
+        roster=["database", "event_bus", "queue", "workflow"],
+        entity="appointment",
+        product_name="VetCare Hub",
+        default_actions={"event_bus": "publish", "database": "insert", "queue": "enqueue"},
+    )
+    by_block = {step["block"]: step for step in out["steps"]}
+    bus = by_block["event_bus"]["input"]
+    assert by_block["event_bus"].get("action") == "publish"
+    assert bus["topic"]
+    assert bus["channel"] == "mcp"
+    assert bus["channel"] != "sample"
+    assert bus["channel"] != "email"
+    assert isinstance(bus.get("payload"), dict)
+    assert bus["payload"]["pet_name"] == "Rex"
+    assert isinstance(bus.get("message"), str) and bus["message"]
+    assert _event_bus_like_live_sess_4fba2a2(bus)["status"] == "ok"
+    assert by_block["database"]["input"]["table"] == "appointment"
+    assert by_block["database"]["input"]["table"] != "records"
+
+
+def test_sess_4fba2a2_block_id_steps_are_normalized_and_prepared():
+    """Coder steps often use block_id; workflow only reads step.get('block')."""
+    sample = {"pet_name": "Rex", "appointment_date": "2026-09-10", "status": "open"}
+    out = prepare_block_input(
+        "workflow",
+        {"steps": [{"block_id": "event_bus", "input": sample}]},
+        roster=["event_bus", "workflow"],
+        entity="appointment",
+        product_name="VetCare Hub",
+        default_actions={"event_bus": "publish"},
+    )
+    step = out["steps"][0]
+    assert step["block"] == "event_bus"
+    assert step["action"] == "publish"
+    assert _event_bus_like_live_sess_4fba2a2(step["input"])["status"] == "ok"
+
+
 def test_queue_coerces_numeric_strings():
     """Live PRODUCT: Store queue / work_queue refused str where they want int."""
     out = prepare_block_input(
@@ -458,6 +557,37 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
         )
         assert factory["channel"] == emitted["channel"] == "mcp", (bid, factory, emitted)
     assert queue_factory["label"] == queue_emitted["label"] == "id-1"
+    coder_steps = {
+        "steps": [
+            {
+                "block": "event_bus",
+                "input": {
+                    "pet_name": "Rex",
+                    "appointment_date": "2026-09-10",
+                    "channel": "email",
+                },
+            }
+        ]
+    }
+    factory_flow = prepare_block_input(
+        "workflow",
+        coder_steps,
+        roster=["event_bus", "workflow"],
+        entity="appointment",
+        default_actions={"event_bus": "publish"},
+    )
+    emitted_flow = mod.prepare_block_input(
+        "workflow",
+        coder_steps,
+        roster=["event_bus", "workflow"],
+        entity="appointment",
+        default_actions={"event_bus": "publish"},
+    )
+    assert factory_flow["steps"][0]["input"]["channel"] == "mcp"
+    assert emitted_flow["steps"][0]["input"]["channel"] == "mcp"
+    assert factory_flow["steps"][0]["input"]["topic"]
+    assert emitted_flow["steps"][0]["input"]["topic"]
+    assert factory_flow["steps"][0]["action"] == emitted_flow["steps"][0]["action"] == "publish"
 
 
 # -- property_reference_code / sample ↔ handler alignment -----------------

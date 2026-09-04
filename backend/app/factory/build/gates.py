@@ -137,6 +137,14 @@ _SUITE_ASSERTION_CLASSES: tuple[tuple[str, str], ...] = (
         "schema sample refused (notification channel)",
     ),
     (
+        "step_1 (event_bus)",
+        "schema sample refused (event_bus workflow step)",
+    ),
+    (
+        "(event_bus): error",
+        "schema sample refused (event_bus workflow step)",
+    ),
+    (
         "not JSON serializable",
         "e2e handle() result not JSON serializable",
     ),
