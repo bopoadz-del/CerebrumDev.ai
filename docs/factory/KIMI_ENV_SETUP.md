@@ -16,10 +16,12 @@ A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CL
 (default name `kimi`; `KIMI_CODE_CLI` still honoured). The production image
 (`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`.
 If the coder is on and the executable is still missing, dispatch fail-closes
-as `FACTORY_CODE_CLI_UNAVAILABLE` — no HTTP oneshot, no "coding agent has
-taken over" / WRITER progress that cannot deliver a real session.
-`GET /health` → `factory_code_cli` reports the probe (`available` is true
-when `kimi` resolves; credentials are a separate `credentials_file_present`).
+as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
+`~/.kimi-code/config.toml` is absent (`credentials_file_present=false`),
+it fail-closes as `FACTORY_CODE_CLI_CREDENTIALS_MISSING`. Neither path
+opens a WRITER session or claims "coding agent has taken over". HTTP
+oneshot is not a substitute. `GET /health` → `factory_code_cli` reports
+the probe (`available` is the binary; credentials are a separate field).
 
 Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 
@@ -27,7 +29,7 @@ Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 |----------|------|
 | `FACTORY_CODE_CLI` | Binary name or absolute path (`kimi` / `claude` / `/abs/path`) |
 | `KIMI_CODE_CLI` | Legacy alias; `FACTORY_CODE_CLI` wins |
-| `KIMI_CODE_API_KEY` | Writes `~/.kimi-code/config.toml` at boot when set |
+| `KIMI_CODE_API_KEY` | Writes `~/.kimi-code/config.toml` at boot when set. Missing file + keyed Floor → `FACTORY_CODE_CLI_CREDENTIALS_MISSING` |
 | `KIMI_CODE_HOME` | Optional config home (Render: `/app/.kimi-code` if you pin it) |
 | `FACTORY_BRIEF_HTTP_ONESHOT=1` | CI/dev escape only — **not** a ≥2h CLI session |
 | `FACTORY_BRIEF_REQUIRE_CLI=1` | Force generate-start refuse (CI mutation). `ENV=production` already requires the CLI when the coder is on |

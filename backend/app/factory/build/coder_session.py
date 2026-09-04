@@ -1,9 +1,10 @@
 """One-session coder dispatch + owner Pause/Stop control.
 
 The WRITER compiles one brief, then this module hands it to FACTORY_CODE_CLI.
-A keyed production Floor must have that binary (or fail-closed with
-``FACTORY_CODE_CLI_UNAVAILABLE``) BEFORE it claims the coding agent has
-taken over. HTTP oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``);
+A keyed production Floor must have that binary AND, for Kimi, a credentials
+file (or fail-closed with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
+``FACTORY_CODE_CLI_CREDENTIALS_MISSING``) BEFORE it claims the coding agent
+has taken over. HTTP oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``);
 it is not a ≥2h agentic session.
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
@@ -36,8 +37,10 @@ CONTROL_STOP = "stop"
 BRIEF_DISPATCH_ENV = "FACTORY_BRIEF_DISPATCH"
 BRIEF_HTTP_ONESHOT_ENV = "FACTORY_BRIEF_HTTP_ONESHOT"
 NAMED_BLOCKER_CLI = "FACTORY_CODE_CLI_UNAVAILABLE"
+NAMED_BLOCKER_CLI_CREDS = "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
+CLI_PREFLIGHT_BLOCKERS = frozenset({NAMED_BLOCKER_CLI, NAMED_BLOCKER_CLI_CREDS})
 
 #: One-line operator note. Dashboard clicks stay owner-gated.
 OWNER_GATED_CLI_LOG = (
@@ -49,6 +52,12 @@ class CodeCliUnavailable(RuntimeError):
     """Operator/config class: FACTORY_CODE_CLI is not on the factory host."""
 
     blocker = NAMED_BLOCKER_CLI
+
+
+class CodeCliCredentialsMissing(CodeCliUnavailable):
+    """Kimi CLI is on PATH but ~/.kimi-code/config.toml is missing."""
+
+    blocker = NAMED_BLOCKER_CLI_CREDS
 
 
 def brief_dispatch_enabled() -> bool:
@@ -102,6 +111,67 @@ def cli_unavailable_detail(command: Optional[str] = None) -> str:
         f"session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
         f"{OWNER_GATED_CLI_LOG}."
     )
+
+
+def kimi_credentials_home() -> Path:
+    return Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code"))
+
+
+def kimi_credentials_file() -> Path:
+    return kimi_credentials_home() / "config.toml"
+
+
+def credentials_file_present() -> bool:
+    return kimi_credentials_file().is_file()
+
+
+def cli_requires_kimi_credentials(command: Optional[str] = None) -> bool:
+    """Kimi Code authenticates via config.toml. Claude uses its own login.
+
+    Credentials are expected when the resolved command is kimi (default
+    name, ``KIMI_CODE_CLI``, or a path whose basename contains ``kimi``).
+    """
+    from app.factory.coder import code_cli_command
+
+    cli = (command or code_cli_command()).strip()
+    names = [Path(cli).name.lower()] if cli else []
+    resolved = resolve_code_cli(cli) if cli else resolve_code_cli()
+    if resolved:
+        names.append(Path(resolved).name.lower())
+    return any("kimi" in name for name in names)
+
+
+def cli_credentials_ok(command: Optional[str] = None) -> bool:
+    if not cli_requires_kimi_credentials(command):
+        return True
+    return credentials_file_present()
+
+
+def cli_credentials_missing_detail(command: Optional[str] = None) -> str:
+    """Named-class operator text for binary-present / credentials-absent."""
+    from app.factory.coder import CODE_CLI_ENV, code_cli_command
+
+    cli = (command or code_cli_command()).strip() or "kimi"
+    dest = kimi_credentials_file()
+    return (
+        f"{NAMED_BLOCKER_CLI_CREDS}: {cli!r} is an executable on this host but "
+        f"{dest} is missing (credentials_file_present=false). "
+        "Set KIMI_CODE_API_KEY so boot writes [providers.kimi] into that file "
+        f"(or place the file yourself). {CODE_CLI_ENV} / CEREBRUM_LLM_API_KEY "
+        "do not authenticate the Kimi Code CLI. HTTP oneshot is not a "
+        f"FACTORY_CODE_CLI session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
+        f"{OWNER_GATED_CLI_LOG}."
+    )
+
+
+def raise_if_cli_session_unready() -> None:
+    """Fail-closed before generate-start claims the coding agent took over."""
+    if not brief_requires_cli():
+        return
+    if not cli_available():
+        raise CodeCliUnavailable(cli_unavailable_detail())
+    if not cli_credentials_ok():
+        raise CodeCliCredentialsMissing(cli_credentials_missing_detail())
 
 
 def coder_artifact_paths(root: Path) -> Dict[str, Path]:
@@ -242,18 +312,21 @@ def probe_code_cli() -> Dict[str, Any]:
 
     command = code_cli_command()
     resolved = resolve_code_cli(command)
-    home = Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code"))
-    creds = home / "config.toml"
+    creds_ok = credentials_file_present()
     probe: Dict[str, Any] = {
         "command": command,
         "available": bool(resolved),
         "resolved": resolved,
-        "credentials_file_present": creds.is_file(),
+        "credentials_file_present": creds_ok,
         "requires_cli": brief_requires_cli(),
+        "requires_kimi_credentials": cli_requires_kimi_credentials(command),
     }
     if not resolved:
         probe["blocker"] = NAMED_BLOCKER_CLI
         probe["error"] = cli_unavailable_detail(command)
+    elif brief_requires_cli() and not cli_credentials_ok(command):
+        probe["blocker"] = NAMED_BLOCKER_CLI_CREDS
+        probe["error"] = cli_credentials_missing_detail(command)
     return probe
 
 
@@ -267,8 +340,8 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
         os.getenv("KIMI_CODE_API_KEY", "").strip()
         or os.getenv("KIMI_CODE_KEY", "").strip()
     )
-    home = Path(os.environ.get("KIMI_CODE_HOME") or (Path.home() / ".kimi-code"))
-    dest = home / "config.toml"
+    home = kimi_credentials_home()
+    dest = kimi_credentials_file()
     if not key:
         logger.info(OWNER_GATED_CLI_LOG)
         return {"ok": False, "wrote": False, "reason": "KIMI_CODE_API_KEY unset"}
@@ -675,7 +748,24 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     if left is not None:
         timeout_s = max(30.0, float(left) - 15.0)
 
-    if cli_available():
+    if cli_available() and brief_requires_cli() and not cli_credentials_ok():
+        detail = cli_credentials_missing_detail()
+        logger.error("%s", OWNER_GATED_CLI_LOG)
+        _append_log(root / LOG_REL, f"[{NAMED_BLOCKER_CLI_CREDS}] {detail}")
+        ctx.note(
+            f"{NAMED_BLOCKER_CLI_CREDS} — coding session never opened",
+            stage="dispatch",
+            source="brief dispatch",
+            done=0,
+            total=1,
+        )
+        result = DispatchResult(
+            via="unavailable",
+            ok=False,
+            detail=detail,
+            blocker=NAMED_BLOCKER_CLI_CREDS,
+        )
+    elif cli_available():
         result = _run_cli_session(ctx, compiled, timeout_s=timeout_s)
         if result.ok:
             # #318 keep-path: prefer on-disk workflow/event_bus steps over a

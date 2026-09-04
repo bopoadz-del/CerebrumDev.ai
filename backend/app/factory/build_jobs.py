@@ -632,10 +632,8 @@ def start_runner_build(
     """
     from app.factory.build.coder_session import (
         CodeCliUnavailable,
-        brief_requires_cli,
-        cli_available,
-        cli_unavailable_detail,
         OWNER_GATED_CLI_LOG,
+        raise_if_cli_session_unready,
     )
     from app.factory.build.ledger import BuildLedger
     from app.factory.build.runner import blueprint_hash
@@ -683,9 +681,11 @@ def start_runner_build(
             ledger = BuildLedger(_ledger_path(out))
             fresh_workspace = True
 
-    if brief_requires_cli() and not cli_available():
+    try:
+        raise_if_cli_session_unready()
+    except CodeCliUnavailable:
         logger.error("%s", OWNER_GATED_CLI_LOG)
-        raise CodeCliUnavailable(cli_unavailable_detail())
+        raise
 
     if not ledger.exists():
         ledger.start_run(

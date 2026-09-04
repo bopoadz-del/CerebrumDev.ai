@@ -23,6 +23,24 @@ async def test_health_reports_factory_code_cli_probe(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, monkeypatch):
+    fake = _write_fake_cli(tmp_path)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is False
+    assert probe["blocker"] == "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
+    assert probe["requires_cli"] is True
+
+
+@pytest.mark.asyncio
 async def test_health_kimi_flag_without_binary_is_not_capability(tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")

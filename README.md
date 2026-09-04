@@ -162,8 +162,10 @@ FACTORY_CODE_CLI=kimi      # Kimi CLI (default; production image ships /usr/loca
 `KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. The production
 `Dockerfile` installs the official Kimi Code CLI at `/usr/local/bin/kimi`
 (pin `KIMI_CODE_VERSION`; see `docs/factory/KIMI_ENV_SETUP.md`). A keyed Floor
-without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE` (no HTTP
-oneshot, no fake WRITER takeover). CLI credentials are `KIMI_CODE_API_KEY`
+without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
+binary without `~/.kimi-code/config.toml` fail-closes as
+`FACTORY_CODE_CLI_CREDENTIALS_MISSING` (no HTTP oneshot, no fake WRITER
+takeover). CLI credentials are `KIMI_CODE_API_KEY`
 → `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`.
 Render dashboard values stay owner-gated.
 
