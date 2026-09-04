@@ -34,10 +34,11 @@ by ``create_team``) which is replaced by the platform precondition id.
 from __future__ import annotations
 
 import json
+import keyword
 import os
 import re
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 #: Path-like keys document_engine (and SCHEMA_OBLIGATIONS) accept.
 _DOC_PATH_KEYS = (
@@ -124,12 +125,6 @@ _REQUIRED_ASSIGNMENT = re.compile(
 
 _IDENT_IN_LIST = re.compile(r"""['\"](""" + _FIELD_NAME + r""")['\"]""")
 
-#: role must be one of {veterinarian, technician, …}
-_MUST_BE_ONE_OF = re.compile(
-    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be one of\s*[:\{{]\s*([^}}\n'\"]+)""",
-    re.IGNORECASE,
-)
-
 #: payload.get("role") not in ("veterinarian", "technician")
 _GET_NOT_IN = re.compile(
     r"""payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
@@ -138,18 +133,49 @@ _GET_NOT_IN = re.compile(
     re.IGNORECASE,
 )
 
-_MUST_BE_BOOL = re.compile(
-    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be a boolean""",
-    re.IGNORECASE,
+
+def _must_be_field_pattern(predicate: str) -> re.Pattern[str]:
+    """Match ``field must be …`` without taking English ``and`` / ``or``.
+
+    Live veterinary-care (sess_e04e9cd8f4904d19): LLM handlers emit
+    ``clinic_id is missing and must be a non-empty string``. The previous
+    optional-quote pattern treated the conjunction ``and`` as the field
+    name, so WRITER wrote ``and: str = ""`` and ``workspace_compiles``
+    failed. Prefer a quoted name, then ``X is missing and must be``, then
+    a bare ``X must be``.
+    """
+    return re.compile(
+        r"""(?:['\"](?P<quoted>"""
+        + _FIELD_NAME
+        + r""")['\"]"""
+        + r"""|\b(?P<missing>"""
+        + _FIELD_NAME
+        + r""")\s+is missing(?:\s+and)?"""
+        + r"""|\b(?P<bare>"""
+        + _FIELD_NAME
+        + r"""))"""
+        + r"""\s+"""
+        + predicate,
+        re.IGNORECASE,
+    )
+
+
+_MUST_BE_BOOL = _must_be_field_pattern(r"must be a boolean")
+_MUST_BE_INT = _must_be_field_pattern(
+    r"must be an integer(?:\s*>=\s*(?P<bound>-?\d+))?"
 )
-_MUST_BE_INT = re.compile(
-    r"""['\"]?("""
+_MUST_BE_NONEMPTY = _must_be_field_pattern(r"must be a non-empty string")
+_MUST_BE_ONE_OF = re.compile(
+    r"""(?:['\"](?P<quoted>"""
     + _FIELD_NAME
-    + r""")['\"]?\s+must be an integer(?:\s*>=\s*(-?\d+))?""",
-    re.IGNORECASE,
-)
-_MUST_BE_NONEMPTY = re.compile(
-    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be a non-empty string""",
+    + r""")['\"]"""
+    + r"""|\b(?P<missing>"""
+    + _FIELD_NAME
+    + r""")\s+is missing(?:\s+and)?"""
+    + r"""|\b(?P<bare>"""
+    + _FIELD_NAME
+    + r"""))"""
+    + r"""\s+must be one of\s*[:\{{]\s*(?P<values>[^}}\n'\"]+)""",
     re.IGNORECASE,
 )
 _ISINSTANCE_BOOL = re.compile(
@@ -502,9 +528,63 @@ def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+_NON_IDENT_CHARS = re.compile(r"[^0-9A-Za-z_]+")
+
+
+def sanitize_python_identifier(
+    name: Any,
+    *,
+    used: Optional[Set[str]] = None,
+    reserved: Optional[Iterable[str]] = None,
+) -> str:
+    """Return a unique valid Python identifier derived from ``name``.
+
+    Keywords (``and``, ``class``, ``for``, …) get a trailing underscore.
+    Illegal characters are remapped to ``_``. Leading digits are prefixed.
+    ``id`` / ``self`` collide with the generated dataclass primary key and
+    the instance name, so they are suffixed too.
+    """
+    extra = set(reserved or ())
+    cleaned = _NON_IDENT_CHARS.sub("_", str(name or "").strip())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned:
+        cleaned = "field"
+    if cleaned[0].isdigit():
+        cleaned = f"field_{cleaned}"
+    if (
+        keyword.iskeyword(cleaned)
+        or cleaned in extra
+        or cleaned in {"id", "self"}
+    ):
+        cleaned = f"{cleaned}_"
+    if not cleaned.isidentifier():
+        cleaned = "field"
+    taken = used if used is not None else set()
+    candidate = cleaned
+    n = 2
+    while candidate in taken:
+        candidate = f"{cleaned}_{n}"
+        n += 1
+    taken.add(candidate)
+    return candidate
+
+
+def _match_field_name(match: re.Match[str]) -> Optional[str]:
+    """Field name captured by a named or positional group."""
+    for key in ("quoted", "missing", "bare"):
+        if key in match.re.groupindex:
+            value = match.group(key)
+            if value:
+                return value
+    return next((g for g in match.groups() if g), None)
+
+
 def _usable_align_name(name: Optional[str]) -> Optional[str]:
+    """Accept only real domain identifiers — never keywords or junk tokens."""
     name = str(name or "").strip()
     if not name or name in _ALIGN_SKIP_NAMES:
+        return None
+    if not name.isidentifier() or keyword.iskeyword(name):
         return None
     return name
 
@@ -626,8 +706,8 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
         _touch(name)
 
     for match in _MUST_BE_ONE_OF.finditer(text):
-        slot = _touch(match.group(1))
-        values = _parse_value_list(match.group(2))
+        slot = _touch(_match_field_name(match))
+        values = _parse_value_list(match.group("values"))
         if slot and values:
             slot["allowed_values"] = values
             slot.setdefault("type", "str")
@@ -640,7 +720,7 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
             slot.setdefault("type", "str")
 
     for match in _MUST_BE_BOOL.finditer(text):
-        slot = _touch(match.group(1))
+        slot = _touch(_match_field_name(match))
         if slot:
             slot["type"] = "bool"
 
@@ -650,12 +730,13 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
             slot["type"] = "bool"
 
     for match in _MUST_BE_INT.finditer(text):
-        slot = _touch(match.group(1))
+        slot = _touch(_match_field_name(match))
         if not slot:
             continue
         slot["type"] = "int"
-        if match.group(2) is not None:
-            slot["min"] = int(match.group(2))
+        bound = match.group("bound") if "bound" in match.re.groupindex else None
+        if bound is not None:
+            slot["min"] = int(bound)
 
     for match in _ISINSTANCE_INT.finditer(text):
         slot = _touch(match.group(1))
@@ -663,7 +744,7 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
             slot.setdefault("type", "int")
 
     for match in _MUST_BE_NONEMPTY.finditer(text):
-        slot = _touch(match.group(1))
+        slot = _touch(_match_field_name(match))
         if slot:
             slot.setdefault("type", "str")
 

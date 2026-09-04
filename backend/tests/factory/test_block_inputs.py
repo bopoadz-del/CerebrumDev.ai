@@ -27,11 +27,13 @@ from app.factory.build.block_inputs import (
     handler_required_fields,
     prepare_block_input,
     render_block_inputs_module,
+    sanitize_python_identifier,
     split_execute_action,
 )
 from app.factory.build.roles import (
     _constraint_guard,
     _handler_module,
+    _render_models,
     _sample_payload,
     _sample_value,
     _templated_body,
@@ -330,6 +332,7 @@ def test_handler_required_fields_mine_plural_lists_and_is_missing():
         "owner_id",
     ):
         assert name in mined, (name, mined)
+    assert "and" not in mined
     assert "steps" not in mined
     assert "team_id" not in mined
 
@@ -406,6 +409,9 @@ def test_handler_field_contracts_mine_vetconnect_enums_types_bounds():
     assert contracts["login_count"]["type"] == "int"
     assert contracts["login_count"]["min"] == 0
     assert contracts["clinic_id"]["required"] is True
+    assert "and" not in contracts
+    assert "or" not in contracts
+    assert "class" not in contracts
     assert contracts["channel"]["allowed_values"] == ["email", "sms", "push"]
     assert contracts["reminder_type"]["allowed_values"] == [
         "appointment",
@@ -549,6 +555,46 @@ def test_align_spec_to_handler_source_covers_vetconnect_caps():
         exec("def handle(payload):\n" + guard + "\n    return {'ok': True}\n", gns)
         guarded = gns["handle"](payload)
         assert guarded.get("ok") is True, (cid, payload, guarded)
+
+
+def test_is_missing_and_must_be_does_not_mine_english_and():
+    """Live sess_e04e9cd: ``and: str = ""`` came from this exact phrase."""
+    body = (
+        "    if not payload.get('clinic_id'):\n"
+        "        return {'ok': False, 'error': 'clinic_id is missing and "
+        "must be a non-empty string'}\n"
+        "    if not payload.get('owner_id'):\n"
+        "        return {'ok': False, 'error': 'owner_id is missing and "
+        "must be a non-empty string'}\n"
+    )
+    mined = handler_required_fields(body)
+    contracts = handler_field_contracts(body)
+    assert "clinic_id" in mined
+    assert "owner_id" in mined
+    assert "and" not in mined
+    assert "and" not in contracts
+    aligned, changed = align_spec_to_handler_source(
+        {"entity": "record", "fields": [{"name": "reference", "type": "str"}]},
+        body,
+    )
+    names = [f["name"] for f in aligned["fields"]]
+    assert "clinic_id" in names
+    assert "owner_id" in names
+    assert "and" not in names
+    assert "and" not in changed
+    src = _render_models({"secure_multi_user_dashboard": aligned})
+    assert "    and:" not in src
+    exec(compile(src, "<models>", "exec"), {})
+
+
+def test_sanitize_python_identifier_remaps_keywords_and_illegal_chars():
+    assert sanitize_python_identifier("and") == "and_"
+    assert sanitize_python_identifier("class") == "class_"
+    assert sanitize_python_identifier("for") == "for_"
+    assert sanitize_python_identifier("pet-id") == "pet_id"
+    assert sanitize_python_identifier("2fa") == "field_2fa"
+    used = {"and_"}
+    assert sanitize_python_identifier("and", used=used) == "and__2"
 
 
 def test_constraint_guard_enforces_required_fields_from_spec():

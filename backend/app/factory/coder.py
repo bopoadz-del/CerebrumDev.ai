@@ -36,6 +36,7 @@ import httpx
 
 from .blueprint import CapabilitySpec, ProductBlueprint
 from .build.authority import kernel_seat_brief
+from .build.block_inputs import sanitize_python_identifier
 from .build.writer_brief import writer_system_brief
 from .llm_watchdog import (
     attempt_wall_s,
@@ -1011,19 +1012,22 @@ def generate_model_spec(
         raise CoderError(f"model spec for {capability_id} has a bad entity name: {entity!r}")
 
     fields = []
+    used_names: set[str] = set()
     for item in data.get("fields") or []:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip()
+        raw_name = str(item.get("name") or "").strip()
         ftype = str(item.get("type") or "str").strip()
-        if not name.isidentifier() or name in {"id", "self"} or name.startswith("_"):
+        if not raw_name or raw_name in {"id", "self"} or raw_name.startswith("_"):
             continue
+        name = sanitize_python_identifier(raw_name, used=used_names)
         format_hint = _TEMPORAL_TYPE_ALIASES.get(ftype.lower())
         if format_hint:
             ftype = "str"
         else:
             ftype = _SQL_TYPE_ALIASES.get(ftype.lower(), ftype)
         if ftype not in _ALLOWED_FIELD_TYPES:
+            used_names.discard(name)
             continue
         field = {
             "name": name,
