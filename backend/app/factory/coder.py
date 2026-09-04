@@ -837,9 +837,15 @@ Contract:
       execute(block_id, record, action=BLOCK_DEFAULT_ACTIONS.get(block_id))
   or another action= keyword that matches the block's contract.
 - The caller knows NOTHING about blocks. NEVER require a block-specific
-  field (like "steps" or "channel") from the caller's payload -- CONSTRUCT
-  it inside the handler from the domain data the capability does have.
-  Validate only the capability's own fields.
+  field (like "steps", "channel", "topic", "sql", "table", file paths, or
+  team_id) from the caller's payload -- CONSTRUCT it inside the handler
+  from the domain data the capability does have. The fail-closed execute
+  wrapper also runs prepare_block_input for event_bus (topic), database
+  (table/sql), document_engine (a real pdf/docx/xlsx path), team (the
+  minted team_id from app.preconditions), notification, workflow, and
+  analytics. Pass the domain record through execute(); do not invent a
+  second contract the spec cannot express. Validate only the capability's
+  own fields.
 - The platform runs OFFLINE and its suite BLOCKS outbound network. Never
   choose webhook URLs, SMTP/email, or Slack. For notification, the Store
   only accepts known channels: set channel to "mcp" and pass block=<a
