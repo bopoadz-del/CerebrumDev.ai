@@ -178,7 +178,13 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert PRODUCT_ACCEPT_TEST in text
     assert PRODUCT_EVENT_BUS_STEP_HALT in text
     assert PRODUCT_EVENT_BUS_STEP_CLASS in text
-    assert workflow_accept_acceptance_line() in text
+    assert workflow_accept_acceptance_line(
+        capability_ids=[
+            "appointment_scheduling",
+            "reminders_and_notifications",
+            "reminders_notifications",
+        ]
+    ) in text
     assert f"[check:{PRODUCT_ACCEPT_CHECK}]" in text
     assert EVENT_BUS_STEP_CHANNEL in text
     assert EVENT_BUS_STEP_ACTION in text
@@ -286,8 +292,10 @@ def test_harness_fails_unprepared_event_bus_handlers_before_writer_done(tmp_path
     errors = event_bus_workflow_handler_errors(tmp_path, compiled)
     assert any("appointment_scheduling" in e for e in errors)
     assert not any("reminders_notifications" in e for e in errors)
-    with pytest.raises(EventBusWorkflowHalt, match=WRITER_EVENT_BUS_WORKFLOW_HALT):
+    with pytest.raises(EventBusWorkflowHalt) as halted:
         assert_event_bus_workflow_handlers(tmp_path, compiled)
+    assert WRITER_EVENT_BUS_WORKFLOW_HALT in str(halted.value)
+    assert "appointment_scheduling" in str(halted.value)
 
 
 def test_harness_passes_prepared_and_wrapped_handlers(tmp_path):
