@@ -2526,6 +2526,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.coder_session import (
         NAMED_BLOCKER_CLI,
         brief_dispatch_enabled,
+        brief_requires_cli,
         dispatch_compiled_brief,
         write_brief_artifacts,
     )
@@ -2549,7 +2550,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     use_brief_dispatch = brief_dispatch_enabled()
     if use_brief_dispatch:
         dispatch = dispatch_compiled_brief(ctx, compiled_brief)
-        if dispatch.via == "unavailable" and dispatch.blocker == NAMED_BLOCKER_CLI:
+        if (
+            dispatch.via == "unavailable"
+            and dispatch.blocker == NAMED_BLOCKER_CLI
+            and brief_requires_cli()
+        ):
             raise RoleError(dispatch.detail)
         ctx.note(
             f"brief dispatch via {dispatch.via}: {dispatch.detail}",

@@ -9,6 +9,7 @@ this gate. LLM-authored route bodies stay forbidden.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,6 +36,8 @@ def _no_paid_calls(monkeypatch):
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
+    # Module-scoped: autouse monkeypatch has not run yet.
+    os.environ["FACTORY_CODER_ENABLED"] = "0"
     out = tmp_path_factory.mktemp("s12") / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()

@@ -161,6 +161,7 @@ def test_writer_halts_when_cli_missing_without_oneshot(
 
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     oneshot = []
     monkeypatch.setattr(
         "app.factory.coder.generate_from_compiled_brief",
