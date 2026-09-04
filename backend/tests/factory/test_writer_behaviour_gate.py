@@ -19,6 +19,7 @@ from app.factory.build.authority import BuildRole
 from app.factory.build import writer_behaviour as writer_behaviour_mod
 from app.factory.build.writer_behaviour import (
     BEHAVIOUR_PROBE,
+    CONTRACT_HALT,
     F1_HALT,
     F11_HALT,
     GATE_NAME,
@@ -341,6 +342,24 @@ def test_probe_emits_canonical_f11_halt():
     assert "GATE-FINDING: " + F11_HALT in BEHAVIOUR_PROBE
     # ``(F1)`` is a substring of ``(F11)`` — the probe must still name F11.
     assert "(F11)" in BEHAVIOUR_PROBE
+
+
+def test_probe_emits_canonical_contract_halt():
+    """Refuse-all payload/block mismatch must stay one named sentence."""
+    assert CONTRACT_HALT in BEHAVIOUR_PROBE
+    assert "GATE-FINDING: " + CONTRACT_HALT in BEHAVIOUR_PROBE
+
+
+def test_banner_detail_contract_does_not_masquerade_as_f1():
+    """Live makerspace Floor banner must name the contract halt, not F1."""
+    line = (
+        "dashboards_and_reports: dashboard: the action travelled inside "
+        "the payload; Answered 'Unknown action: None' (CONTRACT: unknown action)"
+    )
+    assert banner_detail([CONTRACT_HALT, line]) == CONTRACT_HALT
+    assert banner_detail([line]) == CONTRACT_HALT
+    assert F1_HALT not in banner_detail([CONTRACT_HALT, line])
+    assert "success over a failed block" not in banner_detail([line])
 
 
 def test_probe_emits_canonical_sql_halt():
@@ -950,5 +969,191 @@ def test_gate_invalid_appointment_ddl_is_gate_finding_not_sql_banner(tmp_path):
     assert result.detail != "scheduled_time TEXT,"
     joined = " ".join(result.findings) + " " + result.detail
     assert SCHEMA_SQL_HALT in joined
+    assert result.detail != F1_HALT
+    assert "success over a failed block" not in result.detail
+
+
+# -- live makerspace-management action-in-payload (2026-09-04) ------------
+
+_REFUSING_DISPATCH = '''def execute(block_id, payload=None, action=None, params=None):
+    payload = payload if isinstance(payload, dict) else {}
+    inner = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+    if "action" in payload or "action" in inner:
+        if action is None:
+            return {"status": "error", "error": "Unknown action: None"}
+        return {"status": "error", "error": "%s unknown field(s): action" % block_id}
+    if action is None:
+        return {"status": "error", "error": "Unknown action: None"}
+    return {"status": "ok", "block": block_id}
+'''
+
+_BURIED_ACTION_BODY = """    results = {}
+    errors = {}
+    for block_id in BLOCK_IDS:
+        body = dict(payload)
+        body["action"] = BLOCK_DEFAULT_ACTIONS.get(block_id) or "run"
+        res = execute(block_id, body)
+        results[block_id] = res
+        if isinstance(res, dict) and (res.get("status") == "error" or "error" in res):
+            errors[block_id] = str(res.get("error") or res)[:200]
+    if errors:
+        return {"ok": False, "capability": CAPABILITY_ID,
+                "error": "; ".join("%s: %s" % item for item in errors.items()),
+                "results": results}
+    return {"ok": True, "capability": CAPABILITY_ID, "results": results}
+"""
+
+
+def _write_makerspace_action_in_payload_workspace(root: Path, *, wrapped: bool) -> None:
+    """Reproduce sess_39b5fec2abd346a5: action rides inside the payload.
+
+    ``wrapped=True`` is the production WRITER path (``_handler_module`` +
+    ``app/block_inputs.py``). ``wrapped=False`` is a raw execute() call that
+    bypasses the repair wrapper — the honesty gate must still halt.
+    """
+    from app.factory.build.block_inputs import render_block_inputs_module
+    from app.factory.build.roles_handlers import _handler_module
+
+    _write_workspace(root, _GUARDED)
+    app = root / "app"
+    (app / "block_inputs.py").write_text(render_block_inputs_module(), encoding="utf-8")
+    (app / "dispatch.py").write_text(_REFUSING_DISPATCH, encoding="utf-8")
+
+    models = (app / "models.py").read_text(encoding="utf-8")
+    (app / "models.py").write_text(
+        models.replace(
+            "MODELS = {'widget_intake': Widget}\n",
+            "MODELS = {"
+            "'dashboards_and_reports': Widget, "
+            "'equipment_inventory_and_maintenance': Widget}\n",
+        ),
+        encoding="utf-8",
+    )
+    (app / "jobs.py").write_text(
+        "CAPABILITIES = ["
+        "{'id': 'dashboards_and_reports', 'entity': 'dashboard'}, "
+        "{'id': 'equipment_inventory_and_maintenance', 'entity': 'equipment'}]\n"
+        "JOBS = []\nCATALOG = {}\nGATES = {}\n",
+        encoding="utf-8",
+    )
+    defaults = {
+        "dashboard": "render",
+        "analytics": "track_event",
+        "database": "insert",
+        "estate_registry": "register",
+    }
+    (app / "actions" / "__init__.py").write_text(
+        "from app.actions import dashboards_and_reports  # noqa: F401\n"
+        "from app.actions import equipment_inventory_and_maintenance  # noqa: F401\n",
+        encoding="utf-8",
+    )
+    if wrapped:
+        (app / "actions" / "dashboards_and_reports.py").write_text(
+            _handler_module(
+                "dashboards_and_reports",
+                ["dashboard", "analytics", "database"],
+                _BURIED_ACTION_BODY,
+                "coder LLM (makerspace live miss)",
+                defaults,
+            ),
+            encoding="utf-8",
+        )
+        (app / "actions" / "equipment_inventory_and_maintenance.py").write_text(
+            _handler_module(
+                "equipment_inventory_and_maintenance",
+                ["estate_registry"],
+                _BURIED_ACTION_BODY,
+                "coder LLM (makerspace live miss)",
+                defaults,
+            ),
+            encoding="utf-8",
+        )
+    else:
+        def _raw(cap: str, blocks: list[str]) -> str:
+            return (
+                "from app.dispatch import execute\n\n"
+                f"CAPABILITY_ID = {cap!r}\n"
+                f"BLOCK_IDS = {blocks!r}\n"
+                f"BLOCK_DEFAULT_ACTIONS = {defaults!r}\n\n"
+                "def handle(payload):\n"
+                + _BURIED_ACTION_BODY
+            )
+
+        (app / "actions" / "dashboards_and_reports.py").write_text(
+            _raw("dashboards_and_reports", ["dashboard", "analytics", "database"]),
+            encoding="utf-8",
+        )
+        (app / "actions" / "equipment_inventory_and_maintenance.py").write_text(
+            _raw("equipment_inventory_and_maintenance", ["estate_registry"]),
+            encoding="utf-8",
+        )
+    (app / "routes.py").write_text(
+        "from typing import Any, Dict\n"
+        "from fastapi import APIRouter\n"
+        "from app import store\n"
+        "from app.actions import dashboards_and_reports as _dash\n"
+        "from app.actions import equipment_inventory_and_maintenance as _equip\n\n"
+        "router = APIRouter()\n\n"
+        '@router.post("/dashboards_and_reports")\n'
+        "def dashboards_create(payload: Dict[str, Any]) -> Dict[str, Any]:\n"
+        "    result = _dash.handle(payload)\n"
+        "    if isinstance(result, dict) and result.get('ok') is False:\n"
+        "        return result\n"
+        '    saved = store.save("dashboard", payload)\n'
+        '    return {"ok": True, "capability": "dashboards_and_reports", "stored": saved}\n\n'
+        '@router.get("/dashboards_and_reports")\n'
+        "def dashboards_list() -> Dict[str, Any]:\n"
+        '    items = store.list_all("dashboard")\n'
+        '    return {"items": items, "total": len(items)}\n\n'
+        '@router.post("/equipment_inventory_and_maintenance")\n'
+        "def equipment_create(payload: Dict[str, Any]) -> Dict[str, Any]:\n"
+        "    result = _equip.handle(payload)\n"
+        "    if isinstance(result, dict) and result.get('ok') is False:\n"
+        "        return result\n"
+        '    saved = store.save("equipment", payload)\n'
+        '    return {"ok": True, "capability": "equipment_inventory_and_maintenance", "stored": saved}\n\n'
+        '@router.get("/equipment_inventory_and_maintenance")\n'
+        "def equipment_list() -> Dict[str, Any]:\n"
+        '    items = store.list_all("equipment")\n'
+        '    return {"items": items, "total": len(items)}\n',
+        encoding="utf-8",
+    )
+
+
+def test_gate_repairs_action_buried_in_payload_and_does_not_halt(tmp_path):
+    """Live makerspace: wrapped handlers must lift action= and ship a zip.
+
+    The coder wrote execute(block, {..., "action": ...}) with no keyword.
+    The fail-closed wrapper lifts and strips so blocks accept the call.
+    Honesty is unchanged: Export still requires the rest of the pilot.
+    """
+    _write_makerspace_action_in_payload_workspace(tmp_path, wrapped=True)
+    result = _run_gate(tmp_path)
+
+    assert result.ok is True, (result.detail, result.findings)
+    assert result.detail != CONTRACT_HALT
+    assert result.detail != F1_HALT
+    assert CONTRACT_HALT not in (result.findings or [])
+    joined = " ".join(result.findings or [])
+    assert "the action travelled inside the payload" not in joined
+
+
+def test_gate_still_halts_when_action_reaches_dispatch_inside_payload(tmp_path):
+    """Honesty: an unrepaired action-in-payload still fails writer_behaviour.
+
+    Per-capability findings must name the block and the live answers
+    (Unknown action: None / unknown field(s): action). Export stays closed.
+    """
+    _write_makerspace_action_in_payload_workspace(tmp_path, wrapped=False)
+    result = _run_gate(tmp_path)
+
+    assert result.ok is False, result
+    assert result.detail == CONTRACT_HALT, result.detail
+    assert CONTRACT_HALT in result.findings
+    joined = " ".join(result.findings)
+    assert "dashboards_and_reports" in joined
+    assert "equipment_inventory_and_maintenance" in joined
+    assert "the action travelled inside the payload" in joined
+    assert "Unknown action" in joined or "unknown field" in joined.lower()
     assert result.detail != F1_HALT
     assert "success over a failed block" not in result.detail

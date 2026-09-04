@@ -25,6 +25,7 @@ from app.factory.build.block_inputs import (
     handler_required_fields,
     prepare_block_input,
     render_block_inputs_module,
+    split_execute_action,
 )
 from app.factory.build.roles import (
     _constraint_guard,
@@ -192,6 +193,52 @@ def test_rendered_block_inputs_module_is_importable(tmp_path):
         "notification", {"reference": "x"}, roster=["notification", "workflow"]
     )
     assert out["channel"] == "mcp" and out["message"]
+    action, clean = mod.split_execute_action(
+        {"action": "render", "name": "lathe"}, default_action="draw"
+    )
+    assert action == "render" and "action" not in clean
+
+
+def test_split_execute_action_lifts_and_strips_payload_action():
+    """Live makerspace: action in the dict must become the keyword and leave."""
+    action, clean = split_execute_action(
+        {"action": "render", "name": "lathe", "status": "open"},
+        action=None,
+        default_action="draw",
+    )
+    assert action == "render"
+    assert "action" not in clean
+    assert clean["name"] == "lathe"
+
+    action, clean = split_execute_action(
+        {"input": {"action": "insert", "table": "tools"}},
+        action=None,
+    )
+    assert action == "insert"
+    assert "action" not in clean
+    assert "action" not in clean["input"]
+    assert clean["input"]["table"] == "tools"
+
+    action, clean = split_execute_action(
+        {"action": "buried", "metric": "x"},
+        action="track_event",
+    )
+    assert action == "track_event"
+    assert "action" not in clean
+
+    action, clean = split_execute_action({"name": "press"}, default_action="register")
+    assert action == "register"
+    assert "action" not in clean
+
+
+def test_prepare_block_input_never_forwards_action_field():
+    out = prepare_block_input(
+        "estate_registry",
+        {"action": "register", "name": "mill"},
+        action="register",
+    )
+    assert "action" not in out
+    assert out["name"] == "mill"
 
 
 def test_templated_handler_wrapper_prepares_notification_before_execute(tmp_path):
@@ -249,6 +296,82 @@ def test_templated_handler_wrapper_prepares_notification_before_execute(tmp_path
     assert isinstance(by_block["team"]["user_id"], str)
     assert isinstance(by_block["team"]["name"], str)
     assert isinstance(by_block["team"]["slug"], str)
+    for call in calls:
+        assert "action" not in call["payload"], call
+        assert call["action"], call
+
+
+def test_handler_wrapper_lifts_action_out_of_payload_before_dispatch(tmp_path):
+    """Regression: execute(block, {action: ...}) must become action= keyword.
+
+    Live Your Platforms findings for makerspace-management named
+    ``the action travelled inside the payload`` on dashboard/analytics/
+    database/estate_registry. The wrapper is the last seam before
+    dispatch; if action still rides in the payload here, WRITER halts.
+    """
+    buried = (
+        "    results = {}\n"
+        "    for block_id in BLOCK_IDS:\n"
+        "        body = dict(payload)\n"
+        "        body['action'] = BLOCK_DEFAULT_ACTIONS.get(block_id) or 'run'\n"
+        "        results[block_id] = execute(block_id, body)\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID, 'results': results}\n"
+    )
+    module_text = _handler_module(
+        "dashboards_and_reports",
+        ["dashboard", "analytics", "database"],
+        buried,
+        "coder LLM (makerspace live miss)",
+        {
+            "dashboard": "render",
+            "analytics": "track_event",
+            "database": "insert",
+        },
+    )
+    block_inputs_mod = types.ModuleType("app.block_inputs")
+    exec(render_block_inputs_module(), block_inputs_mod.__dict__)
+    handler_path = tmp_path / "handler.py"
+    handler_path.write_text(module_text, encoding="utf-8")
+
+    calls = []
+    fake_dispatch = types.ModuleType("app.dispatch")
+
+    def _fake_execute(block_id, payload, action=None, params=None):
+        assert "action" not in (payload or {}), (block_id, payload)
+        if isinstance(payload, dict) and isinstance(payload.get("input"), dict):
+            assert "action" not in payload["input"], (block_id, payload)
+        assert action, (block_id, payload)
+        calls.append({"block_id": block_id, "payload": dict(payload), "action": action})
+        return {"status": "ok", "block": block_id}
+
+    fake_dispatch.execute = _fake_execute
+    previous_dispatch = sys.modules.get("app.dispatch")
+    previous_block_inputs = sys.modules.get("app.block_inputs")
+    sys.modules["app.dispatch"] = fake_dispatch
+    sys.modules["app.block_inputs"] = block_inputs_mod
+    try:
+        spec = importlib.util.spec_from_file_location("makerspace_handler", handler_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.handle({"name": "lathe", "status": "open"})
+    finally:
+        if previous_dispatch is None:
+            sys.modules.pop("app.dispatch", None)
+        else:
+            sys.modules["app.dispatch"] = previous_dispatch
+        if previous_block_inputs is None:
+            sys.modules.pop("app.block_inputs", None)
+        else:
+            sys.modules["app.block_inputs"] = previous_block_inputs
+
+    assert out.get("ok") is True, out
+    assert {c["block_id"] for c in calls} == {"dashboard", "analytics", "database"}
+    by_block = {c["block_id"]: c["action"] for c in calls}
+    assert by_block == {
+        "dashboard": "render",
+        "analytics": "track_event",
+        "database": "insert",
+    }
 
 
 def test_dispatch_runtime_still_has_no_f18_fabrication_helpers():
