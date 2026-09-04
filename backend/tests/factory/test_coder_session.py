@@ -280,16 +280,39 @@ def test_specs_from_models_source_reads_fields_and_constraints():
     assert status["allowed_values"] == ["open", "closed"]
 
 
+_PREPARED_EVENT_BUS_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [{\n"
+    "        'block': 'event_bus',\n"
+    "        'action': 'publish',\n"
+    "        'input': {\n"
+    "            'topic': 'reminder.due',\n"
+    "            'payload': {'reference': payload.get('reference')},\n"
+    "            'message': 'reminder recorded',\n"
+    "            'channel': 'mcp',\n"
+    "        },\n"
+    "    }]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+_UNPREPARED_EVENT_BUS_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [{'block': 'event_bus', 'input': payload}]\n"
+    "    return execute('workflow', {'steps': steps})\n"
+)
+
+
 def test_harvest_keeps_brief_driven_workflow_steps_without_capability_id(tmp_path):
-    """#317 keepable required CAPABILITY_ID; CLI workflow modules often omit it."""
+    """#317 keepable required CAPABILITY_ID; CLI workflow modules often omit it.
+
+    After #318 the keep-path treated unprepared ``input: payload`` as
+    brief-driven. Only the prepared PRODUCT contract is keepable.
+    """
     root = tmp_path / "ws"
     actions = root / "app" / "actions"
     actions.mkdir(parents=True)
     (actions / "reminders_and_notifications.py").write_text(
-        "def handle(payload):\n"
-        "    steps = [{'block': 'event_bus', 'input': payload}]\n"
-        "    return execute('workflow', {'steps': steps})\n",
-        encoding="utf-8",
+        _PREPARED_EVENT_BUS_HANDLER, encoding="utf-8"
     )
     (actions / "clinic_intake.py").write_text(
         "# fragment — not a keepable handler\nreturn {}\n",
@@ -308,19 +331,35 @@ def test_harvest_keeps_brief_driven_workflow_steps_without_capability_id(tmp_pat
     assert specs == {}
 
 
+def test_harvest_does_not_keep_unprepared_event_bus_forward(tmp_path):
+    """Live sess_a4690fb: CLI wrote {'block': 'event_bus', 'input': payload}."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        "CAPABILITY_ID = 'appointment_scheduling'\n" + _UNPREPARED_EVENT_BUS_HANDLER,
+        encoding="utf-8",
+    )
+    (actions / "reminders_notifications.py").write_text(
+        _UNPREPARED_EVENT_BUS_HANDLER, encoding="utf-8"
+    )
+    assert _is_keepable_handler(
+        (actions / "appointment_scheduling.py").read_text(encoding="utf-8")
+    ) is False
+    specs, kept = harvest_cli_artifacts(
+        root, ["appointment_scheduling", "reminders_notifications"]
+    )
+    assert kept == []
+    assert specs == {}
+
+
 def test_harvest_cli_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
     """Same-session CLI: thin JSON body must not replace brief-driven steps."""
     root = tmp_path / "ws"
     actions = root / "app" / "actions"
     actions.mkdir(parents=True)
     (actions / "reminders_and_notifications.py").write_text(
-        "def handle(payload):\n"
-        "    steps = [\n"
-        "        {'block': 'notification', 'input': payload},\n"
-        "        {'block': 'event_bus', 'input': payload},\n"
-        "    ]\n"
-        "    return execute('workflow', {'steps': steps}, action='run')\n",
-        encoding="utf-8",
+        _PREPARED_EVENT_BUS_HANDLER, encoding="utf-8"
     )
     result = DispatchResult(
         via="cli",
@@ -339,16 +378,33 @@ def test_harvest_cli_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
     assert "reminders_and_notifications" not in result.handlers
 
 
+def test_harvest_cli_does_not_prefer_unprepared_disk_over_json_body(tmp_path):
+    """Unprepared disk must not lock in; factory wrap should get the body."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        _UNPREPARED_EVENT_BUS_HANDLER, encoding="utf-8"
+    )
+    body = "return {'ok': True, 'capability': 'appointment_scheduling'}"
+    result = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="cli",
+        handlers={"appointment_scheduling": body},
+    )
+    _merge_workspace_harvest(result, root, ["appointment_scheduling"])
+    assert result.handlers["appointment_scheduling"] == body
+    assert "appointment_scheduling" not in result.kept_handler_ids
+
+
 def test_harvest_oneshot_does_not_pin_a_previous_round_handler(tmp_path):
     """Rework oneshot must keep its body so a red PRODUCT handler can change."""
     root = tmp_path / "ws"
     actions = root / "app" / "actions"
     actions.mkdir(parents=True)
     (actions / "reminders_and_notifications.py").write_text(
-        "def handle(payload):\n"
-        "    steps = [{'block': 'event_bus', 'input': payload}]\n"
-        "    return execute('workflow', {'steps': steps})\n",
-        encoding="utf-8",
+        _UNPREPARED_EVENT_BUS_HANDLER, encoding="utf-8"
     )
     body = "return {'ok': True, 'capability': 'reminders_and_notifications'}"
     result = DispatchResult(
@@ -361,7 +417,7 @@ def test_harvest_oneshot_does_not_pin_a_previous_round_handler(tmp_path):
         result, root, ["reminders_and_notifications"]
     )
     assert result.handlers["reminders_and_notifications"] == body
-    assert "reminders_and_notifications" in result.kept_handler_ids
+    assert "reminders_and_notifications" not in result.kept_handler_ids
 
 
 def test_harvest_cli_artifacts_keeps_handle_modules(tmp_path):

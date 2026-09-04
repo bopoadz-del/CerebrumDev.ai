@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.factory.blueprint import load_blueprint
 from app.factory.build.brief_compiler import brief_fingerprint, compile_brief
 from app.factory.build.brief_lint import lint_brief
@@ -36,15 +38,24 @@ from app.factory.build.schema_accept import (
 from app.factory.build.workflow_accept import (
     EVENT_BUS_STEP_ACTION,
     EVENT_BUS_STEP_CHANNEL,
+    PREPARED_EVENT_BUS_STEP_EXAMPLE,
     PRODUCT_ACCEPT_CHECK,
     PRODUCT_ACCEPT_TEST,
     PRODUCT_EMAIL_SAMPLE,
     PRODUCT_EVENT_BUS_STEP_CLASS,
     PRODUCT_EVENT_BUS_STEP_HALT,
+    WRITER_EVENT_BUS_WORKFLOW_HALT,
+    EventBusWorkflowHalt,
+    assert_event_bus_workflow_handlers,
     declares_event_bus_workflow,
     event_bus_workflow_capability_ids,
+    event_bus_workflow_handler_errors,
+    handler_has_prepared_event_bus_step,
+    handler_satisfies_event_bus_contract,
     workflow_accept_acceptance_line,
     workflow_accept_brief_contract,
+    workflow_accept_forbidden_lines,
+    workflow_accept_needles,
     workflow_accept_rules_text,
 )
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
@@ -87,10 +98,33 @@ class _VetCare:
     summary = "Clinic appointments, reminders, and pet records."
 
 
+PREPARED_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [{\n"
+    "        'block': 'event_bus',\n"
+    "        'action': 'publish',\n"
+    "        'input': {\n"
+    "            'topic': 'appointment.scheduled',\n"
+    "            'payload': {'reference': payload.get('reference')},\n"
+    "            'message': 'appointment recorded',\n"
+    "            'channel': 'mcp',\n"
+    "        },\n"
+    "    }]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+UNPREPARED_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [{'block': 'event_bus', 'input': payload}]\n"
+    "    return execute('workflow', {'steps': steps})\n"
+)
+
+
 def _vetcare_plan():
     return _Plan(
         _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE"),
         _Cap("reminders_and_notifications", ["notification", "workflow", "event_bus"], "COMPOSE"),
+        _Cap("reminders_notifications", ["notification", "workflow", "event_bus"], "COMPOSE"),
         _Cap("clinic_intake", [], "GENERATE"),
     )
 
@@ -129,6 +163,7 @@ def test_vetcare_inventory_declares_event_bus_workflows():
     ids = event_bus_workflow_capability_ids(compiled)
     assert "appointment_scheduling" in ids
     assert "reminders_and_notifications" in ids
+    assert "reminders_notifications" in ids
     assert "clinic_intake" not in ids
     assert declares_event_bus_workflow(compiled) is True
 
@@ -148,9 +183,24 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert EVENT_BUS_STEP_CHANNEL in text
     assert EVENT_BUS_STEP_ACTION in text
     assert "never the raw schema sample" in text
-    rules = workflow_accept_rules_text()
+    assert "appointment_scheduling" in text
+    assert "reminders_notifications" in text
+    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in text
+    assert "'input': payload" in text
+    assert '"channel": "mcp"' in text
+    assert '"action": "publish"' in text
+    assert "input.topic" in text
+    assert "payload dict" in text
+    rules = workflow_accept_rules_text(
+        capability_ids=["appointment_scheduling", "reminders_notifications"]
+    )
     assert PRODUCT_ACCEPT_TEST in rules
-    assert "reminders_and_notifications" in text or "appointment_scheduling" in text
+    assert "appointment_scheduling" in rules
+    assert "reminders_notifications" in rules
+    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in rules
+    assert workflow_accept_forbidden_lines() in text
+    for needle in workflow_accept_needles():
+        assert needle.lower() in text.lower(), needle
     result = lint_brief(compiled)
     assert result.ok, result.errors
 
@@ -187,7 +237,76 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert PRODUCT_ACCEPT_TEST in contract
     assert PRODUCT_EVENT_BUS_STEP_HALT in contract
     assert EVENT_BUS_STEP_CHANNEL in contract
+    assert "'input': payload" in contract
+    assert "appointment_scheduling" in contract
+    assert "reminders_notifications" in contract
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_ACCEPT_TEST in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_HALT in _WHOLE_JOB_SYSTEM
     assert "channel=mcp" in _WHOLE_JOB_SYSTEM
+    assert "'input': payload" in _WHOLE_JOB_SYSTEM or "input to payload" in _WHOLE_JOB_SYSTEM
+
+
+def test_appointment_style_with_event_bus_only_still_gets_the_contract():
+    """CLI invents workflow children even when the plan only bound event_bus."""
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_scheduling", ["event_bus"], "REUSE")),
+        store_ids={"event_bus"},
+    )
+    assert "appointment_scheduling" in event_bus_workflow_capability_ids(compiled)
+    assert declares_event_bus_workflow(compiled) is True
+    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
+def test_prepared_handler_contract_helpers():
+    assert handler_has_prepared_event_bus_step(PREPARED_HANDLER) is True
+    assert handler_satisfies_event_bus_contract(PREPARED_HANDLER) is True
+    assert handler_has_prepared_event_bus_step(UNPREPARED_HANDLER) is False
+    assert handler_satisfies_event_bus_contract(UNPREPARED_HANDLER) is False
+    wrapped = "from app.block_inputs import prepare_block_input\n" + UNPREPARED_HANDLER
+    assert handler_satisfies_event_bus_contract(wrapped) is True
+
+
+def test_harness_fails_unprepared_event_bus_handlers_before_writer_done(tmp_path):
+    compiled = compile_brief(
+        _VetCare(),
+        _vetcare_plan(),
+        store_ids={"event_bus", "workflow", "notification", "database"},
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        UNPREPARED_HANDLER, encoding="utf-8"
+    )
+    (actions / "reminders_notifications.py").write_text(
+        PREPARED_HANDLER, encoding="utf-8"
+    )
+    errors = event_bus_workflow_handler_errors(tmp_path, compiled)
+    assert any("appointment_scheduling" in e for e in errors)
+    assert not any("reminders_notifications" in e for e in errors)
+    with pytest.raises(EventBusWorkflowHalt, match=WRITER_EVENT_BUS_WORKFLOW_HALT):
+        assert_event_bus_workflow_handlers(tmp_path, compiled)
+
+
+def test_harness_passes_prepared_and_wrapped_handlers(tmp_path):
+    compiled = compile_brief(
+        _VetCare(),
+        _vetcare_plan(),
+        store_ids={"event_bus", "workflow", "notification", "database"},
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        PREPARED_HANDLER, encoding="utf-8"
+    )
+    (actions / "reminders_and_notifications.py").write_text(
+        "from app.block_inputs import prepare_block_input\n" + UNPREPARED_HANDLER,
+        encoding="utf-8",
+    )
+    (actions / "reminders_notifications.py").write_text(
+        PREPARED_HANDLER, encoding="utf-8"
+    )
+    assert event_bus_workflow_handler_errors(tmp_path, compiled) == []
+    assert_event_bus_workflow_handlers(tmp_path, compiled)

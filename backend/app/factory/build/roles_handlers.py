@@ -2698,11 +2698,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
             and ctx.workspace.exists(handler_rel)
         ):
-            # FACTORY_CODE_CLI / oneshot harvest already wrote the module
-            # the brief asked for. Overwriting it with the fallback
-            # envelope template is how brief-driven workflow steps died
-            # (VetCare sess_91553364089d4970 schema-accept; sess_e94ddfa
-            # event_bus step_N).
+            # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED
+            # brief-driven module. Overwriting a prepared handler with the
+            # fallback envelope is how workflow steps died; keeping an
+            # unprepared {'block': 'event_bus', 'input': payload} is how
+            # PRODUCT step_N (event_bus) locked in after #318.
             sources[cid] = (
                 f"coder CLI ({dispatch.model})" if dispatch.model
                 else ("FACTORY_CODE_CLI" if dispatch.via == "cli" else "harvested workspace handler")
@@ -2752,6 +2752,20 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
     )
+
+    from app.factory.build.workflow_accept import (
+        EventBusWorkflowHalt,
+        assert_event_bus_workflow_handlers,
+        declares_event_bus_workflow,
+    )
+
+    if declares_event_bus_workflow(compiled_brief):
+        try:
+            assert_event_bus_workflow_handlers(
+                ctx.workspace.workspace, compiled_brief
+            )
+        except EventBusWorkflowHalt as exc:
+            raise RoleError(str(exc)) from exc
 
     # Handlers may validate domain fields the model_specs omitted (live:
     # property_reference_code) or enforce a vocabulary/type the spec left as
