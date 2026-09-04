@@ -399,6 +399,68 @@ def _shim_needs_runtime(source: Path) -> bool:
     )
 
 
+def _package_source_blob(pkg_dir: Path) -> str:
+    parts: List[str] = []
+    for py in sorted(pkg_dir.rglob("*.py")):
+        if "__pycache__" in py.parts:
+            continue
+        parts.append(py.read_text(encoding="utf-8", errors="replace"))
+    return "\n".join(parts)
+
+
+def _shadow_stem(mod: str) -> Optional[str]:
+    """``document_engine_block`` → ``document_engine``; else None."""
+    suffix = "_block"
+    if not mod.endswith(suffix):
+        return None
+    stem = mod[: -len(suffix)]
+    return stem or None
+
+
+def _package_declares_sibling_wrapper(pkg_dir: Path, stem: str, synthetic_mod: Optional[str] = None) -> bool:
+    """True when a shadowing package load-names the sibling ``{stem}.py``.
+
+    The live Cerebrum-Blocks pattern (``document_engine/`` +
+    ``document_engine.py``) sets ``_BLOCK_MODULE_NAME =
+    "app.blocks.document_engine_block"`` and importlib-loads
+    ``../document_engine.py``. Both tokens must be present so we do not
+    invent a module from a coincidental filename mention.
+    """
+    if not (pkg_dir / "__init__.py").is_file():
+        return False
+    blob = _package_source_blob(pkg_dir)
+    if f"{stem}.py" not in blob:
+        return False
+    if synthetic_mod is not None and f"app.blocks.{synthetic_mod}" not in blob:
+        return False
+    return True
+
+
+def _resolve_shadowed_wrapper(blocks_dir: Path, mod: str) -> Optional[Path]:
+    """Sibling ``{stem}.py`` a package importlib-loads as ``app.blocks.{mod}``.
+
+    Live sess_000f9a85d339422f: CLONER scanned the ``document_engine/``
+    package, regex-picked ``document_engine_block``, and failed closed
+    because that path is not on disk. The wrapper lives at
+    ``app/blocks/document_engine.py``. Map the synthetic name only when
+    the package declares it and the sibling file exists.
+    """
+    if (blocks_dir / f"{mod}.py").is_file():
+        return None
+    if (blocks_dir / mod / "__init__.py").is_file():
+        return None
+    stem = _shadow_stem(mod)
+    if stem is None:
+        return None
+    wrapper = blocks_dir / f"{stem}.py"
+    pkg = blocks_dir / stem
+    if not wrapper.is_file():
+        return None
+    if not _package_declares_sibling_wrapper(pkg, stem, mod):
+        return None
+    return wrapper
+
+
 def _closure_over_runtime(
     blocks_root: Path, block_ids: Sequence[str], defs: Dict[str, tuple]
 ) -> tuple:
@@ -443,6 +505,7 @@ def _closure_over_runtime(
             )
         path = blocks_dir / f"{mod}.py"
         pkg_init = blocks_dir / mod / "__init__.py"
+        shadow = _resolve_shadowed_wrapper(blocks_dir, mod)
         sources: List[str] = []
         if pkg_init.is_file():
             for py in sorted((blocks_dir / mod).rglob("*.py")):
@@ -451,6 +514,8 @@ def _closure_over_runtime(
                 sources.append(py.read_text(encoding="utf-8", errors="replace"))
         elif path.is_file():
             sources.append(path.read_text(encoding="utf-8", errors="replace"))
+        elif shadow is not None:
+            sources.append(shadow.read_text(encoding="utf-8", errors="replace"))
         else:
             raise RoleError(
                 f"runtime slice needs app/blocks/{mod}.py or "
@@ -625,9 +690,10 @@ def _vendor_runtime_slice(
         runtime_block_ids, defs, blocks_root, shim_texts=shim_texts
     )
     _write(base / "blocks" / "__init__.py", _render_vendored_registry(registry))
+    blocks_dir = blocks_root / "app" / "blocks"
     for mod in sorted(block_mods):
-        pkg_src = blocks_root / "app" / "blocks" / mod
-        py_file = blocks_root / "app" / "blocks" / f"{mod}.py"
+        pkg_src = blocks_dir / mod
+        py_file = blocks_dir / f"{mod}.py"
         if (pkg_src / "__init__.py").is_file():
             for py in sorted(pkg_src.rglob("*.py")):
                 if "__pycache__" in py.parts:
@@ -648,6 +714,30 @@ def _vendor_runtime_slice(
                         base / "blocks" / mod / "parsers" / "__init__.py",
                         DOCUMENT_ENGINE_PARSERS_STUB,
                     )
+            sibling = blocks_dir / f"{mod}.py"
+            if sibling.is_file() and _package_declares_sibling_wrapper(pkg_src, mod):
+                # Keep ../{mod}.py next to the package so importlib load of
+                # the shadowed wrapper still resolves after rewrite.
+                source = sibling.read_text(encoding="utf-8", errors="replace")
+                _write(
+                    base / "blocks" / f"{mod}.py",
+                    emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+                )
+            continue
+        if not py_file.is_file():
+            shadow = _resolve_shadowed_wrapper(blocks_dir, mod)
+            if shadow is None:
+                raise RoleError(
+                    f"runtime slice needs app/blocks/{mod}.py or "
+                    f"app/blocks/{mod}/__init__.py which does not exist in "
+                    "the Store checkout"
+                )
+            emit_mod = _shadow_stem(mod) or mod
+            source = shadow.read_text(encoding="utf-8", errors="replace")
+            _write(
+                base / "blocks" / f"{mod}.py",
+                emit_runtime_module(emit_mod, _rewrite_runtime_imports(source)),
+            )
             continue
         source = py_file.read_text(encoding="utf-8", errors="replace")
         rewritten = emit_runtime_module(mod, _rewrite_runtime_imports(source))
