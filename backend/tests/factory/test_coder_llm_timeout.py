@@ -606,11 +606,13 @@ def test_overdue_1085s_vs_480s_fails_the_build_status(tmp_path):
     assert status["pilot_ready"] is False
 
 
-def test_legacy_150s_timeout_is_not_the_production_wall(monkeypatch):
-    """Live 510s abort: FACTORY_CODER_TIMEOUT_S=150 × 3 + 30 = 480s.
+def test_legacy_160s_timeout_is_the_live_510s_wall(monkeypatch):
+    """Live Floor copy: coder LLM timed out after 510s.
 
-    That leftover hang-detect band must not keep killing WRITER. Sub-minute
-    test values stay short so the watchdog tests remain tight.
+    attempt_wall_s (old) = call_timeout_s × MAX_LEGS(3) + grace(30).
+    160 × 3 + 30 = 510 — Render FACTORY_CODER_TIMEOUT_S is 160, not the
+    code default 120 and not the earlier 150 guess (480s + poll lag).
+    That leftover must remap so a dashboard pin cannot keep killing WRITER.
     """
     from app.factory import llm_watchdog as wd
 
@@ -621,11 +623,13 @@ def test_legacy_150s_timeout_is_not_the_production_wall(monkeypatch):
     assert wd.DEFAULT_CALL_TIMEOUT_S >= 1200.0
     assert wd.DEFAULT_ATTEMPT_WALL_S >= 2400.0
     assert wd.DEFAULT_ATTEMPT_WALL_S > 510.0
+    assert wd.MAX_LEGS * 160 + wd.MODEL_CALL_GRACE_S == 510
 
-    for leftover in ("120", "150"):
+    for leftover in ("120", "150", "160"):
         monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", leftover)
         assert wd.call_timeout_s() == wd.DEFAULT_CALL_TIMEOUT_S, leftover
         assert wd.attempt_wall_s() == wd.DEFAULT_ATTEMPT_WALL_S, leftover
+        assert wd.attempt_wall_s() != wd.MAX_LEGS * float(leftover) + wd.MODEL_CALL_GRACE_S
 
     monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "0.2")
     assert wd.call_timeout_s() == 0.2

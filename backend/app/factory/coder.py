@@ -88,22 +88,37 @@ def coder_enabled() -> bool:
 
 
 CODER_BUDGET_ENV = "FACTORY_CODER_BUDGET_S"
+#: Template-generator loop across ALL GENERATE capabilities. The old
+#: 300s default stubbed remaining caps after five minutes — a thin
+#: scaffold with ``pilot_ready`` false. Match the Store-green wall.
+DEFAULT_CODER_BUDGET_S = 7200.0
+#: Live leftover ``FACTORY_CODER_BUDGET_S=300`` (and the same "hold the
+#: worker" band) must not keep stubbing a multi-capability pilot.
+#: ``0`` still disables. Sub-minute values stay honoured for tests.
+LEGACY_CODER_BUDGET_MIN_S = 60.0
+LEGACY_CODER_BUDGET_MAX_S = 600.0
 
 
 def coder_budget_s() -> float:
     """Total wall-clock the coder may spend across one generation (seconds).
 
-    Each GENERATE capability is up to two sequential 120 s LLM calls and the
-    loop runs inside the HTTP request on a single-worker service, so an
-    uncapped plan of N such capabilities holds a worker for N x 240 s. When
-    the budget runs out, remaining capabilities ship the honest stub with the
-    reason recorded — the same disclosure path as any other coder failure.
-    0 disables the budget.
+    The template generator still runs the GENERATE loop in-request.
+    Production Floor uses the role runner (2-hour wall / 90-minute phase).
+    This budget must not be the 300s leftover that stubbed remaining
+    capabilities and left ``pilot_ready`` false. ``0`` disables it.
     """
+    raw = os.getenv(CODER_BUDGET_ENV, "").strip()
+    if not raw:
+        return DEFAULT_CODER_BUDGET_S
     try:
-        return float(os.getenv(CODER_BUDGET_ENV, "300"))
+        value = float(raw)
     except ValueError:
-        return 300.0
+        return DEFAULT_CODER_BUDGET_S
+    if value == 0:
+        return 0.0
+    if LEGACY_CODER_BUDGET_MIN_S <= value <= LEGACY_CODER_BUDGET_MAX_S:
+        return DEFAULT_CODER_BUDGET_S
+    return max(0.0, value)
 
 
 _SYSTEM = """You write ONE Python function body for a generated business platform.

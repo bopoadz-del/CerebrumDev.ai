@@ -31,12 +31,13 @@ This helper:
 * honours an optional monotonic ``deadline`` so stacked legs cannot
   outrun ``attempt_wall_s()``
 
-The 510s live abort (sess MakersHub Leeds, SHA da47307) was this wall
-firing at production ``FACTORY_CODER_TIMEOUT_S=150`` × 3 + 30s grace.
-That band is a hang detector leftover, not a coding budget. Production
-defaults are 20 min per HTTP post and 40 min per calling-NOTE; a truly
-hung/dribbling socket still dies at those walls. The Store-green build
-wall (2 hours) is the coding budget.
+The 510s live abort (sess MakersHub Leeds, SHA da47307) is the identity
+``FACTORY_CODER_TIMEOUT_S=160 × MAX_LEGS(3) + MODEL_CALL_GRACE_S(30)``.
+Earlier notes guessed 150 (480s + poll lag); the Floor copy is exactly
+510s, so Render is 160. That band is a hang detector leftover, not a
+coding budget. Production defaults are 20 min per HTTP post and 40 min
+per calling-NOTE; a truly hung/dribbling socket still dies at those
+walls. The Store-green build wall (2 hours) is the coding budget.
 """
 
 from __future__ import annotations
@@ -54,17 +55,18 @@ logger = logging.getLogger("cerebrumdev.factory.llm_watchdog")
 
 CODER_TIMEOUT_ENV = "FACTORY_CODER_TIMEOUT_S"
 ATTEMPT_WALL_ENV = "FACTORY_CODER_ATTEMPT_WALL_S"
-#: One HTTP post. 120s / live 150s was the hang-detect leftover that
-#: aborted WRITER at ~510s (150 × 3 legs + 30s) while kimi-k2.7-code was
-#: still writing a handler. A real GENERATE body needs many minutes;
-#: 20 min is a hang abort, not a "finish the handler" race.
+#: One HTTP post. Live Render ``FACTORY_CODER_TIMEOUT_S=160`` produced
+#: the Floor copy ``timed out after 510s`` (160 × 3 + 30). 120 / 150
+#: are the same hang-detect leftover. A real GENERATE body needs many
+#: minutes; 20 min is a hang abort, not a "finish the handler" race.
 DEFAULT_CALL_TIMEOUT_S = 1200.0
 #: One calling-NOTE: one real generation + one alternate-model retry.
 #: Not ``timeout × 3`` — stacking three 20 min hangs would eat the
 #: 2-hour Store-green wall on a single capability.
 DEFAULT_ATTEMPT_WALL_S = 2400.0
-#: Live Render leftover ``FACTORY_CODER_TIMEOUT_S=120`` / ``150`` must
-#: not keep killing pilots. Sub-minute values stay honoured for tests.
+#: Live Render leftover 120 / 150 / **160** must not keep killing
+#: pilots. 160 is the measured production value (160 × 3 + 30 = 510).
+#: Sub-minute values stay honoured for tests.
 LEGACY_TIMEOUT_BAND_MIN_S = 60.0
 LEGACY_TIMEOUT_BAND_MAX_S = 180.0
 #: One _llm_code_call may try primary + same-endpoint fallback +
@@ -83,8 +85,8 @@ def call_timeout_s() -> float:
 
     Override with FACTORY_CODER_TIMEOUT_S. Sub-minute values (tests) and
     values above the old hang-detect band are honoured. Live leftover
-    120s / 150s is treated as unset so a dashboard pin cannot keep
-    aborting WRITER at ~510s.
+    120s / 150s / 160s is treated as unset so a dashboard pin cannot
+    keep aborting WRITER at 510s (160 × 3 + 30).
     """
     raw = os.getenv(CODER_TIMEOUT_ENV, "").strip()
     if not raw:

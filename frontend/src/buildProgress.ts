@@ -5,8 +5,8 @@ export const CLIENT_STALE_AFTER_S = 180
 /** Match backend build_jobs._STALL_AFTER_S — process likely gone. */
 export const CLIENT_STALL_AFTER_S = 1800
 /** Match backend llm_watchdog.attempt_wall_s production default (40 min).
- *  The old 390s / 480s figures (120 or 150 × 3 legs + 30s) aborted live
- *  WRITER at ~510s. Prefer the server's model_call_deadline_s when present. */
+ *  Live Render FACTORY_CODER_TIMEOUT_S=160 → old wall 160×3+30=510s.
+ *  Prefer the server's model_call_deadline_s when present. */
 export const CLIENT_MODEL_CALL_DEADLINE_S = 2400
 
 export type LevelGradeName =

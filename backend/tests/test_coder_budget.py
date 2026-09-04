@@ -4,7 +4,8 @@ New-shape tests for the PRR fix: generation runs in-request on a single
 worker, and each GENERATE capability is up to two sequential 120 s LLM calls.
 FACTORY_CODER_BUDGET_S bounds the whole loop; capabilities past the deadline
 ship the honest stub with the reason recorded, exactly like any other coder
-failure — never a fabricated success, never a silent stub.
+failure — never a fabricated success, never a silent stub. The production
+default is the 2-hour Store-green wall; leftover 300s is remapped.
 """
 
 from __future__ import annotations
@@ -87,6 +88,21 @@ def test_zero_budget_disables_the_deadline(monkeypatch, tmp_path):
 
 def test_budget_default_and_parse_failure(monkeypatch):
     monkeypatch.delenv("FACTORY_CODER_BUDGET_S", raising=False)
-    assert coder.coder_budget_s() == 300.0
+    assert coder.coder_budget_s() == coder.DEFAULT_CODER_BUDGET_S
+    assert coder.DEFAULT_CODER_BUDGET_S >= 7200.0
     monkeypatch.setenv("FACTORY_CODER_BUDGET_S", "not-a-number")
-    assert coder.coder_budget_s() == 300.0
+    assert coder.coder_budget_s() == coder.DEFAULT_CODER_BUDGET_S
+
+
+def test_legacy_300s_budget_does_not_stub_a_pilot(monkeypatch):
+    """Live leftover FACTORY_CODER_BUDGET_S=300 stubbed remaining
+    capabilities after five minutes. That is a thin scaffold, not a pilot.
+    """
+    monkeypatch.setenv("FACTORY_CODER_BUDGET_S", "300")
+    assert coder.coder_budget_s() == coder.DEFAULT_CODER_BUDGET_S
+    monkeypatch.setenv("FACTORY_CODER_BUDGET_S", "1")
+    assert coder.coder_budget_s() == 1.0
+    monkeypatch.setenv("FACTORY_CODER_BUDGET_S", "0")
+    assert coder.coder_budget_s() == 0.0
+    monkeypatch.setenv("FACTORY_CODER_BUDGET_S", "9000")
+    assert coder.coder_budget_s() == 9000.0

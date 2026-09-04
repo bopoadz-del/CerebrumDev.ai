@@ -205,15 +205,23 @@ services:
       # live Blueprint — the dashboard is source of truth.
       - key: BILLING_ENFORCEMENT
         value: "false"
-      # Per-HTTP hang abort for the factory coder. 120 / live 150 was the
-      # leftover that aborted WRITER at ~510s (150 × 3 + 30). Code remaps
-      # that band to 1200s even if the dashboard still has 120/150.
-      # 20 min is a hung-socket abort, not the 2-hour Store-green budget.
+      # Per-HTTP hang abort for the factory coder. Live Render is 160
+      # (Floor copy "timed out after 510s" = 160 × 3 + 30). 120 / 150
+      # are the same leftover. Code remaps 60–180 to 1200s so a dashboard
+      # pin cannot keep killing WRITER. 20 min is a hung-socket abort,
+      # not the 2-hour Store-green budget.
+      # Required if the remap is ever removed: FACTORY_CODER_TIMEOUT_S=1200
+      # and FACTORY_CODER_ATTEMPT_WALL_S=2400 (never 160).
       - key: FACTORY_CODER_TIMEOUT_S
         value: "1200"
       # One calling-NOTE wall (one generation + one alternate retry).
       - key: FACTORY_CODER_ATTEMPT_WALL_S
         value: "2400"
+      # Template-generator loop across all GENERATE caps. Leftover 300
+      # stubbed remaining capabilities (pilot_ready false). Remapped in
+      # code; required override if remap is removed: 7200 (or 0 to disable).
+      - key: FACTORY_CODER_BUDGET_S
+        value: "7200"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage

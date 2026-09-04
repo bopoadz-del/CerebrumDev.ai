@@ -360,7 +360,16 @@ export function Floor({
       .then((design) => {
         if (cancelled || !design) return
         const hydrated = hydrateFromDesign(design)
-        setMsgs((current) => (current.length > 1 ? current : hydrated.msgs))
+        let applied = false
+        setMsgs((current) => {
+          if (current.length > 1) return current
+          applied = true
+          return hydrated.msgs
+        })
+        // Same turn as the hydrated generation card so the first watch
+        // tick is not one effect behind takeover chrome (CI flake:
+        // heading up, COLLECTOR 1/5 not yet painted).
+        if (applied && hydrated.coderActive) setCoderActive(true)
       })
       .catch(() => {})
     return () => {
