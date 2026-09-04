@@ -22,10 +22,13 @@ from app.factory.build.authority import (
 from app.factory.build.offline_adapters import (
     AIOFILES_MARKER,
     DOC_PARSE_UNWIRED_MARKER,
+    DOC_PARSERS_PACKAGE_MARKER,
+    DOCUMENT_ENGINE_PARSERS_STUB,
     ENSURE_READY_MARKER,
     MCP_OFFLINE_MARKER,
     QUERY_CREATE_MARKER,
     QUERY_UNWIRED_MARKER,
+    SKLEARN_UNWIRED_MARKER,
     emit_database_insert,
     emit_database_query,
     emit_document_engine_parse,
@@ -33,6 +36,8 @@ from app.factory.build.offline_adapters import (
     emit_notification_mcp,
     emit_runtime_module,
     emit_storage_aiofiles,
+    emit_vector_search_sklearn,
+    needs_document_engine_parsers_package,
 )
 from app.factory.build.roles import RoleContext, run_tester, run_writer
 from app.factory.build.runner import RoleRunner
@@ -118,6 +123,27 @@ def test_document_engine_parse_is_store_unwired_not_a_real_pdf_lib():
     assert "Store-unwired document parse" in out
     assert emit_runtime_module("document_engine", src) == out
     assert emit_document_engine_parse(out) == out
+    assert needs_document_engine_parsers_package(
+        "from vendor.cerebrum.blocks.document_engine.parsers import Parser\n"
+    )
+    assert DOC_PARSERS_PACKAGE_MARKER in DOCUMENT_ENGINE_PARSERS_STUB
+    assert "def parse(" in DOCUMENT_ENGINE_PARSERS_STUB
+
+
+def test_vector_search_sklearn_is_store_unwired_not_a_hard_fail():
+    src = (
+        "from sklearn.feature_extraction.text import TfidfVectorizer\n"
+        "from sklearn.metrics.pairwise import cosine_similarity\n"
+        "def retrieve(self, data):\n"
+        "    return cosine_similarity(TfidfVectorizer().fit_transform(['a']), [[0]])\n"
+    )
+    out = emit_vector_search_sklearn(src)
+    assert SKLEARN_UNWIRED_MARKER in out
+    assert emit_runtime_module("vector_search", src) == out
+    assert emit_vector_search_sklearn(out) == out
+    assert emit_vector_search_sklearn("def retrieve(self, data):\n    return []\n") == (
+        "def retrieve(self, data):\n    return []\n"
+    )
 
 
 def test_cloner_emission_contains_storage_aiofiles_contract():

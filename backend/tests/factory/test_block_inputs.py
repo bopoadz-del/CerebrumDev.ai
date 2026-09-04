@@ -288,6 +288,41 @@ def test_queue_coerces_numeric_strings():
     assert "id-1" not in {out["id"], out["priority"], out["item_id"]}
 
 
+def test_queue_non_numeric_priority_becomes_zero():
+    """Live sess_a69c8ce: ``priority > n`` TypeError when priority is 'sample'."""
+    out = prepare_block_input(
+        "queue",
+        {"priority": "sample", "id": "id-1", "pet_name": "Nala"},
+    )
+    assert out["priority"] == 0
+    assert "id" not in out
+    assert "item_id" not in out
+    assert out["pet_name"] == "Nala"
+    assert 0 > -1  # the compare Store performs, now both ints
+
+
+def test_database_records_table_retargets_to_entity():
+    """#306 leftover table=records must not survive when ENTITY is known."""
+    out = prepare_block_input(
+        "database",
+        {"table": "records", "pet_name": "Nala"},
+        entity="pet_record",
+    )
+    assert out["table"] == "pet_record"
+    assert out["table"] != "records"
+
+
+def test_database_sql_from_records_retargets_to_entity():
+    out = prepare_block_input(
+        "database",
+        {"sql": "SELECT * FROM records", "pet_name": "Nala"},
+        entity="pet_record",
+    )
+    assert "pet_record" in out["sql"]
+    assert "FROM records" not in out["sql"]
+    assert out["table"] == "pet_record"
+
+
 def test_database_keeps_caller_sql():
     out = prepare_block_input("database", {"sql": "SELECT 1", "status": "open"})
     assert out["sql"] == "SELECT 1"

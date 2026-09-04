@@ -36,10 +36,15 @@ from app.factory.build.block_obligations import (
 )
 from app.factory.build.offline_adapters import (
     DOC_PARSE_UNWIRED_MARKER,
+    DOC_PARSERS_PACKAGE_MARKER,
+    DOCUMENT_ENGINE_PARSERS_STUB,
     QUERY_CREATE_MARKER,
+    SKLEARN_UNWIRED_MARKER,
     emit_database_query,
     emit_document_engine_parse,
     emit_runtime_module,
+    emit_vector_search_sklearn,
+    needs_document_engine_parsers_package,
 )
 from app.factory.build.roles import _constraint_guard, _sample_payload
 
@@ -83,6 +88,25 @@ _VETCARE_CAPS = (
             "veterinarian_name": "Dr Lee",
             "service_date": "2026-09-10",
             "status": "open",
+        },
+    ),
+    # sess_a69c8ce Platforms card (same PRODUCT red, extra caps).
+    (
+        "pet_record_management",
+        "pet_record",
+        ["document_engine", "database"],
+        {
+            "pet_name": "Nala",
+            "owner_name": "Lee",
+        },
+    ),
+    (
+        "universal_search",
+        "search_hit",
+        ["vector_search", "database"],
+        {
+            "query": "vaccination",
+            "pet_name": "Nala",
         },
     ),
 )
@@ -231,3 +255,27 @@ def test_unrepaired_veterinary_domain_json_still_refused():
     assert prepared_bus["topic"]
     assert prepared_db["table"] == "appointment"
     assert Path(prepared_doc["pdf_path"]).is_file()
+
+
+def test_sess_a69c8ce_leftover_records_and_sample_priority():
+    """Platforms card: table=records + priority='sample' on accept-payload."""
+    leftover = prepare_block_input(
+        "database",
+        {"table": "records", "sql": "SELECT * FROM records", "pet_name": "Nala"},
+        entity="pet_record",
+    )
+    assert leftover["table"] == "pet_record"
+    assert "FROM pet_record" in leftover["sql"]
+    queued = prepare_block_input("queue", {"priority": "sample", "id": "id-1"})
+    assert queued["priority"] == 0
+    assert "id" not in queued
+
+
+def test_sess_a69c8ce_parsers_package_and_sklearn_stubs():
+    assert needs_document_engine_parsers_package(
+        "from vendor.cerebrum.blocks.document_engine.parsers import Parser\n"
+    )
+    assert DOC_PARSERS_PACKAGE_MARKER in DOCUMENT_ENGINE_PARSERS_STUB
+    src = "from sklearn.feature_extraction.text import TfidfVectorizer\n"
+    assert SKLEARN_UNWIRED_MARKER in emit_vector_search_sklearn(src)
+    assert SKLEARN_UNWIRED_MARKER in emit_runtime_module("vector_search", src)

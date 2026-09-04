@@ -558,6 +558,18 @@ def _coerce_int(value: Any) -> Optional[int]:
     return None
 
 
+_QUEUE_COMPARE_KEYS = (
+    "priority",
+    "delay",
+    "delay_seconds",
+    "timeout",
+    "visibility_timeout",
+    "attempts",
+    "max_attempts",
+    "retry_count",
+)
+
+
 def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
     """Store queue blocks refuse str where they declared int (live PRODUCT)."""
     out = dict(data)
@@ -579,6 +591,16 @@ def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
         aliased = _coerce_int(out.get("item_id"))
         if aliased is not None:
             out["id"] = aliased
+    # Live sess_a69c8ce: Store queue does ``priority > n``; ``"sample"`` /
+    # ``"id-1"`` from ``_sample_value`` is not a digit string so it survived
+    # coerce and raised TypeError. Comparison keys become 0; non-numeric
+    # ids are dropped from the queue record (kept only in payload).
+    for key in _QUEUE_COMPARE_KEYS:
+        if key in out and _coerce_int(out[key]) is None:
+            out[key] = 0
+    for key in ("id", "item_id"):
+        if key in out and _coerce_int(out[key]) is None:
+            out.pop(key)
     if "payload" not in out and "item" not in out:
         out["payload"] = {
             key: value
@@ -597,6 +619,17 @@ def _usable_table_name(value: Any) -> Optional[str]:
     return None
 
 
+_SQL_RECORDS_TABLE = re.compile(
+    r"\b(FROM|INTO|UPDATE|JOIN|TABLE)\s+records\b",
+    re.IGNORECASE,
+)
+
+
+def _retarget_records_sql(sql: str, entity: str) -> str:
+    """Rewrite leftover ``FROM records`` SQL onto the capability entity."""
+    return _SQL_RECORDS_TABLE.sub(lambda match: f"{match.group(1)} {entity}", sql)
+
+
 def _for_database(
     data: Dict[str, Any], *, entity: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -608,27 +641,37 @@ def _for_database(
     A domain record is not SQL; map it onto ``table`` + ``values`` the way
     notification maps onto channel/message.
 
-    Live veterinary-care PRODUCT (sess_66a387b5c9b0495c): defaulting
-    ``table=records`` passed WRITER (the string was present) then failed
-    PRODUCT with ``no such table: records`` — Alembic creates the
-    capability entity, not a generic ``records`` table.
+    Live veterinary-care PRODUCT (sess_66a387b5c9b0495c / sess_a69c8ce):
+    defaulting ``table=records`` passed WRITER then failed PRODUCT with
+    ``no such table: records``. Alembic creates the capability entity.
+    A leftover ``table=records`` or ``SELECT * FROM records`` from #306
+    is retargeted onto ``entity`` when the handler wrapper supplies it.
     """
     out = dict(data)
     inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     for key in ("sql", "table", "table_name", "values"):
         if key not in out and key in inner:
             out[key] = inner[key]
+    entity_table = _usable_table_name(entity)
     sql = out.get("sql")
     if isinstance(sql, str) and sql.strip():
+        if entity_table and _SQL_RECORDS_TABLE.search(sql):
+            out["sql"] = _retarget_records_sql(sql, entity_table)
+            out["table"] = entity_table
         return out
     table = _usable_table_name(out.get("table") or out.get("table_name"))
+    if table == "records" and entity_table:
+        table = entity_table
     if not table:
         for key in ("entity", "table", "table_name"):
             table = _usable_table_name(out.get(key) or inner.get(key))
-            if table:
+            if table and table != "records":
+                break
+            if table == "records" and entity_table:
+                table = entity_table
                 break
     if not table:
-        table = _usable_table_name(entity)
+        table = entity_table
     if not table:
         table = "records"
     out["table"] = table
@@ -1296,6 +1339,12 @@ def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
         aliased = _coerce_int(out.get("item_id"))
         if aliased is not None:
             out["id"] = aliased
+    for key in ("priority", "delay", "delay_seconds", "timeout", "visibility_timeout", "attempts", "max_attempts", "retry_count"):
+        if key in out and _coerce_int(out[key]) is None:
+            out[key] = 0
+    for key in ("id", "item_id"):
+        if key in out and _coerce_int(out[key]) is None:
+            out.pop(key)
     if "payload" not in out and "item" not in out:
         out["payload"] = {
             key: value
@@ -1314,23 +1363,42 @@ def _usable_table_name(value):
     return None
 
 
+_SQL_RECORDS_TABLE = re.compile(
+    r"\\b(FROM|INTO|UPDATE|JOIN|TABLE)\\s+records\\b",
+    re.IGNORECASE,
+)
+
+
+def _retarget_records_sql(sql, entity):
+    return _SQL_RECORDS_TABLE.sub(lambda match: f"{match.group(1)} {entity}", sql)
+
+
 def _for_database(data: Dict[str, Any], *, entity: Optional[str] = None) -> Dict[str, Any]:
     out = dict(data)
     inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     for key in ("sql", "table", "table_name", "values"):
         if key not in out and key in inner:
             out[key] = inner[key]
+    entity_table = _usable_table_name(entity)
     sql = out.get("sql")
     if isinstance(sql, str) and sql.strip():
+        if entity_table and _SQL_RECORDS_TABLE.search(sql):
+            out["sql"] = _retarget_records_sql(sql, entity_table)
+            out["table"] = entity_table
         return out
     table = _usable_table_name(out.get("table") or out.get("table_name"))
+    if table == "records" and entity_table:
+        table = entity_table
     if not table:
         for key in ("entity", "table", "table_name"):
             table = _usable_table_name(out.get(key) or inner.get(key))
-            if table:
+            if table and table != "records":
+                break
+            if table == "records" and entity_table:
+                table = entity_table
                 break
     if not table:
-        table = _usable_table_name(entity)
+        table = entity_table
     if not table:
         table = "records"
     out["table"] = table

@@ -18,8 +18,10 @@ from app.factory.build.authority import (
     role_contract,
 )
 from app.factory.build.offline_adapters import (
+    DOCUMENT_ENGINE_PARSERS_STUB,
     emit_instantiate_ready,
     emit_runtime_module,
+    needs_document_engine_parsers_package,
 )
 from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
@@ -435,31 +437,42 @@ def _closure_over_runtime(
             continue
         if "." in mod:
             raise RoleError(
-                f"runtime slice cannot vendor app.blocks.{mod}: subpackage "
-                "blocks are not supported by the slice vendorer yet"
+                f"runtime slice cannot vendor app.blocks.{mod}: dotted "
+                "registry module names are not supported by the slice "
+                "vendorer yet (package *contents* are copied separately)"
             )
         path = blocks_dir / f"{mod}.py"
-        if not path.is_file():
+        pkg_init = blocks_dir / mod / "__init__.py"
+        sources: List[str] = []
+        if pkg_init.is_file():
+            for py in sorted((blocks_dir / mod).rglob("*.py")):
+                if "__pycache__" in py.parts:
+                    continue
+                sources.append(py.read_text(encoding="utf-8", errors="replace"))
+        elif path.is_file():
+            sources.append(path.read_text(encoding="utf-8", errors="replace"))
+        else:
             raise RoleError(
-                f"runtime slice needs app/blocks/{mod}.py which does not "
-                "exist in the Store checkout"
+                f"runtime slice needs app/blocks/{mod}.py or "
+                f"app/blocks/{mod}/__init__.py which does not exist in "
+                "the Store checkout"
             )
         block_mods[mod] = None
-        text = path.read_text(encoding="utf-8", errors="replace")
-        core_mods.update(dict.fromkeys(re.findall(r"\bapp\.core\.(\w+)\b", text)))
-        todo.extend(re.findall(r"\bapp\.blocks\.(\w+)\b", text))
-        # Line-bounded on purpose: ``[\w,\s]+`` would swallow the next line.
-        for cls in re.findall(r"from\s+app\.blocks\s+import\s+([^\n(#]+)", text):
-            for name in (c.strip() for c in cls.split(",")):
-                if not name or name in _REGISTRY_API_NAMES:
-                    continue
-                ref = class_to_name.get(name)
-                if ref is None:
-                    raise RoleError(
-                        f"app/blocks/{mod}.py imports {name} from app.blocks "
-                        "but the Store registry maps no block to that class"
-                    )
-                todo.append(defs[ref][0])
+        for text in sources:
+            core_mods.update(dict.fromkeys(re.findall(r"\bapp\.core\.(\w+)\b", text)))
+            todo.extend(re.findall(r"\bapp\.blocks\.(\w+)\b", text))
+            # Line-bounded on purpose: ``[\w,\s]+`` would swallow the next line.
+            for cls in re.findall(r"from\s+app\.blocks\s+import\s+([^\n(#]+)", text):
+                for name in (c.strip() for c in cls.split(",")):
+                    if not name or name in _REGISTRY_API_NAMES:
+                        continue
+                    ref = class_to_name.get(name)
+                    if ref is None:
+                        raise RoleError(
+                            f"app/blocks/{mod} imports {name} from app.blocks "
+                            "but the Store registry maps no block to that class"
+                        )
+                    todo.append(defs[ref][0])
 
     seen_core: Dict[str, None] = {}
     core_todo = list(core_mods)
@@ -613,13 +626,42 @@ def _vendor_runtime_slice(
     )
     _write(base / "blocks" / "__init__.py", _render_vendored_registry(registry))
     for mod in sorted(block_mods):
-        source = (blocks_root / "app" / "blocks" / f"{mod}.py").read_text(
-            encoding="utf-8", errors="replace"
-        )
-        _write(
-            base / "blocks" / f"{mod}.py",
-            emit_runtime_module(mod, _rewrite_runtime_imports(source)),
-        )
+        pkg_src = blocks_root / "app" / "blocks" / mod
+        py_file = blocks_root / "app" / "blocks" / f"{mod}.py"
+        if (pkg_src / "__init__.py").is_file():
+            for py in sorted(pkg_src.rglob("*.py")):
+                if "__pycache__" in py.parts:
+                    continue
+                rel_inner = py.relative_to(pkg_src)
+                source = py.read_text(encoding="utf-8", errors="replace")
+                _write(
+                    base / "blocks" / mod / rel_inner,
+                    emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+                )
+            parsers_init = (
+                ctx.workspace.workspace / base / "blocks" / mod / "parsers" / "__init__.py"
+            )
+            if mod == "document_engine" and not parsers_init.is_file():
+                joined = "\n".join(shipped.get(p, "") for p in written)
+                if needs_document_engine_parsers_package(joined):
+                    _write(
+                        base / "blocks" / mod / "parsers" / "__init__.py",
+                        DOCUMENT_ENGINE_PARSERS_STUB,
+                    )
+            continue
+        source = py_file.read_text(encoding="utf-8", errors="replace")
+        rewritten = emit_runtime_module(mod, _rewrite_runtime_imports(source))
+        if needs_document_engine_parsers_package(rewritten):
+            # A module file cannot host a .parsers submodule. Convert to a
+            # package so ``vendor.cerebrum.blocks.document_engine.parsers``
+            # imports (live sess_a69c8ce).
+            _write(base / "blocks" / mod / "__init__.py", rewritten)
+            _write(
+                base / "blocks" / mod / "parsers" / "__init__.py",
+                DOCUMENT_ENGINE_PARSERS_STUB,
+            )
+        else:
+            _write(base / "blocks" / f"{mod}.py", rewritten)
 
     # The shims themselves still say ``from app.blocks import get_block`` --
     # rewrite them in place to point at the vendored runtime.
