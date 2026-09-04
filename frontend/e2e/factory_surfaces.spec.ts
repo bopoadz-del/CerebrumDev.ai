@@ -747,7 +747,7 @@ test('Floor and Your Platforms name a pending golden residential_lettings draft 
   await expect(page.getByRole('button', { name: 'Approve & build' })).toBeEnabled()
   await expectNoGoldFinished(page)
 
-  await page.getByRole('button', { name: 'Your Platforms' }).click()
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   await expect(page.getByTestId('platforms-empty-state')).toBeVisible()
   await expect(page.getByText('No platform built yet')).toBeVisible()
@@ -873,7 +873,7 @@ test('Your Platforms stays Building after golden lettings Approve — never a go
   await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
   await expectNoGoldFinished(page)
 
-  await page.getByRole('button', { name: 'Your Platforms' }).click()
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   await expect(page.getByTestId('platforms-empty-state')).toHaveCount(0)
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
