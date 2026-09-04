@@ -77,6 +77,19 @@ def test_mutation_invented_scope_line_is_rejected():
     assert any("orphan line" in e for e in result.errors)
 
 
+def test_mutation_drops_writer_behaviour_acceptance():
+    compiled = _compiled()
+    compiled.text = compiled.text.replace(
+        "every capability accepts a POST built from its own FIELDS/CONSTRAINTS",
+        "every capability looks fine in the demo",
+    )
+    compiled.text = compiled.text.replace("[check:writer_behaviour]", "")
+    compiled.text = compiled.text.replace("writer_behaviour", "writer_other")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("writer_behaviour schema-accept" in e for e in result.errors)
+
+
 def test_unfilled_template_slot_is_rejected():
     compiled = _compiled()
     compiled.text = compiled.text + "\n{{ORPHAN_SLOT}}\n"

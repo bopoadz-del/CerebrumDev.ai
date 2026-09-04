@@ -15,9 +15,11 @@ from app.factory.build.coder_session import (
     brief_dispatch_enabled,
     cli_available,
     dispatch_compiled_brief,
+    harvest_cli_artifacts,
     read_control,
     read_log_tail,
     session_status,
+    specs_from_models_source,
     wait_if_paused,
     write_control,
 )
@@ -132,6 +134,91 @@ def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):
     assert result.blocker == NAMED_BLOCKER_STOPPED
     log = read_log_tail(tmp_path / "build")
     assert "STOP" in log or result.detail
+
+
+def test_specs_from_models_source_reads_fields_and_constraints():
+    source = (
+        "class Appointment:\n"
+        "    FIELDS = ['reference', 'status', 'pet_name']\n"
+        "    CONSTRAINTS = {'status': {'allowed_values': ['open', 'closed']}}\n"
+        "    ENTITY = 'appointment'\n"
+        "\n"
+        "MODELS = {'appointment_scheduling': Appointment}\n"
+    )
+    specs = specs_from_models_source(source)
+    assert "appointment_scheduling" in specs
+    names = [f["name"] for f in specs["appointment_scheduling"]["fields"]]
+    assert names == ["reference", "status", "pet_name"]
+    status = next(
+        f for f in specs["appointment_scheduling"]["fields"] if f["name"] == "status"
+    )
+    assert status["allowed_values"] == ["open", "closed"]
+
+
+def test_harvest_cli_artifacts_keeps_handle_modules(tmp_path):
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (root / "app" / "models.py").write_text(
+        "class Reminder:\n"
+        "    FIELDS = ['reference', 'status']\n"
+        "    CONSTRAINTS = {}\n"
+        "MODELS = {'automated_reminders': Reminder}\n",
+        encoding="utf-8",
+    )
+    (actions / "automated_reminders.py").write_text(
+        'CAPABILITY_ID = "automated_reminders"\n'
+        "def handle(payload):\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID}\n",
+        encoding="utf-8",
+    )
+    (actions / "clinic_intake.py").write_text(
+        "# fragment — not a keepable handler\nreturn {}\n",
+        encoding="utf-8",
+    )
+    specs, kept = harvest_cli_artifacts(
+        root, ["automated_reminders", "clinic_intake"]
+    )
+    assert "automated_reminders" in specs
+    assert kept == ["automated_reminders"]
+
+
+def test_cli_dispatch_harvests_workspace_specs_and_handlers(tmp_path, monkeypatch):
+    script = tmp_path / "fake_coder.sh"
+    dest = tmp_path / "build"
+    script.write_text(
+        "#!/bin/sh\n"
+        "mkdir -p app/actions\n"
+        "cat > app/models.py << 'EOF'\n"
+        "class Appointment:\n"
+        "    FIELDS = ['reference', 'status', 'pet_name']\n"
+        "    CONSTRAINTS = {'status': {'allowed_values': ['open', 'closed']}}\n"
+        "MODELS = {'analytics_surface': Appointment}\n"
+        "EOF\n"
+        "cat > app/actions/analytics_surface.py << 'EOF'\n"
+        'CAPABILITY_ID = "analytics_surface"\n'
+        "def handle(payload):\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID}\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert "analytics_surface" in result.specs
+    names = [f["name"] for f in result.specs["analytics_surface"]["fields"]]
+    assert "pet_name" in names
+    assert result.kept_handler_ids == ["analytics_surface"]
+    receipt = json.loads(
+        (dest / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["kept_handler_ids"] == ["analytics_surface"]
 
 
 def test_cli_available_sees_an_executable(tmp_path, monkeypatch):
