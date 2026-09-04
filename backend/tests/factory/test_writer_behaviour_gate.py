@@ -1157,3 +1157,189 @@ def test_gate_still_halts_when_action_reaches_dispatch_inside_payload(tmp_path):
     assert "Unknown action" in joined or "unknown field" in joined.lower()
     assert result.detail != F1_HALT
     assert "success over a failed block" not in result.detail
+
+
+# -- live veterinary-care required-field CONTRACT (2026-09-04) ------------
+
+_LIVE_TOPIC = "RuntimeError: topic required"
+_LIVE_DOC = (
+    "RuntimeError: No input files provided (pdf/docx/xlsx). "
+    "Pass file_path as pdf_path, docx_path, or xlsx_path."
+)
+_LIVE_SQL = "Query failed: missing sql or table"
+_LIVE_TEAM = "Team access denied"
+
+_VET_REFUSING_DISPATCH = '''import os
+
+def execute(block_id, payload=None, action=None, params=None):
+    payload = payload if isinstance(payload, dict) else {}
+    if block_id == "event_bus":
+        topic = payload.get("topic")
+        if not (isinstance(topic, str) and topic.strip()):
+            return {"status": "error", "error": "RuntimeError: topic required"}
+    if block_id == "document_engine":
+        paths = [payload.get(k) for k in ("file_path", "pdf_path", "docx_path", "xlsx_path")]
+        if not any(isinstance(p, str) and os.path.isfile(p) for p in paths):
+            return {"status": "error", "error": (
+                "RuntimeError: No input files provided (pdf/docx/xlsx). "
+                "Pass file_path as pdf_path, docx_path, or xlsx_path."
+            )}
+    if block_id == "database":
+        sql = payload.get("sql")
+        table = payload.get("table") or payload.get("table_name")
+        if not ((isinstance(sql, str) and sql.strip()) or (isinstance(table, str) and table.strip())):
+            return {"status": "error", "error": "Query failed: missing sql or table"}
+    if block_id == "team":
+        tid = payload.get("team_id")
+        if not (isinstance(tid, str) and tid.startswith("team_") and len(tid) > 8):
+            return {"status": "error", "error": "Team access denied"}
+    return {"status": "ok", "block": block_id}
+'''
+
+_FORWARD_DOMAIN_BODY = """    results = {}
+    errors = {}
+    for block_id in BLOCK_IDS:
+        res = execute(block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id))
+        results[block_id] = res
+        if isinstance(res, dict) and (res.get("status") == "error" or "error" in res):
+            errors[block_id] = str(res.get("error") or res)[:200]
+    if errors:
+        return {"ok": False, "capability": CAPABILITY_ID,
+                "error": "; ".join("%s: %s" % item for item in errors.items()),
+                "results": results}
+    return {"ok": True, "capability": CAPABILITY_ID, "results": results}
+"""
+
+_VET_CAPS = (
+    ("automated_reminders", "reminder", ["event_bus"], {"event_bus": "publish"}),
+    ("pet_records_management", "pet_record", ["document_engine"], {"document_engine": "parse"}),
+    ("role_based_dashboard", "dashboard", ["database"], {"database": "query"}),
+    ("veterinarian_availability", "availability", ["team"], {"team": "get_team_context"}),
+)
+
+
+def _write_veterinary_care_contract_workspace(root: Path, *, wrapped: bool) -> None:
+    """Reproduce sess_a4aa977d2dff4c55: domain JSON, missing block records.
+
+    ``wrapped=True`` is the production WRITER path. ``wrapped=False`` is a
+    raw execute() that bypasses prepare_block_input — honesty must halt.
+    """
+    from app.factory.build.block_inputs import render_block_inputs_module
+    from app.factory.build.roles_handlers import _handler_module
+
+    _write_workspace(root, _GUARDED)
+    app = root / "app"
+    (app / "block_inputs.py").write_text(render_block_inputs_module(), encoding="utf-8")
+    (app / "dispatch.py").write_text(_VET_REFUSING_DISPATCH, encoding="utf-8")
+    (app / "preconditions.py").write_text(
+        "RESOURCE_IDS = {'team': 'team_4f473e37589a69bb'}\n"
+        "def resource_id(block_id):\n"
+        "    return RESOURCE_IDS.get(block_id)\n"
+        "def ensure_all():\n"
+        "    return {'ids': dict(RESOURCE_IDS), 'errors': {}}\n",
+        encoding="utf-8",
+    )
+
+    model_names = ", ".join(f"{cap!r}: Widget" for cap, _e, _b, _d in _VET_CAPS)
+    models = (app / "models.py").read_text(encoding="utf-8")
+    (app / "models.py").write_text(
+        models.replace("MODELS = {'widget_intake': Widget}\n", f"MODELS = {{{model_names}}}\n"),
+        encoding="utf-8",
+    )
+    caps = ", ".join(
+        f"{{'id': {cap!r}, 'entity': {entity!r}}}" for cap, entity, _b, _d in _VET_CAPS
+    )
+    (app / "jobs.py").write_text(
+        f"CAPABILITIES = [{caps}]\nJOBS = []\nCATALOG = {{}}\nGATES = {{}}\n",
+        encoding="utf-8",
+    )
+    imports = "\n".join(
+        f"from app.actions import {cap}  # noqa: F401" for cap, _e, _b, _d in _VET_CAPS
+    )
+    (app / "actions" / "__init__.py").write_text(imports + "\n", encoding="utf-8")
+
+    route_imports = "\n".join(
+        f"from app.actions import {cap} as _{cap}" for cap, _e, _b, _d in _VET_CAPS
+    )
+    route_fns = []
+    for cap, entity, _blocks, _defaults in _VET_CAPS:
+        route_fns.append(
+            f'@router.post("/{cap}")\n'
+            f"def {cap}_create(payload: Dict[str, Any]) -> Dict[str, Any]:\n"
+            f"    result = _{cap}.handle(payload)\n"
+            f"    if isinstance(result, dict) and result.get('ok') is False:\n"
+            f"        return result\n"
+            f'    saved = store.save("{entity}", payload)\n'
+            f'    return {{"ok": True, "capability": "{cap}", "stored": saved}}\n\n'
+            f'@router.get("/{cap}")\n'
+            f"def {cap}_list() -> Dict[str, Any]:\n"
+            f'    items = store.list_all("{entity}")\n'
+            f'    return {{"items": items, "total": len(items)}}\n'
+        )
+    (app / "routes.py").write_text(
+        "from typing import Any, Dict\n"
+        "from fastapi import APIRouter\n"
+        "from app import store\n"
+        f"{route_imports}\n\n"
+        "router = APIRouter()\n\n"
+        + "\n".join(route_fns),
+        encoding="utf-8",
+    )
+
+    for cap, _entity, blocks, defaults in _VET_CAPS:
+        if wrapped:
+            text = _handler_module(
+                cap, blocks, _FORWARD_DOMAIN_BODY,
+                "coder LLM (veterinary-care live miss)", defaults,
+            )
+        else:
+            text = (
+                "from app.dispatch import execute\n\n"
+                f"CAPABILITY_ID = {cap!r}\n"
+                f"BLOCK_IDS = {blocks!r}\n"
+                f"BLOCK_DEFAULT_ACTIONS = {defaults!r}\n\n"
+                "def handle(payload):\n"
+                + _FORWARD_DOMAIN_BODY
+            )
+        (app / "actions" / f"{cap}.py").write_text(text, encoding="utf-8")
+
+
+def test_gate_repairs_veterinary_care_contract_fields_and_does_not_halt(tmp_path):
+    """Live VetCare Hub: wrapper + prepare_block_input must not CONTRACT_HALT."""
+    _write_veterinary_care_contract_workspace(tmp_path, wrapped=True)
+    result = _run_gate(tmp_path)
+
+    assert result.ok is True, (result.detail, result.findings)
+    assert result.detail != CONTRACT_HALT
+    assert result.detail != F1_HALT
+    assert CONTRACT_HALT not in (result.findings or [])
+    joined = " ".join(result.findings or [])
+    assert _LIVE_TOPIC not in joined
+    assert "No input files provided" not in joined
+    assert _LIVE_SQL not in joined
+    assert _LIVE_TEAM not in joined
+
+
+def test_gate_still_halts_when_live_contract_fields_are_unrepaired(tmp_path):
+    """Honesty: unrepaired domain JSON still fails writer_behaviour.
+
+    Per-capability findings must quote the four live Store answers.
+    Export stays closed — this gate failure is not pilot_ready.
+    """
+    _write_veterinary_care_contract_workspace(tmp_path, wrapped=False)
+    result = _run_gate(tmp_path)
+
+    assert result.ok is False, result
+    assert result.detail == CONTRACT_HALT, result.detail
+    assert CONTRACT_HALT in result.findings
+    joined = " ".join(result.findings)
+    assert "automated_reminders" in joined
+    assert "pet_records_management" in joined
+    assert "role_based_dashboard" in joined
+    assert "veterinarian_availability" in joined
+    assert _LIVE_TOPIC in joined
+    assert "No input files provided" in joined
+    assert _LIVE_SQL in joined
+    assert _LIVE_TEAM in joined
+    assert result.detail != F1_HALT
+    assert "success over a failed block" not in result.detail

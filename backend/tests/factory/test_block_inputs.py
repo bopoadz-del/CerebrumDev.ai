@@ -92,10 +92,37 @@ def test_team_payload_never_passes_none_to_lowercased_fields():
 
 def test_team_injects_resource_id_when_preconditions_exist(monkeypatch):
     fake = types.ModuleType("app.preconditions")
-    fake.resource_id = lambda block_id: "team_abc123" if block_id == "team" else None
+    fake.resource_id = lambda block_id: "team_abc123ff" if block_id == "team" else None
     monkeypatch.setitem(sys.modules, "app.preconditions", fake)
     out = prepare_block_input("team", {"reference": "x"})
-    assert out["team_id"] == "team_abc123"
+    assert out["team_id"] == "team_abc123ff"
+
+
+def test_team_replaces_domain_looking_team_id(monkeypatch):
+    """Live veterinarian_availability: domain string as team_id → access denied."""
+    fake = types.ModuleType("app.preconditions")
+    fake.resource_id = lambda block_id: "team_4f473e37589a69bb"
+    monkeypatch.setitem(sys.modules, "app.preconditions", fake)
+    out = prepare_block_input("team", {"team_id": "sample", "name": "Dr Lee"})
+    assert out["team_id"] == "team_4f473e37589a69bb"
+
+
+def test_team_ensure_all_when_resource_id_empty(monkeypatch):
+    state = {"id": None}
+
+    def _resource_id(block_id):
+        return state["id"] if block_id == "team" else None
+
+    def _ensure_all():
+        state["id"] = "team_deadbeefcafe01"
+        return {"ids": {"team": state["id"]}, "errors": {}}
+
+    fake = types.ModuleType("app.preconditions")
+    fake.resource_id = _resource_id
+    fake.ensure_all = _ensure_all
+    monkeypatch.setitem(sys.modules, "app.preconditions", fake)
+    out = prepare_block_input("team", {"reference": "x"})
+    assert out["team_id"] == "team_deadbeefcafe01"
 
 
 # -- document_engine ------------------------------------------------------
@@ -113,14 +140,30 @@ def test_document_engine_rejects_dict_path_and_supplies_text():
         if key in out:
             assert isinstance(out[key], (str, bytes)), (key, out[key])
     assert isinstance(out.get("text"), str) and out["text"]
+    # Live veterinary-care: text alone is refused — a real pdf path is required.
+    assert Path(out["pdf_path"]).is_file()
+    assert Path(out["file_path"]).is_file()
 
 
-def test_document_engine_keeps_string_attachment_path():
-    domain = {"attachment_path": "/tmp/lease.pdf", "reference": "A1"}
+def test_document_engine_keeps_existing_attachment_path(tmp_path):
+    real = tmp_path / "lease.pdf"
+    real.write_bytes(b"%PDF-1.1\n")
+    domain = {"attachment_path": str(real), "reference": "A1"}
     out = prepare_block_input("document_engine", domain)
-    assert out["attachment_path"] == "/tmp/lease.pdf"
-    assert out["file_path"] == "/tmp/lease.pdf"
-    assert out["pdf_path"] == "/tmp/lease.pdf"
+    assert out["attachment_path"] == str(real)
+    assert out["file_path"] == str(real)
+    assert out["pdf_path"] == str(real)
+
+
+def test_document_engine_replaces_sample_placeholder_path():
+    """_sample_value emits 'sample' for obligated attachment_path — not a file."""
+    out = prepare_block_input(
+        "document_engine", {"attachment_path": "sample", "reference": "A1"}
+    )
+    assert out["attachment_path"] == "sample"
+    assert Path(out["pdf_path"]).is_file()
+    assert out["pdf_path"] != "sample"
+    assert Path(out["file_path"]).is_file()
 
 
 # -- analytics (historical envelope miss) ---------------------------------
@@ -133,6 +176,108 @@ def test_analytics_lifts_metric_value_and_defaults():
     )
     assert out["metric"] == "monthly_rent_gbp"
     assert out["value"] == 1450.0
+
+
+# -- veterinary-care CONTRACT record fields (sess_a4aa977d2dff4c55) -------
+
+_LIVE_TOPIC = "RuntimeError: topic required"
+_LIVE_DOC = (
+    "RuntimeError: No input files provided (pdf/docx/xlsx). "
+    "Pass file_path as pdf_path, docx_path, or xlsx_path."
+)
+_LIVE_SQL = "Query failed: missing sql or table"
+_LIVE_TEAM = "Team access denied"
+
+
+def _refuse_like_live(block_id, payload):
+    """The four live Store answers, used to prove prepare repairs them."""
+    data = payload if isinstance(payload, dict) else {}
+    if block_id == "event_bus":
+        if not (isinstance(data.get("topic"), str) and data["topic"].strip()):
+            return {"status": "error", "error": _LIVE_TOPIC}
+    if block_id == "document_engine":
+        paths = [
+            data.get(k)
+            for k in ("file_path", "pdf_path", "docx_path", "xlsx_path")
+        ]
+        if not any(isinstance(p, str) and Path(p).is_file() for p in paths):
+            return {"status": "error", "error": _LIVE_DOC}
+    if block_id == "database":
+        sql = data.get("sql")
+        table = data.get("table") or data.get("table_name")
+        if not ((isinstance(sql, str) and sql.strip()) or (isinstance(table, str) and table.strip())):
+            return {"status": "error", "error": _LIVE_SQL}
+    if block_id == "team":
+        tid = data.get("team_id")
+        if not (isinstance(tid, str) and tid.startswith("team_") and len(tid) > 8):
+            return {"status": "error", "error": _LIVE_TEAM}
+    return {"status": "ok", "block": block_id}
+
+
+def test_event_bus_synthesizes_topic_from_domain_record():
+    domain = {"reminder_type": "vaccination", "pet_name": "Nala", "status": "open"}
+    raw = _refuse_like_live("event_bus", domain)
+    assert raw["error"] == _LIVE_TOPIC
+    out = prepare_block_input("event_bus", domain)
+    assert out["topic"] == "vaccination"
+    assert _refuse_like_live("event_bus", out)["status"] == "ok"
+
+
+def test_event_bus_topic_from_record_summary_when_no_event_field():
+    out = prepare_block_input("event_bus", {"reference": "R-1", "status": "open"})
+    assert isinstance(out["topic"], str) and out["topic"]
+    assert _refuse_like_live("event_bus", out)["status"] == "ok"
+
+
+def test_database_synthesizes_table_from_domain_record():
+    domain = {"reference": "dash-1", "status": "open", "quantity": 2}
+    raw = _refuse_like_live("database", domain)
+    assert raw["error"] == _LIVE_SQL
+    out = prepare_block_input("database", domain)
+    assert out["table"] == "records"
+    assert out["values"]["reference"] == "dash-1"
+    assert _refuse_like_live("database", out)["status"] == "ok"
+
+
+def test_database_keeps_caller_sql():
+    out = prepare_block_input("database", {"sql": "SELECT 1", "status": "open"})
+    assert out["sql"] == "SELECT 1"
+    assert _refuse_like_live("database", out)["status"] == "ok"
+
+
+def test_document_engine_domain_record_is_refused_until_prepared():
+    domain = {"pet_name": "Nala", "notes": "annual exam"}
+    raw = _refuse_like_live("document_engine", domain)
+    assert raw["error"] == _LIVE_DOC
+    out = prepare_block_input("document_engine", domain)
+    assert _refuse_like_live("document_engine", out)["status"] == "ok"
+
+
+def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monkeypatch):
+    """Generated app/block_inputs.py must repair the same four refusals."""
+    fake = types.ModuleType("app.preconditions")
+    fake.resource_id = lambda block_id: "team_4f473e37589a69bb"
+    monkeypatch.setitem(sys.modules, "app.preconditions", fake)
+    path = tmp_path / "block_inputs.py"
+    path.write_text(render_block_inputs_module(), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("emitted_block_inputs", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    domain = {"reference": "V1", "status": "open", "quantity": 1}
+    for bid in ("event_bus", "document_engine", "database", "team"):
+        factory = prepare_block_input(bid, domain, product_name="VetCare Hub")
+        emitted = mod.prepare_block_input(bid, domain, product_name="VetCare Hub")
+        assert _refuse_like_live(bid, factory)["status"] == "ok", (bid, factory)
+        assert _refuse_like_live(bid, emitted)["status"] == "ok", (bid, emitted)
+        if bid == "event_bus":
+            assert factory["topic"] and emitted["topic"]
+        if bid == "database":
+            assert factory["table"] == emitted["table"] == "records"
+        if bid == "document_engine":
+            assert Path(factory["pdf_path"]).is_file()
+            assert Path(emitted["pdf_path"]).is_file()
+        if bid == "team":
+            assert factory["team_id"] == emitted["team_id"] == "team_4f473e37589a69bb"
 
 
 # -- property_reference_code / sample ↔ handler alignment -----------------
@@ -618,6 +763,71 @@ def test_handler_wrapper_lifts_action_out_of_payload_before_dispatch(tmp_path):
         "analytics": "track_event",
         "database": "insert",
     }
+
+
+def test_wrapper_prepares_live_veterinary_care_contract_fields(tmp_path, monkeypatch):
+    """Naive execute(block, payload) must not reach the four live refusals."""
+    fake_pre = types.ModuleType("app.preconditions")
+    fake_pre.resource_id = lambda block_id: "team_4f473e37589a69bb"
+    monkeypatch.setitem(sys.modules, "app.preconditions", fake_pre)
+
+    body = _templated_body(
+        ["event_bus", "document_engine", "database", "team"]
+    )
+    module_text = _handler_module(
+        "veterinary_care",
+        ["event_bus", "document_engine", "database", "team"],
+        body,
+        "deterministic contract template",
+        {
+            "event_bus": "publish",
+            "document_engine": "parse",
+            "database": "query",
+            "team": "get_team_context",
+        },
+    )
+    block_inputs_mod = types.ModuleType("app.block_inputs")
+    exec(render_block_inputs_module(), block_inputs_mod.__dict__)
+    handler_path = tmp_path / "handler.py"
+    handler_path.write_text(module_text, encoding="utf-8")
+
+    calls = []
+    fake_dispatch = types.ModuleType("app.dispatch")
+
+    def _fake_execute(block_id, payload, action=None, params=None):
+        answer = _refuse_like_live(block_id, payload)
+        calls.append({"block_id": block_id, "payload": dict(payload), "answer": answer})
+        return answer
+
+    fake_dispatch.execute = _fake_execute
+    previous_dispatch = sys.modules.get("app.dispatch")
+    previous_block_inputs = sys.modules.get("app.block_inputs")
+    sys.modules["app.dispatch"] = fake_dispatch
+    sys.modules["app.block_inputs"] = block_inputs_mod
+    try:
+        spec = importlib.util.spec_from_file_location("vet_handler", handler_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        out = module.handle({"reference": "V1", "status": "open", "quantity": 1})
+    finally:
+        if previous_dispatch is None:
+            sys.modules.pop("app.dispatch", None)
+        else:
+            sys.modules["app.dispatch"] = previous_dispatch
+        if previous_block_inputs is None:
+            sys.modules.pop("app.block_inputs", None)
+        else:
+            sys.modules["app.block_inputs"] = previous_block_inputs
+
+    assert out.get("ok") is True, (out, calls)
+    by_block = {c["block_id"]: c for c in calls}
+    assert set(by_block) == {"event_bus", "document_engine", "database", "team"}
+    for bid, call in by_block.items():
+        assert call["answer"]["status"] == "ok", (bid, call)
+        assert _LIVE_TOPIC not in str(call["answer"])
+        assert _LIVE_DOC not in str(call["answer"])
+        assert _LIVE_SQL not in str(call["answer"])
+        assert _LIVE_TEAM not in str(call["answer"])
 
 
 def test_dispatch_runtime_still_has_no_f18_fabrication_helpers():

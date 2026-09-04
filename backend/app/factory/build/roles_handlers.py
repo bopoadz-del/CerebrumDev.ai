@@ -835,10 +835,12 @@ def _ensure_handler_fails_closed(body: str) -> str:
 
     Before the call, domain records are shaped into block-acceptable inputs
     via ``prepare_block_input`` (notification channel/message, workflow
-    steps, team string defaults, document_engine path/text). That is the
-    residential-lettings pilot fix: handlers that forward the domain JSON
-    unchanged still reach the block with a contract-valid payload. Soft
-    import keeps unit tests that stub only ``app.dispatch`` working.
+    steps, team minted ``team_id``, document_engine existing file paths,
+    event_bus ``topic``, database ``table``/``sql``, analytics
+    metric/value). That is the residential-lettings + veterinary-care
+    pilot fix: handlers that forward the domain JSON unchanged still
+    reach the block with a contract-valid payload. Soft import keeps unit
+    tests that stub only ``app.dispatch`` working.
 
     ``action`` is lifted out of the payload and passed only as the
     ``action=`` keyword (live makerspace-management, sess_39b5fec2abd346a5:
@@ -968,7 +970,8 @@ def _templated_body(block_ids: Sequence[str]) -> str:
     # Domain JSON is not block-acceptable JSON. prepare_block_input (invoked
     # inside the fail-closed execute wrapper, and explicitly here so the
     # template documents the contract) builds channel/message, steps, team
-    # defaults, and document text/path strings from the capability record.
+    # minted team_id, document file paths, event_bus topic, and database
+    # table/sql from the capability record.
     # The nested check is the honesty line: the ninth live build shipped
     # three capabilities whose block calls all failed while the handler
     # reported ok -- the suite passed on a payload the blocks had rejected.

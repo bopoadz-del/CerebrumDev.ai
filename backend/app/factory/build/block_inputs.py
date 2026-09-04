@@ -11,6 +11,15 @@ shipped handlers that forwarded the domain JSON unchanged, so pilot
 * team — ``NoneType.lower`` on empty name/slug
 * document_engine — dict handed to a path-like opener
 
+Live veterinary-care (sess_a4aa977d2dff4c55, 2026-09-04) then halted
+WRITER on four *different* refusals — required record fields, not
+``Unknown action: None``:
+
+* event_bus — ``RuntimeError: topic required``
+* document_engine — ``No input files provided (pdf/docx/xlsx)``
+* database — ``Query failed: missing sql or table``
+* team — ``Team access denied`` (domain ``team_id`` / missing minted id)
+
 This module is the shared construction rule. WRITER emits it into every
 generated platform as ``app/block_inputs.py`` and the fail-closed execute
 wrapper calls ``prepare_block_input`` before ``dispatch.execute``. That is
@@ -18,13 +27,16 @@ handler-layer adaptation, not F18 fabrication inside ``dispatch.py``
 (``_default_block_field`` / ``_ALWAYS_FILL`` stay forbidden there).
 
 Only missing constructible keys are filled. Values the handler already
-supplied are left alone.
+supplied are left alone, except a domain-looking ``team_id`` (not minted
+by ``create_team``) which is replaced by the platform precondition id.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 #: Path-like keys document_engine (and SCHEMA_OBLIGATIONS) accept.
@@ -222,6 +234,10 @@ def prepare_block_input(
         return _for_document_engine(data)
     if bid == "analytics":
         return _for_analytics(data)
+    if bid == "event_bus":
+        return _for_event_bus(data)
+    if bid == "database":
+        return _for_database(data)
     return data
 
 
@@ -266,6 +282,38 @@ def _for_workflow(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]
     return out
 
 
+def _looks_minted_team_id(value: Any) -> bool:
+    """True when ``value`` is a create_team id, not a domain label.
+
+    Live veterinarian_availability forwarded a domain string as ``team_id``
+    and the Store answered ``Team access denied``. Minted ids are
+    ``team_`` + hex (see block_obligations.create_team measurement).
+    """
+    if not isinstance(value, str):
+        return False
+    body = value[5:] if value.startswith("team_") else ""
+    return len(body) >= 8 and all(c in "0123456789abcdefABCDEF" for c in body)
+
+
+def _platform_team_id() -> Optional[str]:
+    """Id the R1c startup step minted, creating the team if startup missed it."""
+    try:
+        from app.preconditions import resource_id  # type: ignore
+    except Exception:  # noqa: BLE001 — generated workspace may lack module
+        return None
+    tid = resource_id("team")
+    if tid:
+        return str(tid)
+    try:
+        from app.preconditions import ensure_all  # type: ignore
+
+        ensure_all()
+    except Exception:  # noqa: BLE001 — boot must not die inside prepare
+        return None
+    tid = resource_id("team")
+    return str(tid) if tid else None
+
+
 def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[str, Any]:
     out = dict(data)
     for key in _TEAM_STRING_KEYS:
@@ -276,15 +324,10 @@ def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[s
     out.setdefault("user_id", "system")
     out.setdefault("name", f"{product_name or 'platform'} team")
     out.setdefault("slug", f"{slug_base}-team")
-    if not out.get("team_id"):
-        try:
-            from app.preconditions import resource_id  # type: ignore
-
-            tid = resource_id("team")
-        except Exception:  # noqa: BLE001 — generated workspace may lack module
-            tid = None
-        if tid:
-            out["team_id"] = str(tid)
+    minted = _platform_team_id()
+    current = out.get("team_id")
+    if minted and (not current or not _looks_minted_team_id(current)):
+        out["team_id"] = minted
     # Final guard: never leave a None on a lowercased key.
     for key in _TEAM_STRING_KEYS:
         if key in out and out[key] is None:
@@ -294,32 +337,74 @@ def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[s
     return out
 
 
+#: Smallest PDF the Store document_engine will open. ``text`` alone is not
+#: enough: the live default parse action answers "No input files provided
+#: (pdf/docx/xlsx). Pass file_path as pdf_path, docx_path, or xlsx_path."
+_MINIMAL_PDF = (
+    b"%PDF-1.1\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/MediaBox[0 0 3 3]>>endobj\n"
+    b"trailer<</Size 4/Root 1 0 R>>\n"
+)
+
+_SYNTH_DOC_PATH: Optional[str] = None
+
+
+def _existing_file_path(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return value if os.path.isfile(value) else None
+    except OSError:
+        return None
+
+
+def _synthesized_document_path() -> str:
+    """Write one reusable temp PDF so path keys point at a real file."""
+    global _SYNTH_DOC_PATH
+    if _SYNTH_DOC_PATH and os.path.isfile(_SYNTH_DOC_PATH):
+        return _SYNTH_DOC_PATH
+    fd, path = tempfile.mkstemp(prefix="platform-doc-", suffix=".pdf")
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(_MINIMAL_PDF)
+    _SYNTH_DOC_PATH = path
+    return path
+
+
 def _for_document_engine(data: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     # Drop dict values on path keys — that is the live TypeError.
     for key in _DOC_PATH_KEYS:
         if isinstance(out.get(key), dict):
             out.pop(key)
+        elif key not in out and _existing_file_path(inner.get(key)):
+            out[key] = inner[key]
+    existing = None
     for key in _DOC_PATH_KEYS:
-        val = out.get(key)
-        if isinstance(val, (str, bytes)) and val:
-            if isinstance(val, str):
-                out.setdefault("file_path", val)
-                out.setdefault("pdf_path", val)
-            return out
+        existing = _existing_file_path(out.get(key))
+        if existing:
+            out.setdefault("file_path", existing)
+            out.setdefault("pdf_path", existing)
+            break
     text = out.get("text")
-    if isinstance(text, str) and text.strip():
+    if not (isinstance(text, str) and text.strip()):
+        lines = [
+            f"{key}: {value}"
+            for key, value in data.items()
+            if isinstance(value, (str, int, float, bool))
+        ]
+        text = "\n".join(lines) if lines else json.dumps(data, default=str)
+        out["text"] = text
+    if existing:
         return out
-    raw = out.get("bytes")
-    if isinstance(raw, (bytes, str)) and raw:
-        return out
-    # Prefer a text document over inventing a filesystem path that does not exist.
-    lines = [
-        f"{key}: {value}"
-        for key, value in data.items()
-        if isinstance(value, (str, int, float, bool))
-    ]
-    out["text"] = "\n".join(lines) if lines else json.dumps(data, default=str)
+    # A placeholder path ("sample") or text-only payload still fails the
+    # live parse action. Materialize a real PDF and point the contract keys
+    # at it — do not invent success over a path the block cannot open.
+    path = _synthesized_document_path()
+    out["file_path"] = path
+    out["pdf_path"] = path
     return out
 
 
@@ -341,6 +426,79 @@ def _for_analytics(data: Dict[str, Any]) -> Dict[str, Any]:
                 out["value"] = value
                 break
         out.setdefault("value", 1)
+    return out
+
+
+_TOPIC_KEYS = ("topic", "event", "event_type", "event_name", "reminder_type")
+
+
+def _topic_from_domain(data: Dict[str, Any]) -> str:
+    """A short event_bus topic derived from the capability record."""
+    slug = re.sub(r"[^a-zA-Z0-9_.-]+", ".", _summary_message(data)).strip(".")
+    return (slug or "platform.event")[:80]
+
+
+def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Satisfy ``topic required`` from domain fields, never invent success.
+
+    Live automated_reminders forwarded the capability JSON; the Store
+    event_bus raised ``RuntimeError: topic required``. Map a domain name
+    (reminder_type / event / …) or a record summary onto ``topic``.
+    """
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    topic = out.get("topic") or inner.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        for key in _TOPIC_KEYS:
+            if key == "topic":
+                continue
+            cand = out.get(key) if out.get(key) is not None else inner.get(key)
+            if isinstance(cand, str) and cand.strip():
+                topic = cand.strip()
+                break
+        else:
+            topic = _topic_from_domain(data)
+    out["topic"] = str(topic).strip()
+    return out
+
+
+def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Satisfy ``missing sql or table`` from the domain record.
+
+    The factory's Store-unwired query adapter
+    (``offline_adapters.emit_database_query``) returns exactly
+    ``Query failed: missing sql or table`` when the handler omitted both.
+    A domain record is not SQL; map it onto ``table`` + ``values`` the way
+    notification maps onto channel/message.
+    """
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    for key in ("sql", "table", "table_name", "values"):
+        if key not in out and key in inner:
+            out[key] = inner[key]
+    sql = out.get("sql")
+    if isinstance(sql, str) and sql.strip():
+        return out
+    table = out.get("table") or out.get("table_name")
+    if not (isinstance(table, str) and table.strip()):
+        for key in ("entity", "table", "table_name"):
+            cand = out.get(key) or inner.get(key)
+            if isinstance(cand, str) and re.match(r"^[A-Za-z_][\w]*$", cand):
+                table = cand
+                break
+        else:
+            table = "records"
+    out["table"] = str(table).strip()
+    if not isinstance(out.get("values"), dict):
+        values = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP_REQUIRED_NAMES
+            and key not in {"sql", "table", "table_name", "values", "input"}
+            and isinstance(value, (str, int, float, bool))
+        }
+        if values:
+            out["values"] = values
     return out
 
 
@@ -591,7 +749,9 @@ payloads without requiring the caller to know about channel/steps/paths.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _DOC_PATH_KEYS = (
@@ -604,6 +764,15 @@ _DOC_PATH_KEYS = (
     "path",
 )
 _TEAM_STRING_KEYS = ("user_id", "name", "slug", "role", "email", "plan", "permission")
+_TOPIC_KEYS = ("topic", "event", "event_type", "event_name", "reminder_type")
+_MINIMAL_PDF = (
+    b"%PDF-1.1\\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\\n"
+    b"3 0 obj<</Type/Page/MediaBox[0 0 3 3]>>endobj\\n"
+    b"trailer<</Size 4/Root 1 0 R>>\\n"
+)
+_SYNTH_DOC_PATH = None
 _SKIP = frozenset(
     {
         "ok",
@@ -675,6 +844,10 @@ def prepare_block_input(
         return _for_document_engine(data)
     if bid == "analytics":
         return _for_analytics(data)
+    if bid == "event_bus":
+        return _for_event_bus(data)
+    if bid == "database":
+        return _for_database(data)
     return data
 
 
@@ -717,6 +890,31 @@ def _for_workflow(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]
     return out
 
 
+def _looks_minted_team_id(value):
+    if not isinstance(value, str):
+        return False
+    body = value[5:] if value.startswith("team_") else ""
+    return len(body) >= 8 and all(c in "0123456789abcdefABCDEF" for c in body)
+
+
+def _platform_team_id():
+    try:
+        from app.preconditions import resource_id
+    except Exception:
+        return None
+    tid = resource_id("team")
+    if tid:
+        return str(tid)
+    try:
+        from app.preconditions import ensure_all
+
+        ensure_all()
+    except Exception:
+        return None
+    tid = resource_id("team")
+    return str(tid) if tid else None
+
+
 def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[str, Any]:
     out = dict(data)
     for key in _TEAM_STRING_KEYS:
@@ -727,15 +925,10 @@ def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[s
     out.setdefault("user_id", "system")
     out.setdefault("name", f"{product_name or 'platform'} team")
     out.setdefault("slug", f"{slug_base}-team")
-    if not out.get("team_id"):
-        try:
-            from app.preconditions import resource_id
-
-            tid = resource_id("team")
-        except Exception:
-            tid = None
-        if tid:
-            out["team_id"] = str(tid)
+    minted = _platform_team_id()
+    current = out.get("team_id")
+    if minted and (not current or not _looks_minted_team_id(current)):
+        out["team_id"] = minted
     for key in _TEAM_STRING_KEYS:
         if key in out and out[key] is None:
             out.pop(key)
@@ -744,30 +937,54 @@ def _for_team(data: Dict[str, Any], *, product_name: str = "platform") -> Dict[s
     return out
 
 
+def _existing_file_path(value):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return value if os.path.isfile(value) else None
+    except OSError:
+        return None
+
+
+def _synthesized_document_path():
+    global _SYNTH_DOC_PATH
+    if _SYNTH_DOC_PATH and os.path.isfile(_SYNTH_DOC_PATH):
+        return _SYNTH_DOC_PATH
+    fd, path = tempfile.mkstemp(prefix="platform-doc-", suffix=".pdf")
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(_MINIMAL_PDF)
+    _SYNTH_DOC_PATH = path
+    return path
+
+
 def _for_document_engine(data: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
     for key in _DOC_PATH_KEYS:
         if isinstance(out.get(key), dict):
             out.pop(key)
+        elif key not in out and _existing_file_path(inner.get(key)):
+            out[key] = inner[key]
+    existing = None
     for key in _DOC_PATH_KEYS:
-        val = out.get(key)
-        if isinstance(val, (str, bytes)) and val:
-            if isinstance(val, str):
-                out.setdefault("file_path", val)
-                out.setdefault("pdf_path", val)
-            return out
+        existing = _existing_file_path(out.get(key))
+        if existing:
+            out.setdefault("file_path", existing)
+            out.setdefault("pdf_path", existing)
+            break
     text = out.get("text")
-    if isinstance(text, str) and text.strip():
+    if not (isinstance(text, str) and text.strip()):
+        lines = [
+            f"{key}: {value}"
+            for key, value in data.items()
+            if isinstance(value, (str, int, float, bool))
+        ]
+        out["text"] = "\\n".join(lines) if lines else json.dumps(data, default=str)
+    if existing:
         return out
-    raw = out.get("bytes")
-    if isinstance(raw, (bytes, str)) and raw:
-        return out
-    lines = [
-        f"{key}: {value}"
-        for key, value in data.items()
-        if isinstance(value, (str, int, float, bool))
-    ]
-    out["text"] = "\\n".join(lines) if lines else json.dumps(data, default=str)
+    path = _synthesized_document_path()
+    out["file_path"] = path
+    out["pdf_path"] = path
     return out
 
 
@@ -789,5 +1006,60 @@ def _for_analytics(data: Dict[str, Any]) -> Dict[str, Any]:
                 out["value"] = value
                 break
         out.setdefault("value", 1)
+    return out
+
+
+def _topic_from_domain(data):
+    slug = re.sub(r"[^a-zA-Z0-9_.-]+", ".", _summary_message(data)).strip(".")
+    return (slug or "platform.event")[:80]
+
+
+def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    topic = out.get("topic") or inner.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        for key in _TOPIC_KEYS:
+            if key == "topic":
+                continue
+            cand = out.get(key) if out.get(key) is not None else inner.get(key)
+            if isinstance(cand, str) and cand.strip():
+                topic = cand.strip()
+                break
+        else:
+            topic = _topic_from_domain(data)
+    out["topic"] = str(topic).strip()
+    return out
+
+
+def _for_database(data: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(data)
+    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
+    for key in ("sql", "table", "table_name", "values"):
+        if key not in out and key in inner:
+            out[key] = inner[key]
+    sql = out.get("sql")
+    if isinstance(sql, str) and sql.strip():
+        return out
+    table = out.get("table") or out.get("table_name")
+    if not (isinstance(table, str) and table.strip()):
+        for key in ("entity", "table", "table_name"):
+            cand = out.get(key) or inner.get(key)
+            if isinstance(cand, str) and re.match(r"^[A-Za-z_][\\w]*$", cand):
+                table = cand
+                break
+        else:
+            table = "records"
+    out["table"] = str(table).strip()
+    if not isinstance(out.get("values"), dict):
+        values = {
+            key: value
+            for key, value in data.items()
+            if key not in _SKIP
+            and key not in {"sql", "table", "table_name", "values", "input"}
+            and isinstance(value, (str, int, float, bool))
+        }
+        if values:
+            out["values"] = values
     return out
 '''

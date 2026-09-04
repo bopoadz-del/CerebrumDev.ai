@@ -41,10 +41,12 @@ Contracts you must honour on every capability you write:
 - Call execute() for EVERY id in BLOCK_IDS. A declared block that is never
   invoked fails the WRITER behaviour gate and halts the build.
 - Validate only the capability's own fields. Construct block inputs; do not
-  demand block-specific keys from the caller. If you require a field, type,
-  or vocabulary, declare it on the spec — the factory copies handler
-  contracts onto the spec so the pilot suite can build a payload you will
-  accept. Do not invent a second, stricter contract the spec cannot express.
+  demand block-specific keys (topic, sql/table, file paths, team_id,
+  channel, steps) from the caller. The execute wrapper synthesizes those
+  from the domain record. If you require a field, type, or vocabulary,
+  declare it on the spec — the factory copies handler contracts onto the
+  spec so the pilot suite can build a payload you will accept. Do not
+  invent a second, stricter contract the spec cannot express.
 - Offline platform: no network, no HTTP store callbacks, channel "mcp" only.
 
 This brief is the horizon. The user message is one micro-task (one handle(),
