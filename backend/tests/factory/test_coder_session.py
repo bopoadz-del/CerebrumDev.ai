@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -12,16 +14,23 @@ from app.factory.build.coder_session import (
     CONTROL_STOP,
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_STOPPED,
+    CodeCliUnavailable,
     DispatchResult,
     _has_brief_workflow_steps,
     _is_keepable_handler,
     _merge_workspace_harvest,
     brief_dispatch_enabled,
+    brief_requires_cli,
     cli_available,
+    cli_unavailable_detail,
     dispatch_compiled_brief,
+    ensure_code_cli_credentials,
     harvest_cli_artifacts,
+    http_oneshot_enabled,
+    probe_code_cli,
     read_control,
     read_log_tail,
+    resolve_code_cli,
     session_status,
     specs_from_models_source,
     wait_if_paused,
@@ -96,11 +105,18 @@ def test_wait_if_paused_returns_stop_on_deadline(tmp_path):
 
 
 def test_dispatch_without_cli_names_the_blocker(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    """CLI missing + coder on → named class; HTTP oneshot is not used."""
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.setenv("FACTORY_CODE_CLI", "/definitely/not/a/cli")
     monkeypatch.setattr(
         "app.factory.build.coder_session.cli_available",
         lambda command=None: False,
+    )
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
     )
     ctx = _ctx(tmp_path)
     compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
@@ -108,13 +124,114 @@ def test_dispatch_without_cli_names_the_blocker(tmp_path, monkeypatch):
     ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
     result = dispatch_compiled_brief(ctx, compiled)
     assert result.ok is False
+    assert result.via == "unavailable"
     assert result.blocker == NAMED_BLOCKER_CLI
+    assert NAMED_BLOCKER_CLI in result.detail
+    assert "FACTORY_CODE_CLI" in result.detail
+    assert oneshot == [], "HTTP oneshot must not run when CLI is missing"
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
     assert receipt["blocker"] == NAMED_BLOCKER_CLI
     status = session_status(tmp_path / "build")
     assert status["coder_receipt"]["blocker"] == NAMED_BLOCKER_CLI
+    log = read_log_tail(tmp_path / "build")
+    assert NAMED_BLOCKER_CLI in log
+    assert "falling back to HTTP oneshot" not in log
+
+
+def test_dispatch_with_cli_does_not_use_oneshot(tmp_path, monkeypatch):
+    script = tmp_path / "fake_coder.sh"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert oneshot == [], "CLI present must not call HTTP oneshot"
+
+
+def test_brief_requires_cli_when_coder_on(monkeypatch):
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    assert brief_requires_cli() is True
+    assert http_oneshot_enabled() is False
+    monkeypatch.setenv("FACTORY_BRIEF_HTTP_ONESHOT", "1")
+    assert brief_requires_cli() is False
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    assert brief_requires_cli() is False
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    monkeypatch.setenv("ENV", "test")
+    assert brief_requires_cli() is False
+    monkeypatch.setenv("ENV", "production")
+    assert brief_requires_cli() is True
+
+
+def test_cli_unavailable_detail_names_env():
+    text = cli_unavailable_detail("/no/such/coder")
+    assert NAMED_BLOCKER_CLI in text
+    assert "FACTORY_CODE_CLI" in text
+    assert "KIMI_CODE_API_KEY" in text
+    assert "FACTORY_BRIEF_HTTP_ONESHOT" in text
+
+
+def test_probe_code_cli_reports_unavailable(monkeypatch):
+    monkeypatch.setenv("FACTORY_CODE_CLI", "/no/such/coder")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    probe = probe_code_cli()
+    assert probe["available"] is False
+    assert probe["blocker"] == NAMED_BLOCKER_CLI
+    assert probe["requires_cli"] is True
+
+
+def test_resolve_code_cli_finds_home_local_bin(tmp_path, monkeypatch):
+    bindir = tmp_path / ".local" / "bin"
+    bindir.mkdir(parents=True)
+    script = bindir / "kimi"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("FACTORY_CODE_CLI", "kimi")
+    monkeypatch.delenv("KIMI_CODE_CLI", raising=False)
+    # Not on PATH — only the extra home location.
+    monkeypatch.setenv("PATH", "/usr/bin")
+    assert resolve_code_cli() == str(script)
+    assert cli_available() is True
+
+
+def test_ensure_code_cli_credentials_writes_when_key_set(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    result = ensure_code_cli_credentials()
+    assert result["wrote"] is True
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "[providers.kimi]" in text
+    assert "sk-test-not-real" in text
+
+
+def test_ensure_code_cli_credentials_skips_when_unset(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.delenv("KIMI_CODE_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_CODE_KEY", raising=False)
+    result = ensure_code_cli_credentials()
+    assert result["wrote"] is False
+    assert "unset" in result["reason"]
 
 
 def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):
@@ -307,6 +424,59 @@ def test_cli_dispatch_harvests_workspace_specs_and_handlers(tmp_path, monkeypatc
         (dest / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
     assert receipt["kept_handler_ids"] == ["analytics_surface"]
+
+
+def test_start_runner_build_refuses_when_cli_missing(tmp_path, monkeypatch):
+    from app.factory.build_jobs import start_runner_build
+    from app.factory.blueprint import load_blueprint
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODE_CLI", "/no/such/coder")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.cli_available",
+        lambda command=None: False,
+    )
+    root = Path(__file__).resolve().parents[3]
+    bp = load_blueprint(root / "blueprints/examples/runner_smoke.yaml")
+    with pytest.raises(CodeCliUnavailable, match=NAMED_BLOCKER_CLI):
+        start_runner_build(bp, tmp_path / "out")
+    assert not (tmp_path / "out" / "build_ledger.jsonl").exists()
+
+
+def test_approve_and_generate_names_cli_class_without_takeover(tmp_path, monkeypatch):
+    from app.factory import platform_chat_flow
+    from app.models.session import ProductDesignState, SessionState
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODE_CLI", "/no/such/coder")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.cli_available",
+        lambda command=None: False,
+    )
+    root = Path(__file__).resolve().parents[3]
+    from app.factory.blueprint import load_blueprint
+
+    bp = load_blueprint(root / "blueprints/examples/runner_smoke.yaml")
+    state = SessionState(
+        session_id="sess_cli_missing",
+        user_id="test-user",
+        product_design=ProductDesignState(
+            blueprint=bp.model_dump(mode="json"),
+            blueprint_approved=False,
+        ),
+    )
+    result = platform_chat_flow.approve_and_generate(state, output_root=tmp_path)
+    assert result["ok"] is False
+    assert result["sse"] == "error"
+    assert result["blocker"] == NAMED_BLOCKER_CLI
+    assert NAMED_BLOCKER_CLI in result["summary"]
+    assert "never opened" in result["summary"]
+    assert state.product_design.generation is None
+    assert NAMED_BLOCKER_CLI in (state.product_design.last_error or "")
 
 
 def test_cli_available_sees_an_executable(tmp_path, monkeypatch):

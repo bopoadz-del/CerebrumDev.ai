@@ -48,6 +48,8 @@ def _no_paid_calls(monkeypatch):
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
+    # Module-scoped: autouse monkeypatch has not run yet.
+    os.environ["FACTORY_CODER_ENABLED"] = "0"
     out = tmp_path_factory.mktemp("s11") / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()

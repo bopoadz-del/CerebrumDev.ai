@@ -630,6 +630,13 @@ def start_runner_build(
     keying on it -- as ``ProductGenerator.inputs_hash`` does -- would make
     resume impossible.
     """
+    from app.factory.build.coder_session import (
+        CodeCliUnavailable,
+        brief_requires_cli,
+        cli_available,
+        cli_unavailable_detail,
+        OWNER_GATED_CLI_LOG,
+    )
     from app.factory.build.ledger import BuildLedger
     from app.factory.build.runner import blueprint_hash
 
@@ -675,6 +682,10 @@ def start_runner_build(
             out.mkdir(parents=True, exist_ok=True)
             ledger = BuildLedger(_ledger_path(out))
             fresh_workspace = True
+
+    if brief_requires_cli() and not cli_available():
+        logger.error("%s", OWNER_GATED_CLI_LOG)
+        raise CodeCliUnavailable(cli_unavailable_detail())
 
     if not ledger.exists():
         ledger.start_run(

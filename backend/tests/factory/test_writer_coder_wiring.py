@@ -12,6 +12,7 @@ also what lets CI exercise this path at all.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,7 @@ def _coder_on(monkeypatch):
     entry point it is actually about.
     """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_HTTP_ONESHOT", "1")
     monkeypatch.setattr(
         "app.factory.build.coder_session.cli_available",
         lambda command=None: False,
@@ -149,6 +151,31 @@ def test_the_writer_uses_the_coding_agent_when_one_is_configured(
     for name, text in _headers(out).items():
         assert "coder LLM (test-model-1)" in text, name
         assert '"agent": True' in text, name
+
+
+def test_writer_halts_when_cli_missing_without_oneshot(
+    blueprint, tmp_path, monkeypatch
+):
+    """Keyed brief path without FACTORY_CODE_CLI must not fake WRITER progress."""
+    from app.factory.build.coder_session import NAMED_BLOCKER_CLI
+
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or _oneshot_payload(),
+    )
+    outcome = RoleRunner(blueprint, tmp_path / "build").run()
+    assert outcome.ok is False
+    assert NAMED_BLOCKER_CLI in (outcome.detail or "")
+    assert oneshot == []
+    # Dispatch receipt exists; handlers must not be credited as agent-written.
+    receipt = tmp_path / "build" / "docs" / "coder_receipt.json"
+    if receipt.is_file():
+        data = json.loads(receipt.read_text(encoding="utf-8"))
+        assert data.get("blocker") == NAMED_BLOCKER_CLI
 
 
 def test_a_coder_failure_ships_the_template_and_records_why(

@@ -30,6 +30,7 @@ CI_YML = ROOT / ".github" / "workflows" / "ci.yml"
 @pytest.fixture(autouse=True)
 def _keyed_stub(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_HTTP_ONESHOT", "1")
     if not os.environ.get("KIMI_API_KEY") and not os.environ.get("CEREBRUM_LLM_API_KEY"):
         monkeypatch.setenv("KIMI_API_KEY", "ci-stub-not-a-real-key")
     monkeypatch.setattr(

@@ -2491,10 +2491,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     A pilot cycle without a coder key must not replace agent-written
     handlers with the deterministic template. Adapter patches already ran.
 
-    C-BRIEF: compile ONE gated brief and dispatch it once (FACTORY_CODE_CLI
-    or a single HTTP oneshot). Per-capability handle() shots stay behind
-    FACTORY_BRIEF_DISPATCH=0. Inventory is checked against the Store
-    registry before any handler is written.
+    C-BRIEF: compile ONE gated brief and dispatch it once via
+    FACTORY_CODE_CLI. A keyed Floor without that binary fail-closes
+    (FACTORY_CODE_CLI_UNAVAILABLE) before WRITER progress. HTTP oneshot
+    stays behind FACTORY_BRIEF_HTTP_ONESHOT=1 (CI). Per-capability
+    handle() shots stay behind FACTORY_BRIEF_DISPATCH=0. Inventory is
+    checked against the Store registry before any handler is written.
     """
     writer_roster = _writer_block_roster(ctx.state)
     if (
@@ -2522,7 +2524,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
     from app.factory.build.brief_lint import BriefLintError, lint_or_raise
     from app.factory.build.coder_session import (
+        NAMED_BLOCKER_CLI,
         brief_dispatch_enabled,
+        brief_requires_cli,
         dispatch_compiled_brief,
         write_brief_artifacts,
     )
@@ -2546,13 +2550,19 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     use_brief_dispatch = brief_dispatch_enabled()
     if use_brief_dispatch:
         dispatch = dispatch_compiled_brief(ctx, compiled_brief)
+        if (
+            dispatch.via == "unavailable"
+            and dispatch.blocker == NAMED_BLOCKER_CLI
+            and brief_requires_cli()
+        ):
+            raise RoleError(dispatch.detail)
         ctx.note(
             f"brief dispatch via {dispatch.via}: {dispatch.detail}",
             stage="dispatch",
             source=f"coder {'CLI' if dispatch.via == 'cli' else 'LLM'} ({dispatch.model})"
             if dispatch.ok
             else "brief dispatch",
-            done=1,
+            done=1 if dispatch.ok else 0,
             total=1,
         )
 

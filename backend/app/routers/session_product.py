@@ -97,6 +97,10 @@ def _raise_product_error(session_id: str, state, exc: BaseException) -> None:
         exc, (BlueprintError, DualRegistryError, UnsafeOutputDir, ValidationError)
     ):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    from app.factory.build.coder_session import CodeCliUnavailable
+
+    if isinstance(exc, CodeCliUnavailable):
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.exception("session product handler failed")
     raise HTTPException(status_code=500, detail="internal_error") from exc
 

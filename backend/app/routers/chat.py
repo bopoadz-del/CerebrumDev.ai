@@ -353,8 +353,10 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 if (
                     decision.get("action") == "start_coder"
                     and llm_result is not None
+                    and llm_result.get("ok") is not False
                     and not llm_result.get("already_running")
                     and not llm_result.get("already_complete")
+                    and llm_result.get("sse") != "error"
                 ):
                     require_within_limit(getattr(state, "user_id", None), "generation")
 
@@ -375,13 +377,19 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 yield _sse_event("done", "")
                 return
             result = platform_chat_flow.approve_and_generate(state)
-            if not result.get("already_running"):
+            if (
+                result.get("ok")
+                and not result.get("already_running")
+                and result.get("sse") != "error"
+            ):
                 require_within_limit(getattr(state, "user_id", None), "generation")
+            if result.get("ok") and not result.get("sse"):
+                result = {**result, "sse": "generation"}
             state.chat_history.append({"role": "assistant", "content": result["summary"]})
             state.updated_at = datetime.utcnow()
             update_session(session_id, state)
-            yield _sse_event("generation", json.dumps(result))
-            yield _sse_event("done", "")
+            async for ev in _yield_platform_result(result):
+                yield ev
             return
 
         if platform_chat_flow.has_pending_blueprint(state):

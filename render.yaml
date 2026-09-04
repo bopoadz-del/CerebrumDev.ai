@@ -222,6 +222,17 @@ services:
       # code; required override if remap is removed: 7200 (or 0 to disable).
       - key: FACTORY_CODER_BUDGET_S
         value: "7200"
+      # Owner-gated FACTORY_CODE_CLI + KIMI_CODE_API_KEY. This blueprint is
+      # not applied; the dashboard is source of truth. Declaring the keys
+      # here does not install the binary and does not claim they are set.
+      # A keyed Floor without the executable fail-closes
+      # FACTORY_CODE_CLI_UNAVAILABLE (no HTTP oneshot takeover).
+      - key: FACTORY_CODE_CLI
+        sync: false
+      - key: KIMI_CODE_API_KEY
+        sync: false
+      - key: KIMI_CODE_HOME
+        value: /app/.kimi-code
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
