@@ -365,11 +365,20 @@ def lookup_reuse(
     http_get=None,
     blocks_root: Optional[Path] = None,
 ) -> ReuseRecord:
-    """HTTP first when the surface exists; else local exact-id + block.json."""
+    """HTTP first when the surface exists; else local exact-id + block.json.
+
+    An injected ``http_get`` is always called — CI has no ``CEREBRUM_API_URL``,
+    and STEP 0 tests must still fail-closed on ``present: false``. Live HTTP
+    only fires when a base URL is configured.
+    """
     bid = str(block_id).strip()
     known = {str(x) for x in (local_ids or ()) if str(x).strip()}
-    getter = http_get or lookup_reuse_http
-    remote = getter(bid, base_url=base_url) if base_url or store_base_url() else None
+    if http_get is not None:
+        remote = http_get(bid, base_url=base_url)
+    elif base_url or store_base_url():
+        remote = lookup_reuse_http(bid, base_url=base_url)
+    else:
+        remote = None
     if remote is not None:
         return _overlay_local_scope(remote, blocks_root=blocks_root)
     return _local_reuse_record(bid, known, blocks_root=blocks_root)

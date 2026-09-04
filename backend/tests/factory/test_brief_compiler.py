@@ -161,9 +161,15 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
         verify_inventory(poisoned)
 
 
-def test_reuse_http_present_false_is_a_named_missing_id():
-    """STEP 0 trusts the Blocks REUSE 200 body, not a local assumption."""
+def test_reuse_http_present_false_is_a_named_missing_id(monkeypatch):
+    """STEP 0 trusts the Blocks REUSE 200 body, not a local assumption.
+
+    CI has no CEREBRUM_API_URL (unlike a local .env). The injected getter
+    must still run so present:false fail-closes.
+    """
     from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
 
     def fake_get(block_id, base_url=None):
         return ReuseRecord(block_id=block_id, present=False, source="registry/blocks")
@@ -180,8 +186,10 @@ def test_reuse_http_present_false_is_a_named_missing_id():
         verify_inventory(compiled)
 
 
-def test_reuse_http_l2_fields_appear_in_brief_when_declared():
+def test_reuse_http_l2_fields_appear_in_brief_when_declared(monkeypatch):
     from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
 
     def fake_get(block_id, base_url=None):
         return ReuseRecord(
@@ -234,8 +242,10 @@ def test_preflip_block_json_says_scopes_not_declared():
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
-def test_compiler_does_not_invent_scopes_when_http_omits_l2():
+def test_compiler_does_not_invent_scopes_when_http_omits_l2(monkeypatch):
     from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
 
     def fake_get(block_id, base_url=None):
         return ReuseRecord(

@@ -114,6 +114,25 @@ def test_http_unavailable_falls_back_to_local_ids():
     assert missing.present is False
 
 
+def test_injected_getter_runs_when_api_url_unset(monkeypatch):
+    """CI has no CEREBRUM_API_URL; STEP 0 still has to call the injected lookup."""
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
+    seen = []
+
+    def fake_get(block_id, base_url=None):
+        seen.append(block_id)
+        return ReuseRecord(block_id=block_id, present=False, source="registry/blocks")
+
+    rec = lookup_reuse(
+        "event_bus",
+        local_ids={"event_bus"},
+        base_url="",
+        http_get=fake_get,
+    )
+    assert seen == ["event_bus"]
+    assert rec.present is False
+
+
 def test_http_200_wins_over_local_absence():
     def fake_get(block_id, base_url=None):
         return ReuseRecord(
