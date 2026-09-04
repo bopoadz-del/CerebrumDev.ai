@@ -1203,7 +1203,10 @@ def generate_platform_handler(
     if model_fields:
         lines.append(
             "\nThe payload arriving at handle() carries the capability's data "
-            "model. Validate ONLY these fields; never demand any other:\n"
+            "model. Validate ONLY these fields; never demand any other. "
+            "If you must enforce a vocabulary, bool, or int bound, it has "
+            "to appear on this list — the pilot suite builds payloads from "
+            "the same spec:\n"
             + describe_fields(model_fields)
         )
     if resource_obligations:

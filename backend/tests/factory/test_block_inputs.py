@@ -22,6 +22,8 @@ from pathlib import Path
 
 from app.factory.build.block_inputs import (
     align_spec_to_handler_fields,
+    align_spec_to_handler_source,
+    handler_field_contracts,
     handler_required_fields,
     prepare_block_input,
     render_block_inputs_module,
@@ -31,6 +33,7 @@ from app.factory.build.roles import (
     _constraint_guard,
     _handler_module,
     _sample_payload,
+    _sample_value,
     _templated_body,
 )
 from app.factory.build.roles_constants import _DISPATCH_RUNTIME
@@ -158,6 +161,249 @@ def test_align_spec_adds_handler_required_field_for_sample_payload():
     assert "property_reference_code" in payload
     assert isinstance(payload["property_reference_code"], str)
     assert payload["status"] == "vacant"
+
+
+def test_handler_required_fields_mine_plural_lists_and_is_missing():
+    """Live VetConnect: handlers named several fields in one error string."""
+    body = (
+        "    needed = ['pet_name', 'owner_name', 'appointment_date', "
+        "'veterinarian_name']\n"
+        "    missing = [n for n in needed if n not in payload]\n"
+        "    if missing:\n"
+        "        return {'ok': False, 'error': 'Missing required fields: ' "
+        "+ ', '.join(missing)}\n"
+        "    if not payload.get('owner_id'):\n"
+        "        return {'ok': False, 'error': 'owner_id is missing and "
+        "must be a non-empty string'}\n"
+    )
+    mined = handler_required_fields(body)
+    for name in (
+        "pet_name",
+        "owner_name",
+        "appointment_date",
+        "veterinarian_name",
+        "owner_id",
+    ):
+        assert name in mined, (name, mined)
+    assert "steps" not in mined
+    assert "team_id" not in mined
+
+
+def test_handler_required_fields_keeps_domain_status_and_channel():
+    """``status`` / ``channel`` are domain columns on new-domain pilots.
+
+    The envelope skip list used to drop them, so veterinarian availability
+    ``status`` and reminder ``channel`` never reached the sample payload.
+    """
+    body = (
+        "        return {'ok': False, 'error': 'Missing required fields: "
+        "service_date, service_type, capacity, status'}\n"
+        "        return {'ok': False, 'error': 'channel is invalid'}\n"
+        "        if payload.get('channel') not in ('email', 'sms', 'push'):\n"
+        "            return {'ok': False, 'error': 'channel is invalid'}\n"
+    )
+    mined = handler_required_fields(body)
+    assert "status" in mined
+    contracts = handler_field_contracts(body)
+    assert "channel" in contracts
+    assert contracts["channel"]["allowed_values"] == ["email", "sms", "push"]
+    assert "ok" not in mined
+    assert "error" not in mined
+    assert "ok" not in contracts
+    assert "steps" not in contracts
+
+
+def test_handler_field_contracts_mine_vetconnect_enums_types_bounds():
+    """Lock the 2026-09-04 Platforms card: enums, bool, int >= 0, non-empty ids."""
+    body = (
+        "    if 'clinic_id' not in payload or not payload.get('clinic_id'):\n"
+        "        return {'ok': False, 'error': 'clinic_id is missing and "
+        "must be a non-empty string'}\n"
+        "    if payload.get('role') not in ('veterinarian', 'technician', "
+        "'receptionist', 'practice_manager', 'pet_owner'):\n"
+        "        return {'ok': False, 'error': 'role must be one of "
+        "{veterinarian, technician, receptionist, practice_manager, "
+        "pet_owner}'}\n"
+        "    if payload.get('access_level') not in ('admin', 'standard', "
+        "'read_only'):\n"
+        "        return {'ok': False, 'error': 'access_level must be one of "
+        "{admin, standard, read_only}'}\n"
+        "    if not isinstance(payload.get('is_active'), bool):\n"
+        "        return {'ok': False, 'error': 'is_active must be a boolean'}\n"
+        "    if not isinstance(payload.get('login_count'), int) "
+        "or payload.get('login_count') < 0:\n"
+        "        return {'ok': False, 'error': 'login_count must be an "
+        "integer >= 0'}\n"
+        "    if payload.get('reminder_type') not in ('appointment', 'vaccine', "
+        "'follow_up'):\n"
+        "        return {'ok': False, 'error': 'reminder_type is invalid'}\n"
+        "    if payload.get('channel') not in ('email', 'sms', 'push'):\n"
+        "        return {'ok': False, 'error': 'channel is invalid'}\n"
+        "    if not payload.get('message_template'):\n"
+        "        return {'ok': False, 'error': 'message_template must be a "
+        "non-empty string'}\n"
+    )
+    contracts = handler_field_contracts(body)
+    assert contracts["role"]["allowed_values"][0] == "veterinarian"
+    assert set(contracts["role"]["allowed_values"]) == {
+        "veterinarian",
+        "technician",
+        "receptionist",
+        "practice_manager",
+        "pet_owner",
+    }
+    assert contracts["access_level"]["allowed_values"] == [
+        "admin",
+        "standard",
+        "read_only",
+    ]
+    assert contracts["is_active"]["type"] == "bool"
+    assert contracts["login_count"]["type"] == "int"
+    assert contracts["login_count"]["min"] == 0
+    assert contracts["clinic_id"]["required"] is True
+    assert contracts["channel"]["allowed_values"] == ["email", "sms", "push"]
+    assert contracts["reminder_type"]["allowed_values"] == [
+        "appointment",
+        "vaccine",
+        "follow_up",
+    ]
+    assert "message_template" in contracts
+
+
+def test_align_spec_merges_vocab_and_types_onto_bare_str_fields():
+    """Existing spec fields must pick up handler enums — not stay bare str."""
+    spec = {
+        "entity": "dashboard",
+        "fields": [
+            {"name": "role", "type": "str", "required": True},
+            {"name": "is_active", "type": "str", "required": True},
+            {"name": "login_count", "type": "str", "required": False},
+        ],
+    }
+    contracts = {
+        "role": {
+            "name": "role",
+            "required": True,
+            "type": "str",
+            "allowed_values": [
+                "veterinarian",
+                "technician",
+                "receptionist",
+                "practice_manager",
+                "pet_owner",
+            ],
+        },
+        "is_active": {"name": "is_active", "required": True, "type": "bool"},
+        "login_count": {
+            "name": "login_count",
+            "required": True,
+            "type": "int",
+            "min": 0,
+        },
+        "clinic_id": {"name": "clinic_id", "required": True, "type": "str"},
+    }
+    aligned, changed = align_spec_to_handler_fields(
+        spec, ["clinic_id"], contracts=contracts
+    )
+    assert "clinic_id" in changed
+    assert "role" in changed
+    by_name = {f["name"]: f for f in aligned["fields"]}
+    payload = _sample_payload(aligned)
+    assert payload["role"] == "veterinarian"
+    assert payload["is_active"] is True
+    assert isinstance(payload["login_count"], int) and payload["login_count"] >= 0
+    assert payload["clinic_id"]
+    assert by_name["login_count"]["type"] == "int"
+    assert by_name["is_active"]["type"] == "bool"
+
+
+def test_align_spec_to_handler_source_covers_vetconnect_caps():
+    """Synthetic multi-capability VetConnect miss → sample satisfies guards."""
+    handlers = {
+        "appointment_scheduling": (
+            "    needed = ['pet_name', 'owner_name', 'appointment_date', "
+            "'veterinarian_name']\n"
+            "    missing = [n for n in needed if n not in payload "
+            "or payload[n] in (None, '')]\n"
+            "    if missing:\n"
+            "        return {'ok': False, 'error': 'Missing required fields: ' "
+            "+ ', '.join(missing)}\n"
+            "    return {'ok': True}\n"
+        ),
+        "veterinarian_availability_management": (
+            "    required = ['service_date', 'service_type', 'capacity', 'status']\n"
+            "    missing = [n for n in required if n not in payload "
+            "or payload[n] in (None, '')]\n"
+            "    if missing:\n"
+            "        return {'ok': False, 'error': 'Missing required fields: "
+            "service_date, service_type, capacity, status'}\n"
+            "    return {'ok': True}\n"
+        ),
+        "pet_records": (
+            "    if not payload.get('owner_id'):\n"
+            "        return {'ok': False, 'error': 'owner_id is missing and "
+            "must be a non-empty string'}\n"
+            "    return {'ok': True}\n"
+        ),
+        "automated_reminders": (
+            "    if not payload.get('pet_id'):\n"
+            "        return {'ok': False, 'error': 'pet_id is missing and "
+            "must be a non-empty string'}\n"
+            "    if payload.get('reminder_type') not in ('appointment', 'vaccine'):\n"
+            "        return {'ok': False, 'error': 'reminder_type is invalid'}\n"
+            "    if payload.get('channel') not in ('email', 'sms'):\n"
+            "        return {'ok': False, 'error': 'channel is invalid'}\n"
+            "    if not payload.get('message_template'):\n"
+            "        return {'ok': False, 'error': 'message_template must be a "
+            "non-empty string'}\n"
+            "    return {'ok': True}\n"
+        ),
+        "secure_multi_user_dashboard": (
+            "    if not payload.get('clinic_id'):\n"
+            "        return {'ok': False, 'error': 'clinic_id is missing and "
+            "must be a non-empty string'}\n"
+            "    if payload.get('role') not in ('veterinarian', 'technician', "
+            "'receptionist', 'practice_manager', 'pet_owner'):\n"
+            "        return {'ok': False, 'error': 'role must be one of "
+            "{veterinarian, technician, receptionist, practice_manager, "
+            "pet_owner}'}\n"
+            "    if payload.get('access_level') not in ('admin', 'standard', "
+            "'read_only'):\n"
+            "        return {'ok': False, 'error': 'access_level must be one of "
+            "{admin, standard, read_only}'}\n"
+            "    if not isinstance(payload.get('is_active'), bool):\n"
+            "        return {'ok': False, 'error': 'is_active must be a boolean'}\n"
+            "    if not isinstance(payload.get('login_count'), int) "
+            "or payload['login_count'] < 0:\n"
+            "        return {'ok': False, 'error': 'login_count must be an "
+            "integer >= 0'}\n"
+            "    return {'ok': True}\n"
+        ),
+    }
+    thin = {
+        "entity": "record",
+        "fields": [
+            {"name": "reference", "type": "str", "required": True},
+        ],
+    }
+    for cid, source in handlers.items():
+        aligned, changed = align_spec_to_handler_source(thin, source)
+        assert changed, cid
+        payload = _sample_payload(aligned)
+        ns: dict = {"payload": None}
+
+        def _run(body: str, sample: dict, env: dict) -> dict:
+            env = dict(env)
+            exec("def handle(payload):\n" + body, env)
+            return env["handle"](sample)
+
+        out = _run(source, payload, ns)
+        assert out.get("ok") is True, (cid, payload, out)
+        guard = _constraint_guard(aligned)
+        gns: dict = {}
+        exec("def handle(payload):\n" + guard + "\n    return {'ok': True}\n", gns)
+        guarded = gns["handle"](payload)
+        assert guarded.get("ok") is True, (cid, payload, guarded)
 
 
 def test_constraint_guard_enforces_required_fields_from_spec():
@@ -401,6 +647,93 @@ def test_sample_payload_covers_every_required_field_type():
     assert isinstance(payload["property_reference_code"], str)
     assert payload["beds"] == 1
     assert isinstance(payload["furnished"], bool)
+
+
+def test_sample_value_uses_truthy_int_when_min_is_zero():
+    """``min=0`` is valid; 0 is falsy and fails ``if not payload.get(...)``."""
+    assert _sample_value({"name": "login_count", "type": "int", "min": 0}) == 1
+    assert _sample_value({"name": "owner_id", "type": "str"}) == "id-1"
+
+
+def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
+    """Pilot rework must refresh samples from on-disk handler contracts."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext, run_tester
+    from app.factory.build.workspace import RoleWorkspace
+
+    class _Cap:
+        def __init__(self, cid):
+            self.capability_id = cid
+            self.block_ids = ()
+
+    class _Plan:
+        capabilities = (_Cap("secure_multi_user_dashboard"),)
+
+    class _Blueprint:
+        product_name = "VetConnect"
+        product_id = "veterinary-services"
+        vertical = "veterinary_services"
+
+    root = tmp_path / "ws"
+    handler = root / "app" / "actions" / "secure_multi_user_dashboard.py"
+    handler.parent.mkdir(parents=True, exist_ok=True)
+    handler.write_text(
+        "def handle(payload):\n"
+        "    if not payload.get('clinic_id'):\n"
+        "        return {'ok': False, 'error': 'clinic_id is missing and "
+        "must be a non-empty string'}\n"
+        "    if payload.get('role') not in ('veterinarian', 'technician', "
+        "'receptionist', 'practice_manager', 'pet_owner'):\n"
+        "        return {'ok': False, 'error': 'role must be one of "
+        "{veterinarian, technician, receptionist, practice_manager, "
+        "pet_owner}'}\n"
+        "    if payload.get('access_level') not in ('admin', 'standard', "
+        "'read_only'):\n"
+        "        return {'ok': False, 'error': 'access_level must be one of "
+        "{admin, standard, read_only}'}\n"
+        "    if not isinstance(payload.get('is_active'), bool):\n"
+        "        return {'ok': False, 'error': 'is_active must be a boolean'}\n"
+        "    if not isinstance(payload.get('login_count'), int) "
+        "or payload['login_count'] < 0:\n"
+        "        return {'ok': False, 'error': 'login_count must be an "
+        "integer >= 0'}\n"
+        "    return {'ok': True}\n",
+        encoding="utf-8",
+    )
+    ws = RoleWorkspace(BuildRole.TESTER, root)
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        work_list=(
+            "secure_multi_user_dashboard rejected a payload built from "
+            "its own schema: clinic_id is missing",
+        ),
+        state={
+            "build_cycle": "pilot",
+            "vendored_blocks": (),
+            "model_specs": {
+                "secure_multi_user_dashboard": {
+                    "entity": "dashboard",
+                    "fields": [
+                        {"name": "role", "type": "str", "required": True},
+                        {"name": "is_active", "type": "str", "required": True},
+                    ],
+                }
+            },
+        },
+    )
+    result = run_tester(ctx)
+    assert result.ok, result.detail
+    routes = ws.read_text(Path("tests") / "test_routes.py")
+    assert "test_every_capability_route_accepts_payload" in routes
+    assert "'role': 'veterinarian'" in routes
+    assert "'access_level': 'admin'" in routes
+    assert "'is_active': True" in routes
+    assert "'clinic_id': 'id-1'" in routes
+    assert "login_count" in routes
+    assert "'role': 'sample'" not in routes
 
 
 def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(tmp_path, monkeypatch):

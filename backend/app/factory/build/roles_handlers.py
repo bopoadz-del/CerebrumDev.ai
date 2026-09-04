@@ -22,8 +22,7 @@ from app.factory.build.offline_adapters import (
     emit_runtime_module,
 )
 from app.factory.build.block_inputs import (
-    align_spec_to_handler_fields,
-    handler_required_fields,
+    align_spec_to_handler_source,
     render_block_inputs_module,
 )
 from app.factory.build.block_obligations import (
@@ -2380,8 +2379,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
 
     # Handlers may validate domain fields the model_specs omitted (live:
-    # property_reference_code). Align specs so _sample_payload and the
-    # route guard agree with the handler before routes/tests are written.
+    # property_reference_code) or enforce a vocabulary/type the spec left as
+    # bare str (live VetConnect role/channel/is_active/login_count). Align
+    # specs so _sample_payload and the route guard agree with the handler
+    # before routes/tests are written.
     aligned_specs = False
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
@@ -2389,9 +2390,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         handler_rel = Path("app") / "actions" / f"{name}.py"
         if not ctx.workspace.exists(handler_rel):
             continue
-        needed = handler_required_fields(ctx.workspace.read_text(handler_rel))
-        specs[cid], added = align_spec_to_handler_fields(specs[cid], needed)
-        if not added:
+        specs[cid], changed = align_spec_to_handler_source(
+            specs[cid], ctx.workspace.read_text(handler_rel)
+        )
+        if not changed:
             continue
         aligned_specs = True
         field_names = [
@@ -2410,10 +2412,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         ctx.workspace.write_text(handler_rel, text)
         ctx.note(
             f"aligned model_specs for {cid} with handler-required fields: "
-            + ", ".join(added),
+            + ", ".join(changed),
             stage="models",
             capability=cid,
-            added=added,
+            added=changed,
         )
     if aligned_specs:
         ctx.workspace.write_text(Path("app") / "models.py", _render_models(specs))
@@ -2828,13 +2830,30 @@ def _sample_value(field: Dict[str, Any]) -> Any:
     temporal = _temporal_sample(field)
     if temporal is not None:
         return temporal
+    name = str(field.get("name") or "").lower()
+    declared = str(field.get("type") or "str").strip().lower()
+    # Name-only fallback when the spec still says str but the handler
+    # (VetConnect) demanded a bool / count. Alignment usually upgrades the
+    # type first; this keeps the sample honest if a stale spec slips through.
+    if declared in ("str", "text", "string", ""):
+        if name.startswith("is_") or name.startswith("has_"):
+            return True
+        if name.endswith("_count") or name in {"capacity", "quantity", "login_count"}:
+            return 1
     ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")
         if lo is not None:
+            # min=0 is a valid bound; 0 is also falsy. LLM handlers often
+            # write ``if not payload.get("capacity")`` so prefer a positive
+            # sample that still satisfies the bound.
+            if lo <= 0 and (hi is None or hi >= 1):
+                return 1 if ftype == "int" else 1.0
             return lo
         if hi is not None:
             return hi if hi < _SAMPLE_VALUES[ftype] else _SAMPLE_VALUES[ftype]
+    if ftype == "str" and (name.endswith("_id") or name.endswith("_code")):
+        return "id-1"
     return _SAMPLE_VALUES.get(ftype, "sample")
 
 
@@ -2917,7 +2936,23 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             )
     caps = [c.capability_id.replace("-", "_") for c in ctx.plan.capabilities]
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
-    specs = ctx.state.get("model_specs") or {}
+    specs = {
+        cid: dict(spec) if isinstance(spec, dict) else spec
+        for cid, spec in dict(ctx.state.get("model_specs") or {}).items()
+    }
+    # Late align: coder rework may have rewritten handlers after WRITER's
+    # first align, or left vocab/type on the handler that the spec never
+    # declared. Re-mine on-disk handlers so _sample_payload matches the
+    # body TESTER is about to exercise (live VetConnect miss).
+    for cap in ctx.plan.capabilities:
+        cid = cap.capability_id
+        handler_rel = Path("app") / "actions" / f"{cid.replace('-', '_')}.py"
+        if not ctx.workspace.exists(handler_rel):
+            continue
+        specs[cid], _changed = align_spec_to_handler_source(
+            specs.get(cid) or {},
+            ctx.workspace.read_text(handler_rel),
+        )
     entities = {
         cap.capability_id.replace("-", "_"): specs.get(cap.capability_id, {}).get(
             "entity", cap.capability_id.replace("-", "_")
@@ -3287,6 +3322,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "entities": entities,
             "agent_domain_cases": admitted,
             "agent_domain_model": case_model,
+            "model_specs": specs,
         },
     )
 

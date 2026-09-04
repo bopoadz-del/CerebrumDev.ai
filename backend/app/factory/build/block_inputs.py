@@ -41,40 +41,116 @@ _DOC_PATH_KEYS = (
 #: Team fields the Store block lowercases; None must never reach them.
 _TEAM_STRING_KEYS = ("user_id", "name", "slug", "role", "email", "plan", "permission")
 
-#: Error / guard patterns that name a domain field the handler requires.
-_HANDLER_REQUIRED_PATTERNS = (
-    re.compile(
-        r"Missing required field[:\s]+['\"]?([A-Za-z_][\w]*)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"""if\s+['\"]([A-Za-z_][\w]*)['\"]\s+not in\s+payload""",
-    ),
-    re.compile(
-        r"""['\"]([A-Za-z_][\w]*)['\"]\s+is required""",
-        re.IGNORECASE,
-    ),
-)
-
-_SKIP_REQUIRED_NAMES = frozenset(
+#: Envelope keys that are never domain columns (return-shape / dispatch).
+_ENVELOPE_NAMES = frozenset(
     {
         "ok",
         "error",
         "capability",
         "id",
-        "status",
         "result",
         "results",
         "payload",
         "action",
         "block",
         "blocks",
-        "channel",
-        "message",
-        "steps",
-        "team_id",
     }
 )
+
+#: Block-contract keys ``prepare_block_input`` constructs. Still skipped when
+#: building notification summaries, but alignment MAY treat ``channel`` /
+#: ``message`` as domain fields when a handler validates them as such
+#: (live VetConnect: reminder ``channel`` ∈ email/sms/…).
+_BLOCK_CONTRACT_NAMES = frozenset({"channel", "message", "steps", "team_id"})
+
+#: Summary / prepare_block_input skip set (envelope + block-contract).
+_SKIP_REQUIRED_NAMES = _ENVELOPE_NAMES | _BLOCK_CONTRACT_NAMES | {"status"}
+
+#: Alignment never copies envelope keys or workflow/team construction keys.
+#: ``status`` and ``channel`` stay eligible — they are common domain columns.
+_ALIGN_SKIP_NAMES = _ENVELOPE_NAMES | frozenset({"steps", "team_id"})
+
+_FIELD_NAME = r"[A-Za-z_][\w]*"
+
+#: Error / guard patterns that name a domain field the handler requires.
+_HANDLER_REQUIRED_PATTERNS = (
+    re.compile(
+        r"Missing required field[:\s]+['\"]?(" + _FIELD_NAME + r")",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""if\s+['\"](""" + _FIELD_NAME + r""")['\"]\s+not in\s+payload""",
+    ),
+    re.compile(
+        r"""['\"](""" + _FIELD_NAME + r""")['\"]\s+is required""",
+        re.IGNORECASE,
+    ),
+    # Live VetConnect: "pet_id is missing and must be a non-empty string"
+    re.compile(
+        r"""\b(""" + _FIELD_NAME + r""")\s+is missing\b""",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"""if\s+not\s+payload\.get\(\s*['\"](""" + _FIELD_NAME + r""")['\"]""",
+    ),
+    re.compile(
+        r"""payload\.get\(\s*['\"](""" + _FIELD_NAME + r""")['\"]\s*\)\s+in\s+\(None""",
+    ),
+)
+
+#: "Missing required fields: pet_name, owner_name, appointment_date"
+_MISSING_FIELDS_LIST = re.compile(
+    r"Missing required fields?\s*:\s*(.+?)(?:\"|'|$)",
+    re.IGNORECASE,
+)
+
+#: required / needed = ["pet_name", "owner_name"]
+_REQUIRED_ASSIGNMENT = re.compile(
+    r"""(?:required(?:_fields)?|needed)\s*=\s*(\[[^\]]+\]|\([^)]+\))""",
+    re.IGNORECASE,
+)
+
+_IDENT_IN_LIST = re.compile(r"""['\"](""" + _FIELD_NAME + r""")['\"]""")
+
+#: role must be one of {veterinarian, technician, …}
+_MUST_BE_ONE_OF = re.compile(
+    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be one of\s*[:\{{]\s*([^}}\n'\"]+)""",
+    re.IGNORECASE,
+)
+
+#: payload.get("role") not in ("veterinarian", "technician")
+_GET_NOT_IN = re.compile(
+    r"""payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
+    + _FIELD_NAME
+    + r""")['\"]\s*\)?\s+not in\s*(\[[^\]]+\]|\([^)]+\)|\{[^}]+\})""",
+    re.IGNORECASE,
+)
+
+_MUST_BE_BOOL = re.compile(
+    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be a boolean""",
+    re.IGNORECASE,
+)
+_MUST_BE_INT = re.compile(
+    r"""['\"]?("""
+    + _FIELD_NAME
+    + r""")['\"]?\s+must be an integer(?:\s*>=\s*(-?\d+))?""",
+    re.IGNORECASE,
+)
+_MUST_BE_NONEMPTY = re.compile(
+    r"""['\"]?(""" + _FIELD_NAME + r""")['\"]?\s+must be a non-empty string""",
+    re.IGNORECASE,
+)
+_ISINSTANCE_BOOL = re.compile(
+    r"""isinstance\(\s*payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
+    + _FIELD_NAME
+    + r""")['\"][^,]*,\s*bool""",
+)
+_ISINSTANCE_INT = re.compile(
+    r"""isinstance\(\s*payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
+    + _FIELD_NAME
+    + r""")['\"][^,]*,\s*int""",
+)
+_VALUE_TOKEN = re.compile(r"""['\"]([^'\"]+)['\"]|([A-Za-z][\w-]*)""")
 
 
 def split_execute_action(
@@ -268,47 +344,239 @@ def _for_analytics(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _usable_align_name(name: Optional[str]) -> Optional[str]:
+    name = str(name or "").strip()
+    if not name or name in _ALIGN_SKIP_NAMES:
+        return None
+    return name
+
+
+def _names_from_list_text(raw: str) -> List[str]:
+    found: List[str] = []
+    for match in _IDENT_IN_LIST.finditer(raw or ""):
+        name = _usable_align_name(match.group(1))
+        if name:
+            found.append(name)
+    if found:
+        return found
+    # Unquoted: pet_name, owner_name, appointment_date
+    for part in re.split(r"[,;]", raw or ""):
+        token = re.sub(r"[^A-Za-z0-9_]+", "", part)
+        name = _usable_align_name(token)
+        if name:
+            found.append(name)
+    return found
+
+
+def _parse_value_list(raw: str) -> List[str]:
+    """Split a handler enum listing into distinct string values."""
+    values, seen = [], set()
+    for match in _VALUE_TOKEN.finditer(raw or ""):
+        token = next((g for g in match.groups() if g), None)
+        if not token:
+            continue
+        token = token.strip().strip("{}[]()\"'")
+        if not token or token.lower() in _ALIGN_SKIP_NAMES:
+            continue
+        if token not in seen:
+            seen.add(token)
+            values.append(token)
+    return values
+
+
+def _inferred_field_shape(name: str) -> Dict[str, Any]:
+    """Type hint from a handler-required name when the body has no type check.
+
+    This is not vocabulary invention: it only picks bool/int so
+    ``_sample_payload`` does not emit the word ``sample`` for ``is_active``
+    or ``login_count``. Enums still come from handler text.
+    """
+    n = name.lower()
+    if n.startswith("is_") or n.startswith("has_"):
+        return {"type": "bool", "required": True}
+    if n.endswith("_count") or n in {"capacity", "quantity", "login_count"}:
+        return {"type": "int", "required": True, "min": 0}
+    return {"type": "str", "required": True}
+
+
+def _merge_field_contract(
+    field: Dict[str, Any],
+    contract: Optional[Dict[str, Any]],
+) -> bool:
+    """Copy mined type / vocab / bounds onto ``field``. Returns True if changed."""
+    if not contract:
+        return False
+    changed = False
+    ctype = contract.get("type")
+    if ctype and (
+        not field.get("type")
+        or (str(field.get("type")) in {"str", "text", "string"} and ctype != "str")
+    ):
+        field["type"] = ctype
+        changed = True
+    allowed = contract.get("allowed_values")
+    if allowed and not field.get("allowed_values"):
+        field["allowed_values"] = list(allowed)
+        changed = True
+    if contract.get("min") is not None and field.get("min") is None:
+        field["min"] = contract["min"]
+        changed = True
+    if contract.get("max") is not None and field.get("max") is None:
+        field["max"] = contract["max"]
+        changed = True
+    if contract.get("required") and not field.get("required"):
+        field["required"] = True
+        changed = True
+    return changed
+
+
 def handler_required_fields(handler_source: str) -> List[str]:
     """Domain field names a handler body treats as required."""
     found: List[str] = []
     text = handler_source or ""
     for pattern in _HANDLER_REQUIRED_PATTERNS:
         for match in pattern.finditer(text):
-            name = next((g for g in match.groups() if g), None)
-            if name and name not in _SKIP_REQUIRED_NAMES:
+            name = _usable_align_name(next((g for g in match.groups() if g), None))
+            if name:
                 found.append(name)
+    for match in _MISSING_FIELDS_LIST.finditer(text):
+        found.extend(_names_from_list_text(match.group(1)))
+    for match in _REQUIRED_ASSIGNMENT.finditer(text):
+        found.extend(_names_from_list_text(match.group(1)))
     return sorted(set(found))
+
+
+def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
+    """Required names plus type / vocabulary / bounds the handler enforces.
+
+    Live VetConnect (sess_73409fa): LLM handlers demanded ``role`` ∈
+    {veterinarian, …}, ``is_active`` bool, ``login_count`` int ≥ 0, and
+    non-empty ``*_id`` columns the model_specs never declared. Mining the
+    contracts lets ``align_spec_to_handler_fields`` and ``_sample_payload``
+    stay in lockstep without fabricating Store inputs.
+    """
+    text = handler_source or ""
+    contracts: Dict[str, Dict[str, Any]] = {}
+
+    def _touch(name: Optional[str]) -> Optional[Dict[str, Any]]:
+        usable = _usable_align_name(name)
+        if not usable:
+            return None
+        return contracts.setdefault(usable, {"name": usable, "required": True})
+
+    for name in handler_required_fields(text):
+        _touch(name)
+
+    for match in _MUST_BE_ONE_OF.finditer(text):
+        slot = _touch(match.group(1))
+        values = _parse_value_list(match.group(2))
+        if slot and values:
+            slot["allowed_values"] = values
+            slot.setdefault("type", "str")
+
+    for match in _GET_NOT_IN.finditer(text):
+        slot = _touch(match.group(1))
+        values = _parse_value_list(match.group(2))
+        if slot and values:
+            slot["allowed_values"] = values
+            slot.setdefault("type", "str")
+
+    for match in _MUST_BE_BOOL.finditer(text):
+        slot = _touch(match.group(1))
+        if slot:
+            slot["type"] = "bool"
+
+    for match in _ISINSTANCE_BOOL.finditer(text):
+        slot = _touch(match.group(1))
+        if slot:
+            slot["type"] = "bool"
+
+    for match in _MUST_BE_INT.finditer(text):
+        slot = _touch(match.group(1))
+        if not slot:
+            continue
+        slot["type"] = "int"
+        if match.group(2) is not None:
+            slot["min"] = int(match.group(2))
+
+    for match in _ISINSTANCE_INT.finditer(text):
+        slot = _touch(match.group(1))
+        if slot:
+            slot.setdefault("type", "int")
+
+    for match in _MUST_BE_NONEMPTY.finditer(text):
+        slot = _touch(match.group(1))
+        if slot:
+            slot.setdefault("type", "str")
+
+    return contracts
 
 
 def align_spec_to_handler_fields(
     spec: Optional[Dict[str, Any]],
     required_names: Iterable[str],
+    contracts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[Dict[str, Any], List[str]]:
-    """Add handler-required domain fields the model_specs omitted.
+    """Add / enrich handler-required domain fields the model_specs omitted.
 
     Live miss: handler validated ``property_reference_code`` while the
     model_specs (and therefore ``_sample_payload``) never declared it, so
     pilot rejected "a payload built from its own schema".
+
+    A later VetConnect miss: fields existed as bare ``str`` (or were skipped
+    because ``status`` / ``channel`` sat on the envelope skip list) while the
+    handler enforced a vocabulary, a bool, or ``int >= 0``. This merge copies
+    those contracts onto the spec so the sample payload satisfies the guard.
     """
     base = dict(spec or {})
     fields = [dict(f) for f in (base.get("fields") or []) if isinstance(f, dict)]
-    have = {str(f.get("name")) for f in fields if f.get("name")}
-    added: List[str] = []
+    by_name = {str(f.get("name")): f for f in fields if f.get("name")}
+    contracts = dict(contracts or {})
+    changed: List[str] = []
+
+    names: List[str] = []
     for name in required_names:
-        name = str(name or "").strip()
-        if not name or name in have or name in _SKIP_REQUIRED_NAMES:
+        usable = _usable_align_name(name)
+        if usable and usable not in names:
+            names.append(usable)
+    for name in contracts:
+        usable = _usable_align_name(name)
+        if usable and usable not in names:
+            names.append(usable)
+
+    for name in names:
+        contract = contracts.get(name) or {}
+        if name in by_name:
+            if _merge_field_contract(by_name[name], contract):
+                changed.append(name)
             continue
-        fields.append({"name": name, "type": "str", "required": True})
-        have.add(name)
-        added.append(name)
-    if not added:
+        field = {"name": name, **_inferred_field_shape(name)}
+        _merge_field_contract(field, contract)
+        fields.append(field)
+        by_name[name] = field
+        changed.append(name)
+
+    if not changed:
         return base if spec is not None else {"fields": fields}, []
     out = dict(base)
     out["fields"] = fields
     notes = list(out.get("handler_aligned_fields") or [])
-    notes.extend(added)
+    notes.extend(changed)
     out["handler_aligned_fields"] = notes
-    return out, added
+    return out, changed
+
+
+def align_spec_to_handler_source(
+    spec: Optional[Dict[str, Any]],
+    handler_source: str,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Mine a handler (or route) body and align the spec in one step."""
+    contracts = handler_field_contracts(handler_source)
+    return align_spec_to_handler_fields(
+        spec,
+        handler_required_fields(handler_source),
+        contracts=contracts,
+    )
 
 
 def render_block_inputs_module() -> str:
