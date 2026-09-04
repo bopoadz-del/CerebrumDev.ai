@@ -440,9 +440,11 @@ def _merge_workspace_harvest(
             "[harvest] workspace "
             f"specs={sorted(harvested_specs)} kept_handlers={merged}",
         )
-    # Prefer a keepable on-disk workflow handler over an oneshot body that
-    # never named event_bus steps — wrapping that body is the envelope
-    # rewrite that dropped brief-driven steps (sess_e94ddfa797ea4a45).
+    # Same-session CLI: prefer on-disk workflow steps over a thin JSON
+    # body. Do not do this for HTTP oneshot — leftover files from a red
+    # PRODUCT round would pin the failing handler and block rework.
+    if result.via != "cli":
+        return
     for cid in list(result.handlers):
         name = str(cid).replace("-", "_")
         path = Path(root) / "app" / "actions" / f"{name}.py"
@@ -547,9 +549,11 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         result = _http_oneshot(ctx, compiled)
         if result.via == "skipped":
             result.blocker = NAMED_BLOCKER_CLI
-        # Oneshot / template fallback still harvests workspace files so
-        # brief-driven workflow steps survive the envelope rewrite.
-        _merge_workspace_harvest(result, root, list(compiled.capabilities))
+        elif result.ok:
+            # Harvest only a successful oneshot. A skipped / failed shot
+            # must not treat the previous round's files as "kept" or a
+            # rework pass cannot regenerate the failing capability.
+            _merge_workspace_harvest(result, root, list(compiled.capabilities))
 
     receipt = {
         "via": result.via,

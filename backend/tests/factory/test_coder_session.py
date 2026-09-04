@@ -187,8 +187,8 @@ def test_harvest_keeps_brief_driven_workflow_steps_without_capability_id(tmp_pat
     assert specs == {}
 
 
-def test_harvest_oneshot_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
-    """HTTP oneshot envelope must not replace brief-driven event_bus steps."""
+def test_harvest_cli_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
+    """Same-session CLI: thin JSON body must not replace brief-driven steps."""
     root = tmp_path / "ws"
     actions = root / "app" / "actions"
     actions.mkdir(parents=True)
@@ -202,9 +202,9 @@ def test_harvest_oneshot_body_does_not_overwrite_workspace_workflow_steps(tmp_pa
         encoding="utf-8",
     )
     result = DispatchResult(
-        via="http_oneshot",
+        via="cli",
         ok=True,
-        detail="oneshot",
+        detail="cli",
         handlers={
             "reminders_and_notifications": (
                 "return {'ok': True, 'capability': 'reminders_and_notifications'}"
@@ -216,6 +216,31 @@ def test_harvest_oneshot_body_does_not_overwrite_workspace_workflow_steps(tmp_pa
     )
     assert "reminders_and_notifications" in result.kept_handler_ids
     assert "reminders_and_notifications" not in result.handlers
+
+
+def test_harvest_oneshot_does_not_pin_a_previous_round_handler(tmp_path):
+    """Rework oneshot must keep its body so a red PRODUCT handler can change."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "reminders_and_notifications.py").write_text(
+        "def handle(payload):\n"
+        "    steps = [{'block': 'event_bus', 'input': payload}]\n"
+        "    return execute('workflow', {'steps': steps})\n",
+        encoding="utf-8",
+    )
+    body = "return {'ok': True, 'capability': 'reminders_and_notifications'}"
+    result = DispatchResult(
+        via="http_oneshot",
+        ok=True,
+        detail="oneshot",
+        handlers={"reminders_and_notifications": body},
+    )
+    _merge_workspace_harvest(
+        result, root, ["reminders_and_notifications"]
+    )
+    assert result.handlers["reminders_and_notifications"] == body
+    assert "reminders_and_notifications" in result.kept_handler_ids
 
 
 def test_harvest_cli_artifacts_keeps_handle_modules(tmp_path):
