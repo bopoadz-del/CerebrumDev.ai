@@ -24,6 +24,7 @@ from app.factory.build.offline_adapters import (
 from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
     render_block_inputs_module,
+    sanitize_python_identifier,
 )
 from app.factory.build.block_obligations import (
     assert_feedable,
@@ -1030,6 +1031,15 @@ def _fallback_spec(cap: Any) -> Dict[str, Any]:
     }
 
 
+def _entity_class_name(entity: str) -> str:
+    """PascalCase class name that is always a valid Python identifier."""
+    raw = re.sub(r"[^0-9A-Za-z_]+", "_", str(entity or "record"))
+    cls = "".join(p.title() for p in raw.split("_") if p) or "Record"
+    if cls[0].isdigit() or not cls.isidentifier():
+        cls = f"Record{cls}" if cls and cls[0].isdigit() else "Record"
+    return cls
+
+
 def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
     """dataclass per entity. Stdlib only, so the artifact needs no ORM."""
     out = [
@@ -1046,8 +1056,36 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
         "",
         "",
     ]
+    class_names: Dict[str, str] = {}
+    used_classes: set[str] = set()
     for cap_id, spec in sorted(specs.items()):
-        cls = "".join(p.title() for p in spec["entity"].split("_")) or "Record"
+        cls = _entity_class_name(spec["entity"])
+        if cls in used_classes:
+            cls = sanitize_python_identifier(cls, used=used_classes)
+        else:
+            used_classes.add(cls)
+        class_names[cap_id] = cls
+        reserved = {
+            "id",
+            "self",
+            "FIELDS",
+            "CONSTRAINTS",
+            "_FIELD_PY",
+            "_FIELD_JSON",
+            "to_dict",
+            "from_dict",
+        }
+        rendered: List[tuple[Dict[str, Any], str]] = []
+        for f in spec["fields"]:
+            original = str(f.get("name") or "").strip()
+            attr = sanitize_python_identifier(original, used=reserved)
+            rendered.append((f, attr))
+        json_to_py = {
+            str(f["name"]): attr
+            for f, attr in rendered
+            if str(f.get("name") or "") != attr
+        }
+        py_to_json = {attr: str(f["name"]) for f, attr in rendered if str(f.get("name") or "") != attr}
         out += [
             "@dataclass",
             f"class {cls}:",
@@ -1055,9 +1093,9 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             "",
             "    id: Optional[int] = None",
         ]
-        for f in spec["fields"]:
+        for f, attr in rendered:
             out.append(
-                f"    {f['name']}: {_python_annotation(f)} = {_field_default(f)}"
+                f"    {attr}: {_python_annotation(f)} = {_field_default(f)}"
             )
         out += [
             "",
@@ -1066,21 +1104,29 @@ def _render_models(specs: Dict[str, Dict[str, Any]]) -> str:
             # validates against these and the tests build payloads from them,
             # so neither side can invent a rule the other cannot satisfy.
             "    CONSTRAINTS = " + repr(_constraints_of(spec)),
+            "    _FIELD_PY = " + repr(json_to_py),
+            "    _FIELD_JSON = " + repr(py_to_json),
             "",
             "    def to_dict(self) -> Dict[str, Any]:",
-            "        return asdict(self)",
+            "        raw = asdict(self)",
+            "        return {self._FIELD_JSON.get(k, k): v for k, v in raw.items()}",
             "",
             "    @classmethod",
             "    def from_dict(cls, data: Dict[str, Any]) -> \"" + cls + "\":",
-            "        known = {k: v for k, v in (data or {}).items() if k in cls.FIELDS}",
+            "        known = {}",
+            "        for k, v in (data or {}).items():",
+            "            if k == \"id\":",
+            "                continue",
+            "            attr = cls._FIELD_PY.get(k, k)",
+            "            if k in cls.FIELDS or attr in cls._FIELD_JSON:",
+            "                known[attr] = v",
             "        return cls(id=(data or {}).get(\"id\"), **known)",
             "",
             "",
         ]
     out.append("MODELS = {")
-    for cap_id, spec in sorted(specs.items()):
-        cls = "".join(p.title() for p in spec["entity"].split("_")) or "Record"
-        out.append(f'    "{cap_id}": {cls},')
+    for cap_id in sorted(specs):
+        out.append(f'    "{cap_id}": {class_names[cap_id]},')
     out.append("}")
     return "\n".join(out) + "\n"
 

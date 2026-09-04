@@ -175,6 +175,80 @@ def test_coder_keeps_datetime_fields_as_iso_text(monkeypatch):
     assert by_name["service_type"]["type"] == "str"
 
 
+def test_reserved_keyword_field_names_render_and_round_trip():
+    """Live veterinary-care: mined ``and`` (and LLM ``class`` / ``for``)
+    must become valid attributes and still map JSON keys."""
+    spec = {
+        "secure_multi_user_dashboard": {
+            "entity": "dashboard",
+            "fields": [
+                {"name": "and", "type": "str", "required": True},
+                {"name": "class", "type": "str", "required": True},
+                {"name": "for", "type": "str", "required": True},
+                {"name": "pet-id", "type": "str", "required": True},
+            ],
+        }
+    }
+    src = _render_models(spec)
+    assert "    and:" not in src
+    assert "    class:" not in src
+    assert "    for:" not in src
+    assert "    and_:" in src
+    assert "    class_:" in src
+    assert "    for_:" in src
+    assert "    pet_id:" in src
+    ns: dict = {}
+    exec(compile(src, "<models>", "exec"), ns)
+    cls = ns["MODELS"]["secure_multi_user_dashboard"]
+    payload = {
+        "and": "conjunction",
+        "class": "mammals",
+        "for": "clinic",
+        "pet-id": "p-1",
+    }
+    row = cls.from_dict(payload)
+    assert row.and_ == "conjunction"
+    assert row.class_ == "mammals"
+    assert row.for_ == "clinic"
+    assert row.pet_id == "p-1"
+    assert row.to_dict()["and"] == "conjunction"
+    assert row.to_dict()["class"] == "mammals"
+    assert row.to_dict()["pet-id"] == "p-1"
+
+
+def test_generate_model_spec_sanitizes_keyword_and_illegal_names(monkeypatch):
+    from app.factory import coder as coder_mod
+
+    monkeypatch.setattr(
+        coder_mod,
+        "_llm_code_call",
+        lambda _messages: (
+            '{"entity": "record", "fields": ['
+            '{"name": "and", "type": "str", "required": true},'
+            '{"name": "class", "type": "str", "required": true},'
+            '{"name": "pet-name", "type": "str", "required": true},'
+            '{"name": "status", "type": "str", "required": true}'
+            "]}",
+            "stub",
+        ),
+    )
+    spec = generate_model_spec(
+        capability_id="secure_multi_user_dashboard",
+        description="role dashboard",
+        product_name="VetCare Hub",
+        vertical="veterinary-care",
+    )
+    names = [f["name"] for f in spec["fields"]]
+    assert "and" not in names
+    assert "class" not in names
+    assert "and_" in names
+    assert "class_" in names
+    assert "pet_name" in names
+    assert "status" in names
+    src = _render_models({"secure_multi_user_dashboard": spec})
+    exec(compile(src, "<models>", "exec"), {})
+
+
 def test_a_vocabulary_is_accepted_and_deduped():
     out = _clean_constraints(
         {"allowed_values": ["open", "closed", "open", " done "]}, "str"
