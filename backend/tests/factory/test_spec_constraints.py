@@ -71,6 +71,21 @@ def test_appointment_time_fields_sample_iso_not_the_word_sample():
     assert _sample_value({"name": "duration_minutes", "type": "int", "min": 1}) == 1
 
 
+def test_channel_fields_sample_a_store_known_value_not_the_word_sample():
+    """Live sess_67fe60f7: automated_reminders schema sample was channel=sample."""
+    from app.factory.build.block_inputs import STORE_NOTIFICATION_CHANNELS
+
+    assert _sample_value({"name": "channel", "type": "str"}) != "sample"
+    assert _sample_value({"name": "channel", "type": "str"}) in STORE_NOTIFICATION_CHANNELS
+    assert _sample_value({"name": "notify_channel", "type": "str"}) != "sample"
+    assert _sample_value(
+        {"name": "channel", "type": "str", "allowed_values": ["sms", "email"]}
+    ) == "email"
+    assert _sample_value(
+        {"name": "channel", "type": "str", "allowed_values": ["sms", "push"]}
+    ) == "sms"
+
+
 def test_coder_route_that_saves_the_handle_envelope_is_rewritten_to_payload():
     """Live zip POSTed ok:true then stored all-null rows because the coder
     persisted handle()'s {ok, data} envelope instead of the request."""

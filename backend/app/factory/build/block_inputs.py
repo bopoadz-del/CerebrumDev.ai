@@ -28,7 +28,9 @@ handler-layer adaptation, not F18 fabrication inside ``dispatch.py``
 
 Only missing constructible keys are filled. Values the handler already
 supplied are left alone, except a domain-looking ``team_id`` (not minted
-by ``create_team``) which is replaced by the platform precondition id.
+by ``create_team``) which is replaced by the platform precondition id,
+and a reminder ``channel`` that is not a Store notification channel
+(``sample`` / ``sms`` / ``in_process``) which is rewritten to ``mcp``.
 """
 
 from __future__ import annotations
@@ -82,6 +84,14 @@ _ENVELOPE_NAMES = frozenset(
 #: ``message`` as domain fields when a handler validates them as such
 #: (live VetConnect: reminder ``channel`` ∈ email/sms/…).
 _BLOCK_CONTRACT_NAMES = frozenset({"channel", "message", "steps", "team_id"})
+
+#: Cerebrum-Blocks ``NotificationBlock._send`` handlers. Anything else
+#: (including the schema-sample word ``sample``) is
+#: ``Unknown channel: …``. Offline email/webhook/slack also need extra
+#: fields the domain record does not have (``to`` / ``url``).
+STORE_NOTIFICATION_CHANNELS = frozenset({"mcp", "email", "webhook", "slack"})
+_OFFLINE_NOTIFICATION_CHANNEL = "mcp"
+_DOMAIN_CHANNEL_SAMPLE = "email"
 
 #: Summary / prepare_block_input skip set (envelope + block-contract).
 _SKIP_REQUIRED_NAMES = _ENVELOPE_NAMES | _BLOCK_CONTRACT_NAMES | {"status"}
@@ -316,10 +326,61 @@ def _for_dashboard(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def sample_channel_value(allowed: Optional[Sequence[Any]] = None) -> str:
+    """Schema-sample for a reminder / notification ``channel`` field.
+
+    A bare str field used to sample as ``"sample"``. Live VetCare Hub
+    ``automated_reminders`` (sess_67fe60f7) forwarded that into
+    notification / event_bus and the Store raised
+    ``RuntimeError: Unknown channel: sample``. Prefer a Store-known
+    value from ``allowed_values``; otherwise ``email`` (domain-typical
+    and Store-listed). ``prepare_block_input`` still rewrites placeholders
+    and delivery channels that lack their extra fields onto ``mcp``.
+    """
+    if allowed:
+        for cand in allowed:
+            raw = str(cand).strip()
+            if raw.lower() in STORE_NOTIFICATION_CHANNELS:
+                return raw
+        first = allowed[0]
+        if isinstance(first, str) and first.strip():
+            return first.strip()
+    return _DOMAIN_CHANNEL_SAMPLE
+
+
+def notification_channel(
+    value: Any, data: Optional[Dict[str, Any]] = None
+) -> str:
+    """Map a domain/reminder channel onto a Store-accepted notification channel.
+
+    ``sample``, ``sms``, ``push``, ``in_process`` are not Store channels.
+    ``email`` / ``webhook`` / ``slack`` are listed but fail closed offline
+    without ``to`` / ``url`` / a Slack webhook — those become ``mcp``.
+    """
+    raw = str(value or "").strip().lower()
+    payload = data if isinstance(data, dict) else {}
+    if raw == "mcp":
+        return "mcp"
+    if raw == "email":
+        to = payload.get("to") or payload.get("email")
+        if isinstance(to, str) and to.strip() and "@" in to:
+            return "email"
+        return _OFFLINE_NOTIFICATION_CHANNEL
+    if raw == "webhook":
+        url = payload.get("url") or payload.get("webhook_url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return "webhook"
+        return _OFFLINE_NOTIFICATION_CHANNEL
+    if raw == "slack":
+        if payload.get("webhook_url") or payload.get("slack_webhook_url"):
+            return "slack"
+        return _OFFLINE_NOTIFICATION_CHANNEL
+    return _OFFLINE_NOTIFICATION_CHANNEL
+
+
 def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
     out = dict(data)
-    if not out.get("channel"):
-        out["channel"] = "mcp"
+    out["channel"] = notification_channel(out.get("channel"), out)
     if not out.get("message"):
         body = out.get("body")
         out["message"] = body if isinstance(body, str) and body.strip() else _summary_message(data)
@@ -558,8 +619,7 @@ def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
     out.setdefault("event", out["topic"])
     if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
         out["message"] = _summary_message(data)
-    if not out.get("channel"):
-        out["channel"] = "mcp"
+    out["channel"] = notification_channel(out.get("channel"), out)
     return out
 
 
@@ -1242,10 +1302,31 @@ def _for_dashboard(data: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _notification_channel(value, data=None):
+    raw = str(value or "").strip().lower()
+    payload = data if isinstance(data, dict) else {}
+    if raw == "mcp":
+        return "mcp"
+    if raw == "email":
+        to = payload.get("to") or payload.get("email")
+        if isinstance(to, str) and to.strip() and "@" in to:
+            return "email"
+        return "mcp"
+    if raw == "webhook":
+        url = payload.get("url") or payload.get("webhook_url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return "webhook"
+        return "mcp"
+    if raw == "slack":
+        if payload.get("webhook_url") or payload.get("slack_webhook_url"):
+            return "slack"
+        return "mcp"
+    return "mcp"
+
+
 def _for_notification(data: Dict[str, Any], roster: Sequence[str]) -> Dict[str, Any]:
     out = dict(data)
-    if not out.get("channel"):
-        out["channel"] = "mcp"
+    out["channel"] = _notification_channel(out.get("channel"), out)
     if not out.get("message"):
         body = out.get("body")
         out["message"] = (
@@ -1428,8 +1509,7 @@ def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
     out.setdefault("event", out["topic"])
     if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
         out["message"] = _summary_message(data)
-    if not out.get("channel"):
-        out["channel"] = "mcp"
+    out["channel"] = _notification_channel(out.get("channel"), out)
     return out
 
 

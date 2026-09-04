@@ -133,6 +133,10 @@ _SUITE_ASSERTION_CLASSES: tuple[tuple[str, str], ...] = (
         "schema sample refused (status vocabulary)",
     ),
     (
+        "Unknown channel:",
+        "schema sample refused (notification channel)",
+    ),
+    (
         "not JSON serializable",
         "e2e handle() result not JSON serializable",
     ),

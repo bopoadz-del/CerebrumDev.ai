@@ -27,6 +27,7 @@ from app.factory.build.block_inputs import (
     align_spec_to_handler_source,
     extract_capability_route_source,
     render_block_inputs_module,
+    sample_channel_value,
     sanitize_python_identifier,
 )
 from app.factory.build.block_obligations import (
@@ -3095,6 +3096,9 @@ def _sample_value(field: Dict[str, Any]) -> Any:
     to delete its own validation.
     """
     if field.get("allowed_values"):
+        name = str(field.get("name") or "").lower()
+        if name == "channel" or name.endswith("_channel"):
+            return sample_channel_value(field["allowed_values"])
         return field["allowed_values"][0]
     if _looks_like_email_field(field):
         return "guest@example.com"
@@ -3117,6 +3121,11 @@ def _sample_value(field: Dict[str, Any]) -> Any:
         # (sess_5dfb4a3 appointment_scheduling).
         if name == "status" or name.endswith("_status"):
             return "open"
+        # Live sess_67fe60f7 automated_reminders: bare ``channel`` sampled
+        # as "sample" and the Store notification / event_bus notify path
+        # raised ``Unknown channel: sample``.
+        if name == "channel" or name.endswith("_channel"):
+            return sample_channel_value()
     ftype = _normalize_field_type(field.get("type") or "str")
     if ftype in ("int", "float"):
         lo, hi = field.get("min"), field.get("max")

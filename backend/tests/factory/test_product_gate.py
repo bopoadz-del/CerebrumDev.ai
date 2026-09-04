@@ -289,6 +289,7 @@ def test_the_probe_payload_matches_the_writer_probe_s():
             "status",
             "scheduled_time",
             "duration_minutes",
+            "channel",
         ]
         CONSTRAINTS = {
             "status": {"allowed_values": ["draft", "live"]},
@@ -303,6 +304,7 @@ def test_the_probe_payload_matches_the_writer_probe_s():
             "status": "str",
             "scheduled_time": "str",
             "duration_minutes": "int",
+            "channel": "str",
         }
 
     writer_payload = lift_payload(writer_src)(Model)
@@ -310,6 +312,8 @@ def test_the_probe_payload_matches_the_writer_probe_s():
     assert writer_payload["scheduled_time"] == "10:00:00"
     assert writer_payload["scheduled_time"] != "sample"
     assert writer_payload["duration_minutes"] == 1
+    assert writer_payload["channel"] != "sample"
+    assert writer_payload["channel"] == "email"
 
 
 def test_a_returned_record_counts_only_when_it_carries_a_supplied_value():

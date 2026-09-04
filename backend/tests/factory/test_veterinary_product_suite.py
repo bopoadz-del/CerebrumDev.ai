@@ -41,6 +41,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.factory.build.block_inputs import (
+    STORE_NOTIFICATION_CHANNELS,
     align_spec_to_handler_source,
     extract_capability_route_source,
     prepare_block_input,
@@ -233,9 +234,11 @@ def test_veterinary_product_prepare_repairs_live_product_symptoms():
             "event_bus", payload, product_name="VetCare Hub", roster=roster
         )
         assert isinstance(bus["topic"], str) and bus["topic"]
-        # Domain reminder `channel` (email/sms/…) is left alone; only a
-        # missing channel is filled with mcp (live notify miss).
-        assert isinstance(bus.get("channel"), str) and bus["channel"]
+        # Schema-sample ``channel=sample`` is not a Store channel (live
+        # sess_67fe60f7 Unknown channel: sample). Missing / placeholder /
+        # delivery channels without extra fields become mcp.
+        assert bus["channel"] in STORE_NOTIFICATION_CHANNELS
+        assert bus["channel"] != "sample"
         if "channel" not in domain:
             assert bus["channel"] == "mcp"
         assert isinstance(bus.get("payload"), dict)
@@ -265,10 +268,12 @@ def test_veterinary_product_prepare_repairs_live_product_symptoms():
         if "database" in by_block:
             assert by_block["database"]["table"] == entity
         if "event_bus" in by_block:
-            assert by_block["event_bus"].get("channel")
+            assert by_block["event_bus"]["channel"] in STORE_NOTIFICATION_CHANNELS
+            assert by_block["event_bus"]["channel"] != "sample"
             assert by_block["event_bus"]["message"]
         if "notification" in by_block:
-            assert by_block["notification"].get("channel")
+            assert by_block["notification"]["channel"] in STORE_NOTIFICATION_CHANNELS
+            assert by_block["notification"]["channel"] != "sample"
             assert by_block["notification"]["message"]
             if "channel" not in domain:
                 assert by_block["notification"]["channel"] == "mcp"
@@ -856,3 +861,89 @@ def test_sess_f1fe691_reminders_result_key_is_not_required_on_envelope():
     # Store construction that produces the live TypeError.
     live = "instance = DatabaseBlock()\n"
     assert "_instantiate_store_block(DatabaseBlock)" in _rewrite_shim_constructors(live)
+
+
+_LIVE_CHANNEL_ERROR = "Unknown channel: sample"
+_SESS_67FE60F_ROSTER = ["notification", "database", "event_bus"]
+
+
+def test_sess_67fe60f_automated_reminders_schema_sample_is_not_channel_sample():
+    """Live accept-payload: automated_reminders sent channel='sample'.
+
+    sess_67fe60f7b40a4ac3 on tip d0d6d42 (#313). PRODUCT refused:
+
+        automated_reminders rejected a payload built from its own schema:
+        RuntimeError: Unknown channel: sample
+
+    The LLM spec declared ``channel: str`` with no vocabulary, so
+    ``_sample_value`` emitted the generic word. Notification and
+    event_bus then forwarded it unchanged.
+    """
+    llm = {
+        "entity": "reminder",
+        "fields": [
+            {"name": "pet_name", "type": "str", "required": True},
+            {"name": "reminder_type", "type": "str", "required": True},
+            {"name": "channel", "type": "str", "required": True},
+        ],
+    }
+    stale = {"pet_name": "Nala", "reminder_type": "vaccination", "channel": "sample"}
+    assert stale["channel"] == "sample"
+
+    llm, _ = ensure_record_envelope(llm)
+    sample = _sample_payload(llm)
+    assert sample["channel"] != "sample"
+    assert sample["channel"] in STORE_NOTIFICATION_CHANNELS
+    assert _sample_value({"name": "channel", "type": "str"}) != "sample"
+
+
+def test_sess_67fe60f_notification_and_event_bus_rewrite_sample_channel():
+    """Workflow step_0 (notification) and step_2 (event_bus) on the live run."""
+    domain = {
+        "reference": "R1",
+        "pet_name": "Nala",
+        "reminder_type": "vaccination",
+        "channel": "sample",
+        "status": "open",
+    }
+    note = prepare_block_input(
+        "notification", domain, roster=_SESS_67FE60F_ROSTER
+    )
+    assert note["channel"] == "mcp"
+    assert note["channel"] != "sample"
+    assert note["message"]
+
+    bus = prepare_block_input("event_bus", domain, product_name="VetCare Hub")
+    assert bus["channel"] == "mcp"
+    assert bus["channel"] != "sample"
+    assert bus["topic"]
+    assert bus["message"]
+    assert isinstance(bus["payload"], dict)
+
+    flow = prepare_block_input(
+        "workflow",
+        domain,
+        roster=_SESS_67FE60F_ROSTER,
+        entity="reminder",
+        product_name="VetCare Hub",
+    )
+    by_block = {step["block"]: step["input"] for step in flow["steps"]}
+    assert by_block["notification"]["channel"] == "mcp"
+    assert by_block["event_bus"]["channel"] == "mcp"
+    assert "sample" not in (
+        by_block["notification"]["channel"],
+        by_block["event_bus"]["channel"],
+    )
+
+
+def test_sess_67fe60f_product_detail_names_unknown_channel_class():
+    findings = [
+        "FAILED tests/test_routes.py::test_every_capability_route_accepts_payload",
+        "E   AssertionError: automated_reminders rejected a payload "
+        f"built from its own schema: RuntimeError: {_LIVE_CHANNEL_ERROR}",
+    ]
+    detail = classify_suite_red(findings)
+    assert "schema sample refused" in detail
+    assert "notification channel" in detail
+    assert "automated_reminders" in detail
+    assert _LIVE_CHANNEL_ERROR in detail
