@@ -795,7 +795,7 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
     exec(compile(ast.Module(body=picked, type_ignores=[]), "<p>", "exec"), ns)
 
     class Appointment:
-        FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type"]
+        FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type", "channel"]
         CONSTRAINTS = {
             "status": {"allowed_values": ["booked", "completed"]},
             "scheduled_time": {"format": "time"},
@@ -805,6 +805,7 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
             "duration_minutes": "int",
             "status": "str",
             "service_type": "str",
+            "channel": "str",
         }
 
     payload = ns["_payload"](Appointment)
@@ -813,6 +814,8 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
     assert payload["duration_minutes"] == 1
     assert payload["status"] == "booked"
     assert payload["service_type"] == "sample"
+    assert payload["channel"] != "sample"
+    assert payload["channel"] == "email"
 
     class DatetimeAnn:
         FIELDS = ["visit"]

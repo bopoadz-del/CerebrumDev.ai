@@ -21,12 +21,15 @@ import types
 from pathlib import Path
 
 from app.factory.build.block_inputs import (
+    STORE_NOTIFICATION_CHANNELS,
     align_spec_to_handler_fields,
     align_spec_to_handler_source,
     handler_field_contracts,
     handler_required_fields,
+    notification_channel,
     prepare_block_input,
     render_block_inputs_module,
+    sample_channel_value,
     sanitize_python_identifier,
     split_execute_action,
 )
@@ -60,6 +63,52 @@ def test_notification_does_not_overwrite_caller_supplied_fields():
     out = prepare_block_input("notification", domain, roster=["notification"])
     assert out["message"] == "hello"
     assert out["block"] == "database"
+    assert out["channel"] == "mcp"
+
+
+def test_sample_channel_value_prefers_store_known():
+    assert sample_channel_value() == "email"
+    assert sample_channel_value(["sms", "email"]) == "email"
+    assert sample_channel_value(["sms", "push"]) == "sms"
+    assert notification_channel("sample") == "mcp"
+    assert notification_channel("in_process") == "mcp"
+    assert notification_channel("sms") == "mcp"
+    assert notification_channel("email") == "mcp"
+    assert notification_channel("email", {"to": "clinic@example.com"}) == "email"
+    assert notification_channel("mcp") == "mcp"
+
+
+def test_notification_rewrites_sample_channel_to_mcp():
+    """Live sess_67fe60f7: schema sample ``channel=sample`` hit the Store.
+
+    ``RuntimeError: Unknown channel: sample`` on automated_reminders
+    accept-payload and on workflow step_0 (notification).
+    """
+    domain = {
+        "pet_name": "Nala",
+        "reminder_type": "vaccination",
+        "channel": "sample",
+        "message": "vaccination due",
+    }
+    out = prepare_block_input(
+        "notification", domain, roster=["notification", "event_bus"]
+    )
+    assert out["channel"] == "mcp"
+    assert out["channel"] != "sample"
+    assert out["channel"] in STORE_NOTIFICATION_CHANNELS
+    assert out["message"] == "vaccination due"
+    assert out["block"] == "event_bus"
+
+
+def test_notification_keeps_formed_email_channel():
+    domain = {
+        "channel": "email",
+        "to": "clinic@example.com",
+        "message": "vaccination due",
+    }
+    out = prepare_block_input("notification", domain, roster=["notification"])
+    assert out["channel"] == "email"
+    assert out["to"] == "clinic@example.com"
 
 
 # -- workflow -------------------------------------------------------------
@@ -274,6 +323,24 @@ def test_event_bus_carries_payload_and_channel():
     assert isinstance(out["message"], str) and out["message"]
 
 
+def test_event_bus_rewrites_sample_channel_to_mcp():
+    """Live sess_67fe60f7: workflow step_2 (event_bus) used channel=sample."""
+    out = prepare_block_input(
+        "event_bus",
+        {
+            "pet_name": "Nala",
+            "reminder_type": "vaccination",
+            "channel": "sample",
+        },
+        product_name="VetCare Hub",
+    )
+    assert out["topic"] == "vaccination"
+    assert out["channel"] == "mcp"
+    assert out["channel"] != "sample"
+    assert isinstance(out["message"], str) and out["message"]
+    assert isinstance(out["payload"], dict)
+
+
 def test_queue_coerces_numeric_strings():
     """Live PRODUCT: Store queue / work_queue refused str where they want int."""
     out = prepare_block_input(
@@ -377,6 +444,19 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
     assert queue_factory["id"] == queue_emitted["id"] == 7
     assert queue_factory["item_id"] == queue_emitted["item_id"] == 7
     assert queue_factory["priority"] == queue_emitted["priority"] == 2
+    sample_domain = {
+        "pet_name": "Nala",
+        "reminder_type": "vaccination",
+        "channel": "sample",
+    }
+    for bid in ("notification", "event_bus"):
+        factory = prepare_block_input(
+            bid, sample_domain, roster=["notification", "event_bus"]
+        )
+        emitted = mod.prepare_block_input(
+            bid, sample_domain, roster=["notification", "event_bus"]
+        )
+        assert factory["channel"] == emitted["channel"] == "mcp", (bid, factory, emitted)
     assert queue_factory["label"] == queue_emitted["label"] == "id-1"
 
 

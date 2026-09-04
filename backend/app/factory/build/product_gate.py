@@ -119,6 +119,8 @@ def _value(cls, name):
         return "10:00:00"
     if n == "status" or n.endswith("_status"):
         return "open"
+    if n == "channel" or n.endswith("_channel"):
+        return "email"
     return "sample"
 
 
