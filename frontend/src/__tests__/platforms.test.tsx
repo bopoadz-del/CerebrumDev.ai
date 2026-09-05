@@ -436,6 +436,47 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.queryByText(/Download the export and launch it anywhere/i)).not.toBeInTheDocument()
   })
 
+  it('refuses Export when a founding card also reports FACTORY_CODE_CLI_FAILED', async () => {
+    getMock.mockResolvedValue({
+      generation: {
+        ...GENERATION,
+        product_id: 'veterinary-care',
+      },
+      blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          pilot_ready: true,
+        },
+        coder_receipt: {
+          ok: false,
+          blocker: 'FACTORY_CODE_CLI_FAILED',
+          detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_45729bb662cf4a5d" />)
+    expect(await screen.findByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(await screen.findByText(/FACTORY_CODE_CLI_FAILED: CLI exited 1/)).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
+    ).not.toBeInTheDocument()
+    const refused = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(refused).toBeDisabled()
+    expect(refused).toHaveClass('ghost')
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
+  })
+
   it('names missing Kimi Code CLI credentials from /health on Platforms', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {

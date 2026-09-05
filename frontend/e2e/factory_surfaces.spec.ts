@@ -728,6 +728,65 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(page.getByText(/Download the export and launch it anywhere/i)).toHaveCount(0)
 })
 
+test('Your Platforms refuses Export when founding card reports FACTORY_CODE_CLI_FAILED', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          inputs_hash: 'vetcarehash',
+          output_dir: '/tmp/veterinary-care',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+          level_grade: {
+            level: 'FOUNDING_CUSTOMER_READY',
+            founding_customer_ready: true,
+            pilot_ready: true,
+          },
+          coder_receipt: {
+            ok: false,
+            blocker: 'FACTORY_CODE_CLI_FAILED',
+            detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-failed-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText(/FACTORY_CODE_CLI_FAILED: CLI exited 1/)).toBeVisible()
+  await expect(page.getByText(/Founding-customer-ready/)).toHaveCount(0)
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Download unavailable — build failed/)
+})
+
 test('Floor CODE_GREEN level_grade never says Finished or founding-ready', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')

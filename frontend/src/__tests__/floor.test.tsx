@@ -385,6 +385,41 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
   })
 
+  it('refuses Floor Download when coder_receipt is FACTORY_CODE_CLI_FAILED', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          pilot_ready: true,
+        },
+        coder_receipt: {
+          ok: false,
+          blocker: 'FACTORY_CODE_CLI_FAILED',
+          detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_45729bb662cf4a5d" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(screen.getByText(/FACTORY_CODE_CLI_FAILED: CLI exited 1/)).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+  })
+
   it('honesty-locks a founding claim when pilot_ready is false', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
