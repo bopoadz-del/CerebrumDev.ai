@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
+from app.factory.build.persist_accept import persist_accept_needles
 from app.factory.build.workflow_accept import (
     declares_event_bus_workflow,
     workflow_accept_needles,
@@ -26,6 +27,11 @@ EXECUTABLE_ACCEPTANCE = (
     ("own gates green", "gates"),
     ("one-record round-trip", "round_trip"),
     ("round-trip per capability", "round_trip"),
+    ("did not remember a record", "round_trip"),
+    ("no such table", "round_trip"),
+    ("store.save(ENTITY, payload)", "round_trip"),
+    ("factory-grounded persist", "round_trip"),
+    ("alembic entity", "round_trip"),
     ("writer_behaviour", "writer_behaviour"),
     ("accepted its own schema", "writer_behaviour"),
     ("own FIELDS/CONSTRAINTS", "writer_behaviour"),
@@ -105,6 +111,12 @@ TEMPLATE_STATIC_NEEDLES = (
     "the product boots",
     "own gates green",
     "one-record round-trip",
+    "did not remember a record",
+    "no such table",
+    "store.save(entity, payload)",
+    "factory-grounded persist",
+    "alembic entity",
+    "0001_baseline",
     "writer_behaviour",
     "accepted its own schema",
     "own fields/constraints",
@@ -350,6 +362,18 @@ def lint_brief(
         errors.append(
             "acceptance missing writer_behaviour schema-accept "
             "(no capability accepted its own schema)"
+        )
+    persist_needles = persist_accept_needles()
+    missing_persist = [
+        needle
+        for needle in persist_needles
+        if needle.lower() not in text.lower()
+    ]
+    if missing_persist:
+        errors.append(
+            "brief dropped PRODUCT one-record persist contract "
+            "(alembic entity / store.save): "
+            + ", ".join(missing_persist[:4])
         )
 
     blob = text.lower()

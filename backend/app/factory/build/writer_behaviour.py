@@ -528,6 +528,18 @@ for _cap_id, _cls in targets:
             % (_cap_id, ", ".join(_never))
         )
 
+persist_misses = [
+    m for m in schema_misses
+    if "no such table" in m.lower() or "OperationalError" in m
+]
+if persist_misses:
+    # Isolated schema refusals may continue; a missing persist table is
+    # the photographed Veterinary Care Platform class and must halt.
+    sys.stderr.write(
+        "GATE-FINDING: persist entity missing from migrated schema\n"
+        + "".join("GATE-FINDING: %s\n" % f for f in persist_misses)
+    )
+    raise SystemExit(1)
 if not targets:
     # Every capability failed schema (or never reached a probeable
     # state). Isolated schema misses do not take this path. Always emit
@@ -804,6 +816,12 @@ def banner_detail(findings: list[str]) -> str:
         return classify_unmarked_probe_failure(findings)
     if any(SCHEMA_HALT in ln for ln in usable):
         return SCHEMA_HALT
+    if any("persist entity missing from migrated schema" in ln for ln in usable):
+        return next(
+            ln for ln in usable if "persist entity missing from migrated schema" in ln
+        )
+    if any("no such table" in ln.lower() for ln in usable):
+        return next(ln for ln in usable if "no such table" in ln.lower())
     if any(SCHEMA_SQL_HALT in ln for ln in usable):
         return next(ln for ln in usable if SCHEMA_SQL_HALT in ln)
     if any(_is_schema_line(ln) for ln in usable):

@@ -13,6 +13,7 @@ from __future__ import annotations
 from app.factory.build.authority import kernel_seat_brief
 from app.factory.build.level_grade import Level
 from app.factory.build.product_gate import GATE_SCOPES
+from app.factory.build.persist_accept import persist_accept_brief_contract
 from app.factory.build.schema_accept import schema_accept_brief_contract
 from app.factory.build.workflow_accept import workflow_accept_brief_contract
 
@@ -51,6 +52,7 @@ Contracts you must honour on every capability you write:
   invent a second, stricter contract the spec cannot express.
 - Offline platform: no network, no HTTP store callbacks, channel "mcp" only.
 - {schema_accept_brief_contract()}
+- {persist_accept_brief_contract()}
 - {workflow_accept_brief_contract()}
 
 This brief is the horizon. The user message is the compiled whole-job brief

@@ -22,6 +22,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 import re
 
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
+from app.factory.build.persist_accept import (
+    persist_accept_acceptance_line,
+    persist_accept_forbidden_lines,
+    persist_accept_rules_text,
+)
 from app.factory.build.schema_accept import (
     schema_accept_acceptance_line,
     schema_accept_rules_text,
@@ -511,6 +516,8 @@ def render_slot_bodies(
         "",
         schema_accept_rules_text(),
         "",
+        persist_accept_rules_text(),
+        "",
         workflow_accept_rules_text(
             capability_ids=event_bus_workflow_capability_ids(inventory)
         ),
@@ -574,6 +581,7 @@ def render_slot_bodies(
         "- the product boots  [check:boot]",
         "- own gates green  [check:gates]",
         "- one-record round-trip per capability (POST creates, GET returns it)  [check:round_trip]",
+        persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
         workflow_accept_acceptance_line(
             capability_ids=event_bus_workflow_capability_ids(inventory)
@@ -607,6 +615,7 @@ def render_slot_bodies(
         "(circular import; writer_behaviour workspace does not import)",
         "- importing app.actions / app.routes / app.main from a capability handler "
         "(writer_behaviour workspace does not import)",
+        persist_accept_forbidden_lines(),
         workflow_accept_forbidden_lines(),
         "- one handle() / one spec / one route at a time — this brief is the whole job",
         "- weakening honesty or exporting when the pilot suite is red",
