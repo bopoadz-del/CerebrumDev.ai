@@ -206,6 +206,39 @@ def _ledger_path(output_dir: Path | str) -> Path:
     return Path(output_dir) / "build_ledger.jsonl"
 
 
+CRASH_MARKER_NAME = ".build_thread_crashed"
+
+
+def _crash_marker_path(output_dir: Path | str) -> Path:
+    return Path(output_dir) / CRASH_MARKER_NAME
+
+
+def _write_crash_marker(output_dir: Path | str, detail: str) -> None:
+    try:
+        _crash_marker_path(output_dir).write_text(detail.strip() + "\n", encoding="utf-8")
+    except OSError:
+        logger.exception("could not write crash marker at %s", output_dir)
+
+
+def _live_runner_thread(product_id: str) -> bool:
+    name = f"build-{product_id}"
+    for thread in threading.enumerate():
+        if thread.name == name and thread.is_alive():
+            return True
+    return False
+
+
+def _product_id_of(events: Any, output_dir: Path | str) -> str:
+    from app.factory.build.ledger import EventKind
+
+    for event in events or ():
+        if event.kind is EventKind.RUN_STARTED:
+            pid = str((event.payload or {}).get("product_id") or "").strip()
+            if pid:
+                return pid
+    return Path(output_dir).name
+
+
 _RUN_SUFFIX_RE = re.compile(r"__run(\d+)$")
 
 
@@ -320,11 +353,60 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         resume = ledger.resume_point()
         quarantined = ledger.quarantined_notes()
     except Exception as exc:  # noqa: BLE001 -- a torn ledger must not 500
+        from app.factory.build.ledger import LEDGER_UNREADABLE
+
         logger.warning("unreadable build ledger at %s: %s", path, exc)
-        return {"state": "unknown", "detail": f"ledger unreadable: {exc}"}
+        # unknown is "no ledger yet" (template / awaitBuild → succeeded).
+        # An unreadable ledger is a crashed run — Floor must not keep
+        # "CODING AGENT HAS TAKEN OVER" / Platforms "Building…".
+        return _with_level_grade(
+            {
+                "state": "failed",
+                "detail": f"{LEDGER_UNREADABLE}: {exc}",
+                "pilot_ready": False,
+                "honesty": LEDGER_UNREADABLE,
+            },
+            output_dir,
+        )
 
     phases = [p.value for p in BUILD_PHASES]
     current_role = interrupted or resume
+    if terminal is None and _crash_marker_path(output_dir).is_file():
+        return _with_level_grade(
+            {
+                "state": "failed",
+                "detail": "build thread crashed; see service logs",
+                "pilot_ready": False,
+                "honesty": "BUILD_THREAD_CRASHED",
+            },
+            output_dir,
+        )
+    if (
+        terminal is None
+        and interrupted is not None
+        and quarantined
+        and not _live_runner_thread(_product_id_of(events, output_dir))
+    ):
+        from app.factory.build.ledger import LEDGER_EXTERNAL_NOTE_QUARANTINED
+
+        # Live sess_69f28c0d8bc540e9: CLI scribble bricked append, the
+        # crash handler could not write RUN_FAILED, the thread died, and
+        # Floor kept "taken over / 1/5". After quarantine the ledger is
+        # readable again — still not an active coding claim.
+        return _with_level_grade(
+            {
+                "state": "stalled",
+                "detail": (
+                    f"{LEDGER_EXTERNAL_NOTE_QUARANTINED}: seq-less NOTE in "
+                    "the ledger and the build thread is gone — not still coding"
+                ),
+                "pilot_ready": False,
+                "honesty": LEDGER_EXTERNAL_NOTE_QUARANTINED,
+                "ledger_quarantined_notes": quarantined,
+            },
+            output_dir,
+        )
+
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
         current_role = BUILD_PHASES[-1]
     if current_role is not None:
@@ -594,14 +676,16 @@ def _run(
         # The thread must never die silently: without this the ledger's last
         # event stays PHASE_STARTED and status reads "building" forever.
         logger.exception("runner build crashed for %s", output_dir)
+        crash_detail = "build thread crashed; see service logs"
         try:
             from app.factory.build.ledger import BuildLedger, EventKind
 
             BuildLedger(_ledger_path(output_dir)).append(
-                EventKind.RUN_FAILED, detail="build thread crashed; see service logs"
+                EventKind.RUN_FAILED, detail=crash_detail
             )
         except Exception:  # noqa: BLE001
             logger.exception("could not record the crash in the ledger")
+            _write_crash_marker(output_dir, crash_detail)
         _refund_generation_quota(output_dir)
         return
     from app.factory.build.ledger import BuildLedger, EventKind

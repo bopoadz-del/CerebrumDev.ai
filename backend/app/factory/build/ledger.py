@@ -121,6 +121,7 @@ class LedgerError(RuntimeError):
 #: Those lines are not verdicts. Quarantining them keeps ``_next_seq`` / chat /
 #: status alive; inventing ``pilot_ready`` from a torn ledger is still forbidden.
 LEDGER_EXTERNAL_NOTE_QUARANTINED = "LEDGER_EXTERNAL_NOTE_QUARANTINED"
+LEDGER_UNREADABLE = "LEDGER_UNREADABLE"
 QUARANTINE_PAYLOAD_KEY = "ledger_quarantine"
 
 

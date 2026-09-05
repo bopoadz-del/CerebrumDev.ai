@@ -299,7 +299,12 @@ def test_mutation_protect_blocks_raw_cli_scribble(ledger):
 
 
 def test_mutation_build_status_survives_sentry_note(tmp_path):
-    """Kills: chat/status returning 'ledger unreadable' for a seq-less NOTE."""
+    """Kills: chat/status returning 'ledger unreadable' for a seq-less NOTE.
+
+    And kills: Floor/Platforms still claiming Building / taken-over after
+    the thread died (sess_69f28c0d8bc540e9 ~09:55Z).
+    """
+    from app.factory.build.ledger import LEDGER_EXTERNAL_NOTE_QUARANTINED
     from app.factory.build_jobs import build_status
 
     out = tmp_path / "veterinary-care"
@@ -309,8 +314,58 @@ def test_mutation_build_status_survives_sentry_note(tmp_path):
     status = build_status(out)
     assert "ledger unreadable" not in str(status.get("detail") or "")
     assert status.get("ledger_quarantined_notes") == 1
-    assert status["state"] != "unknown"
-    assert status.get("pilot_ready") in (False, None)
+    assert status["state"] == "stalled"
+    assert status.get("honesty") == LEDGER_EXTERNAL_NOTE_QUARANTINED
+    assert status.get("pilot_ready") is False
+    assert "not still coding" in str(status.get("detail") or "")
+
+
+def test_mutation_unreadable_ledger_is_failed_not_unknown(tmp_path):
+    """Kills: state=unknown on a torn ledger so Floor keeps 'taken over'."""
+    from app.factory.build.ledger import LEDGER_UNREADABLE
+    from app.factory.build_jobs import build_status
+
+    out = tmp_path / "veterinary-care"
+    out.mkdir()
+    (out / "build_ledger.jsonl").write_text(
+        '{"seq": 1, "kind": "NOTE"}\nnot json at all\n{"seq": 2, "kind": "NOTE"}\n',
+        encoding="utf-8",
+    )
+    status = build_status(out)
+    assert status["state"] == "failed"
+    assert status.get("honesty") == LEDGER_UNREADABLE
+    assert LEDGER_UNREADABLE in str(status.get("detail") or "")
+    assert status.get("pilot_ready") is False
+
+
+def test_mutation_crash_marker_is_failed_when_run_failed_could_not_append(tmp_path):
+    """Kills: crash handler failing to append, Floor still Building."""
+    from app.factory.build_jobs import CRASH_MARKER_NAME, build_status
+
+    out = tmp_path / "veterinary-care"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="veterinary-care", inputs_hash="h")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER)
+    (out / CRASH_MARKER_NAME).write_text("build thread crashed\n", encoding="utf-8")
+
+    status = build_status(out)
+    assert status["state"] == "failed"
+    assert status.get("honesty") == "BUILD_THREAD_CRASHED"
+    assert status.get("pilot_ready") is False
+
+
+def test_mutation_crash_append_works_after_sentry_note(tmp_path):
+    """Kills: crash handler KeyError('seq') so RUN_FAILED never lands."""
+    path = tmp_path / "build_ledger.jsonl"
+    _write_sentry_shaped_ledger(path)
+    crashed = BuildLedger(path).append(
+        EventKind.RUN_FAILED,
+        detail="build thread crashed; see service logs",
+    )
+    assert crashed.seq == 3
+    assert BuildLedger(path).terminal_event() is not None
+    assert BuildLedger(path).terminal_event().kind is EventKind.RUN_FAILED
 
 
 def test_registrar_can_scan_every_platform_ledger(tmp_path):
