@@ -193,7 +193,8 @@ def test_factory_generate_body_persists_instead_of_no_block_bound():
         entity="veterinary_care_core",
     )
     assert "def _persist_record" in module
-    assert "store.save(ENTITY, record)" in module
+    assert "_store.save(ENTITY, record)" in module
+    assert "from app import store as _store" in module
 
 
 def test_factory_reuse_body_persists_after_blocks():

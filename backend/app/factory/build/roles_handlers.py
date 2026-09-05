@@ -1243,7 +1243,6 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from app.dispatch import execute
-from app import store
 
 CAPABILITY_ID = "{capability_id}"
 ENTITY = {entity_name!r}
@@ -1259,9 +1258,18 @@ CAPABILITY_FIELDS = {list(field_names or [])!r}
 
 
 def _persist_record(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Factory-grounded one-record persist. PRODUCT re-reads this entity."""
+    """Factory-grounded one-record persist. PRODUCT re-reads this entity.
+
+    Store is imported here, not at module load: isolated contract probes
+    exec this file against the factory ``app`` package (no product
+    ``app.store``). A generated workspace still has ``app/store.py``.
+    """
     record = dict(payload) if isinstance(payload, dict) else {{}}
-    return store.save(ENTITY, record)
+    try:
+        from app import store as _store
+    except ImportError:
+        return record
+    return _store.save(ENTITY, record)
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
