@@ -89,6 +89,7 @@ def test_compiled_brief_has_the_gated_shape():
     assert "workspace does not import" in text
     assert "test_every_capability_route_accepts_payload" in text
     assert "workflow: step_N (event_bus): error" in text
+    assert "workflow: step_0 (event_bus): error" in text
     assert "workflow: step_1 (event_bus): error" in text
     assert "workflow: step_2 (event_bus): error" in text
     assert "appointment_scheduling" in text

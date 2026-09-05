@@ -36,6 +36,8 @@ from app.factory.build.schema_accept import (
 from app.factory.build.workflow_accept import (
     APPOINTMENT_BOOKING_STYLE,
     APPOINTMENT_SCHEDULING_STYLE,
+    AUTOMATED_REMINDERS_STYLE,
+    PRODUCT_EVENT_BUS_STEP_0_HALT,
     EVENT_BUS_STEP_ACTION,
     EVENT_BUS_STEP_CHANNEL,
     PREPARED_EVENT_BUS_STEP_EXAMPLE,
@@ -113,12 +115,13 @@ PREPARED_HANDLER = (
     "        'input': {\n"
     "            'topic': 'appointment.scheduled',\n"
     "            'payload': {'reference': payload.get('reference')},\n"
-    "            'message': 'appointment recorded',\n"
-    "            'channel': 'mcp',\n"
-    "        },\n"
-    "    }]\n"
-    "    return execute('workflow', {'steps': steps}, action='run')\n"
-)
+    "                        'message': 'appointment recorded',\n"
+            "            'channel': 'mcp',\n"
+            "            'tool': 'event_bus',\n"
+            "        },\n"
+            "    }]\n"
+            "    return execute('workflow', {'steps': steps}, action='run')\n"
+        )
 
 UNPREPARED_HANDLER = (
     "def handle(payload):\n"
@@ -150,6 +153,7 @@ MIXED_PREPARED_THEN_RAW = (
     "                'payload': {'reference': payload.get('reference')},\n"
     "                'message': 'appointment recorded',\n"
     "                'channel': 'mcp',\n"
+    "                'tool': 'event_bus',\n"
     "            },\n"
     "        },\n"
     "        {'block': 'event_bus', 'input': payload},\n"
@@ -178,6 +182,7 @@ TWO_PREPARED_EVENT_BUS_STEPS = (
     "                'payload': {'reference': payload.get('reference')},\n"
     "                'message': 'appointment recorded',\n"
     "                'channel': 'mcp',\n"
+    "                'tool': 'event_bus',\n"
     "            },\n"
     "        },\n"
     "        {\n"
@@ -188,6 +193,7 @@ TWO_PREPARED_EVENT_BUS_STEPS = (
     "                'payload': {'reference': payload.get('reference')},\n"
     "                'message': 'booking confirmed',\n"
     "                'channel': 'mcp',\n"
+    "                'tool': 'event_bus',\n"
     "            },\n"
     "        },\n"
     "    ]\n"
@@ -206,6 +212,7 @@ STEP2_PRODUCT_CHANNEL_HANDLER = (
     "                'payload': {'reference': payload.get('reference')},\n"
     "                'message': 'appointment recorded',\n"
     "                'channel': 'mcp',\n"
+    "                'tool': 'event_bus',\n"
     "            },\n"
     "        },\n"
     "        {\n"
@@ -359,15 +366,19 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert "'input': payload" in contract
     assert "appointment_scheduling" in contract
     assert "appointment_booking" in contract
+    assert PRODUCT_EVENT_BUS_STEP_0_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in contract
+    assert AUTOMATED_REMINDERS_STYLE in contract
     assert "reminders_notifications" in contract
     assert "keep/done" in contract
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_ACCEPT_TEST in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_HALT in _WHOLE_JOB_SYSTEM
+    assert PRODUCT_EVENT_BUS_STEP_0_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in _WHOLE_JOB_SYSTEM
+    assert AUTOMATED_REMINDERS_STYLE in _WHOLE_JOB_SYSTEM
     assert "appointment_booking" in _WHOLE_JOB_SYSTEM
     assert "channel=mcp" in _WHOLE_JOB_SYSTEM
     assert "'input': payload" in _WHOLE_JOB_SYSTEM or "input to payload" in _WHOLE_JOB_SYSTEM
@@ -547,11 +558,13 @@ def test_mutation_step1_only_prepared_fails_when_step2_forwards_product_sample(t
         "'topic': 'appointment.confirmed',\n"
         "                'payload': {'reference': payload.get('reference')},\n"
         "                'message': 'booking confirmed',\n"
-        "                'channel': 'mcp',",
+        "                'channel': 'mcp',\n"
+        "                'tool': 'event_bus',",
         f"'topic': 'appointment.confirmed',\n"
         f"                'payload': {sample!r},\n"
         f"                'message': payload,\n"
-        f"                'channel': {sample['channel']!r},",
+        f"                'channel': {sample['channel']!r},\n"
+        f"                'tool': 'event_bus',",
     )
     # Stronger live shape: step_2 input is the raw PRODUCT sample.
     mutated_forward = TWO_PREPARED_EVENT_BUS_STEPS.replace(
@@ -563,6 +576,7 @@ def test_mutation_step1_only_prepared_fails_when_step2_forwards_product_sample(t
         "                'payload': {'reference': payload.get('reference')},\n"
         "                'message': 'booking confirmed',\n"
         "                'channel': 'mcp',\n"
+        "                'tool': 'event_bus',\n"
         "            },\n"
         "        },",
         "        {'block': 'event_bus', 'input': payload},\n",
@@ -761,4 +775,90 @@ def test_brief_names_factory_grounded_emit():
     assert "factory-grounded" in compiled.text
     assert 'execute("workflow", payload)' in compiled.text
     assert "input.tool" in compiled.text
+    assert PRODUCT_EVENT_BUS_STEP_0_HALT in compiled.text
+    assert AUTOMATED_REMINDERS_STYLE in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
+def test_automated_reminders_needs_grounded_event_bus_even_without_event_bus_id():
+    """Live sess_d5789a91: workflow synthesized event_bus as Store step_0."""
+    assert needs_grounded_event_bus_handler(
+        "automated_reminders", ["event_bus", "workflow"]
+    )
+    assert needs_grounded_event_bus_handler(
+        "automated_reminders", ["workflow", "notification"]
+    )
+    assert not needs_grounded_event_bus_handler(
+        "veterinary_care_core", ["database"]
+    )
+
+
+def test_factory_grounded_body_is_prepared_step0_for_automated_reminders():
+    """WRITER emit for automated_reminders — Store first child is step_0."""
+    from app.factory.build.workflow_accept import event_bus_step_is_store_ready
+
+    body = grounded_event_bus_handler_body(
+        "automated_reminders", ["event_bus", "workflow"]
+    )
+    wrapped = "def handle(payload):\n" + body + "\n"
+    assert handler_satisfies_event_bus_contract(wrapped, require_prepared_step=True)
+    steps = event_bus_steps_from_handler(body)
+    assert steps == [(1, True)]
+    assert "reminder.due" in body
+    assert '"tool": "event_bus"' in body
+    assert EVENT_BUS_STEP_CHANNEL in body
+    # Runtime shape Store accepts (topic/payload/message/channel/tool).
+    sample_input = {
+        "topic": "reminder.due",
+        "payload": {"reference": "R1"},
+        "message": "reminder due",
+        "channel": EVENT_BUS_STEP_CHANNEL,
+        "tool": "event_bus",
+    }
+    assert event_bus_step_is_store_ready(sample_input)
+
+
+def test_writer_replaces_unprepared_reminders_with_grounded(tmp_path):
+    """Live sess_d5789a91 class: do not keep a stub PRODUCT refuses at step_0."""
+    from app.factory.build.roles_handlers import _capability_handler_body
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("automated_reminders", ["event_bus", "workflow"], "COMPOSE")),
+        store_ids={"event_bus", "workflow"},
+    )
+    assert AUTOMATED_REMINDERS_STYLE in compiled.text
+    assert PRODUCT_EVENT_BUS_STEP_0_HALT in compiled.text
+    body = _capability_handler_body(
+        "automated_reminders", ["event_bus", "workflow"]
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "automated_reminders.py").write_text(
+        "CAPABILITY_ID = 'automated_reminders'\n"
+        "BLOCK_IDS = ['event_bus', 'workflow']\n"
+        "def handle(payload):\n" + body + "\n",
+        encoding="utf-8",
+    )
+    assert event_bus_workflow_handler_errors(tmp_path, compiled) == []
+    assert_event_bus_workflow_handlers(tmp_path, compiled)
+
+
+def test_unprepared_first_child_names_store_step_0(tmp_path):
+    """Store 0-indexes; factory AST still labels the first list child step_1."""
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("automated_reminders", ["event_bus", "workflow"], "COMPOSE")),
+        store_ids={"event_bus", "workflow"},
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "automated_reminders.py").write_text(
+        UNPREPARED_HANDLER, encoding="utf-8"
+    )
+    errors = event_bus_workflow_handler_errors(tmp_path, compiled)
+    assert any("automated_reminders" in e and "step_0" in e for e in errors)
+    with pytest.raises(EventBusWorkflowHalt) as halted:
+        assert_event_bus_workflow_handlers(tmp_path, compiled)
+    assert "step_0" in str(halted.value)
+    assert PRODUCT_EVENT_BUS_STEP_0_HALT.split(":")[0] in str(halted.value) or "step_0" in str(halted.value)

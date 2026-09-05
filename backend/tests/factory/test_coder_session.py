@@ -517,9 +517,10 @@ _PREPARED_EVENT_BUS_HANDLER = (
     "        'input': {\n"
     "            'topic': 'reminder.due',\n"
     "            'payload': {'reference': payload.get('reference')},\n"
-    "            'message': 'reminder recorded',\n"
-    "            'channel': 'mcp',\n"
-    "        },\n"
+    "                        'message': 'reminder recorded',\n"
+            "            'channel': 'mcp',\n"
+            "            'tool': 'event_bus',\n"
+            "        },\n"
     "    }]\n"
     "    return execute('workflow', {'steps': steps}, action='run')\n"
 )
@@ -529,6 +530,23 @@ _UNPREPARED_EVENT_BUS_HANDLER = (
     "    steps = [{'block': 'event_bus', 'input': payload}]\n"
     "    return execute('workflow', {'steps': steps})\n"
 )
+
+
+def test_harvest_does_not_keep_publish_keys_without_mcp_tool(tmp_path):
+    """Live sess_d5789a91: topic/payload/message/mcp without tool → step_0."""
+    missing_tool = _PREPARED_EVENT_BUS_HANDLER.replace(
+        "            'tool': 'event_bus',\n",
+        "",
+    )
+    assert "tool" not in missing_tool
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "automated_reminders.py").write_text(missing_tool, encoding="utf-8")
+    assert _is_keepable_handler(missing_tool) is False
+    specs, kept = harvest_cli_artifacts(root, ["automated_reminders"])
+    assert kept == []
+    assert specs == {}
 
 
 def test_harvest_keeps_brief_driven_workflow_steps_without_capability_id(tmp_path):

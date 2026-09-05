@@ -723,14 +723,9 @@ def _for_event_bus(
         data.get("channel") if data.get("channel") is not None else inner.get("channel"),
         data,
     )
-    target = data.get("block") or inner.get("block") or data.get("tool") or inner.get("tool")
-    if not (isinstance(target, str) and target.strip()):
-        peers = [
-            b
-            for b in roster
-            if b and b not in {"event_bus", "notification", "workflow"}
-        ]
-        target = peers[0] if peers else "event_bus"
+    # MCP notify target is always event_bus. A peer id (database) as
+    # block/tool is the live automated_reminders Store step_0 refuse:
+    # workflow's first child is event_bus but notify looked for the peer.
     return {
         "topic": topic,
         "payload": dict(payload),
@@ -738,7 +733,8 @@ def _for_event_bus(
         "event": topic,
         "message": str(message).strip() or _summary_message(data),
         "channel": channel,
-        "block": str(target).strip(),
+        "block": "event_bus",
+        "tool": "event_bus",
     }
 
 
@@ -1714,10 +1710,6 @@ def _for_event_bus(data, roster=()):
         data.get("channel") if data.get("channel") is not None else inner.get("channel"),
         data,
     )
-    target = data.get("block") or inner.get("block") or data.get("tool") or inner.get("tool")
-    if not (isinstance(target, str) and target.strip()):
-        peers = [b for b in roster if b and b not in ("event_bus", "notification", "workflow")]
-        target = peers[0] if peers else "event_bus"
     return {
         "topic": topic,
         "payload": dict(payload),
@@ -1725,7 +1717,8 @@ def _for_event_bus(data, roster=()):
         "event": topic,
         "message": str(message).strip() or _summary_message(data),
         "channel": channel,
-        "block": str(target).strip(),
+        "block": "event_bus",
+        "tool": "event_bus",
     }
 
 
