@@ -5,6 +5,7 @@ import type {
 } from './api/factory'
 import {
   FACTORY_CODE_CLI_CREDENTIALS_MISSING,
+  FACTORY_CODE_CLI_FAILED,
   FACTORY_CODE_CLI_NO_MODEL,
 } from './api/factory'
 
@@ -37,6 +38,7 @@ const CLAIMED_LEVELS = new Set<string>([
  */
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
+  if (isCoderCliFailed(build) || isScaffoldClaim(build)) return 'SCAFFOLD'
   const claimed = String(build.level_grade?.level || '').toUpperCase()
   const ready = build.pilot_ready === true
   if (!ready) {
@@ -83,6 +85,7 @@ export function levelGradeLabel(level: LevelGradeName, sourced = true): string {
 /** True only for a Store-green / founding zip — never CODE_GREEN or in-flight. */
 export function isPilotZipReady(build: BuildStatus | null | undefined): boolean {
   if (!build || build.state !== 'succeeded' || build.pilot_ready !== true) return false
+  if (isCoderCliFailed(build) || isScaffoldClaim(build)) return false
   const level = honestLevel(build)
   return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
 }
@@ -271,6 +274,76 @@ export function isUnreadableLedger(build: BuildStatus | null | undefined): boole
   return /LEDGER_UNREADABLE|ledger unreadable/i.test(detail)
 }
 
+const CLI_FAIL_TEXT =
+  /FACTORY_CODE_CLI_FAILED|FACTORY_CODE_CLI_UNAVAILABLE|FACTORY_CODE_CLI_MODEL_DENIED|CLI exited/i
+
+/** Receipt or ledger says the Kimi Code CLI failed — never a founding zip. */
+export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  const receipt = build.coder_receipt
+  if (receipt) {
+    if (receipt.ok === false) return true
+    if (CLI_FAIL_TEXT.test(String(receipt.blocker || ''))) return true
+    if (CLI_FAIL_TEXT.test(String(receipt.detail || ''))) return true
+  }
+  const blobs = [
+    build.detail ?? '',
+    ...(build.findings ?? []),
+    ...(build.level_grade?.blockers ?? []),
+    ...Object.values(build.authorship?.coder_failures ?? {}),
+  ]
+  return blobs.some((text) => CLI_FAIL_TEXT.test(text))
+}
+
+export function isScaffoldClaim(build: BuildStatus | null | undefined): boolean {
+  return String(build?.level_grade?.level || '').toUpperCase() === 'SCAFFOLD'
+}
+
+function cliFailDetail(build: BuildStatus): string {
+  const receipt = build.coder_receipt
+  const fromFailures = Object.values(build.authorship?.coder_failures ?? {}).find((value) =>
+    CLI_FAIL_TEXT.test(value),
+  )
+  return (
+    build.detail ||
+    receipt?.detail ||
+    (receipt?.blocker ? String(receipt.blocker) : '') ||
+    fromFailures ||
+    FACTORY_CODE_CLI_FAILED
+  )
+}
+
+/**
+ * CLI-failed / SCAFFOLD honesty: a succeeded + founding payload must not
+ * stay Finished / Downloadable when the coder receipt (or grade) says fail.
+ */
+export function withExportHonesty(build: BuildStatus | null): BuildStatus | null {
+  if (!build) return build
+  if (build.state === 'building' || build.state === 'not_started') return build
+  const cliFailed = isCoderCliFailed(build)
+  const scaffold = isScaffoldClaim(build)
+  if (!cliFailed && !scaffold) return build
+  const grade = {
+    ...(build.level_grade ?? {}),
+    level: 'SCAFFOLD',
+    pilot_ready: false,
+    founding_customer_ready: false,
+  }
+  if (build.state === 'failed' || build.state === 'stalled') {
+    if (build.pilot_ready === true || build.level_grade?.founding_customer_ready === true) {
+      return { ...build, pilot_ready: false, level_grade: grade }
+    }
+    return build
+  }
+  return {
+    ...build,
+    state: 'failed',
+    pilot_ready: false,
+    level_grade: grade,
+    detail: cliFailDetail(build),
+  }
+}
+
 /** Unreadable / crash honesty: never paint as an active coding run. */
 export function withLedgerHonesty(build: BuildStatus | null): BuildStatus | null {
   if (!build) return build
@@ -285,7 +358,7 @@ export function withClientStall(
   build: BuildStatus | null,
   nowMs = Date.now(),
 ): BuildStatus | null {
-  build = withLedgerHonesty(build)
+  build = withExportHonesty(withLedgerHonesty(build))
   if (!build || build.state !== 'building') return build
   const age = eventAgeSeconds(build, nowMs)
   const deadline =
@@ -333,6 +406,9 @@ export function platformsLeadCopy(
   }
   if (isUnreadableLedger(build)) {
     return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+  }
+  if (isCoderCliFailed(build) || isScaffoldClaim(build)) {
+    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
   if (!build || build.state === 'building' || build.state === 'not_started' || build.state === 'unknown') {
     return 'The coding agent is writing this platform. Export stays closed until a pilot-ready run succeeds.'
@@ -412,7 +488,12 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   ghost: boolean
   title?: string
 } {
-  if (isUnreadableLedger(build) || build?.state === 'failed') {
+  if (
+    isUnreadableLedger(build) ||
+    build?.state === 'failed' ||
+    isCoderCliFailed(build) ||
+    isScaffoldClaim(build)
+  ) {
     return {
       label: 'Export (.zip) — pilot suite failed',
       disabled: true,

@@ -11,13 +11,16 @@ import {
   formatPhaseCounts,
   formatPhaseHeadline,
   honestLevel,
+  isCoderCliFailed,
   isPilotZipReady,
+  isScaffoldClaim,
   levelGradeLabel,
   phaseBarFraction,
   platformsLeadCopy,
   stampBuildObservation,
   threeGateEntries,
   withClientStall,
+  withExportHonesty,
 } from '../buildProgress'
 
 const cloner: BuildStatus = {
@@ -468,6 +471,61 @@ describe('build progress copy', () => {
     ).toMatchObject({
       label: 'Download code-cycle prototype (.zip)',
       ghost: true,
+    })
+  })
+
+  it('CLI-failed founding payload is never Finished / gold Download', () => {
+    const vetCareCliFailed: BuildStatus = {
+      state: 'succeeded',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        pilot_ready: true,
+      },
+      coder_receipt: {
+        ok: false,
+        blocker: 'FACTORY_CODE_CLI_FAILED',
+        detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+      },
+    }
+    expect(isCoderCliFailed(vetCareCliFailed)).toBe(true)
+    expect(honestLevel(vetCareCliFailed)).toBe('SCAFFOLD')
+    expect(isPilotZipReady(vetCareCliFailed)).toBe(false)
+    expect(withExportHonesty(vetCareCliFailed)).toMatchObject({
+      state: 'failed',
+      pilot_ready: false,
+      detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+    })
+    expect(withClientStall(vetCareCliFailed)?.state).toBe('failed')
+    expect(exportAffordance(vetCareCliFailed)).toMatchObject({
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+    })
+    expect(platformsLeadCopy(vetCareCliFailed, true)).toMatch(/Download unavailable — build failed/)
+    expect(platformsLeadCopy(vetCareCliFailed, true)).not.toMatch(/Download the export/i)
+    expect(
+      formatFinishedAuthorship(vetCareCliFailed.authorship, {
+        pilotReady: isPilotZipReady(vetCareCliFailed),
+      }),
+    ).not.toMatch(/Finished/)
+  })
+
+  it('SCAFFOLD grade refuses Export even when state claims succeeded', () => {
+    const scaffold: BuildStatus = {
+      state: 'succeeded',
+      pilot_ready: true,
+      level_grade: { level: 'SCAFFOLD', founding_customer_ready: true },
+    }
+    expect(isScaffoldClaim(scaffold)).toBe(true)
+    expect(honestLevel(scaffold)).toBe('SCAFFOLD')
+    expect(isPilotZipReady(scaffold)).toBe(false)
+    expect(exportAffordance(scaffold)).toMatchObject({
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
     })
   })
 

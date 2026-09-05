@@ -604,6 +604,8 @@ export const domains = {
 export const FACTORY_CODE_CLI_CREDENTIALS_MISSING = 'FACTORY_CODE_CLI_CREDENTIALS_MISSING'
 /** Named /health blocker when config.toml exists but default_model is unusable. */
 export const FACTORY_CODE_CLI_NO_MODEL = 'FACTORY_CODE_CLI_NO_MODEL'
+/** Coder receipt / WRITER honesty when FACTORY_CODE_CLI exited non-zero. */
+export const FACTORY_CODE_CLI_FAILED = 'FACTORY_CODE_CLI_FAILED'
 
 export type FactoryCodeCliProbe = {
   command?: string | null
