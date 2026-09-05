@@ -427,6 +427,42 @@ def test_harvest_does_not_keep_unprepared_event_bus_forward(tmp_path):
     assert specs == {}
 
 
+_MIXED_STEP2_EVENT_BUS_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [\n"
+    "        {\n"
+    "            'block': 'event_bus',\n"
+    "            'action': 'publish',\n"
+    "            'input': {\n"
+    "                'topic': 'appointment.booked',\n"
+    "                'payload': {'reference': payload.get('reference')},\n"
+    "                'message': 'booked',\n"
+    "                'channel': 'mcp',\n"
+    "            },\n"
+    "        },\n"
+    "        {'block': 'event_bus', 'input': payload},\n"
+    "    ]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+
+def test_harvest_does_not_keep_prepared_step1_raw_step2(tmp_path):
+    """Live sess_d70c18ef: appointment_booking step_2 still forwarded payload."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_booking.py").write_text(
+        "CAPABILITY_ID = 'appointment_booking'\n" + _MIXED_STEP2_EVENT_BUS_HANDLER,
+        encoding="utf-8",
+    )
+    assert _is_keepable_handler(
+        (actions / "appointment_booking.py").read_text(encoding="utf-8")
+    ) is False
+    specs, kept = harvest_cli_artifacts(root, ["appointment_booking"])
+    assert kept == []
+    assert specs == {}
+
+
 def test_harvest_cli_body_does_not_overwrite_workspace_workflow_steps(tmp_path):
     """Same-session CLI: thin JSON body must not replace brief-driven steps."""
     root = tmp_path / "ws"
@@ -470,6 +506,26 @@ def test_harvest_cli_does_not_prefer_unprepared_disk_over_json_body(tmp_path):
     _merge_workspace_harvest(result, root, ["appointment_scheduling"])
     assert result.handlers["appointment_scheduling"] == body
     assert "appointment_scheduling" not in result.kept_handler_ids
+
+
+def test_harvest_cli_does_not_prefer_mixed_step2_disk(tmp_path):
+    """Prepared step_1 + raw step_2 must not pin appointment_booking."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_booking.py").write_text(
+        _MIXED_STEP2_EVENT_BUS_HANDLER, encoding="utf-8"
+    )
+    body = "return {'ok': True, 'capability': 'appointment_booking'}"
+    result = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="cli",
+        handlers={"appointment_booking": body},
+    )
+    _merge_workspace_harvest(result, root, ["appointment_booking"])
+    assert result.handlers["appointment_booking"] == body
+    assert "appointment_booking" not in result.kept_handler_ids
 
 
 def test_harvest_oneshot_does_not_pin_a_previous_round_handler(tmp_path):

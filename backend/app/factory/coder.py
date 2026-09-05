@@ -1493,11 +1493,12 @@ Rules:
   express fails the gate: no capability accepted its own schema.
 - PRODUCT test_every_capability_route_accepts_payload then POSTs that
   same schema sample and runs bound blocks. A capability that binds
-  workflow + event_bus (appointment_scheduling / reminders_notifications
-  style) must prepare each event_bus step (block=event_bus,
-  action=publish, topic, payload dict, message, channel=mcp). Do not
-  set step input to payload. Unprepared steps fail as
-  workflow: step_N (event_bus): error. Exact shape:
+  workflow + event_bus (appointment_scheduling / appointment_booking /
+  reminders_notifications style) must prepare EACH event_bus step
+  including step_2+ (block=event_bus, action=publish, topic, payload
+  dict, message, channel=mcp). Do not set step input to payload. A
+  prepared step_1 plus an unprepared step_2 still fails as
+  workflow: step_2 (event_bus): error. Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
    "channel": "mcp"}}.

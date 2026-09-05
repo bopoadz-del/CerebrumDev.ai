@@ -30,6 +30,8 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
     assert "channel=mcp" in brief
     assert "'input': payload" in brief
     assert "appointment_scheduling" in brief
+    assert "appointment_booking" in brief
+    assert "workflow: step_2 (event_bus): error" in brief
     assert "reminders_notifications" in brief
     assert "EVERY id in BLOCK_IDS" in brief
     assert "Finished" in brief or "finished product" in lowered

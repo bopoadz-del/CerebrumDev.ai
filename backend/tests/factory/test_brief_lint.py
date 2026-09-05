@@ -116,6 +116,9 @@ def test_mutation_drops_event_bus_workflow_accept_when_declared():
     compiled.text = compiled.text.replace("[check:event_bus_workflow]", "")
     compiled.text = compiled.text.replace("event_bus_workflow", "event_bus_other")
     compiled.text = compiled.text.replace("workflow: step_N (event_bus): error", "")
+    compiled.text = compiled.text.replace("workflow: step_2 (event_bus): error", "")
+    compiled.text = compiled.text.replace("appointment_booking", "")
+    compiled.text = compiled.text.replace("every event_bus", "")
     compiled.text = compiled.text.replace(
         "schema sample refused (event_bus workflow step)", ""
     )
