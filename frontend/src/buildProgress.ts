@@ -355,18 +355,15 @@ export function shouldRefuseExport(build: BuildStatus | null | undefined): boole
 
 function refuseExportDetail(build: BuildStatus): string {
   if (build.detail) return build.detail
+  const receipt = build.coder_receipt
+  if (receipt?.detail) return receipt.detail
+  if (receipt?.blocker) return String(receipt.blocker)
   if (productSuiteFailed(build)) return 'PRODUCT suite failed'
   if (outcomeFailed(build)) return String(build.outcome)
-  const receipt = build.coder_receipt
   const fromFailures = Object.values(build.authorship?.coder_failures ?? {}).find((value) =>
     CLI_FAIL_TEXT.test(value),
   )
-  return (
-    receipt?.detail ||
-    (receipt?.blocker ? String(receipt.blocker) : '') ||
-    fromFailures ||
-    FACTORY_CODE_CLI_FAILED
-  )
+  return fromFailures || FACTORY_CODE_CLI_FAILED
 }
 
 /**
