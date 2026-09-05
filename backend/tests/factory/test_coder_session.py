@@ -16,9 +16,11 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_CLI_FAILED,
+    NAMED_BLOCKER_CLI_MODEL_DENIED,
     NAMED_BLOCKER_CLI_NO_MODEL,
     NAMED_BLOCKER_STOPPED,
     CodeCliCredentialsMissing,
+    CodeCliModelDenied,
     CodeCliNoModelConfigured,
     CodeCliUnavailable,
     DispatchResult,
@@ -237,8 +239,11 @@ def test_ensure_code_cli_credentials_writes_when_key_set(tmp_path, monkeypatch):
     assert "sk-test-not-real" in text
     assert f'default_model = "{DEFAULT_KIMI_CODE_MODEL}"' in text
     assert f'[models."{DEFAULT_KIMI_CODE_MODEL}"]' in text
-    assert 'model = "k3"' in text
-    assert "max_context_size = 1048576" in text
+    assert DEFAULT_KIMI_CODE_MODEL == "kimi-k2.7-code"
+    assert 'model = "kimi-k2.7-code"' in text
+    assert "kimi-code/k3" not in text
+    assert 'model = "k3"' not in text
+    assert "max_context_size = 262144" in text
 
 
 def test_ensure_code_cli_credentials_honours_kimi_code_model(tmp_path, monkeypatch):
@@ -310,6 +315,85 @@ def test_classify_cli_exit_names_no_model_configured():
     generic, generic_detail = classify_cli_exit(1, "segfault")
     assert generic == NAMED_BLOCKER_CLI_FAILED
     assert generic_detail == "CLI exited 1"
+
+
+def test_classify_cli_exit_names_k3_model_denied():
+    """Live sess_d70c18ef: CLI tried k3 / kimi-code/k3 → 404 / Permission denied."""
+    blocker, detail = classify_cli_exit(
+        1,
+        "error: failed to run prompt: 404 model k3 not found "
+        "(kimi-code/k3)",
+    )
+    assert blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert CodeCliModelDenied.blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert "KIMI_CODE_MODEL" in detail
+    assert "kimi-k2.7-code" in detail
+    denied, denied_detail = classify_cli_exit(
+        1, "error: Permission denied for model kimi-code/k3"
+    )
+    assert denied == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert "Permission denied" in denied_detail
+
+
+def test_ensure_code_cli_credentials_migrates_legacy_k3(tmp_path, monkeypatch):
+    """#324 leftover: default_model=kimi-code/k3 must not stay after boot."""
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    dest = home / "config.toml"
+    dest.write_text(
+        'default_model = "kimi-code/k3"\n'
+        "\n"
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        'api_key = "sk-test-not-real"\n'
+        'base_url = "https://api.moonshot.ai/v1"\n'
+        "\n"
+        '[models."kimi-code/k3"]\n'
+        'provider = "kimi"\n'
+        'model = "k3"\n'
+        "max_context_size = 1048576\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    result = ensure_code_cli_credentials()
+    assert result["ok"] is True
+    assert result["mutated"] is True
+    assert result["model"] == "kimi-k2.7-code"
+    text = dest.read_text(encoding="utf-8")
+    assert 'default_model = "kimi-k2.7-code"' in text
+    assert '[models."kimi-k2.7-code"]' in text
+    assert 'model = "kimi-k2.7-code"' in text
+    assert 'default_model = "kimi-code/k3"' not in text
+
+
+def test_ensure_code_cli_credentials_keeps_operator_k3(tmp_path, monkeypatch):
+    """Operator set KIMI_CODE_MODEL=kimi-code/k3 — do not overwrite."""
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    dest = home / "config.toml"
+    dest.write_text(
+        'default_model = "kimi-code/k3"\n'
+        "\n"
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        'api_key = "sk-test-not-real"\n'
+        'base_url = "https://api.moonshot.ai/v1"\n'
+        "\n"
+        '[models."kimi-code/k3"]\n'
+        'provider = "kimi"\n'
+        'model = "k3"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-code/k3")
+    result = ensure_code_cli_credentials()
+    assert result["ok"] is True
+    assert result["mutated"] is False
+    assert result["reason"] == "already present"
+    assert result["model"] == "kimi-code/k3"
 
 
 def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):

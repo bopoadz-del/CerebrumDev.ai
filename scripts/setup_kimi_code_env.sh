@@ -9,8 +9,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KEY="${1:-}"
 BASE_URL="${KIMI_CODE_BASE_URL:-https://api.moonshot.ai/v1}"
-# Kimi Code CLI 0.41 config-files complete example. Override for other catalogs.
-MODEL="${KIMI_CODE_MODEL:-kimi-code/k3}"
+# Moonshot Open Platform id this factory already uses (HTTP coder).
+# The CLI 0.41 docs example kimi-code/k3 404s on api.moonshot.ai.
+MODEL="${KIMI_CODE_MODEL:-kimi-k2.7-code}"
 
 if [[ -z "$KEY" ]]; then
   echo "Usage: $0 'sk-your-kimi-code-key'" >&2
@@ -45,7 +46,7 @@ from pathlib import Path
 path = Path(sys.argv[1])
 key = sys.argv[2]
 base_url = sys.argv[3]
-alias = sys.argv[4] or "kimi-code/k3"
+alias = sys.argv[4] or "kimi-k2.7-code"
 model_id = alias.rsplit("/", 1)[-1]
 ctx = 1048576 if model_id == "k3" else 262144
 text = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -67,7 +68,17 @@ else:
         text += "\n"
     text = text + ("\n" if text else "") + block
 
-if not re.search(r'(?m)^\s*default_model\s*=\s*"[^"]+"', text):
+legacy_k3 = re.search(
+    r'(?m)^\s*default_model\s*=\s*"(?:kimi-code/k3|k3)"', text
+)
+if legacy_k3 and alias not in {"kimi-code/k3", "k3"}:
+    text = re.sub(
+        r'(?m)^\s*default_model\s*=\s*"(?:kimi-code/k3|k3)"\s*\n?',
+        f'default_model = "{alias}"\n',
+        text,
+        count=1,
+    )
+elif not re.search(r'(?m)^\s*default_model\s*=\s*"[^"]+"', text):
     text = re.sub(r"(?m)^\s*default_model\s*=.*\n?", "", text)
     body = text.lstrip("\n")
     text = f'default_model = "{alias}"\n' + ("\n" + body if body else "")
