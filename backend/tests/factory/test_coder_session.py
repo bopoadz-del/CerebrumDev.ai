@@ -12,10 +12,14 @@ from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
     CONTROL_PAUSE,
     CONTROL_STOP,
+    DEFAULT_KIMI_CODE_MODEL,
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_CLI_CREDS,
+    NAMED_BLOCKER_CLI_FAILED,
+    NAMED_BLOCKER_CLI_NO_MODEL,
     NAMED_BLOCKER_STOPPED,
     CodeCliCredentialsMissing,
+    CodeCliNoModelConfigured,
     CodeCliUnavailable,
     DispatchResult,
     _has_brief_workflow_steps,
@@ -23,6 +27,7 @@ from app.factory.build.coder_session import (
     _merge_workspace_harvest,
     brief_dispatch_enabled,
     brief_requires_cli,
+    classify_cli_exit,
     cli_available,
     cli_credentials_ok,
     cli_unavailable_detail,
@@ -222,11 +227,62 @@ def test_resolve_code_cli_finds_home_local_bin(tmp_path, monkeypatch):
 def test_ensure_code_cli_credentials_writes_when_key_set(tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
     monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
     result = ensure_code_cli_credentials()
     assert result["wrote"] is True
+    assert result.get("mutated") is False
+    assert result["model"] == DEFAULT_KIMI_CODE_MODEL
     text = Path(result["path"]).read_text(encoding="utf-8")
     assert "[providers.kimi]" in text
     assert "sk-test-not-real" in text
+    assert f'default_model = "{DEFAULT_KIMI_CODE_MODEL}"' in text
+    assert f'[models."{DEFAULT_KIMI_CODE_MODEL}"]' in text
+    assert 'model = "k3"' in text
+    assert "max_context_size = 1048576" in text
+
+
+def test_ensure_code_cli_credentials_honours_kimi_code_model(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-code/kimi-for-coding")
+    result = ensure_code_cli_credentials()
+    assert result["wrote"] is True
+    assert result["model"] == "kimi-code/kimi-for-coding"
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert 'default_model = "kimi-code/kimi-for-coding"' in text
+    assert '[models."kimi-code/kimi-for-coding"]' in text
+    assert 'model = "kimi-for-coding"' in text
+
+
+def test_ensure_code_cli_credentials_mutates_when_model_missing(tmp_path, monkeypatch):
+    """Live-shaped file: [providers.kimi] present, default_model absent."""
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    dest = home / "config.toml"
+    dest.write_text(
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        'api_key = "sk-test-not-real"\n'
+        'base_url = "https://api.moonshot.ai/v1"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    result = ensure_code_cli_credentials()
+    assert result["ok"] is True
+    assert result["wrote"] is False
+    assert result["mutated"] is True
+    assert result["model"] == DEFAULT_KIMI_CODE_MODEL
+    text = dest.read_text(encoding="utf-8")
+    assert f'default_model = "{DEFAULT_KIMI_CODE_MODEL}"' in text
+    assert f'[models."{DEFAULT_KIMI_CODE_MODEL}"]' in text
+    assert "[providers.kimi]" in text
+    assert "sk-test-not-real" in text
+    again = ensure_code_cli_credentials()
+    assert again["wrote"] is False
+    assert again["mutated"] is False
+    assert again["reason"] == "already present"
 
 
 def test_ensure_code_cli_credentials_skips_when_unset(tmp_path, monkeypatch):
@@ -236,6 +292,24 @@ def test_ensure_code_cli_credentials_skips_when_unset(tmp_path, monkeypatch):
     result = ensure_code_cli_credentials()
     assert result["wrote"] is False
     assert "unset" in result["reason"]
+
+
+def test_classify_cli_exit_names_no_model_configured():
+    blocker, detail = classify_cli_exit(
+        1,
+        "error: failed to run prompt: No model configured. "
+        "Run 'kimi' and use /login to sign in, then retry; "
+        "or set default model in config.toml.",
+    )
+    assert blocker == NAMED_BLOCKER_CLI_NO_MODEL
+    assert CodeCliNoModelConfigured.blocker == NAMED_BLOCKER_CLI_NO_MODEL
+    assert "No model configured" in detail
+    assert "KIMI_CODE_MODEL" in detail
+    assert DEFAULT_KIMI_CODE_MODEL in detail
+    assert "templated" in detail
+    generic, generic_detail = classify_cli_exit(1, "segfault")
+    assert generic == NAMED_BLOCKER_CLI_FAILED
+    assert generic_detail == "CLI exited 1"
 
 
 def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):
@@ -600,6 +674,71 @@ def test_dispatch_kimi_without_config_toml_fail_closed(tmp_path, monkeypatch):
     log = read_log_tail(tmp_path / "build")
     assert NAMED_BLOCKER_CLI_CREDS in log
     assert "falling back to HTTP oneshot" not in log
+
+
+def test_dispatch_cli_no_model_configured_fail_closed(tmp_path, monkeypatch):
+    """CLI exit with 'No model configured' is a named fail-closed class."""
+    script = tmp_path / "kimi"
+    script.write_text(
+        "#!/bin/sh\n"
+        "echo \"error: failed to run prompt: No model configured. "
+        "Run 'kimi' and use /login to sign in, then retry; "
+        "or set default model in config.toml.\" >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        "[providers.kimi]\ntype = \"kimi\"\napi_key = \"sk-test-not-real\"\n",
+        encoding="utf-8",
+    )
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.via == "cli"
+    assert result.blocker == NAMED_BLOCKER_CLI_NO_MODEL
+    assert "No model configured" in result.detail
+    assert "templated" in result.detail
+    assert oneshot == [], "CLI no-model must not fall back to HTTP oneshot"
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_NO_MODEL
+    failures = ctx.state.get("coder_failures") or {}
+    assert NAMED_BLOCKER_CLI_NO_MODEL in failures.get("brief_dispatch", "")
+
+
+def test_dispatch_cli_other_nonzero_stays_failed(tmp_path, monkeypatch):
+    script = tmp_path / "kimi"
+    script.write_text("#!/bin/sh\necho boom\nexit 1\n", encoding="utf-8")
+    script.chmod(0o755)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text("[providers.kimi]\n", encoding="utf-8")
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.blocker == NAMED_BLOCKER_CLI_FAILED
+    assert result.detail == "CLI exited 1"
 
 
 def test_dispatch_kimi_with_config_toml_credentials_ok(tmp_path, monkeypatch):

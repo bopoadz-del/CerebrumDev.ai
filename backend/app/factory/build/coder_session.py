@@ -4,8 +4,10 @@ The WRITER compiles one brief, then this module hands it to FACTORY_CODE_CLI.
 A keyed production Floor must have that binary AND, for Kimi, a credentials
 file (or fail-closed with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
 ``FACTORY_CODE_CLI_CREDENTIALS_MISSING``) BEFORE it claims the coding agent
-has taken over. HTTP oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``);
-it is not a ≥2h agentic session.
+has taken over. A CLI exit of ``No model configured`` is
+``FACTORY_CODE_CLI_NO_MODEL`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
+A templated pilot zip after that skip is not a ≥2h CLI session. HTTP
+oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``).
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
 stop terminates the session. Owner eyes are the monitor.
@@ -16,12 +18,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from app.factory.build.workflow_accept import (
     handler_has_prepared_event_bus_step,
@@ -43,9 +46,21 @@ BRIEF_DISPATCH_ENV = "FACTORY_BRIEF_DISPATCH"
 BRIEF_HTTP_ONESHOT_ENV = "FACTORY_BRIEF_HTTP_ONESHOT"
 NAMED_BLOCKER_CLI = "FACTORY_CODE_CLI_UNAVAILABLE"
 NAMED_BLOCKER_CLI_CREDS = "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
+NAMED_BLOCKER_CLI_FAILED = "FACTORY_CODE_CLI_FAILED"
+NAMED_BLOCKER_CLI_NO_MODEL = "FACTORY_CODE_CLI_NO_MODEL"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset({NAMED_BLOCKER_CLI, NAMED_BLOCKER_CLI_CREDS})
+NO_MODEL_CONFIGURED_HINT = "No model configured"
+
+#: Kimi Code CLI 0.41 config-files complete example (`default_model`).
+KIMI_CODE_MODEL_ENV = "KIMI_CODE_MODEL"
+KIMI_CODE_MODEL_ID_ENV = "KIMI_CODE_MODEL_ID"
+DEFAULT_KIMI_CODE_MODEL = "kimi-code/k3"
+_MODEL_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+_DEFAULT_MODEL_RE = re.compile(
+    r'(?m)^\s*default_model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
+)
 
 #: One-line operator note. Dashboard clicks stay owner-gated.
 OWNER_GATED_CLI_LOG = (
@@ -63,6 +78,18 @@ class CodeCliCredentialsMissing(CodeCliUnavailable):
     """Kimi CLI is on PATH but ~/.kimi-code/config.toml is missing."""
 
     blocker = NAMED_BLOCKER_CLI_CREDS
+
+
+class CodeCliFailed(RuntimeError):
+    """CLI ran and exited non-zero. Not a silent template success."""
+
+    blocker = NAMED_BLOCKER_CLI_FAILED
+
+
+class CodeCliNoModelConfigured(CodeCliFailed):
+    """CLI refused: no default_model (headless /login is not available)."""
+
+    blocker = NAMED_BLOCKER_CLI_NO_MODEL
 
 
 def brief_dispatch_enabled() -> bool:
@@ -161,7 +188,8 @@ def cli_credentials_missing_detail(command: Optional[str] = None) -> str:
     return (
         f"{NAMED_BLOCKER_CLI_CREDS}: {cli!r} is an executable on this host but "
         f"{dest} is missing (credentials_file_present=false). "
-        "Set KIMI_CODE_API_KEY so boot writes [providers.kimi] into that file "
+        "Set KIMI_CODE_API_KEY so boot writes [providers.kimi] and "
+        "default_model (KIMI_CODE_MODEL, default kimi-code/k3) into that file "
         f"(or place the file yourself). {CODE_CLI_ENV} / CEREBRUM_LLM_API_KEY "
         "do not authenticate the Kimi Code CLI. HTTP oneshot is not a "
         f"FACTORY_CODE_CLI session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
@@ -335,11 +363,132 @@ def probe_code_cli() -> Dict[str, Any]:
     return probe
 
 
+def kimi_code_default_model() -> str:
+    """Alias written as ``default_model``. ``KIMI_CODE_MODEL`` overrides."""
+    raw = os.getenv(KIMI_CODE_MODEL_ENV, "").strip()
+    if raw and _MODEL_ALIAS_RE.match(raw):
+        return raw
+    return DEFAULT_KIMI_CODE_MODEL
+
+
+def kimi_code_model_id(alias: Optional[str] = None) -> str:
+    """API model id for the ``[models]`` table (last path segment of the alias)."""
+    override = os.getenv(KIMI_CODE_MODEL_ID_ENV, "").strip()
+    if override and _MODEL_ALIAS_RE.match(override):
+        return override
+    name = alias or kimi_code_default_model()
+    return name.rsplit("/", 1)[-1]
+
+
+def config_default_model(text: str) -> str:
+    match = _DEFAULT_MODEL_RE.search(text or "")
+    if not match:
+        return ""
+    return (match.group(1) or match.group(2) or match.group(3) or "").strip()
+
+
+def config_has_kimi_provider(text: str) -> bool:
+    return "[providers.kimi]" in (text or "")
+
+
+def config_has_model_alias(text: str, alias: str) -> bool:
+    if not alias:
+        return False
+    blob = text or ""
+    if f'[models."{alias}"]' in blob:
+        return True
+    if "/" not in alias and "." not in alias:
+        return f"[models.{alias}]" in blob
+    return False
+
+
+def _model_context_size(model_id: str) -> int:
+    # k3 window from Kimi Code CLI 0.41 config-files example; others 256k.
+    return 1048576 if model_id == "k3" else 262144
+
+
+def _provider_block(key: str, base_url: str) -> str:
+    return (
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        f'api_key = "{key}"\n'
+        f'base_url = "{base_url}"\n'
+    )
+
+
+def _model_table_block(alias: str, model_id: str) -> str:
+    return (
+        f'[models."{alias}"]\n'
+        'provider = "kimi"\n'
+        f'model = "{model_id}"\n'
+        f"max_context_size = {_model_context_size(model_id)}\n"
+    )
+
+
+def _ensure_trailing_newline(text: str) -> str:
+    if text and not text.endswith("\n"):
+        return text + "\n"
+    return text
+
+
+def apply_kimi_code_default_model(
+    text: str, *, alias: Optional[str] = None
+) -> Tuple[str, bool]:
+    """Insert ``default_model`` + ``[models]`` when missing. Does not strip keys."""
+    alias = alias or kimi_code_default_model()
+    model_id = kimi_code_model_id(alias)
+    out = text or ""
+    current = config_default_model(out)
+    mutated = False
+    if not current:
+        out = re.sub(r"(?m)^\s*default_model\s*=\s*(?:\"\"|''|\s*)\s*\n?", "", out)
+        prefix = f'default_model = "{alias}"\n'
+        body = out.lstrip("\n")
+        out = prefix + ("\n" + body if body else "")
+        current = alias
+        mutated = True
+    if not config_has_model_alias(out, current):
+        mid = model_id if current == alias else current.rsplit("/", 1)[-1]
+        out = _ensure_trailing_newline(out)
+        if out and not out.endswith("\n\n"):
+            out += "\n"
+        out += _model_table_block(current, mid)
+        mutated = True
+    return out, mutated
+
+
+def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
+    """Named fail-closed class for a non-zero FACTORY_CODE_CLI exit.
+
+    ``FACTORY_CODE_CLI_FAILED`` stays the generic honesty class. A more
+    specific ``FACTORY_CODE_CLI_NO_MODEL`` fires when the CLI prints
+    ``No model configured`` (headless /login is not a Floor path).
+    A templated pilot zip is not a ≥2h CLI session.
+    """
+    exit_bit = f"CLI exited {code}"
+    if NO_MODEL_CONFIGURED_HINT in (output or ""):
+        return (
+            NAMED_BLOCKER_CLI_NO_MODEL,
+            (
+                f"{exit_bit} — No model configured. Headless Floor cannot run "
+                "`kimi` /login. Set KIMI_CODE_MODEL (default "
+                f"{DEFAULT_KIMI_CODE_MODEL}, Kimi Code CLI 0.41) so boot writes "
+                "default_model into ~/.kimi-code/config.toml. A templated "
+                f"pilot zip is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
+            ),
+        )
+    return NAMED_BLOCKER_CLI_FAILED, exit_bit
+
+
 def ensure_code_cli_credentials() -> Dict[str, Any]:
     """Write ~/.kimi-code/config.toml from KIMI_CODE_API_KEY when present.
 
-    Does not install the binary. Skipped (one-line log) when the secret is
-    unset — owner-gated stays owner-gated.
+    Also writes ``default_model`` (``KIMI_CODE_MODEL``, default
+    ``kimi-code/k3`` — Kimi Code CLI 0.41) so non-interactive
+    ``kimi --prompt`` works without TTY ``/login``. Mutates an existing
+    credentials-only file that is missing a model. Does not install the
+    binary. Skipped when the secret is unset — owner-gated stays
+    owner-gated. Does not claim the Render dashboard is set.
     """
     key = (
         os.getenv("KIMI_CODE_API_KEY", "").strip()
@@ -347,27 +496,55 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
     )
     home = kimi_credentials_home()
     dest = kimi_credentials_file()
+    alias = kimi_code_default_model()
     if not key:
         logger.info(OWNER_GATED_CLI_LOG)
-        return {"ok": False, "wrote": False, "reason": "KIMI_CODE_API_KEY unset"}
-    if dest.is_file() and "[providers.kimi]" in dest.read_text(encoding="utf-8"):
-        return {"ok": True, "wrote": False, "path": str(dest), "reason": "already present"}
+        return {
+            "ok": False,
+            "wrote": False,
+            "mutated": False,
+            "reason": "KIMI_CODE_API_KEY unset",
+        }
+    existed = dest.is_file()
+    existing = dest.read_text(encoding="utf-8") if existed else ""
+    has_provider = config_has_kimi_provider(existing)
+    current_model = config_default_model(existing)
+    if (
+        has_provider
+        and current_model
+        and config_has_model_alias(existing, current_model)
+    ):
+        return {
+            "ok": True,
+            "wrote": False,
+            "mutated": False,
+            "path": str(dest),
+            "model": current_model,
+            "reason": "already present",
+        }
     home.mkdir(parents=True, exist_ok=True)
     base_url = os.getenv("KIMI_CODE_BASE_URL", "https://api.moonshot.ai/v1").strip()
-    block = (
-        "[providers.kimi]\n"
-        'type = "kimi"\n'
-        f'api_key = "{key}"\n'
-        f'base_url = "{base_url}"\n'
-    )
-    existing = dest.read_text(encoding="utf-8") if dest.is_file() else ""
     text = existing
-    if text and not text.endswith("\n"):
-        text += "\n"
-    text = text + ("\n" if text else "") + block
+    wrote_provider = False
+    if not has_provider:
+        text = _ensure_trailing_newline(text)
+        text = text + ("\n" if text else "") + _provider_block(key, base_url)
+        wrote_provider = True
+    text, mutated_model = apply_kimi_code_default_model(text, alias=alias)
     dest.write_text(text, encoding="utf-8")
-    logger.info("wrote Kimi Code CLI credentials to %s (binary still required)", dest)
-    return {"ok": True, "wrote": True, "path": str(dest)}
+    logger.info(
+        "wrote Kimi Code CLI credentials to %s (model=%s; binary still required)",
+        dest,
+        config_default_model(text) or alias,
+    )
+    return {
+        "ok": True,
+        "wrote": wrote_provider,
+        "mutated": bool(existed and mutated_model),
+        "path": str(dest),
+        "model": config_default_model(text) or alias,
+        "reason": "mutated" if existed and mutated_model else "wrote",
+    }
 
 
 @dataclass
@@ -524,11 +701,17 @@ def _run_cli_session(
             blocker=NAMED_BLOCKER_STOPPED,
         )
     if code != 0:
+        log_text = ""
+        try:
+            log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            log_text = ""
+        blocker, detail = classify_cli_exit(int(code or 1), log_text)
         return DispatchResult(
             via="cli",
             ok=False,
-            detail=f"CLI exited {code}",
-            blocker="FACTORY_CODE_CLI_FAILED",
+            detail=detail,
+            blocker=blocker,
             model=cli,
         )
     ctx.note(
