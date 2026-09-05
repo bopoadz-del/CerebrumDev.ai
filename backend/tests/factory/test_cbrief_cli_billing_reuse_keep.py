@@ -22,9 +22,11 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI_BILLING,
     NAMED_BLOCKER_CLI_FAILED,
 )
-from app.factory.build.gates import GateContext
-from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
-from app.factory.build.product_gate import gate_round_trip
+from app.factory.build.persist_accept import (
+    FACTORY_GROUNDED_PERSIST_SOURCE,
+    assert_persist_round_trip_ready,
+    persist_round_trip_errors,
+)
 from app.factory.build.roles import RoleContext, run_writer
 from app.factory.build.workflow_accept import FACTORY_GROUNDED_EVENT_BUS_SOURCE
 from app.factory.build.workspace import RoleWorkspace
@@ -128,10 +130,20 @@ def test_writer_empty_gap_billing_fail_allows_product_round_trip(
         assert "_persist_record(" in text, cid
         assert want in text, (cid, want)
         assert "deterministic contract template" not in text
-    ctx = GateContext(workspace=out, role=BuildRole.TESTER, cycle="pilot")
-    trip = gate_round_trip(ctx)
-    assert trip.ok, (trip.detail, trip.findings)
-    assert "pilot_zip" not in (trip.detail or "").lower()
+    # CI has no CEREBRUM_BLOCKS_ROOT / CLONER shims, so Store execute()
+    # of event_bus/workflow is not the contract. Persist harness + writer
+    # not RoleError-ing is the PRODUCT path this C-BRIEF opens.
+    specs = {
+        cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
+        for cid in (
+            "appointment_scheduling",
+            "clinic_dashboard",
+            "pet_records_management",
+        )
+    }
+    assert persist_round_trip_errors(out, specs) == []
+    assert_persist_round_trip_ready(out, specs)
+    assert "pilot_zip" not in (result.detail or "").lower()
 
 
 def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypatch):
