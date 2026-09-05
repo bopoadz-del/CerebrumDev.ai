@@ -9,9 +9,14 @@ BEFORE it claims the coding agent has taken over. A CLI exit of
 ``No model configured`` is also ``FACTORY_CODE_CLI_NO_MODEL``
 (still ``FACTORY_CODE_CLI_FAILED`` honesty).
 A 404 / Permission denied on the configured model is
-``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A templated
-pilot zip after that skip is not a ≥2h CLI session. HTTP oneshot is
-CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``).
+``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A Moonshot
+``429`` / insufficient-balance / account-suspended exit is
+``FACTORY_CODE_CLI_BILLING`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
+When STEP 0 inventory has **zero gaps** (all capabilities REUSE-present),
+that named billing/auth miss must not discard the factory-grounded emit +
+harvest keep-path (#333/#336/#337). A templated pilot zip after that skip
+is not a ≥2h CLI session. HTTP oneshot is CI-only
+(``FACTORY_BRIEF_HTTP_ONESHOT=1``).
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
 stop terminates the session. Owner eyes are the monitor.
@@ -53,11 +58,23 @@ NAMED_BLOCKER_CLI_CREDS = "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
 NAMED_BLOCKER_CLI_FAILED = "FACTORY_CODE_CLI_FAILED"
 NAMED_BLOCKER_CLI_NO_MODEL = "FACTORY_CODE_CLI_NO_MODEL"
 NAMED_BLOCKER_CLI_MODEL_DENIED = "FACTORY_CODE_CLI_MODEL_DENIED"
+NAMED_BLOCKER_CLI_BILLING = "FACTORY_CODE_CLI_BILLING"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset(
     {NAMED_BLOCKER_CLI, NAMED_BLOCKER_CLI_CREDS, NAMED_BLOCKER_CLI_NO_MODEL}
 )
+#: Named billing/auth misses that still allow factory-grounded REUSE
+#: emit + harvest when STEP 0 inventory_gaps is empty (sess_d5789a91).
+CLI_AUTH_BILLING_BLOCKERS = frozenset(
+    {
+        NAMED_BLOCKER_CLI_BILLING,
+        NAMED_BLOCKER_CLI_CREDS,
+        NAMED_BLOCKER_CLI_NO_MODEL,
+        NAMED_BLOCKER_CLI_MODEL_DENIED,
+    }
+)
+KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
 NO_MODEL_CONFIGURED_HINT = "No model configured"
 
 #: Moonshot Open Platform ids for ``[providers.kimi]`` +
@@ -106,6 +123,17 @@ _MODEL_DENIED_HINTS = (
     "unknown model",
     "model does not exist",
 )
+#: Moonshot / Kimi Code CLI billing-auth class (sess_d5789a91 photograph).
+_BILLING_HINTS = (
+    "insufficient balance",
+    "insufficient_balance",
+    "insufficient quota",
+    "insufficient_quota",
+    "account has been suspended",
+    "suspended due to insufficient",
+    "invalid api key",
+    "invalid_api_key",
+)
 
 #: One-line operator note. Dashboard clicks stay owner-gated.
 OWNER_GATED_CLI_LOG = (
@@ -146,6 +174,16 @@ class CodeCliModelDenied(CodeCliFailed):
     """CLI ran but the configured model 404'd / Permission denied."""
 
     blocker = NAMED_BLOCKER_CLI_MODEL_DENIED
+
+
+class CodeCliBillingFailed(CodeCliFailed):
+    """CLI ran; Moonshot/account billing refused the session.
+
+    Still ``FACTORY_CODE_CLI_FAILED`` honesty — never a ≥2h CLI session.
+    Empty-gap REUSE may continue factory-grounded emit + harvest.
+    """
+
+    blocker = NAMED_BLOCKER_CLI_BILLING
 
 
 def brief_dispatch_enabled() -> bool:
@@ -688,8 +726,9 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
     ``No model configured`` (headless /login is not a Floor path).
     ``FACTORY_CODE_CLI_MODEL_DENIED`` fires on 404 / Permission denied
     for the configured model (live tip after #324: ``k3`` /
-    ``kimi-code/k3`` on Moonshot). A templated pilot zip is not a ≥2h
-    CLI session.
+    ``kimi-code/k3`` on Moonshot). ``FACTORY_CODE_CLI_BILLING`` fires on
+    Moonshot ``429`` account-suspended / insufficient balance
+    (sess_d5789a91). A templated pilot zip is not a ≥2h CLI session.
     """
     exit_bit = f"CLI exited {code}"
     blob = output or ""
@@ -724,6 +763,20 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 "Moonshot api.moonshot.ai — not managed kimi-code/k3). Boot "
                 "rewrites ~/.kimi-code/config.toml. A templated pilot zip "
                 f"is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
+            ),
+        )
+    billing = any(hint in lowered for hint in _BILLING_HINTS)
+    rate_suspended = "429" in lowered and "suspended" in lowered
+    if billing or rate_suspended:
+        return (
+            NAMED_BLOCKER_CLI_BILLING,
+            (
+                f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — Moonshot account "
+                "billing/auth refused the session (insufficient balance / "
+                "429 suspended). Still FACTORY_CODE_CLI_FAILED honesty — "
+                "not a ≥2h CLI session. Empty-gap REUSE continues "
+                "factory-grounded emit + harvest; inventory_gaps still "
+                f"fail-closed. {OWNER_GATED_CLI_LOG}."
             ),
         )
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
@@ -849,6 +902,7 @@ class DispatchResult:
     kept_handler_ids: List[str] = field(default_factory=list)
     model: str = ""
     blocker: Optional[str] = None
+    reuse_keep_path: bool = False
     receipt: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -858,11 +912,153 @@ class DispatchResult:
             "detail": self.detail,
             "model": self.model,
             "blocker": self.blocker,
+            "reuse_keep_path": self.reuse_keep_path,
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
             "spec_ids": sorted(self.specs),
             "receipt": dict(self.receipt),
         }
+
+
+def inventory_gap_ids(compiled: Any) -> List[str]:
+    """STEP 0 inventory ids that required agentic CLI writes (GENERATE/GAP)."""
+    out: List[str] = []
+    for item in getattr(compiled, "inventory", ()) or ():
+        if getattr(item, "is_gap", False):
+            cid = str(getattr(item, "capability_id", "") or "").strip()
+            if cid:
+                out.append(cid)
+    return out
+
+
+def should_keep_factory_grounded_reuse(compiled: Any, result: DispatchResult) -> bool:
+    """Empty-gap REUSE + named billing/auth CLI miss → keep emit/harvest.
+
+    Live sess_d5789a91 (VetCare Hub / veterinary-care): inventory_gaps=[]
+    and FACTORY_CODE_CLI exited 1 with Moonshot 429 / insufficient
+    balance. Harvest was skipped because ``result.ok`` was false, then
+    WRITER labeled persist/event_bus emit as a deterministic template and
+    budget_inspect hard-stopped at stub_rate≈0.833 / SCAFFOLD.
+    """
+    if result.ok:
+        return False
+    if inventory_gap_ids(compiled):
+        return False
+    return result.blocker in CLI_AUTH_BILLING_BLOCKERS
+
+
+def factory_grounded_source_for(
+    capability_id: str, block_ids: Optional[Sequence[str]] = None
+) -> str:
+    """Authorship label for factory-grounded persist / event_bus emit."""
+    from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
+    from app.factory.build.workflow_accept import needs_grounded_event_bus_handler
+
+    if needs_grounded_event_bus_handler(capability_id, block_ids):
+        from app.factory.build.workflow_accept import (
+            FACTORY_GROUNDED_EVENT_BUS_SOURCE,
+        )
+
+        return FACTORY_GROUNDED_EVENT_BUS_SOURCE
+    return FACTORY_GROUNDED_PERSIST_SOURCE
+
+
+def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str]:
+    """Write persist / event_bus handlers for REUSE caps, then harvest can keep.
+
+    Does not claim a CLI session. Does not write GENERATE/GAP caps — those
+    still need agentic CLI and stay fail-closed.
+    """
+    from app.factory.build.roles_handlers import (
+        _capability_handler_body,
+        _handler_module,
+    )
+
+    root = Path(root)
+    written: List[str] = []
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True, exist_ok=True)
+    for item in getattr(compiled, "inventory", ()) or ():
+        if getattr(item, "is_gap", False):
+            continue
+        cid = str(getattr(item, "capability_id", "") or "").strip()
+        if not cid:
+            continue
+        bids = [
+            str(b)
+            for b in (
+                getattr(item, "verified_present", None)
+                or getattr(item, "block_ids", None)
+                or ()
+            )
+            if str(b).strip()
+        ]
+        body = _capability_handler_body(cid, bids)
+        source = factory_grounded_source_for(cid, bids)
+        name = cid.replace("-", "_")
+        path = actions / f"{name}.py"
+        path.write_text(
+            _handler_module(cid, bids, body, source, entity=name),
+            encoding="utf-8",
+        )
+        written.append(cid)
+    return written
+
+
+def write_dispatch_receipt(
+    ctx: Any,
+    compiled: Any,
+    result: DispatchResult,
+) -> Dict[str, Any]:
+    """Persist coder_receipt.json. Honesty fields stay even on keep-path."""
+    receipt = {
+        "via": result.via,
+        "ok": result.ok,
+        "detail": result.detail,
+        "blocker": result.blocker,
+        "honesty_class": (
+            NAMED_BLOCKER_CLI_FAILED
+            if result.blocker
+            in CLI_AUTH_BILLING_BLOCKERS | {NAMED_BLOCKER_CLI_FAILED}
+            else result.blocker
+        ),
+        "keep_path": (
+            KEEP_PATH_FACTORY_GROUNDED_REUSE if result.reuse_keep_path else None
+        ),
+        "reuse_keep_path": result.reuse_keep_path,
+        "model": result.model,
+        "product_id": compiled.product_id,
+        "vertical": compiled.vertical,
+        "capabilities": list(compiled.capabilities),
+        "inventory_reuse": [
+            item.capability_id
+            for item in compiled.inventory
+            if item.verified_present and not item.missing
+        ],
+        "inventory_gaps": inventory_gap_ids(compiled),
+        "harvested_spec_ids": sorted(result.specs),
+        "kept_handler_ids": list(result.kept_handler_ids),
+    }
+    result.receipt = receipt
+    root = _workspace_root(ctx)
+    try:
+        ctx.workspace.write_text(
+            RECEIPT_REL,
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+        )
+    except Exception:  # noqa: BLE001 — receipt must not fail the role
+        _write_receipt(root, receipt)
+    return receipt
+
+
+def refresh_receipt_harvest(
+    ctx: Any, compiled: Any, result: DispatchResult
+) -> DispatchResult:
+    """Re-harvest after WRITER emit so models/handlers land on the receipt."""
+    root = _workspace_root(ctx)
+    _merge_workspace_harvest(result, root, list(compiled.capabilities))
+    write_dispatch_receipt(ctx, compiled, result)
+    return result
 
 
 def _write_receipt(root: Path, payload: Mapping[str, Any]) -> None:
@@ -1294,6 +1490,31 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             # #318 keep-path: prefer on-disk workflow/event_bus steps over a
             # thin JSON body so the fallback envelope cannot overwrite them.
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
+        elif should_keep_factory_grounded_reuse(compiled, result):
+            # sess_d5789a91: CLI 429 / insufficient balance with empty
+            # inventory_gaps. Harvest used to run only on result.ok, so
+            # factory-grounded persist / event_bus emit was discarded and
+            # budget_inspect hard-stopped as a thin SCAFFOLD.
+            result.reuse_keep_path = True
+            emitted = emit_factory_grounded_reuse_keep_path(root, compiled)
+            _merge_workspace_harvest(result, root, list(compiled.capabilities))
+            _append_log(
+                root / LOG_REL,
+                "[harvest] factory-grounded REUSE keep-path after "
+                f"{result.blocker}: emitted={emitted} "
+                f"kept={list(result.kept_handler_ids)}",
+            )
+            ctx.note(
+                (
+                    f"{result.blocker} — factory-grounded REUSE keep-path "
+                    f"({len(result.kept_handler_ids)} handler(s)); "
+                    "not a ≥2h CLI session"
+                ),
+                stage="dispatch",
+                source="factory-grounded reuse keep-path",
+                done=1 if result.kept_handler_ids else 0,
+                total=1,
+            )
     elif http_oneshot_enabled():
         _append_log(
             root / LOG_REL,
@@ -1340,34 +1561,22 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                 blocker=NAMED_BLOCKER_CLI,
             )
 
-    receipt = {
-        "via": result.via,
-        "ok": result.ok,
-        "detail": result.detail,
-        "blocker": result.blocker,
-        "model": result.model,
-        "product_id": compiled.product_id,
-        "vertical": compiled.vertical,
-        "capabilities": list(compiled.capabilities),
-        "inventory_reuse": [
-            item.capability_id
-            for item in compiled.inventory
-            if item.verified_present and not item.missing
-        ],
-        "inventory_gaps": [
-            item.capability_id for item in compiled.inventory if item.is_gap
-        ],
-        "harvested_spec_ids": sorted(result.specs),
-        "kept_handler_ids": list(result.kept_handler_ids),
-    }
-    result.receipt = receipt
-    try:
-        ctx.workspace.write_text(
-            RECEIPT_REL,
-            json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+    if (
+        not result.ok
+        and not result.reuse_keep_path
+        and should_keep_factory_grounded_reuse(compiled, result)
+    ):
+        result.reuse_keep_path = True
+        emitted = emit_factory_grounded_reuse_keep_path(root, compiled)
+        _merge_workspace_harvest(result, root, list(compiled.capabilities))
+        _append_log(
+            root / LOG_REL,
+            "[harvest] factory-grounded REUSE keep-path after "
+            f"{result.blocker}: emitted={emitted} "
+            f"kept={list(result.kept_handler_ids)}",
         )
-    except Exception:  # noqa: BLE001 — receipt must not fail the role
-        _write_receipt(root, receipt)
+
+    write_dispatch_receipt(ctx, compiled, result)
     ctx.state["brief_dispatch"] = result.to_dict()
     ctx.state["compiled_brief"] = {
         "product_id": compiled.product_id,

@@ -79,6 +79,50 @@ def test_inspect_reads_caps_timeouts_stubs_and_contract_misses(tmp_path):
     assert snap["progressing"] is True
 
 
+def test_factory_grounded_emit_is_authored_not_a_stub(tmp_path):
+    """sess_d5789a91 class: factory-grounded persist/event_bus lower stub_rate."""
+    ledger = _ledger(tmp_path)
+    for cap, source in (
+        ("appointment_scheduling", "factory-grounded event_bus workflow"),
+        ("clinic_dashboard", "factory-grounded persist"),
+        ("pet_records_management", "factory-grounded persist"),
+    ):
+        ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.WRITER,
+            detail=f"wrote handler {cap} ({source})",
+            payload={
+                "stage": "handlers",
+                "capability": cap,
+                "source": source,
+            },
+        )
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="wrote handler leftover (deterministic contract template)",
+        payload={
+            "stage": "handlers",
+            "capability": "leftover_gap",
+            "source": "deterministic contract template",
+        },
+    )
+    snap = inspect_build(ledger)
+    assert "appointment_scheduling" in snap["caps_written"]
+    assert "clinic_dashboard" in snap["caps_written"]
+    assert "leftover_gap" in snap["caps_templated"]
+    assert snap["stub_rate"] < 0.5
+    assert snap["progressing"] is True
+    decided = inspect_decision(
+        elapsed_s=STAGE_1_S,
+        current_wall_s=STAGE_1_S,
+        snapshot=snap,
+        stage="stage_1",
+    )
+    assert decided["decision"] != "hard_stop"
+    assert should_continue_after_inspect(snap) is True
+
+
 def test_all_stubs_and_timeouts_are_not_progressing(tmp_path):
     ledger = _ledger(tmp_path)
     ledger.append(
