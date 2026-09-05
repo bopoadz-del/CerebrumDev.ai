@@ -7,15 +7,16 @@ Live sess_8273a26a4c1b4ee7 (VetCare Hub / veterinary-care) stopped at WRITER
     'pet_records_management' from partially initialized module 'app.actions'
     (.../app/actions/__init__.py)
 
-Root cause: factory ``app/actions/__init__.py`` eagerly re-exported every
-capability (``from app.actions import pet_records_management``) while a
-CLI/Kimi handler imported a sibling through the same package. The probe
-never reached route honesty. This file is the failing-then-passing lock:
+Root cause: factory ``app/actions/__init__.py`` and ``app/routes.py`` both
+did ``from app.actions import pet_records_management`` at load time. A
+CLI/Kimi handler that imports ``app.routes`` (or ``app.main``) completes
+the cycle. The probe never reached route honesty. This file is the
+failing-then-passing lock:
 
-* the live eager init + sibling back-import is still circular
+* eager init + eager route fromlist + handler ``import app.routes`` is circular
 * ``writer_behaviour`` still fail-closes on that import (not ignored)
-* factory ``_render_actions_init`` + deferred route imports import cleanly
-  with the same sibling-importing handlers
+* factory lazy init + deferred route imports import cleanly with the same
+  handlers
 """
 
 from __future__ import annotations
@@ -46,14 +47,16 @@ ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
-_SIBLING_BACK_IMPORT = """
+# Kimi-class full module: handle() plus a load-time import of the HTTP
+# surface. Combined with eager package/route fromlist this is the cycle.
+_HANDLER_IMPORTS_ROUTES = """
 from app.dispatch import execute
-from app.actions import {other}
+from app.routes import router
 
 CAPABILITY_ID = {cap!r}
 
 def handle(payload):
-    _ = {other}.CAPABILITY_ID
+    _ = router
     res = execute('database', {{'input': payload}}, action='insert')
     if res.get('status') == 'error':
         return {{'ok': False, 'error': res.get('error')}}
@@ -62,28 +65,20 @@ def handle(payload):
 
 
 def _eager_actions_init(names) -> str:
+    ordered = ["pet_records_management"] + [n for n in names if n != "pet_records_management"]
     return (
         '"""Capability handlers."""\n\n'
-        + "\n".join(f"from app.actions import {n}  # noqa: F401" for n in names)
+        + "\n".join(f"from app.actions import {n}  # noqa: F401" for n in ordered)
         + "\n"
     )
 
 
 def _write_vetcare_circular_handlers(root: Path) -> None:
-    """Kimi-class sibling imports through ``app.actions`` (the live cycle)."""
+    """Kimi-class handlers that import ``app.routes`` at module load."""
     app = root / "app"
-    names = [cap for cap, _e, _b, _d in _VET_CAPS]
-    # pet_records_management <-> automated_reminders is the named live miss.
-    pairs = {
-        "pet_records_management": "automated_reminders",
-        "automated_reminders": "pet_records_management",
-        "role_based_dashboard": "pet_records_management",
-        "veterinarian_availability": "pet_records_management",
-    }
     for cap, _entity, _blocks, _defaults in _VET_CAPS:
-        other = pairs[cap]
         (app / "actions" / f"{cap}.py").write_text(
-            _SIBLING_BACK_IMPORT.format(cap=cap, other=other),
+            _HANDLER_IMPORTS_ROUTES.format(cap=cap),
             encoding="utf-8",
         )
 
@@ -113,8 +108,10 @@ def _overlay_vetcare_caps(root: Path) -> list[str]:
 
 def _write_eager_routes(root: Path, names: list[str]) -> None:
     """Pre-fix factory routes: module-level ``from app.actions import``."""
+    # Live Floor named pet_records_management — import that capability first.
+    ordered = ["pet_records_management"] + [n for n in names if n != "pet_records_management"]
     imports = "\n".join(
-        f"from app.actions import {n} as _{n}" for n in names
+        f"from app.actions import {n} as _{n}" for n in ordered
     )
     fns = []
     entities = {cap: entity for cap, entity, _b, _d in _VET_CAPS}
@@ -145,7 +142,7 @@ def _write_eager_routes(root: Path, names: list[str]) -> None:
 
 
 def _write_live_circular_workspace(root: Path) -> list[str]:
-    """Reproduce the Floor import crash (eager init + sibling back-import)."""
+    """Reproduce the Floor import crash (eager init + handler→routes)."""
     _write_workspace(root, _GUARDED)
     names = _overlay_vetcare_caps(root)
     (root / "app" / "actions" / "__init__.py").write_text(
@@ -228,8 +225,14 @@ def _import_probe(root: Path) -> subprocess.CompletedProcess:
     )
 
 
-def test_eager_actions_init_plus_sibling_import_is_circular(tmp_path):
-    """Failing fixture: the live ``app.actions`` packaging class."""
+def test_eager_actions_init_plus_handler_route_import_is_circular(tmp_path):
+    """Failing fixture: the live ``app.actions`` packaging class.
+
+    Eager ``from app.actions import pet_records_management`` in ``__init__.py``
+    and in ``routes.py``, plus a handler that imports ``app.routes``, is the
+    cycle. The traceback names that fromlist; the ImportError is the
+    partially initialized module (``app.actions`` or ``app.routes``).
+    """
     _write_live_circular_workspace(tmp_path)
     init = (tmp_path / "app" / "actions" / "__init__.py").read_text(encoding="utf-8")
     assert "pet_records_management" in actions_init_eager_reexports(init)
@@ -239,7 +242,7 @@ def test_eager_actions_init_plus_sibling_import_is_circular(tmp_path):
     err = proc.stderr
     assert "pet_records_management" in err, err
     assert "partially initialized" in err, err
-    assert "app.actions" in err, err
+    assert "from app.actions import pet_records_management" in err, err
 
 
 def test_writer_behaviour_fail_closes_on_circular_actions_import(tmp_path):
@@ -250,7 +253,7 @@ def test_writer_behaviour_fail_closes_on_circular_actions_import(tmp_path):
     assert result.ok is False, result
     joined = " ".join([result.detail or "", *(result.findings or [])])
     assert "workspace does not import" in joined, joined
-    assert "pet_records_management" in joined, joined
+    assert "partially initialized" in joined, joined
     assert result.detail != F1_HALT
     assert "success over a failed block" not in (result.detail or "")
 
@@ -282,10 +285,10 @@ def test_factory_routes_defer_action_imports():
     assert "from app.actions.pet_records_management import handle" in src
 
 
-def test_factory_packaging_imports_veterinary_care_with_sibling_back_imports(
+def test_factory_packaging_imports_veterinary_care_with_handler_route_imports(
     tmp_path,
 ):
-    """Passing fixture: factory emit + the same Kimi-class sibling imports."""
+    """Passing fixture: factory emit + the same Kimi-class route imports."""
     _write_factory_packaged_workspace(tmp_path)
     init = (tmp_path / "app" / "actions" / "__init__.py").read_text(encoding="utf-8")
     assert actions_init_eager_reexports(init) == []

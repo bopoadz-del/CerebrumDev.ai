@@ -1151,11 +1151,12 @@ def _render_actions_init(capability_names: Sequence[str]) -> str:
         'app.actions' (.../app/actions/__init__.py)
 
     The factory used to emit ``from app.actions import <cap>`` for every
-    capability. That re-enters the package while it is still initializing.
-    A CLI/Kimi handler that then imports a sibling (or ``app.routes`` /
-    ``app.main``) completes the cycle. PEP 562 ``__getattr__`` loads a
-    submodule on first attribute access after ``__init__`` has finished.
-    Callers may still write ``from app.actions import pet_records_management``.
+    capability and the same fromlist at module level in ``app/routes.py``.
+    A CLI/Kimi handler that imports ``app.routes`` / ``app.main`` at load
+    time (or a name from the still-initializing ``app.actions`` package)
+    completes the cycle. PEP 562 ``__getattr__`` plus deferred route
+    imports break it. Callers may still write
+    ``from app.actions import pet_records_management``.
     """
     names = [
         str(name).replace("-", "_")
