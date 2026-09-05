@@ -13,12 +13,15 @@ from app.factory.build.coder_session import (
     CONTROL_PAUSE,
     CONTROL_STOP,
     DEFAULT_KIMI_CODE_MODEL,
+    DEFAULT_KIMI_CODE_MODEL_ID,
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_CLI_FAILED,
+    NAMED_BLOCKER_CLI_MODEL_DENIED,
     NAMED_BLOCKER_CLI_NO_MODEL,
     NAMED_BLOCKER_STOPPED,
     CodeCliCredentialsMissing,
+    CodeCliModelDenied,
     CodeCliNoModelConfigured,
     CodeCliUnavailable,
     DispatchResult,
@@ -29,6 +32,8 @@ from app.factory.build.coder_session import (
     brief_requires_cli,
     classify_cli_exit,
     cli_available,
+    config_default_model,
+    config_model_id,
     cli_credentials_ok,
     cli_unavailable_detail,
     dispatch_compiled_brief,
@@ -228,30 +233,68 @@ def test_ensure_code_cli_credentials_writes_when_key_set(tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
     monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
     monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
     result = ensure_code_cli_credentials()
     assert result["wrote"] is True
     assert result.get("mutated") is False
     assert result["model"] == DEFAULT_KIMI_CODE_MODEL
+    assert result["model_id"] == DEFAULT_KIMI_CODE_MODEL_ID
     text = Path(result["path"]).read_text(encoding="utf-8")
     assert "[providers.kimi]" in text
     assert "sk-test-not-real" in text
     assert f'default_model = "{DEFAULT_KIMI_CODE_MODEL}"' in text
     assert f'[models."{DEFAULT_KIMI_CODE_MODEL}"]' in text
-    assert 'model = "k3"' in text
+    assert config_default_model(text) == "kimi-k3"
+    assert config_model_id(text, "kimi-k3") == "kimi-k3"
+    assert 'model = "kimi-k3"' in text
     assert "max_context_size = 1048576" in text
+    assert 'model = "k3"' not in text
+    assert "kimi-code/k3" not in text
 
 
 def test_ensure_code_cli_credentials_honours_kimi_code_model(tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
     monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
-    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-code/kimi-for-coding")
+    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-k2.7-code")
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
     result = ensure_code_cli_credentials()
     assert result["wrote"] is True
-    assert result["model"] == "kimi-code/kimi-for-coding"
+    assert result["model"] == "kimi-k2.7-code"
+    assert result["model_id"] == "kimi-k2.7-code"
     text = Path(result["path"]).read_text(encoding="utf-8")
-    assert 'default_model = "kimi-code/kimi-for-coding"' in text
-    assert '[models."kimi-code/kimi-for-coding"]' in text
-    assert 'model = "kimi-for-coding"' in text
+    assert 'default_model = "kimi-k2.7-code"' in text
+    assert '[models."kimi-k2.7-code"]' in text
+    assert config_model_id(text, "kimi-k2.7-code") == "kimi-k2.7-code"
+    assert 'model = "kimi-k2.7-code"' in text
+    assert "max_context_size = 262144" in text
+
+
+def test_ensure_code_cli_credentials_honours_kimi_code_model_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-k2.7-code-highspeed")
+    monkeypatch.setenv("KIMI_CODE_MODEL_ID", "kimi-k2.7-code-highspeed")
+    result = ensure_code_cli_credentials()
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert config_default_model(text) == "kimi-k2.7-code-highspeed"
+    assert config_model_id(text, "kimi-k2.7-code-highspeed") == "kimi-k2.7-code-highspeed"
+    assert result["model_id"] == "kimi-k2.7-code-highspeed"
+
+
+def test_ensure_code_cli_credentials_maps_managed_k3_env(tmp_path, monkeypatch):
+    """KIMI_CODE_MODEL=kimi-code/k3 (docs leftover) must write Moonshot kimi-k3."""
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("KIMI_CODE_MODEL", "kimi-code/k3")
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
+    result = ensure_code_cli_credentials()
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert result["model"] == "kimi-k3"
+    assert result["model_id"] == "kimi-k3"
+    assert config_default_model(text) == "kimi-k3"
+    assert config_model_id(text, "kimi-k3") == "kimi-k3"
+    assert "kimi-code/k3" not in text
+    assert 'model = "k3"' not in text
 
 
 def test_ensure_code_cli_credentials_mutates_when_model_missing(tmp_path, monkeypatch):
@@ -269,18 +312,64 @@ def test_ensure_code_cli_credentials_mutates_when_model_missing(tmp_path, monkey
     monkeypatch.setenv("KIMI_CODE_HOME", str(home))
     monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
     monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
     result = ensure_code_cli_credentials()
     assert result["ok"] is True
     assert result["wrote"] is False
     assert result["mutated"] is True
     assert result["model"] == DEFAULT_KIMI_CODE_MODEL
+    assert result["model_id"] == DEFAULT_KIMI_CODE_MODEL_ID
     text = dest.read_text(encoding="utf-8")
     assert f'default_model = "{DEFAULT_KIMI_CODE_MODEL}"' in text
     assert f'[models."{DEFAULT_KIMI_CODE_MODEL}"]' in text
+    assert config_model_id(text, DEFAULT_KIMI_CODE_MODEL) == DEFAULT_KIMI_CODE_MODEL_ID
     assert "[providers.kimi]" in text
     assert "sk-test-not-real" in text
     again = ensure_code_cli_credentials()
     assert again["wrote"] is False
+    assert again["mutated"] is False
+    assert again["reason"] == "already present"
+
+
+def test_ensure_code_cli_credentials_rewrites_managed_k3_file(tmp_path, monkeypatch):
+    """#324 live shape: default_model=kimi-code/k3 / model=k3 on Moonshot."""
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    dest = home / "config.toml"
+    dest.write_text(
+        'default_model = "kimi-code/k3"\n'
+        "\n"
+        "[providers.kimi]\n"
+        'type = "kimi"\n'
+        'api_key = "sk-test-not-real"\n'
+        'base_url = "https://api.moonshot.ai/v1"\n'
+        "\n"
+        '[models."kimi-code/k3"]\n'
+        'provider = "kimi"\n'
+        'model = "k3"\n'
+        "max_context_size = 1048576\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-test-not-real")
+    monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
+    result = ensure_code_cli_credentials()
+    assert result["ok"] is True
+    assert result["wrote"] is False
+    assert result["mutated"] is True
+    assert result["model"] == "kimi-k3"
+    assert result["model_id"] == "kimi-k3"
+    text = dest.read_text(encoding="utf-8")
+    assert config_default_model(text) == "kimi-k3"
+    assert config_model_id(text, "kimi-k3") == "kimi-k3"
+    assert 'default_model = "kimi-k3"' in text
+    assert '[models."kimi-k3"]' in text
+    assert 'model = "kimi-k3"' in text
+    assert "kimi-code/k3" not in text
+    assert 'model = "k3"' not in text
+    assert "sk-test-not-real" in text
+    again = ensure_code_cli_credentials()
     assert again["mutated"] is False
     assert again["reason"] == "already present"
 
@@ -310,6 +399,23 @@ def test_classify_cli_exit_names_no_model_configured():
     generic, generic_detail = classify_cli_exit(1, "segfault")
     assert generic == NAMED_BLOCKER_CLI_FAILED
     assert generic_detail == "CLI exited 1"
+
+
+def test_classify_cli_exit_names_model_denied():
+    blocker, detail = classify_cli_exit(
+        1,
+        "error: failed to run prompt: 404 Not Found — Permission denied "
+        "for model kimi-code/k3 (k3)",
+    )
+    assert blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert CodeCliModelDenied.blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert "Permission denied" in detail
+    assert "kimi-k3" in detail
+    assert "KIMI_CODE_MODEL" in detail
+    assert "templated" in detail
+    perm, perm_detail = classify_cli_exit(1, "Permission denied: model k3")
+    assert perm == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert "Moonshot" in perm_detail
 
 
 def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):
@@ -775,6 +881,48 @@ def test_dispatch_cli_no_model_configured_fail_closed(tmp_path, monkeypatch):
     assert receipt["blocker"] == NAMED_BLOCKER_CLI_NO_MODEL
     failures = ctx.state.get("coder_failures") or {}
     assert NAMED_BLOCKER_CLI_NO_MODEL in failures.get("brief_dispatch", "")
+
+
+def test_dispatch_cli_model_denied_is_named_class(tmp_path, monkeypatch):
+    """CLI 404 / Permission denied on the model is a named fail-closed class."""
+    script = tmp_path / "kimi"
+    script.write_text(
+        "#!/bin/sh\n"
+        "echo \"error: failed to run prompt: 404 Not Found / "
+        "Permission denied for model kimi-code/k3\" >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        'default_model = "kimi-code/k3"\n'
+        "[providers.kimi]\ntype = \"kimi\"\napi_key = \"sk-test-not-real\"\n",
+        encoding="utf-8",
+    )
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.via == "cli"
+    assert result.blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert "Permission denied" in result.detail
+    assert oneshot == [], "CLI model-denied must not fall back to HTTP oneshot"
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_MODEL_DENIED
 
 
 def test_dispatch_cli_other_nonzero_stays_failed(tmp_path, monkeypatch):

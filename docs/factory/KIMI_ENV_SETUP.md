@@ -21,7 +21,9 @@ as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
 it fail-closes as `FACTORY_CODE_CLI_CREDENTIALS_MISSING`. If the CLI
 exits with `No model configured` (binary + credentials file, no
 `default_model`), dispatch fail-closes as `FACTORY_CODE_CLI_NO_MODEL`
-(still a `FACTORY_CODE_CLI_FAILED` honesty class). None of those paths
+(still a `FACTORY_CODE_CLI_FAILED` honesty class). A 404 / Permission
+denied on the configured model fail-closes as
+`FACTORY_CODE_CLI_MODEL_DENIED` (distinct from NO_MODEL). None of those paths
 open a WRITER session or claim "coding agent has taken over". A templated
 pilot zip after a CLI skip is **not** a ≥2h CLI session. HTTP oneshot is
 not a substitute. `GET /health` → `factory_code_cli` reports the probe
@@ -35,8 +37,8 @@ Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 | `FACTORY_CODE_CLI` | Binary name or absolute path (`kimi` / `claude` / `/abs/path`) |
 | `KIMI_CODE_CLI` | Legacy alias; `FACTORY_CODE_CLI` wins |
 | `KIMI_CODE_API_KEY` | Writes `~/.kimi-code/config.toml` at boot when set (`[providers.kimi]` + `default_model`). Missing file + keyed Floor → `FACTORY_CODE_CLI_CREDENTIALS_MISSING` |
-| `KIMI_CODE_MODEL` | Default-model alias written into that file. Default `kimi-code/k3` (Kimi Code CLI 0.41 [config-files](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files) example). Override if the key's catalog differs. Owner-gated — this doc does not claim Render is set |
-| `KIMI_CODE_MODEL_ID` | Optional API model id for the `[models]` table (default: last path segment of `KIMI_CODE_MODEL`, e.g. `k3`) |
+| `KIMI_CODE_MODEL` | Default-model alias written into that file. Default `kimi-k3` ([Moonshot API](https://platform.moonshot.ai/docs/guide/start-using-kimi-api)). Kimi Code CLI 0.41 [config-files](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files) still show managed `kimi-code/k3` (`k3` on `api.kimi.com/coding/v1` via `/login`) — that pair 404s on a platform key. Boot maps it to `kimi-k3`. Owner-gated — this doc does not claim Render is set |
+| `KIMI_CODE_MODEL_ID` | Optional API model id for the `[models]` table (default `kimi-k3`). Other Moonshot ids: `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`, `kimi-k2.6` |
 | `KIMI_CODE_HOME` | Optional config home (Render: `/app/.kimi-code` if you pin it) |
 | `FACTORY_BRIEF_HTTP_ONESHOT=1` | CI/dev escape only — **not** a ≥2h CLI session |
 | `FACTORY_BRIEF_REQUIRE_CLI=1` | Force generate-start refuse (CI mutation). `ENV=production` already requires the CLI when the coder is on |
@@ -63,8 +65,8 @@ API keys; `KIMI_CODE_API_KEY` stays owner-gated on the Render dashboard and
 writes `$HOME/.kimi-code/config.toml` (or `$KIMI_CODE_HOME/config.toml`) at
 boot, including `default_model` so `kimi --prompt` does not require TTY
 `/login`. `HOME=/app` in this image, so the default config home is
-`/app/.kimi-code`. A credentials-only file from an older boot is mutated
-on the next start when `default_model` is missing.
+`/app/.kimi-code`. A credentials-only file, or a #324 `kimi-code/k3` /
+`k3` file, is mutated on the next start.
 
 A missing or wrong `FACTORY_CODE_CLI` still fail-closes. Baking the binary
 does not disable that gate.
@@ -74,14 +76,14 @@ does not disable that gate.
 ```bash
 ./scripts/setup_kimi_code_env.sh 'sk-your-kimi-code-key'
 # writes ~/.kimi-code/config.toml:
-#   default_model = "kimi-code/k3"   # KIMI_CODE_MODEL override
+#   default_model = "kimi-k3"   # KIMI_CODE_MODEL override (Moonshot API)
 #   [providers.kimi]
 #   type = "kimi"
 #   api_key = "sk-..."
 #   base_url = "https://api.moonshot.ai/v1"
-#   [models."kimi-code/k3"]
+#   [models."kimi-k3"]
 #   provider = "kimi"
-#   model = "k3"
+#   model = "kimi-k3"
 #   max_context_size = 1048576
 ```
 

@@ -73,7 +73,7 @@ COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 # A keyed Floor still fail-closes FACTORY_CODE_CLI_UNAVAILABLE if the
 # executable is missing (wrong FACTORY_CODE_CLI, deleted binary, etc.).
 # KIMI_CODE_API_KEY at boot writes ~/.kimi-code/config.toml
-# ([providers.kimi] + default_model from KIMI_CODE_MODEL).
+# ([providers.kimi] + default_model from KIMI_CODE_MODEL, Moonshot kimi-k3).
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is
