@@ -483,7 +483,11 @@ describe('Your Platforms — coding-agent build', () => {
     expect(banner).toHaveTextContent('FACTORY_CODE_CLI_NO_MODEL')
     expect(banner).toHaveTextContent('default_model')
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
-    expect(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+    // Wait for watchBuild failed — /health banner can win the race while
+    // the card still says Building… (CI flake on C-BRIEF-only PRs).
+    expect(
+      await screen.findByRole('button', { name: 'Export (.zip) — pilot suite failed' }),
+    ).toBeDisabled()
   })
 
   it('labels code-phase success as not pilot-ready', async () => {
