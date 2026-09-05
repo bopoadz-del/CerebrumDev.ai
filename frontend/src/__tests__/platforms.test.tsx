@@ -502,6 +502,26 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-stalled-pill')).toHaveTextContent('Build stalled')
   })
 
+  it('unreadable ledger is Build failed — never Building…', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'VetCare Hub' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'unknown',
+        detail: "LEDGER_UNREADABLE: build_ledger.jsonl:4561 is not a readable ledger event: 'seq'",
+        pilot_ready: false,
+      })
+    })
+    render(<Platforms sessionId="sess_ledger" />)
+    expect(await screen.findByText(/Build failed — LEDGER_UNREADABLE/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/unreadable ledger/)
+    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(exportBtn).toBeDisabled()
+  })
+
   it('does not download a failed coding-agent build', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {

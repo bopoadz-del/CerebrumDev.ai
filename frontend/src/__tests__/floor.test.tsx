@@ -670,6 +670,27 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(exportBtn).toHaveClass('ghost')
   })
 
+  it('stops the takeover chrome when the ledger is unreadable', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'unknown',
+        detail: "LEDGER_UNREADABLE: build_ledger.jsonl:4561 is not a readable ledger event: 'seq'",
+        pilot_ready: false,
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_ledger" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    expect(screen.queryByText(/Writing your platform/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    expect(failedExport).toBeDisabled()
+  })
+
   it('keeps coding chrome after Approve while generation SSE and status poll are pending', async () => {
     let releaseApprove: (() => void) | undefined
     const approveGate = new Promise<void>((resolve) => {

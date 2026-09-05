@@ -249,6 +249,22 @@ describe('build progress copy', () => {
     ).not.toMatch(/Finished/)
   })
 
+  it('unreadable ledger is failed honesty — never Building / writing', () => {
+    const torn = {
+      state: 'unknown' as const,
+      detail: "LEDGER_UNREADABLE: build_ledger.jsonl:4561 is not a readable ledger event: 'seq'",
+    }
+    expect(withClientStall(torn)?.state).toBe('failed')
+    expect(platformsLeadCopy(torn, true)).toMatch(/unreadable ledger/)
+    expect(platformsLeadCopy(torn, true)).toMatch(/Download unavailable — build failed/)
+    expect(platformsLeadCopy(torn, true)).not.toMatch(/writing this platform/)
+    expect(exportAffordance(torn)).toMatchObject({
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+    })
+  })
+
   it('platformsLeadCopy never invites Download when export is not pilot-ready', () => {
     expect(platformsLeadCopy(null, false)).not.toMatch(/Download the export/i)
     expect(platformsLeadCopy({ state: 'building' }, true)).not.toMatch(/Download the export/i)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.factory.build.authority import (
     BUILD_PHASES,
+    FACTORY_RESIDUE,
     KERNEL_ROUTE_NAMES,
     ROLE_CONTRACTS,
     SEALED_AFTER_CLONER,
@@ -37,6 +38,7 @@ from app.factory.build.workspace import RoleWorkspace
 
 __all__ = [
     "BUILD_PHASES",
+    "FACTORY_RESIDUE",
     "KERNEL_ROUTE_NAMES",
     "ROLE_CONTRACTS",
     "SEALED_AFTER_CLONER",

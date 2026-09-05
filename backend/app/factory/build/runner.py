@@ -338,7 +338,11 @@ class RoleRunner:
             deadline=deadline,
             deadline_box=self._deadline_box,
         )
-        result = self.roles[role](ctx)
+        # Protect the destination ledger while the role (and FACTORY_CODE_CLI)
+        # can see the workspace. Notes still go through append(); raw JSONL
+        # scribbles get PermissionError (CEREBRUMDEV-BACKEND-B).
+        with self.ledger.protect():
+            result = self.roles[role](ctx)
         if not result.ok:
             raise RoleError(result.detail or f"{role.value} reported failure")
         # Only now does the staged pass become visible. Everything before this

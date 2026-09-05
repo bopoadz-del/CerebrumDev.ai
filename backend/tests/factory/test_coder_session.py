@@ -1080,3 +1080,16 @@ def test_approve_and_generate_names_credentials_class_without_takeover(
     assert "taken over" not in result["summary"].lower()
     assert state.product_design.generation is None
     assert NAMED_BLOCKER_CLI_CREDS in (state.product_design.last_error or "")
+
+
+def test_mutation_coder_session_never_writes_raw_ledger_jsonl():
+    """Kills: coder_session opening build_ledger.jsonl instead of ctx.note()."""
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "factory"
+        / "build"
+        / "coder_session.py"
+    ).read_text(encoding="utf-8")
+    assert "build_ledger.jsonl" not in src
+    assert "ctx.note(" in src

@@ -263,11 +263,26 @@ export function formatHeartbeat(build: BuildStatus, nowMs = Date.now()): string 
   return ago ? `still working · ${ago}` : 'still working'
 }
 
+export function isUnreadableLedger(build: BuildStatus | null | undefined): boolean {
+  const detail = build?.detail || ''
+  return /LEDGER_UNREADABLE|ledger unreadable/i.test(detail)
+}
+
+/** Unreadable / crash honesty: never paint as an active coding run. */
+export function withLedgerHonesty(build: BuildStatus | null): BuildStatus | null {
+  if (!build) return build
+  if (build.state === 'unknown' && isUnreadableLedger(build)) {
+    return { ...build, state: 'failed', pilot_ready: false }
+  }
+  return build
+}
+
 /** Promote a forever-"building" snapshot to stalled when the ledger is dead. */
 export function withClientStall(
   build: BuildStatus | null,
   nowMs = Date.now(),
 ): BuildStatus | null {
+  build = withLedgerHonesty(build)
   if (!build || build.state !== 'building') return build
   const age = eventAgeSeconds(build, nowMs)
   const deadline =
@@ -312,6 +327,9 @@ export function platformsLeadCopy(
 ): string {
   if (!hasGeneration) {
     return 'What the factory built for you. A downloadable export appears here only after a pilot-ready run succeeds.'
+  }
+  if (isUnreadableLedger(build)) {
+    return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
   if (!build || build.state === 'building' || build.state === 'not_started' || build.state === 'unknown') {
     return 'The coding agent is writing this platform. Export stays closed until a pilot-ready run succeeds.'
@@ -359,6 +377,14 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   ghost: boolean
   title?: string
 } {
+  if (isUnreadableLedger(build) || build?.state === 'failed') {
+    return {
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+    }
+  }
   if (!build || build.state === 'building' || build.state === 'not_started') {
     return { label: 'Building…', disabled: true, ghost: true }
   }
@@ -368,14 +394,6 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       disabled: true,
       ghost: true,
       title: 'Build stalled — a full-pilot zip will be refused by the server',
-    }
-  }
-  if (build.state === 'failed') {
-    return {
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
-      ghost: true,
-      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
     }
   }
   if (build.state === 'succeeded' && !isPilotZipReady(build)) {
