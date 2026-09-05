@@ -436,7 +436,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.queryByText(/Download the export and launch it anywhere/i)).not.toBeInTheDocument()
   })
 
-  it('refuses Export when a founding card also reports FACTORY_CODE_CLI_FAILED', async () => {
+  it('keeps Export when a founding SUCCESS card still reports FACTORY_CODE_CLI_FAILED', async () => {
     getMock.mockResolvedValue({
       generation: {
         ...GENERATION,
@@ -447,6 +447,7 @@ describe('Your Platforms — coding-agent build', () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
+        outcome: 'SUCCESS',
         pilot_ready: true,
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 1, templated: 23 },
@@ -454,6 +455,47 @@ describe('Your Platforms — coding-agent build', () => {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
           pilot_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+        coder_receipt: {
+          ok: false,
+          blocker: 'FACTORY_CODE_CLI_FAILED',
+          detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_c220986f67914681" />)
+    expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent(
+      'Founding-customer-ready',
+    )
+    expect(screen.getByText('Finished — 1 artifacts; 23 templated')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Export (.zip) — pilot suite failed' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download the export/)
+  })
+
+  it('refuses Export when a CLI-failed founding claim is not actually pilot-ready', async () => {
+    getMock.mockResolvedValue({
+      generation: {
+        ...GENERATION,
+        product_id: 'veterinary-care',
+      },
+      blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: false,
+        cycle: 'pilot',
+        authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          pilot_ready: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'FAIL', STORE: 'NOT_RUN' },
         },
         coder_receipt: {
           ok: false,
