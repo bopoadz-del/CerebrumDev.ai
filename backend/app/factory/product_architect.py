@@ -204,7 +204,15 @@ Rules:
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """Strip Markdown fences and parse the first JSON object in *text*."""
+    """Strip Markdown fences and parse the first JSON object in *text*.
+
+    OpenRouter free models (and some safety filters) return prose such as
+    ``User Safety: safe`` instead of JSON. Callers must not ``json.loads``
+    the raw completion — this helper raises ``ValueError`` when no object
+    is present so Floor chat / architect fail-safes stay clean.
+    """
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
     text = text.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1] if "\n" in text else ""
@@ -288,7 +296,7 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             )
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+            return _extract_json(content)
 
         try:
             return _try(cfg["model"])
