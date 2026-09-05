@@ -312,6 +312,96 @@ test('Floor New session starts a clean workspace after a failed run', async ({ p
   await expect(page.getByText('session sess_e2e_fre…')).toBeVisible()
 })
 
+test('Floor ?session= deep-link selects that session — not list[0] Download', async ({ page }) => {
+  const readyId = 'sess_45729bb0001'
+  const failedId = 'sess_d5789a91d53b4bae'
+  await mockVerifiedFactory(page)
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        sessions: [{ session_id: readyId }, { session_id: failedId }],
+      }),
+    })
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route(`**/v1/sessions/${readyId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'vineyard',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${readyId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'vineyard',
+        build: {
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 19, agent_written: 13, templated: 6 },
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${failedId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: BLUEPRINT,
+        blueprint_approved: true,
+        generation: {
+          product_id: 'residential-lettings',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${failedId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'residential-lettings',
+        build: {
+          state: 'failed',
+          cycle: 'pilot',
+          outcome: 'FAILED_BUDGET_SPENT',
+          pilot_ready: false,
+          detail:
+            'rework budget of 3 exhausted; TESTER gate still failing: PRODUCT (pilot-marked suite): suite is red',
+        },
+      }),
+    })
+  })
+
+  await page.goto(`/?session=${failedId}`)
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('session sess_d5789a9…')).toBeVisible()
+  await expect(page.getByText('session sess_45729bb…')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible()
+  await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
+  await expectNoGoldFinished(page)
+  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+})
+
 test('Floor finished state offers the zip download on the generate surface', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')
