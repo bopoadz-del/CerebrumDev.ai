@@ -318,6 +318,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         terminal = ledger.terminal_event()
         interrupted = ledger.interrupted_role()
         resume = ledger.resume_point()
+        quarantined = ledger.quarantined_notes()
     except Exception as exc:  # noqa: BLE001 -- a torn ledger must not 500
         logger.warning("unreadable build ledger at %s: %s", path, exc)
         return {"state": "unknown", "detail": f"ledger unreadable: {exc}"}
@@ -387,6 +388,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "completed": [p for p in phases if p in completed],
         "phases_total": len(phases),
         "phases_done": sum(1 for p in phases if p in completed),
+        "ledger_quarantined_notes": quarantined,
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),

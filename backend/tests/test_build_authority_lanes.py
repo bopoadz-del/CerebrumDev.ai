@@ -17,6 +17,7 @@ import pytest
 
 from app.factory.build.authority import (
     BUILD_PHASES,
+    FACTORY_RESIDUE,
     KERNEL_ROUTE_NAMES,
     AgentSeat,
     AuthorityError,
@@ -73,6 +74,16 @@ def test_writer_cannot_touch_the_tests_that_judge_it(workspace):
         assert_write_allowed(
             BuildRole.WRITER, workspace / "tests" / "test_smoke.py", workspace=workspace
         )
+
+
+def test_mutation_no_role_may_write_the_build_ledger(workspace):
+    """Kills: RoleWorkspace.write_text('build_ledger.jsonl') as a raw NOTE sink."""
+    assert "build_ledger.jsonl" in FACTORY_RESIDUE
+    for role in (BuildRole.CLONER, BuildRole.WRITER, BuildRole.TESTER):
+        with pytest.raises(AuthorityError, match="factory residue"):
+            assert_write_allowed(
+                role, workspace / "build_ledger.jsonl", workspace=workspace
+            )
 
 
 def test_tester_cannot_patch_the_code_under_test(workspace):
@@ -182,6 +193,7 @@ def test_manifest_covers_every_phase_and_marks_the_read_only_role():
     assert all(r["gate"] for r in manifest["roles"].values())
     assert manifest["roles"]["COLLECTOR"]["title"] == "Binding surveyor"
     assert manifest["sealed_after_cloner"] == ["vendor/**"]
+    assert manifest["factory_residue"] == ["build_ledger.jsonl"]
     assert manifest["roles"]["COLLECTOR"]["agent"] == AgentSeat.CONSULT.value
     assert manifest["roles"]["WRITER"]["http_routes"]
 

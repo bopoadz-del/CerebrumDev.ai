@@ -642,3 +642,16 @@ def test_gates_are_not_injectable(blueprint, tmp_path):
     params = set(inspect.signature(RoleRunner.__init__).parameters)
     assert "roles" in params
     assert "gates" not in params, "gates must stay looked-up-by-phase"
+
+
+def test_mutation_run_phase_protects_ledger_from_cli_scribble():
+    """Kills: WRITER/CLI running against an unprotected destination ledger."""
+    src = (
+        Path(__file__).resolve().parents[2]
+        / "app"
+        / "factory"
+        / "build"
+        / "runner.py"
+    ).read_text(encoding="utf-8")
+    assert "with self.ledger.protect():" in src
+    assert "self.roles[role](ctx)" in src

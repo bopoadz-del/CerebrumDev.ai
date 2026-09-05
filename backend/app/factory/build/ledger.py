@@ -16,9 +16,13 @@ can answer "what did this platform take from the store, and has any of it
 gone stale against store head" by reading ledgers rather than by re-scanning
 delivered artifacts.
 
-Only the orchestrator writes here. Roles do not -- a role that can edit the
+Only the orchestrator writes here, and only through :meth:`BuildLedger.append`
+(which always assigns ``seq``). Roles do not -- a role that can edit the
 record of its own gate is the same hole that
-:mod:`app.factory.build.authority` closes for source files.
+:mod:`app.factory.build.authority` closes for source files. FACTORY_CODE_CLI
+runs inside the workspace and has been seen appending seq-less NOTE objects
+as raw JSONL (CEREBRUMDEV-BACKEND-B). Readers quarantine that shape;
+:meth:`BuildLedger.protect` makes the file owner-readonly during a role.
 """
 
 from __future__ import annotations
@@ -112,8 +116,35 @@ class LedgerError(RuntimeError):
     """The ledger on disk cannot be trusted for the run being attempted."""
 
 
+#: Honesty class when an external writer (FACTORY_CODE_CLI in the workspace)
+#: appended a complete NOTE object without going through :meth:`BuildLedger.append`.
+#: Those lines are not verdicts. Quarantining them keeps ``_next_seq`` / chat /
+#: status alive; inventing ``pilot_ready`` from a torn ledger is still forbidden.
+LEDGER_EXTERNAL_NOTE_QUARANTINED = "LEDGER_EXTERNAL_NOTE_QUARANTINED"
+QUARANTINE_PAYLOAD_KEY = "ledger_quarantine"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _coerce_seq(raw: Mapping[str, Any]) -> Optional[int]:
+    """Return a positive ledger seq, or None when the field is absent/unusable."""
+    if "seq" not in raw:
+        return None
+    value = raw["seq"]
+    if value is None or value == "":
+        return None
+    try:
+        seq = int(value)
+    except (TypeError, ValueError):
+        return None
+    return seq if seq > 0 else None
+
+
+def _is_external_note(raw: Any) -> bool:
+    """True for a complete JSON object that is a NOTE, not a phase verdict."""
+    return isinstance(raw, Mapping) and str(raw.get("kind") or "") == EventKind.NOTE.value
 
 
 @dataclass(frozen=True)
@@ -164,6 +195,7 @@ class BuildLedger:
     ) -> None:
         self.path = Path(path)
         self._clock = clock
+        self._protect_depth = 0
 
     # -- reading ---------------------------------------------------------
 
@@ -175,23 +207,96 @@ class BuildLedger:
             return []
         out: List[BuildEvent] = []
         with self.path.open("r", encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, start=1):
-                line = line.strip()
-                if not line:
+            physical = [
+                (lineno, line.strip())
+                for lineno, line in enumerate(fh, start=1)
+                if line.strip()
+            ]
+        last_lineno = physical[-1][0] if physical else 0
+        for lineno, line in physical:
+            try:
+                raw = json.loads(line)
+            except ValueError as exc:
+                # A half-written *final* line is the expected shape of a
+                # crash mid-append. Anything earlier is real corruption.
+                if lineno == last_lineno:
+                    logger.warning(
+                        "half-written final ledger line at %s:%s — skipping",
+                        self.path,
+                        lineno,
+                    )
                     continue
-                try:
-                    out.append(BuildEvent.from_json(json.loads(line)))
-                except (ValueError, KeyError) as exc:
-                    # A half-written final line is the expected shape of a
-                    # crash; anything earlier means real corruption.
-                    raise LedgerError(
-                        f"{self.path}:{lineno} is not a readable ledger event: {exc}"
-                    ) from exc
+                raise LedgerError(
+                    f"{self.path}:{lineno} is not a readable ledger event: {exc}"
+                ) from exc
+            try:
+                event = self._event_from_raw(raw, lineno=lineno)
+            except (ValueError, KeyError, TypeError) as exc:
+                raise LedgerError(
+                    f"{self.path}:{lineno} is not a readable ledger event: {exc}"
+                ) from exc
+            if event is not None:
+                out.append(event)
         return out
 
+    def _event_from_raw(self, raw: Any, *, lineno: int) -> Optional[BuildEvent]:
+        if not isinstance(raw, Mapping):
+            raise TypeError(f"expected object, got {type(raw).__name__}")
+        seq = _coerce_seq(raw)
+        if seq is None:
+            if _is_external_note(raw):
+                return self._quarantine_external_note(raw, lineno=lineno)
+            raise KeyError("seq")
+        return BuildEvent.from_json({**dict(raw), "seq": seq})
+
+    def _quarantine_external_note(
+        self, raw: Mapping[str, Any], *, lineno: int
+    ) -> BuildEvent:
+        """Keep a seq-less NOTE visible without bricking ``_next_seq``.
+
+        Live shape (CEREBRUMDEV-BACKEND-B / sess_69f28c0d8bc540e9:4561): a
+        complete JSON object with ``ts``, ``role=WRITER``, ``kind=NOTE``,
+        ``detail`` (rework fix text), ``payload.source=coder CLI`` — and no
+        ``seq``. FACTORY_CODE_CLI wrote it as raw JSONL into the workspace
+        ledger. ``seq=0`` is reserved for quarantined lines so
+        :meth:`_next_seq` stays monotonic on factory-assigned ids.
+        """
+        payload = dict(raw.get("payload") or {})
+        payload[QUARANTINE_PAYLOAD_KEY] = LEDGER_EXTERNAL_NOTE_QUARANTINED
+        payload["ledger_line"] = lineno
+        role_raw = raw.get("role")
+        try:
+            role = BuildRole(role_raw) if role_raw else None
+        except ValueError:
+            role = None
+        logger.warning(
+            "%s: %s:%s seq-less NOTE quarantined (source=%s stage=%s) — run continues",
+            LEDGER_EXTERNAL_NOTE_QUARANTINED,
+            self.path,
+            lineno,
+            payload.get("source"),
+            payload.get("stage"),
+        )
+        return BuildEvent(
+            seq=0,
+            ts=str(raw.get("ts", "")),
+            kind=EventKind.NOTE,
+            role=role,
+            detail=str(raw.get("detail", "")),
+            payload=payload,
+        )
+
     def _next_seq(self) -> int:
-        events = self.events()
-        return (events[-1].seq + 1) if events else 1
+        seqs = [event.seq for event in self.events() if event.seq > 0]
+        return (max(seqs) + 1) if seqs else 1
+
+    def quarantined_notes(self) -> int:
+        return sum(
+            1
+            for event in self.events()
+            if (event.payload or {}).get(QUARANTINE_PAYLOAD_KEY)
+            == LEDGER_EXTERNAL_NOTE_QUARANTINED
+        )
 
     # -- writing ---------------------------------------------------------
 
@@ -214,13 +319,53 @@ class BuildLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(event.to_json(), sort_keys=True) + "\n"
         # One write plus fsync per event, under a file lock so two workers
-        # cannot interleave JSONL lines.
+        # cannot interleave JSONL lines. While :meth:`protect` is active the
+        # file is owner-readonly except for this locked window, so a CLI
+        # subprocess cannot append raw JSONL (the CEREBRUMDEV-BACKEND-B path).
         with _exclusive_ledger(self.path):
-            with self.path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
-                fh.flush()
-                os.fsync(fh.fileno())
+            if self._protect_depth:
+                self._chmod_writable()
+            try:
+                with self.path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            finally:
+                if self._protect_depth:
+                    self._chmod_readonly()
         return event
+
+    def _chmod_readonly(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            os.chmod(self.path, 0o444)
+        except OSError as exc:
+            logger.warning("could not protect ledger %s: %s", self.path, exc)
+
+    def _chmod_writable(self) -> None:
+        if not self.path.is_file():
+            return
+        try:
+            os.chmod(self.path, 0o644)
+        except OSError as exc:
+            logger.warning("could not unprotect ledger %s: %s", self.path, exc)
+
+    @contextmanager
+    def protect(self):
+        """Owner-readonly while a role (and its CLI) is running.
+
+        Factory :meth:`append` lifts the bit under the file lock. Raw
+        ``open(..., 'a')`` from FACTORY_CODE_CLI is PermissionError.
+        """
+        self._protect_depth += 1
+        self._chmod_readonly()
+        try:
+            yield self
+        finally:
+            self._protect_depth -= 1
+            if self._protect_depth <= 0:
+                self._chmod_writable()
 
     def start_run(self, *, product_id: str, inputs_hash: str) -> BuildEvent:
         return self.append(
@@ -405,6 +550,7 @@ class BuildLedger:
         events = self.events()
         done = self.completed_roles()
         resume = self.resume_point()
+        quarantined = self.quarantined_notes()
         return {
             "schema_version": LEDGER_SCHEMA,
             "path": str(self.path),
@@ -417,6 +563,7 @@ class BuildLedger:
             "complete": resume is None,
             "rework": self.rework_counts(),
             "clones": self.clones(),
+            "quarantined_notes": quarantined,
             "outcome": (
                 self.terminal_event().kind.value if self.terminal_event() else None
             ),

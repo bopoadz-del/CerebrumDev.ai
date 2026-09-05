@@ -263,6 +263,12 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
 # the provenance the whole build is audited against.
 FORBIDDEN_SEGMENTS = frozenset({".git", ".hg", ".svn"})
 
+#: Factory residue. The ledger is the orchestrator's record; a role or CLI
+#: that writes it as a workspace file is the CEREBRUMDEV-BACKEND-B hole
+#: (seq-less NOTE lines that brick ``events()``). Notes go through
+#: :meth:`app.factory.build.ledger.BuildLedger.append` only.
+FACTORY_RESIDUE = frozenset({"build_ledger.jsonl"})
+
 #: After CLONER's gate passes, ``vendor/**`` is sealed. A later write there
 #: (the old prepare_pilot_workspace patch-until-green) is FAILED_AUTHORITY,
 #: not a NOTE. CLONER itself is not sealed while it is still running.
@@ -374,6 +380,11 @@ def assert_write_allowed(
             raise AuthorityError(
                 f"{role.value} may not write inside a version-control directory: {path}"
             )
+        if relative.name in FACTORY_RESIDUE or relative.as_posix() in FACTORY_RESIDUE:
+            raise AuthorityError(
+                f"{role.value} may not write {path} — factory residue "
+                f"({relative.name}); notes go through BuildLedger.append()"
+            )
         if sealed and lane_root is LaneRoot.WORKSPACE:
             for sealed_glob in sealed:
                 if _matches_lane(relative, sealed_glob):
@@ -427,5 +438,6 @@ def authority_manifest() -> Dict[str, Any]:
             for role, contract in ROLE_CONTRACTS.items()
         },
         "forbidden_segments": sorted(FORBIDDEN_SEGMENTS),
+        "factory_residue": sorted(FACTORY_RESIDUE),
         "sealed_after_cloner": list(SEALED_AFTER_CLONER),
     }
