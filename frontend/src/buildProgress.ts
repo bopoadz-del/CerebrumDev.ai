@@ -56,7 +56,6 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
     }
     if (CLAIMED_LEVELS.has(claimed)) return claimed as LevelGradeName
     if (build.state === 'succeeded') return 'CODE_GREEN'
-    if (build.state === 'failed' || build.state === 'stalled') return 'SCAFFOLD'
     return null
   }
   if (
