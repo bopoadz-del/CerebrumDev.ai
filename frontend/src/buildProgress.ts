@@ -3,7 +3,10 @@ import type {
   BuildStatus,
   FactoryCodeCliProbe,
 } from './api/factory'
-import { FACTORY_CODE_CLI_CREDENTIALS_MISSING } from './api/factory'
+import {
+  FACTORY_CODE_CLI_CREDENTIALS_MISSING,
+  FACTORY_CODE_CLI_NO_MODEL,
+} from './api/factory'
 
 /** Match backend build_jobs._STALE_AFTER_S — quiet model call vs frozen UI. */
 export const CLIENT_STALE_AFTER_S = 180
@@ -352,15 +355,33 @@ const MISSING_KIMI_CLI_CREDS =
   'The CLI binary can be present while credentials_file_present is false — ' +
   'CEREBRUM_LLM_API_KEY and HTTP architect keys do not authenticate the Kimi Code CLI.'
 
+const MISSING_KIMI_CLI_MODEL =
+  'Kimi Code CLI has no usable default_model (FACTORY_CODE_CLI_NO_MODEL). ' +
+  'config.toml can be present (credentials_file_present=true) while default_model ' +
+  'or its [models] entry is missing. Set KIMI_CODE_API_KEY so boot writes ' +
+  'default_model (KIMI_CODE_MODEL, default kimi-k3). Headless Floor cannot run ' +
+  'kimi /login. CEREBRUM_LLM_API_KEY does not configure the Kimi Code model.'
+
 /**
  * Operator copy from GET /health factory_code_cli. Named blocker wins;
  * credentials_file_present=false also fires unless Kimi credentials are
- * explicitly not required (Claude login).
+ * explicitly not required (Claude login). A credentials file without
+ * default_model is FACTORY_CODE_CLI_NO_MODEL, not a successful probe.
  */
 export function factoryCodeCliHonesty(
   probe: FactoryCodeCliProbe | null | undefined,
 ): string | null {
   if (!probe) return null
+  if (probe.blocker === FACTORY_CODE_CLI_NO_MODEL) {
+    return MISSING_KIMI_CLI_MODEL
+  }
+  if (
+    probe.credentials_file_present === true &&
+    probe.default_model_configured === false &&
+    probe.requires_kimi_credentials !== false
+  ) {
+    return MISSING_KIMI_CLI_MODEL
+  }
   if (probe.blocker === FACTORY_CODE_CLI_CREDENTIALS_MISSING) {
     return MISSING_KIMI_CLI_CREDS
   }
@@ -368,6 +389,20 @@ export function factoryCodeCliHonesty(
     return MISSING_KIMI_CLI_CREDS
   }
   return null
+}
+
+/** Floor / Platforms status-pill label for the /health CLI probe. */
+export function factoryCodeCliStatusTitle(
+  probeOrMessage: FactoryCodeCliProbe | string | null | undefined,
+): string {
+  const text =
+    typeof probeOrMessage === 'string'
+      ? probeOrMessage
+      : factoryCodeCliHonesty(probeOrMessage) || ''
+  if (text.includes(FACTORY_CODE_CLI_NO_MODEL) || text.includes('default_model')) {
+    return 'Kimi Code CLI has no model'
+  }
+  return 'Kimi Code CLI credentials missing'
 }
 
 /** Honest export CTA. Gold "Download platform export" is only for Store-green. */

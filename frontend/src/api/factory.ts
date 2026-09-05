@@ -602,12 +602,16 @@ export const domains = {
 
 /** Named /health blocker when Kimi Code CLI is on PATH but config.toml is missing. */
 export const FACTORY_CODE_CLI_CREDENTIALS_MISSING = 'FACTORY_CODE_CLI_CREDENTIALS_MISSING'
+/** Named /health blocker when config.toml exists but default_model is unusable. */
+export const FACTORY_CODE_CLI_NO_MODEL = 'FACTORY_CODE_CLI_NO_MODEL'
 
 export type FactoryCodeCliProbe = {
   command?: string | null
   available?: boolean
   resolved?: string | null
   credentials_file_present?: boolean
+  default_model?: string | null
+  default_model_configured?: boolean
   requires_cli?: boolean
   requires_kimi_credentials?: boolean
   blocker?: string | null

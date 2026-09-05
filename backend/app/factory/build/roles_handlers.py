@@ -2494,8 +2494,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     C-BRIEF: compile ONE gated brief and dispatch it once via
     FACTORY_CODE_CLI. A keyed Floor without that binary, or a Kimi
     binary without config.toml, fail-closes (FACTORY_CODE_CLI_UNAVAILABLE
-    / FACTORY_CODE_CLI_CREDENTIALS_MISSING) before WRITER progress.
-    A CLI exit of "No model configured" is FACTORY_CODE_CLI_NO_MODEL
+    / FACTORY_CODE_CLI_CREDENTIALS_MISSING /
+    FACTORY_CODE_CLI_NO_MODEL) before WRITER progress.
+    A CLI exit of "No model configured" is also FACTORY_CODE_CLI_NO_MODEL
     (still FACTORY_CODE_CLI_FAILED honesty; not a ≥2h CLI session).
     A 404 / Permission denied on the configured model is
     FACTORY_CODE_CLI_MODEL_DENIED (distinct from NO_MODEL).
@@ -2556,11 +2557,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     use_brief_dispatch = brief_dispatch_enabled()
     if use_brief_dispatch:
         dispatch = dispatch_compiled_brief(ctx, compiled_brief)
-        if (
-            dispatch.via == "unavailable"
-            and dispatch.blocker in CLI_PREFLIGHT_BLOCKERS
-            and brief_requires_cli()
-        ):
+        if dispatch.blocker in CLI_PREFLIGHT_BLOCKERS and brief_requires_cli():
             raise RoleError(dispatch.detail)
         ctx.note(
             f"brief dispatch via {dispatch.via}: {dispatch.detail}",

@@ -41,6 +41,33 @@ async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_health_reports_no_model_when_config_lacks_default_model(
+    tmp_path, monkeypatch
+):
+    fake = _write_fake_cli(tmp_path)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        "[providers.kimi]\ntype = \"kimi\"\napi_key = \"sk-test-not-real\"\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is True
+    assert probe["default_model_configured"] is False
+    assert probe["blocker"] == "FACTORY_CODE_CLI_NO_MODEL"
+    assert probe["requires_cli"] is True
+
+
+@pytest.mark.asyncio
 async def test_health_kimi_flag_without_binary_is_not_capability(tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("KIMI_WORKBENCH_ENABLED", "true")

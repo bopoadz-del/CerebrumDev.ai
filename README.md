@@ -164,9 +164,11 @@ FACTORY_CODE_CLI=kimi      # Kimi CLI (default; production image ships /usr/loca
 (pin `KIMI_CODE_VERSION`; see `docs/factory/KIMI_ENV_SETUP.md`). A keyed Floor
 without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
 binary without `~/.kimi-code/config.toml` fail-closes as
-`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. A CLI exit of `No model configured`
-fail-closes as `FACTORY_CODE_CLI_NO_MODEL` (still `FACTORY_CODE_CLI_FAILED`
-honesty — no HTTP oneshot, no fake WRITER takeover). A 404 / Permission
+`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. A credentials file without a usable `default_model` / `[models]` entry
+fail-closes as `FACTORY_CODE_CLI_NO_MODEL` before WRITER takeover (still
+`FACTORY_CODE_CLI_FAILED` honesty — no HTTP oneshot, no fake WRITER
+takeover). A CLI exit of `No model configured` is the same named class
+and stops the coding-agent takeover (no perpetual "still working"). A 404 / Permission
 denied on the configured model fail-closes as
 `FACTORY_CODE_CLI_MODEL_DENIED`. Boot writes `default_model` from
 `KIMI_CODE_MODEL` / `KIMI_CODE_MODEL_ID` (default Moonshot `kimi-k3`, not
