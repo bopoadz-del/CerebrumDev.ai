@@ -30,6 +30,12 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
 )
+from app.factory.build.workflow_accept import (
+    FACTORY_GROUNDED_EVENT_BUS_SOURCE,
+    grounded_event_bus_handler_body,
+    handler_satisfies_event_bus_contract,
+    needs_grounded_event_bus_handler,
+)
 from app.factory.build.block_obligations import (
     BlockObligationError,
     ENVELOPE_STATUS_VALUES,
@@ -1245,6 +1251,22 @@ CAPABILITY_FIELDS = {list(field_names or [])!r}
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
 {_ensure_handler_fails_closed(body)}
 '''
+
+
+def _capability_handler_body(
+    capability_id: str,
+    block_ids: Sequence[str],
+) -> str:
+    """Template, or the factory-grounded event_bus workflow body.
+
+    Live tip 397e56a / #332: LLM timeouts left appointment_scheduling on
+    ``execute(block_id, payload)``. #331's AST check vacuous-passed; PRODUCT
+    then refused workflow step_1 (event_bus). Appointment-style capabilities
+    get the prepared step in source so WRITER does not burn rework on stubs.
+    """
+    if needs_grounded_event_bus_handler(capability_id, block_ids):
+        return grounded_event_bus_handler_body(capability_id, block_ids)
+    return _templated_body(block_ids)
 
 
 def _templated_body(block_ids: Sequence[str]) -> str:
@@ -2769,29 +2791,55 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
             and ctx.workspace.exists(handler_rel)
         ):
-            # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED
-            # brief-driven module. Overwriting a prepared handler with the
-            # fallback envelope is how workflow steps died; keeping an
-            # unprepared {'block': 'event_bus', 'input': payload} is how
-            # PRODUCT step_N (event_bus) locked in after #318.
-            sources[cid] = (
-                f"coder CLI ({dispatch.model})" if dispatch.model
-                else ("FACTORY_CODE_CLI" if dispatch.via == "cli" else "harvested workspace handler")
-            )
-            ctx.note(
-                f"kept CLI handler {cid} ({sources[cid]})",
-                stage="handlers",
-                capability=cid,
-                source=sources[cid],
-                done=len([k for k in sources if k in set(cap_ids)]),
-                total=len(cap_ids),
-            )
-            continue
+            kept_text = ctx.workspace.read_text(handler_rel)
+            if needs_grounded_event_bus_handler(cid, usable) and not (
+                handler_satisfies_event_bus_contract(
+                    kept_text, require_prepared_step=True
+                )
+            ):
+                authored = None
+            else:
+                # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED
+                # brief-driven module. Overwriting a prepared handler with the
+                # fallback envelope is how workflow steps died; keeping an
+                # unprepared {'block': 'event_bus', 'input': payload} is how
+                # PRODUCT step_N (event_bus) locked in after #318.
+                sources[cid] = (
+                    f"coder CLI ({dispatch.model})" if dispatch.model
+                    else (
+                        "FACTORY_CODE_CLI" if dispatch.via == "cli"
+                        else "harvested workspace handler"
+                    )
+                )
+                ctx.note(
+                    f"kept CLI handler {cid} ({sources[cid]})",
+                    stage="handlers",
+                    capability=cid,
+                    source=sources[cid],
+                    done=len([k for k in sources if k in set(cap_ids)]),
+                    total=len(cap_ids),
+                )
+                continue
         elif use_brief_dispatch:
             authored = None
         else:
             authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
-        body, source = authored or (_templated_body(usable), fallback_source)
+        if authored:
+            body, source = authored
+        else:
+            body = _capability_handler_body(cid, usable)
+            source = (
+                FACTORY_GROUNDED_EVENT_BUS_SOURCE
+                if needs_grounded_event_bus_handler(cid, usable)
+                else fallback_source
+            )
+        if needs_grounded_event_bus_handler(cid, usable) and not (
+            handler_satisfies_event_bus_contract(
+                body, require_prepared_step=True
+            )
+        ):
+            body = grounded_event_bus_handler_body(cid, usable)
+            source = FACTORY_GROUNDED_EVENT_BUS_SOURCE
 
         default_actions = {
             b: contract["default_action"]

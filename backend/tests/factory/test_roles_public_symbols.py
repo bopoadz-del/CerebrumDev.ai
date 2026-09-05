@@ -79,6 +79,7 @@ _PRE_SPLIT_SYMBOLS = (
     "_sample_value",
     "_shim_needs_runtime",
     "_store_block_defs",
+    "_capability_handler_body",
     "_templated_body",
     "_templated_readme",
     "_templated_route_body",

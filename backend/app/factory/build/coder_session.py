@@ -1119,7 +1119,9 @@ def _is_keepable_handler(text: str) -> bool:
     blob = text or ""
     if "def handle(" not in blob:
         return False
-    if not handler_satisfies_event_bus_contract(blob):
+    if not handler_satisfies_event_bus_contract(
+        blob, require_prepared_step=_has_brief_workflow_steps(blob)
+    ):
         return False
     if "CAPABILITY_ID" in blob:
         return True

@@ -96,6 +96,8 @@ def test_compiled_brief_has_the_gated_shape():
     assert "[check:event_bus_workflow]" in text
     assert "action=publish" in text
     assert "'input': payload" in text
+    assert "factory-grounded" in text
+    assert 'execute("workflow", payload)' in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert "llm_writes_brief: never" in load_brief_template()
 
@@ -174,6 +176,7 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
     assert "input.topic" in compiled.text
     assert "'input': payload" in compiled.text
     assert '"channel": "mcp"' in compiled.text
+    assert "factory-grounded" in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert any(item.capability_id == "clinic_intake" and item.is_gap for item in compiled.inventory)
     assert compiled.missing_reuse == []

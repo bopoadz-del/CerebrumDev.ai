@@ -51,12 +51,15 @@ from app.factory.build.workflow_accept import (
     assert_event_bus_workflow_handlers,
     declares_event_bus_workflow,
     event_bus_steps_from_handler,
+    event_bus_step_is_store_ready,
     event_bus_workflow_capability_ids,
     event_bus_workflow_handler_errors,
+    grounded_event_bus_handler_body,
     handler_builds_unparsed_event_bus_workflow,
     handler_has_factory_event_bus_wrap,
     handler_has_prepared_event_bus_step,
     handler_satisfies_event_bus_contract,
+    needs_grounded_event_bus_handler,
     workflow_accept_acceptance_line,
     workflow_accept_brief_contract,
     workflow_accept_forbidden_lines,
@@ -687,3 +690,76 @@ def test_wrapped_prepared_step1_still_passes():
     )
     assert handler_has_factory_event_bus_wrap(wrapped) is True
     assert handler_satisfies_event_bus_contract(wrapped) is True
+
+
+TEMPLATED_STUB_LOOP = (
+    "    results = {}\n"
+    "    for block_id in BLOCK_IDS:\n"
+    "        result = execute(\n"
+    "            block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id)\n"
+    "        )\n"
+    "        results[block_id] = result\n"
+    "    return {'ok': True, 'capability': CAPABILITY_ID, 'results': results}\n"
+)
+
+
+def test_templated_stub_loop_fails_when_prepared_step_required():
+    """#331 hole: execute(block_id, payload) vacuous-passed, PRODUCT still red."""
+    assert handler_satisfies_event_bus_contract(TEMPLATED_STUB_LOOP) is True
+    assert handler_satisfies_event_bus_contract(
+        TEMPLATED_STUB_LOOP, require_prepared_step=True
+    ) is False
+
+
+def test_factory_grounded_body_is_prepared_step1_and_store_ready():
+    """WRITER emit for appointment_scheduling — not an LLM stub."""
+    assert needs_grounded_event_bus_handler(
+        "appointment_scheduling", ["event_bus", "workflow"]
+    )
+    body = grounded_event_bus_handler_body(
+        "appointment_scheduling", ["database", "event_bus", "workflow"]
+    )
+    wrapped = "def handle(payload):\n" + body + "\n"
+    assert handler_satisfies_event_bus_contract(wrapped, require_prepared_step=True)
+    assert handler_satisfies_event_bus_contract(body, require_prepared_step=True)
+    steps = event_bus_steps_from_handler(body)
+    assert steps == [(1, True)]
+    assert "appointment.scheduled" in body
+    assert '"tool": "event_bus"' in body
+    assert "channel" in body and "mcp" in body
+
+
+def test_writer_replaces_unprepared_scheduling_with_grounded(tmp_path):
+    """Live #332 class: do not keep a stub that PRODUCT will refuse at step_1."""
+    from app.factory.build.roles_handlers import _capability_handler_body
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")),
+        store_ids={"event_bus", "workflow"},
+    )
+    body = _capability_handler_body(
+        "appointment_scheduling", ["event_bus", "workflow"]
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        "CAPABILITY_ID = 'appointment_scheduling'\n"
+        "BLOCK_IDS = ['event_bus', 'workflow']\n"
+        "def handle(payload):\n" + body + "\n",
+        encoding="utf-8",
+    )
+    assert event_bus_workflow_handler_errors(tmp_path, compiled) == []
+    assert_event_bus_workflow_handlers(tmp_path, compiled)
+
+
+def test_brief_names_factory_grounded_emit():
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")),
+        store_ids={"event_bus", "workflow"},
+    )
+    assert "factory-grounded" in compiled.text
+    assert 'execute("workflow", payload)' in compiled.text
+    assert "input.tool" in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors

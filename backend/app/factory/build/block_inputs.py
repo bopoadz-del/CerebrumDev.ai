@@ -299,7 +299,7 @@ def prepare_block_input(
     if bid == "analytics":
         return _for_analytics(data)
     if bid == "event_bus":
-        return _for_event_bus(data)
+        return _for_event_bus(data, roster)
     if bid == "database":
         return _for_database(data, entity=entity)
     if bid == "queue":
@@ -675,43 +675,71 @@ def _topic_from_domain(data: Dict[str, Any]) -> str:
     return (slug or "platform.event")[:80]
 
 
-def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Satisfy ``topic required`` from domain fields, never invent success.
+def _for_event_bus(
+    data: Dict[str, Any],
+    roster: Sequence[str] = (),
+) -> Dict[str, Any]:
+    """Satisfy Store event_bus notify — not a copy of the schema sample.
 
     Live automated_reminders forwarded the capability JSON; the Store
     event_bus raised ``RuntimeError: topic required``. Map a domain name
     (reminder_type / event / …) or a record summary onto ``topic``.
     Live PRODUCT then failed notify: topic alone is not a notification
     payload — also supply ``payload`` / ``data`` / ``message``.
+
+    After #331 the wall stayed at appointment_scheduling step_1 because
+    ``out = dict(data)`` kept pet/date/channel=email on the child and
+    omitted MCP ``block``/``tool``. Workflow children bypass factory
+    dispatch, so those extras reach Store as-is.
     """
-    out = dict(data)
-    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
-    topic = out.get("topic") or inner.get("topic")
+    inner = data.get("input") if isinstance(data.get("input"), dict) else {}
+    topic = data.get("topic") or inner.get("topic")
     if not (isinstance(topic, str) and topic.strip()):
         for key in _TOPIC_KEYS:
             if key == "topic":
                 continue
-            cand = out.get(key) if out.get(key) is not None else inner.get(key)
+            cand = data.get(key) if data.get(key) is not None else inner.get(key)
             if isinstance(cand, str) and cand.strip():
                 topic = cand.strip()
                 break
         else:
             topic = _topic_from_domain(data)
-    out["topic"] = str(topic).strip()
-    if not isinstance(out.get("payload"), dict):
-        scalars = {
+    topic = str(topic).strip()
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else None
+    if payload is None and isinstance(inner.get("payload"), dict):
+        payload = inner["payload"]
+    if not isinstance(payload, dict):
+        payload = {
             key: value
             for key, value in data.items()
             if key not in _SKIP_REQUIRED_NAMES
             and isinstance(value, (str, int, float, bool))
-        }
-        out["payload"] = scalars or {"topic": out["topic"]}
-    out.setdefault("data", dict(out["payload"]))
-    out.setdefault("event", out["topic"])
-    if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
-        out["message"] = _summary_message(data)
-    out["channel"] = notification_channel(out.get("channel"), out)
-    return out
+        } or {"topic": topic}
+    message = data.get("message") if isinstance(data.get("message"), str) else ""
+    if not message.strip():
+        inner_msg = inner.get("message")
+        message = inner_msg if isinstance(inner_msg, str) and inner_msg.strip() else _summary_message(data)
+    channel = notification_channel(
+        data.get("channel") if data.get("channel") is not None else inner.get("channel"),
+        data,
+    )
+    target = data.get("block") or inner.get("block") or data.get("tool") or inner.get("tool")
+    if not (isinstance(target, str) and target.strip()):
+        peers = [
+            b
+            for b in roster
+            if b and b not in {"event_bus", "notification", "workflow"}
+        ]
+        target = peers[0] if peers else "event_bus"
+    return {
+        "topic": topic,
+        "payload": dict(payload),
+        "data": dict(payload),
+        "event": topic,
+        "message": str(message).strip() or _summary_message(data),
+        "channel": channel,
+        "block": str(target).strip(),
+    }
 
 
 _QUEUE_INT_KEYS = (
@@ -1368,7 +1396,7 @@ def prepare_block_input(
     if bid == "analytics":
         return _for_analytics(data)
     if bid == "event_bus":
-        return _for_event_bus(data)
+        return _for_event_bus(data, roster)
     if bid == "database":
         return _for_database(data, entity=entity)
     if bid == "queue":
@@ -1655,34 +1683,50 @@ def _topic_from_domain(data):
     return (slug or "platform.event")[:80]
 
 
-def _for_event_bus(data: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(data)
-    inner = out.get("input") if isinstance(out.get("input"), dict) else {}
-    topic = out.get("topic") or inner.get("topic")
+def _for_event_bus(data, roster=()):
+    inner = data.get("input") if isinstance(data.get("input"), dict) else {}
+    topic = data.get("topic") or inner.get("topic")
     if not (isinstance(topic, str) and topic.strip()):
         for key in _TOPIC_KEYS:
             if key == "topic":
                 continue
-            cand = out.get(key) if out.get(key) is not None else inner.get(key)
+            cand = data.get(key) if data.get(key) is not None else inner.get(key)
             if isinstance(cand, str) and cand.strip():
                 topic = cand.strip()
                 break
         else:
             topic = _topic_from_domain(data)
-    out["topic"] = str(topic).strip()
-    if not isinstance(out.get("payload"), dict):
-        scalars = {
+    topic = str(topic).strip()
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else None
+    if payload is None and isinstance(inner.get("payload"), dict):
+        payload = inner["payload"]
+    if not isinstance(payload, dict):
+        payload = {
             key: value
             for key, value in data.items()
             if key not in _SKIP and isinstance(value, (str, int, float, bool))
-        }
-        out["payload"] = scalars or {"topic": out["topic"]}
-    out.setdefault("data", dict(out["payload"]))
-    out.setdefault("event", out["topic"])
-    if not (isinstance(out.get("message"), str) and str(out.get("message")).strip()):
-        out["message"] = _summary_message(data)
-    out["channel"] = _notification_channel(out.get("channel"), out)
-    return out
+        } or {"topic": topic}
+    message = data.get("message") if isinstance(data.get("message"), str) else ""
+    if not str(message).strip():
+        inner_msg = inner.get("message")
+        message = inner_msg if isinstance(inner_msg, str) and inner_msg.strip() else _summary_message(data)
+    channel = _notification_channel(
+        data.get("channel") if data.get("channel") is not None else inner.get("channel"),
+        data,
+    )
+    target = data.get("block") or inner.get("block") or data.get("tool") or inner.get("tool")
+    if not (isinstance(target, str) and target.strip()):
+        peers = [b for b in roster if b and b not in ("event_bus", "notification", "workflow")]
+        target = peers[0] if peers else "event_bus"
+    return {
+        "topic": topic,
+        "payload": dict(payload),
+        "data": dict(payload),
+        "event": topic,
+        "message": str(message).strip() or _summary_message(data),
+        "channel": channel,
+        "block": str(target).strip(),
+    }
 
 
 def _coerce_int(value):
