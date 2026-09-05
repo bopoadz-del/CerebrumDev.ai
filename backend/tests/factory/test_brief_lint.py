@@ -137,6 +137,48 @@ def test_mutation_drops_event_bus_workflow_accept_when_declared():
     assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
 
 
+def test_mutation_drops_only_step2_booking_needles():
+    """step_1 contract left intact; dropping step_2 / booking must still lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap(
+                "appointment_booking",
+                ["database", "workflow", "event_bus"],
+                "COMPOSE",
+            )
+        ),
+        store_ids={"database", "workflow", "event_bus"},
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("workflow: step_2 (event_bus): error", "")
+    compiled.text = compiled.text.replace("appointment_booking", "appointment_other")
+    compiled.text = compiled.text.replace("every event_bus", "the first event_bus")
+    compiled.text = compiled.text.replace("step_2", "step_one")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
+
+
 def test_mutation_drops_writer_behaviour_acceptance():
     compiled = _compiled()
     compiled.text = compiled.text.replace(

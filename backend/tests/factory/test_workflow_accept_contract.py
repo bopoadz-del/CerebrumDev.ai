@@ -161,6 +161,62 @@ FACTORY_WRAP_UNPREPARED = (
     "    return execute('workflow', {'steps': steps})\n"
 )
 
+#: Both event_bus children prepared — WRITER green. Mutation tests strip step_2.
+TWO_PREPARED_EVENT_BUS_STEPS = (
+    "def handle(payload):\n"
+    "    steps = [\n"
+    "        {\n"
+    "            'block': 'event_bus',\n"
+    "            'action': 'publish',\n"
+    "            'input': {\n"
+    "                'topic': 'appointment.scheduled',\n"
+    "                'payload': {'reference': payload.get('reference')},\n"
+    "                'message': 'appointment recorded',\n"
+    "                'channel': 'mcp',\n"
+    "            },\n"
+    "        },\n"
+    "        {\n"
+    "            'block': 'event_bus',\n"
+    "            'action': 'publish',\n"
+    "            'input': {\n"
+    "                'topic': 'appointment.confirmed',\n"
+    "                'payload': {'reference': payload.get('reference')},\n"
+    "                'message': 'booking confirmed',\n"
+    "                'channel': 'mcp',\n"
+    "            },\n"
+    "        },\n"
+    "    ]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+#: step_2 looks keyed but uses PRODUCT sample channel=email (no `to`).
+STEP2_PRODUCT_CHANNEL_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [\n"
+    "        {\n"
+    "            'block': 'event_bus',\n"
+    "            'action': 'publish',\n"
+    "            'input': {\n"
+    "                'topic': 'appointment.scheduled',\n"
+    "                'payload': {'reference': payload.get('reference')},\n"
+    "                'message': 'appointment recorded',\n"
+    "                'channel': 'mcp',\n"
+    "            },\n"
+    "        },\n"
+    "        {\n"
+    "            'block': 'event_bus',\n"
+    "            'action': 'publish',\n"
+    "            'input': {\n"
+    "                'topic': 'appointment.confirmed',\n"
+    "                'payload': {'reference': payload.get('reference')},\n"
+    "                'message': 'booking confirmed',\n"
+    "                'channel': 'email',\n"
+    "            },\n"
+    "        },\n"
+    "    ]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
 
 def _vetcare_plan():
     return _Plan(
@@ -442,6 +498,102 @@ def test_disk_alias_booking_handler_is_scanned_even_if_plan_used_scheduling(tmp_
     )
     (actions / "appointment_booking.py").write_text(
         MIXED_STEP2_HANDLER, encoding="utf-8"
+    )
+    errors = event_bus_workflow_handler_errors(tmp_path, compiled)
+    assert any("appointment_booking" in e and "step_2" in e for e in errors)
+
+
+def _product_accept_sample():
+    """Same payload PRODUCT bakes into test_every_capability_route_accepts_payload."""
+    return _sample_payload(
+        {
+            "fields": [
+                {"name": "reference", "type": "str"},
+                {"name": "status", "type": "str"},
+                {"name": "channel", "type": "str"},
+                {"name": "owner_email", "type": "str"},
+                {"name": "appointment_date", "type": "str"},
+            ]
+        }
+    )
+
+
+def test_mutation_step1_only_prepared_fails_when_step2_forwards_product_sample(tmp_path):
+    """Mutate a green two-step handler: step_2 gets the PRODUCT schema sample.
+
+    PRODUCT POSTs ``_sample_payload`` (channel=email, status=open). A
+    handler that only prepares step_1 and forwards that sample as step_2
+    is the live appointment_booking class and must fail the WRITER check.
+    """
+    sample = _product_accept_sample()
+    assert sample["channel"] == CHANNEL_SAMPLE == "email"
+    assert sample["status"] == ENVELOPE_STATUS_SAMPLE == "open"
+    assert handler_satisfies_event_bus_contract(TWO_PREPARED_EVENT_BUS_STEPS) is True
+    steps_green = event_bus_steps_from_handler(TWO_PREPARED_EVENT_BUS_STEPS)
+    assert steps_green == [(1, True), (2, True)]
+
+    mutated = TWO_PREPARED_EVENT_BUS_STEPS.replace(
+        "'topic': 'appointment.confirmed',\n"
+        "                'payload': {'reference': payload.get('reference')},\n"
+        "                'message': 'booking confirmed',\n"
+        "                'channel': 'mcp',",
+        f"'topic': 'appointment.confirmed',\n"
+        f"                'payload': {sample!r},\n"
+        f"                'message': payload,\n"
+        f"                'channel': {sample['channel']!r},",
+    )
+    # Stronger live shape: step_2 input is the raw PRODUCT sample.
+    mutated_forward = TWO_PREPARED_EVENT_BUS_STEPS.replace(
+        "        {\n"
+        "            'block': 'event_bus',\n"
+        "            'action': 'publish',\n"
+        "            'input': {\n"
+        "                'topic': 'appointment.confirmed',\n"
+        "                'payload': {'reference': payload.get('reference')},\n"
+        "                'message': 'booking confirmed',\n"
+        "                'channel': 'mcp',\n"
+        "            },\n"
+        "        },",
+        "        {'block': 'event_bus', 'input': payload},\n",
+    )
+    assert "appointment.confirmed" not in mutated_forward
+    assert handler_has_prepared_event_bus_step(mutated_forward) is True
+    assert handler_satisfies_event_bus_contract(mutated_forward) is False
+    assert event_bus_steps_from_handler(mutated_forward) == [(1, True), (2, False)]
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_booking", ["workflow", "event_bus"], "COMPOSE")),
+        store_ids={"workflow", "event_bus"},
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_booking.py").write_text(mutated_forward, encoding="utf-8")
+    errors = event_bus_workflow_handler_errors(tmp_path, compiled)
+    assert any("appointment_booking" in e and "step_2" in e for e in errors)
+    with pytest.raises(EventBusWorkflowHalt) as halted:
+        assert_event_bus_workflow_handlers(tmp_path, compiled)
+    assert "step_2" in str(halted.value)
+    assert handler_satisfies_event_bus_contract(mutated) is False
+
+
+def test_mutation_step2_product_email_channel_fails_writer_check(tmp_path):
+    """Harvest sees publish keys on step_1; step_2 channel=email is PRODUCT-red."""
+    assert handler_has_prepared_event_bus_step(STEP2_PRODUCT_CHANNEL_HANDLER) is True
+    assert handler_satisfies_event_bus_contract(STEP2_PRODUCT_CHANNEL_HANDLER) is False
+    assert event_bus_steps_from_handler(STEP2_PRODUCT_CHANNEL_HANDLER) == [
+        (1, True),
+        (2, False),
+    ]
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_booking", ["workflow", "event_bus"], "COMPOSE")),
+        store_ids={"workflow", "event_bus"},
+    )
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_booking.py").write_text(
+        STEP2_PRODUCT_CHANNEL_HANDLER, encoding="utf-8"
     )
     errors = event_bus_workflow_handler_errors(tmp_path, compiled)
     assert any("appointment_booking" in e and "step_2" in e for e in errors)
