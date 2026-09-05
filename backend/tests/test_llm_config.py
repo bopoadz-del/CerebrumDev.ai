@@ -24,6 +24,8 @@ def _clear_env():
         "CEREBRUM_FACTORY_LLM_API_KEY",
         "CEREBRUM_FACTORY_LLM_BASE_URL",
         "CEREBRUM_FACTORY_LLM_MODEL",
+        "OPENROUTER_API_KEY",
+        "FACTORY_LLM_FALLBACK_API_KEY",
     ]
     old = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -114,4 +116,90 @@ def test_chat_and_factory_fallback_to_shared_vars():
     factory_cfg = get_factory_llm_config()
     assert chat_cfg["model"] == "moonshot-v1-8k"
     assert factory_cfg["model"] == "moonshot-v1-8k"
+
+
+def test_openrouter_base_uses_openrouter_key_not_moonshot_keys():
+    """Pointing CEREBRUM_LLM_BASE_URL at OpenRouter must not send a Moonshot key."""
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-moonshot-shared"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "kimi"
+    assert factory_cfg["provider"] == "kimi"
+    assert chat_cfg["base_url"] == "https://openrouter.ai/api/v1"
+    assert factory_cfg["base_url"] == "https://openrouter.ai/api/v1"
+    assert chat_cfg["api_key"] == "sk-or-test"
+    assert factory_cfg["api_key"] == "sk-or-test"
+    assert "error" not in factory_cfg
+
+
+def test_openrouter_base_is_case_insensitive_and_prefers_path_key():
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://OpenRouter.AI/api/v1"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-or-chat-override"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
+
+    chat_cfg = get_llm_config()
+    assert chat_cfg["api_key"] == "sk-or-chat-override"
+    assert chat_cfg["base_url"] == "https://OpenRouter.AI/api/v1"
+
+
+def test_moonshot_base_still_uses_kimi_keys_when_openrouter_key_present():
+    """Default Moonshot host must keep using Moonshot credentials."""
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-moonshot-shared"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "kimi"
+    assert factory_cfg["provider"] == "kimi"
+    assert chat_cfg["api_key"] == "sk-moonshot-kimi"
+    assert factory_cfg["api_key"] == "sk-moonshot-kimi"
+    assert chat_cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert factory_cfg["base_url"] == "https://api.moonshot.ai/v1"
+
+
+def test_openrouter_base_without_openrouter_key_does_not_use_moonshot_key():
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-moonshot-shared"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["api_key"] == ""
+    assert factory_cfg["api_key"] == ""
+    assert "OPENROUTER_API_KEY" in factory_cfg.get("error", "")
+
+
+def test_openrouter_key_alone_activates_chat_when_base_is_openrouter():
+    """Floor chat must not require a Moonshot key just to talk to OpenRouter."""
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "kimi"
+    assert factory_cfg["provider"] == "kimi"
+    assert chat_cfg["api_key"] == "sk-or-test"
+    assert factory_cfg["api_key"] == "sk-or-test"
+
+
+def test_openrouter_base_uses_factory_fallback_api_key_when_openrouter_unset():
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
+    os.environ["FACTORY_LLM_FALLBACK_API_KEY"] = "sk-or-fallback"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["api_key"] == "sk-or-fallback"
+    assert factory_cfg["api_key"] == "sk-or-fallback"
 
