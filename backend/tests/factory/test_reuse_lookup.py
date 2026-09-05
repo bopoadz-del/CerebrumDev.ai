@@ -7,6 +7,7 @@ import json
 from app.factory.build.reuse_lookup import (
     ReuseRecord,
     extract_l2_fields,
+    is_store_exact_id_miss,
     load_local_block_json,
     lookup_reuse,
     parse_reuse_body,
@@ -263,3 +264,37 @@ def test_extract_l2_empty_declared_is_not_invented():
 
 def test_reset_http_surface_cache_is_exported():
     reset_http_surface_cache()
+
+
+def test_store_exact_id_miss_is_registry_present_false_only():
+    assert (
+        is_store_exact_id_miss(
+            ReuseRecord(block_id="readiness_engine", present=False, source="registry/blocks")
+        )
+        is True
+    )
+    assert (
+        is_store_exact_id_miss(
+            ReuseRecord(block_id="readiness_engine", present=False, source="registry/reuse")
+        )
+        is True
+    )
+    assert (
+        is_store_exact_id_miss(
+            ReuseRecord(block_id="readiness_engine", present=True, source="registry/blocks")
+        )
+        is False
+    )
+    assert (
+        is_store_exact_id_miss(
+            ReuseRecord(block_id="ghost", present=False, source="absent")
+        )
+        is False
+    )
+    assert (
+        is_store_exact_id_miss(
+            ReuseRecord(block_id="event_bus", present=True, source="local_dual_registry")
+        )
+        is False
+    )
+    assert is_store_exact_id_miss(None) is False

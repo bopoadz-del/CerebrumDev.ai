@@ -192,6 +192,54 @@ def test_mutation_drops_writer_behaviour_acceptance():
     assert any("writer_behaviour schema-accept" in e for e in result.errors)
 
 
+def test_vetcare_dropped_readiness_engine_reuse_lints_clean(monkeypatch):
+    """Invented readiness_engine REUSE is a GAP, not an unresolved-id lint fail."""
+    from app.factory.build.brief_compiler import compile_brief
+    from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    def fake_get(block_id, base_url=None):
+        return ReuseRecord(block_id=block_id, present=False, source="registry/blocks")
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap(
+                "veterinarian_availability_tracking",
+                ["readiness_engine"],
+                "REUSE",
+            )
+        ),
+        store_ids={"readiness_engine", "event_bus"},
+        reuse_http_get=fake_get,
+    )
+    result = lint_brief(compiled)
+    assert result.ok, result.errors
+    assert result.checks["missing_reuse"] == []
+    compiled.missing_reuse = ["readiness_engine"]
+    planted = lint_brief(compiled)
+    assert planted.ok is False
+    assert any("unresolved block id" in e and "readiness_engine" in e for e in planted.errors)
+
+
 def test_unfilled_template_slot_is_rejected():
     compiled = _compiled()
     compiled.text = compiled.text + "\n{{ORPHAN_SLOT}}\n"
