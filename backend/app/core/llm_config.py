@@ -62,6 +62,32 @@ def _kimi_key(*prefixes: str) -> str:
     return _env_first(*candidates)
 
 
+def _is_openrouter_base(base_url: str) -> bool:
+    return "openrouter.ai" in (base_url or "").lower()
+
+
+def _openrouter_key(*prefixes: str) -> str:
+    """Resolve an OpenRouter key for a kimi-wire OpenRouter base_url.
+
+    Path-prefixed ``*_LLM_API_KEY`` still wins (operator override). Shared
+    Moonshot names (``KIMI_API_KEY`` / ``CEREBRUM_LLM_API_KEY``) are excluded
+    — those keys 401 on OpenRouter.
+    """
+    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
+    candidates.extend(["OPENROUTER_API_KEY", "FACTORY_LLM_FALLBACK_API_KEY"])
+    return _env_first(*candidates)
+
+
+def _resolve_kimi_api_key(base_url: str, *prefixes: str) -> str:
+    """Pick the key that belongs to the resolved host.
+
+    When ``base_url`` is OpenRouter, never fall back to Moonshot keys.
+    """
+    if _is_openrouter_base(base_url):
+        return _openrouter_key(*prefixes)
+    return _kimi_key(*prefixes)
+
+
 def _kimi_base_url(*prefixes: str) -> str:
     candidates: List[str] = []
     for prefix in prefixes:
@@ -91,10 +117,11 @@ def _kimi_fallback_model(*prefixes: str, default: str) -> str:
 
 
 def _kimi_config(*prefixes: str) -> Dict[str, Any]:
+    base_url = _kimi_base_url(*prefixes)
     return {
         "provider": "kimi",
-        "api_key": _kimi_key(*prefixes),
-        "base_url": _kimi_base_url(*prefixes),
+        "api_key": _resolve_kimi_api_key(base_url, *prefixes),
+        "base_url": base_url,
         "model": _kimi_model(*prefixes),
         "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
@@ -104,10 +131,11 @@ def _kimi_config(*prefixes: str) -> Dict[str, Any]:
 
 def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
     """Factory config with a code-oriented fallback model default."""
+    base_url = _kimi_base_url(*prefixes)
     return {
         "provider": "kimi",
-        "api_key": _kimi_key(*prefixes),
-        "base_url": _kimi_base_url(*prefixes),
+        "api_key": _resolve_kimi_api_key(base_url, *prefixes),
+        "base_url": base_url,
         "model": _kimi_model(*prefixes),
         # The fallback leg must be a DIFFERENT, live model: with the primary
         # now kimi-k2.7-code, falling back to itself would just
@@ -233,9 +261,14 @@ def _detect_provider() -> str:
     provider configured; otherwise it must be asked for by name.
 
     Prefers the chat-scoped key so a factory-only key does not accidentally
-    turn on chat LLM calls.
+    turn on chat LLM calls. An OpenRouter key counts only when the resolved
+    chat base_url is actually OpenRouter (Moonshot keys stay Moonshot).
     """
-    if _kimi_key("CEREBRUM_CHAT") or _has_kimi_credentials():
+    chat_base = _kimi_base_url("CEREBRUM_CHAT")
+    if (
+        _resolve_kimi_api_key(chat_base, "CEREBRUM_CHAT")
+        or _has_kimi_credentials()
+    ):
         return "kimi"
     if _has_claude_credentials():
         return "claude"
@@ -315,10 +348,18 @@ def get_factory_llm_config() -> Dict[str, Any]:
     if cfg["mock"]:
         return cfg
     if not cfg["api_key"]:
-        cfg["error"] = (
-            "Factory architect requires KIMI_API_KEY (or CEREBRUM_LLM_API_KEY), "
-            "or set KIMI_MOCK=1 for tests"
-        )
+        if _is_openrouter_base(str(cfg.get("base_url", ""))):
+            cfg["error"] = (
+                "Factory architect base_url is OpenRouter but OPENROUTER_API_KEY "
+                "(or FACTORY_LLM_FALLBACK_API_KEY) is not set; "
+                "KIMI_API_KEY / CEREBRUM_LLM_API_KEY are Moonshot credentials "
+                "and will 401 on this host"
+            )
+        else:
+            cfg["error"] = (
+                "Factory architect requires KIMI_API_KEY (or CEREBRUM_LLM_API_KEY), "
+                "or set KIMI_MOCK=1 for tests"
+            )
     return cfg
 
 
