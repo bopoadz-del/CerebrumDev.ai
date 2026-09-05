@@ -60,7 +60,15 @@ GATE_SCOPES = {
 #: is a source string rather than an import. Findings are marked so the
 #: gate never mistakes alembic's or uvicorn's stderr for its own reason.
 ROUND_TRIP_PROBE = r'''
-import sys
+import os, sys, tempfile
+
+# Isolate STORAGE_PATH the same way writer_behaviour does. A leftover
+# ./data/platform.db already stamped at 0001_baseline (CLI alembic, or a
+# prior TestClient) makes upgrade_head() a no-op after the factory
+# rewrites 0001 — live Veterinary Care Platform then POSTed
+# OperationalError: no such table: audit / dashboard / veterinary_care_core.
+os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="product-gate-")
+sys.path.insert(0, os.getcwd())
 
 try:
     from app.models import MODELS

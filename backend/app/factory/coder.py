@@ -1506,6 +1506,11 @@ Rules:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
    "channel": "mcp"}}.
+- PRODUCT one-record round-trip then POSTs that sample and re-reads
+  store.list_all(entity). Every capability must persist via
+  store.save(ENTITY, payload) to the alembic 0001 table (factory-grounded
+  persist). POST raised OperationalError: no such table: <entity> is a
+  miss. Do not treat a leftover ./data/platform.db as migrated.
 """
 
 

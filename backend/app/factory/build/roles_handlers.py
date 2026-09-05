@@ -1142,7 +1142,16 @@ def _ensure_handler_fails_closed(body: str) -> str:
         '            "error": "block failed: " + "; ".join(_block_errors),\n'
         '            "result": result,\n'
         "        }\n"
-        "    return result"
+        "    if isinstance(result, dict) and result.get('ok') is False:\n"
+        "        return result\n"
+        "    stored = _persist_record(payload)\n"
+        "    if isinstance(result, dict):\n"
+        "        result = dict(result)\n"
+        "        result.setdefault('ok', True)\n"
+        "        result['stored'] = stored\n"
+        "        return result\n"
+        "    return {'ok': True, 'capability': CAPABILITY_ID, "
+        "'stored': stored, 'result': result}"
     )
 
 
@@ -1248,6 +1257,21 @@ BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
 CAPABILITY_FIELDS = {list(field_names or [])!r}
 
 
+def _persist_record(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Factory-grounded one-record persist. PRODUCT re-reads this entity.
+
+    Store is imported here, not at module load: isolated contract probes
+    exec this file against the factory ``app`` package (no product
+    ``app.store``). A generated workspace still has ``app/store.py``.
+    """
+    record = dict(payload) if isinstance(payload, dict) else {{}}
+    try:
+        from app import store as _store
+    except ImportError:
+        return record
+    return _store.save(ENTITY, record)
+
+
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
 {_ensure_handler_fails_closed(body)}
 '''
@@ -1272,8 +1296,9 @@ def _capability_handler_body(
 def _templated_body(block_ids: Sequence[str]) -> str:
     if not block_ids:
         return (
-            '    return {"capability": CAPABILITY_ID, "status": "no_block_bound",\n'
-            '            "detail": "no vendored block backs this capability"}'
+            "    stored = _persist_record(payload)\n"
+            '    return {"ok": True, "capability": CAPABILITY_ID, '
+            '"stored": stored}'
         )
     # Domain JSON is not block-acceptable JSON. prepare_block_input (invoked
     # inside the fail-closed execute wrapper, and explicitly here so the
@@ -1302,7 +1327,9 @@ def _templated_body(block_ids: Sequence[str]) -> str:
         '            "error": "; ".join(f"{b}: {e}" for b, e in sorted(errors.items())),\n'
         '            "results": results,\n'
         "        }\n"
-        '    return {"ok": True, "capability": CAPABILITY_ID, "results": results}'
+        "    stored = _persist_record(payload)\n"
+        '    return {"ok": True, "capability": CAPABILITY_ID, '
+        '"results": results, "stored": stored}'
     )
 
 
@@ -1499,7 +1526,12 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
         "        return {'ok': False,",
         "                'error': result.get('error_message') or result.get('status'),",
         "                'result': result}",
-        "    stored = save(payload)",
+        "    try:",
+        "        stored = save(payload)",
+        "    except Exception as exc:",
+        "        return {'ok': False,",
+        "                'error': f'{type(exc).__name__}: {exc}',",
+        "                'capability': CAPABILITY_ID}",
         '    return {"ok": True, "capability": CAPABILITY_ID, "result": result,',
         '            "stored": stored}',
     ]
@@ -1519,7 +1551,13 @@ def _ensure_route_persists_payload(body: str) -> str:
         body,
     )
     if "save(payload)" not in rewritten:
-        rewritten = rewritten.rstrip() + "\n    stored = save(payload)\n"
+        rewritten = (
+            rewritten.rstrip()
+            + "\n    try:\n        stored = save(payload)\n"
+            + "    except Exception as exc:\n"
+            + "        return {'ok': False, "
+            + "'error': f'{type(exc).__name__}: {exc}'}\n"
+        )
     return rewritten
 
 
@@ -2746,6 +2784,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     emit_writer_artifacts(ctx.workspace, specs)
     emit_deploy_artifacts(ctx.workspace)
     emit_domain_artifacts(ctx.workspace, specs)
+    from app.factory.build.persist_accept import wipe_workspace_runtime_db
+
+    wipe_workspace_runtime_db(ctx.workspace)
     sources["persistence"] = (
         "derived from coder-designed models"
         if any(s.get("model") for s in specs.values())
@@ -2797,6 +2838,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                     kept_text, require_prepared_step=True
                 )
             ):
+                authored = None
+            elif "_persist_record(" not in kept_text and "store.save(" not in kept_text:
+                # Live keyword-fallback audit/dashboard/{vertical}_core:
+                # keepable CLI stubs executed blocks but never persisted,
+                # then PRODUCT raised no such table / remembered nothing.
                 authored = None
             else:
                 # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED
@@ -3105,6 +3151,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
     sources["jobs"] = fallback_source
     ctx.workspace.write_text(Path("app") / "routes.py", _render_routes(entries))
+    from app.factory.build.persist_accept import (
+        PersistRoundTripHalt,
+        assert_persist_round_trip_ready,
+        wipe_workspace_runtime_db,
+    )
+
+    wipe_workspace_runtime_db(ctx.workspace)
+    try:
+        assert_persist_round_trip_ready(ctx.workspace.workspace, specs)
+    except PersistRoundTripHalt as exc:
+        raise RoleError(str(exc)) from exc
 
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")

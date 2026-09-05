@@ -235,6 +235,28 @@ def _lift(names):
     return ns
 
 
+def test_the_probe_isolates_storage_path_like_writer_behaviour():
+    """Live Veterinary Care Platform: PRODUCT used leftover ./data stamped
+    at 0001_baseline, upgrade_head was a no-op, POST raised no such table.
+    WRITER already isolates STORAGE_PATH; PRODUCT must too.
+    """
+    assert 'tempfile.mkdtemp(prefix="product-gate-")' in ROUND_TRIP_PROBE
+    assert 'os.environ["STORAGE_PATH"]' in ROUND_TRIP_PROBE
+    tree = ast.parse(ROUND_TRIP_PROBE)
+    assigns_storage = False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Attribute)
+                and target.value.attr == "environ"
+            ):
+                assigns_storage = True
+    assert assigns_storage
+
+
 def test_the_probe_enters_the_client_context_so_the_lifespan_runs():
     """A bare ``TestClient(app)`` skips lifespan: no migrations, and since
     R1c no platform preconditions either. Every capability would then fail

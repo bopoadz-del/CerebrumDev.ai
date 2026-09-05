@@ -543,8 +543,9 @@ def grounded_event_bus_handler_body(
         'f"{b}: {e}" for b, e in sorted(errors.items())),\n'
         '            "results": results,\n'
         "        }\n"
+        "    stored = _persist_record(payload)\n"
         '    return {"ok": True, "capability": CAPABILITY_ID, '
-        '"results": results}'
+        '"results": results, "stored": stored}'
     )
 
 
