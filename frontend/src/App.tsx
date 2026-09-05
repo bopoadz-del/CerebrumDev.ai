@@ -34,6 +34,7 @@ export function viewFromPath(pathname: string): View {
   if (pathname === '/account') return 'account'
   if (pathname === '/subscription') return 'subscription'
   if (pathname === '/platforms') return 'platforms'
+  if (pathname === '/floor') return 'floor'
   return 'floor'
 }
 
@@ -57,6 +58,39 @@ export function isSignedInAuthRedirectPath(pathname: string): boolean {
   return pathname === '/login' || pathname === '/register'
 }
 
+/** `?session=` from a Floor / Platforms deep-link. Empty or whitespace is absent. */
+export function sessionQueryParam(search: string): string | null {
+  const raw = new URLSearchParams(search.startsWith('?') ? search : `?${search}`).get('session')
+  const trimmed = raw?.trim() ?? ''
+  return trimmed || null
+}
+
+export type SessionListItem = { session_id?: string }
+
+export type BootSessionResult =
+  | { status: 'selected'; sessionId: string }
+  | { status: 'create' }
+  | { status: 'missing'; requested: string }
+
+/**
+ * Pick the boot session from `?session=` + the account list.
+ * A requested id that is not in the list is missing — never fall through
+ * to list[0], which would paint another build's Download / Finished card.
+ */
+export function resolveBootSession(
+  requested: string | null,
+  list: SessionListItem[],
+): BootSessionResult {
+  if (requested) {
+    const match = list.find((s) => s.session_id === requested)
+    if (match?.session_id) return { status: 'selected', sessionId: match.session_id }
+    return { status: 'missing', requested }
+  }
+  const first = list[0]?.session_id
+  if (first) return { status: 'selected', sessionId: first }
+  return { status: 'create' }
+}
+
 const NAV_ITEMS: { view: View; label: string; shortLabel: string; icon: string }[] = [
   { view: 'floor', label: 'Factory Floor', shortLabel: 'Floor', icon: '⌂' },
   { view: 'platforms', label: 'Your Platforms', shortLabel: 'Platforms', icon: '▣' },
@@ -78,6 +112,7 @@ export default function App() {
   const [accountMe, setAccountMe] = useState<AccountInfo | null>(null)
   const [accessPaused, setAccessPaused] = useState(false)
   const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
+  const [sessionLinkError, setSessionLinkError] = useState<string | null>(null)
 
   function go(next: View) {
     setView(next)
@@ -93,6 +128,7 @@ export default function App() {
     ;(async () => {
       const params = new URLSearchParams(window.location.search)
       const linkToken = params.get('token')
+      const requestedSession = sessionQueryParam(window.location.search)
       if (linkToken && window.location.pathname === '/verify-email') {
         window.history.replaceState(null, '', '/')
         try {
@@ -109,7 +145,21 @@ export default function App() {
           billing.status().catch(() => null),
         ])
         const arr = Array.isArray(list) ? list : list.sessions ?? []
-        let sid = arr[0]?.session_id
+        const choice = resolveBootSession(requestedSession, arr)
+        if (choice.status === 'missing') {
+          if (!cancelled) {
+            setAccountMe(me)
+            setAccessPaused(factoryAccessPaused(bill))
+            setNeedsEmailVerify(false)
+            setBootError(null)
+            setSessionLinkError(choice.requested)
+            setSessionId(null)
+            setAuthed(true)
+            setView(viewFromPath(window.location.pathname))
+          }
+          return
+        }
+        let sid = choice.status === 'selected' ? choice.sessionId : undefined
         if (!sid) {
           const created = await sessions.create()
           sid = created.session_id
@@ -119,6 +169,7 @@ export default function App() {
           setAccessPaused(factoryAccessPaused(bill))
           setNeedsEmailVerify(false)
           setBootError(null)
+          setSessionLinkError(null)
           setSessionId(sid ?? null)
           setAuthed(true)
           if (isSignedInAuthRedirectPath(window.location.pathname)) {
@@ -134,6 +185,7 @@ export default function App() {
           if (isUnauthenticatedError(e)) {
             clearSession()
             setNeedsEmailVerify(false)
+            setSessionLinkError(null)
             setSessionId(null)
             setAuthed(false)
           } else if (isEmailNotVerifiedError(e)) {
@@ -236,6 +288,35 @@ export default function App() {
             }}
           >
             Retry
+          </button>
+        </div>
+      </div>
+    )
+  if (sessionLinkError)
+    return (
+      <div className="center-screen">
+        <div className="panel narrow">
+          <h2>Session not found</h2>
+          <p className="dim">
+            Session <code>{sessionLinkError}</code> is not in your list. The Floor
+            did not open a different build, so a failed or unfinished export is
+            never shown as Finished or Downloadable.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                const url = new URL(window.location.href)
+                url.searchParams.delete('session')
+                const next = `${url.pathname}${url.search}${url.hash}`
+                window.history.replaceState(null, '', next || '/')
+              }
+              setSessionLinkError(null)
+              setSessionId(null)
+              setBootNonce((n) => n + 1)
+            }}
+          >
+            Open Factory Floor
           </button>
         </div>
       </div>

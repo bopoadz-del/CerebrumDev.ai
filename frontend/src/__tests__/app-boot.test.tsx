@@ -11,7 +11,12 @@ import {
   isUnauthenticatedError,
   signOut,
 } from '../api/factory'
-import App, { pathFromView, viewFromPath } from '../App'
+import App, {
+  pathFromView,
+  resolveBootSession,
+  sessionQueryParam,
+  viewFromPath,
+} from '../App'
 
 const {
   meMock,
@@ -380,6 +385,68 @@ describe('App boot', () => {
     expect(window.location.pathname).toBe('/platforms')
   })
 
+  it('?session= selects that session when it is in the list — not list[0]', async () => {
+    window.history.pushState(null, '', '/?session=sess_d5789a91d53b4bae')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_45729bb0001' },
+      { session_id: 'sess_d5789a91d53b4bae' },
+    ])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_d5789a9/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_45729bb/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('?session= on /platforms keeps path routing and still selects that session', async () => {
+    window.history.pushState(null, '', '/platforms?session=sess_d5789a91d53b4bae')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_45729bb0001' },
+      { session_id: 'sess_d5789a91d53b4bae' },
+    ])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Your Platforms' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_d5789a9/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/platforms')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('missing ?session= id fails closed — no other session Download card', async () => {
+    window.history.pushState(null, '', '/?session=sess_not_in_list')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_45729bb0001' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeInTheDocument()
+    expect(screen.getByText(/sess_not_in_list/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/session sess_45729bb/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(createMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Factory Floor' }))
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_45729bb/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Session not found' })).not.toBeInTheDocument()
+  })
+
   it('rail nav buttons expose icons, labels, and accessible names', async () => {
     meMock.mockResolvedValue({
       email: 'new@factory.dev',
@@ -406,11 +473,55 @@ describe('viewFromPath / pathFromView', () => {
     expect(viewFromPath('/account')).toBe('account')
     expect(viewFromPath('/subscription')).toBe('subscription')
     expect(viewFromPath('/platforms')).toBe('platforms')
+    expect(viewFromPath('/floor')).toBe('floor')
     expect(viewFromPath('/')).toBe('floor')
     expect(viewFromPath('/login')).toBe('floor')
     expect(pathFromView('account')).toBe('/account')
     expect(pathFromView('subscription')).toBe('/subscription')
     expect(pathFromView('platforms')).toBe('/platforms')
     expect(pathFromView('floor')).toBe('/')
+  })
+})
+
+describe('sessionQueryParam / resolveBootSession', () => {
+  it('reads ?session= and ignores blank values', () => {
+    expect(sessionQueryParam('?session=sess_d5789a91d53b4bae')).toBe('sess_d5789a91d53b4bae')
+    expect(sessionQueryParam('session=sess_d5789a91d53b4bae&token=x')).toBe(
+      'sess_d5789a91d53b4bae',
+    )
+    expect(sessionQueryParam('?token=only')).toBeNull()
+    expect(sessionQueryParam('?session=')).toBeNull()
+    expect(sessionQueryParam('?session=%20')).toBeNull()
+  })
+
+  it('selects the requested id when it is in the list — never list[0]', () => {
+    expect(
+      resolveBootSession('sess_d5789a91d53b4bae', [
+        { session_id: 'sess_45729bb0001' },
+        { session_id: 'sess_d5789a91d53b4bae' },
+      ]),
+    ).toEqual({ status: 'selected', sessionId: 'sess_d5789a91d53b4bae' })
+  })
+
+  it('fail-closes when the requested id is missing — does not invent list[0]', () => {
+    expect(
+      resolveBootSession('sess_missing', [{ session_id: 'sess_45729bb0001' }]),
+    ).toEqual({ status: 'missing', requested: 'sess_missing' })
+    expect(resolveBootSession('sess_ghost', [])).toEqual({
+      status: 'missing',
+      requested: 'sess_ghost',
+    })
+  })
+
+  it('keeps current boot when no query param: first listed session, else create', () => {
+    expect(resolveBootSession(null, [{ session_id: 'sess_45729bb0001' }])).toEqual({
+      status: 'selected',
+      sessionId: 'sess_45729bb0001',
+    })
+    expect(resolveBootSession(null, [])).toEqual({ status: 'create' })
+    expect(resolveBootSession('', [{ session_id: 'sess_ok' }])).toEqual({
+      status: 'selected',
+      sessionId: 'sess_ok',
+    })
   })
 })
