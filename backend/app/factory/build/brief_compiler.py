@@ -497,6 +497,12 @@ def render_slot_bodies(
         "Invocation contracts: pass action= as a keyword, never inside the payload dict.",
         "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
         "Call execute() for EVERY id in BLOCK_IDS.",
+        "Call execute() from app.dispatch only. Do not import app.actions, "
+        "app.routes, or app.main from a handler. The factory owns "
+        "app/actions/__init__.py — do not rewrite it with "
+        "'from app.actions import <capability>' eager re-exports. That "
+        "circular import (live VetCare pet_records_management) makes "
+        "writer_behaviour halt as workspace does not import before route honesty.",
         "If you assign a block, you feed it — construct block inputs; do not demand "
         "block-specific keys (topic, sql/table, file paths, team_id, channel, steps) "
         "from the caller.",
@@ -597,6 +603,10 @@ def render_slot_bodies(
         "- assuming a REUSE id is present when STEP 0 flagged it missing",
         "- inventing READS/WRITES/NEVER/ACCEPTANCE when block.json has not declared them",
         "- inventing a stricter accept-contract than the spec (writer_behaviour schema-accept)",
+        "- eager from app.actions import re-exports in app/actions/__init__.py "
+        "(circular import; writer_behaviour workspace does not import)",
+        "- importing app.actions / app.routes / app.main from a capability handler "
+        "(writer_behaviour workspace does not import)",
         workflow_accept_forbidden_lines(),
         "- one handle() / one spec / one route at a time — this brief is the whole job",
         "- weakening honesty or exporting when the pilot suite is red",

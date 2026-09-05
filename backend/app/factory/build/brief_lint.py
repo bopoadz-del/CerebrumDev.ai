@@ -57,6 +57,17 @@ EXECUTABLE_ACCEPTANCE = (
     ("harness", "harness"),
 )
 
+#: C-BRIEF packaging contract. Dropping these lets Kimi rewrite
+#: ``app/actions/__init__.py`` with eager ``from app.actions import``
+#: re-exports (live VetCare: circular pet_records_management).
+ACTIONS_PACKAGING_NEEDLES = (
+    "from app.actions import",
+    "workspace does not import",
+    "app.routes",
+    "app.main from a",
+)
+
+
 TEMPLATE_STATIC_NEEDLES = (
     "c-brief template",
     "revision:",
@@ -74,6 +85,10 @@ TEMPLATE_STATIC_NEEDLES = (
     "invocation contracts",
     "prefer action=",
     "call execute()",
+    "from app.actions import",
+    "workspace does not import",
+    "eager re-export",
+    "app.routes",
     "if you assign a block",
     "declare vocabularies",
     "envelope status vocabulary",
@@ -328,6 +343,19 @@ def lint_brief(
         errors.append(
             "acceptance missing writer_behaviour schema-accept "
             "(no capability accepted its own schema)"
+        )
+
+    blob = text.lower()
+    missing_packaging = [
+        needle
+        for needle in ACTIONS_PACKAGING_NEEDLES
+        if needle.lower() not in blob
+    ]
+    if missing_packaging:
+        errors.append(
+            "brief dropped actions packaging contract "
+            "(circular app.actions import): "
+            + ", ".join(missing_packaging[:4])
         )
 
     if declares_event_bus_workflow(compiled):

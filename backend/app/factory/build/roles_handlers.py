@@ -1140,6 +1140,72 @@ def _ensure_handler_fails_closed(body: str) -> str:
     )
 
 
+def _render_actions_init(capability_names: Sequence[str]) -> str:
+    """``app/actions/__init__.py`` that does not eagerly re-export siblings.
+
+    Live sess_8273a26a4c1b4ee7 (VetCare Hub / veterinary-care) died at
+    WRITER ``writer_behaviour`` before any route honesty check:
+
+        workspace does not import: ImportError: cannot import name
+        'pet_records_management' from partially initialized module
+        'app.actions' (.../app/actions/__init__.py)
+
+    The factory used to emit ``from app.actions import <cap>`` for every
+    capability. That re-enters the package while it is still initializing.
+    A CLI/Kimi handler that then imports a sibling (or ``app.routes`` /
+    ``app.main``) completes the cycle. PEP 562 ``__getattr__`` loads a
+    submodule on first attribute access after ``__init__`` has finished.
+    Callers may still write ``from app.actions import pet_records_management``.
+    """
+    names = [
+        str(name).replace("-", "_")
+        for name in capability_names
+        if str(name).strip()
+    ]
+    names = list(dict.fromkeys(names))
+    all_list = ", ".join(repr(name) for name in names)
+    return (
+        '"""Capability handlers."""\n'
+        "\n"
+        "from __future__ import annotations\n"
+        "\n"
+        "import importlib\n"
+        "from typing import Any\n"
+        "\n"
+        f"__all__ = [{all_list}]\n"
+        "\n"
+        "\n"
+        "def __getattr__(name: str) -> Any:\n"
+        "    if name in __all__:\n"
+        '        return importlib.import_module("." + name, __name__)\n'
+        "    raise AttributeError("
+        'f"module {__name__!r} has no attribute {name!r}")\n'
+        "\n"
+        "\n"
+        "def __dir__() -> list:\n"
+        "    return sorted(set(globals()) | set(__all__))\n"
+    )
+
+
+def actions_init_eager_reexports(text: str) -> List[str]:
+    """Names pulled in via ``from app.actions import X`` inside the package init.
+
+    That pattern is the circular-import class. An empty list means the
+    package can finish initializing before any capability module loads.
+    """
+    found: List[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("from app.actions import "):
+            tail = line.split("from app.actions import ", 1)[1]
+            name = tail.split("#", 1)[0].split(" as ", 1)[0].strip()
+            if name:
+                found.append(name)
+    return found
+
+
 def _handler_module(
     capability_id: str,
     block_ids: Sequence[str],
@@ -1564,12 +1630,15 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         name, entity = e["name"], e["entity"]
         out += [
             f"# --- {e['capability_id']} ({e['source']}) ---",
-            f"from app.actions import {name} as _{name}_action  # noqa: E402",
             "",
             "",
             f"def _{name}_handle(payload: Dict[str, Any]) -> Dict[str, Any]:",
             "    try:",
-            f"        result = _{name}_action.handle(payload)",
+            # Import the sibling module, not the package. A module-level
+            # ``from app.actions import {name}`` plus eager package
+            # re-exports is the circular class (VetCare pet_records_management).
+            f"        from app.actions.{name} import handle as _handle",
+            "        result = _handle(payload)",
             "    except Exception as exc:  # Store/runtime refusal is not HTTP 500",
             '        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}',
             "    if not isinstance(result, dict):",
@@ -2666,12 +2735,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
 
     # --- capability handlers ------------------------------------------------
-    actions_init = ['"""Capability handlers."""', ""]
+    action_names: List[str] = []
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
         name = cid.replace("-", "_")
         handler_rel = Path("app") / "actions" / f"{name}.py"
-        actions_init.append(f"from app.actions import {name}  # noqa: F401")
+        action_names.append(name)
         written.append(name)
 
         if cid not in failing and ctx.workspace.exists(handler_rel):
@@ -2751,7 +2820,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
 
     ctx.workspace.write_text(
-        Path("app") / "actions" / "__init__.py", "\n".join(actions_init) + "\n"
+        Path("app") / "actions" / "__init__.py",
+        _render_actions_init(action_names),
     )
 
     from app.factory.build.workflow_accept import (
