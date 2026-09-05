@@ -2,7 +2,8 @@
 
 A lettings brief must draft the golden roster (not a GENERATE stub), the
 code cycle must emit a full 14-class repo, and a Store-green pilot is the
-only path to ``pilot_ready`` / founding-customer-ready. Fail-closed if the
+only path to ``pilot_ready``. Founding still requires a writer session —
+a no-CLI / thin-authorship walk stays Store-green. Fail-closed if the
 pilot cycle is red.
 """
 
@@ -227,8 +228,11 @@ def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path):
 
 
 def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
-    """Code cycle then Store-green pilot. Founding only if all three gates pass.
+    """Code cycle then Store-green pilot. Founding needs a writer product.
 
+    This walk disables the coder (no paid CLI). PRODUCT/STORE may pass on
+    factory-grounded emit, but ``FACTORY_CODE_CLI_UNAVAILABLE`` + near-zero
+    agent-written authorship must not stamp founding-customer-ready.
     Vendor-mirror durability may still fail PRODUCT/STORE. That must stay a
     red Level, never a thin SUCCESS with implied Finished.
     """
@@ -260,9 +264,11 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
     assert status["pilot_ready"] is True
     assert grade["three_gate"] == {"CODE": "PASS", "PRODUCT": "PASS", "STORE": "PASS"}
     assert grade["missing"] == []
-    assert grade["blockers"] == []
-    assert grade["level"] == Level.FOUNDING_CUSTOMER_READY.value
-    assert grade["founding_customer_ready"] is True
+    assert grade["level"] == Level.STORE_GREEN.value
+    assert grade["founding_customer_ready"] is False
+    assert any(
+        "FACTORY_CODE_CLI_UNAVAILABLE" in b or "templated" in b for b in grade["blockers"]
+    )
 
 
 def runner_pilot_ready(out: Path) -> bool:

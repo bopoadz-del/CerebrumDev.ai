@@ -413,9 +413,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_c220986f67914681" goPlatforms={() => {}} />)
     expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
-    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Founding-customer-ready')
-    expect(screen.getByText(/Finished — 1 artifacts; 23 templated/)).toBeInTheDocument()
-    expect(screen.getByText(/Download ready/)).toBeInTheDocument()
+    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.getByTestId('floor-pilot-ready-pill')).not.toHaveTextContent(
+      'Founding-customer-ready',
+    )
+    expect(screen.getByText(/Pilot-ready — 1 artifacts; 23 templated/)).toBeInTheDocument()
+    expect(screen.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready\. Download ready/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.queryByTestId('floor-failed-pill')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Export (.zip) — pilot suite failed' })).not.toBeInTheDocument()

@@ -20,6 +20,7 @@ import {
   hasSourcedLevel,
   honestLevel,
   isPilotZipReady,
+  shouldDemoteFounding,
   phaseBarFraction,
   stampBuildObservation,
   withClientStall,
@@ -259,6 +260,7 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
   if (build.state === 'succeeded') {
     const finished = formatFinishedAuthorship(build.authorship, {
       pilotReady: isPilotZipReady(build),
+      demoteFounding: shouldDemoteFounding(build),
     })
     const level = honestLevel(build)
     const sourced = hasSourcedLevel(build)

@@ -466,9 +466,14 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_c220986f67914681" />)
     expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent(
+      'Store-green',
+    )
+    expect(screen.getByTestId('platforms-pilot-ready-pill')).not.toHaveTextContent(
       'Founding-customer-ready',
     )
-    expect(screen.getByText('Finished — 1 artifacts; 23 templated')).toBeInTheDocument()
+    expect(screen.getByText('Pilot-ready — 1 artifacts; 23 templated')).toBeInTheDocument()
+    expect(screen.getByText(/Store-green — not founding-customer-ready/)).toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready — PRODUCT and STORE/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
     expect(

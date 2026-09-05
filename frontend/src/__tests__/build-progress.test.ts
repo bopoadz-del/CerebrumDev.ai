@@ -15,6 +15,8 @@ import {
   isCoderCliFailed,
   isPilotZipReady,
   isScaffoldClaim,
+  isThinTemplatedAuthorship,
+  shouldDemoteFounding,
   levelGradeLabel,
   phaseBarFraction,
   platformsLeadCopy,
@@ -498,9 +500,12 @@ describe('build progress copy', () => {
       },
     }
     expect(isCoderCliFailed(vetCareKeepPath)).toBe(true)
+    expect(isThinTemplatedAuthorship(vetCareKeepPath.authorship)).toBe(true)
+    expect(shouldDemoteFounding(vetCareKeepPath)).toBe(true)
     expect(isAuthoritativePilotReady(vetCareKeepPath)).toBe(true)
     expect(shouldRefuseExport(vetCareKeepPath)).toBe(false)
-    expect(honestLevel(vetCareKeepPath)).toBe('FOUNDING_CUSTOMER_READY')
+    expect(honestLevel(vetCareKeepPath)).toBe('STORE_GREEN')
+    expect(honestLevel(vetCareKeepPath)).not.toBe('FOUNDING_CUSTOMER_READY')
     expect(isPilotZipReady(vetCareKeepPath)).toBe(true)
     expect(withExportHonesty(vetCareKeepPath)).toMatchObject({
       state: 'succeeded',
@@ -513,11 +518,73 @@ describe('build progress copy', () => {
       ghost: false,
     })
     expect(platformsLeadCopy(vetCareKeepPath, true)).toMatch(/Download the export/)
+    expect(levelGradeLabel(honestLevel(vetCareKeepPath)!)).toBe('Store-green')
     expect(
       formatFinishedAuthorship(vetCareKeepPath.authorship, {
         pilotReady: isPilotZipReady(vetCareKeepPath),
+        demoteFounding: shouldDemoteFounding(vetCareKeepPath),
       }),
-    ).toMatch(/^Finished —/)
+    ).toMatch(/^Pilot-ready —/)
+    expect(
+      formatFinishedAuthorship(vetCareKeepPath.authorship, {
+        pilotReady: isPilotZipReady(vetCareKeepPath),
+        demoteFounding: shouldDemoteFounding(vetCareKeepPath),
+      }),
+    ).not.toMatch(/Finished/)
+  })
+
+  it('FACTORY_CODE_CLI_BILLING honesty_class demotes founding and keeps Export', () => {
+    const billingKeepPath: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        pilot_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+      coder_receipt: {
+        ok: false,
+        blocker: 'FACTORY_CODE_CLI_BILLING',
+        honesty_class: 'FACTORY_CODE_CLI_FAILED',
+        detail: 'FACTORY_CODE_CLI_BILLING: 429 — insufficient balance',
+      },
+    }
+    expect(isCoderCliFailed(billingKeepPath)).toBe(true)
+    expect(shouldDemoteFounding(billingKeepPath)).toBe(true)
+    expect(isAuthoritativePilotReady(billingKeepPath)).toBe(true)
+    expect(shouldRefuseExport(billingKeepPath)).toBe(false)
+    expect(honestLevel(billingKeepPath)).toBe('STORE_GREEN')
+    expect(exportAffordance(billingKeepPath)).toMatchObject({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+      ghost: false,
+    })
+    expect(levelGradeLabel('STORE_GREEN')).toBe('Store-green')
+    expect(levelGradeLabel('STORE_GREEN', false)).toBe('Pilot-ready')
+  })
+
+  it('thin templated authorship demotes founding even without a CLI receipt', () => {
+    const thinKeep: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(isCoderCliFailed(thinKeep)).toBe(false)
+    expect(isThinTemplatedAuthorship(thinKeep.authorship)).toBe(true)
+    expect(shouldDemoteFounding(thinKeep)).toBe(true)
+    expect(honestLevel(thinKeep)).toBe('STORE_GREEN')
+    expect(shouldRefuseExport(thinKeep)).toBe(false)
+    expect(isPilotZipReady(thinKeep)).toBe(true)
   })
 
   it('CLI-failed + pilot_ready=false still refuses Export', () => {
