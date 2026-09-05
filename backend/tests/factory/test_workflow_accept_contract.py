@@ -51,7 +51,6 @@ from app.factory.build.workflow_accept import (
     assert_event_bus_workflow_handlers,
     declares_event_bus_workflow,
     event_bus_steps_from_handler,
-    event_bus_step_is_store_ready,
     event_bus_workflow_capability_ids,
     event_bus_workflow_handler_errors,
     grounded_event_bus_handler_body,
