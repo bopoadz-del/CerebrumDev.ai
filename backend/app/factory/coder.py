@@ -1495,10 +1495,12 @@ Rules:
   same schema sample and runs bound blocks. A capability that binds
   workflow + event_bus (appointment_scheduling / appointment_booking /
   reminders_notifications style) must prepare EACH event_bus step
-  including step_2+ (block=event_bus, action=publish, topic, payload
-  dict, message, channel=mcp). Do not set step input to payload. A
-  prepared step_1 plus an unprepared step_2 still fails as
-  workflow: step_2 (event_bus): error. Exact shape:
+  including step_1 and step_2+ (block=event_bus, action=publish, topic,
+  payload dict, message, channel=mcp). Do not set step input to payload.
+  An unprepared first child fails as workflow: step_1 (event_bus): error.
+  A prepared step_1 plus an unprepared step_2 still fails as
+  workflow: step_2 (event_bus): error. The factory wrap is not keep/done.
+  Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
    "channel": "mcp"}}.

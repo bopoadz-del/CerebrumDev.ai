@@ -582,6 +582,33 @@ def test_harvest_does_not_keep_unprepared_event_bus_forward(tmp_path):
     assert specs == {}
 
 
+_FACTORY_WRAP_UNPREPARED = (
+    "def _watched(block_id, *a, **kw):\n"
+    "    prepared = _prepare_block_input(block_id, data, action=action)\n"
+    "    return _dispatch.execute(block_id, prepared, action=action)\n"
+    "def handle(payload):\n"
+    "    steps = [{'block': 'event_bus', 'input': payload}]\n"
+    "    return execute('workflow', {'steps': steps})\n"
+)
+
+
+def test_harvest_does_not_keep_factory_wrap_around_unprepared_step1(tmp_path):
+    """Wrap tokens must not make appointment_scheduling step_1 keepable."""
+    root = tmp_path / "ws"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        "CAPABILITY_ID = 'appointment_scheduling'\n" + _FACTORY_WRAP_UNPREPARED,
+        encoding="utf-8",
+    )
+    assert _is_keepable_handler(
+        (actions / "appointment_scheduling.py").read_text(encoding="utf-8")
+    ) is False
+    specs, kept = harvest_cli_artifacts(root, ["appointment_scheduling"])
+    assert kept == []
+    assert specs == {}
+
+
 _MIXED_STEP2_EVENT_BUS_HANDLER = (
     "def handle(payload):\n"
     "    steps = [\n"

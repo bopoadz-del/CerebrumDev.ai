@@ -2,20 +2,19 @@
 
 The live VetCare Floor halt (sess_a4690fb3336c42fb, after #318) was
 step_1. After #323 grounded the prepared publish shape, the wall moved
-(sess_d70c18ef58ab48e6, tip 205f957):
+(sess_d70c18ef58ab48e6, tip 205f957) to step_2 booking. #325 grounded
+step_2 / appointment_booking needles. Live tip d72b97f / #330
+(sess_14e690829d1f4282) is back at:
 
-    PRODUCT (pilot-marked suite): suite is red: schema sample refused;
-    schema sample refused (event_bus workflow step);
-    accept-payload persisted nothing — FAILED
+    appointment_scheduling rejected a payload built from its own schema:
+    workflow: step_1 (event_bus): error
 
-    appointment_booking rejected a payload built from its own schema:
-    workflow: step_2 (event_bus): error
-
-#323 validated a single prepared publish step / ``prepare_block_input``
-import. CLI then shipped a prepared step_1 plus an unprepared step_2, or
-aliased ``appointment_scheduling`` → ``appointment_booking``. This
-module is the one brief + harvest + harness contract: EVERY event_bus
-child (step_2+) must be prepared. An LLM never writes these rules.
+#325 treated a factory execute wrap, or one prepared child, as enough.
+WRITER then claimed done; PRODUCT still refused the first event_bus
+child. This module is the one brief + harvest + harness contract:
+EVERY event_bus child (step_1, step_2, and later) must be prepared in
+source. A wrap / import is not keep-or-done. An LLM never writes these
+rules.
 """
 
 from __future__ import annotations
@@ -65,7 +64,10 @@ REMINDER_STYLE_MARKERS = (
 )
 
 #: Live PRODUCT class after #323: the wall moved from step_1 to step_2.
+#: Live tip d72b97f / #330: the wall is step_1 again (appointment_scheduling).
+PRODUCT_EVENT_BUS_STEP_1_HALT = "workflow: step_1 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_2_HALT = "workflow: step_2 (event_bus): error"
+APPOINTMENT_SCHEDULING_STYLE = "appointment_scheduling"
 APPOINTMENT_BOOKING_STYLE = "appointment_booking"
 
 #: Tokens that mean the handler built an event_bus workflow child.
@@ -76,12 +78,30 @@ EVENT_BUS_STEP_TOKENS = (
     "'block_id': 'event_bus'",
     'execute("event_bus"',
     "execute('event_bus'",
+    '["block"] = "event_bus"',
+    "['block'] = 'event_bus'",
+    '["block_id"] = "event_bus"',
+    "['block_id'] = 'event_bus'",
+)
+
+#: Tokens that mean the handler invents a workflow ``steps`` list.
+WORKFLOW_CHILD_TOKENS = (
+    '"steps"',
+    "'steps'",
+    "steps =",
+    "steps=",
+    'execute("workflow"',
+    "execute('workflow'",
 )
 
 #: Live CLI invention: forward the schema sample as the step input.
 UNPREPARED_INPUT_FORWARD_TOKENS = (
     "'input': payload",
     '"input": payload',
+    "'input': dict(payload)",
+    '"input": dict(payload)',
+    "'input': dict(sample)",
+    '"input": dict(sample)',
     "input=payload",
     "input = payload",
     "input=dict(payload)",
@@ -205,6 +225,25 @@ def _ast_is_raw_sample(node: Any) -> bool:
     return False
 
 
+def _ast_is_payload_get_without_fallback(node: Any) -> bool:
+    """True when topic/message is ``payload.get(...)`` with no literal fallback.
+
+    PRODUCT ``_sample_payload`` for appointment_scheduling has pet/date
+    fields — not topic / event. ``payload.get('event')`` is None at
+    accept-payload time and Store records step_1 (event_bus): error.
+    """
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        if any(_ast_str(value) for value in node.values):
+            return False
+        return any(_ast_is_payload_get_without_fallback(value) for value in node.values)
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if not isinstance(func, ast.Attribute) or func.attr != "get":
+        return False
+    return isinstance(func.value, ast.Name) and func.value.id in {"payload", "sample"}
+
+
 def _ast_is_event_bus_block(pairs: dict) -> bool:
     return any(
         _ast_str(pairs.get(key)) == "event_bus"
@@ -214,10 +253,18 @@ def _ast_is_event_bus_block(pairs: dict) -> bool:
 
 def _ast_inner_prepared(inner: dict) -> bool:
     topic = inner.get("topic")
-    has_topic = topic is not None and not _ast_is_raw_sample(topic)
+    has_topic = (
+        topic is not None
+        and not _ast_is_raw_sample(topic)
+        and not _ast_is_payload_get_without_fallback(topic)
+    )
     has_payload = isinstance(inner.get("payload"), ast.Dict)
     message = inner.get("message")
-    has_message = message is not None and not _ast_is_raw_sample(message)
+    has_message = (
+        message is not None
+        and not _ast_is_raw_sample(message)
+        and not _ast_is_payload_get_without_fallback(message)
+    )
     has_channel = _ast_str(inner.get("channel")) == EVENT_BUS_STEP_CHANNEL
     return bool(has_topic and has_payload and has_message and has_channel)
 
@@ -301,18 +348,37 @@ def handler_has_prepared_event_bus_step(text: str) -> bool:
     return bool(has_topic and has_payload_dict and has_message and has_channel and has_action)
 
 
-def handler_satisfies_event_bus_contract(text: str) -> bool:
-    """Every event_bus child is prepared, or the factory wrap will prepare it.
-
-    Importing ``prepare_block_input`` is not enough — CLI often prepares
-    step_1 (database) and still forwards the schema sample as step_2
-    (event_bus). A prepared step_1 plus an unprepared step_2 must fail.
+def handler_builds_unparsed_event_bus_workflow(text: str) -> bool:
+    """True when source invents workflow children with event_bus but AST
+    cannot see those dicts. Fail closed — dynamic step_1 construction is
+    the live appointment_scheduling class after #325.
     """
-    if handler_has_factory_event_bus_wrap(text):
-        return True
+    blob = text or ""
+    if "event_bus" not in blob:
+        return False
+    if not any(token in blob for token in WORKFLOW_CHILD_TOKENS):
+        return False
+    if event_bus_steps_from_handler(blob):
+        return False
+    return handler_constructs_event_bus_step(blob)
+
+
+def handler_satisfies_event_bus_contract(text: str) -> bool:
+    """Every event_bus child is prepared in source. Wrap is not keep/done.
+
+    Importing ``prepare_block_input`` or emitting the factory execute wrap
+    is not enough — CLI often forwards the schema sample as step_1
+    (appointment_scheduling) or as step_2 (appointment_booking). A
+    prepared sibling plus any unprepared event_bus child must fail.
+    Unparsed dynamic construction must fail. Templated
+    ``execute(block_id, payload)`` with no workflow children still passes
+    so the wrap can prepare a roster call.
+    """
     steps = event_bus_steps_from_handler(text)
     if steps:
         return all(prepared for _idx, prepared in steps)
+    if handler_builds_unparsed_event_bus_workflow(text):
+        return False
     if not handler_constructs_event_bus_step(text):
         return True
     if handler_forwards_raw_sample(text):
@@ -415,8 +481,9 @@ def workflow_accept_rules_text(
     if named:
         bound_lines = [
             "These planned capabilities bind workflow and/or event_bus",
-            "(appointment / booking / reminders style) and MUST use the",
-            "prepared step on EVERY event_bus child, including step_2+:",
+            "(appointment / scheduling / booking / reminders style) and MUST",
+            "use the prepared step on EVERY event_bus child, including",
+            f"{APPOINTMENT_SCHEDULING_STYLE} step_1 and {APPOINTMENT_BOOKING_STYLE} step_2+:",
             *[f"- {cid}" for cid in named],
             "",
         ]
@@ -447,15 +514,16 @@ def workflow_accept_rules_text(
             "",
             "That schema sample is NOT an event_bus input. When a capability",
             "binds workflow AND event_bus — or a reminders / appointment /",
-            f"booking-style id ({APPOINTMENT_BOOKING_STYLE} aliases",
-            "appointment_scheduling) invents a multi-step workflow — do NOT",
-            "set ANY step input to payload. step_1 prepared + step_2 raw",
-            f"still fails PRODUCT as {PRODUCT_EVENT_BUS_STEP_2_HALT}.",
+            f"scheduling / booking-style id ({APPOINTMENT_SCHEDULING_STYLE} /",
+            f"{APPOINTMENT_BOOKING_STYLE}) invents a workflow — do NOT set",
+            "ANY step input to payload. An unprepared first child fails",
+            f"PRODUCT as {PRODUCT_EVENT_BUS_STEP_1_HALT}. step_1 prepared +",
+            f"step_2 raw still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT}.",
             "The Store workflow records a child refusal as status=error — often",
             "only the banner string, no inner message.",
-            "Construct each event_bus step (every child, including step_2+)",
-            "or let the factory execute wrap call prepare_block_input on the",
-            "workflow payload (never return coder-built steps unchanged):",
+            "Construct each event_bus step (every child, including step_1",
+            "and step_2+) in source. The factory execute wrap is a safety",
+            "net, not permission to keep/done an unprepared child:",
             "- step['block'] = 'event_bus' (workflow reads block, not block_id)",
             f"- action={EVENT_BUS_STEP_ACTION} (BLOCK_DEFAULT_ACTIONS, keyword only)",
             f"- input.topic = non-empty str ({topic_keys} or a record summary)",
@@ -481,11 +549,13 @@ def workflow_accept_acceptance_line(
     who = f" ({', '.join(named)})" if named else ""
     return (
         f"- PRODUCT accept-payload{who}: every event_bus step including "
-        f"step_2+ ({APPOINTMENT_BOOKING_STYLE} class) accepts the prepared "
+        f"step_1 ({APPOINTMENT_SCHEDULING_STYLE} class) and step_2+ "
+        f"({APPOINTMENT_BOOKING_STYLE} class) accepts the prepared "
         f"contract (topic, payload dict, message, "
         f"channel={EVENT_BUS_STEP_CHANNEL}, "
         f"action={EVENT_BUS_STEP_ACTION}) — never the raw schema sample "
         f"({PRODUCT_ACCEPT_TEST}; {PRODUCT_EVENT_BUS_STEP_HALT}; "
+        f"{PRODUCT_EVENT_BUS_STEP_1_HALT}; "
         f"{PRODUCT_EVENT_BUS_STEP_2_HALT})  "
         f"[check:{PRODUCT_ACCEPT_CHECK}]"
     )
@@ -498,12 +568,19 @@ def workflow_accept_forbidden_lines() -> str:
             "- forwarding the PRODUCT schema sample as an event_bus workflow step input",
             "- setting an event_bus workflow step to 'input': payload or "
             '"input": payload (or input=dict(payload))',
+            "- an unprepared step_1 (event_bus) — "
+            f"{APPOINTMENT_SCHEDULING_STYLE} class fails PRODUCT as "
+            f"{PRODUCT_EVENT_BUS_STEP_1_HALT}",
             "- a prepared step_1 plus an unprepared step_2 (event_bus) — "
             f"{APPOINTMENT_BOOKING_STYLE} class still fails PRODUCT as "
             f"{PRODUCT_EVENT_BUS_STEP_2_HALT}",
+            "- treating one prepared event_bus child, a prepare_block_input "
+            "import, or the factory execute wrap as keep/done while any "
+            "child (including step_1) is still raw",
             f"- channel={GENERIC_STR_SAMPLE} or channel={CHANNEL_SAMPLE} without "
             f"`to` on an event_bus step (use channel={EVENT_BUS_STEP_CHANNEL})",
             f"- inventing {PRODUCT_EVENT_BUS_STEP_HALT} / "
+            f"{PRODUCT_EVENT_BUS_STEP_1_HALT} / "
             f"{PRODUCT_EVENT_BUS_STEP_2_HALT} without the prepared "
             f"contract on EVERY event_bus child (topic, payload dict, message, "
             f"channel={EVENT_BUS_STEP_CHANNEL}, action={EVENT_BUS_STEP_ACTION})",
@@ -516,15 +593,17 @@ def workflow_accept_brief_contract() -> str:
     return (
         f"PRODUCT {PRODUCT_ACCEPT_TEST} POSTs a schema-sample payload then "
         f"runs bound blocks. A capability that binds workflow + event_bus "
-        f"(appointment_scheduling / {APPOINTMENT_BOOKING_STYLE} / "
+        f"({APPOINTMENT_SCHEDULING_STYLE} / {APPOINTMENT_BOOKING_STYLE} / "
         f"reminders_notifications style) must prepare EACH event_bus step "
-        f"including step_2+ "
+        f"including step_1 and step_2+ "
         f"(block=event_bus, action={EVENT_BUS_STEP_ACTION}, topic, "
         f"payload dict, message, channel={EVENT_BUS_STEP_CHANNEL}) — never "
         f"forward the raw sample as 'input': payload. Unprepared steps fail as "
-        f"{PRODUCT_EVENT_BUS_STEP_HALT!r}. A prepared step_1 plus "
+        f"{PRODUCT_EVENT_BUS_STEP_HALT!r}. An unprepared first child fails as "
+        f"{PRODUCT_EVENT_BUS_STEP_1_HALT!r}. A prepared step_1 plus "
         f"an unprepared step_2 still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT!r} "
-        f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Exact shape: "
+        f"({PRODUCT_EVENT_BUS_STEP_CLASS}). The factory wrap is not keep/done. "
+        f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
         f'"channel": "{EVENT_BUS_STEP_CHANNEL}"}}}}.'
@@ -536,8 +615,10 @@ def workflow_accept_needles() -> Sequence[str]:
     return (
         PRODUCT_ACCEPT_TEST,
         PRODUCT_EVENT_BUS_STEP_HALT,
+        PRODUCT_EVENT_BUS_STEP_1_HALT,
         PRODUCT_EVENT_BUS_STEP_2_HALT,
         PRODUCT_EVENT_BUS_STEP_CLASS,
+        APPOINTMENT_SCHEDULING_STYLE,
         APPOINTMENT_BOOKING_STYLE,
         f"[check:{PRODUCT_ACCEPT_CHECK}]",
         f"channel={EVENT_BUS_STEP_CHANNEL}",
@@ -549,7 +630,9 @@ def workflow_accept_needles() -> Sequence[str]:
         "'input': payload",
         "not the raw schema sample",
         "every event_bus",
+        "step_1",
         "step_2",
+        "keep/done",
         f'"channel": "{EVENT_BUS_STEP_CHANNEL}"',
         f'"action": "{EVENT_BUS_STEP_ACTION}"',
     )
