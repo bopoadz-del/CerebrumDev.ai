@@ -36,14 +36,27 @@ RUN pip install --no-cache-dir -r requirements.lock
 # ~/.kimi-code/config.toml at boot (providers + default_model; see
 # docs/factory/KIMI_ENV_SETUP.md). Headless Floor cannot run /login.
 ARG KIMI_CODE_VERSION=0.41.0
-RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh \
-      -o /tmp/kimi-code-install.sh \
-    && KIMI_VERSION="${KIMI_CODE_VERSION}" \
+# Official installer still owns the pin + checksum. Its _download uses bare
+# curl, and code.kimi.com's HTTP/2 often RST mid-binary on GHA
+# (curl 18: "HTTP/2 stream 1 was not closed cleanly" — CI run 33994965484).
+# Retry + HTTP/1.1 on install.sh and on every curl the installer issues.
+# Do not stub kimi; the image smoke still requires /usr/local/bin/kimi.
+RUN set -eu \
+    && printf '%s\n' \
+         '#!/bin/sh' \
+         'exec /usr/bin/curl --retry 5 --retry-all-errors --retry-delay 2 --http1.1 "$@"' \
+         > /tmp/curl \
+    && chmod +x /tmp/curl \
+    && PATH="/tmp:${PATH}" \
+       curl -fsSL https://code.kimi.com/kimi-code/install.sh \
+         -o /tmp/kimi-code-install.sh \
+    && PATH="/tmp:${PATH}" \
+       KIMI_VERSION="${KIMI_CODE_VERSION}" \
        KIMI_INSTALL_DIR=/usr/local \
        KIMI_NO_MODIFY_PATH=1 \
        KIMI_CODE_HOME=/tmp/kimi-code-home \
        bash /tmp/kimi-code-install.sh \
-    && rm -f /tmp/kimi-code-install.sh \
+    && rm -f /tmp/kimi-code-install.sh /tmp/curl \
     && rm -rf /tmp/kimi-code-home /root/.kimi-code \
     && test -x /usr/local/bin/kimi \
     && /usr/local/bin/kimi --version

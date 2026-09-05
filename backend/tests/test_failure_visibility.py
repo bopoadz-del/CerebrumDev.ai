@@ -189,6 +189,8 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         assert "KIMI_INSTALL_DIR=/usr/local" in dockerfile
         assert "/usr/local/bin/kimi" in dockerfile
         assert "kimi --version" in dockerfile
+        assert "--http1.1" in dockerfile
+        assert "--retry" in dockerfile
         assert "is NOT installed" not in dockerfile
         docs = (REPO_ROOT / "docs/factory/KIMI_ENV_SETUP.md").read_text(encoding="utf-8")
         assert "/usr/local/bin/kimi" in docs
