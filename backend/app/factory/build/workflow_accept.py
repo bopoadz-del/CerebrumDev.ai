@@ -118,6 +118,13 @@ FACTORY_WRAP_TOKENS = (
     "_prepare_block_input(",
 )
 
+#: MCP notify target on the prepared input (notification requires block/tool).
+#: Use ``tool`` — ``input.block`` is also the workflow child discriminator,
+#: so AST would treat the inner dict as a second unprepared event_bus step.
+EVENT_BUS_MCP_BLOCK = "event_bus"
+EVENT_BUS_MCP_TARGET_KEY = "tool"
+FACTORY_GROUNDED_EVENT_BUS_SOURCE = "factory-grounded event_bus workflow"
+
 #: Exact step FACTORY_CODE_CLI must emit (or let prepare_block_input shape).
 PREPARED_EVENT_BUS_STEP_EXAMPLE = (
     "{\n"
@@ -127,7 +134,8 @@ PREPARED_EVENT_BUS_STEP_EXAMPLE = (
     '    "topic": "<non-empty str from event / reminder_type / record summary>",\n'
     '    "payload": {"reference": "<domain scalar — not the raw schema sample>"},\n'
     '    "message": "<non-empty str>",\n'
-    f'    "channel": "{EVENT_BUS_STEP_CHANNEL}"\n'
+    f'    "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
+    f'    "{EVENT_BUS_MCP_TARGET_KEY}": "{EVENT_BUS_MCP_BLOCK}"\n'
     "  }\n"
     "}"
 )
@@ -287,10 +295,14 @@ def event_bus_steps_from_handler(text: str) -> List[Tuple[int, bool]]:
     ``step_N`` matches PRODUCT ``workflow: step_N (event_bus)`` when the
     children live in one steps list (database + event_bus → step_2).
     """
+    blob = text or ""
     try:
-        tree = ast.parse(text or "")
+        tree = ast.parse(blob)
     except SyntaxError:
-        return []
+        try:
+            tree = ast.parse("def handle(payload):\n" + blob)
+        except SyntaxError:
+            return []
     seen: set = set()
     out: List[Tuple[int, bool]] = []
     for node in ast.walk(tree):
@@ -363,27 +375,177 @@ def handler_builds_unparsed_event_bus_workflow(text: str) -> bool:
     return handler_constructs_event_bus_step(blob)
 
 
-def handler_satisfies_event_bus_contract(text: str) -> bool:
+def handler_satisfies_event_bus_contract(
+    text: str,
+    *,
+    require_prepared_step: bool = False,
+) -> bool:
     """Every event_bus child is prepared in source. Wrap is not keep/done.
 
     Importing ``prepare_block_input`` or emitting the factory execute wrap
     is not enough — CLI often forwards the schema sample as step_1
     (appointment_scheduling) or as step_2 (appointment_booking). A
     prepared sibling plus any unprepared event_bus child must fail.
-    Unparsed dynamic construction must fail. Templated
-    ``execute(block_id, payload)`` with no workflow children still passes
-    so the wrap can prepare a roster call.
+    Unparsed dynamic construction must fail.
+
+    ``require_prepared_step`` is the #331 hole: a templated
+    ``execute(block_id, payload)`` loop has no event_bus dicts, so the
+    AST check used to vacuous-pass. WRITER then claimed done; PRODUCT
+    executed workflow with the schema sample and refused step_1.
+    Appointment / booking / reminder handlers must ship the prepared
+    step in source (factory-grounded emit, not an LLM stub).
     """
     steps = event_bus_steps_from_handler(text)
     if steps:
         return all(prepared for _idx, prepared in steps)
     if handler_builds_unparsed_event_bus_workflow(text):
         return False
+    if require_prepared_step:
+        return False
     if not handler_constructs_event_bus_step(text):
         return True
     if handler_forwards_raw_sample(text):
         return False
     return handler_has_prepared_event_bus_step(text)
+
+
+def needs_grounded_event_bus_handler(
+    capability_id: str,
+    block_ids: Optional[Sequence[str]] = None,
+) -> bool:
+    """True when WRITER must emit the prepared event_bus step in source.
+
+    Style-only ids (stakeholder_notification) without a bound event_bus
+    stay on the generic template. Inventing an event_bus workflow child
+    when the block is not vendored is how field_ops PRODUCT went red.
+    """
+    cid = str(capability_id or "")
+    bids = {str(b) for b in (block_ids or ()) if str(b).strip()}
+    if "event_bus" not in bids:
+        return False
+    return _is_reminder_or_appointment_style(cid) or "workflow" in bids
+
+
+def event_bus_step_is_store_ready(data: Any) -> bool:
+    """True when a workflow child input should not become step_N (event_bus): error.
+
+    Live Store notify (after #314 channel=mcp) still refuses a schema sample
+    that has no topic / payload / message, uses channel=email without ``to``,
+    or omits MCP ``block``/``tool``. Domain columns at the top level are not
+    an event_bus contract.
+    """
+    if not isinstance(data, dict):
+        return False
+    topic = data.get("topic")
+    if not (isinstance(topic, str) and topic.strip()):
+        return False
+    if not isinstance(data.get("payload"), dict):
+        return False
+    message = data.get("message")
+    if not (isinstance(message, str) and str(message).strip()):
+        return False
+    channel = str(data.get("channel") or "").strip().lower()
+    if channel != EVENT_BUS_STEP_CHANNEL:
+        return False
+    target = data.get("block") or data.get("tool")
+    if not (isinstance(target, str) and target.strip()):
+        return False
+    return True
+
+
+def grounded_event_bus_topic(capability_id: str) -> str:
+    blob = str(capability_id or "record").lower().replace("-", "_")
+    if "remind" in blob or "notif" in blob:
+        return "reminder.due"
+    if "book" in blob:
+        return "appointment.booked"
+    if "appoint" in blob or "schedul" in blob:
+        return "appointment.scheduled"
+    return f"{blob or 'record'}.recorded"
+
+
+def grounded_event_bus_handler_body(
+    capability_id: str,
+    block_ids: Optional[Sequence[str]] = None,
+) -> str:
+    """Deterministic handle() body: prepared event_bus step_1, no LLM.
+
+    The live #332 VetCare halt (stub_rate≈0.833) used ``_templated_body``
+    ``execute(block_id, payload)``. That vacuous-passed #331's AST check,
+    then PRODUCT ran workflow with the schema sample and refused
+    appointment_scheduling step_1. This body is the factory-grounded path.
+    """
+    topic = grounded_event_bus_topic(capability_id)
+    message = topic.replace(".", " ")
+    bids = [str(b) for b in (block_ids or ()) if str(b).strip()]
+    others = [b for b in bids if b not in {"workflow", "event_bus"}]
+    other_loop = ""
+    if others:
+        other_loop = (
+            "    for block_id in BLOCK_IDS:\n"
+            "        if block_id in ('workflow', 'event_bus'):\n"
+            "            continue\n"
+            "        result = execute(\n"
+            "            block_id, payload, "
+            "action=BLOCK_DEFAULT_ACTIONS.get(block_id)\n"
+            "        )\n"
+            "        results[block_id] = result\n"
+            "        if isinstance(result, dict) and (\n"
+            '            result.get("status") == "error" or "error" in result\n'
+            "        ):\n"
+            "            errors[block_id] = str("
+            "result.get(\"error\") or result)[:200]\n"
+        )
+    return (
+        "    results = {}\n"
+        "    errors = {}\n"
+        "    steps = [{\n"
+        '        "block": "event_bus",\n'
+        f'        "action": "{EVENT_BUS_STEP_ACTION}",\n'
+        "        \"input\": {\n"
+        f'            "topic": {topic!r},\n'
+        '            "payload": {"reference": payload.get("reference") '
+        'or payload.get("pet_name") or "record"},\n'
+        f'            "message": {message!r},\n'
+        f'            "channel": "{EVENT_BUS_STEP_CHANNEL}",\n'
+        f'            "tool": "{EVENT_BUS_MCP_BLOCK}",\n'
+        "        },\n"
+        "    }]\n"
+        f"{other_loop}"
+        "    if 'workflow' in BLOCK_IDS:\n"
+        "        result = execute(\n"
+        "            'workflow', {'steps': steps}, "
+        "action=BLOCK_DEFAULT_ACTIONS.get('workflow') or 'run',\n"
+        "        )\n"
+        "        results['workflow'] = result\n"
+        "        if isinstance(result, dict) and (\n"
+        '            result.get("status") == "error" or "error" in result\n'
+        "        ):\n"
+        "            errors['workflow'] = str("
+        "result.get(\"error\") or result)[:200]\n"
+        "    if 'event_bus' in BLOCK_IDS:\n"
+        "        result = execute(\n"
+        f"            'event_bus', steps[0]['input'], "
+        f"action=BLOCK_DEFAULT_ACTIONS.get('event_bus') or "
+        f"'{EVENT_BUS_STEP_ACTION}',\n"
+        "        )\n"
+        "        results['event_bus'] = result\n"
+        "        if isinstance(result, dict) and (\n"
+        '            result.get("status") == "error" or "error" in result\n'
+        "        ):\n"
+        "            errors['event_bus'] = str("
+        "result.get(\"error\") or result)[:200]\n"
+        "    if errors:\n"
+        "        return {\n"
+        '            "ok": False,\n'
+        '            "capability": CAPABILITY_ID,\n'
+        '            "error": "; ".join('
+        'f"{b}: {e}" for b, e in sorted(errors.items())),\n'
+        '            "results": results,\n'
+        "        }\n"
+        '    return {"ok": True, "capability": CAPABILITY_ID, '
+        '"results": results}'
+    )
 
 
 def _action_module_ids(root: Path) -> List[str]:
@@ -433,6 +595,17 @@ def event_bus_workflow_handler_errors(
 ) -> List[str]:
     """Scan written handlers. Empty = the WRITER check is green."""
     ids = handler_ids_for_event_bus_check(root, compiled_or_inventory)
+    inventory = (
+        getattr(compiled_or_inventory, "inventory", None)
+        if not isinstance(compiled_or_inventory, (list, tuple))
+        else compiled_or_inventory
+    )
+    bids_by_cid = {
+        str(getattr(item, "capability_id", "") or ""): list(
+            getattr(item, "block_ids", None) or []
+        )
+        for item in inventory or ()
+    }
     errors: List[str] = []
     base = Path(root)
     for cid in ids:
@@ -443,7 +616,14 @@ def event_bus_workflow_handler_errors(
             text = path.read_text(encoding="utf-8")
         except OSError:
             continue
-        if handler_satisfies_event_bus_contract(text):
+        require = (
+            needs_grounded_event_bus_handler(cid, bids_by_cid.get(cid, ()))
+            or handler_constructs_event_bus_step(text)
+            or handler_builds_unparsed_event_bus_workflow(text)
+        )
+        if handler_satisfies_event_bus_contract(
+            text, require_prepared_step=require
+        ):
             continue
         steps = event_bus_steps_from_handler(text)
         bad = [f"step_{idx}" for idx, prepared in steps if not prepared]
@@ -521,6 +701,10 @@ def workflow_accept_rules_text(
             f"step_2 raw still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT}.",
             "The Store workflow records a child refusal as status=error — often",
             "only the banner string, no inner message.",
+            "WRITER emits a factory-grounded prepared event_bus step for",
+            "appointment / booking / reminder capabilities — do not burn",
+            "rework on execute(block_id, payload) stubs, and do not",
+            'execute("workflow", payload) with the raw schema sample.',
             "Construct each event_bus step (every child, including step_1",
             "and step_2+) in source. The factory execute wrap is a safety",
             "net, not permission to keep/done an unprepared child:",
@@ -531,6 +715,8 @@ def workflow_accept_rules_text(
             "- input.message = non-empty str",
             f"- input.channel = {EVENT_BUS_STEP_CHANNEL!r} "
             f"(never {GENERIC_STR_SAMPLE!r}; {CHANNEL_SAMPLE!r} without `to` is not notify-ready)",
+            f"- input.{EVENT_BUS_MCP_TARGET_KEY} = {EVENT_BUS_MCP_BLOCK!r} "
+            "(MCP notify requires block/tool; the schema sample has neither)",
             "Exact prepared event_bus workflow step (copy this shape on",
             "EVERY event_bus child — step_1, step_2, and later):",
             PREPARED_EVENT_BUS_STEP_EXAMPLE,
@@ -584,6 +770,10 @@ def workflow_accept_forbidden_lines() -> str:
             f"{PRODUCT_EVENT_BUS_STEP_2_HALT} without the prepared "
             f"contract on EVERY event_bus child (topic, payload dict, message, "
             f"channel={EVENT_BUS_STEP_CHANNEL}, action={EVENT_BUS_STEP_ACTION})",
+            "- execute(block_id, payload) stubs for appointment / booking / "
+            "reminder capabilities (WRITER must emit the factory-grounded "
+            "prepared event_bus step)",
+            '- execute("workflow", payload) with the raw schema sample',
         ]
     )
 
@@ -597,16 +787,20 @@ def workflow_accept_brief_contract() -> str:
         f"reminders_notifications style) must prepare EACH event_bus step "
         f"including step_1 and step_2+ "
         f"(block=event_bus, action={EVENT_BUS_STEP_ACTION}, topic, "
-        f"payload dict, message, channel={EVENT_BUS_STEP_CHANNEL}) — never "
+        f"payload dict, message, channel={EVENT_BUS_STEP_CHANNEL}, "
+        f"{EVENT_BUS_MCP_TARGET_KEY}={EVENT_BUS_MCP_BLOCK}) — never "
         f"forward the raw sample as 'input': payload. Unprepared steps fail as "
         f"{PRODUCT_EVENT_BUS_STEP_HALT!r}. An unprepared first child fails as "
         f"{PRODUCT_EVENT_BUS_STEP_1_HALT!r}. A prepared step_1 plus "
         f"an unprepared step_2 still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT!r} "
         f"({PRODUCT_EVENT_BUS_STEP_CLASS}). The factory wrap is not keep/done. "
+        f"WRITER emits a factory-grounded prepared event_bus step — do not "
+        f'execute("workflow", payload) with the raw schema sample. '
         f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
-        f'"channel": "{EVENT_BUS_STEP_CHANNEL}"}}}}.'
+        f'"channel": "{EVENT_BUS_STEP_CHANNEL}", '
+        f'"{EVENT_BUS_MCP_TARGET_KEY}": "{EVENT_BUS_MCP_BLOCK}"}}}}.'
     )
 
 
@@ -635,6 +829,11 @@ def workflow_accept_needles() -> Sequence[str]:
         "keep/done",
         f'"channel": "{EVENT_BUS_STEP_CHANNEL}"',
         f'"action": "{EVENT_BUS_STEP_ACTION}"',
+        "factory-grounded",
+        'execute("workflow", payload)',
+        "execute(block_id, payload)",
+        "input.tool",
+        f'"tool": "{EVENT_BUS_MCP_BLOCK}"',
     )
 
 

@@ -42,6 +42,7 @@ from app.factory.build.roles import (
     _templated_body,
 )
 from app.factory.build.roles_constants import _DISPATCH_RUNTIME
+from app.factory.build.workflow_accept import event_bus_step_is_store_ready
 
 
 # -- notification ---------------------------------------------------------
@@ -326,6 +327,9 @@ def test_event_bus_carries_payload_and_channel():
     assert out["payload"]["pet_name"] == "Rex"
     assert out["data"]["pet_name"] == "Rex"
     assert isinstance(out["message"], str) and out["message"]
+    assert out["block"] == "event_bus"
+    assert event_bus_step_is_store_ready(out) is True
+    assert "pet_name" not in out
 
 
 def test_event_bus_rewrites_sample_channel_to_mcp():
@@ -370,6 +374,11 @@ def _event_bus_like_live_sess_4fba2a2(payload):
         isinstance(data.get("message"), str) and data.get("message")
     ):
         return {"status": "error"}
+    if channel == "mcp" and not (
+        (isinstance(data.get("block"), str) and data["block"].strip())
+        or (isinstance(data.get("tool"), str) and data["tool"].strip())
+    ):
+        return {"status": "error", "error": "block or tool name required for MCP channel"}
     return {"status": "ok", "block": "event_bus"}
 
 
@@ -421,6 +430,9 @@ def test_sess_4fba2a2_coder_built_workflow_steps_prepare_event_bus():
     assert _event_bus_like_live_sess_4fba2a2(bus)["status"] == "ok"
     assert by_block["database"]["input"]["table"] == "appointment"
     assert by_block["database"]["input"]["table"] != "records"
+    assert event_bus_step_is_store_ready(bus) is True
+    assert bus["block"]
+    assert "pet_name" not in bus or bus.get("topic")
 
 
 def test_sess_4fba2a2_block_id_steps_are_normalized_and_prepared():
@@ -523,6 +535,9 @@ def test_emitted_module_matches_factory_for_live_contract_blocks(tmp_path, monke
             assert factory["topic"] and emitted["topic"]
             assert factory["channel"] == emitted["channel"] == "mcp"
             assert factory["payload"] and emitted["payload"]
+            assert factory["block"] == emitted["block"] == "event_bus"
+            assert event_bus_step_is_store_ready(factory)
+            assert event_bus_step_is_store_ready(emitted)
         if bid == "database":
             assert factory["table"] == emitted["table"] == "records"
         if bid == "document_engine":
