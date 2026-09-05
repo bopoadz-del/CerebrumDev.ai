@@ -6,6 +6,11 @@ says whether the artifact is a full exportable pilot or a thin scaffold.
 Fail-closed: ``pilot_ready`` false cannot become STORE_GREEN or
 FOUNDING_CUSTOMER_READY. Missing 14-class files, HTTP store callbacks, or
 absent payload-contract helpers also block founding.
+
+A CLI billing/auth miss (``FACTORY_CODE_CLI_FAILED`` /
+``FACTORY_CODE_CLI_BILLING`` / equivalent) or near-zero agent-written
+authorship cannot stamp founding-customer-ready. Those keep-paths may
+still be Store-green when PRODUCT + STORE pass — Export stays allowed.
 """
 
 from __future__ import annotations
@@ -29,6 +34,19 @@ FOUNDING_EXTRA_FILES: Sequence[str] = (
     "app/block_inputs.py",
     "tests/test_routes.py",
     "frontend/src/App.tsx",
+)
+
+#: Receipt honesty that is not a ≥2h writer product. Still Store-green
+#: when the three gates pass (empty-gap REUSE keep-path after a 429).
+CLI_FOUNDING_HONESTY_MISS = frozenset(
+    {
+        "FACTORY_CODE_CLI_FAILED",
+        "FACTORY_CODE_CLI_BILLING",
+        "FACTORY_CODE_CLI_CREDENTIALS_MISSING",
+        "FACTORY_CODE_CLI_NO_MODEL",
+        "FACTORY_CODE_CLI_UNAVAILABLE",
+        "FACTORY_CODE_CLI_MODEL_DENIED",
+    }
 )
 
 
@@ -70,6 +88,42 @@ def _missing_founding_files(root: Path) -> List[str]:
     classes = present_classes(root)
     missing.extend(rel for rel, ok in classes.items() if not ok)
     return missing
+
+
+def _cli_honesty_miss(status: Mapping[str, Any]) -> Optional[str]:
+    """Named CLI billing/auth miss on coder_receipt. Not founding."""
+    receipt = status.get("coder_receipt")
+    if not isinstance(receipt, Mapping):
+        return None
+    blobs = [
+        str(receipt.get("honesty_class") or ""),
+        str(receipt.get("blocker") or ""),
+        str(receipt.get("detail") or ""),
+    ]
+    for blob in blobs:
+        upper = blob.upper()
+        for name in CLI_FOUNDING_HONESTY_MISS:
+            if name in upper:
+                return name
+    if receipt.get("ok") is False:
+        return "FACTORY_CODE_CLI_FAILED"
+    return None
+
+
+def _thin_templated_authorship(status: Mapping[str, Any]) -> bool:
+    """Near-zero agent-written vs a templated majority (live 1 / 23)."""
+    authorship = status.get("authorship")
+    if not isinstance(authorship, Mapping):
+        return False
+    written = authorship.get("agent_written")
+    templated = authorship.get("templated")
+    if not isinstance(written, int):
+        return False
+    if written <= 0:
+        return True
+    if not isinstance(templated, int):
+        return written <= 1
+    return written <= 1 and templated >= 8 and templated >= written * 8
 
 
 def _accept_payload_test_present(root: Path) -> bool:
@@ -130,6 +184,15 @@ def grade_workspace(
         blockers.append("handlers call the store over HTTP: " + ", ".join(store_hits[:6]))
     if not accept:
         blockers.append("tests/test_routes.py has no accept-payload contract")
+    cli_miss = _cli_honesty_miss(status)
+    if cli_miss:
+        blockers.append(
+            f"coder_receipt honesty {cli_miss} is not a founding writer product"
+        )
+    if _thin_templated_authorship(status):
+        blockers.append(
+            "authorship is overwhelmingly templated (near-zero agent_written)"
+        )
 
     if ready and not blockers:
         level = Level.FOUNDING_CUSTOMER_READY

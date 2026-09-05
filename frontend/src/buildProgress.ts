@@ -35,6 +35,9 @@ const CLAIMED_LEVELS = new Set<string>([
  * Fail-closed glass grade. A false ``pilot_ready`` can never read as
  * Store-green or founding-customer-ready, even if ``level_grade.level``
  * overclaims. Missing grade falls back to cycle + pilot_ready.
+ *
+ * CLI billing/auth miss + thin templated authorship can stay Store-green
+ * (Export allowed) but must not paint founding-customer-ready.
  */
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
@@ -59,12 +62,15 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
     return null
   }
   if (
-    build.level_grade?.founding_customer_ready === true ||
-    claimed === 'FOUNDING_CUSTOMER_READY'
+    (build.level_grade?.founding_customer_ready === true ||
+      claimed === 'FOUNDING_CUSTOMER_READY') &&
+    !shouldDemoteFounding(build)
   ) {
     return 'FOUNDING_CUSTOMER_READY'
   }
-  if (claimed === 'STORE_GREEN') return 'STORE_GREEN'
+  if (claimed === 'STORE_GREEN' || claimed === 'FOUNDING_CUSTOMER_READY') {
+    return 'STORE_GREEN'
+  }
   return 'STORE_GREEN'
 }
 
@@ -113,10 +119,11 @@ export function threeGateEntries(
 
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
  *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
+ *  Thin CLI-billing keep-path zips stay Pilot-ready, not Finished founding.
  */
 export function formatFinishedAuthorship(
   authorship: BuildAuthorship | null | undefined,
-  opts?: { pilotReady?: boolean | null },
+  opts?: { pilotReady?: boolean | null; demoteFounding?: boolean | null },
 ): string | null {
   if (!authorship) return null
   const written = authorship.agent_written
@@ -132,6 +139,9 @@ export function formatFinishedAuthorship(
         : null
   if (!counts) return null
   if (opts?.pilotReady === true) {
+    if (opts.demoteFounding === true || isThinTemplatedAuthorship(authorship)) {
+      return `Pilot-ready — ${counts}`
+    }
     return `Finished — ${counts}`
   }
   return `Code-cycle prototype — ${counts}. Not yet pilot-ready`
@@ -283,7 +293,7 @@ export function isUnreadableLedger(build: BuildStatus | null | undefined): boole
 }
 
 const CLI_FAIL_TEXT =
-  /FACTORY_CODE_CLI_FAILED|FACTORY_CODE_CLI_UNAVAILABLE|FACTORY_CODE_CLI_MODEL_DENIED|CLI exited/i
+  /FACTORY_CODE_CLI_FAILED|FACTORY_CODE_CLI_BILLING|FACTORY_CODE_CLI_UNAVAILABLE|FACTORY_CODE_CLI_MODEL_DENIED|FACTORY_CODE_CLI_CREDENTIALS_MISSING|FACTORY_CODE_CLI_NO_MODEL|CLI exited/i
 
 /** Receipt or ledger says the Kimi Code CLI failed. Not enough alone to refuse Export. */
 export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean {
@@ -291,6 +301,7 @@ export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean
   const receipt = build.coder_receipt
   if (receipt) {
     if (receipt.ok === false) return true
+    if (CLI_FAIL_TEXT.test(String(receipt.honesty_class || ''))) return true
     if (CLI_FAIL_TEXT.test(String(receipt.blocker || ''))) return true
     if (CLI_FAIL_TEXT.test(String(receipt.detail || ''))) return true
   }
@@ -301,6 +312,32 @@ export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean
     ...Object.values(build.authorship?.coder_failures ?? {}),
   ]
   return blobs.some((text) => CLI_FAIL_TEXT.test(text))
+}
+
+/**
+ * Near-zero writer keep-path: 0–1 agent-written vs a templated majority.
+ * Live photograph: 1 agent-written / 23 templated after a CLI billing miss.
+ */
+export function isThinTemplatedAuthorship(
+  authorship: BuildAuthorship | null | undefined,
+): boolean {
+  if (!authorship) return false
+  const written = authorship.agent_written
+  const templated = authorship.templated
+  if (typeof written !== 'number') return false
+  if (written <= 0) return true
+  if (typeof templated !== 'number') return written <= 1
+  return written <= 1 && templated >= 8 && templated >= written * 8
+}
+
+/**
+ * CLI billing/auth miss or thin templated authorship. Export may still be
+ * allowed on a pilot_ready SUCCESS keep-path — founding paint must not.
+ */
+export function shouldDemoteFounding(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  if (isCoderCliFailed(build)) return true
+  return isThinTemplatedAuthorship(build.authorship)
 }
 
 export function isScaffoldClaim(build: BuildStatus | null | undefined): boolean {

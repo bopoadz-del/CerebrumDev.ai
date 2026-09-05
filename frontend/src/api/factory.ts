@@ -401,6 +401,7 @@ export type BuildStatus = {
     ok?: boolean
     detail?: string
     blocker?: string | null
+    honesty_class?: string | null
     model?: string
   }
   brief_dispatch?: string | null
@@ -606,6 +607,8 @@ export const FACTORY_CODE_CLI_CREDENTIALS_MISSING = 'FACTORY_CODE_CLI_CREDENTIAL
 export const FACTORY_CODE_CLI_NO_MODEL = 'FACTORY_CODE_CLI_NO_MODEL'
 /** Coder receipt / WRITER honesty when FACTORY_CODE_CLI exited non-zero. */
 export const FACTORY_CODE_CLI_FAILED = 'FACTORY_CODE_CLI_FAILED'
+/** Moonshot 429 / insufficient-balance / account-suspended CLI miss. */
+export const FACTORY_CODE_CLI_BILLING = 'FACTORY_CODE_CLI_BILLING'
 
 export type FactoryCodeCliProbe = {
   command?: string | null

@@ -23,6 +23,7 @@ import {
   honestLevel,
   isPilotZipReady,
   platformsLeadCopy,
+  shouldDemoteFounding,
   stampBuildObservation,
   withClientStall,
 } from './buildProgress'
@@ -264,7 +265,10 @@ export function Platforms({
           {liveBuild?.state === 'succeeded' && authorship && (
             <>
               <p className="bp-summary">
-                {formatFinishedAuthorship(authorship, { pilotReady }) ??
+                {formatFinishedAuthorship(authorship, {
+                  pilotReady,
+                  demoteFounding: shouldDemoteFounding(liveBuild),
+                }) ??
                   (pilotReady
                     ? 'Coding agent finished. Download it from Your Platforms.'
                     : 'Code-cycle prototype. Not yet pilot-ready.')}

@@ -117,6 +117,35 @@ def test_full_repo_with_pilot_ready_is_founding(tmp_path):
     assert grade["blockers"] == []
 
 
+def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
+    """#338 keep-path: PRODUCT/STORE pass, but CLI billing is not founding."""
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": (
+                "CODE PASS — the code-phase suite; "
+                "PRODUCT PASS — round-trip; "
+                "STORE PASS — restart"
+            ),
+            "authorship": {"artifacts": 24, "agent_written": 1, "templated": 23},
+            "coder_receipt": {
+                "ok": False,
+                "blocker": "FACTORY_CODE_CLI_BILLING",
+                "honesty_class": "FACTORY_CODE_CLI_FAILED",
+                "detail": "FACTORY_CODE_CLI_BILLING: 429 — insufficient balance",
+            },
+        },
+    )
+    assert grade["founding_customer_ready"] is False
+    assert grade["level"] == Level.STORE_GREEN.value
+    assert grade["pilot_ready"] is True
+    assert any("FACTORY_CODE_CLI_BILLING" in b or "templated" in b for b in grade["blockers"])
+
+
 def test_http_store_callback_blocks_founding(tmp_path):
     _full_repo(tmp_path)
     (tmp_path / "app" / "actions" / "viewing_management.py").write_text(
