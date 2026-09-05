@@ -461,6 +461,31 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
+  it('names missing Kimi Code CLI default_model from /health on Platforms', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: true,
+        default_model_configured: false,
+        blocker: 'FACTORY_CODE_CLI_NO_MODEL',
+      },
+    })
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'VetCare Hub' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({ state: 'failed', pilot_ready: false, detail: 'FACTORY_CODE_CLI_NO_MODEL' })
+    })
+    render(<Platforms sessionId="sess_no_model" />)
+    const banner = await screen.findByTestId('platforms-factory-cli-status')
+    expect(banner).toHaveTextContent('Kimi Code CLI has no model')
+    expect(banner).toHaveTextContent('FACTORY_CODE_CLI_NO_MODEL')
+    expect(banner).toHaveTextContent('default_model')
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
+    expect(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+  })
+
   it('labels code-phase success as not pilot-ready', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {

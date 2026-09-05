@@ -5,6 +5,7 @@ import {
   eventAgeSeconds,
   exportAffordance,
   factoryCodeCliHonesty,
+  factoryCodeCliStatusTitle,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -314,6 +315,33 @@ describe('build progress copy', () => {
     })
     expect(fileOnly).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
     expect(fileOnly).toMatch(/KIMI_CODE_API_KEY/)
+  })
+
+  it('factoryCodeCliHonesty names missing default_model as FACTORY_CODE_CLI_NO_MODEL', () => {
+    const named = factoryCodeCliHonesty({
+      available: true,
+      credentials_file_present: true,
+      default_model_configured: false,
+      blocker: 'FACTORY_CODE_CLI_NO_MODEL',
+    })
+    expect(named).toMatch(/FACTORY_CODE_CLI_NO_MODEL/)
+    expect(named).toMatch(/default_model/)
+    expect(named).toMatch(/KIMI_CODE_API_KEY/)
+    expect(named).not.toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
+    const fileOnly = factoryCodeCliHonesty({
+      available: true,
+      credentials_file_present: true,
+      default_model_configured: false,
+      requires_kimi_credentials: true,
+    })
+    expect(fileOnly).toMatch(/FACTORY_CODE_CLI_NO_MODEL/)
+    expect(factoryCodeCliStatusTitle(named)).toBe('Kimi Code CLI has no model')
+    expect(
+      factoryCodeCliStatusTitle({
+        blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+        credentials_file_present: false,
+      }),
+    ).toBe('Kimi Code CLI credentials missing')
   })
 
   it('gold Download is only for a Store-green success', () => {

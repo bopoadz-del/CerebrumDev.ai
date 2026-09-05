@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getHealth } from './api/factory'
-import { factoryCodeCliHonesty } from './buildProgress'
+import { factoryCodeCliHonesty, factoryCodeCliStatusTitle } from './buildProgress'
 
 /** Live /health factory_code_cli honesty — null when the probe is clean or unreachable. */
 export function useFactoryCodeCliHonesty(): string | null {
@@ -31,7 +31,7 @@ export function FactoryCodeCliStatus({
   if (!message) return null
   return (
     <div className="panel dim error-box factory-cli-status" role="status" data-testid={testId}>
-      <span className="status-pill status-pill-failed">Kimi Code CLI credentials missing</span>
+      <span className="status-pill status-pill-failed">{factoryCodeCliStatusTitle(message)}</span>
       <p>{message}</p>
     </div>
   )

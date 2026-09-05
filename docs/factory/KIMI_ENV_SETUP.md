@@ -18,13 +18,19 @@ A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CL
 If the coder is on and the executable is still missing, dispatch fail-closes
 as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
 `~/.kimi-code/config.toml` is absent (`credentials_file_present=false`),
-it fail-closes as `FACTORY_CODE_CLI_CREDENTIALS_MISSING`. If the CLI
-exits with `No model configured` (binary + credentials file, no
-`default_model`), dispatch fail-closes as `FACTORY_CODE_CLI_NO_MODEL`
-(still a `FACTORY_CODE_CLI_FAILED` honesty class). A 404 / Permission
+it fail-closes as `FACTORY_CODE_CLI_CREDENTIALS_MISSING`. If the file is
+present but has no usable `default_model` and/or `[models]` entry
+(`credentials_file_present=true`, `default_model_configured=false`),
+generate-start and brief dispatch fail-close as
+`FACTORY_CODE_CLI_NO_MODEL` *before* WRITER takeover. If the CLI still
+exits with `No model configured` mid-run, that is the same named class
+(still a `FACTORY_CODE_CLI_FAILED` honesty class) and WRITER stops —
+no perpetual "still working". A 404 / Permission
 denied on the configured model fail-closes as
 `FACTORY_CODE_CLI_MODEL_DENIED` (distinct from NO_MODEL). None of those paths
-open a WRITER session or claim "coding agent has taken over". A templated
+open a WRITER session or claim "coding agent has taken over". Headless
+`--prompt` also passes documented `kimi --model` (0.41 `-m` / `--model`)
+so Floor does not depend solely on config.toml mutation. A templated
 pilot zip after a CLI skip is **not** a ≥2h CLI session. HTTP oneshot is
 not a substitute. `GET /health` → `factory_code_cli` reports the probe
 (`available` is the binary; credentials are a separate field). Headless

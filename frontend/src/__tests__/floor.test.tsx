@@ -646,6 +646,24 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByTestId('floor-factory-cli-status')).toHaveTextContent(/Kimi Code CLI credentials/)
   })
 
+  it('names missing Kimi Code CLI default_model from /health on the Floor', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: true,
+        default_model_configured: false,
+        blocker: 'FACTORY_CODE_CLI_NO_MODEL',
+      },
+    })
+    render(<Floor sessionId="sess_no_model" goPlatforms={() => {}} />)
+    const banner = await screen.findByTestId('floor-factory-cli-status')
+    expect(banner).toHaveTextContent('Kimi Code CLI has no model')
+    expect(banner).toHaveTextContent('FACTORY_CODE_CLI_NO_MODEL')
+    expect(banner).toHaveTextContent('default_model')
+    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
+    expect(screen.queryByText(/CODING AGENT HAS TAKEN OVER/i)).not.toBeInTheDocument()
+  })
+
   it('does not offer a ready Download when the coding agent stalled', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
