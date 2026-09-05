@@ -17,6 +17,8 @@ from app.factory.build.coder_session import (
     DEFAULT_KIMI_CODE_MODEL,
     DEFAULT_KIMI_CODE_MODEL_ID,
     KEEP_PATH_FACTORY_GROUNDED_REUSE,
+    should_factory_llm_generate_gaps,
+    should_keep_factory_grounded_reuse,
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_CLI_BILLING,
     NAMED_BLOCKER_CLI_CREDS,
@@ -1495,7 +1497,7 @@ def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
 def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     tmp_path, monkeypatch
 ):
-    """Non-empty gaps + billing miss stay fail-closed — no fake pilot_ready."""
+    """GENERATE gap + billing miss: factory LLM is attempted, no fake keep-path."""
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
@@ -1511,6 +1513,11 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     _require_cli(monkeypatch)
     monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
     monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
 
     class _Gap:
         capability_id = "novel_clinic_ai"
@@ -1531,16 +1538,61 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     assert result.ok is False
     assert result.blocker == NAMED_BLOCKER_CLI_BILLING
     assert result.reuse_keep_path is False
+    assert result.factory_llm_generate_fallthrough is True
+    assert result.factory_llm_generate_ids == ["novel_clinic_ai"]
+    assert result.factory_llm_written_ids == []
     assert result.kept_handler_ids == []
+    assert oneshot, "GENERATE gaps must call the factory coder LLM"
+    assert oneshot[0]["capabilities"] == ["novel_clinic_ai"]
+    assert "GENERATE-GAP FALLTHROUGH" in oneshot[0]["brief"]
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
     assert receipt["ok"] is False
     assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
     assert receipt["keep_path"] is None
     assert receipt["inventory_gaps"] == ["novel_clinic_ai"]
+    assert receipt["factory_llm_written_ids"] == []
     assert receipt["kept_handler_ids"] == []
     assert not (tmp_path / "build" / "app" / "actions" / "novel_clinic_ai.py").is_file()
+
+
+def test_should_factory_llm_generate_gaps_only_on_named_cli_miss():
+    compiled = compile_brief(
+        _Blueprint(),
+        type("P", (), {"capabilities": (
+            type("G", (), {
+                "capability_id": "veterinary_care_core",
+                "block_ids": (),
+                "strategy": "GENERATE",
+                "notes": "core",
+            })(),
+        )})(),
+        store_ids={"dashboard"},
+    )
+    billing = DispatchResult(
+        via="cli",
+        ok=False,
+        detail="FACTORY_CODE_CLI_BILLING: 429",
+        blocker=NAMED_BLOCKER_CLI_BILLING,
+    )
+    assert should_factory_llm_generate_gaps(compiled, billing) is True
+    assert should_keep_factory_grounded_reuse(compiled, billing) is False
+    ok = DispatchResult(via="cli", ok=True, detail="done")
+    assert should_factory_llm_generate_gaps(compiled, ok) is False
+    boom = DispatchResult(
+        via="cli", ok=False, detail="CLI exited 1", blocker=NAMED_BLOCKER_CLI_FAILED
+    )
+    assert should_factory_llm_generate_gaps(compiled, boom) is False
+    empty = compile_brief(
+        _Blueprint(),
+        type("P", (), {"capabilities": (_Cap(),)})(),
+        store_ids={"analytics"},
+    )
+    assert inventory_gap_ids(empty) == []
+    assert should_factory_llm_generate_gaps(empty, billing) is False
+    assert should_keep_factory_grounded_reuse(empty, billing) is True
 
 
 def test_mutation_coder_session_never_writes_raw_ledger_jsonl():

@@ -14,8 +14,11 @@ A 404 / Permission denied on the configured model is
 ``FACTORY_CODE_CLI_BILLING`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
 When STEP 0 inventory has **zero gaps** (all capabilities REUSE-present),
 that named billing/auth miss must not discard the factory-grounded emit +
-harvest keep-path (#333/#336/#337). A templated pilot zip after that skip
-is not a ≥2h CLI session. HTTP oneshot is CI-only
+harvest keep-path (#333/#336/#337). Remaining GENERATE inventory_gaps
+then fall through to the factory coder LLM (same gated brief /
+``generate_from_compiled_brief`` path the Floor already uses for README
+via OpenRouter) — not a new per-capability handle() loop, and not a
+claimed ≥2h CLI session. HTTP oneshot is CI-only
 (``FACTORY_BRIEF_HTTP_ONESHOT=1``).
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
@@ -65,13 +68,24 @@ CLI_PREFLIGHT_BLOCKERS = frozenset(
     {NAMED_BLOCKER_CLI, NAMED_BLOCKER_CLI_CREDS, NAMED_BLOCKER_CLI_NO_MODEL}
 )
 #: Named billing/auth misses that still allow factory-grounded REUSE
-#: emit + harvest when STEP 0 inventory_gaps is empty (sess_d5789a91).
+#: emit + harvest for verified REUSE rows (sess_d5789a91). GENERATE
+#: gaps on the same miss use the factory coder LLM second leg.
 CLI_AUTH_BILLING_BLOCKERS = frozenset(
     {
         NAMED_BLOCKER_CLI_BILLING,
         NAMED_BLOCKER_CLI_CREDS,
         NAMED_BLOCKER_CLI_NO_MODEL,
         NAMED_BLOCKER_CLI_MODEL_DENIED,
+    }
+)
+#: CLI honesty classes that fall through GENERATE gaps to the factory
+#: coder LLM. UNAVAILABLE is included (no binary); generic FAILED only
+#: when the detail is a billing miss. NO_MODEL stays fail-closed.
+CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS = frozenset(
+    {
+        NAMED_BLOCKER_CLI_BILLING,
+        NAMED_BLOCKER_CLI_CREDS,
+        NAMED_BLOCKER_CLI,
     }
 )
 KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
@@ -774,9 +788,10 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — Moonshot account "
                 "billing/auth refused the session (insufficient balance / "
                 "429 suspended). Still FACTORY_CODE_CLI_FAILED honesty — "
-                "not a ≥2h CLI session. Empty-gap REUSE continues "
-                "factory-grounded emit + harvest; inventory_gaps still "
-                f"fail-closed. {OWNER_GATED_CLI_LOG}."
+                "not a ≥2h CLI session. Verified REUSE continues "
+                "factory-grounded emit + harvest; GENERATE inventory_gaps "
+                "fall through to the factory coder LLM and stay listed "
+                f"until artifacts land. {OWNER_GATED_CLI_LOG}."
             ),
         )
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
@@ -903,6 +918,10 @@ class DispatchResult:
     model: str = ""
     blocker: Optional[str] = None
     reuse_keep_path: bool = False
+    factory_llm_generate_fallthrough: bool = False
+    factory_llm_generate_ids: List[str] = field(default_factory=list)
+    factory_llm_written_ids: List[str] = field(default_factory=list)
+    factory_llm_model: str = ""
     receipt: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -913,11 +932,33 @@ class DispatchResult:
             "model": self.model,
             "blocker": self.blocker,
             "reuse_keep_path": self.reuse_keep_path,
+            "factory_llm_generate_fallthrough": self.factory_llm_generate_fallthrough,
+            "factory_llm_generate_ids": list(self.factory_llm_generate_ids),
+            "factory_llm_written_ids": list(self.factory_llm_written_ids),
+            "factory_llm_model": self.factory_llm_model,
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
             "spec_ids": sorted(self.specs),
             "receipt": dict(self.receipt),
         }
+
+    def artifact_source(self, cid: str) -> str:
+        """Authorship label for a dispatch-owned spec/handler.
+
+        GENERATE-gap factory-LLM writes credit the factory model
+        (OpenRouter / keyed Floor LLM), never FACTORY_CODE_CLI.
+        """
+        gap_ids = set(self.factory_llm_generate_ids or ())
+        written = set(self.factory_llm_written_ids or ())
+        if cid in written or (cid in gap_ids and cid in (self.specs or {})):
+            return (
+                f"coder LLM ({self.factory_llm_model})"
+                if self.factory_llm_model
+                else "coder LLM (factory)"
+            )
+        if self.model:
+            return f"coder LLM ({self.model})"
+        return "compiled-brief oneshot"
 
 
 def inventory_gap_ids(compiled: Any) -> List[str]:
@@ -931,20 +972,65 @@ def inventory_gap_ids(compiled: Any) -> List[str]:
     return out
 
 
+def reuse_inventory_ids(compiled: Any) -> List[str]:
+    """Verified REUSE rows — factory-grounded emit may keep these."""
+    out: List[str] = []
+    for item in getattr(compiled, "inventory", ()) or ():
+        if getattr(item, "is_gap", False):
+            continue
+        cid = str(getattr(item, "capability_id", "") or "").strip()
+        if cid:
+            out.append(cid)
+    return out
+
+
+def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]:
+    """Gaps still open after factory-LLM writes land. Fail-closed until then."""
+    landed = set(result.factory_llm_written_ids or ())
+    return [cid for cid in inventory_gap_ids(compiled) if cid not in landed]
+
+
+def cli_miss_allows_generate_llm(result: DispatchResult) -> bool:
+    """Billing / credentials / unavailable honesty — factory LLM may write gaps."""
+    if result.ok or result.via == "http_oneshot":
+        return False
+    if result.blocker in CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS:
+        return True
+    if result.blocker == NAMED_BLOCKER_CLI_FAILED:
+        blob = (result.detail or "").lower()
+        return any(hint in blob for hint in _BILLING_HINTS) or (
+            "429" in blob and "suspended" in blob
+        )
+    return False
+
+
+def should_factory_llm_generate_gaps(
+    compiled: Any, result: DispatchResult
+) -> bool:
+    """Named CLI miss + remaining GENERATE gaps → one factory-LLM brief shot."""
+    if not cli_miss_allows_generate_llm(result):
+        return False
+    return bool(inventory_gap_ids(compiled))
+
+
 def should_keep_factory_grounded_reuse(compiled: Any, result: DispatchResult) -> bool:
-    """Empty-gap REUSE + named billing/auth CLI miss → keep emit/harvest.
+    """Verified REUSE + named billing/auth CLI miss → keep emit/harvest.
 
     Live sess_d5789a91 (VetCare Hub / veterinary-care): inventory_gaps=[]
     and FACTORY_CODE_CLI exited 1 with Moonshot 429 / insufficient
     balance. Harvest was skipped because ``result.ok`` was false, then
     WRITER labeled persist/event_bus emit as a deterministic template and
     budget_inspect hard-stopped at stub_rate≈0.833 / SCAFFOLD.
+
+    Mixed plans (REUSE + GENERATE, live veterinary_care_core gap) still
+    harvest the REUSE rows. GENERATE gaps are a separate factory-LLM leg.
+    GENERATE-only plans do not claim this keep-path.
     """
     if result.ok:
         return False
-    if inventory_gap_ids(compiled):
+    if result.blocker not in CLI_AUTH_BILLING_BLOCKERS:
         return False
-    return result.blocker in CLI_AUTH_BILLING_BLOCKERS
+    return bool(reuse_inventory_ids(compiled))
 
 
 def factory_grounded_source_for(
@@ -967,7 +1053,7 @@ def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str
     """Write persist / event_bus handlers for REUSE caps, then harvest can keep.
 
     Does not claim a CLI session. Does not write GENERATE/GAP caps — those
-    still need agentic CLI and stay fail-closed.
+    fall through to the factory coder LLM after a billing/auth miss.
     """
     from app.factory.build.roles_handlers import (
         _capability_handler_body,
@@ -1005,6 +1091,102 @@ def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str
     return written
 
 
+def apply_factory_llm_generate_gaps(
+    ctx: Any, compiled: Any, result: DispatchResult
+) -> DispatchResult:
+    """Second leg: one factory-LLM compiled-brief shot for GENERATE gaps.
+
+    Receipt stays ``ok=false`` with the CLI billing/auth blocker. Not
+    ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session.
+    """
+    if not should_factory_llm_generate_gaps(compiled, result):
+        return result
+    from app.factory.coder import CoderError, coder_enabled, generate_from_compiled_brief
+
+    if not coder_enabled():
+        return result
+    gap_ids = inventory_gap_ids(compiled)
+    result.factory_llm_generate_fallthrough = True
+    result.factory_llm_generate_ids = list(gap_ids)
+    root = _workspace_root(ctx)
+    brief = compiled.text if hasattr(compiled, "text") else str(compiled)
+    suffix = (
+        "\n\n## GENERATE-GAP FALLTHROUGH\n"
+        "FACTORY_CODE_CLI missed (billing/credentials/unavailable). "
+        f"Write ONLY these GENERATE inventory_gaps: {gap_ids!r}. "
+        "Do not claim a ≥2h CLI session. Do not invent REUSE block ids.\n"
+    )
+    ctx.note(
+        (
+            f"FACTORY_CODE_CLI {result.blocker} — factory coder LLM for "
+            f"{len(gap_ids)} GENERATE gap(s); not a ≥2h CLI session"
+        ),
+        stage="dispatch",
+        source="factory coder LLM (GENERATE gaps)",
+        model_call=True,
+        done=0,
+        total=1,
+    )
+    try:
+        llm = generate_from_compiled_brief(
+            brief=brief + suffix,
+            capabilities=list(gap_ids),
+            product_name=compiled.product_name,
+            vertical=compiled.vertical,
+        )
+    except CoderError as exc:
+        _append_log(
+            root / LOG_REL,
+            f"[factory-llm] GENERATE-gap fallthrough after {result.blocker} "
+            f"failed: {exc}",
+        )
+        ctx.state.setdefault("coder_failures", {})["factory_llm_generate"] = str(exc)
+        ctx.note(
+            f"factory coder LLM GENERATE fallthrough failed: {exc}",
+            stage="dispatch",
+            source="factory coder LLM (GENERATE gaps)",
+            done=0,
+            total=1,
+        )
+        return result
+    model = str(llm.get("model") or "")
+    result.factory_llm_model = model
+    written: List[str] = []
+    raw_specs = llm.get("specs") or {}
+    raw_handlers = llm.get("handlers") or {}
+    if not isinstance(raw_specs, dict):
+        raw_specs = {}
+    if not isinstance(raw_handlers, dict):
+        raw_handlers = {}
+    for cid in gap_ids:
+        spec = raw_specs.get(cid)
+        if isinstance(spec, dict) and spec.get("entity"):
+            result.specs[cid] = spec
+        body = raw_handlers.get(cid)
+        if isinstance(body, str) and body.strip():
+            result.handlers[cid] = body
+            written.append(cid)
+    result.factory_llm_written_ids = written
+    _append_log(
+        root / LOG_REL,
+        f"[factory-llm] GENERATE-gap fallthrough after {result.blocker}: "
+        f"attempted={gap_ids} written={written} model={model}",
+    )
+    ctx.note(
+        (
+            f"{result.blocker} — factory coder LLM wrote {len(written)}/"
+            f"{len(gap_ids)} GENERATE gap(s); not a ≥2h CLI session"
+        ),
+        stage="dispatch",
+        source=(
+            f"coder LLM ({model})" if model else "factory coder LLM (GENERATE gaps)"
+        ),
+        done=1 if written else 0,
+        total=1,
+    )
+    return result
+
+
 def write_dispatch_receipt(
     ctx: Any,
     compiled: Any,
@@ -1026,6 +1208,10 @@ def write_dispatch_receipt(
             KEEP_PATH_FACTORY_GROUNDED_REUSE if result.reuse_keep_path else None
         ),
         "reuse_keep_path": result.reuse_keep_path,
+        "factory_llm_generate_fallthrough": result.factory_llm_generate_fallthrough,
+        "factory_llm_generate_ids": list(result.factory_llm_generate_ids),
+        "factory_llm_written_ids": list(result.factory_llm_written_ids),
+        "factory_llm_model": result.factory_llm_model,
         "model": result.model,
         "product_id": compiled.product_id,
         "vertical": compiled.vertical,
@@ -1035,10 +1221,15 @@ def write_dispatch_receipt(
             for item in compiled.inventory
             if item.verified_present and not item.missing
         ],
-        "inventory_gaps": inventory_gap_ids(compiled),
+        "inventory_gaps": remaining_inventory_gaps(compiled, result),
         "harvested_spec_ids": sorted(result.specs),
-        "kept_handler_ids": list(result.kept_handler_ids),
+        "kept_handler_ids": [
+            cid
+            for cid in result.kept_handler_ids
+            if cid not in set(result.factory_llm_generate_ids or ())
+        ],
     }
+    result.kept_handler_ids = list(receipt["kept_handler_ids"])
     result.receipt = receipt
     root = _workspace_root(ctx)
     try:
@@ -1495,8 +1686,8 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             # inventory_gaps. Harvest used to run only on result.ok, so
             # factory-grounded persist / event_bus emit was discarded and
             # budget_inspect hard-stopped as a thin SCAFFOLD.
-            result.reuse_keep_path = True
             emitted = emit_factory_grounded_reuse_keep_path(root, compiled)
+            result.reuse_keep_path = bool(emitted)
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
             _append_log(
                 root / LOG_REL,
@@ -1566,8 +1757,8 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         and not result.reuse_keep_path
         and should_keep_factory_grounded_reuse(compiled, result)
     ):
-        result.reuse_keep_path = True
         emitted = emit_factory_grounded_reuse_keep_path(root, compiled)
+        result.reuse_keep_path = bool(emitted)
         _merge_workspace_harvest(result, root, list(compiled.capabilities))
         _append_log(
             root / LOG_REL,
@@ -1576,6 +1767,7 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             f"kept={list(result.kept_handler_ids)}",
         )
 
+    apply_factory_llm_generate_gaps(ctx, compiled, result)
     write_dispatch_receipt(ctx, compiled, result)
     ctx.state["brief_dispatch"] = result.to_dict()
     ctx.state["compiled_brief"] = {

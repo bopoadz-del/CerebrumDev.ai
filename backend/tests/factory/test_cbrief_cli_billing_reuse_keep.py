@@ -147,7 +147,7 @@ def test_writer_empty_gap_billing_fail_allows_product_round_trip(
 
 
 def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypatch):
-    """GENERATE gap + billing miss must not claim keep-path or fake PRODUCT."""
+    """GENERATE gap + billing miss + factory-LLM fail: templates, no fake keep-path."""
     script = _billing_cli(tmp_path)
     home = tmp_path / "kimi-home"
     home.mkdir()
@@ -157,6 +157,12 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
     monkeypatch.setenv("KIMI_CODE_HOME", str(home))
     monkeypatch.setenv("FACTORY_BRIEF_DISPATCH", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    from app.factory.coder import CoderError
+
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: (_ for _ in ()).throw(CoderError("model refused")),
+    )
 
     plan = _Plan(_Cap("novel_clinic_ai", [], "GENERATE"))
     compiled = compile_brief(_VetCare(), plan, store_ids={"database"})
@@ -166,8 +172,6 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
         "app.factory.build.brief_compiler.compile_brief_from_ctx",
         lambda _ctx: compiled,
     )
-    # Billing is not a preflight blocker — WRITER continues with templates.
-    # Keep-path must stay off; receipt must not claim factory_grounded_reuse.
     result = run_writer(
         RoleContext(
             role=BuildRole.WRITER,
@@ -183,10 +187,14 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
     )
     assert receipt["ok"] is False
     assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
     assert receipt["keep_path"] is None
+    assert receipt["factory_llm_generate_fallthrough"] is True
     assert "novel_clinic_ai" in receipt["inventory_gaps"]
+    assert receipt["factory_llm_written_ids"] == []
     assert receipt["kept_handler_ids"] == []
     handler = (
         tmp_path / "gap" / "app" / "actions" / "novel_clinic_ai.py"
     ).read_text(encoding="utf-8")
     assert "deterministic contract template" in handler
+    assert "FACTORY_CODE_CLI" not in handler or "factory-grounded" in handler
