@@ -137,6 +137,10 @@ _SUITE_ASSERTION_CLASSES: tuple[tuple[str, str], ...] = (
         "schema sample refused (notification channel)",
     ),
     (
+        "step_0 (event_bus)",
+        "schema sample refused (event_bus workflow step)",
+    ),
+    (
         "step_1 (event_bus)",
         "schema sample refused (event_bus workflow step)",
     ),

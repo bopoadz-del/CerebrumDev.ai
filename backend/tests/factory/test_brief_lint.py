@@ -258,6 +258,47 @@ def test_mutation_drops_factory_grounded_emit_needles():
     assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
 
 
+def test_mutation_drops_only_step0_reminders_needles():
+    """step_1 / step_2 left intact; dropping Store step_0 must still lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap(
+                "automated_reminders",
+                ["event_bus", "workflow"],
+                "COMPOSE",
+            )
+        ),
+        store_ids={"event_bus", "workflow"},
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("workflow: step_0 (event_bus): error", "")
+    compiled.text = compiled.text.replace("automated_reminders", "reminders_other")
+    compiled.text = compiled.text.replace("step_0", "step_zero")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
+
+
 def test_mutation_drops_writer_behaviour_acceptance():
     compiled = _compiled()
     compiled.text = compiled.text.replace(

@@ -328,8 +328,36 @@ def test_event_bus_carries_payload_and_channel():
     assert out["data"]["pet_name"] == "Rex"
     assert isinstance(out["message"], str) and out["message"]
     assert out["block"] == "event_bus"
+    assert out["tool"] == "event_bus"
     assert event_bus_step_is_store_ready(out) is True
     assert "pet_name" not in out
+
+
+def test_event_bus_mcp_target_is_not_a_peer_block():
+    """Live sess_d5789a91: roster had database; notify used tool=database."""
+    out = prepare_block_input(
+        "event_bus",
+        {"pet_name": "Nala", "reminder_type": "vaccination", "status": "open"},
+        roster=["event_bus", "database", "workflow"],
+        product_name="VetCare Hub",
+    )
+    assert out["tool"] == "event_bus"
+    assert out["block"] == "event_bus"
+    assert event_bus_step_is_store_ready(out) is True
+
+    flow = prepare_block_input(
+        "workflow",
+        {"pet_name": "Nala", "reminder_type": "vaccination", "status": "open"},
+        roster=["event_bus", "database", "workflow"],
+        entity="reminder",
+        product_name="VetCare Hub",
+        default_actions={"event_bus": "publish"},
+    )
+    bus = flow["steps"][0]
+    assert bus["block"] == "event_bus"
+    assert bus["input"]["tool"] == "event_bus"
+    assert bus["input"]["block"] == "event_bus"
+    assert event_bus_step_is_store_ready(bus["input"]) is True
 
 
 def test_event_bus_rewrites_sample_channel_to_mcp():

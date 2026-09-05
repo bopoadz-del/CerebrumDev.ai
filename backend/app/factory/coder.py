@@ -1496,16 +1496,18 @@ Rules:
 - PRODUCT test_every_capability_route_accepts_payload then POSTs that
   same schema sample and runs bound blocks. A capability that binds
   workflow + event_bus (appointment_scheduling / appointment_booking /
-  reminders_notifications style) must prepare EACH event_bus step
-  including step_1 and step_2+ (block=event_bus, action=publish, topic,
-  payload dict, message, channel=mcp). Do not set step input to payload.
-  An unprepared first child fails as workflow: step_1 (event_bus): error.
-  A prepared step_1 plus an unprepared step_2 still fails as
-  workflow: step_2 (event_bus): error. The factory wrap is not keep/done.
-  Exact shape:
+  automated_reminders / reminders_notifications style) must prepare EACH
+  event_bus step including Store step_0, step_1 and step_2+
+  (block=event_bus, action=publish, topic, payload dict, message,
+  channel=mcp, tool=event_bus). Do not set step input to payload.
+  An event_bus-first child fails as workflow: step_0 (event_bus): error.
+  An unprepared first factory child fails as
+  workflow: step_1 (event_bus): error. A prepared step_1 plus an
+  unprepared step_2 still fails as workflow: step_2 (event_bus): error.
+  The factory wrap is not keep/done. Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
-   "channel": "mcp"}}.
+   "channel": "mcp", "tool": "event_bus"}}.
 - PRODUCT one-record round-trip then POSTs that sample and re-reads
   store.list_all(entity). Every capability must persist via
   store.save(ENTITY, payload) to the alembic 0001 table (factory-grounded
