@@ -11,12 +11,14 @@ import {
   formatPhaseCounts,
   formatPhaseHeadline,
   honestLevel,
+  isAuthoritativePilotReady,
   isCoderCliFailed,
   isPilotZipReady,
   isScaffoldClaim,
   levelGradeLabel,
   phaseBarFraction,
   platformsLeadCopy,
+  shouldRefuseExport,
   stampBuildObservation,
   threeGateEntries,
   withClientStall,
@@ -474,9 +476,12 @@ describe('build progress copy', () => {
     })
   })
 
-  it('CLI-failed founding payload is never Finished / gold Download', () => {
-    const vetCareCliFailed: BuildStatus = {
+  it('CLI-failed + pilot_ready SUCCESS still allows Export / Finished (#338 keep-path)', () => {
+    // Live sess_c220986f67914681 after #338: Moonshot 429 billing miss,
+    // factory-grounded REUSE keep-path, PRODUCT passed, Export produced a zip.
+    const vetCareKeepPath: BuildStatus = {
       state: 'succeeded',
+      outcome: 'SUCCESS',
       pilot_ready: true,
       cycle: 'pilot',
       authorship: { artifacts: 24, agent_written: 1, templated: 23 },
@@ -484,6 +489,82 @@ describe('build progress copy', () => {
         level: 'FOUNDING_CUSTOMER_READY',
         founding_customer_ready: true,
         pilot_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+      coder_receipt: {
+        ok: false,
+        blocker: 'FACTORY_CODE_CLI_FAILED',
+        detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+      },
+    }
+    expect(isCoderCliFailed(vetCareKeepPath)).toBe(true)
+    expect(isAuthoritativePilotReady(vetCareKeepPath)).toBe(true)
+    expect(shouldRefuseExport(vetCareKeepPath)).toBe(false)
+    expect(honestLevel(vetCareKeepPath)).toBe('FOUNDING_CUSTOMER_READY')
+    expect(isPilotZipReady(vetCareKeepPath)).toBe(true)
+    expect(withExportHonesty(vetCareKeepPath)).toMatchObject({
+      state: 'succeeded',
+      pilot_ready: true,
+    })
+    expect(withClientStall(vetCareKeepPath)?.state).toBe('succeeded')
+    expect(exportAffordance(vetCareKeepPath)).toEqual({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+      ghost: false,
+    })
+    expect(platformsLeadCopy(vetCareKeepPath, true)).toMatch(/Download the export/)
+    expect(
+      formatFinishedAuthorship(vetCareKeepPath.authorship, {
+        pilotReady: isPilotZipReady(vetCareKeepPath),
+      }),
+    ).toMatch(/^Finished —/)
+  })
+
+  it('CLI-failed + pilot_ready=false still refuses Export', () => {
+    const cliMissNotReady: BuildStatus = {
+      state: 'succeeded',
+      pilot_ready: false,
+      cycle: 'code',
+      authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+      coder_receipt: {
+        ok: false,
+        blocker: 'FACTORY_CODE_CLI_FAILED',
+        detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+      },
+    }
+    expect(isCoderCliFailed(cliMissNotReady)).toBe(true)
+    expect(isAuthoritativePilotReady(cliMissNotReady)).toBe(false)
+    expect(shouldRefuseExport(cliMissNotReady)).toBe(true)
+    expect(isPilotZipReady(cliMissNotReady)).toBe(false)
+    expect(withExportHonesty(cliMissNotReady)).toMatchObject({
+      state: 'failed',
+      pilot_ready: false,
+      detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+    })
+    expect(exportAffordance(cliMissNotReady)).toMatchObject({
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+    })
+    expect(platformsLeadCopy(cliMissNotReady, true)).toMatch(/Download unavailable — build failed/)
+    expect(
+      formatFinishedAuthorship(cliMissNotReady.authorship, {
+        pilotReady: isPilotZipReady(cliMissNotReady),
+      }),
+    ).not.toMatch(/Finished/)
+  })
+
+  it('sess_45729bb claimed founding + PRODUCT fail refuses Export', () => {
+    const vetCareCliFailed: BuildStatus = {
+      state: 'succeeded',
+      pilot_ready: false,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        pilot_ready: false,
+        three_gate: { CODE: 'PASS', PRODUCT: 'FAIL', STORE: 'NOT_RUN' },
       },
       coder_receipt: {
         ok: false,
@@ -492,6 +573,7 @@ describe('build progress copy', () => {
       },
     }
     expect(isCoderCliFailed(vetCareCliFailed)).toBe(true)
+    expect(shouldRefuseExport(vetCareCliFailed)).toBe(true)
     expect(honestLevel(vetCareCliFailed)).toBe('SCAFFOLD')
     expect(isPilotZipReady(vetCareCliFailed)).toBe(false)
     expect(withExportHonesty(vetCareCliFailed)).toMatchObject({
@@ -514,15 +596,16 @@ describe('build progress copy', () => {
     ).not.toMatch(/Finished/)
   })
 
-  it('SCAFFOLD grade refuses Export even when state claims succeeded', () => {
+  it('SCAFFOLD grade refuses Export when the build is not actually pilot-ready', () => {
     const scaffold: BuildStatus = {
       state: 'succeeded',
-      pilot_ready: true,
+      pilot_ready: false,
       level_grade: { level: 'SCAFFOLD', founding_customer_ready: true },
     }
     expect(isScaffoldClaim(scaffold)).toBe(true)
     expect(honestLevel(scaffold)).toBe('SCAFFOLD')
     expect(isPilotZipReady(scaffold)).toBe(false)
+    expect(shouldRefuseExport(scaffold)).toBe(true)
     expect(exportAffordance(scaffold)).toMatchObject({
       label: 'Export (.zip) — pilot suite failed',
       disabled: true,

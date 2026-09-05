@@ -728,7 +728,7 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(page.getByText(/Download the export and launch it anywhere/i)).toHaveCount(0)
 })
 
-test('Your Platforms refuses Export when founding card reports FACTORY_CODE_CLI_FAILED', async ({
+test('Your Platforms keeps Export when CLI-failed receipt sits on a pilot-ready SUCCESS', async ({
   page,
 }) => {
   await mockVerifiedFactory(page)
@@ -757,6 +757,7 @@ test('Your Platforms refuses Export when founding card reports FACTORY_CODE_CLI_
         product_id: 'veterinary-care',
         build: {
           state: 'succeeded',
+          outcome: 'SUCCESS',
           pilot_ready: true,
           cycle: 'pilot',
           authorship: { artifacts: 24, agent_written: 1, templated: 23 },
@@ -764,6 +765,67 @@ test('Your Platforms refuses Export when founding card reports FACTORY_CODE_CLI_
             level: 'FOUNDING_CUSTOMER_READY',
             founding_customer_ready: true,
             pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+          coder_receipt: {
+            ok: false,
+            blocker: 'FACTORY_CODE_CLI_FAILED',
+            detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveText('Founding-customer-ready')
+  await expect(page.getByText(/Finished — 1 artifacts; 23 templated/)).toBeVisible()
+  const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
+  await expect(download).toBeVisible()
+  await expect(download).toBeEnabled()
+  await expect(page.getByTestId('platforms-failed-pill')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toHaveCount(0)
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Download the export/)
+})
+
+test('Your Platforms refuses Export when CLI-failed founding claim is not pilot-ready', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          inputs_hash: 'vetcarehash',
+          output_dir: '/tmp/veterinary-care',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          pilot_ready: false,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+          level_grade: {
+            level: 'FOUNDING_CUSTOMER_READY',
+            founding_customer_ready: true,
+            pilot_ready: false,
+            three_gate: { CODE: 'PASS', PRODUCT: 'FAIL', STORE: 'NOT_RUN' },
           },
           coder_receipt: {
             ok: false,
