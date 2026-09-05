@@ -44,6 +44,30 @@ from app.factory.product_architect import (
 router = APIRouter()
 
 
+def generation_with_live_build(generation: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Re-read the workspace ledger onto ``generation.build``.
+
+    ``_record_generation`` snapshots ``build`` at session start
+    (state=building, current_phase=COLLECTOR, last_event_age_s≈0.7).
+    Floor / Platforms poll ``/product/build-status`` (live ledger) and
+    correctly show CODING AGENT STOPPED after RUN_FAILED. GET /product
+    used to return that frozen snapshot — live sess_14e690829d1f4282.
+    """
+    if not generation:
+        return generation
+    out = generation.get("output_dir")
+    if not out:
+        return generation
+    from app.factory.build_jobs import build_status
+
+    live = build_status(Path(out))
+    attached = dict(generation)
+    attached["build"] = live
+    if isinstance(live, dict) and "phases_done" in live:
+        attached["phases_done"] = live.get("phases_done")
+    return attached
+
+
 class DraftBody(BaseModel):
     brief: str = Field(..., min_length=1)
     vertical_hint: Optional[str] = None
@@ -220,7 +244,7 @@ def get_product_design(
         "intake_blueprint": pd.intake_blueprint,
         "blueprint_approved": pd.blueprint_approved,
         "brief_lint": pd.brief_lint,
-        "generation": pd.generation,
+        "generation": generation_with_live_build(pd.generation),
         "last_error": pd.last_error,
     }
 
