@@ -33,7 +33,8 @@ RUN pip install --no-cache-dir -r requirements.lock
 #   https://code.kimi.com/kimi-code/install.sh
 #   KIMI_VERSION=… KIMI_INSTALL_DIR=/usr/local  →  /usr/local/bin/kimi
 # Credentials stay out of the image: KIMI_CODE_API_KEY writes
-# ~/.kimi-code/config.toml at boot (see docs/factory/KIMI_ENV_SETUP.md).
+# ~/.kimi-code/config.toml at boot (providers + default_model; see
+# docs/factory/KIMI_ENV_SETUP.md). Headless Floor cannot run /login.
 ARG KIMI_CODE_VERSION=0.41.0
 RUN curl -fsSL https://code.kimi.com/kimi-code/install.sh \
       -o /tmp/kimi-code-install.sh \
@@ -71,7 +72,8 @@ COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 # FACTORY_CODE_CLI=kimi resolves to /usr/local/bin/kimi (installed above).
 # A keyed Floor still fail-closes FACTORY_CODE_CLI_UNAVAILABLE if the
 # executable is missing (wrong FACTORY_CODE_CLI, deleted binary, etc.).
-# KIMI_CODE_API_KEY at boot writes ~/.kimi-code/config.toml only.
+# KIMI_CODE_API_KEY at boot writes ~/.kimi-code/config.toml
+# ([providers.kimi] + default_model from KIMI_CODE_MODEL).
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is

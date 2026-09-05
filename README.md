@@ -164,10 +164,14 @@ FACTORY_CODE_CLI=kimi      # Kimi CLI (default; production image ships /usr/loca
 (pin `KIMI_CODE_VERSION`; see `docs/factory/KIMI_ENV_SETUP.md`). A keyed Floor
 without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
 binary without `~/.kimi-code/config.toml` fail-closes as
-`FACTORY_CODE_CLI_CREDENTIALS_MISSING` (no HTTP oneshot, no fake WRITER
-takeover). CLI credentials are `KIMI_CODE_API_KEY`
-→ `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`.
-Render dashboard values stay owner-gated.
+`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. A CLI exit of `No model configured`
+fail-closes as `FACTORY_CODE_CLI_NO_MODEL` (still `FACTORY_CODE_CLI_FAILED`
+honesty — no HTTP oneshot, no fake WRITER takeover). Boot writes
+`default_model` from `KIMI_CODE_MODEL` (default `kimi-code/k3`, Kimi Code
+CLI 0.41) so headless `kimi --prompt` does not need TTY `/login`. A
+templated pilot zip after that skip is not a ≥2h CLI session. CLI
+credentials are `KIMI_CODE_API_KEY` → `~/.kimi-code/config.toml`, not the
+in-app `CEREBRUM_LLM_API_KEY`. Render dashboard values stay owner-gated.
 
 ### Running the tests: the factory coder changes the results
 
