@@ -178,10 +178,10 @@ def test_writer_halts_when_cli_missing_without_oneshot(
         assert data.get("blocker") == NAMED_BLOCKER_CLI
 
 
-def test_writer_halts_when_kimi_credentials_missing(
+def test_writer_records_creds_miss_and_keeps_empty_gap_reuse(
     blueprint, tmp_path, monkeypatch
 ):
-    """Keyed brief path with kimi on PATH but no config.toml must not fake WRITER progress."""
+    """Empty-gap REUSE + missing Kimi creds: honest receipt, no oneshot, no CLI claim."""
     from app.factory.build.coder_session import NAMED_BLOCKER_CLI_CREDS
 
     script = tmp_path / "kimi"
@@ -201,14 +201,20 @@ def test_writer_halts_when_kimi_credentials_missing(
         "app.factory.coder.generate_from_compiled_brief",
         lambda **kw: oneshot.append(kw) or _oneshot_payload(),
     )
-    outcome = RoleRunner(blueprint, tmp_path / "build").run()
-    assert outcome.ok is False
-    assert NAMED_BLOCKER_CLI_CREDS in (outcome.detail or "")
-    assert oneshot == []
-    receipt = tmp_path / "build" / "docs" / "coder_receipt.json"
-    if receipt.is_file():
-        data = json.loads(receipt.read_text(encoding="utf-8"))
-        assert data.get("blocker") == NAMED_BLOCKER_CLI_CREDS
+    out = tmp_path / "build"
+    outcome = RoleRunner(blueprint, out).run()
+    assert oneshot == [], "credentials miss must not enable HTTP oneshot"
+    receipt = out / "docs" / "coder_receipt.json"
+    assert receipt.is_file()
+    data = json.loads(receipt.read_text(encoding="utf-8"))
+    assert data.get("blocker") == NAMED_BLOCKER_CLI_CREDS
+    assert data.get("ok") is False
+    assert data.get("honesty_class") == "FACTORY_CODE_CLI_FAILED"
+    for name, text in _headers(out).items():
+        assert "coder LLM" not in text, name
+        assert "FACTORY_CODE_CLI" not in text or "factory-grounded" in text, name
+    # Honesty: this is not a ≥2h CLI session and not a pilot_zip claim.
+    assert "pilot_zip" not in (outcome.detail or "").lower()
 
 
 def test_a_coder_failure_ships_the_template_and_records_why(

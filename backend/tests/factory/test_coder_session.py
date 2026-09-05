@@ -10,18 +10,23 @@ import pytest
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
+    CLI_AUTH_BILLING_BLOCKERS,
     CLI_PREFLIGHT_BLOCKERS,
     CONTROL_PAUSE,
     CONTROL_STOP,
     DEFAULT_KIMI_CODE_MODEL,
     DEFAULT_KIMI_CODE_MODEL_ID,
+    KEEP_PATH_FACTORY_GROUNDED_REUSE,
     NAMED_BLOCKER_CLI,
+    NAMED_BLOCKER_CLI_BILLING,
     NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_CLI_FAILED,
     NAMED_BLOCKER_CLI_MODEL_DENIED,
     NAMED_BLOCKER_CLI_NO_MODEL,
     NAMED_BLOCKER_STOPPED,
+    CodeCliBillingFailed,
     CodeCliCredentialsMissing,
+    CodeCliFailed,
     CodeCliModelDenied,
     CodeCliNoModelConfigured,
     CodeCliUnavailable,
@@ -43,6 +48,7 @@ from app.factory.build.coder_session import (
     ensure_code_cli_credentials,
     harvest_cli_artifacts,
     http_oneshot_enabled,
+    inventory_gap_ids,
     probe_code_cli,
     raise_if_cli_session_unready,
     read_control,
@@ -448,6 +454,26 @@ def test_classify_cli_exit_names_no_model_configured():
     generic, generic_detail = classify_cli_exit(1, "segfault")
     assert generic == NAMED_BLOCKER_CLI_FAILED
     assert generic_detail == "CLI exited 1"
+
+
+def test_classify_cli_exit_names_billing_suspended():
+    """sess_d5789a91: Moonshot 429 / insufficient balance is a billing class."""
+    blocker, detail = classify_cli_exit(
+        1,
+        "429 Too Many Requests — this account has been suspended due to "
+        "insufficient balance",
+    )
+    assert blocker == NAMED_BLOCKER_CLI_BILLING
+    assert CodeCliBillingFailed.blocker == NAMED_BLOCKER_CLI_BILLING
+    assert issubclass(CodeCliBillingFailed, CodeCliFailed)
+    assert NAMED_BLOCKER_CLI_BILLING in CLI_AUTH_BILLING_BLOCKERS
+    assert NAMED_BLOCKER_CLI_BILLING in detail
+    assert "FACTORY_CODE_CLI_FAILED" in detail
+    assert "insufficient balance" in detail
+    balance, _ = classify_cli_exit(1, "error: insufficient balance on Moonshot")
+    assert balance == NAMED_BLOCKER_CLI_BILLING
+    generic, _ = classify_cli_exit(1, "429 rate limit, retry later")
+    assert generic == NAMED_BLOCKER_CLI_FAILED
 
 
 def test_classify_cli_exit_names_model_denied():
@@ -1055,6 +1081,8 @@ def test_dispatch_cli_other_nonzero_stays_failed(tmp_path, monkeypatch):
     assert result.ok is False
     assert result.blocker == NAMED_BLOCKER_CLI_FAILED
     assert result.detail == "CLI exited 1"
+    assert result.reuse_keep_path is False
+    assert result.kept_handler_ids == []
 
 
 def test_dispatch_kimi_with_config_toml_credentials_ok(tmp_path, monkeypatch):
@@ -1322,8 +1350,8 @@ def test_approve_and_generate_names_no_model_class_without_takeover(
     assert NAMED_BLOCKER_CLI_NO_MODEL in (state.product_design.last_error or "")
 
 
-def test_run_writer_raises_on_mid_run_no_model(tmp_path, monkeypatch):
-    """CLI exit NO_MODEL must stop WRITER — no template continuation."""
+def test_run_writer_raises_on_no_model_when_inventory_gaps(tmp_path, monkeypatch):
+    """Non-empty gaps + NO_MODEL stay fail-closed — no fake pilot_ready."""
     from app.factory.build.roles_handlers import run_writer
     from app.factory.build.roles_models import RoleError
 
@@ -1334,8 +1362,20 @@ def test_run_writer_raises_on_mid_run_no_model(tmp_path, monkeypatch):
     home.mkdir()
     (home / "config.toml").write_text(_usable_kimi_toml(), encoding="utf-8")
     monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+
+    class _GapCap:
+        capability_id = "novel_clinic_ai"
+        block_ids = ()
+        strategy = "GENERATE"
+        notes = "gap"
+
+    class _GapPlan:
+        capabilities = (_GapCap(),)
+
     ctx = _ctx(tmp_path)
+    ctx.plan = _GapPlan()
     compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    assert any(item.is_gap for item in compiled.inventory)
     monkeypatch.setattr(
         "app.factory.build.brief_compiler.compile_brief_from_ctx",
         lambda _ctx: compiled,
@@ -1359,6 +1399,148 @@ def test_run_writer_raises_on_mid_run_no_model(tmp_path, monkeypatch):
     )
     with pytest.raises(RoleError, match=NAMED_BLOCKER_CLI_NO_MODEL):
         run_writer(ctx)
+
+
+def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
+    tmp_path, monkeypatch
+):
+    """C-BRIEF sess_d5789a91: empty gaps + CLI 429 still harvests REUSE keep-path."""
+    script = tmp_path / "kimi"
+    script.write_text(
+        "#!/bin/sh\n"
+        "echo '429 Too Many Requests — this account has been suspended "
+        "due to insufficient balance'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(_usable_kimi_toml(), encoding="utf-8")
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+
+    class _Sched:
+        capability_id = "appointment_scheduling"
+        block_ids = ("event_bus", "workflow", "database")
+        strategy = "REUSE"
+        notes = "schedule"
+
+    class _Dash:
+        capability_id = "clinic_dashboard"
+        block_ids = ("dashboard",)
+        strategy = "REUSE"
+        notes = "dash"
+
+    class _Plan:
+        capabilities = (_Sched(), _Dash())
+
+    class _Blueprint:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "sess_d5789a91 photograph"
+
+    ws = RoleWorkspace(BuildRole.WRITER, tmp_path / "build")
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        state={},
+    )
+    compiled = compile_brief(
+        ctx.blueprint,
+        ctx.plan,
+        store_ids={"event_bus", "workflow", "database", "dashboard"},
+    )
+    assert inventory_gap_ids(compiled) == []
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.blocker == NAMED_BLOCKER_CLI_BILLING
+    assert result.reuse_keep_path is True
+    assert oneshot == [], "billing miss must not enable HTTP oneshot"
+    assert "appointment_scheduling" in result.kept_handler_ids
+    assert "clinic_dashboard" in result.kept_handler_ids
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["ok"] is False
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
+    assert receipt["keep_path"] == KEEP_PATH_FACTORY_GROUNDED_REUSE
+    assert receipt["inventory_gaps"] == []
+    assert "appointment_scheduling" in receipt["kept_handler_ids"]
+    sched = (
+        tmp_path / "build" / "app" / "actions" / "appointment_scheduling.py"
+    ).read_text(encoding="utf-8")
+    assert "_persist_record(" in sched
+    assert "event_bus" in sched
+    assert "factory-grounded" in sched
+    dash = (tmp_path / "build" / "app" / "actions" / "clinic_dashboard.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_persist_record(" in dash
+    assert "FACTORY_BRIEF_HTTP_ONESHOT" not in sched
+
+
+def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
+    tmp_path, monkeypatch
+):
+    """Non-empty gaps + billing miss stay fail-closed — no fake pilot_ready."""
+    script = tmp_path / "kimi"
+    script.write_text(
+        "#!/bin/sh\n"
+        "echo '429 Too Many Requests — this account has been suspended "
+        "due to insufficient balance'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    home = tmp_path / "kimi-home"
+    home.mkdir()
+    (home / "config.toml").write_text(_usable_kimi_toml(), encoding="utf-8")
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(home))
+
+    class _Gap:
+        capability_id = "novel_clinic_ai"
+        block_ids = ()
+        strategy = "GENERATE"
+        notes = "needs CLI"
+
+    class _Plan:
+        capabilities = (_Gap(),)
+
+    ctx = _ctx(tmp_path)
+    ctx.plan = _Plan()
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    assert inventory_gap_ids(compiled) == ["novel_clinic_ai"]
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok is False
+    assert result.blocker == NAMED_BLOCKER_CLI_BILLING
+    assert result.reuse_keep_path is False
+    assert result.kept_handler_ids == []
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["ok"] is False
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["keep_path"] is None
+    assert receipt["inventory_gaps"] == ["novel_clinic_ai"]
+    assert receipt["kept_handler_ids"] == []
+    assert not (tmp_path / "build" / "app" / "actions" / "novel_clinic_ai.py").is_file()
 
 
 def test_mutation_coder_session_never_writes_raw_ledger_jsonl():

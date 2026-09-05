@@ -30,6 +30,7 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
 )
+from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
 from app.factory.build.workflow_accept import (
     FACTORY_GROUNDED_EVENT_BUS_SOURCE,
     grounded_event_bus_handler_body,
@@ -2630,6 +2631,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     (still FACTORY_CODE_CLI_FAILED honesty; not a ≥2h CLI session).
     A 404 / Permission denied on the configured model is
     FACTORY_CODE_CLI_MODEL_DENIED (distinct from NO_MODEL).
+    A Moonshot 429 / insufficient-balance exit is
+    FACTORY_CODE_CLI_BILLING (still FACTORY_CODE_CLI_FAILED honesty).
+    When STEP 0 inventory_gaps is empty, that billing/auth miss continues
+    factory-grounded persist / event_bus emit + harvest (sess_d5789a91)
+    instead of a templated SCAFFOLD. Non-empty gaps still fail-closed.
     HTTP oneshot stays behind FACTORY_BRIEF_HTTP_ONESHOT=1 (CI).
     Per-capability handle() shots stay behind FACTORY_BRIEF_DISPATCH=0.
     Inventory is checked against the Store registry before any handler
@@ -2661,10 +2667,14 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
     from app.factory.build.brief_lint import BriefLintError, lint_or_raise
     from app.factory.build.coder_session import (
+        CLI_AUTH_BILLING_BLOCKERS,
         CLI_PREFLIGHT_BLOCKERS,
         brief_dispatch_enabled,
         brief_requires_cli,
         dispatch_compiled_brief,
+        factory_grounded_source_for,
+        inventory_gap_ids,
+        refresh_receipt_harvest,
         write_brief_artifacts,
     )
 
@@ -2685,10 +2695,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     write_brief_artifacts(ctx, compiled_brief)
     dispatch = None
     use_brief_dispatch = brief_dispatch_enabled()
+    reuse_keep_path = False
     if use_brief_dispatch:
         dispatch = dispatch_compiled_brief(ctx, compiled_brief)
+        reuse_keep_path = bool(getattr(dispatch, "reuse_keep_path", False))
+        gaps = inventory_gap_ids(compiled_brief)
         if dispatch.blocker in CLI_PREFLIGHT_BLOCKERS and brief_requires_cli():
-            raise RoleError(dispatch.detail)
+            # Empty-gap REUSE + named billing/auth miss: continue emit.
+            # Binary-missing (UNAVAILABLE) and non-empty gaps stay halt.
+            if gaps or dispatch.blocker not in CLI_AUTH_BILLING_BLOCKERS:
+                raise RoleError(dispatch.detail)
         ctx.note(
             f"brief dispatch via {dispatch.via}: {dispatch.detail}",
             stage="dispatch",
@@ -2850,13 +2866,18 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 # fallback envelope is how workflow steps died; keeping an
                 # unprepared {'block': 'event_bus', 'input': payload} is how
                 # PRODUCT step_N (event_bus) locked in after #318.
-                sources[cid] = (
-                    f"coder CLI ({dispatch.model})" if dispatch.model
-                    else (
-                        "FACTORY_CODE_CLI" if dispatch.via == "cli"
-                        else "harvested workspace handler"
+                # Empty-gap billing/auth keep-path is factory-grounded emit,
+                # not a ≥2h CLI session — do not credit FACTORY_CODE_CLI.
+                if reuse_keep_path and not dispatch.ok:
+                    sources[cid] = factory_grounded_source_for(cid, usable)
+                else:
+                    sources[cid] = (
+                        f"coder CLI ({dispatch.model})" if dispatch.model
+                        else (
+                            "FACTORY_CODE_CLI" if dispatch.via == "cli"
+                            else "harvested workspace handler"
+                        )
                     )
-                )
                 ctx.note(
                     f"kept CLI handler {cid} ({sources[cid]})",
                     stage="handlers",
@@ -2874,11 +2895,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             body, source = authored
         else:
             body = _capability_handler_body(cid, usable)
-            source = (
-                FACTORY_GROUNDED_EVENT_BUS_SOURCE
-                if needs_grounded_event_bus_handler(cid, usable)
-                else fallback_source
-            )
+            if needs_grounded_event_bus_handler(cid, usable):
+                source = FACTORY_GROUNDED_EVENT_BUS_SOURCE
+            elif reuse_keep_path:
+                source = FACTORY_GROUNDED_PERSIST_SOURCE
+            else:
+                source = fallback_source
         if needs_grounded_event_bus_handler(cid, usable) and not (
             handler_satisfies_event_bus_contract(
                 body, require_prepared_step=True
@@ -2918,6 +2940,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         Path("app") / "actions" / "__init__.py",
         _render_actions_init(action_names),
     )
+    if reuse_keep_path and dispatch is not None:
+        refresh_receipt_harvest(ctx, compiled_brief, dispatch)
+        ctx.state["brief_dispatch"] = dispatch.to_dict()
 
     from app.factory.build.workflow_accept import (
         EventBusWorkflowHalt,
