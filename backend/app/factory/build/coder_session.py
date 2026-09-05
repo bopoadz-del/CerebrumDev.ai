@@ -6,8 +6,10 @@ file (or fail-closed with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
 ``FACTORY_CODE_CLI_CREDENTIALS_MISSING``) BEFORE it claims the coding agent
 has taken over. A CLI exit of ``No model configured`` is
 ``FACTORY_CODE_CLI_NO_MODEL`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
-A templated pilot zip after that skip is not a ≥2h CLI session. HTTP
-oneshot is CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``).
+A 404 / Permission denied on the configured model is
+``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A templated
+pilot zip after that skip is not a ≥2h CLI session. HTTP oneshot is
+CI-only (``FACTORY_BRIEF_HTTP_ONESHOT=1``).
 
 Control is a file the Floor writes. The dispatcher polls it: pause waits,
 stop terminates the session. Owner eyes are the monitor.
@@ -48,18 +50,57 @@ NAMED_BLOCKER_CLI = "FACTORY_CODE_CLI_UNAVAILABLE"
 NAMED_BLOCKER_CLI_CREDS = "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
 NAMED_BLOCKER_CLI_FAILED = "FACTORY_CODE_CLI_FAILED"
 NAMED_BLOCKER_CLI_NO_MODEL = "FACTORY_CODE_CLI_NO_MODEL"
+NAMED_BLOCKER_CLI_MODEL_DENIED = "FACTORY_CODE_CLI_MODEL_DENIED"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset({NAMED_BLOCKER_CLI, NAMED_BLOCKER_CLI_CREDS})
 NO_MODEL_CONFIGURED_HINT = "No model configured"
 
-#: Kimi Code CLI 0.41 config-files complete example (`default_model`).
+#: Moonshot Open Platform ids for ``[providers.kimi]`` +
+#: ``https://api.moonshot.ai/v1``. Kimi Code CLI 0.41 config-files still
+#: show managed ``kimi-code/k3`` / ``k3`` (``managed:kimi-code``,
+#: ``https://api.kimi.com/coding/v1``) which needs TTY ``/login``. That
+#: pair 404s / Permission-denied on a platform key. Docs:
+#: https://platform.moonshot.ai/docs/guide/start-using-kimi-api
+#: https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files
 KIMI_CODE_MODEL_ENV = "KIMI_CODE_MODEL"
 KIMI_CODE_MODEL_ID_ENV = "KIMI_CODE_MODEL_ID"
-DEFAULT_KIMI_CODE_MODEL = "kimi-code/k3"
+DEFAULT_KIMI_CODE_MODEL = "kimi-k3"
+DEFAULT_KIMI_CODE_MODEL_ID = "kimi-k3"
+#: Managed /login catalog aliases → Moonshot API (alias, model id).
+_MANAGED_TO_MOONSHOT = {
+    "kimi-code/k3": (DEFAULT_KIMI_CODE_MODEL, DEFAULT_KIMI_CODE_MODEL_ID),
+    "k3": (DEFAULT_KIMI_CODE_MODEL, DEFAULT_KIMI_CODE_MODEL_ID),
+    "kimi-code/kimi-for-coding": ("kimi-k2.7-code", "kimi-k2.7-code"),
+    "kimi-for-coding": ("kimi-k2.7-code", "kimi-k2.7-code"),
+    "kimi-code/kimi-for-coding-highspeed": (
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.7-code-highspeed",
+    ),
+    "kimi-for-coding-highspeed": (
+        "kimi-k2.7-code-highspeed",
+        "kimi-k2.7-code-highspeed",
+    ),
+}
+_BROKEN_MANAGED_IDS = frozenset(
+    {"k3", "kimi-for-coding", "kimi-for-coding-highspeed"}
+)
 _MODEL_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
 _DEFAULT_MODEL_RE = re.compile(
     r'(?m)^\s*default_model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
+)
+_DEFAULT_MODEL_LINE_RE = re.compile(
+    r'(?m)^\s*default_model\s*=\s*(?:"[^"]*"|\'[^\']*\'|\S+)\s*\n?'
+)
+_MODEL_FIELD_RE = re.compile(
+    r'(?m)^\s*model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
+)
+_MODEL_DENIED_HINTS = (
+    "permission denied",
+    "model_not_found",
+    "invalid model",
+    "unknown model",
+    "model does not exist",
 )
 
 #: One-line operator note. Dashboard clicks stay owner-gated.
@@ -90,6 +131,12 @@ class CodeCliNoModelConfigured(CodeCliFailed):
     """CLI refused: no default_model (headless /login is not available)."""
 
     blocker = NAMED_BLOCKER_CLI_NO_MODEL
+
+
+class CodeCliModelDenied(CodeCliFailed):
+    """CLI ran but the configured model 404'd / Permission denied."""
+
+    blocker = NAMED_BLOCKER_CLI_MODEL_DENIED
 
 
 def brief_dispatch_enabled() -> bool:
@@ -189,7 +236,7 @@ def cli_credentials_missing_detail(command: Optional[str] = None) -> str:
         f"{NAMED_BLOCKER_CLI_CREDS}: {cli!r} is an executable on this host but "
         f"{dest} is missing (credentials_file_present=false). "
         "Set KIMI_CODE_API_KEY so boot writes [providers.kimi] and "
-        "default_model (KIMI_CODE_MODEL, default kimi-code/k3) into that file "
+        "default_model (KIMI_CODE_MODEL, default kimi-k3 / Moonshot API) into that file "
         f"(or place the file yourself). {CODE_CLI_ENV} / CEREBRUM_LLM_API_KEY "
         "do not authenticate the Kimi Code CLI. HTTP oneshot is not a "
         f"FACTORY_CODE_CLI session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
@@ -363,21 +410,49 @@ def probe_code_cli() -> Dict[str, Any]:
     return probe
 
 
+def _moonshot_alias(name: str) -> str:
+    mapped = _MANAGED_TO_MOONSHOT.get(name)
+    return mapped[0] if mapped else name
+
+
+def _moonshot_model_id(name: str) -> str:
+    mapped = _MANAGED_TO_MOONSHOT.get(name)
+    if mapped:
+        return mapped[1]
+    return name.rsplit("/", 1)[-1] if name else DEFAULT_KIMI_CODE_MODEL_ID
+
+
+def kimi_code_model_env_set() -> bool:
+    return bool(
+        os.getenv(KIMI_CODE_MODEL_ENV, "").strip()
+        or os.getenv(KIMI_CODE_MODEL_ID_ENV, "").strip()
+    )
+
+
 def kimi_code_default_model() -> str:
-    """Alias written as ``default_model``. ``KIMI_CODE_MODEL`` overrides."""
+    """Alias written as ``default_model``. ``KIMI_CODE_MODEL`` overrides.
+
+    Managed ``kimi-code/k3`` / ``k3`` (Kimi Code CLI 0.41 complete example)
+    map to Moonshot ``kimi-k3`` so a platform key on api.moonshot.ai does
+    not 404. Headless Floor cannot ``/login``.
+    """
     raw = os.getenv(KIMI_CODE_MODEL_ENV, "").strip()
     if raw and _MODEL_ALIAS_RE.match(raw):
-        return raw
+        return _moonshot_alias(raw)
     return DEFAULT_KIMI_CODE_MODEL
 
 
 def kimi_code_model_id(alias: Optional[str] = None) -> str:
-    """API model id for the ``[models]`` table (last path segment of the alias)."""
+    """API model id for the ``[models]`` table (Moonshot catalog).
+
+    ``KIMI_CODE_MODEL_ID`` wins. Managed leftovers (``k3``) map to
+    ``kimi-k3``. Otherwise the last path segment of the alias.
+    """
     override = os.getenv(KIMI_CODE_MODEL_ID_ENV, "").strip()
     if override and _MODEL_ALIAS_RE.match(override):
-        return override
+        return _moonshot_model_id(override)
     name = alias or kimi_code_default_model()
-    return name.rsplit("/", 1)[-1]
+    return _moonshot_model_id(name)
 
 
 def config_default_model(text: str) -> str:
@@ -391,20 +466,63 @@ def config_has_kimi_provider(text: str) -> bool:
     return "[providers.kimi]" in (text or "")
 
 
+def _model_table_pattern(alias: str) -> re.Pattern[str]:
+    escaped = re.escape(alias)
+    return re.compile(
+        rf'(?ms)^\[models\.(?:"{escaped}"|\'{escaped}\'|{escaped})\][^\[]*(?=^\[|\Z)'
+    )
+
+
 def config_has_model_alias(text: str, alias: str) -> bool:
     if not alias:
         return False
-    blob = text or ""
-    if f'[models."{alias}"]' in blob:
+    return _model_table_pattern(alias).search(text or "") is not None
+
+
+def config_model_id(text: str, alias: str) -> str:
+    """``model =`` field under ``[models."<alias>"]``."""
+    if not alias:
+        return ""
+    block = _model_table_pattern(alias).search(text or "")
+    if not block:
+        return ""
+    match = _MODEL_FIELD_RE.search(block.group(0))
+    if not match:
+        return ""
+    return (match.group(1) or match.group(2) or match.group(3) or "").strip()
+
+
+def is_broken_managed_model(alias: str, model_id: str = "") -> bool:
+    """True for Kimi Code /login catalog names that 404 on Moonshot API."""
+    if alias in _MANAGED_TO_MOONSHOT:
         return True
-    if "/" not in alias and "." not in alias:
-        return f"[models.{alias}]" in blob
+    mid = (model_id or "").rsplit("/", 1)[-1]
+    return mid in _BROKEN_MANAGED_IDS
+
+
+def config_needs_kimi_model_rewrite(
+    text: str, alias: str, model_id: str
+) -> bool:
+    """Whether boot should mutate ``default_model`` / ``[models]``."""
+    current = config_default_model(text)
+    if not current:
+        return True
+    current_id = config_model_id(text, current)
+    if not config_has_model_alias(text, current):
+        return True
+    if is_broken_managed_model(current, current_id):
+        return True
+    if kimi_code_model_env_set() and (
+        current != alias or current_id != model_id
+    ):
+        return True
     return False
 
 
 def _model_context_size(model_id: str) -> int:
-    # k3 window from Kimi Code CLI 0.41 config-files example; others 256k.
-    return 1048576 if model_id == "k3" else 262144
+    # Moonshot K3 is 1M; Kimi Code CLI 0.41 k3 example matches. Others 256k.
+    tail = (model_id or "").rsplit("/", 1)[-1].lower()
+    return 1048576 if tail in {"k3", "kimi-k3"} else 262144
 
 
 def _provider_block(key: str, base_url: str) -> str:
@@ -431,12 +549,28 @@ def _ensure_trailing_newline(text: str) -> str:
     return text
 
 
-def apply_kimi_code_default_model(
-    text: str, *, alias: Optional[str] = None
+def _replace_or_append_model_table(
+    text: str, alias: str, model_id: str
 ) -> Tuple[str, bool]:
-    """Insert ``default_model`` + ``[models]`` when missing. Does not strip keys."""
+    block = _model_table_block(alias, model_id)
+    pattern = _model_table_pattern(alias)
+    if pattern.search(text):
+        current_id = config_model_id(text, alias)
+        if current_id == model_id:
+            return text, False
+        return pattern.sub(block.rstrip() + "\n\n", text), True
+    out = _ensure_trailing_newline(text)
+    if out and not out.endswith("\n\n"):
+        out += "\n"
+    return out + block, True
+
+
+def apply_kimi_code_default_model(
+    text: str, *, alias: Optional[str] = None, model_id: Optional[str] = None
+) -> Tuple[str, bool]:
+    """Converge ``default_model`` + ``[models]`` to alias/id. Keeps keys."""
     alias = alias or kimi_code_default_model()
-    model_id = kimi_code_model_id(alias)
+    model_id = model_id or kimi_code_model_id(alias)
     out = text or ""
     current = config_default_model(out)
     mutated = False
@@ -447,14 +581,13 @@ def apply_kimi_code_default_model(
         out = prefix + ("\n" + body if body else "")
         current = alias
         mutated = True
-    if not config_has_model_alias(out, current):
-        mid = model_id if current == alias else current.rsplit("/", 1)[-1]
-        out = _ensure_trailing_newline(out)
-        if out and not out.endswith("\n\n"):
-            out += "\n"
-        out += _model_table_block(current, mid)
+    elif current != alias:
+        out = _DEFAULT_MODEL_LINE_RE.sub(f'default_model = "{alias}"\n', out, count=1)
+        out = _model_table_pattern(current).sub("", out)
+        current = alias
         mutated = True
-    return out, mutated
+    out, table_mutated = _replace_or_append_model_table(out, current, model_id)
+    return out, mutated or table_mutated
 
 
 def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
@@ -463,18 +596,43 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
     ``FACTORY_CODE_CLI_FAILED`` stays the generic honesty class. A more
     specific ``FACTORY_CODE_CLI_NO_MODEL`` fires when the CLI prints
     ``No model configured`` (headless /login is not a Floor path).
-    A templated pilot zip is not a ≥2h CLI session.
+    ``FACTORY_CODE_CLI_MODEL_DENIED`` fires on 404 / Permission denied
+    for the configured model (live tip after #324: ``k3`` /
+    ``kimi-code/k3`` on Moonshot). A templated pilot zip is not a ≥2h
+    CLI session.
     """
     exit_bit = f"CLI exited {code}"
-    if NO_MODEL_CONFIGURED_HINT in (output or ""):
+    blob = output or ""
+    lowered = blob.lower()
+    if NO_MODEL_CONFIGURED_HINT in blob:
         return (
             NAMED_BLOCKER_CLI_NO_MODEL,
             (
                 f"{exit_bit} — No model configured. Headless Floor cannot run "
-                "`kimi` /login. Set KIMI_CODE_MODEL (default "
-                f"{DEFAULT_KIMI_CODE_MODEL}, Kimi Code CLI 0.41) so boot writes "
+                "`kimi` /login. Set KIMI_CODE_MODEL / KIMI_CODE_MODEL_ID "
+                f"(default {DEFAULT_KIMI_CODE_MODEL} / "
+                f"{DEFAULT_KIMI_CODE_MODEL_ID}, Moonshot API) so boot writes "
                 "default_model into ~/.kimi-code/config.toml. A templated "
                 f"pilot zip is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
+            ),
+        )
+    modelish = any(
+        token in lowered
+        for token in ("model", "k3", "kimi-code", "kimi-k3", "kimi-k2")
+    )
+    denied = any(hint in lowered for hint in _MODEL_DENIED_HINTS)
+    not_found_404 = "404" in lowered and modelish
+    if (denied and modelish) or not_found_404:
+        return (
+            NAMED_BLOCKER_CLI_MODEL_DENIED,
+            (
+                f"{exit_bit} — configured model 404 / Permission denied. "
+                "Headless Floor cannot run `kimi` /login. Set "
+                "KIMI_CODE_MODEL / KIMI_CODE_MODEL_ID (default "
+                f"{DEFAULT_KIMI_CODE_MODEL} / {DEFAULT_KIMI_CODE_MODEL_ID}, "
+                "Moonshot api.moonshot.ai — not managed kimi-code/k3). Boot "
+                "rewrites ~/.kimi-code/config.toml. A templated pilot zip "
+                f"is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
             ),
         )
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
@@ -483,12 +641,14 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
 def ensure_code_cli_credentials() -> Dict[str, Any]:
     """Write ~/.kimi-code/config.toml from KIMI_CODE_API_KEY when present.
 
-    Also writes ``default_model`` (``KIMI_CODE_MODEL``, default
-    ``kimi-code/k3`` — Kimi Code CLI 0.41) so non-interactive
-    ``kimi --prompt`` works without TTY ``/login``. Mutates an existing
-    credentials-only file that is missing a model. Does not install the
-    binary. Skipped when the secret is unset — owner-gated stays
-    owner-gated. Does not claim the Render dashboard is set.
+    Also writes ``default_model`` (``KIMI_CODE_MODEL`` /
+    ``KIMI_CODE_MODEL_ID``, default Moonshot ``kimi-k3``) so
+    non-interactive ``kimi --prompt`` works without TTY ``/login``.
+    Mutates an existing credentials-only file and a #324
+    ``kimi-code/k3`` / ``k3`` file that 404s on api.moonshot.ai. Does
+    not install the binary. Skipped when the secret is unset —
+    owner-gated stays owner-gated. Does not claim the Render dashboard
+    is set. Does not claim Floor re-prove.
     """
     key = (
         os.getenv("KIMI_CODE_API_KEY", "").strip()
@@ -497,6 +657,7 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
     home = kimi_credentials_home()
     dest = kimi_credentials_file()
     alias = kimi_code_default_model()
+    model_id = kimi_code_model_id(alias)
     if not key:
         logger.info(OWNER_GATED_CLI_LOG)
         return {
@@ -509,17 +670,16 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
     existing = dest.read_text(encoding="utf-8") if existed else ""
     has_provider = config_has_kimi_provider(existing)
     current_model = config_default_model(existing)
-    if (
-        has_provider
-        and current_model
-        and config_has_model_alias(existing, current_model)
-    ):
+    current_id = config_model_id(existing, current_model)
+    rewrite_model = config_needs_kimi_model_rewrite(existing, alias, model_id)
+    if has_provider and current_model and not rewrite_model:
         return {
             "ok": True,
             "wrote": False,
             "mutated": False,
             "path": str(dest),
             "model": current_model,
+            "model_id": current_id,
             "reason": "already present",
         }
     home.mkdir(parents=True, exist_ok=True)
@@ -530,19 +690,32 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
         text = _ensure_trailing_newline(text)
         text = text + ("\n" if text else "") + _provider_block(key, base_url)
         wrote_provider = True
-    text, mutated_model = apply_kimi_code_default_model(text, alias=alias)
+    apply_alias = alias
+    if (
+        current_model
+        and not is_broken_managed_model(current_model, current_id)
+        and not kimi_code_model_env_set()
+    ):
+        apply_alias = current_model
+    text, mutated_model = apply_kimi_code_default_model(
+        text, alias=apply_alias, model_id=kimi_code_model_id(apply_alias)
+    )
     dest.write_text(text, encoding="utf-8")
+    written_alias = config_default_model(text) or apply_alias
+    written_id = config_model_id(text, written_alias) or model_id
     logger.info(
-        "wrote Kimi Code CLI credentials to %s (model=%s; binary still required)",
+        "wrote Kimi Code CLI credentials to %s (model=%s id=%s; binary still required)",
         dest,
-        config_default_model(text) or alias,
+        written_alias,
+        written_id,
     )
     return {
         "ok": True,
         "wrote": wrote_provider,
         "mutated": bool(existed and mutated_model),
         "path": str(dest),
-        "model": config_default_model(text) or alias,
+        "model": written_alias,
+        "model_id": written_id,
         "reason": "mutated" if existed and mutated_model else "wrote",
     }
 
