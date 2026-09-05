@@ -779,7 +779,7 @@ test('Your Platforms keeps Export when CLI-failed receipt sits on a pilot-ready 
 
   await page.goto('/platforms')
   await expect(page.getByTestId('platforms-pilot-ready-pill')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText(/Founding-customer-ready/)).toBeVisible()
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveText('Founding-customer-ready')
   await expect(page.getByText(/Finished — 1 artifacts; 23 templated/)).toBeVisible()
   const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
   await expect(download).toBeVisible()
