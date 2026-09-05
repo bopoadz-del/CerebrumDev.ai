@@ -57,11 +57,11 @@ export function Platforms({
         .get(sessionId)
         .then(async (next) => {
           setDesign(next)
-          // product GET does not carry live runner progress (phases / last event).
-          // Refresh re-fetches build-status (including while building). Never POST
-          // generate from this button. Initial load skips build-status — the
-          // watchBuildStatus effect owns the live snapshot; a slow not_started
-          // reply must not clobber a succeeded/building tick from the watcher.
+          // product GET now re-reads the ledger onto generation.build, but
+          // Refresh still fetches build-status (including while building). Never
+          // POST generate from this button. Initial load skips build-status —
+          // the watchBuildStatus effect owns the live snapshot; a slow
+          // not_started reply must not clobber a succeeded/building tick.
           if (!next.generation) {
             setBuild(null)
             return

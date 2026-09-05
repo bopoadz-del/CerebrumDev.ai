@@ -1109,10 +1109,12 @@ def _is_keepable_handler(text: str) -> bool:
     Prepared brief-driven event_bus steps must survive the fallback
     envelope even when the module omitted CAPABILITY_ID. Unprepared
     ``{'block': 'event_bus', 'input': payload}`` must NOT be kept —
-    including a prepared step_1 plus an unprepared step_2
-    (appointment_booking class after #323). That is how PRODUCT
-    ``workflow: step_2 (event_bus): error`` locked in
-    (sess_d70c18ef58ab48e6).
+    including an unprepared step_1 (appointment_scheduling after #325)
+    and a prepared step_1 plus an unprepared step_2
+    (appointment_booking class after #323). A factory wrap around raw
+    children is not keepable. That is how PRODUCT
+    ``workflow: step_1 (event_bus): error`` locked in
+    (sess_14e690829d1f4282).
     """
     blob = text or ""
     if "def handle(" not in blob:

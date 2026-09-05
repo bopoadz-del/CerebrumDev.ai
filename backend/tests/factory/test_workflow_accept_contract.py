@@ -35,12 +35,14 @@ from app.factory.build.schema_accept import (
 )
 from app.factory.build.workflow_accept import (
     APPOINTMENT_BOOKING_STYLE,
+    APPOINTMENT_SCHEDULING_STYLE,
     EVENT_BUS_STEP_ACTION,
     EVENT_BUS_STEP_CHANNEL,
     PREPARED_EVENT_BUS_STEP_EXAMPLE,
     PRODUCT_ACCEPT_CHECK,
     PRODUCT_ACCEPT_TEST,
     PRODUCT_EMAIL_SAMPLE,
+    PRODUCT_EVENT_BUS_STEP_1_HALT,
     PRODUCT_EVENT_BUS_STEP_2_HALT,
     PRODUCT_EVENT_BUS_STEP_CLASS,
     PRODUCT_EVENT_BUS_STEP_HALT,
@@ -51,6 +53,7 @@ from app.factory.build.workflow_accept import (
     event_bus_steps_from_handler,
     event_bus_workflow_capability_ids,
     event_bus_workflow_handler_errors,
+    handler_builds_unparsed_event_bus_workflow,
     handler_has_factory_event_bus_wrap,
     handler_has_prepared_event_bus_step,
     handler_satisfies_event_bus_contract,
@@ -292,9 +295,12 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert "never the raw schema sample" in text
     assert "appointment_scheduling" in text
     assert "appointment_booking" in text
+    assert PRODUCT_EVENT_BUS_STEP_1_HALT in text
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in text
+    assert APPOINTMENT_SCHEDULING_STYLE in text
     assert APPOINTMENT_BOOKING_STYLE in text
     assert "every event_bus" in text
+    assert "keep/done" in text
     assert "reminders_notifications" in text
     assert PREPARED_EVENT_BUS_STEP_EXAMPLE in text
     assert "'input': payload" in text
@@ -351,11 +357,14 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert "'input': payload" in contract
     assert "appointment_scheduling" in contract
     assert "appointment_booking" in contract
+    assert PRODUCT_EVENT_BUS_STEP_1_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in contract
     assert "reminders_notifications" in contract
+    assert "keep/done" in contract
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_ACCEPT_TEST in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_HALT in _WHOLE_JOB_SYSTEM
+    assert PRODUCT_EVENT_BUS_STEP_1_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in _WHOLE_JOB_SYSTEM
     assert "appointment_booking" in _WHOLE_JOB_SYSTEM
     assert "channel=mcp" in _WHOLE_JOB_SYSTEM
@@ -398,7 +407,7 @@ def test_prepared_handler_contract_helpers():
     wrapped = "from app.block_inputs import prepare_block_input\n" + UNPREPARED_HANDLER
     assert handler_satisfies_event_bus_contract(wrapped) is False
     assert handler_has_factory_event_bus_wrap(FACTORY_WRAP_UNPREPARED) is True
-    assert handler_satisfies_event_bus_contract(FACTORY_WRAP_UNPREPARED) is True
+    assert handler_satisfies_event_bus_contract(FACTORY_WRAP_UNPREPARED) is False
 
 
 def test_mixed_step2_handler_fails_contract():
@@ -448,7 +457,7 @@ def test_harness_passes_prepared_and_wrapped_handlers(tmp_path):
         PREPARED_HANDLER, encoding="utf-8"
     )
     (actions / "reminders_and_notifications.py").write_text(
-        FACTORY_WRAP_UNPREPARED, encoding="utf-8"
+        PREPARED_HANDLER, encoding="utf-8"
     )
     (actions / "reminders_notifications.py").write_text(
         PREPARED_HANDLER, encoding="utf-8"
@@ -597,3 +606,84 @@ def test_mutation_step2_product_email_channel_fails_writer_check(tmp_path):
     )
     errors = event_bus_workflow_handler_errors(tmp_path, compiled)
     assert any("appointment_booking" in e and "step_2" in e for e in errors)
+
+
+PAYLOAD_GET_TOPIC_HANDLER = (
+    "def handle(payload):\n"
+    "    steps = [{\n"
+    "        'block': 'event_bus',\n"
+    "        'action': 'publish',\n"
+    "        'input': {\n"
+    "            'topic': payload.get('event'),\n"
+    "            'payload': {'reference': payload.get('reference')},\n"
+    "            'message': payload.get('status'),\n"
+    "            'channel': 'mcp',\n"
+    "        },\n"
+    "    }]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+DYNAMIC_UNPARSED_STEP1 = (
+    "def handle(payload):\n"
+    "    step = {}\n"
+    "    step['block'] = 'event_bus'\n"
+    "    step['input'] = payload\n"
+    "    steps = [step]\n"
+    "    return execute('workflow', {'steps': steps}, action='run')\n"
+)
+
+
+def test_factory_wrap_does_not_green_unprepared_step1():
+    """#325 wrap free-pass let WRITER done while PRODUCT refused step_1."""
+    assert handler_has_factory_event_bus_wrap(FACTORY_WRAP_UNPREPARED) is True
+    assert handler_satisfies_event_bus_contract(FACTORY_WRAP_UNPREPARED) is False
+    steps = event_bus_steps_from_handler(FACTORY_WRAP_UNPREPARED)
+    assert (1, False) in steps
+
+
+def test_appointment_scheduling_step1_cannot_pass_writer_while_product_red(tmp_path):
+    """Live sess_14e690829d1f4282 class must fail [check:event_bus_workflow]."""
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(_Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")),
+        store_ids={"event_bus", "workflow"},
+    )
+    assert "appointment_scheduling" in event_bus_workflow_capability_ids(compiled)
+    assert APPOINTMENT_SCHEDULING_STYLE in compiled.text
+    assert PRODUCT_EVENT_BUS_STEP_1_HALT in compiled.text
+    actions = tmp_path / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "appointment_scheduling.py").write_text(
+        FACTORY_WRAP_UNPREPARED, encoding="utf-8"
+    )
+    errors = event_bus_workflow_handler_errors(tmp_path, compiled)
+    assert any("appointment_scheduling" in e and "step_1" in e for e in errors)
+    with pytest.raises(EventBusWorkflowHalt) as halted:
+        assert_event_bus_workflow_handlers(tmp_path, compiled)
+    assert WRITER_EVENT_BUS_WORKFLOW_HALT in str(halted.value)
+    assert "appointment_scheduling" in str(halted.value)
+    assert "step_1" in str(halted.value)
+
+
+def test_payload_get_topic_without_fallback_is_unprepared():
+    """PRODUCT sample has no event key — payload.get('event') is None."""
+    assert handler_has_prepared_event_bus_step(PAYLOAD_GET_TOPIC_HANDLER) is True
+    assert handler_satisfies_event_bus_contract(PAYLOAD_GET_TOPIC_HANDLER) is False
+    assert event_bus_steps_from_handler(PAYLOAD_GET_TOPIC_HANDLER) == [(1, False)]
+
+
+def test_dynamic_unparsed_step1_fails_contract():
+    """CLI step['block'] = 'event_bus' + input=payload must not vacuous-pass."""
+    assert handler_builds_unparsed_event_bus_workflow(DYNAMIC_UNPARSED_STEP1) is True
+    assert handler_satisfies_event_bus_contract(DYNAMIC_UNPARSED_STEP1) is False
+
+
+def test_wrapped_prepared_step1_still_passes():
+    wrapped = (
+        "def _watched(block_id, *a, **kw):\n"
+        "    prepared = _prepare_block_input(block_id, data, action=action)\n"
+        "    return _dispatch.execute(block_id, prepared, action=action)\n"
+        + PREPARED_HANDLER
+    )
+    assert handler_has_factory_event_bus_wrap(wrapped) is True
+    assert handler_satisfies_event_bus_contract(wrapped) is True

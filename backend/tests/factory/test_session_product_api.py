@@ -207,6 +207,75 @@ def test_stalled_build_cannot_be_downloaded(client, tmp_path):
     assert "full-pilot" in detail or "stalled" in detail.lower()
 
 
+def test_product_get_rereads_terminal_ledger_onto_generation_build(client, tmp_path):
+    """GET /product must not keep the session-start building snapshot.
+
+    Live sess_14e690829d1f4282: generation.build stayed state=building,
+    current_phase=COLLECTOR, phases_done=0, last_event_age_s≈0.7 while
+    Floor correctly showed CODING AGENT STOPPED off the live ledger.
+    """
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger, EventKind
+
+    create_session("sess_frozen_gen", "tester")
+    out = tmp_path / "veterinary-care"
+    out.mkdir()
+    (out / "README.md").write_text("torn", encoding="utf-8")
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="veterinary-care", inputs_hash="vet-hash")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.COLLECTOR, detail="COLLECTOR")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.COLLECTOR, detail="ok")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.CLONER, detail="CLONER")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.CLONER, detail="ok")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(EventKind.GATE_PASSED, role=BuildRole.WRITER, detail="ok")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+    ledger.append(EventKind.GATE_FAILED, role=BuildRole.TESTER, detail="pilot red")
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.TESTER,
+        detail=(
+            "rework budget of 3 exhausted; TESTER gate still failing: "
+            "PRODUCT (pilot-marked suite): suite is red: schema sample refused; "
+            "schema sample refused (event_bus workflow step); "
+            "accept-payload persisted nothing — FAILED "
+            "tests/test_routes.py::test_every_capability_route_accepts_payload"
+        ),
+        payload={"cycle": "pilot", "outcome": "FAILED_BUDGET_SPENT", "rework_used": 3},
+    )
+
+    state = get_session("sess_frozen_gen")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "veterinary-care",
+        "inputs_hash": "vet-hash",
+        "engine": "runner",
+        "build": {
+            "state": "building",
+            "current_phase": {"id": "COLLECTOR", "label": "Binding surveyor"},
+            "phases_done": 0,
+            "phases_total": 5,
+            "last_event_age_s": 0.7,
+            "stale": False,
+        },
+        "phases_done": 0,
+    }
+    update_session("sess_frozen_gen", state)
+
+    product = client.get("/v1/sessions/sess_frozen_gen/product")
+    assert product.status_code == 200, product.text
+    gen = product.json()["generation"]
+    assert gen["build"]["state"] == "failed"
+    assert gen["build"]["phases_done"] >= 2
+    assert gen["phases_done"] == gen["build"]["phases_done"]
+    assert "rework budget of 3 exhausted" in str(gen["build"].get("detail") or "")
+
+    status = client.get("/v1/sessions/sess_frozen_gen/product/build-status")
+    assert status.status_code == 200
+    assert status.json()["build"]["state"] == "failed"
+
+
 def test_product_export_omits_tester_caches(tmp_path):
     """shutil.make_archive shipped the TESTER's __pycache__ and .pytest_cache
     in the live winery-hospitality zip (146 files, lots of bytecode)."""
