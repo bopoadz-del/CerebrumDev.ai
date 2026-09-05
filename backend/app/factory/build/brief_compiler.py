@@ -38,7 +38,11 @@ from app.factory.build.intake_blueprint import (
     validate_intake,
 )
 from app.factory.build.product_gate import GATE_SCOPES
-from app.factory.build.reuse_lookup import ReuseRecord, resolve_store_presence
+from app.factory.build.reuse_lookup import (
+    ReuseRecord,
+    is_store_exact_id_miss,
+    resolve_store_presence,
+)
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.coder import coder_budget_s
 from app.factory.delivery_standard import DOMAIN_PACK_FIELDS
@@ -69,6 +73,7 @@ class InventoryItem:
     block_ids: List[str] = field(default_factory=list)
     verified_present: List[str] = field(default_factory=list)
     missing: List[str] = field(default_factory=list)
+    dropped_reuse: List[str] = field(default_factory=list)
     notes: str = ""
     reads: List[str] = field(default_factory=list)
     writes: List[str] = field(default_factory=list)
@@ -149,8 +154,12 @@ def compile_inventory(
     """Classify each planned capability as verified REUSE, gap, or missing.
 
     Never assume a block exists. A claimed id that is not in ``store_ids``
-    (or whose REUSE record says present=false) is flagged missing — the
-    runner must halt before the build step.
+    is flagged missing — the runner must halt before the build step.
+
+    A Store exact-id ``present: false`` is different: the architect invented
+    REUSE (often from the local vendor mirror / dual-registry). Drop the
+    claim so the capability is a named GAP. Do not HALT the session and do
+    not keep the REUSE line.
     """
     known = {str(b) for b in store_ids if str(b).strip()}
     records = dict(reuse_records or {})
@@ -161,6 +170,7 @@ def compile_inventory(
         claimed = [str(b) for b in (getattr(cap, "block_ids", None) or []) if str(b).strip()]
         present: List[str] = []
         missing: List[str] = []
+        dropped: List[str] = []
         reads: List[str] = []
         writes: List[str] = []
         never: List[str] = []
@@ -174,26 +184,38 @@ def compile_inventory(
                     writes.extend(rec.writes)
                     never.extend(rec.never)
                     acceptance.extend(rec.acceptance)
+                elif is_store_exact_id_miss(rec):
+                    dropped.append(bid)
                 else:
                     missing.append(bid)
             elif bid in known:
                 present.append(bid)
             else:
                 missing.append(bid)
+        honest_claimed = [bid for bid in claimed if bid not in dropped]
         notes = str(getattr(cap, "notes", "") or "")
+        if dropped:
+            drop_note = (
+                "unverified REUSE dropped (Store exact-id present=false): "
+                + ", ".join(dropped)
+            )
+            notes = f"{notes} ({drop_note})" if notes else drop_note
         if missing:
             label = "MISSING"
         elif present:
             label = "REUSE" if strategy in {"", "REUSE", "COMPOSE", "ADAPT"} else strategy
+        elif dropped:
+            label = "GAP"
         else:
             label = "GAP" if strategy in {"", "REUSE", "COMPOSE"} else strategy
         items.append(
             InventoryItem(
                 capability_id=cid,
                 strategy=label,
-                block_ids=claimed,
+                block_ids=honest_claimed,
                 verified_present=present,
                 missing=missing,
+                dropped_reuse=dropped,
                 notes=notes,
                 reads=sorted(set(reads)),
                 writes=sorted(set(writes)),
@@ -379,11 +401,19 @@ def render_slot_bodies(
     packed_intake = dict(intake or {})
 
     cap_lines: List[str] = []
+    inv_by_cid = {item.capability_id: item for item in inventory}
     for cap in getattr(plan, "capabilities", ()) or ():
         cid = str(getattr(cap, "capability_id", "") or getattr(cap, "id", "") or "")
         desc = _capability_description(cap) or cid
-        bids = [str(b) for b in (getattr(cap, "block_ids", None) or []) if str(b).strip()]
-        strategy = str(getattr(cap, "strategy", "") or "")
+        item = inv_by_cid.get(cid)
+        if item is not None:
+            bids = list(item.block_ids)
+            strategy = item.strategy
+            if item.dropped_reuse:
+                desc = item.notes or desc
+        else:
+            bids = [str(b) for b in (getattr(cap, "block_ids", None) or []) if str(b).strip()]
+            strategy = str(getattr(cap, "strategy", "") or "")
         cap_lines.append(
             f"- {cid} [{strategy or 'planned'}]: {desc}"
             + (f"  blocks={bids}" if bids else "  (no block ids — genuine gap)")
@@ -403,7 +433,12 @@ def render_slot_bodies(
                 f"- {item.capability_id}: REUSE {item.verified_present} "
                 "(verified present in Store registry)"
             )
-        if item.is_gap or (not item.verified_present and not item.missing):
+        if item.dropped_reuse and not item.verified_present:
+            gap_lines.append(
+                f"- {item.capability_id}: GAP — unverified REUSE dropped "
+                f"(Store exact-id present=false): {', '.join(item.dropped_reuse)}"
+            )
+        elif item.is_gap or (not item.verified_present and not item.missing):
             gap_lines.append(
                 f"- {item.capability_id}: GAP — author this logic "
                 f"({item.notes or item.strategy or 'no verified block'})"
@@ -615,8 +650,10 @@ def _line_sources_for(
     for item in inventory:
         if item.capability_id:
             sources[item.capability_id] = f"blueprint.capabilities.{item.capability_id}"
-        for bid in item.block_ids + item.verified_present:
+        for bid in item.block_ids + item.verified_present + item.dropped_reuse:
             sources[bid] = f"manifest.block.{bid}"
+        if item.notes:
+            sources[item.notes.strip()[:80]] = f"blueprint.capabilities.{item.capability_id}"
     for key, body in slots.items():
         sources[f"slot:{key}"] = f"template.{key}"
         for line in body.splitlines():

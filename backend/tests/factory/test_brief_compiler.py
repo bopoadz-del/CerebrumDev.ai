@@ -183,11 +183,12 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
         verify_inventory(poisoned)
 
 
-def test_reuse_http_present_false_is_a_named_missing_id(monkeypatch):
-    """STEP 0 trusts the Blocks REUSE 200 body, not a local assumption.
+def test_reuse_http_present_false_drops_invented_reuse_claim(monkeypatch):
+    """STEP 0 trusts the Blocks exact-id 200 body, not a local shelf hit.
 
     CI has no CEREBRUM_API_URL (unlike a local .env). The injected getter
-    must still run so present:false fail-closes.
+    must still run. present:false is an invented REUSE claim — drop it to
+    a named GAP. Do not HALT the session; do not keep the REUSE line.
     """
     from app.factory.build.reuse_lookup import ReuseRecord
 
@@ -202,10 +203,39 @@ def test_reuse_http_present_false_is_a_named_missing_id(monkeypatch):
         store_ids={"event_bus"},
         reuse_http_get=fake_get,
     )
-    assert compiled.missing_reuse == ["event_bus"]
+    assert compiled.missing_reuse == []
     assert compiled.reuse_records["event_bus"]["present"] is False
-    with pytest.raises(InventoryHalt, match="event_bus"):
+    item = compiled.inventory[0]
+    assert item.dropped_reuse == ["event_bus"]
+    assert item.verified_present == []
+    assert item.missing == []
+    assert item.is_gap
+    verify_inventory(compiled)
+    assert "unverified REUSE dropped" in compiled.text
+    assert "Store exact-id present=false" in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    reuse_section = compiled.text.split("REUSE (verified present):", 1)[1].split(
+        "GAPS (you author", 1
+    )[0]
+    assert "event_bus" not in reuse_section
+
+
+def test_planted_reuse_claim_for_absent_id_still_rejects():
+    """Mutation: a brief that still claims REUSE for a ghost id is refused."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("clinic_intake", [], "GENERATE")),
+        store_ids={"event_bus"},
+    )
+    verify_inventory(compiled)
+    compiled.missing_reuse = ["not_a_real_block"]
+    compiled.inventory[0].missing = ["not_a_real_block"]
+    compiled.inventory[0].strategy = "REUSE"
+    with pytest.raises(InventoryHalt, match="not_a_real_block"):
         verify_inventory(compiled)
+    planted = lint_brief(compiled)
+    assert planted.ok is False
+    assert any("unresolved block id" in e for e in planted.errors)
 
 
 def test_reuse_http_l2_fields_appear_in_brief_when_declared(monkeypatch):
@@ -300,3 +330,82 @@ def test_case_sensitive_claimed_reuse_does_not_match_folded_id():
     assert compiled.missing_reuse == ["DocumentEngine"]
     with pytest.raises(InventoryHalt, match="DocumentEngine"):
         verify_inventory(compiled)
+
+
+def test_vetcare_invented_readiness_engine_reuse_dropped_on_store_miss(monkeypatch):
+    """Live sess_8ef2f7b7ae594b85: architect claimed readiness_engine REUSE.
+
+    The Factory vendor mirror / dual-registry lists readiness_engine (estate
+    property-readiness). The Blocks exact-id surface does not. STEP 0 must
+    drop the claim — veterinarian_availability_tracking is a GAP — not HALT
+    before WRITER with BRIEF_LINT_REJECTED.
+    """
+    from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
+
+    def fake_get(block_id, base_url=None):
+        return ReuseRecord(block_id=block_id, present=False, source="registry/blocks")
+
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(
+            _Cap(
+                "veterinarian_availability_tracking",
+                ["readiness_engine"],
+                "REUSE",
+            )
+        ),
+        store_ids={"readiness_engine", "event_bus"},
+        reuse_http_get=fake_get,
+    )
+    assert compiled.missing_reuse == []
+    item = compiled.inventory[0]
+    assert item.capability_id == "veterinarian_availability_tracking"
+    assert item.dropped_reuse == ["readiness_engine"]
+    assert item.block_ids == []
+    assert item.verified_present == []
+    assert item.missing == []
+    assert item.is_gap
+    verify_inventory(compiled)
+    result = lint_brief(compiled)
+    assert result.ok, result.errors
+    assert "unverified REUSE dropped" in compiled.text
+    assert "readiness_engine" in compiled.text
+    reuse_section = compiled.text.split("REUSE (verified present):", 1)[1].split(
+        "GAPS (you author", 1
+    )[0]
+    assert "readiness_engine" not in reuse_section
+    assert "veterinarian_availability_tracking:readiness_engine" not in compiled.text
+
+
+def test_vetcare_readiness_engine_reuse_kept_when_exact_id_hits(monkeypatch):
+    """If the Store exact-id endpoint confirms the id, REUSE stands."""
+    from app.factory.build.reuse_lookup import ReuseRecord
+
+    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
+
+    def fake_get(block_id, base_url=None):
+        return ReuseRecord(block_id=block_id, present=True, source="registry/blocks")
+
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(
+            _Cap(
+                "veterinarian_availability_tracking",
+                ["readiness_engine"],
+                "REUSE",
+            )
+        ),
+        store_ids={"readiness_engine"},
+        reuse_http_get=fake_get,
+    )
+    verify_inventory(compiled)
+    item = compiled.inventory[0]
+    assert item.verified_present == ["readiness_engine"]
+    assert item.dropped_reuse == []
+    assert item.missing == []
+    assert item.is_reuse
+    assert compiled.missing_reuse == []
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    assert "REUSE ['readiness_engine']" in compiled.text

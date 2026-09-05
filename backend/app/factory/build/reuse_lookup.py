@@ -410,3 +410,16 @@ def resolve_store_presence(
 
 def present_ids(records: Dict[str, ReuseRecord]) -> Set[str]:
     return {bid for bid, rec in records.items() if rec.present}
+
+
+def is_store_exact_id_miss(record: Optional[ReuseRecord]) -> bool:
+    """True when the Blocks exact-id surface said ``present: false``.
+
+    That is not a ghost id (local ``absent``) and not a local shelf hit.
+    STEP 0 must drop the REUSE claim rather than invent presence from the
+    Factory vendor mirror / dual-registry.
+    """
+    if record is None or record.present:
+        return False
+    src = (record.source or "").strip().lower()
+    return src.startswith("registry/")
