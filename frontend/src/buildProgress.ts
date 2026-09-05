@@ -38,9 +38,18 @@ const CLAIMED_LEVELS = new Set<string>([
  */
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
-  if (isCoderCliFailed(build) || isScaffoldClaim(build)) return 'SCAFFOLD'
   const claimed = String(build.level_grade?.level || '').toUpperCase()
   const ready = build.pilot_ready === true
+  // Authoritative fail fields win over a founding/CLI receipt overclaim.
+  // Do not force SCAFFOLD from coder_receipt alone when pilot_ready is true.
+  if (
+    productSuiteFailed(build) ||
+    outcomeFailed(build) ||
+    build.state === 'failed' ||
+    build.state === 'stalled'
+  ) {
+    return 'SCAFFOLD'
+  }
   if (!ready) {
     if (claimed === 'STORE_GREEN' || claimed === 'FOUNDING_CUSTOMER_READY') {
       return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
@@ -85,7 +94,7 @@ export function levelGradeLabel(level: LevelGradeName, sourced = true): string {
 /** True only for a Store-green / founding zip — never CODE_GREEN or in-flight. */
 export function isPilotZipReady(build: BuildStatus | null | undefined): boolean {
   if (!build || build.state !== 'succeeded' || build.pilot_ready !== true) return false
-  if (isCoderCliFailed(build) || isScaffoldClaim(build)) return false
+  if (productSuiteFailed(build) || outcomeFailed(build)) return false
   const level = honestLevel(build)
   return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
 }
@@ -277,7 +286,7 @@ export function isUnreadableLedger(build: BuildStatus | null | undefined): boole
 const CLI_FAIL_TEXT =
   /FACTORY_CODE_CLI_FAILED|FACTORY_CODE_CLI_UNAVAILABLE|FACTORY_CODE_CLI_MODEL_DENIED|CLI exited/i
 
-/** Receipt or ledger says the Kimi Code CLI failed — never a founding zip. */
+/** Receipt or ledger says the Kimi Code CLI failed. Not enough alone to refuse Export. */
 export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
   const receipt = build.coder_receipt
@@ -299,13 +308,60 @@ export function isScaffoldClaim(build: BuildStatus | null | undefined): boolean 
   return String(build?.level_grade?.level || '').toUpperCase() === 'SCAFFOLD'
 }
 
-function cliFailDetail(build: BuildStatus): string {
+/** PRODUCT three-gate is red — never a founding / gold Export. */
+export function productSuiteFailed(build: BuildStatus | null | undefined): boolean {
+  const verdict = build?.level_grade?.three_gate?.PRODUCT
+  return Boolean(verdict && /FAIL|RED/i.test(String(verdict)))
+}
+
+/** Ledger outcome is a named failure (FAILED_BUDGET_SPENT, …). */
+export function outcomeFailed(build: BuildStatus | null | undefined): boolean {
+  const outcome = String(build?.outcome || '').trim()
+  if (!outcome) return false
+  if (/^(SUCCESS|PASS|SUCCEEDED)$/i.test(outcome)) return false
+  return /FAIL/i.test(outcome)
+}
+
+/**
+ * Authoritative pilot-ready SUCCESS. CLI billing miss + factory-grounded
+ * REUSE keep-path (#338) is an allowed honesty class when these fields hold.
+ */
+export function isAuthoritativePilotReady(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  if (build.state !== 'succeeded') return false
+  if (build.pilot_ready !== true) return false
+  if (outcomeFailed(build)) return false
+  if (productSuiteFailed(build)) return false
+  return true
+}
+
+/**
+ * Refuse Finished / gold Download / founding chips. Prefer authoritative
+ * build fields (pilot_ready, outcome, state, PRODUCT) over a raw
+ * FACTORY_CODE_CLI_FAILED receipt.
+ */
+export function shouldRefuseExport(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  if (build.state === 'building' || build.state === 'not_started') return false
+  if (isUnreadableLedger(build)) return true
+  if (build.state === 'failed') return true
+  if (productSuiteFailed(build)) return true
+  if (outcomeFailed(build)) return true
+  if (isAuthoritativePilotReady(build)) return false
+  if (isCoderCliFailed(build)) return true
+  if (isScaffoldClaim(build) && build.pilot_ready !== true) return true
+  return false
+}
+
+function refuseExportDetail(build: BuildStatus): string {
+  if (build.detail) return build.detail
+  if (productSuiteFailed(build)) return 'PRODUCT suite failed'
+  if (outcomeFailed(build)) return String(build.outcome)
   const receipt = build.coder_receipt
   const fromFailures = Object.values(build.authorship?.coder_failures ?? {}).find((value) =>
     CLI_FAIL_TEXT.test(value),
   )
   return (
-    build.detail ||
     receipt?.detail ||
     (receipt?.blocker ? String(receipt.blocker) : '') ||
     fromFailures ||
@@ -314,15 +370,15 @@ function cliFailDetail(build: BuildStatus): string {
 }
 
 /**
- * CLI-failed / SCAFFOLD honesty: a succeeded + founding payload must not
- * stay Finished / Downloadable when the coder receipt (or grade) says fail.
+ * Demote Finished / Downloadable paint only when the build is not
+ * actually pilot-ready. A FACTORY_CODE_CLI_FAILED receipt after a
+ * SUCCESS + pilot_ready keep-path must not strip Export.
  */
 export function withExportHonesty(build: BuildStatus | null): BuildStatus | null {
   if (!build) return build
   if (build.state === 'building' || build.state === 'not_started') return build
-  const cliFailed = isCoderCliFailed(build)
-  const scaffold = isScaffoldClaim(build)
-  if (!cliFailed && !scaffold) return build
+  if (isAuthoritativePilotReady(build)) return build
+  if (!shouldRefuseExport(build)) return build
   const grade = {
     ...(build.level_grade ?? {}),
     level: 'SCAFFOLD',
@@ -340,7 +396,7 @@ export function withExportHonesty(build: BuildStatus | null): BuildStatus | null
     state: 'failed',
     pilot_ready: false,
     level_grade: grade,
-    detail: cliFailDetail(build),
+    detail: refuseExportDetail(build),
   }
 }
 
@@ -407,7 +463,7 @@ export function platformsLeadCopy(
   if (isUnreadableLedger(build)) {
     return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
-  if (isCoderCliFailed(build) || isScaffoldClaim(build)) {
+  if (shouldRefuseExport(build)) {
     return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
   if (!build || build.state === 'building' || build.state === 'not_started' || build.state === 'unknown') {
@@ -488,12 +544,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   ghost: boolean
   title?: string
 } {
-  if (
-    isUnreadableLedger(build) ||
-    build?.state === 'failed' ||
-    isCoderCliFailed(build) ||
-    isScaffoldClaim(build)
-  ) {
+  if (isUnreadableLedger(build) || build?.state === 'failed' || shouldRefuseExport(build)) {
     return {
       label: 'Export (.zip) — pilot suite failed',
       disabled: true,
