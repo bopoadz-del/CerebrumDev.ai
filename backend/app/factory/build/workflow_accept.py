@@ -521,7 +521,8 @@ def workflow_accept_brief_contract() -> str:
         f"including step_2+ "
         f"(block=event_bus, action={EVENT_BUS_STEP_ACTION}, topic, "
         f"payload dict, message, channel={EVENT_BUS_STEP_CHANNEL}) — never "
-        f"forward the raw sample as 'input': payload. A prepared step_1 plus "
+        f"forward the raw sample as 'input': payload. Unprepared steps fail as "
+        f"{PRODUCT_EVENT_BUS_STEP_HALT!r}. A prepared step_1 plus "
         f"an unprepared step_2 still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT!r} "
         f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
