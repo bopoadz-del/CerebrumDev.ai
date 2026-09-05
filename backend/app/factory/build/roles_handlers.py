@@ -2497,6 +2497,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     / FACTORY_CODE_CLI_CREDENTIALS_MISSING) before WRITER progress.
     A CLI exit of "No model configured" is FACTORY_CODE_CLI_NO_MODEL
     (still FACTORY_CODE_CLI_FAILED honesty; not a ≥2h CLI session).
+    A 404 / Permission denied on the configured model is
+    FACTORY_CODE_CLI_MODEL_DENIED (distinct from NO_MODEL).
     HTTP oneshot stays behind FACTORY_BRIEF_HTTP_ONESHOT=1 (CI).
     Per-capability handle() shots stay behind FACTORY_BRIEF_DISPATCH=0.
     Inventory is checked against the Store registry before any handler
