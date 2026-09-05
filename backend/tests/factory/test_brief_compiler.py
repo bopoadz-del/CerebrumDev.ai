@@ -85,6 +85,8 @@ def test_compiled_brief_has_the_gated_shape():
     assert "writer_behaviour" in text
     assert "no capability accepted its own schema" in text
     assert "[check:writer_behaviour]" in text
+    assert "from app.actions import" in text
+    assert "workspace does not import" in text
     assert "test_every_capability_route_accepts_payload" in text
     assert "workflow: step_N (event_bus): error" in text
     assert "workflow: step_1 (event_bus): error" in text

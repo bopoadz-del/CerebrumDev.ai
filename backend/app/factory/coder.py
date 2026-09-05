@@ -1482,7 +1482,9 @@ Return ONLY a JSON object, no prose and no markdown fences:
 Rules:
 - Include every capability id you were given. Do not invent extra ids.
 - Handler bodies obey the same contract as a single handle() shot:
-  execute() every BLOCK_IDS entry, action= keyword only, no imports,
+  execute() every BLOCK_IDS entry, action= keyword only, no imports
+  (especially not app.actions / app.routes / app.main — circular
+  package init fails writer_behaviour as workspace does not import),
   return a dict with capability=CAPABILITY_ID.
 - status fields use the envelope vocabulary open|in_progress|closed.
 - Do not claim REUSE for a block id that STEP 0 flagged missing.
