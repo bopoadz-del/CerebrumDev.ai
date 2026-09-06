@@ -377,8 +377,13 @@ def emit_storage_aiofiles(text: str) -> str:
     return text
 
 
+#: Live sess_07dff0eaf8f64186: Store workflow used ``out['result']`` /
+#: ``step_result['result']``, then wrapped the KeyError as
+#: ``RuntimeError: 'result'``. The first whitelist (envelope/result/output/
+#: data/response/payload) missed those names. Any identifier subscript is
+#: the same miss — rewrite to ``.get("result", <obj>)``.
 _RESULT_KEY_SUB = re.compile(
-    r"""\b(envelope|result|output|data|response|payload)\s*\[\s*['\"]result['\"]\s*\]"""
+    r"""\b([A-Za-z_][\w]*)\s*\[\s*['\"]result['\"]\s*\]"""
 )
 _DEPENDENCIES_IMPORT = re.compile(
     r"^([ \t]*)from app\.dependencies import _create_block_instance[^\n]*\n",
@@ -393,6 +398,11 @@ def emit_result_key_access(text: str) -> str:
     Kit shims / workflow steps did ``envelope["result"]`` (or wrapped that
     KeyError as RuntimeError). event_bus / notification execute() often
     returns a status envelope with no ``result`` key.
+
+    Live sess_07dff0eaf8f64186 (VetCare Hub ALL-REUSE, tip da7cd2b / #348):
+    ``appointment_scheduling`` PRODUCT schema-sample then failed as
+    ``workflow: RuntimeError: 'result'``. The Store kit shim used ``out`` /
+    ``step_result``, not ``envelope``.
     """
     if not text:
         return text
@@ -442,4 +452,8 @@ def emit_runtime_module(module_name: str, text: str) -> str:
 
         # P1 replaces a Store capture module that would default to deepseek.
         return P1_CAPTURE_ADAPTER
+    if name == "workflow":
+        # Kit shim / WorkflowBlock ``out['result']`` is the live
+        # appointment_scheduling RuntimeError: 'result' class.
+        return emit_result_key_access(text)
     return text
