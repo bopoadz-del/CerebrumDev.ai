@@ -872,6 +872,11 @@ def test_sess_f1fe691_reminders_result_key_is_not_required_on_envelope():
     step_result = emit_result_key_access("value = step_result['result']\n")
     assert 'step_result.get("result", step_result)' in step_result
 
+    # sess_c63cc1a274994b33: assignment targets must stay subscripts.
+    assigned = emit_result_key_access("result['result'] = payload\n")
+    assert "result['result'] =" in assigned or 'result["result"] =' in assigned
+    assert "result.get(" not in assigned
+
     # Constructor rewrite must not invent a cause — only rewrite zero-arg
     # Store construction that produces the live TypeError.
     live = "instance = DatabaseBlock()\n"
