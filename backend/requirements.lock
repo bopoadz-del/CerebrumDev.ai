@@ -19,7 +19,7 @@ cffi==2.1.1
 charset-normalizer==3.5.1
 chromadb==1.5.9
 click==8.4.2
-cryptography==43.0.3
+cryptography==50.0.1
 durationpy==0.11
 fastapi==0.115.6
 fastembed==0.8.0
