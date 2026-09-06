@@ -155,28 +155,37 @@ request-shape test.
 to this CLI. The seam is shallow — run a command, read its result:
 
 ```bash
-FACTORY_CODE_CLI=claude    # Claude Code CLI as the agentic coder
-FACTORY_CODE_CLI=kimi      # Kimi CLI (default; production image ships /usr/local/bin/kimi)
+FACTORY_CODE_CLI=claude    # Claude Code → DeepSeek V4 Pro when DEEPSEEK_API_KEY is set
+FACTORY_CODE_CLI=kimi      # Kimi CLI (still the default when no DeepSeek key)
 ```
 
-`KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. The production
-`Dockerfile` installs the official Kimi Code CLI at `/usr/local/bin/kimi`
-(pin `KIMI_CODE_VERSION`; see `docs/factory/KIMI_ENV_SETUP.md`). A keyed Floor
-without the binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
+`KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. When
+`DEEPSEEK_API_KEY` is set and the CLI name is not an explicit `kimi`,
+DeepSeek is the default Factory coding path (`claude` + official Anthropic-compat
+env on the **subprocess only**). Floor / architect chat stays on OpenRouter —
+do not burn DeepSeek for chat. See `docs/factory/DEEPSEEK_ENV_SETUP.md` and
+`docs/factory/KIMI_ENV_SETUP.md`.
+
+The production `Dockerfile` installs official Kimi Code at `/usr/local/bin/kimi`
+(pin `KIMI_CODE_VERSION`) and official Claude Code at `/usr/local/bin/claude`
+(pin `CLAUDE_CODE_VERSION`). A keyed Floor without the selected binary
+fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
 binary without `~/.kimi-code/config.toml` fail-closes as
-`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. A credentials file without a usable `default_model` / `[models]` entry
+`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. DeepSeek selected without
+`DEEPSEEK_API_KEY` is the same named class. A credentials file without a usable `default_model` / `[models]` entry
 fail-closes as `FACTORY_CODE_CLI_NO_MODEL` before WRITER takeover (still
 `FACTORY_CODE_CLI_FAILED` honesty — no HTTP oneshot, no fake WRITER
 takeover). A CLI exit of `No model configured` is the same named class
 and stops the coding-agent takeover (no perpetual "still working"). A 404 / Permission
 denied on the configured model fail-closes as
-`FACTORY_CODE_CLI_MODEL_DENIED`. Boot writes `default_model` from
+`FACTORY_CODE_CLI_MODEL_DENIED`. Boot writes Kimi `default_model` from
 `KIMI_CODE_MODEL` / `KIMI_CODE_MODEL_ID` (default Moonshot `kimi-k3`, not
 managed `kimi-code/k3`) so headless `kimi --prompt` does not need TTY
-`/login`. A
+`/login`. DeepSeek uses `claude --print` with `deepseek-v4-pro[1m]`. A
 templated pilot zip after that skip is not a ≥2h CLI session. CLI
-credentials are `KIMI_CODE_API_KEY` → `~/.kimi-code/config.toml`, not the
-in-app `CEREBRUM_LLM_API_KEY`. Render dashboard values stay owner-gated.
+credentials are `DEEPSEEK_API_KEY` or `KIMI_CODE_API_KEY` →
+`~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`. Render
+dashboard values stay owner-gated.
 
 ### Running the tests: the factory coder changes the results
 

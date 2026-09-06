@@ -12,9 +12,14 @@ See [Kimi Code config files](https://www.kimi.com/code/docs/en/kimi-code-cli/con
 
 ## Production Floor (C-BRIEF)
 
+DeepSeek V4 Pro is the default Factory coding path when `DEEPSEEK_API_KEY` is
+set (Claude Code CLI). See [DEEPSEEK_ENV_SETUP.md](DEEPSEEK_ENV_SETUP.md).
+This page stays the Kimi path (`FACTORY_CODE_CLI=kimi` / `KIMI_CODE_API_KEY`).
+
 A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CLI`
-(default name `kimi`; `KIMI_CODE_CLI` still honoured). The production image
-(`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`.
+(default name `kimi` unless DeepSeek is selected; `KIMI_CODE_CLI` still honoured). The production image
+(`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`,
+and official Claude Code so `claude` is on `PATH`.
 If the coder is on and the executable is still missing, dispatch fail-closes
 as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
 `~/.kimi-code/config.toml` is absent (`credentials_file_present=false`),

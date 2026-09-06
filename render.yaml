@@ -222,13 +222,24 @@ services:
       # code; required override if remap is removed: 7200 (or 0 to disable).
       - key: FACTORY_CODER_BUDGET_S
         value: "7200"
-      # Owner-gated FACTORY_CODE_CLI + KIMI_CODE_API_KEY. This blueprint is
-      # not applied; the dashboard is source of truth. The production image
-      # installs official `kimi` at /usr/local/bin/kimi; the dashboard still
-      # owns FACTORY_CODE_CLI=kimi and KIMI_CODE_API_KEY (not in git).
-      # A keyed Floor without the executable still fail-closes
+      # Owner-gated FACTORY_CODE_CLI. This blueprint is not applied; the
+      # dashboard is source of truth. The production image installs official
+      # `kimi` at /usr/local/bin/kimi and official `claude` at
+      # /usr/local/bin/claude. DeepSeek V4 Pro is the default coding path
+      # when DEEPSEEK_API_KEY is set (FACTORY_CODE_CLI=claude). Kimi stays
+      # available via FACTORY_CODE_CLI=kimi + KIMI_CODE_API_KEY.
+      # A keyed Floor without the selected executable still fail-closes
       # FACTORY_CODE_CLI_UNAVAILABLE (no HTTP oneshot takeover).
+      # Do not set ANTHROPIC_BASE_URL process-wide — Factory injects the
+      # DeepSeek Anthropic-compat URL into the Claude Code subprocess only
+      # so Floor chat stays on OpenRouter. Secrets are not in git.
       - key: FACTORY_CODE_CLI
+        sync: false
+      - key: FACTORY_CODE_PROVIDER
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: DEEPSEEK_CODE_MODEL
         sync: false
       - key: KIMI_CODE_API_KEY
         sync: false

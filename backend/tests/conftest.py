@@ -35,6 +35,11 @@ _FALLBACK_LEG_ENV = (
     "FACTORY_LLM_FALLBACK_MODEL",
     "FACTORY_LLM_FALLBACK_PROVIDER",
     "FACTORY_LLM_FALLBACK_ALLOW_PAID",
+    # DeepSeek is the default FACTORY_CODE_CLI when DEEPSEEK_API_KEY is set.
+    # Isolate so a laptop / Cloud .env cannot flip code_cli_command() to claude.
+    "DEEPSEEK_API_KEY",
+    "FACTORY_CODE_PROVIDER",
+    "ANTHROPIC_AUTH_TOKEN",
 )
 
 
