@@ -79,7 +79,8 @@ async def test_health_reports_deepseek_ready(tmp_path, monkeypatch):
     assert probe["available"] is True
     assert probe["provider"] == "deepseek"
     assert probe["deepseek_key_present"] is True
-    assert probe["default_model"] == "deepseek-v4-pro[1m]"
+    assert probe["default_model"] == "deepseek-v4-pro"
+    assert "[1m]" not in probe["default_model"]
     assert "blocker" not in probe
 
 

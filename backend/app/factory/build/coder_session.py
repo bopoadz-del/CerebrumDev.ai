@@ -9,9 +9,9 @@ DeepSeek V4 Pro) or fail-closed with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
 BEFORE it claims the coding agent has taken over. A CLI exit of
 ``No model configured`` is also ``FACTORY_CODE_CLI_NO_MODEL``
 (still ``FACTORY_CODE_CLI_FAILED`` honesty).
-A 404 / Permission denied on the configured model is
-``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A
-``429`` / insufficient-balance / account-suspended exit is
+A 404 / Permission denied / Claude Code ``unrecognized_model`` on the
+configured model is ``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from
+NO_MODEL). A ``429`` / insufficient-balance / account-suspended exit is
 ``FACTORY_CODE_CLI_BILLING`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
 When STEP 0 inventory has **zero gaps** (all capabilities REUSE-present),
 that named billing/auth miss must not discard the factory-grounded emit +
@@ -95,6 +95,17 @@ CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS = frozenset(
 )
 KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
 NO_MODEL_CONFIGURED_HINT = "No model configured"
+UNRECOGNIZED_MODEL_HINT = "unrecognized_model"
+_UNRECOGNIZED_MODEL_JSON_RE = re.compile(
+    r"\[claude-code:unrecognized_model\]\s*(\{.*?\})",
+    re.IGNORECASE | re.DOTALL,
+)
+_UNRECOGNIZED_MODEL_HARD_HINTS = (
+    UNRECOGNIZED_MODEL_HINT,
+    "not a recognized model",
+    "issue with the selected model",
+    "model is not a recognized model id",
+)
 
 #: Moonshot Open Platform ids for ``[providers.kimi]`` +
 #: ``https://api.moonshot.ai/v1``. Kimi Code CLI 0.41 config-files still
@@ -195,7 +206,7 @@ class CodeCliNoModelConfigured(CodeCliUnavailable):
 
 
 class CodeCliModelDenied(CodeCliFailed):
-    """CLI ran but the configured model 404'd / Permission denied."""
+    """CLI ran but the configured model 404'd / was unrecognized."""
 
     blocker = NAMED_BLOCKER_CLI_MODEL_DENIED
 
@@ -937,6 +948,43 @@ def apply_kimi_code_default_model(
     return out, mutated or table_mutated
 
 
+def _billing_hints_present(lowered: str) -> bool:
+    rate_suspended = "429" in lowered and "suspended" in lowered
+    deepseek_denied = "429" in lowered and any(
+        token in lowered
+        for token in ("deepseek", "insufficient", "quota", "balance", "billing")
+    )
+    return (
+        any(hint in lowered for hint in _BILLING_HINTS)
+        or rate_suspended
+        or deepseek_denied
+    )
+
+
+def _extract_unrecognized_model_id(blob: str) -> str:
+    """Pull the rejected id from ``[claude-code:unrecognized_model] {…}``."""
+    match = _UNRECOGNIZED_MODEL_JSON_RE.search(blob or "")
+    if match:
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            payload = {}
+        mid = str(payload.get("model") or "").strip()
+        if mid:
+            return mid
+    quoted = re.search(r'"model"\s*:\s*"([^"]+)"', blob or "")
+    if quoted:
+        return quoted.group(1).strip()
+    selected = re.search(r"selected model \(([^)]+)\)", blob or "", re.IGNORECASE)
+    if selected:
+        return selected.group(1).strip()
+    return ""
+
+
+def _unrecognized_model_denied(lowered: str) -> bool:
+    return any(hint in lowered for hint in _UNRECOGNIZED_MODEL_HARD_HINTS)
+
+
 def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
     """Named fail-closed class for a non-zero FACTORY_CODE_CLI exit.
 
@@ -945,10 +993,18 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
     ``No model configured`` (headless /login is not a Floor path).
     ``FACTORY_CODE_CLI_MODEL_DENIED`` fires on 404 / Permission denied
     for the configured model (live tip after #324: ``k3`` /
-    ``kimi-code/k3`` on Moonshot). ``FACTORY_CODE_CLI_BILLING`` fires on
+    ``kimi-code/k3`` on Moonshot) and on Claude Code
+    ``[claude-code:unrecognized_model]`` (sess_be217f6d:
+    ``deepseek-v4-pro[1m]``). ``FACTORY_CODE_CLI_BILLING`` fires on
     Moonshot ``429`` account-suspended / insufficient balance
     (sess_d5789a91). A templated pilot zip is not a ≥2h CLI session.
     """
+    from app.factory.code_cli import (
+        DEFAULT_DEEPSEEK_MODEL,
+        DEEPSEEK_CODE_MODEL_ENV,
+        REJECTED_DEEPSEEK_CLAUDE_MODEL,
+    )
+
     exit_bit = f"CLI exited {code}"
     blob = output or ""
     lowered = blob.lower()
@@ -963,6 +1019,22 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"{DEFAULT_KIMI_CODE_MODEL_ID}, Moonshot API) so boot writes "
                 "default_model into ~/.kimi-code/config.toml. A templated "
                 f"pilot zip is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
+            ),
+        )
+    if _unrecognized_model_denied(lowered) and not _billing_hints_present(lowered):
+        bad = _extract_unrecognized_model_id(blob) or REJECTED_DEEPSEEK_CLAUDE_MODEL
+        return (
+            NAMED_BLOCKER_CLI_MODEL_DENIED,
+            (
+                f"{NAMED_BLOCKER_CLI_MODEL_DENIED}: {exit_bit} — Claude Code "
+                f"rejected model {bad!r} ([claude-code:unrecognized_model]). "
+                f"The [1m] suffix is DeepSeek's context-window tag, not a "
+                f"Claude Code catalog id. Set {DEEPSEEK_CODE_MODEL_ENV} to "
+                f"{DEFAULT_DEEPSEEK_MODEL} (DeepSeek API / Anthropic-compat "
+                f"catalog). Do not set ANTHROPIC_MODEL="
+                f"{REJECTED_DEEPSEEK_CLAUDE_MODEL} on Render. Still "
+                f"{NAMED_BLOCKER_CLI_FAILED} honesty — not a ≥2h CLI "
+                f"session; no OpenRouter fallthrough. {OWNER_GATED_CLI_LOG}."
             ),
         )
     modelish = any(
@@ -996,13 +1068,7 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"@docs/coder_brief.md mention). {OWNER_GATED_CLI_LOG}."
             ),
         )
-    billing = any(hint in lowered for hint in _BILLING_HINTS)
-    rate_suspended = "429" in lowered and "suspended" in lowered
-    deepseek_denied = "429" in lowered and any(
-        token in lowered
-        for token in ("deepseek", "insufficient", "quota", "balance", "billing")
-    )
-    if billing or rate_suspended or deepseek_denied:
+    if _billing_hints_present(lowered):
         return (
             NAMED_BLOCKER_CLI_BILLING,
             (
