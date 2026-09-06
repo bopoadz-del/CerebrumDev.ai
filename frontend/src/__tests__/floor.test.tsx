@@ -461,6 +461,41 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
   })
 
+  it('sess_45729bb 0639 photograph: thin Store-green Floor never claims founding', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        outcome: 'SUCCESS',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+        level_grade: {
+          level: 'FOUNDING_CUSTOMER_READY',
+          founding_customer_ready: true,
+          pilot_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_45729bb662cf4a5d" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.getByTestId('floor-pilot-ready-pill')).not.toHaveTextContent(
+      'Founding-customer-ready',
+    )
+    expect(screen.getByText(/Pilot-ready — 8 artifacts; 16 templated/)).toBeInTheDocument()
+    expect(screen.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeInTheDocument()
+    expect(screen.queryByText('Founding-customer-ready', { exact: true })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Founding-customer-ready\. Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+  })
+
   it('honesty-locks a founding claim when pilot_ready is false', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({

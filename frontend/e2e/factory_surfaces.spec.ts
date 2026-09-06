@@ -915,6 +915,119 @@ test('Your Platforms refuses Export when CLI-failed founding claim is not pilot-
   await expect(page.getByTestId('platforms-lead')).toContainText(/Download unavailable — build failed/)
 })
 
+test('Your Platforms sess_45729 0639 thin Store-green never claims founding', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          inputs_hash: 'vetcarehash',
+          output_dir: '/tmp/veterinary-care',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'FOUNDING_CUSTOMER_READY',
+            founding_customer_ready: true,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveText('Store-green')
+  await expect(page.getByText('Founding-customer-ready', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/Pilot-ready — 8 artifacts; 16 templated/)).toBeVisible()
+  await expect(page.getByText(/Store-green — not founding-customer-ready/)).toBeVisible()
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
+  await expect(download).toBeVisible()
+  await expect(download).toBeEnabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Download the export/)
+})
+
+test('Floor sess_45729 0639 thin Store-green never claims founding', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+        blueprint_approved: true,
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'FOUNDING_CUSTOMER_READY',
+            founding_customer_ready: true,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByTestId('floor-pilot-ready-pill')).toHaveText('Store-green')
+  await expect(page.getByText('Founding-customer-ready', { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/Pilot-ready — 8 artifacts; 16 templated/)).toBeVisible()
+  await expect(page.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeVisible()
+  await expect(page.getByText(/Finished —/)).toHaveCount(0)
+  const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
+  await expect(download).toBeVisible()
+  await expect(download).toBeEnabled()
+})
+
 test('Floor CODE_GREEN level_grade never says Finished or founding-ready', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')
