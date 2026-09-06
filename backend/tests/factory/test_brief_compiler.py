@@ -119,6 +119,7 @@ def test_verified_reuse_is_not_a_gap():
     )
     assert items[0].verified_present == ["event_bus"]
     assert items[0].missing == []
+    assert items[0].handler_source
     assert items[0].is_reuse
 
 
@@ -126,6 +127,32 @@ def test_capability_without_blocks_is_a_named_gap():
     items = compile_inventory(_Plan(_Cap("custom_intake", [], "GENERATE")), {"analytics"})
     assert items[0].is_gap
     assert items[0].missing == []
+    assert items[0].handler_source == ""
+
+
+def test_false_reuse_without_handler_source_halts():
+    """Architect REUSE with no registry-verified handler source is a halt."""
+    items = compile_inventory(
+        _Plan(_Cap("appointment_scheduling", [], "REUSE")),
+        {"event_bus", "database"},
+    )
+    assert items[0].is_gap
+    assert items[0].handler_source == ""
+    assert items[0].strategy != "REUSE"
+
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("clinic_intake", [], "GENERATE")),
+        store_ids={"event_bus"},
+    )
+    verify_inventory(compiled)
+    compiled.inventory[0].strategy = "REUSE"
+    compiled.inventory[0].handler_source = ""
+    compiled.inventory[0].verified_present = []
+    compiled.inventory[0].missing = []
+    compiled.missing_reuse = []
+    with pytest.raises(InventoryHalt, match="no-handler-source"):
+        verify_inventory(compiled)
 
 
 def test_lettings_golden_is_unchanged_and_compiles():

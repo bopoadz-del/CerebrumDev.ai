@@ -57,6 +57,10 @@ WRITER_PERSIST_HALT = (
     "WRITER [check:round_trip] failed — persist entity missing from "
     "alembic 0001 or store.COLUMNS"
 )
+WRITER_REUSE_HANDLER_HALT = (
+    "WRITER [check:reuse_handler] failed — REUSE capability has no "
+    "loadable app.actions handler (registry-verified handler source miss)"
+)
 PERSIST_ISOLATE_NEEDLE = "tempfile.mkdtemp(prefix=\"product-gate-\")"
 FACTORY_GROUNDED_PERSIST_SOURCE = "factory-grounded persist"
 

@@ -1049,11 +1049,15 @@ def factory_grounded_source_for(
     return FACTORY_GROUNDED_PERSIST_SOURCE
 
 
-def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str]:
+def emit_factory_grounded_reuse_keep_path(
+    root: Path, compiled: Any, *, only_missing: bool = False
+) -> List[str]:
     """Write persist / event_bus handlers for REUSE caps, then harvest can keep.
 
     Does not claim a CLI session. Does not write GENERATE/GAP caps — those
     fall through to the factory coder LLM after a billing/auth miss.
+    ``only_missing`` fills holes after a partial CLI write without
+    overwriting a keepable handler.
     """
     from app.factory.build.roles_handlers import (
         _capability_handler_body,
@@ -1067,6 +1071,10 @@ def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str
     for item in getattr(compiled, "inventory", ()) or ():
         if getattr(item, "is_gap", False):
             continue
+        if not getattr(item, "handler_source", "") and not getattr(
+            item, "verified_present", None
+        ):
+            continue
         cid = str(getattr(item, "capability_id", "") or "").strip()
         if not cid:
             continue
@@ -1079,10 +1087,13 @@ def emit_factory_grounded_reuse_keep_path(root: Path, compiled: Any) -> List[str
             )
             if str(b).strip()
         ]
-        body = _capability_handler_body(cid, bids)
-        source = factory_grounded_source_for(cid, bids)
         name = cid.replace("-", "_")
         path = actions / f"{name}.py"
+        if only_missing and path.is_file():
+            written.append(cid)
+            continue
+        body = _capability_handler_body(cid, bids)
+        source = factory_grounded_source_for(cid, bids)
         path.write_text(
             _handler_module(cid, bids, body, source, entity=name),
             encoding="utf-8",
@@ -1703,6 +1714,16 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             # #318 keep-path: prefer on-disk workflow/event_bus steps over a
             # thin JSON body so the fallback envelope cannot overwrite them.
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
+            # Partial CLI (live ~2/5) must not leave REUSE routes importing
+            # missing app.actions modules. Fill holes only; do not flip
+            # reuse_keep_path (receipt stays CLI-ok).
+            filled = emit_factory_grounded_reuse_keep_path(
+                root, compiled, only_missing=True
+            )
+            if filled:
+                _merge_workspace_harvest(
+                    result, root, list(compiled.capabilities)
+                )
         elif should_keep_factory_grounded_reuse(compiled, result):
             # sess_d5789a91: CLI 429 / insufficient balance with empty
             # inventory_gaps. Harvest used to run only on result.ok, so
