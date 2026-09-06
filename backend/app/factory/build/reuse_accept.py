@@ -1,27 +1,22 @@
 """REUSE keep-path schema-sample accept contract (C-BRIEF).
 
-Photographed Floor after #345 (tip 666659a, sess_78483eaf7acd4219,
-VetCare Hub): ModuleNotFoundError did not recur. WRITER reached 5/5
-routes via FACTORY_CODE_CLI_BILLING + FACTORY_CODE_CLI_REUSE keep-path.
-TESTER PRODUCT then failed after rework budget 3:
+Photographed Floor after #346 (tip 5a530b3, sess_bb870f4fb29042f2,
+VetCare Hub, all-REUSE): ModuleNotFoundError did not recur. Export
+refuse PASS; pilot_zip=no. WRITER stopped at [check:reuse_accept]
+(fail-closed before TESTER):
 
-    tests/test_routes.py::test_every_capability_route_accepts_payload
-    - patient_records_management: database: Unknown action;
-      validation: Unknown action: None
-    - appointment_scheduling: workflow: step_0 (event_bus): error
-    - prescription_management: validation: Unknown action: None
-    - billing_and_invoicing: analytics: Unknown action: None
-    - client_communication_portal: team: Unknown action: None
-    Also: schema sample refused (event_bus workflow step);
-    accept-payload persisted nothing.
+    - prescription_management: formula_executor: reuse/accept miss —
+      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
+    - billing_and_invoicing: formula_executor: reuse/accept miss —
+      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
 
-Cause (verified in this repo): ``emit_factory_grounded_reuse_keep_path``
-wrote ``_handler_module(..., entity=name)`` with no ``default_actions``,
-so ``BLOCK_DEFAULT_ACTIONS = {}``. Keep-path then staged those files.
-``execute(block_id, payload, action=BLOCK_DEFAULT_ACTIONS.get(block_id))``
-passes ``action=None``. Store blocks answer ``Unknown action`` /
-``Unknown action: None``. Workflow children built from the schema sample
-drop ``step.action`` and PRODUCT reports ``step_0 (event_bus): error``.
+#346 harvested STORE_BLOCK_DEFAULT_ACTIONS for the #345 roster
+(database / validation / event_bus / workflow / analytics / team) but
+keep-path emit left ``action=None`` for ``formula_executor`` — that
+Store id is bound on the photographed REUSE caps and is missing from
+the factory-known default map. Harvest also skipped the factory
+vendor_blocks_mirror when workspace vendor/block.json had no action
+input.
 
 This module is the compiler + emit + harvest + WRITER halt — not a
 per-capability handle() micro-shot. Do not claim pilot_zip.
@@ -37,6 +32,10 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.persist_accept import persist_handler_rel, persist_workspace_root
 from app.factory.build.product_gate import GATE_SCOPES
+from app.factory.build.reuse_lookup import (
+    load_local_block_json,
+    local_block_json_candidates,
+)
 from app.factory.build.workflow_accept import (
     EVENT_BUS_STEP_ACTION,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
@@ -52,7 +51,7 @@ WRITER_REUSE_ACCEPT_HALT = (
 )
 REUSE_ACCEPT_MISS = "reuse/accept miss"
 
-#: Photographed VetCare Hub REUSE roster after #345 (sess_78483eaf7acd4219).
+#: Photographed VetCare Hub REUSE roster after #346 (sess_bb870f4fb29042f2).
 LIVE_VETCARE_REUSE_ACCEPT_CAPS = (
     "patient_records_management",
     "appointment_scheduling",
@@ -64,14 +63,16 @@ LIVE_VETCARE_REUSE_ACCEPT_CAPS = (
 LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
     "patient_records_management": ["database", "validation"],
     "appointment_scheduling": ["event_bus", "workflow"],
-    "prescription_management": ["validation"],
-    "billing_and_invoicing": ["analytics"],
+    "prescription_management": ["validation", "formula_executor"],
+    "billing_and_invoicing": ["analytics", "formula_executor"],
     "client_communication_portal": ["team"],
 }
 
 #: Factory-known Store defaults already documented in this repo
 #: (LIVE_CONTRACTS, workflow_accept, writer_behaviour / contract probes).
 #: Harvest from vendored block.json / source wins when present.
+#: ``formula_executor`` is the sess_bb870f4fb29042f2 miss: dual-registered
+#: budget block; Store runtime alias is ``formula_executor_v2``.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
     "audit": "log",
@@ -79,6 +80,8 @@ STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "database": "query",
     "document_engine": "parse",
     "event_bus": EVENT_BUS_STEP_ACTION,
+    "formula_executor": "execute",
+    "formula_executor_v2": "execute",
     "notification": "send",
     "queue": "enqueue",
     "team": "create_team",
@@ -109,6 +112,23 @@ class ReuseAcceptHalt(ValueError):
     """WRITER must not claim done: REUSE schema-sample would Unknown action."""
 
 
+def _harvest_candidate_ids(block_id: str) -> List[str]:
+    """Exact id plus the Store ``_v2`` / kit-shelf alias (formula_executor)."""
+    bid = str(block_id or "").strip()
+    if not bid:
+        return []
+    ids = [bid]
+    if bid.endswith("_v2") and len(bid) > 3:
+        ids.append(bid[:-3])
+    else:
+        ids.append(f"{bid}_v2")
+    seen: Dict[str, None] = {}
+    for item in ids:
+        if item:
+            seen.setdefault(item, None)
+    return list(seen)
+
+
 def default_block_action(
     block_id: str,
     default_actions: Optional[Mapping[str, str]] = None,
@@ -119,9 +139,14 @@ def default_block_action(
         cand = default_actions.get(bid)
         if isinstance(cand, str) and cand.strip():
             return cand.strip()
-    mapped = STORE_BLOCK_DEFAULT_ACTIONS.get(bid)
-    if isinstance(mapped, str) and mapped.strip():
-        return mapped.strip()
+    for cand_id in _harvest_candidate_ids(bid):
+        if isinstance(default_actions, Mapping):
+            alias = default_actions.get(cand_id)
+            if isinstance(alias, str) and alias.strip():
+                return alias.strip()
+        mapped = STORE_BLOCK_DEFAULT_ACTIONS.get(cand_id)
+        if isinstance(mapped, str) and mapped.strip():
+            return mapped.strip()
     return None
 
 
@@ -204,6 +229,19 @@ def _workspace_roots(
     return unique
 
 
+def _harvest_from_factory_vendor(block_id: str) -> Optional[str]:
+    """Prefer factory / Blocks-root block.json, then sibling source."""
+    for cand in _harvest_candidate_ids(block_id):
+        harvested = default_action_from_block_json(load_local_block_json(cand))
+        if harvested:
+            return harvested
+        for path in local_block_json_candidates(cand):
+            harvested = default_action_from_source(_read_text(path.with_name("block.py")))
+            if harvested:
+                return harvested
+    return None
+
+
 def harvest_block_default_action(
     block_id: str,
     *roots: Any,
@@ -213,36 +251,42 @@ def harvest_block_default_action(
     bid = str(block_id or "").strip()
     if not bid:
         return None
+    candidates = _harvest_candidate_ids(bid)
     if workspace is not None and getattr(workspace, "exists", None):
-        meta_rel = Path("vendor") / "blocks" / bid / "block.json"
-        if workspace.exists(meta_rel):
-            try:
-                meta = json.loads(workspace.read_text(meta_rel))
-            except (ValueError, OSError, TypeError):
-                meta = None
+        for cand in candidates:
+            meta_rel = Path("vendor") / "blocks" / cand / "block.json"
+            if workspace.exists(meta_rel):
+                try:
+                    meta = json.loads(workspace.read_text(meta_rel))
+                except (ValueError, OSError, TypeError):
+                    meta = None
+                harvested = default_action_from_block_json(meta)
+                if harvested:
+                    return harvested
+            for rel in (
+                Path("vendor") / "blocks" / cand / "block.py",
+                Path("vendor") / "cerebrum" / "blocks" / f"{cand}.py",
+            ):
+                if workspace.exists(rel):
+                    harvested = default_action_from_source(workspace.read_text(rel))
+                    if harvested:
+                        return harvested
+    for root in _workspace_roots(*roots, workspace=workspace):
+        for cand in candidates:
+            meta = _load_json(root / "vendor" / "blocks" / cand / "block.json")
             harvested = default_action_from_block_json(meta)
             if harvested:
                 return harvested
-        for rel in (
-            Path("vendor") / "blocks" / bid / "block.py",
-            Path("vendor") / "cerebrum" / "blocks" / f"{bid}.py",
-        ):
-            if workspace.exists(rel):
-                harvested = default_action_from_source(workspace.read_text(rel))
+            for rel in (
+                Path("vendor") / "blocks" / cand / "block.py",
+                Path("vendor") / "cerebrum" / "blocks" / f"{cand}.py",
+            ):
+                harvested = default_action_from_source(_read_text(root / rel))
                 if harvested:
                     return harvested
-    for root in _workspace_roots(*roots, workspace=workspace):
-        meta = _load_json(root / "vendor" / "blocks" / bid / "block.json")
-        harvested = default_action_from_block_json(meta)
-        if harvested:
-            return harvested
-        for rel in (
-            Path("vendor") / "blocks" / bid / "block.py",
-            Path("vendor") / "cerebrum" / "blocks" / f"{bid}.py",
-        ):
-            harvested = default_action_from_source(_read_text(root / rel))
-            if harvested:
-                return harvested
+    harvested = _harvest_from_factory_vendor(bid)
+    if harvested:
+        return harvested
     return default_block_action(bid)
 
 
@@ -417,14 +461,18 @@ def reuse_accept_rules_text(
             f"({PRODUCT_EVENT_BUS_STEP_CLASS}).",
             "",
             "factory-grounded REUSE emit MUST populate BLOCK_DEFAULT_ACTIONS",
-            "from vendored block.json (action default / options[0]) or the",
-            "factory-known Store map. Pass action= as a keyword — never",
-            "inside the payload dict. Prefer",
-            "action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
+            "from vendored block.json (workspace vendor/, then factory",
+            "vendor_blocks_mirror / CEREBRUM_BLOCKS_ROOT action default or",
+            "options[0]) or the factory-known Store map. formula_executor",
+            "(and formula_executor_v2) must harvest a keyword action.",
+            "Pass action= as a keyword — never inside the payload dict.",
+            "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
             "",
-            "Photographed VetCare Hub REUSE roster (sess_78483eaf7acd4219):",
+            "Photographed VetCare Hub REUSE roster (sess_bb870f4fb29042f2):",
             *[f"- {cid}" for cid in roster],
             "Those ids are keep-path handlers, not per-cap micro-shots.",
+            "prescription_management / billing_and_invoicing bind",
+            "formula_executor — a missing default is reuse/accept miss.",
             f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
             "three PRODUCT reworks on Unknown action.",
         ]
@@ -461,7 +509,7 @@ def reuse_accept_brief_contract() -> str:
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
         "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map and pass action= as a keyword "
+        "map (including formula_executor) and pass action= as a keyword "
         "(action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
@@ -480,4 +528,5 @@ def reuse_accept_needles() -> Sequence[str]:
         REUSE_ACCEPT_MISS,
         f"[check:{REUSE_ACCEPT_CHECK}]",
         LIVE_VETCARE_REUSE_ACCEPT_CAPS[0],
+        "formula_executor",
     )

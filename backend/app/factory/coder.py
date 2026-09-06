@@ -1496,8 +1496,10 @@ Rules:
 - REUSE keep-path handlers must populate BLOCK_DEFAULT_ACTIONS and pass
   action= as a keyword. execute() with action=None is
   'Unknown action: None'. That miss is reuse/accept miss: HALT before
-  TESTER. Photographed roster: patient_records_management,
-  appointment_scheduling, prescription_management, billing_and_invoicing,
+  TESTER. Harvest formula_executor (and other bound Store blocks) from
+  vendored block.json or the factory Store map. Photographed roster:
+  patient_records_management, appointment_scheduling,
+  prescription_management, billing_and_invoicing,
   client_communication_portal.
 - PRODUCT test_every_capability_route_accepts_payload then POSTs that
   same schema sample and runs bound blocks. A capability that binds

@@ -6,5 +6,14 @@
   "source": "factory-vendor-mirror",
   "upstream": "cerebrum-blocks/block_registry/formula_executor",
   "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "tags": ["platform", "factory-mirror", "steward-kit"],
+  "inputs": [
+    {
+      "name": "action",
+      "type": "string",
+      "default": "execute",
+      "options": ["execute"],
+      "description": "Factory-known keep-path default (sess_bb870f4fb29042f2). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+    }
+  ]
 }
