@@ -1493,6 +1493,12 @@ Rules:
   field and vocabulary on the spec. Do not return ok:false before
   execute() on that sample. A second, stricter contract the spec cannot
   express fails the gate: no capability accepted its own schema.
+- REUSE keep-path handlers must populate BLOCK_DEFAULT_ACTIONS and pass
+  action= as a keyword. execute() with action=None is
+  'Unknown action: None'. That miss is reuse/accept miss: HALT before
+  TESTER. Photographed roster: patient_records_management,
+  appointment_scheduling, prescription_management, billing_and_invoicing,
+  client_communication_portal.
 - PRODUCT test_every_capability_route_accepts_payload then POSTs that
   same schema sample and runs bound blocks. A capability that binds
   workflow + event_bus (appointment_scheduling / appointment_booking /

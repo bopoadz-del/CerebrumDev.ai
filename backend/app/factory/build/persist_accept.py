@@ -382,12 +382,16 @@ def emit_factory_grounded_generate_persist(
             if isinstance(f, dict) and f.get("name")
         ]
         path = root / persist_handler_rel(cid)
+        from app.factory.build.reuse_accept import harvest_block_default_actions
+
+        defaults = harvest_block_default_actions(bids, root)
         path.write_text(
             _handler_module(
                 cid,
                 bids,
                 body,
                 source,
+                defaults,
                 entity=entity,
                 field_names=field_names,
             ),

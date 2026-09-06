@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 from app.factory.build.persist_accept import persist_accept_needles
+from app.factory.build.reuse_accept import reuse_accept_needles
 from app.factory.build.workflow_accept import (
     declares_event_bus_workflow,
     workflow_accept_needles,
@@ -36,6 +37,11 @@ EXECUTABLE_ACCEPTANCE = (
     ("accepted its own schema", "writer_behaviour"),
     ("own FIELDS/CONSTRAINTS", "writer_behaviour"),
     ("schema-accept", "writer_behaviour"),
+    ("Unknown action", "reuse_accept"),
+    ("Unknown action: None", "reuse_accept"),
+    ("BLOCK_DEFAULT_ACTIONS", "reuse_accept"),
+    ("reuse/accept miss", "reuse_accept"),
+    ("patient_records_management", "reuse_accept"),
     ("event_bus_workflow", "event_bus_workflow"),
     ("event_bus workflow", "event_bus_workflow"),
     ("test_every_capability_route_accepts_payload", "event_bus_workflow"),
@@ -123,6 +129,11 @@ TEMPLATE_STATIC_NEEDLES = (
     "accepted its own schema",
     "own fields/constraints",
     "schema-accept",
+    "unknown action",
+    "unknown action: none",
+    "block_default_actions",
+    "reuse/accept miss",
+    "patient_records_management",
     "event_bus_workflow",
     "event_bus workflow",
     "test_every_capability_route_accepts_payload",
@@ -381,6 +392,18 @@ def lint_brief(
             "brief dropped PRODUCT one-record persist contract "
             "(alembic entity / store.save): "
             + ", ".join(missing_persist[:4])
+        )
+    reuse_needles = reuse_accept_needles()
+    missing_reuse = [
+        needle
+        for needle in reuse_needles
+        if needle.lower() not in text.lower()
+    ]
+    if missing_reuse:
+        errors.append(
+            "brief dropped REUSE schema-sample accept contract "
+            "(Unknown action / BLOCK_DEFAULT_ACTIONS): "
+            + ", ".join(missing_reuse[:4])
         )
 
     blob = text.lower()

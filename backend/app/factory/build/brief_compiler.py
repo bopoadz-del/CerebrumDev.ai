@@ -28,6 +28,11 @@ from app.factory.build.persist_accept import (
     persist_accept_forbidden_lines,
     persist_accept_rules_text,
 )
+from app.factory.build.reuse_accept import (
+    reuse_accept_acceptance_line,
+    reuse_accept_forbidden_lines,
+    reuse_accept_rules_text,
+)
 from app.factory.build.schema_accept import (
     schema_accept_acceptance_line,
     schema_accept_rules_text,
@@ -528,6 +533,8 @@ def render_slot_bodies(
         "writer_behaviour with ModuleNotFoundError.",
         "Invocation contracts: pass action= as a keyword, never inside the payload dict.",
         "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
+        "REUSE keep-path emit MUST populate BLOCK_DEFAULT_ACTIONS — "
+        "execute() with action=None is Unknown action: None.",
         "Call execute() for EVERY id in BLOCK_IDS.",
         "Call execute() from app.dispatch only. Do not import app.actions, "
         "app.routes, or app.main from a handler. The factory owns "
@@ -542,6 +549,8 @@ def render_slot_bodies(
         f"Envelope status vocabulary (schema-enforced): {' | '.join(ENVELOPE_STATUS_VALUES)}.",
         "",
         schema_accept_rules_text(),
+        "",
+        reuse_accept_rules_text(),
         "",
         persist_accept_rules_text(),
         "",
@@ -610,6 +619,7 @@ def render_slot_bodies(
         "- one-record round-trip per capability (POST creates, GET returns it)  [check:round_trip]",
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
+        reuse_accept_acceptance_line(),
         workflow_accept_acceptance_line(
             capability_ids=event_bus_workflow_capability_ids(inventory)
         ),
@@ -645,6 +655,7 @@ def render_slot_bodies(
         "- importing app.actions / app.routes / app.main from a capability handler "
         "(writer_behaviour workspace does not import)",
         persist_accept_forbidden_lines(),
+        reuse_accept_forbidden_lines(),
         workflow_accept_forbidden_lines(),
         "- one handle() / one spec / one route at a time — this brief is the whole job",
         "- weakening honesty or exporting when the pilot suite is red",

@@ -36,6 +36,13 @@ from app.factory.build.persist_accept import (
     persist_handler_rel,
     persist_workspace_root,
 )
+from app.factory.build.reuse_accept import (
+    ReuseAcceptHalt,
+    apply_default_actions_to_handler,
+    assert_reuse_schema_accept,
+    harvest_block_default_actions,
+    parse_handler_block_ids,
+)
 from app.factory.build.workflow_accept import (
     FACTORY_GROUNDED_EVENT_BUS_SOURCE,
     grounded_event_bus_handler_body,
@@ -1081,6 +1088,13 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        def _prepare_block_input(block_id, data, **_kw):\n"
         "            return data if isinstance(data, dict) else {'value': data}\n"
         "    try:\n"
+        "        from app.block_inputs import default_block_action as _default_block_action\n"
+        "    except ImportError:  # pragma: no cover - unit stubs / older emit\n"
+        "        def _default_block_action(block_id, default_actions=None):\n"
+        "            defaults = default_actions if isinstance(default_actions, dict) else {}\n"
+        "            cand = defaults.get(block_id)\n"
+        "            return cand if isinstance(cand, str) and cand.strip() else None\n"
+        "    try:\n"
         "        from app.block_inputs import split_execute_action as _split_execute_action\n"
         "    except ImportError:  # pragma: no cover - unit stubs / older emit\n"
         "        def _split_execute_action(payload, action=None, default_action=None):\n"
@@ -1113,7 +1127,9 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        action, data = _split_execute_action(\n"
         "            data,\n"
         "            action=action,\n"
-        "            default_action=BLOCK_DEFAULT_ACTIONS.get(block_id),\n"
+        "            default_action=_default_block_action(\n"
+        "                block_id, BLOCK_DEFAULT_ACTIONS\n"
+        "            ),\n"
         "        )\n"
         "        prepared = _prepare_block_input(\n"
         "            block_id, data, action=action, roster=BLOCK_IDS,\n"
@@ -1296,7 +1312,12 @@ def _stage_handler_for_commit(ctx: RoleContext, handler_rel: Path) -> None:
     path = persist_root / handler_rel
     if not path.is_file():
         return
-    ctx.workspace.write_text(handler_rel, path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    bids = parse_handler_block_ids(text)
+    defaults = harvest_block_default_actions(bids, persist_root, workspace=ctx.workspace)
+    if defaults:
+        text = apply_default_actions_to_handler(text, defaults)
+    ctx.workspace.write_text(handler_rel, text)
 
 
 def _capability_handler_body(
@@ -2977,6 +2998,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             for b in usable
             if (contract := _block_contract(ctx, b)).get("default_action")
         }
+        harvested = harvest_block_default_actions(
+            usable, persist_workspace_root(ctx.workspace), workspace=ctx.workspace
+        )
+        default_actions = {**harvested, **default_actions}
         ctx.workspace.write_text(
             handler_rel,
             _handler_module(
@@ -3018,6 +3043,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             reuse_miss.append(cid)
     if reuse_miss:
         raise RoleError(WRITER_REUSE_HANDLER_HALT + ": " + ", ".join(reuse_miss))
+    try:
+        assert_reuse_schema_accept(persist_root, compiled_brief)
+    except ReuseAcceptHalt as exc:
+        raise RoleError(str(exc)) from exc
 
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py",
