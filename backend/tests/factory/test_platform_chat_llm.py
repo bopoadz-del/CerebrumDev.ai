@@ -8,10 +8,12 @@ Kit-configurator vocabulary never enters this path.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
 from app.factory import platform_chat_flow, platform_chat_llm
+from app.factory.product_architect import LlmSoftMiss
 from app.models.session import ProductDesignState, SessionState
 
 
@@ -78,6 +80,17 @@ def test_kit_config_never_orchestrates(monkeypatch, session):
     )
 
 
+def test_exact_approve_skips_llm_when_blueprint_pending(monkeypatch, session):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    assert platform_chat_llm.should_orchestrate(session, "approve") is False
+    assert platform_chat_llm.should_orchestrate(session, "approved") is False
+
+
+def test_looks_good_still_orchestrates(monkeypatch, session):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    assert platform_chat_llm.should_orchestrate(session, "looks good") is True
+
+
 def test_business_brief_orchestrates_without_saying_platform(monkeypatch):
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     state = SessionState(session_id="sess-brief", user_id="user-1", account_id="acct-1")
@@ -118,8 +131,102 @@ def test_coerce_explicit_approval_if_model_forgets_tool(session):
     assert out.get("coerced") is True
 
 
+def test_decide_empty_object_is_soft_miss(session, monkeypatch):
+    monkeypatch.setattr(platform_chat_llm, "_llm_json_call", lambda messages: {})
+    with pytest.raises(LlmSoftMiss, match="empty action"):
+        platform_chat_llm.decide(session, "looks good")
+
+
+def test_decide_empty_action_is_soft_miss(session, monkeypatch):
+    monkeypatch.setattr(platform_chat_llm, "_llm_json_call", lambda messages: {"action": ""})
+    with pytest.raises(LlmSoftMiss, match="empty action"):
+        platform_chat_llm.decide(session, "looks good")
+
+
+def test_decide_unknown_nonempty_action_is_valueerror(session, monkeypatch):
+    monkeypatch.setattr(
+        platform_chat_llm, "_llm_json_call", lambda messages: {"action": "explode"}
+    )
+    with pytest.raises(ValueError, match="unknown action 'explode'") as excinfo:
+        platform_chat_llm.decide(session, "hi")
+    assert not isinstance(excinfo.value, LlmSoftMiss)
+
+
+def test_try_decide_soft_miss_logs_warning_not_error(session, monkeypatch, caplog):
+    monkeypatch.setattr(platform_chat_llm, "_llm_json_call", lambda messages: {})
+    with caplog.at_level(logging.WARNING, logger="app.factory.platform_chat_llm"):
+        assert platform_chat_llm.try_decide(session, "looks good") is None
+    assert "Floor chat LLM miss" in caplog.text
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+def test_try_decide_hard_failure_still_logs_exception(session, monkeypatch, caplog):
+    def boom(messages):
+        raise ValueError("Floor chat LLM returned unknown action 'explode'")
+
+    monkeypatch.setattr(platform_chat_llm, "_llm_json_call", boom)
+    with caplog.at_level(logging.ERROR, logger="app.factory.platform_chat_llm"):
+        assert platform_chat_llm.try_decide(session, "hi") is None
+    assert "Floor chat LLM failed" in caplog.text
+
+
 @pytest.mark.asyncio
-async def test_chat_llm_approve_emits_generation(session, monkeypatch):
+async def test_exact_approve_skips_llm_and_starts_coder(session, monkeypatch):
+    called = {"decide": 0}
+
+    def boom(state, message):
+        called["decide"] += 1
+        raise AssertionError("exact approve must not call the chat LLM")
+
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    monkeypatch.setattr(platform_chat_llm, "decide", boom)
+
+    def fake_approve(state, output_root=None, triggered_by="regex_approve"):
+        return {
+            "ok": True,
+            "summary": "coding agent has taken over",
+            "generation": {"engine": "runner", "product_id": "retail", "triggered_by": triggered_by},
+            "triggered_by": triggered_by,
+        }
+
+    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
+    events = await _collect_events(session.session_id, "approve")
+    assert called["decide"] == 0
+    kinds = [e["event"] for e in events]
+    assert kinds.count("generation") == 1
+    assert "chain" not in kinds
+    payload = json.loads(next(e["data"] for e in events if e["event"] == "generation"))
+    assert payload["generation"]["engine"] == "runner"
+
+
+@pytest.mark.asyncio
+async def test_looks_good_empty_llm_falls_back_to_regex_approve(session, monkeypatch, caplog):
+    monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
+    monkeypatch.setattr(
+        platform_chat_llm,
+        "decide",
+        lambda state, message: (_ for _ in ()).throw(LlmSoftMiss("empty action")),
+    )
+
+    def fake_approve(state, output_root=None, triggered_by="regex_approve"):
+        return {
+            "ok": True,
+            "summary": "coding agent has taken over",
+            "generation": {"engine": "runner", "product_id": "retail"},
+            "triggered_by": triggered_by,
+        }
+
+    monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
+    with caplog.at_level(logging.WARNING, logger="app.factory.platform_chat_llm"):
+        events = await _collect_events(session.session_id, "looks good")
+    kinds = [e["event"] for e in events]
+    assert kinds.count("generation") == 1
+    assert "Floor chat LLM miss" in caplog.text
+    assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_chat_llm_looks_good_emits_generation(session, monkeypatch):
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     monkeypatch.setattr(
         platform_chat_llm,
@@ -136,7 +243,7 @@ async def test_chat_llm_approve_emits_generation(session, monkeypatch):
         }
 
     monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
-    events = await _collect_events(session.session_id, "approve")
+    events = await _collect_events(session.session_id, "looks good")
     kinds = [e["event"] for e in events]
     assert kinds.count("generation") == 1
     assert "chain" not in kinds

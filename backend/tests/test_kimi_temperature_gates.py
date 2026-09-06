@@ -101,7 +101,7 @@ def test_product_architect_omits_temperature_for_kimi(kimi_env):
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.return_value = {
-        "choices": [{"message": {"content": "{}"}}]
+        "choices": [{"message": {"content": '{"ok": true}'}}]
     }
 
     with patch.object(httpx, "post", return_value=response) as mock_post:
@@ -117,7 +117,7 @@ def test_product_architect_includes_temperature_when_configured(kimi_env, monkey
     response = MagicMock()
     response.raise_for_status.return_value = None
     response.json.return_value = {
-        "choices": [{"message": {"content": "{}"}}]
+        "choices": [{"message": {"content": '{"ok": true}'}}]
     }
 
     with patch.object(httpx, "post", return_value=response) as mock_post:

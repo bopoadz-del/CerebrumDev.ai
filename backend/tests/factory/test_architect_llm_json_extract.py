@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.factory.product_architect import _extract_json, _llm_json_call
+from app.factory.product_architect import LlmSoftMiss, _extract_json, _llm_json_call
 
 
 _SENTRY_SAFETY = "User Safety: safe"
@@ -25,13 +25,23 @@ def test_extract_json_sentry_safety_prose_is_valueerror():
         _extract_json(_SENTRY_SAFETY)
 
 
-def test_extract_json_empty_string_is_valueerror():
-    with pytest.raises(ValueError, match="No JSON object found in model output"):
+def test_extract_json_empty_string_is_soft_miss():
+    with pytest.raises(LlmSoftMiss, match="Empty model output"):
         _extract_json("")
 
 
-def test_extract_json_none_is_valueerror():
-    with pytest.raises(ValueError, match="No JSON object found in model output"):
+def test_extract_json_whitespace_is_soft_miss():
+    with pytest.raises(LlmSoftMiss, match="Empty model output"):
+        _extract_json("  \n\t  ")
+
+
+def test_extract_json_empty_object_is_soft_miss():
+    with pytest.raises(LlmSoftMiss, match="Empty JSON object"):
+        _extract_json("{}")
+
+
+def test_extract_json_none_is_soft_miss():
+    with pytest.raises(LlmSoftMiss, match="Empty model output"):
         _extract_json(None)  # type: ignore[arg-type]
 
 
@@ -82,10 +92,17 @@ def test_llm_json_call_openrouter_safety_prose_is_valueerror(monkeypatch):
     assert not isinstance(excinfo.value, json.JSONDecodeError)
 
 
-def test_llm_json_call_empty_content_is_valueerror(monkeypatch):
+def test_llm_json_call_empty_content_is_soft_miss(monkeypatch):
     _openrouter_factory_env(monkeypatch)
     with patch.object(httpx, "post", return_value=_completion("")):
-        with pytest.raises(ValueError, match="No JSON object found in model output"):
+        with pytest.raises(LlmSoftMiss, match="Empty model output"):
+            _llm_json_call([{"role": "user", "content": "approve"}])
+
+
+def test_llm_json_call_empty_object_is_soft_miss(monkeypatch):
+    _openrouter_factory_env(monkeypatch)
+    with patch.object(httpx, "post", return_value=_completion("{}")):
+        with pytest.raises(LlmSoftMiss, match="Empty JSON object"):
             _llm_json_call([{"role": "user", "content": "approve"}])
 
 

@@ -124,7 +124,7 @@ def test_product_architect_retries_with_fallback_model(factory_env):
     fallback_resp = MagicMock()
     fallback_resp.raise_for_status.return_value = None
     fallback_resp.json.return_value = {
-        "choices": [{"message": {"content": "{}"}}]
+        "choices": [{"message": {"content": '{"ok": true}'}}]
     }
 
     calls = []
@@ -139,4 +139,4 @@ def test_product_architect_retries_with_fallback_model(factory_env):
         result = _llm_json_call([{"role": "user", "content": "build"}])
 
     assert calls == ["kimi-k2.7-code", "kimi-k2.5-code"]
-    assert result == {}
+    assert result == {"ok": True}

@@ -182,6 +182,16 @@ def is_approval(message: str) -> bool:
     return bool(_APPROVAL_RE.search(message or ""))
 
 
+def is_exact_approve_gate(message: str) -> bool:
+    """True for the Floor Approve button / exact approve token.
+
+    The UI sends the word ``approve``. Natural-language confirms
+    (``looks good``, ``go ahead``) stay on the chat LLM path.
+    """
+    token = (message or "").strip().lower().rstrip(".!")
+    return token in {"approve", "approved"}
+
+
 def is_resume_request(message: str) -> bool:
     """True when the user asked to continue/resume an existing coding run."""
     return bool(_RESUME_RE.match((message or "").strip()))

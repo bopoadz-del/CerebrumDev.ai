@@ -13,8 +13,10 @@ this orchestrator. The model returns a JSON action:
                      platform_chat_flow.refine_from_chat
   reply           — talk, do not start the coder
 
-Kit-configurator vocabulary never enters this path. Regex approval remains
-the offline fallback when the LLM is unset or the call fails.
+Kit-configurator vocabulary never enters this path. Exact ``approve`` /
+``approved`` (the Approve button) skips the LLM and uses the regex door.
+Other approval phrasing still asks the model; regex remains the fallback
+when the LLM is unset, returns a soft miss (empty / ``{}``), or fails.
 
 The coding agent still lives only inside WRITER (see
 docs/factory/AGENT_IN_THE_KERNELS.md). This module does not move it into
@@ -29,7 +31,7 @@ from typing import Any, Dict, List, Optional
 
 from app.core.llm_config import get_factory_llm_config
 from app.factory import platform_chat_flow
-from app.factory.product_architect import _llm_json_call
+from app.factory.product_architect import LlmSoftMiss, _llm_json_call
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,12 @@ def should_orchestrate(state: Any, message: str) -> bool:
     if not (message or "").strip():
         return False
     if platform_chat_flow.is_kit_config_vocabulary(message):
+        return False
+    # Exact Approve gate is deterministic. Calling the LLM here is how
+    # empty OpenRouter completions became CEREBRUMDEV-BACKEND-F/G.
+    if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_exact_approve_gate(
+        message
+    ):
         return False
     # The Floor is a product factory. When the LLM is keyed, let it classify
     # business briefs that never say "platform" — regex intent is the offline
@@ -175,6 +183,8 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Floor chat LLM returned a non-object")
     action = str(data.get("action") or "").strip()
+    if not action:
+        raise LlmSoftMiss("Floor chat LLM returned empty action")
     if action not in _ACTIONS:
         raise ValueError(f"Floor chat LLM returned unknown action {action!r}")
     return {
@@ -183,6 +193,22 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
         "refine_message": str(data.get("refine_message") or "").strip(),
         "message": str(data.get("message") or "").strip(),
     }
+
+
+def try_decide(state: Any, message: str) -> Optional[Dict[str, Any]]:
+    """Decide, or None on miss/failure. Soft misses log warning, not error.
+
+    Sentry LoggingIntegration turns ``logger.exception`` into error events.
+    Empty OpenRouter completions are expected; do not page on them.
+    """
+    try:
+        return decide(state, message)
+    except LlmSoftMiss as exc:
+        logger.warning("Floor chat LLM miss; falling back to regex routing: %s", exc)
+        return None
+    except Exception:
+        logger.exception("Floor chat LLM failed; falling back to regex routing")
+        return None
 
 
 def coerce_explicit_approval(decision: Dict[str, Any], state: Any, message: str) -> Dict[str, Any]:
@@ -270,10 +296,8 @@ def try_handle(state: Any, message: str) -> Optional[Dict[str, Any]]:
     """Decide + apply. None means the caller should use the regex fallback."""
     if not should_orchestrate(state, message):
         return None
-    try:
-        decision = decide(state, message)
-    except Exception:
-        logger.exception("Floor chat LLM failed; falling back to regex routing")
+    decision = try_decide(state, message)
+    if decision is None:
         return None
     decision = coerce_explicit_approval(decision, state, message)
     return apply_decision(state, message, decision)

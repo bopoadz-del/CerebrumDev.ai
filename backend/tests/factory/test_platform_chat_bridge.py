@@ -71,6 +71,16 @@ def test_approval_negative(message):
     assert not platform_chat_flow.is_approval(message)
 
 
+@pytest.mark.parametrize("message", ["approve", "approved", "Approve", "APPROVE.", "  approve  "])
+def test_exact_approve_gate_positive(message):
+    assert platform_chat_flow.is_exact_approve_gate(message)
+
+
+@pytest.mark.parametrize("message", ["looks good", "go ahead", "yes, build it", "generate it", ""])
+def test_exact_approve_gate_negative(message):
+    assert not platform_chat_flow.is_exact_approve_gate(message)
+
+
 # --- Routing contract: explicit commands + env gate --------------------------
 
 @pytest.mark.parametrize("message", [
