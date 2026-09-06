@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -24,10 +26,11 @@ from app.factory.build.coder_session import (
 )
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
+    WRITER_PERSIST_HALT,
     assert_persist_round_trip_ready,
     persist_round_trip_errors,
 )
-from app.factory.build.roles import RoleContext, run_writer
+from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.workflow_accept import FACTORY_GROUNDED_EVENT_BUS_SOURCE
 from app.factory.build.workspace import RoleWorkspace
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
@@ -172,16 +175,18 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
         "app.factory.build.brief_compiler.compile_brief_from_ctx",
         lambda _ctx: compiled,
     )
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=plan,
-            state={"resolved_blocks": (), "vendored_blocks": ()},
+    with pytest.raises(RoleError) as halted:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=plan,
+                state={"resolved_blocks": (), "vendored_blocks": ()},
+            )
         )
-    )
-    assert result.ok, result.detail
+    assert WRITER_PERSIST_HALT in str(halted.value)
+    assert "novel_clinic_ai" in str(halted.value)
     receipt = json.loads(
         (tmp_path / "gap" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -193,8 +198,6 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
     assert "novel_clinic_ai" in receipt["inventory_gaps"]
     assert receipt["factory_llm_written_ids"] == []
     assert receipt["kept_handler_ids"] == []
-    handler = (
-        tmp_path / "gap" / "app" / "actions" / "novel_clinic_ai.py"
-    ).read_text(encoding="utf-8")
-    assert "deterministic contract template" in handler
-    assert "FACTORY_CODE_CLI" not in handler or "factory-grounded" in handler
+    handler = tmp_path / "gap" / "app" / "actions" / "novel_clinic_ai.py"
+    assert not handler.is_file()
+    assert "pilot_zip" not in str(halted.value).lower()

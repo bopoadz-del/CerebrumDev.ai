@@ -46,7 +46,10 @@ from app.factory.build.persist_accept import (
     persist_accept_needles,
     persist_accept_rules_text,
     persist_entity_of,
+    persist_handler_rel,
     persist_round_trip_errors,
+    persist_workspace_root,
+    emit_factory_grounded_generate_persist,
     wipe_workspace_runtime_db,
 )
 from app.factory.build.product_gate import ROUND_TRIP_PROBE, gate_round_trip
@@ -137,6 +140,8 @@ def test_vetcare_compiled_brief_grounds_persist_round_trip():
     assert FACTORY_GROUNDED_PERSIST_SOURCE in rules
     assert PRODUCT_NO_SUCH_TABLE_HALT in rules
     assert "veterinary_care_core" in rules
+    assert "GENERATE-gap factory-LLM" in rules
+    assert "deterministic contract template" in rules
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
@@ -370,3 +375,63 @@ def test_emitted_keyword_fallback_vetcare_round_trips(tmp_path):
     # Honesty: a red PRODUCT still refuses export. This test is a green
     # persist contract, not a claim that the live Floor shipped a zip.
     assert "pilot_zip" not in (trip.detail or "").lower()
+
+
+def test_persist_workspace_root_prefers_staging_not_destination(tmp_path):
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.workspace import RoleWorkspace
+
+    dest = tmp_path / "dest"
+    staging = tmp_path / "stage"
+    dest.mkdir()
+    ws = RoleWorkspace(BuildRole.WRITER, dest, staging=staging)
+    assert persist_workspace_root(ws) == staging.resolve()
+    assert persist_handler_rel("veterinary_care_core") == Path(
+        "app/actions/veterinary_care_core.py"
+    )
+
+
+def test_emit_factory_grounded_generate_persist_wraps_llm_body(tmp_path):
+    class _Item:
+        def __init__(self, cid, gap):
+            self.capability_id = cid
+            self.is_gap = gap
+            self.block_ids = []
+            self.verified_present = []
+
+    class _Compiled:
+        inventory = (
+            _Item("veterinary_care_core", True),
+            _Item("audit", False),
+        )
+
+    written = emit_factory_grounded_generate_persist(
+        tmp_path,
+        _Compiled(),
+        handlers={
+            "veterinary_care_core": '    return {"ok": True, "capability": CAPABILITY_ID}',
+        },
+        specs={
+            "veterinary_care_core": {
+                "entity": "veterinary_care_core",
+                "fields": [{"name": "reference", "type": "str"}],
+            }
+        },
+        source="coder LLM (factory)",
+    )
+    assert written == ["veterinary_care_core"]
+    text = (tmp_path / "app" / "actions" / "veterinary_care_core.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_persist_record(" in text
+    assert "coder LLM (factory)" in text
+    empty = emit_factory_grounded_generate_persist(
+        tmp_path / "empty",
+        _Compiled(),
+        handlers={},
+        specs={},
+    )
+    assert empty == []
+    assert not (
+        tmp_path / "empty" / "app" / "actions" / "veterinary_care_core.py"
+    ).is_file()

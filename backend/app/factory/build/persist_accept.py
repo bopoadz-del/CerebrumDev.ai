@@ -26,6 +26,11 @@ then raises ``OperationalError``.
 This module is the one brief + emit + harness contract. An LLM never
 writes these rules. Isolated schema POST-raises must not let WRITER claim
 done while PRODUCT will refuse the same persist path.
+
+GENERATE-gap factory-LLM fallthrough (sess_f358c2e0, after #343 CLI billing
+miss) must use the same persist envelope as REUSE keep-path. Routes without
+``app/actions/{capability}.py`` fail ``[check:round_trip]`` with handler
+missing. An empty LLM return is that miss — not a deterministic template.
 """
 
 from __future__ import annotations
@@ -113,6 +118,13 @@ def persist_accept_rules_text() -> str:
             "Those ids are persistable capabilities, not 'just blocks'. Each",
             "must remember one record. Templated execute(block_id, payload)",
             "or no_block_bound without store.save is not done.",
+            "",
+            "GENERATE-gap factory-LLM fallthrough (after CLI billing/auth miss):",
+            "- write app/actions/{capability}.py through the same persist",
+            "  envelope as REUSE keep-path (_persist_record / store.save)",
+            "- alembic 0001 and store.COLUMNS still use spec.entity",
+            "- an empty LLM return is a persist miss, not a deterministic",
+            "  contract template and not a ≥2h CLI session",
         ]
     )
 
@@ -206,12 +218,40 @@ def wipe_workspace_runtime_db(workspace: Any) -> None:
         shutil.rmtree(data)
 
 
+def persist_workspace_root(workspace: Any) -> Path:
+    """Directory persist_accept scans — WRITER staging, not destination.
+
+    RoleRunner stages WRITER writes. ``RoleWorkspace.exists`` also sees
+    the destination (and store_root). Round-trip must judge the tree
+    that ``commit()`` will copy, or a leftover destination handler makes
+    GENERATE look present while staging is empty (sess_f358c2e0).
+    """
+    return Path(getattr(workspace, "workspace", workspace))
+
+
+def persist_handler_rel(capability_id: str) -> Path:
+    """Workspace-relative handler path persist_accept requires."""
+    name = str(capability_id or "").replace("-", "_")
+    return Path("app") / "actions" / f"{name}.py"
+
+
+def handler_declares_persist(text: str, entity: str) -> bool:
+    """True when the handler body persists to the capability entity."""
+    blob = text or ""
+    return (
+        "_persist_record(" in blob
+        or "store.save(ENTITY" in blob
+        or f'store.save("{entity}"' in blob
+        or f"store.save('{entity}'" in blob
+    )
+
+
 def persist_round_trip_errors(
     root: Path,
     specs: Mapping[str, Mapping[str, Any]],
 ) -> List[str]:
     """Scan emitted alembic + store + handlers/routes. Empty = green."""
-    base = Path(root)
+    base = persist_workspace_root(root)
     errors: List[str] = []
     entities = persist_entities_from_specs(specs)
     revision = base / "alembic" / "versions" / "0001_baseline.py"
@@ -250,8 +290,7 @@ def persist_round_trip_errors(
         errors.append("app/routes.py does not persist via save(payload)")
 
     for cid, entity in entities.items():
-        name = cid.replace("-", "_")
-        handler = base / "app" / "actions" / f"{name}.py"
+        handler = base / persist_handler_rel(cid)
         if not handler.is_file():
             errors.append(f"handler missing for persist capability {cid}")
             continue
@@ -260,13 +299,7 @@ def persist_round_trip_errors(
         except OSError as exc:
             errors.append(f"handler {cid} unreadable: {exc}")
             continue
-        persists = (
-            "_persist_record(" in text
-            or "store.save(ENTITY" in text
-            or f'store.save("{entity}"' in text
-            or f"store.save('{entity}'" in text
-        )
-        if not persists:
+        if not handler_declares_persist(text, entity):
             errors.append(
                 f"{cid}: handler does not store.save persist entity {entity}"
             )
@@ -293,3 +326,68 @@ def assert_persist_round_trip_ready(
 def grounded_persist_assign() -> str:
     """One line: persist the request to the capability entity."""
     return "    stored = _persist_record(payload)"
+
+
+def emit_factory_grounded_generate_persist(
+    root: Path,
+    compiled: Any,
+    *,
+    handlers: Optional[Mapping[str, str]] = None,
+    specs: Optional[Mapping[str, Any]] = None,
+    source: str = "coder LLM (factory)",
+) -> List[str]:
+    """Write persist-capable GENERATE handlers after factory-LLM fallthrough.
+
+    Same ``_handler_module`` / ``_persist_record`` envelope as REUSE
+    keep-path. LLM body is wrapped (not replaced) when present. Empty
+    LLM → no file, so ``persist_round_trip_errors`` reports the miss
+    instead of a deterministic contract template.
+    """
+    from app.factory.build.roles_handlers import _handler_module
+
+    root = persist_workspace_root(root)
+    written: List[str] = []
+    raw_handlers = handlers if isinstance(handlers, Mapping) else {}
+    raw_specs = specs if isinstance(specs, Mapping) else {}
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True, exist_ok=True)
+    for item in getattr(compiled, "inventory", ()) or ():
+        if not getattr(item, "is_gap", False):
+            continue
+        cid = str(getattr(item, "capability_id", "") or "").strip()
+        if not cid:
+            continue
+        body = raw_handlers.get(cid)
+        if not (isinstance(body, str) and body.strip()):
+            continue
+        bids = [
+            str(b)
+            for b in (
+                getattr(item, "verified_present", None)
+                or getattr(item, "block_ids", None)
+                or ()
+            )
+            if str(b).strip()
+        ]
+        spec = raw_specs.get(cid)
+        spec_map = spec if isinstance(spec, Mapping) else {}
+        entity = persist_entity_of(spec_map, cid)
+        field_names = [
+            str(f.get("name"))
+            for f in (spec_map.get("fields") or [])
+            if isinstance(f, dict) and f.get("name")
+        ]
+        path = root / persist_handler_rel(cid)
+        path.write_text(
+            _handler_module(
+                cid,
+                bids,
+                body,
+                source,
+                entity=entity,
+                field_names=field_names,
+            ),
+            encoding="utf-8",
+        )
+        written.append(cid)
+    return written
