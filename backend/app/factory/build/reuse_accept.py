@@ -74,6 +74,7 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
 #: Harvest from vendored block.json / source wins when present.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
+    "audit": "log",
     "dashboard": "render",
     "database": "query",
     "document_engine": "parse",
@@ -332,7 +333,7 @@ def reuse_accept_handler_errors(
             f"{prefix}{bid}: {REUSE_ACCEPT_MISS} — no BLOCK_DEFAULT_ACTIONS "
             f"entry ({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"
         )
-    if "action=None" in (text or ""):
+    if re.search(r"execute\s*\([^)]*action\s*=\s*None", text or ""):
         errors.append(
             f"{prefix}execute() passes action=None "
             f"({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"

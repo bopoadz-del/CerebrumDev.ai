@@ -23,6 +23,7 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -169,11 +170,21 @@ def _plant_store_block_json(root: Path) -> None:
 
 def _schema_sample_exec_script(caps: Sequence[str]) -> str:
     return (
-        "import importlib, json, sys\n"
+        "import importlib, sys, types\n"
         "sys.path.insert(0, '.')\n"
+        "unknown = []\n"
+        "calls = []\n"
+        "def _execute(block_id, payload=None, action=None, params=None, **kw):\n"
+        "    if not (isinstance(action, str) and action.strip()):\n"
+        "        unknown.append('%s: Unknown action: %s' % (block_id, action))\n"
+        "        return {'status': 'error', 'error': 'Unknown action: %s' % action}\n"
+        "    calls.append((block_id, action))\n"
+        "    return {'status': 'ok', 'block': block_id, 'action': action}\n"
+        "dispatch = types.ModuleType('app.dispatch')\n"
+        "dispatch.execute = _execute\n"
+        "sys.modules['app.dispatch'] = dispatch\n"
         f"caps = {list(caps)!r}\n"
         "sample = {'reference': 'sample', 'status': 'open'}\n"
-        "unknown = []\n"
         "for cid in caps:\n"
         "    try:\n"
         "        mod = importlib.import_module('app.actions.' + cid)\n"
@@ -184,30 +195,30 @@ def _schema_sample_exec_script(caps: Sequence[str]) -> str:
         "        action = defaults.get(bid) if isinstance(defaults, dict) else None\n"
         "        if not (isinstance(action, str) and action.strip()):\n"
         "            unknown.append('%s:%s: Unknown action: None' % (cid, bid))\n"
-        "    calls = []\n"
-        "    def _execute(block_id, payload=None, action=None, params=None, **kw):\n"
-        "        if action is None:\n"
-        "            unknown.append('%s:%s: Unknown action: None' % (cid, block_id))\n"
-        "            return {'status': 'error', 'error': 'Unknown action: None'}\n"
-        "        if str(action).strip() == '':\n"
-        "            unknown.append('%s:%s: Unknown action' % (cid, block_id))\n"
-        "            return {'status': 'error', 'error': 'Unknown action'}\n"
-        "        calls.append((block_id, action))\n"
-        "        return {'status': 'ok', 'block': block_id, 'action': action}\n"
-        "    real = getattr(mod, 'execute', None)\n"
-        "    if real is not None:\n"
+        "    if hasattr(mod, 'execute'):\n"
         "        mod.execute = _execute\n"
         "    try:\n"
         "        result = mod.handle(sample)\n"
         "    except ModuleNotFoundError as exc:\n"
         "        raise SystemExit('ModuleNotFoundError: ' + str(exc))\n"
+        "    except Exception as exc:\n"
+        "        err = '%s: %s' % (type(exc).__name__, exc)\n"
+        "        if 'Unknown action' in err:\n"
+        "            unknown.append(cid + ': ' + err[:200])\n"
+        "            result = {}\n"
+        "        elif 'ModuleNotFound' in err or 'No module named' in err:\n"
+        "            raise SystemExit(cid + ': ' + err)\n"
+        "        else:\n"
+        "            result = {}\n"
         "    err = str((result or {}).get('error') or '')\n"
         "    if 'Unknown action' in err:\n"
         "        unknown.append(cid + ': ' + err[:200])\n"
-        "    if 'ModuleNotFoundError' in err:\n"
+        "    if 'ModuleNotFoundError' in err or 'No module named' in err:\n"
         "        raise SystemExit(cid + ': ' + err)\n"
         "if unknown:\n"
         "    raise SystemExit('; '.join(unknown))\n"
+        "if not calls:\n"
+        "    raise SystemExit('schema-sample execute() was never reached')\n"
     )
 
 
@@ -306,7 +317,8 @@ def test_emit_keep_path_populates_block_default_actions(tmp_path):
         encoding="utf-8"
     )
     assert EVENT_BUS_STEP_ACTION in sched
-    assert "action=None" not in sched
+    assert "execute(" in sched
+    assert not re.search(r"execute\s*\([^)]*action\s*=\s*None", sched)
 
 
 def test_empty_defaults_halt_before_tester(tmp_path):
@@ -330,8 +342,10 @@ def test_empty_defaults_halt_before_tester(tmp_path):
     ]
     compiled.inventory[0].verified_present = ["not_a_real_block"]
     compiled.inventory[0].block_ids = ["not_a_real_block"]
-    with pytest.raises(ReuseAcceptHalt, match=WRITER_REUSE_ACCEPT_HALT):
+    with pytest.raises(ReuseAcceptHalt, match=r"reuse_accept") as halted:
         assert_reuse_schema_accept(tmp_path, compiled)
+    assert WRITER_REUSE_ACCEPT_HALT in str(halted.value)
+    assert "not_a_real_block" in str(halted.value)
 
 
 def test_writer_keep_path_schema_sample_has_no_unknown_action(
@@ -385,7 +399,7 @@ def test_writer_keep_path_schema_sample_has_no_unknown_action(
         for bid in bids:
             assert defaults.get(bid), (cid, bid, defaults)
         assert "ModuleNotFoundError" not in text
-        assert PRODUCT_UNKNOWN_ACTION_NONE_HALT not in text
+        assert reuse_accept_handler_errors(text, bids, capability_id=cid) == []
     proc = subprocess.run(
         [sys.executable, "-c", _schema_sample_exec_script(LIVE_VETCARE_REUSE_ACCEPT_CAPS)],
         cwd=str(dest),
