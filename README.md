@@ -182,8 +182,10 @@ denied on the configured model fail-closes as
 `KIMI_CODE_MODEL` / `KIMI_CODE_MODEL_ID` (default Moonshot `kimi-k3`, not
 managed `kimi-code/k3`) so headless `kimi --prompt` does not need TTY
 `/login`. DeepSeek uses `claude --print "<coder_brief.md>"` (prompt + stdin,
-not a bare `@docs/coder_brief.md` mention) with `deepseek-v4-pro` (not
-the `[1m]` suffix Claude Code rejects as `unrecognized_model`). A
+not a bare `@docs/coder_brief.md` mention) with `claude-opus-4-6`
+(DeepSeek maps `claude-opus*` → `deepseek-v4-pro`; bare `deepseek-v4-pro`
+and the `[1m]` suffix both fail live Claude Code 2.1.x as
+`unrecognized_model`). A
 templated pilot zip after that skip is not a ≥2h CLI session. CLI
 credentials are `DEEPSEEK_API_KEY` or `KIMI_CODE_API_KEY` →
 `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`. Render

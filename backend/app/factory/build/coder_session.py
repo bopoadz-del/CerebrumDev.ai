@@ -995,13 +995,16 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
     for the configured model (live tip after #324: ``k3`` /
     ``kimi-code/k3`` on Moonshot) and on Claude Code
     ``[claude-code:unrecognized_model]`` (sess_be217f6d:
-    ``deepseek-v4-pro[1m]``). ``FACTORY_CODE_CLI_BILLING`` fires on
+    ``deepseek-v4-pro[1m]``; sess_401e6619: bare ``deepseek-v4-pro``).
+    ``FACTORY_CODE_CLI_BILLING`` fires on
     Moonshot ``429`` account-suspended / insufficient balance
     (sess_d5789a91). A templated pilot zip is not a ≥2h CLI session.
     """
     from app.factory.code_cli import (
         DEFAULT_DEEPSEEK_MODEL,
+        DEEPSEEK_API_PRO_MODEL,
         DEEPSEEK_CODE_MODEL_ENV,
+        REJECTED_DEEPSEEK_BARE_MODEL,
         REJECTED_DEEPSEEK_CLAUDE_MODEL,
     )
 
@@ -1022,19 +1025,22 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
             ),
         )
     if _unrecognized_model_denied(lowered) and not _billing_hints_present(lowered):
-        bad = _extract_unrecognized_model_id(blob) or REJECTED_DEEPSEEK_CLAUDE_MODEL
+        bad = _extract_unrecognized_model_id(blob) or REJECTED_DEEPSEEK_BARE_MODEL
         return (
             NAMED_BLOCKER_CLI_MODEL_DENIED,
             (
                 f"{NAMED_BLOCKER_CLI_MODEL_DENIED}: {exit_bit} — Claude Code "
                 f"rejected model {bad!r} ([claude-code:unrecognized_model]). "
-                f"The [1m] suffix is DeepSeek's context-window tag, not a "
-                f"Claude Code catalog id. Set {DEEPSEEK_CODE_MODEL_ENV} to "
-                f"{DEFAULT_DEEPSEEK_MODEL} (DeepSeek API / Anthropic-compat "
-                f"catalog). Do not set ANTHROPIC_MODEL="
-                f"{REJECTED_DEEPSEEK_CLAUDE_MODEL} on Render. Still "
-                f"{NAMED_BLOCKER_CLI_FAILED} honesty — not a ≥2h CLI "
-                f"session; no OpenRouter fallthrough. {OWNER_GATED_CLI_LOG}."
+                f"Claude Code 2.1.x SDK allowlists Anthropic catalog ids; "
+                f"bare {REJECTED_DEEPSEEK_BARE_MODEL} and "
+                f"{REJECTED_DEEPSEEK_CLAUDE_MODEL} both fail live "
+                f"(sess_be217f6d, sess_401e6619). Set "
+                f"{DEEPSEEK_CODE_MODEL_ENV} to {DEFAULT_DEEPSEEK_MODEL} "
+                f"(Claude-catalog opus id; DeepSeek maps claude-opus* → "
+                f"{DEEPSEEK_API_PRO_MODEL} at the Anthropic-compat "
+                f"endpoint). Still {NAMED_BLOCKER_CLI_FAILED} honesty — "
+                f"not a ≥2h CLI session; no OpenRouter fallthrough. "
+                f"{OWNER_GATED_CLI_LOG}."
             ),
         )
     modelish = any(
@@ -1771,6 +1777,7 @@ def _run_cli_session(
     from app.factory.coder import (
         code_cli_command,
         deepseek_cli_environ,
+        deepseek_code_model,
         deepseek_coder_selected,
         is_claude_code_cli,
     )
@@ -1782,8 +1789,11 @@ def _run_cli_session(
     stdin_payload: Optional[str] = None
     if is_claude_code_cli(cli) or deepseek_coder_selected(cli):
         brief_text = _claude_brief_text(root, compiled)
+        model = (
+            deepseek_code_model() if deepseek_coder_selected(cli) else None
+        )
         try:
-            cmd = claude_print_argv(cli, brief_text)
+            cmd = claude_print_argv(cli, brief_text, model=model)
         except ClaudePrintPromptEmpty as exc:
             _append_log(log_path, f"[{NAMED_BLOCKER_CLI_FAILED}] {exc}")
             return DispatchResult(
@@ -1796,7 +1806,7 @@ def _run_cli_session(
         stdin_payload = brief_text
         _append_log(
             log_path,
-            f"$ {' '.join(claude_print_log_argv(cli, len(brief_text)))}",
+            f"$ {' '.join(claude_print_log_argv(cli, len(brief_text), model=model))}",
         )
     else:
         cmd = [cli, "--prompt", brief_arg, "--add-dir", "."]

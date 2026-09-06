@@ -18,8 +18,11 @@ https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 
 A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CLI`.
 When `DEEPSEEK_API_KEY` is set (or `FACTORY_CODE_PROVIDER=deepseek`), the default
-binary is `claude` and the session uses DeepSeek V4 Pro
-(`deepseek-v4-pro` — the Anthropic-compat / OpenAI catalog id).
+binary is `claude` and the session uses DeepSeek V4 Pro via a **Claude-catalog
+opus id** (`claude-opus-4-6`). DeepSeek's Anthropic-compat endpoint maps
+`claude-opus*` → `deepseek-v4-pro`. Claude Code 2.1.x SDK rejects both
+`deepseek-v4-pro` and `deepseek-v4-pro[1m]` as `[claude-code:unrecognized_model]`
+(live `sess_401e6619` / `sess_be217f6d`).
 
 When that CLI is ready (binary + DeepSeek key), C-BRIEF **must** dispatch via
 the Claude subprocess — including store-complete inventories that are 100%
@@ -65,12 +68,12 @@ Set these after merge. This doc does **not** claim the dashboard is already set.
 | `DEEPSEEK_API_KEY` | yes (DeepSeek path) | DeepSeek Platform key. Boot/dispatch injects it as `ANTHROPIC_AUTH_TOKEN` on the Claude Code subprocess only |
 | `FACTORY_CODE_CLI` | recommended | `claude` (DeepSeek / Anthropic Claude Code) or `kimi`. When unset, `DEEPSEEK_API_KEY` defaults the binary to `claude` |
 | `FACTORY_CODE_PROVIDER` | optional | `deepseek` forces the DeepSeek coder even before the key is present (fail-closed `CREDENTIALS_MISSING`) |
-| `ANTHROPIC_MODEL` | optional | Override; default `deepseek-v4-pro` (catalog id). **Do not** set `deepseek-v4-pro[1m]` — Claude Code 2.1.x rejects the `[1m]` suffix as `unrecognized_model` (sess_be217f6d) |
-| `DEEPSEEK_CODE_MODEL` | optional | Same override if you do not want `ANTHROPIC_MODEL` on the service (chat leak risk). Use `deepseek-v4-pro` |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | optional | Default `deepseek-v4-pro` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | optional | Default `deepseek-v4-pro` |
-| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | optional | Default `deepseek-v4-flash` |
-| `CLAUDE_CODE_SUBAGENT_MODEL` | optional | Default `deepseek-v4-flash` |
+| `ANTHROPIC_MODEL` | optional | Override; default `claude-opus-4-6` (Claude Code catalog id). Factory remaps leftover `deepseek-v4-pro` / `deepseek-v4-pro[1m]` |
+| `DEEPSEEK_CODE_MODEL` | optional | Same override if you do not want `ANTHROPIC_MODEL` on the service (chat leak risk). Use `claude-opus-4-6`, not a DeepSeek catalog id |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | optional | Default `claude-opus-4-6` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | optional | Default `claude-opus-4-6` (DeepSeek official setup keeps sonnet on Pro) |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | optional | Default `claude-haiku-4-5` (DeepSeek maps `claude-haiku*` → `deepseek-v4-flash`) |
+| `CLAUDE_CODE_SUBAGENT_MODEL` | optional | Default `claude-haiku-4-5` |
 | `CLAUDE_CODE_EFFORT_LEVEL` | optional | Default `max` |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | optional | Default `786432` |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | optional | Default `1` (also baked on the image) |
@@ -79,14 +82,30 @@ Do **not** set process-wide `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthrop
 on the web service unless you intend every `LLM_PROVIDER=claude` call to hit
 DeepSeek. Factory injects that URL into the CLI subprocess automatically.
 
-Do **not** set `ANTHROPIC_MODEL=deepseek-v4-pro[1m]` (or the matching
-`ANTHROPIC_DEFAULT_*` / `DEEPSEEK_CODE_MODEL` values) on Render. DeepSeek's
-Claude Code setup page still prints the `[1m]` context-window suffix;
-live Claude Code SDK rejects it as `[claude-code:unrecognized_model]` and
-the Floor fail-closes as `FACTORY_CODE_CLI_MODEL_DENIED`. Use the catalog
-id `deepseek-v4-pro` (https://api-docs.deepseek.com/quick_start/pricing).
-DeepSeek maps `claude-opus*` → `deepseek-v4-pro`. Factory also strips a
-leftover `[1m]` suffix if an old dashboard value is still set.
+## Working model strategy (Claude Code 2.1.x)
+
+Claude Code 2.1.x (production pin `CLAUDE_CODE_VERSION=2.1.263`) validates
+`--model` / `ANTHROPIC_MODEL` against the Anthropic catalog **before** the
+request is sent (`query_source=sdk`). A custom `ANTHROPIC_BASE_URL` does
+**not** turn off that check for those two inputs.
+
+| Id sent to Claude Code | Live result |
+|------------------------|-------------|
+| `deepseek-v4-pro[1m]` | `unrecognized_model` — `sess_be217f6d` (#370 stripped this; still fails) |
+| `deepseek-v4-pro` | `unrecognized_model` — `sess_401e6619` after #370 |
+| `claude-opus-4-6` | Claude Code catalog id; DeepSeek maps `claude-opus*` → `deepseek-v4-pro` |
+| `claude-haiku-4-5` | Claude Code catalog id; DeepSeek maps `claude-haiku*` → `deepseek-v4-flash` |
+
+Do **not** set `ANTHROPIC_MODEL=deepseek-v4-pro[1m]` **or** bare
+`deepseek-v4-pro` on Render. DeepSeek's Claude Code setup page still prints
+the `[1m]` suffix; the OpenAI/Anthropic-compat catalog lists
+`deepseek-v4-pro`. **Both fail on live Claude Code 2.1.x.** Factory remaps
+those leftovers to `claude-opus-4-6` and injects
+`ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic` plus
+`ANTHROPIC_AUTH_TOKEN` from `DEEPSEEK_API_KEY` on the subprocess only.
+
+https://api-docs.deepseek.com/guides/anthropic_api (model mapping)
+https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 
 Leave Floor chat on OpenRouter. Do not put API keys in this repo.
 
