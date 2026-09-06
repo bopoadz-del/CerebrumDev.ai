@@ -2679,7 +2679,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     factory-grounded persist / event_bus emit + harvest (sess_d5789a91)
     instead of a templated SCAFFOLD. Remaining GENERATE inventory_gaps
     fall through to the factory coder LLM (compiled-brief path, not a
-    per-capability handle() loop). Receipt stays ok=false with the CLI
+    per-capability handle() loop) and still persist-emit (alias-key bind
+    + factory-grounded envelope) so WRITER [check:round_trip] does not
+    HALT on a missing handler. Receipt stays ok=false with the CLI
     miss; inventory_gaps stay listed until artifacts land.
     HTTP oneshot stays behind FACTORY_BRIEF_HTTP_ONESHOT=1 (CI).
     Per-capability handle() shots stay behind FACTORY_BRIEF_DISPATCH=0.
@@ -2964,24 +2966,30 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             and getattr(dispatch, "factory_llm_generate_fallthrough", False)
             and cid in generate_ids
             and cid not in written_ids
+            and (persist_root / handler_rel).is_file()
         ):
-            # Empty factory-LLM GENERATE: do not ship a deterministic
-            # contract template. persist_accept reports the miss.
-            sources[cid] = "factory-llm GENERATE miss"
+            # Billing keep-path already persist-emitted this GENERATE gap
+            # (empty / alias factory-LLM). Stage it; do not skip.
+            sources[cid] = factory_grounded_source_for(cid, usable)
             ctx.note(
-                f"factory-llm GENERATE miss {cid} — persist gate will refuse",
+                f"kept factory-grounded GENERATE persist {cid}",
                 stage="handlers",
                 capability=cid,
                 source=sources[cid],
                 done=len([k for k in sources if k in set(cap_ids)]),
                 total=len(cap_ids),
             )
+            _stage_handler_for_commit(ctx, handler_rel)
             continue
         else:
             body = _capability_handler_body(cid, usable)
             if needs_grounded_event_bus_handler(cid, usable):
                 source = FACTORY_GROUNDED_EVENT_BUS_SOURCE
-            elif reuse_keep_path:
+            elif reuse_keep_path or (
+                dispatch is not None
+                and getattr(dispatch, "factory_llm_generate_fallthrough", False)
+                and cid in generate_ids
+            ):
                 source = FACTORY_GROUNDED_PERSIST_SOURCE
             else:
                 source = fallback_source

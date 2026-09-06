@@ -1552,10 +1552,16 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
     assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
     assert receipt["keep_path"] is None
-    assert receipt["inventory_gaps"] == ["novel_clinic_ai"]
+    assert receipt["inventory_gaps"] == []
     assert receipt["factory_llm_written_ids"] == []
+    assert receipt["generate_persist_ids"] == ["novel_clinic_ai"]
     assert receipt["kept_handler_ids"] == []
-    assert not (tmp_path / "build" / "app" / "actions" / "novel_clinic_ai.py").is_file()
+    persist = (
+        tmp_path / "build" / "app" / "actions" / "novel_clinic_ai.py"
+    ).read_text(encoding="utf-8")
+    assert "_persist_record(" in persist
+    assert "factory-grounded persist" in persist
+    assert "deterministic contract template" not in persist
 
 
 def test_should_factory_llm_generate_gaps_only_on_named_cli_miss():
