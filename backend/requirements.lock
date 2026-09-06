@@ -67,8 +67,8 @@ pluggy==1.6.0
 prometheus_client==0.21.1
 propcache==0.5.2
 protobuf==7.36.1
-psycopg==3.3.4
-psycopg-binary==3.3.4
+psycopg==3.3.5
+psycopg-binary==3.3.5
 py_rust_stemmers==0.1.8
 pybase64==1.5.0
 pycparser==3.0
@@ -112,6 +112,6 @@ urllib3==2.7.0
 uvicorn==0.52.0
 uvloop==0.22.1
 watchfiles==1.2.0
-websocket-client==1.9.2
+websocket-client==1.9.5
 websockets==17.1
 yarl==1.24.5
