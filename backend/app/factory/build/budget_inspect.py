@@ -38,6 +38,8 @@ def inspect_build(
     """
     events = list(getattr(ledger, "events", lambda: ())())
     caps_written: List[str] = []
+    caps_cli_or_llm: List[str] = []
+    caps_factory_grounded: List[str] = []
     caps_templated: List[str] = []
     timeouts: List[str] = []
     contract_misses: List[str] = []
@@ -60,9 +62,17 @@ def inspect_build(
             if "factory-grounded" in source.lower():
                 if cap not in caps_written:
                     caps_written.append(cap)
-            elif source.startswith("coder LLM") or source.startswith("coder CLI"):
+                if cap not in caps_factory_grounded:
+                    caps_factory_grounded.append(cap)
+            elif (
+                source.startswith("coder LLM")
+                or source.startswith("coder CLI")
+                or source.startswith("FACTORY_CODE_CLI")
+            ):
                 if cap not in caps_written:
                     caps_written.append(cap)
+                if cap not in caps_cli_or_llm:
+                    caps_cli_or_llm.append(cap)
             elif source and (
                 "template" in source.lower() or "deterministic" in source.lower()
             ):
@@ -104,6 +114,13 @@ def inspect_build(
         for cap in provenance.get("agent_artifacts") or []:
             if cap not in caps_written:
                 caps_written.append(str(cap))
+            if cap not in caps_cli_or_llm:
+                caps_cli_or_llm.append(str(cap))
+        for cap in provenance.get("factory_grounded_artifacts") or []:
+            if cap not in caps_written:
+                caps_written.append(str(cap))
+            if cap not in caps_factory_grounded:
+                caps_factory_grounded.append(str(cap))
         fail_map = provenance.get("coder_failures") or {}
         for key, reason in fail_map.items():
             text = str(reason)
@@ -141,6 +158,12 @@ def inspect_build(
         "caps_written": caps_written,
         "caps_templated": caps_templated,
         "agent_written": authored,
+        "cli_or_llm_written": len(caps_cli_or_llm),
+        "factory_grounded": len(caps_factory_grounded),
+        "cli_authored_ids": list(
+            dict((state or {}).get("brief_dispatch") or {}).get("cli_authored_ids")
+            or []
+        ),
         "templated": stubbed,
         "stub_rate": round(stub_rate, 3),
         "timeouts": timeouts[:12],
@@ -219,6 +242,7 @@ def inspect_decision(
     current_wall_s: float,
     snapshot: Mapping[str, Any],
     stage: str,
+    state: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Attach a continue/stop decision to an inspect snapshot."""
     new_wall = next_stage_wall(elapsed_s, current_wall_s, snapshot)
@@ -245,16 +269,24 @@ def inspect_decision(
         unused = thin_stub_success_blocked(
             snapshot=snapshot,
             elapsed_s=elapsed_s,
-            state=None,
+            state=state,
             ledger=None,
         )
-        if unused:
+        dispatch = dict((state or {}).get("brief_dispatch") or {})
+        cli_finished = str(dispatch.get("via") or "") == "cli"
+        after_wall = float(elapsed_s) + 1.0 >= float(STAGE_1_S)
+        if unused and not cli_finished and not after_wall:
             # Keep the staged wall alive — do not SUCCESS thin templates
             # and do not treat 8s stub_rate=1.0 as the only coding chance.
             decision = "await_cli"
             reason = (
                 f"inspect {stage}: await FACTORY_CODE_CLI stage-1 wall — "
                 f"{unused}"
+            )
+        elif unused:
+            decision = "hard_stop"
+            reason = (
+                f"inspect {stage}: hard-stop — {unused}"
             )
         else:
             decision = "hard_stop"
@@ -320,15 +352,15 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     sources = prov.get("artifact_sources") or {}
-    agent = sorted(
-        k
-        for k, v in sources.items()
-        if str(v).startswith("coder LLM")
-        or str(v).startswith("coder CLI")
-        or "factory-grounded" in str(v).lower()
+    from app.factory.build.coder_session import is_agent_written_source
+
+    agent = sorted(k for k, v in sources.items() if is_agent_written_source(str(v)))
+    factory = sorted(
+        k for k, v in sources.items() if "factory-grounded" in str(v).lower()
     )
     return {
         "agent_artifacts": agent,
+        "factory_grounded_artifacts": factory,
         "coder_failures": prov.get("coder_failures") or {},
     }
 

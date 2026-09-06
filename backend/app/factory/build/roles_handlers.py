@@ -2033,7 +2033,9 @@ def main() -> int:
     if manifest.is_file():
         prov = json.loads(manifest.read_text(encoding="utf-8"))
         sources = prov.get("artifact_sources", {{}})
-        agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+        from app.factory.build.coder_session import is_agent_written_source as _agent_src
+
+        agent = sorted(k for k, v in sources.items() if _agent_src(str(v)))
         print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
     else:
         print("docs/build_provenance.json: MISSING")
@@ -2660,6 +2662,24 @@ def _writer_block_roster(state: Dict[str, Any]) -> tuple:
     return tuple(sorted({str(b) for b in raw if b}))
 
 
+def _dispatch_cli_keep_ids(dispatch: Any) -> Sequence[str]:
+    """Handlers the CLI actually wrote — not factory-grounded hole-fill.
+
+    An explicit empty ``cli_authored_ids`` after DeepSeek/kimi exit 0 must
+    not fall back to ``kept_handler_ids`` (those may be factory fill).
+    Billing keep-path still uses ``kept_handler_ids`` when the no-authorship
+    blocker is unset.
+    """
+    from app.factory.build.coder_session import NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+
+    authored = list(getattr(dispatch, "cli_authored_ids", None) or [])
+    if authored:
+        return authored
+    if getattr(dispatch, "blocker", None) == NAMED_BLOCKER_CLI_NO_AUTHORSHIP:
+        return ()
+    return list(getattr(dispatch, "kept_handler_ids", None) or [])
+
+
 def run_writer(ctx: RoleContext) -> RoleResult:
     """Platform manufacturer: dispatch runtime plus one handler per capability.
 
@@ -2925,7 +2945,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         elif (
             use_brief_dispatch
             and dispatch
-            and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
+            and cid in _dispatch_cli_keep_ids(dispatch)
             and (persist_root / handler_rel).is_file()
         ):
             kept_text = ctx.workspace.read_text(handler_rel)
@@ -3425,7 +3445,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     if converged.get("ok"):
         sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
-    by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
+    from app.factory.build.coder_session import is_agent_written_source
+
+    by_coder = sum(1 for s in sources.values() if is_agent_written_source(s))
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(

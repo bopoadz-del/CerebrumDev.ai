@@ -330,7 +330,9 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     sources = prov.get("artifact_sources") or {}
-    agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+    from app.factory.build.coder_session import is_agent_written_source
+
+    agent = sorted(k for k, v in sources.items() if is_agent_written_source(str(v)))
     failures = prov.get("coder_failures") or {}
     return {
         "authorship": {

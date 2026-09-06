@@ -498,6 +498,7 @@ class RoleRunner:
             current_wall_s=float(self.budget.wall_clock_s or 0.0),
             snapshot=snap,
             stage=stage,
+            state=self.state,
         )
         self._emit_inspect(decided, reason=reason)
         return decided

@@ -68,6 +68,10 @@ NAMED_BLOCKER_CLI_BILLING = "FACTORY_CODE_CLI_BILLING"
 #: thin templates (stub_rate≈1.0 / written=0) before a real stage-1 wall.
 #: Store-complete REUSE/COMPOSE is not a skip (sess_9d0b43c81b2b4620).
 NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
+#: Kimi/DeepSeek CLI exited 0 but harvest found no agent-written handlers.
+#: Factory-grounded fill after that exit is not C-BRIEF authorship
+#: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
+NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset(
@@ -423,6 +427,55 @@ def deepseek_cli_ready(command: Optional[str] = None) -> bool:
     return cli_default_model_ok(command)
 
 
+def is_agent_written_source(source: str) -> bool:
+    """True for real coder LLM / CLI authorship — not factory-grounded fill.
+
+    Floor provenance and the SUCCESS gate must agree. ``coder CLI`` is
+    agent-written; ``factory-grounded persist`` / event_bus is the billing
+    keep-path, not C-BRIEF authorship.
+    """
+    text = str(source or "")
+    if "factory-grounded" in text.lower():
+        return False
+    return (
+        text.startswith("coder LLM")
+        or text.startswith("coder CLI")
+        or text.startswith("FACTORY_CODE_CLI")
+    )
+
+
+def _handler_text_is_factory_grounded(text: str) -> bool:
+    return "factory-grounded" in (text or "").lower()
+
+
+def _workspace_handler_is_factory_grounded(root: Path, capability_id: str) -> bool:
+    name = str(capability_id).replace("-", "_")
+    path = Path(root) / "app" / "actions" / f"{name}.py"
+    if not path.is_file():
+        return False
+    try:
+        return _handler_text_is_factory_grounded(path.read_text(encoding="utf-8"))
+    except OSError:
+        return False
+
+
+def _real_agent_written(
+    snapshot: Mapping[str, Any],
+    state: Optional[Mapping[str, Any]] = None,
+) -> int:
+    """Count CLI/LLM harvest only. Factory-grounded fill is not authorship."""
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    if "cli_authored_ids" in dispatch:
+        return (
+            len(list(dispatch.get("cli_authored_ids") or []))
+            + len(list(dispatch.get("factory_llm_written_ids") or []))
+            + len(list(dispatch.get("handler_ids") or []))
+        )
+    if snapshot.get("cli_or_llm_written") is not None:
+        return int(snapshot.get("cli_or_llm_written") or 0)
+    return int(snapshot.get("agent_written") or 0)
+
+
 def cli_dispatch_attempted(
     state: Optional[Mapping[str, Any]] = None, ledger: Any = None
 ) -> bool:
@@ -450,28 +503,43 @@ def thin_stub_success_blocked(
     state: Optional[Mapping[str, Any]] = None,
     ledger: Any = None,
 ) -> Optional[str]:
-    """Named blocker: DeepSeek CLI ready, thin stubs, no real stage-1 wall.
+    """Named blocker: DeepSeek CLI ready, no real CLI/LLM authorship.
 
-    sess_9d0b43c81b2b4620: 8s ``budget_inspect`` hard-stop
-    ``written=0 templated=4 stub_rate=1.0`` then ``outcome=SUCCESS`` on a
-    store-complete lettings golden — C-BRIEF never got the remapped ≥1800s
-    wall. Prefer keep-running CLI or fail-closed STOPPED; never thin
-    Store-green SUCCESS from pure templates when the CLI was ready.
+    sess_9d0b43c81b2b4620 / sess_4e1ec7afa3894dc8: Store-green SUCCESS
+    with ``written=0`` / stub_rate≈1.0 while health showed DeepSeek+kimi
+    ready. Factory-grounded hole-fill after a CLI exit 0 is not authorship.
+    After a stage-1 wall the run must still fail-closed — never thin
+    SUCCESS from templates when the CLI was ready.
     """
     if not deepseek_cli_ready():
         return None
-    written = int(snapshot.get("agent_written") or 0)
+    written = _real_agent_written(snapshot, state)
     try:
         stub_rate = float(snapshot.get("stub_rate") or 0.0)
     except (TypeError, ValueError):
         stub_rate = 0.0
-    if written > 0 or stub_rate < 0.99:
+    if written > 0:
         return None
     attempted = bool(snapshot.get("cli_attempted")) or cli_dispatch_attempted(
         state, ledger
     )
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    via_cli = str(dispatch.get("via") or "") == "cli" or attempted
     from app.factory.build.budget_inspect import STAGE_1_S
 
+    if (
+        via_cli
+        and "cli_authored_ids" in dispatch
+        and len(list(dispatch.get("cli_authored_ids") or [])) == 0
+        and written == 0
+    ):
+        return (
+            f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: DeepSeek/kimi "
+            "FACTORY_CODE_CLI exited without harvested agent-written "
+            f"handlers (written={written}, stub_rate={stub_rate}). "
+            "A CLI exit 0 is not C-BRIEF authorship — do not SUCCESS "
+            "thin templates."
+        )
     if not attempted:
         return (
             f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is ready "
@@ -479,15 +547,13 @@ def thin_stub_success_blocked(
             "REUSE/COMPOSE is not a skip — do not SUCCESS thin templates "
             f"(written={written}, stub_rate={stub_rate})."
         )
-    if float(elapsed_s) + 1.0 < float(STAGE_1_S):
-        return (
-            f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is ready "
-            f"but has not had a stage-1 wall ({elapsed_s:.0f}s < "
-            f"{int(STAGE_1_S)}s) and authorship is still thin "
-            f"(written={written}, stub_rate={stub_rate}). Do not SUCCESS "
-            "a Store-green pilot from pure templates."
-        )
-    return None
+    return (
+        f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is ready "
+        f"but authorship is still thin (written={written}, "
+        f"stub_rate={stub_rate}, elapsed={float(elapsed_s):.0f}s"
+        f"{'' if float(elapsed_s) + 1.0 < float(STAGE_1_S) else ', after stage-1 wall'}). "
+        "Do not SUCCESS a Store-green pilot from pure templates."
+    )
 
 
 def kimi_prompt_model_alias() -> str:
@@ -1489,6 +1555,8 @@ class DispatchResult:
     specs: Dict[str, Any] = field(default_factory=dict)
     handlers: Dict[str, str] = field(default_factory=dict)
     kept_handler_ids: List[str] = field(default_factory=list)
+    #: Handlers the CLI actually wrote — not factory-grounded hole-fill.
+    cli_authored_ids: List[str] = field(default_factory=list)
     model: str = ""
     blocker: Optional[str] = None
     reuse_keep_path: bool = False
@@ -1514,6 +1582,7 @@ class DispatchResult:
             "generate_persist_ids": list(self.generate_persist_ids),
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
+            "cli_authored_ids": sorted(self.cli_authored_ids),
             "spec_ids": sorted(self.specs),
             "receipt": dict(self.receipt),
         }
@@ -1847,6 +1916,7 @@ def write_dispatch_receipt(
         "factory_llm_written_ids": list(result.factory_llm_written_ids),
         "factory_llm_model": result.factory_llm_model,
         "generate_persist_ids": list(result.generate_persist_ids),
+        "cli_authored_ids": sorted(result.cli_authored_ids),
         "model": result.model,
         "product_id": compiled.product_id,
         "vertical": compiled.vertical,
@@ -2429,15 +2499,40 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             # #318 keep-path: prefer on-disk workflow/event_bus steps over a
             # thin JSON body so the fallback envelope cannot overwrite them.
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
+            result.cli_authored_ids = [
+                cid
+                for cid in result.kept_handler_ids
+                if not _workspace_handler_is_factory_grounded(root, cid)
+            ]
             # Partial CLI (live ~2/5) must not leave REUSE routes importing
-            # missing app.actions modules. Fill holes only; do not flip
-            # reuse_keep_path (receipt stays CLI-ok).
+            # missing app.actions modules. Fill holes only; do not credit
+            # factory-grounded fill as CLI authorship (receipt stays CLI-ok
+            # for via=cli, but cli_authored_ids stay the pre-fill harvest).
             filled = emit_factory_grounded_reuse_keep_path(
                 root, compiled, only_missing=True
             )
-            if filled:
+            if filled and result.cli_authored_ids:
                 _merge_workspace_harvest(
                     result, root, list(compiled.capabilities)
+                )
+            if (
+                deepseek_cli_ready()
+                and not result.cli_authored_ids
+                and not result.handlers
+            ):
+                result.blocker = NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+                result.detail = (
+                    f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
+                    f"kimi/deepseek exited 0 without harvested "
+                    "agent-written handlers. A CLI exit 0 is not C-BRIEF "
+                    "authorship — do not SUCCESS thin templates."
+                )
+                ctx.note(
+                    result.detail,
+                    stage="dispatch",
+                    source="coder CLI",
+                    done=0,
+                    total=1,
                 )
         elif should_keep_factory_grounded_reuse(compiled, result):
             # sess_d5789a91: CLI 429 / insufficient balance with empty

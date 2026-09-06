@@ -208,7 +208,11 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
     )
     outcome = runner.run()
     sources = runner.state.get("artifact_sources", {})
-    by_agent = sorted(k for k, v in sources.items() if v.startswith("coder LLM"))
+    from app.factory.build.coder_session import is_agent_written_source
+
+    by_agent = sorted(
+        k for k, v in sources.items() if is_agent_written_source(str(v))
+    )
     print(
         json.dumps(
             {
