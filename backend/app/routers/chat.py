@@ -236,8 +236,9 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
     # --- Platform-creation flow: chat bridges to the product state machine ---
     # Routing contract lives in platform_chat_flow.should_handle_platform_message:
     # explicit commands always enter; free-text intent only when the env gate
-    # is on; approvals start the coding agent (chat LLM when keyed, regex
-    # fallback otherwise). Kit-configurator vocabulary never enters.
+    # is on; exact approve uses the regex door (chat LLM when keyed for
+    # other phrasing, regex fallback on miss). Kit-configurator vocabulary
+    # never enters.
     try:
         # NOTE on emission: card events (blueprint/generation) already carry
         # the full summary and the frontend renders it from the card. Do NOT
@@ -331,17 +332,13 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
 
         llm_result = None
         if platform_chat_llm.should_orchestrate(state, user_message):
-            try:
-                decision = await asyncio.to_thread(
-                    platform_chat_llm.decide, state, user_message
-                )
+            decision = await asyncio.to_thread(
+                platform_chat_llm.try_decide, state, user_message
+            )
+            if decision:
                 decision = platform_chat_llm.coerce_explicit_approval(
                     decision, state, user_message
                 )
-            except Exception:
-                logger.exception("Floor chat LLM failed; falling back to regex routing")
-                decision = None
-            if decision:
                 if decision.get("action") == "start_coder":
                     try:
                         require_remaining(getattr(state, "user_id", None), "generation")
@@ -369,7 +366,7 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             return
 
         if platform_chat_flow.has_pending_blueprint(state) and platform_chat_flow.is_approval(user_message):
-            # Offline / LLM-down fallback: the Approve button still starts WRITER.
+            # Exact Approve gate (skipped the LLM) or LLM-down fallback.
             try:
                 require_remaining(getattr(state, "user_id", None), "generation")
             except TrialLimitExceeded as exc:

@@ -108,6 +108,16 @@ def _wants_lettings(text: str, vertical_hint: Optional[str] = None) -> bool:
 
 LLM_DRAFTING_ENV = "ARCHITECT_LLM_DRAFTING_ENABLED"
 
+
+class LlmSoftMiss(Exception):
+    """Expected empty / unusable model output — fall back, do not Sentry-error.
+
+    OpenRouter free / Moonshot completions sometimes return ``''`` or ``{}``
+    under billing pressure. That is a miss, not a contract bug. Floor chat
+    logs these at warning and uses regex routing. Non-empty invalid actions
+    stay ``ValueError`` (fail-closed).
+    """
+
 # Cost ceilings for the drafting call. The brief is caller-supplied and the
 # response was previously unbounded, so a single request could bill an
 # arbitrary number of tokens in each direction (twice, because the call
@@ -208,8 +218,9 @@ def _extract_json(text: str) -> Dict[str, Any]:
 
     OpenRouter free models (and some safety filters) return prose such as
     ``User Safety: safe`` instead of JSON. Callers must not ``json.loads``
-    the raw completion — this helper raises ``ValueError`` when no object
-    is present so Floor chat / architect fail-safes stay clean.
+    the raw completion — this helper raises ``LlmSoftMiss`` for empty
+    content / ``{}`` and ``ValueError`` when non-empty output has no object
+    so Floor chat / architect fail-safes stay clean.
     """
     if not isinstance(text, str):
         text = "" if text is None else str(text)
@@ -219,6 +230,8 @@ def _extract_json(text: str) -> Dict[str, Any]:
     if text.endswith("```"):
         text = text.rsplit("\n", 1)[0] if "\n" in text else ""
     text = text.strip()
+    if not text:
+        raise LlmSoftMiss("Empty model output")
     start = text.find("{")
     if start == -1:
         raise ValueError("No JSON object found in model output")
@@ -249,7 +262,10 @@ def _extract_json(text: str) -> Dict[str, Any]:
                 break
     if depth != 0:
         raise ValueError("Unbalanced JSON object in model output")
-    return json.loads(text[start:end])
+    parsed = json.loads(text[start:end])
+    if isinstance(parsed, dict) and not parsed:
+        raise LlmSoftMiss("Empty JSON object in model output")
+    return parsed
 
 
 def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
