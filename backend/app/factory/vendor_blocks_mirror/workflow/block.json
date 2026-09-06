@@ -13,17 +13,7 @@
       "type": "string",
       "default": "run",
       "options": ["run"],
-      "description": "Factory-known keep-path default. Harvest prefers this over STORE_BLOCK_DEFAULT_ACTIONS."
-    },
-    {
-      "name": "steps",
-      "type": "array",
-      "description": "Workflow children. prepare_block_input constructs this from the schema sample."
-    },
-    {
-      "name": "result",
-      "type": "object",
-      "description": "Store kit shim / WorkflowBlock reads input['result'] or out['result']. Schema-sample POST has neither — prepare fills this from the first prepared step (sess_07dff0eaf8f64186)."
+      "description": "Factory-known keep-path default (sess_07dff0eaf8f64186). Harvest prefers this over STORE_BLOCK_DEFAULT_ACTIONS. Do not declare steps/result here — those close dispatch known-fields and refuse schema-sample domain keys."
     }
   ]
 }

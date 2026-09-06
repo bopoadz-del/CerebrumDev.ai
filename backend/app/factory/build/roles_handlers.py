@@ -2239,7 +2239,6 @@ def _block_contract(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
         # fill it in -- it ships optional and empty on purpose -- a declared
         # value wins over this one. The two are never merged silently.
         keys_read = re.findall(r"\.get\(\s*[\"'](\w{2,30})[\"']", source)
-        keys_read += re.findall(r"\[\s*[\"'](\w{2,30})[\"']\s*\]", source)
         if keys_read:
             contract["input_keys_read_by_block"] = sorted(set(keys_read))[:40]
     return contract

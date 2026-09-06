@@ -186,16 +186,21 @@ def test_registry_workflow_block_json_declares_result_and_run():
     """STEP 0: factory vendor workflow/block.json is the harvest source."""
     meta = load_local_block_json("workflow")
     assert meta and meta.get("id") == "workflow"
-    names = {
+    action = next(
+        item
+        for item in (meta.get("inputs") or [])
+        if isinstance(item, dict) and item.get("name") == "action"
+    )
+    assert action.get("default") == "run"
+    declared = {
         item.get("name")
         for item in (meta.get("inputs") or [])
         if isinstance(item, dict)
     }
-    assert {"action", "steps", "result"} <= names
-    action = next(
-        item for item in meta["inputs"] if item.get("name") == "action"
-    )
-    assert action.get("default") == "run"
+    # steps/result must not be declared — they close dispatch known-fields
+    # and refuse schema-sample domain keys (field_ops defect_register).
+    assert "steps" not in declared
+    assert "result" not in declared
     assert LIVE_VETCARE_REUSE_ACCEPT_CAPS[1] == "appointment_scheduling"
     assert LIVE_VETCARE_REUSE_ACCEPT_BLOCKS["appointment_scheduling"] == [
         "event_bus",
