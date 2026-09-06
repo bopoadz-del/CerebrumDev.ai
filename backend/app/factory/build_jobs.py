@@ -57,6 +57,12 @@ _DEFAULT_WALL_CLOCK_S = 1800.0
 _DEFAULT_MAX_REWORK = 1
 _DEFAULT_PHASE_WALL_CLOCK_S = 1500.0
 _DEFAULT_PILOT_PHASE_WALL_CLOCK_S = 5400.0
+#: Leftover dashboard walls in this band cannot host a Claude→DeepSeek
+#: C-BRIEF session. sess_b9fbae7 died at ~47s FAILED_BUDGET_SPENT after
+#: COLLECTOR's in-process OpenRouter review; remap to stage 1 when the
+#: DeepSeek CLI is ready. Explicit 0 still disables. Values above this
+#: band (including leftover 7200) stay honoured.
+_DEEPSEEK_LEFTOVER_WALL_MAX_S = 600.0
 
 #: A build with no ledger event for this long has no process behind it.
 #: An in-flight model_call NOTE is NOT a dead process — skip this stall
@@ -85,9 +91,18 @@ def _wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
     raw = os.getenv(BUILD_WALL_CLOCK_ENV)
     if raw is not None:
         try:
-            return float(raw)
+            value = float(raw)
         except ValueError:
-            pass
+            value = None
+        else:
+            if value == 0:
+                return 0.0
+            if 0 < value <= _DEEPSEEK_LEFTOVER_WALL_MAX_S:
+                from app.factory.build.coder_session import deepseek_cli_ready
+
+                if deepseek_cli_ready():
+                    return _DEFAULT_WALL_CLOCK_S
+            return value
     if _uses_pilot_budget(cycle, auto_pilot):
         from app.factory.build.auto_pilot import AUTO_PILOT_WALL_CLOCK_S
 

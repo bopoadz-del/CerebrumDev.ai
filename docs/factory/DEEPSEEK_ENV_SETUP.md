@@ -21,6 +21,13 @@ When `DEEPSEEK_API_KEY` is set (or `FACTORY_CODE_PROVIDER=deepseek`), the defaul
 binary is `claude` and the session uses DeepSeek V4 Pro
 (`deepseek-v4-pro[1m]` on the Anthropic-compat endpoint).
 
+When that CLI is ready (binary + DeepSeek key), C-BRIEF **must** dispatch via
+the Claude subprocess. Leftover `FACTORY_BRIEF_REQUIRE_CLI=0` /
+`FACTORY_BRIEF_DISPATCH=0`, COLLECTOR/GENERATE factory-LLM fallthrough, and
+leftover walls ≤600s (sess_b9fbae7 ~47s `FAILED_BUDGET_SPENT` on
+OpenRouter `minimax-m3:free`) must not send WRITER through in-process
+OpenRouter. HTTP oneshot stays CI-only.
+
 The production image (`./Dockerfile`) installs official Claude Code at
 `/usr/local/bin/claude` (pin `CLAUDE_CODE_VERSION`) **and** still installs
 Kimi Code at `/usr/local/bin/kimi`.

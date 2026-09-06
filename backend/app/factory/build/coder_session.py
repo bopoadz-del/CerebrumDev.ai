@@ -207,9 +207,16 @@ class CodeCliBillingFailed(CodeCliFailed):
 
 
 def brief_dispatch_enabled() -> bool:
-    """Default ON. FACTORY_BRIEF_DISPATCH=0 restores per-capability shots."""
+    """Default ON. FACTORY_BRIEF_DISPATCH=0 restores per-capability shots.
+
+    DeepSeek-ready C-BRIEF is not optional: leftover ``FACTORY_BRIEF_DISPATCH=0``
+    must not send a keyed Claude→DeepSeek Floor through per-capability
+    OpenRouter factory-LLM shots.
+    """
     raw = os.getenv(BRIEF_DISPATCH_ENV, "1").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    if raw not in {"0", "false", "no", "off"}:
+        return True
+    return deepseek_cli_ready()
 
 
 def http_oneshot_enabled() -> bool:
@@ -224,16 +231,23 @@ def brief_requires_cli() -> bool:
     Unkeyed / ``FACTORY_CODER_ENABLED=0`` still uses honest templates.
     ``FACTORY_BRIEF_HTTP_ONESHOT=1`` keeps the CI oneshot contract.
     ``ENV=test`` does not refuse at generate-start unless
-    ``FACTORY_BRIEF_REQUIRE_CLI=1`` (the mutation). Production
+    ``FACTORY_BRIEF_REQUIRE_CLI=1`` (the mutation) **or** DeepSeek CLI
+    is already ready (claude on PATH + ``DEEPSEEK_API_KEY``). Production
     (``ENV=production``) and keyed non-test hosts fail-closed.
+
+    Leftover ``FACTORY_BRIEF_REQUIRE_CLI=0`` must not treat a ready
+    DeepSeek+claude session as optional — that is how sess_b9fbae7
+    coded via in-process OpenRouter while health showed claude/deepseek.
     """
-    if not brief_dispatch_enabled():
-        return False
     if http_oneshot_enabled():
         return False
     from app.factory.coder import coder_enabled
 
     if not coder_enabled():
+        return False
+    if deepseek_cli_ready():
+        return True
+    if not brief_dispatch_enabled():
         return False
     require = os.getenv("FACTORY_BRIEF_REQUIRE_CLI", "").strip().lower()
     if require in {"0", "false", "no", "off"}:
@@ -358,6 +372,34 @@ def cli_default_model_ok(command: Optional[str] = None) -> bool:
     if not credentials_file_present():
         return True
     return config_has_usable_default_model(read_kimi_config_text())
+
+
+def deepseek_cli_ready(command: Optional[str] = None) -> bool:
+    """True when C-BRIEF must use Claude Code → DeepSeek, not factory LLM.
+
+    Health-ready photograph: ``FACTORY_CODE_CLI=claude`` (or DeepSeek default)
+    is an executable, ``DEEPSEEK_API_KEY`` is present, and a DeepSeek coding
+    model id is resolvable. HTTP oneshot stays the CI escape.
+    """
+    if http_oneshot_enabled():
+        return False
+    from app.factory.coder import (
+        coder_enabled,
+        deepseek_api_key,
+        deepseek_coder_selected,
+    )
+
+    if not coder_enabled():
+        return False
+    if not deepseek_coder_selected(command):
+        return False
+    if not deepseek_api_key():
+        return False
+    if not cli_available(command):
+        return False
+    if not cli_credentials_ok(command):
+        return False
+    return cli_default_model_ok(command)
 
 
 def kimi_prompt_model_alias() -> str:
@@ -1200,7 +1242,14 @@ def cli_miss_allows_generate_llm(result: DispatchResult) -> bool:
 def should_factory_llm_generate_gaps(
     compiled: Any, result: DispatchResult
 ) -> bool:
-    """Named CLI miss + remaining GENERATE gaps → one factory-LLM brief shot."""
+    """Named CLI miss + remaining GENERATE gaps → one factory-LLM brief shot.
+
+    A ready DeepSeek+claude session must not fall through to OpenRouter
+    (sess_b9fbae7 photographed in-process minimax-m3:free while health
+    already showed command=claude / provider=deepseek).
+    """
+    if deepseek_cli_ready():
+        return False
     if not cli_miss_allows_generate_llm(result):
         return False
     return bool(inventory_gap_ids(compiled))
