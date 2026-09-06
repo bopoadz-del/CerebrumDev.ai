@@ -322,6 +322,17 @@ describe('build progress copy', () => {
     })
     expect(fileOnly).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
     expect(fileOnly).toMatch(/KIMI_CODE_API_KEY/)
+    const deepseek = factoryCodeCliHonesty({
+      available: true,
+      credentials_file_present: false,
+      requires_kimi_credentials: false,
+      requires_deepseek_credentials: true,
+      blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+    })
+    expect(deepseek).toMatch(/DEEPSEEK_API_KEY/)
+    expect(deepseek).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
+    expect(deepseek).toMatch(/not the DeepSeek vehicle/)
+    expect(factoryCodeCliStatusTitle(deepseek)).toBe('DeepSeek CLI credentials missing')
   })
 
   it('factoryCodeCliHonesty names missing default_model as FACTORY_CODE_CLI_NO_MODEL', () => {

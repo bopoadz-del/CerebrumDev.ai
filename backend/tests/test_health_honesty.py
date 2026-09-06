@@ -42,8 +42,8 @@ async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_health_reports_deepseek_credentials_missing(tmp_path, monkeypatch):
-    fake = tmp_path / "claude"
-    fake.write_text("#!/bin/sh\necho claude 9.9.9\nexit 0\n", encoding="utf-8")
+    fake = tmp_path / "kimi"
+    fake.write_text("#!/bin/sh\necho kimi 0.41.0\nexit 0\n", encoding="utf-8")
     fake.chmod(0o755)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
@@ -64,8 +64,8 @@ async def test_health_reports_deepseek_credentials_missing(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_health_reports_deepseek_ready(tmp_path, monkeypatch):
-    fake = tmp_path / "claude"
-    fake.write_text("#!/bin/sh\necho claude 9.9.9\nexit 0\n", encoding="utf-8")
+    fake = tmp_path / "kimi"
+    fake.write_text("#!/bin/sh\necho kimi 0.41.0\nexit 0\n", encoding="utf-8")
     fake.chmod(0o755)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
@@ -79,9 +79,8 @@ async def test_health_reports_deepseek_ready(tmp_path, monkeypatch):
     assert probe["available"] is True
     assert probe["provider"] == "deepseek"
     assert probe["deepseek_key_present"] is True
-    assert probe["default_model"] == "claude-opus-4-6"
-    assert probe["default_model"].startswith("claude-opus")
-    assert "deepseek-v4-pro" not in probe["default_model"]
+    assert probe["default_model"] == "deepseek-v4-pro"
+    assert not probe["default_model"].startswith("claude-opus")
     assert "[1m]" not in probe["default_model"]
     assert "blocker" not in probe
 

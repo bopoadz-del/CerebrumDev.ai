@@ -613,13 +613,16 @@ export const FACTORY_CODE_CLI_BILLING = 'FACTORY_CODE_CLI_BILLING'
 
 export type FactoryCodeCliProbe = {
   command?: string | null
+  provider?: string | null
   available?: boolean
   resolved?: string | null
   credentials_file_present?: boolean
+  deepseek_key_present?: boolean
   default_model?: string | null
   default_model_configured?: boolean
   requires_cli?: boolean
   requires_kimi_credentials?: boolean
+  requires_deepseek_credentials?: boolean
   blocker?: string | null
   error?: string
 }

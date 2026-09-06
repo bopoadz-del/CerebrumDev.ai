@@ -46,10 +46,14 @@ from .code_cli import (  # noqa: F401 — re-export the public FACTORY_CODE_CLI 
     DEFAULT_DEEPSEEK_MODEL,
     LEGACY_CODE_CLI_ENV,
     ClaudePrintPromptEmpty,
+    KimiPromptEmpty,
     claude_print_argv,
     claude_print_log_argv,
     claude_print_prompt,
     code_cli_command,
+    kimi_prompt_argv,
+    kimi_prompt_log_argv,
+    kimi_prompt_text,
     deepseek_api_key,
     deepseek_cli_environ,
     deepseek_coder_selected,
@@ -78,7 +82,8 @@ CODER_ENABLED_ENV = "FACTORY_CODER_ENABLED"
 
 #: Provider-agnostic name for the agentic coding CLI. ``KIMI_CODE_CLI`` stays
 #: honoured so existing deployments keep working unchanged; point
-#: FACTORY_CODE_CLI at the Claude Code CLI (DeepSeek V4 Pro or Anthropic).
+#: FACTORY_CODE_CLI at Kimi Code (DeepSeek V4 Pro OpenAI-compat, or
+#: historical Moonshot). Claude Code is not the DeepSeek vehicle.
 #: The seam is "run this command, read its result". Selection + DeepSeek
 #: subprocess env live in ``app.factory.code_cli`` (re-exported above).
 
