@@ -39,7 +39,9 @@ from app.factory.build.coder_session import (
 from app.factory.build.reuse_accept import (
     LIVE_VETCARE_REUSE_ACCEPT_BLOCKS,
     LIVE_VETCARE_REUSE_ACCEPT_CAPS,
+    FAIL_CLOSED_MUST_REWRITE_READS,
     PRODUCT_ASSIGN_TO_CALL_HALT,
+    PRODUCT_SCHEMA_SAMPLE_REJECT,
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
     REUSE_ACCEPT_MISS,
     STORE_BLOCK_DEFAULT_ACTIONS,
@@ -302,12 +304,16 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
     assert "input['result']" in rules
     assert PRODUCT_ASSIGN_TO_CALL_HALT in rules
     assert "name['result'] =" in rules
+    assert FAIL_CLOSED_MUST_REWRITE_READS in rules
+    assert PRODUCT_SCHEMA_SAMPLE_REJECT in rules
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     contract = reuse_accept_brief_contract()
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_UNKNOWN_ACTION_NONE_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_WORKFLOW_RESULT_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_ASSIGN_TO_CALL_HALT in _WHOLE_JOB_SYSTEM
+    assert FAIL_CLOSED_MUST_REWRITE_READS in _WHOLE_JOB_SYSTEM
+    assert PRODUCT_SCHEMA_SAMPLE_REJECT in _WHOLE_JOB_SYSTEM
     assert "patient_records_management" in _WHOLE_JOB_SYSTEM
     assert "formula_executor" in _WHOLE_JOB_SYSTEM
     assert "vector_search" in _WHOLE_JOB_SYSTEM

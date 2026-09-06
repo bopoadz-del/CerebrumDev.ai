@@ -1519,6 +1519,10 @@ Rules:
   CLONER emit_result_key_access rewrites reads of name['result'] only.
   Rewriting name['result'] = into a .get() call fails as
   SyntaxError: cannot assign to function call (queue / formula_executor).
+  fail-closed keep original must still rewrite reads — a whole-module
+  keep of Store workflow.py leaves envelope['result'] as
+  workflow: RuntimeError: 'result' (appointment_scheduling rejected a
+  payload built from its own schema).
   Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
