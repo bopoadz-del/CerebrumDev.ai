@@ -30,7 +30,13 @@ done while PRODUCT will refuse the same persist path.
 GENERATE-gap factory-LLM fallthrough (sess_f358c2e0, after #343 CLI billing
 miss) must use the same persist envelope as REUSE keep-path. Routes without
 ``app/actions/{capability}.py`` fail ``[check:round_trip]`` with handler
-missing. An empty LLM return is that miss — not a deterministic template.
+missing.
+
+sess_336246 (tip 5a530b3): GENERATE ``vetcare_hub_veterinary_core`` + REUSE
+audit halted at WRITER ``handler missing`` because the factory LLM keyed
+the body as ``veterinary_care_core`` (or returned empty) and the keep-path
+skipped emit. Billing keep-path must still write the persist envelope —
+never a deterministic contract template and never a claimed ≥2h CLI session.
 """
 
 from __future__ import annotations
@@ -91,6 +97,68 @@ def persist_entity_of(
     return raw.replace("-", "_")
 
 
+def normalize_capability_id(capability_id: str) -> str:
+    """Hyphen/underscore-insensitive inventory id."""
+    return str(capability_id or "").strip().lower().replace("-", "_")
+
+
+def bind_generate_artifacts(
+    known_ids: Sequence[str],
+    raw: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Map factory-LLM spec/handler keys onto GENERATE inventory ids.
+
+    Live sess_336246: architect named ``vetcare_hub_veterinary_core``;
+    OpenRouter returned ``veterinary_care_core``. Exact-key emit then
+    skipped the persist handler and WRITER halted at round_trip.
+
+    Order: exact, normalize, then unique leftover pairing when exactly
+    one known id and one unmatched key remain. Never invent extra ids.
+    """
+    known = [str(cid).strip() for cid in known_ids if str(cid).strip()]
+    blob = {
+        str(key).strip(): value
+        for key, value in (raw or {}).items()
+        if str(key).strip()
+    } if isinstance(raw, Mapping) else {}
+    bound: Dict[str, Any] = {}
+    unused = dict(blob)
+
+    def _take(cid: str, key: str) -> None:
+        if key in unused:
+            bound[cid] = unused.pop(key)
+
+    for cid in known:
+        if cid in unused:
+            _take(cid, cid)
+            continue
+        norm = normalize_capability_id(cid)
+        match = next(
+            (key for key in list(unused) if normalize_capability_id(key) == norm),
+            None,
+        )
+        if match:
+            _take(cid, match)
+
+    leftover_known = [cid for cid in known if cid not in bound]
+    leftover_keys = list(unused)
+    if len(leftover_known) == 1 and leftover_keys:
+        cid = leftover_known[0]
+        if len(leftover_keys) == 1:
+            _take(cid, leftover_keys[0])
+        else:
+            norm = normalize_capability_id(cid)
+            coreish = [
+                key
+                for key in leftover_keys
+                if normalize_capability_id(key).endswith("_core")
+                and norm.endswith("_core")
+            ]
+            if len(coreish) == 1:
+                _take(cid, coreish[0])
+    return bound
+
+
 def persist_accept_rules_text() -> str:
     """BUILD cut: what PRODUCT one-record will POST and what persist means."""
     caps = ", ".join(KEYWORD_FALLBACK_VETCARE_CAPS)
@@ -127,8 +195,13 @@ def persist_accept_rules_text() -> str:
             "- write app/actions/{capability}.py through the same persist",
             "  envelope as REUSE keep-path (_persist_record / store.save)",
             "- alembic 0001 and store.COLUMNS still use spec.entity",
-            "- an empty LLM return is a persist miss, not a "
-            "deterministic contract template and not a ≥2h CLI session",
+            "- bind factory-LLM keys onto inventory GENERATE ids (exact,",
+            "  normalize, unique leftover) so vetcare_hub_veterinary_core",
+            "  is not dropped when the LLM writes veterinary_care_core",
+            "- empty / mismatched factory-LLM still emits the persist",
+            "  envelope — not a deterministic contract template and not a",
+            "  ≥2h CLI session. WRITER [check:round_trip] must not HALT",
+            "  solely because the billing keep-path omitted the handler",
         ]
     )
 
@@ -343,16 +416,32 @@ def emit_factory_grounded_generate_persist(
     """Write persist-capable GENERATE handlers after factory-LLM fallthrough.
 
     Same ``_handler_module`` / ``_persist_record`` envelope as REUSE
-    keep-path. LLM body is wrapped (not replaced) when present. Empty
-    LLM → no file, so ``persist_round_trip_errors`` reports the miss
-    instead of a deterministic contract template.
+    keep-path. LLM bodies are remapped onto inventory GENERATE ids and
+    wrapped when present. Empty / mismatched LLM still emits the persist
+    envelope (factory-grounded persist) so WRITER ``[check:round_trip]``
+    does not HALT for a missing handler — not a deterministic contract
+    template and not a ≥2h CLI session.
     """
-    from app.factory.build.roles_handlers import _handler_module
+    from app.factory.build.roles_handlers import (
+        _capability_handler_body,
+        _handler_module,
+    )
+    from app.factory.build.reuse_accept import harvest_block_default_actions
 
     root = persist_workspace_root(root)
     written: List[str] = []
-    raw_handlers = handlers if isinstance(handlers, Mapping) else {}
-    raw_specs = specs if isinstance(specs, Mapping) else {}
+    gap_ids = [
+        str(getattr(item, "capability_id", "") or "").strip()
+        for item in getattr(compiled, "inventory", ()) or ()
+        if getattr(item, "is_gap", False)
+        and str(getattr(item, "capability_id", "") or "").strip()
+    ]
+    raw_handlers = bind_generate_artifacts(
+        gap_ids, handlers if isinstance(handlers, Mapping) else {}
+    )
+    raw_specs = bind_generate_artifacts(
+        gap_ids, specs if isinstance(specs, Mapping) else {}
+    )
     actions = root / "app" / "actions"
     actions.mkdir(parents=True, exist_ok=True)
     for item in getattr(compiled, "inventory", ()) or ():
@@ -360,9 +449,6 @@ def emit_factory_grounded_generate_persist(
             continue
         cid = str(getattr(item, "capability_id", "") or "").strip()
         if not cid:
-            continue
-        body = raw_handlers.get(cid)
-        if not (isinstance(body, str) and body.strip()):
             continue
         bids = [
             str(b)
@@ -373,6 +459,13 @@ def emit_factory_grounded_generate_persist(
             )
             if str(b).strip()
         ]
+        llm_body = raw_handlers.get(cid)
+        if isinstance(llm_body, str) and llm_body.strip():
+            body = llm_body
+            authored = source
+        else:
+            body = _capability_handler_body(cid, bids)
+            authored = FACTORY_GROUNDED_PERSIST_SOURCE
         spec = raw_specs.get(cid)
         spec_map = spec if isinstance(spec, Mapping) else {}
         entity = persist_entity_of(spec_map, cid)
@@ -382,15 +475,13 @@ def emit_factory_grounded_generate_persist(
             if isinstance(f, dict) and f.get("name")
         ]
         path = root / persist_handler_rel(cid)
-        from app.factory.build.reuse_accept import harvest_block_default_actions
-
         defaults = harvest_block_default_actions(bids, root)
         path.write_text(
             _handler_module(
                 cid,
                 bids,
                 body,
-                source,
+                authored,
                 defaults,
                 entity=entity,
                 field_names=field_names,

@@ -17,8 +17,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -31,11 +29,10 @@ from app.factory.build.level_grade import Level, grade_workspace
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
     KEYWORD_FALLBACK_VETCARE_CAPS,
-    WRITER_PERSIST_HALT,
     assert_persist_round_trip_ready,
     persist_round_trip_errors,
 )
-from app.factory.build.roles import RoleContext, RoleError, run_writer
+from app.factory.build.roles import RoleContext, run_writer
 from app.factory.build.workspace import RoleWorkspace
 from tests.factory.coder_stub_bodies import invoking_handler_body
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
@@ -331,8 +328,10 @@ def test_writer_photograph_vetcare_generate_round_trip_after_billing(
     assert "pilot_zip" not in (result.detail or "").lower()
 
 
-def test_writer_generate_llm_empty_is_honest_persist_halt(tmp_path, monkeypatch):
-    """Empty factory-LLM GENERATE must not ship a deterministic template."""
+def test_writer_generate_llm_empty_still_emits_persist_keep_path(
+    tmp_path, monkeypatch
+):
+    """Empty factory-LLM GENERATE still persist-emits (not a template, not CLI)."""
     _arm_billing_cli(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "app.factory.coder.generate_from_compiled_brief",
@@ -350,31 +349,41 @@ def test_writer_generate_llm_empty_is_honest_persist_halt(tmp_path, monkeypatch)
         lambda _ctx: compiled,
     )
     out = tmp_path / "empty-llm"
-    with pytest.raises(RoleError) as halted:
-        run_writer(
-            RoleContext(
-                role=BuildRole.WRITER,
-                workspace=RoleWorkspace(BuildRole.WRITER, out),
-                blueprint=_VetCare(),
-                plan=plan,
-                state={
-                    "resolved_blocks": tuple(store_ids),
-                    "vendored_blocks": tuple(store_ids),
-                },
-            )
+    result = run_writer(
+        RoleContext(
+            role=BuildRole.WRITER,
+            workspace=RoleWorkspace(BuildRole.WRITER, out),
+            blueprint=_VetCare(),
+            plan=plan,
+            state={
+                "resolved_blocks": tuple(store_ids),
+                "vendored_blocks": tuple(store_ids),
+            },
         )
-    assert WRITER_PERSIST_HALT in str(halted.value)
-    assert "veterinary_care_core" in str(halted.value)
-    core = out / "app" / "actions" / "veterinary_care_core.py"
-    assert not core.is_file()
+    )
+    assert result.ok, result.detail
+    core = (out / "app" / "actions" / "veterinary_care_core.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_persist_record(" in core
+    assert FACTORY_GROUNDED_PERSIST_SOURCE in core
+    assert "deterministic contract template" not in core
+    assert "FACTORY_CODE_CLI" not in core
     receipt = json.loads((out / "docs" / "coder_receipt.json").read_text(encoding="utf-8"))
     assert receipt["ok"] is False
     assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
     assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
     assert receipt["keep_path"] == KEEP_PATH_FACTORY_GROUNDED_REUSE
     assert receipt["factory_llm_written_ids"] == []
-    assert "veterinary_care_core" in receipt["inventory_gaps"]
-    assert "pilot_zip" not in str(halted.value).lower()
+    assert "veterinary_care_core" in receipt["generate_persist_ids"]
+    assert receipt["inventory_gaps"] == []
+    specs = {
+        cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
+        for cid in KEYWORD_FALLBACK_VETCARE_CAPS
+    }
+    assert persist_round_trip_errors(out, specs) == []
+    assert_persist_round_trip_ready(out, specs)
+    assert "pilot_zip" not in (result.detail or "").lower()
 
 
 def test_writer_staging_leftover_destination_still_emits_generate_persist(
@@ -432,6 +441,152 @@ def test_writer_staging_leftover_destination_still_emits_generate_persist(
     )
     assert "_persist_record(" in core
     assert "coder LLM (openrouter/free)" in core
+
+
+def test_writer_sess_336246_alias_llm_key_round_trip_after_billing(
+    tmp_path, monkeypatch
+):
+    """sess_336246: GENERATE vetcare_hub_veterinary_core + REUSE audit.
+
+    Factory LLM keyed the body as veterinary_care_core. Tip 5a530b3
+    omitted app/actions/vetcare_hub_veterinary_core.py and WRITER halted
+    at [check:round_trip] handler missing. Billing keep-path must bind
+    the alias and persist-emit.
+    """
+    _arm_billing_cli(tmp_path, monkeypatch)
+    oneshot = []
+
+    def _alias_payload(**kw):
+        oneshot.append(kw)
+        return {
+            "specs": {
+                "veterinary_care_core": {
+                    "entity": "veterinary_care_core",
+                    "fields": [{"name": "reference", "type": "str", "required": True}],
+                }
+            },
+            "handlers": {
+                "veterinary_care_core": invoking_handler_body({"agent": True}),
+            },
+            "model": "openrouter/free",
+        }
+
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        _alias_payload,
+    )
+    plan = _Plan(
+        _Cap("vetcare_hub_veterinary_core", [], "GENERATE"),
+        _Cap("audit", ["audit"], "REUSE"),
+    )
+    store_ids = {"audit"}
+    compiled = compile_brief(_VetCare(), plan, store_ids=store_ids)
+    assert [item.capability_id for item in compiled.inventory if item.is_gap] == [
+        "vetcare_hub_veterinary_core"
+    ]
+    monkeypatch.setattr(
+        "app.factory.build.brief_compiler.compile_brief_from_ctx",
+        lambda _ctx: compiled,
+    )
+    out = tmp_path / "sess-336246-alias"
+    result = run_writer(
+        RoleContext(
+            role=BuildRole.WRITER,
+            workspace=RoleWorkspace(BuildRole.WRITER, out),
+            blueprint=_VetCare(),
+            plan=plan,
+            state={
+                "resolved_blocks": tuple(store_ids),
+                "vendored_blocks": tuple(store_ids),
+            },
+        )
+    )
+    assert result.ok, result.detail
+    assert oneshot and oneshot[0]["capabilities"] == ["vetcare_hub_veterinary_core"]
+    handler = (
+        out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
+    ).read_text(encoding="utf-8")
+    assert "_persist_record(" in handler
+    assert "coder LLM (openrouter/free)" in handler
+    assert '"agent": True' in handler
+    assert "deterministic contract template" not in handler
+    assert "FACTORY_CODE_CLI" not in handler
+    audit = (out / "app" / "actions" / "audit.py").read_text(encoding="utf-8")
+    assert FACTORY_GROUNDED_PERSIST_SOURCE in audit
+    receipt = json.loads((out / "docs" / "coder_receipt.json").read_text(encoding="utf-8"))
+    assert receipt["ok"] is False
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
+    assert receipt["keep_path"] == KEEP_PATH_FACTORY_GROUNDED_REUSE
+    assert receipt["factory_llm_written_ids"] == ["vetcare_hub_veterinary_core"]
+    assert "vetcare_hub_veterinary_core" in receipt["generate_persist_ids"]
+    assert receipt["inventory_gaps"] == []
+    assert "pilot_zip" not in (result.detail or "").lower()
+    specs = {
+        "vetcare_hub_veterinary_core": {
+            "entity": "veterinary_care_core",
+            "fields": [{"name": "reference", "type": "str"}],
+        },
+        "audit": {"entity": "audit", "fields": [{"name": "reference", "type": "str"}]},
+    }
+    assert persist_round_trip_errors(out, specs) == []
+    assert_persist_round_trip_ready(out, specs)
+
+
+def test_writer_sess_336246_empty_llm_still_round_trips_after_billing(
+    tmp_path, monkeypatch
+):
+    """sess_336246 roster: empty factory-LLM still persist-emits the GENERATE core."""
+    _arm_billing_cli(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: {"specs": {}, "handlers": {}, "model": "openrouter/free"},
+    )
+    plan = _Plan(
+        _Cap("vetcare_hub_veterinary_core", [], "GENERATE"),
+        _Cap("audit", ["audit"], "REUSE"),
+    )
+    store_ids = {"audit"}
+    compiled = compile_brief(_VetCare(), plan, store_ids=store_ids)
+    monkeypatch.setattr(
+        "app.factory.build.brief_compiler.compile_brief_from_ctx",
+        lambda _ctx: compiled,
+    )
+    out = tmp_path / "sess-336246-empty"
+    result = run_writer(
+        RoleContext(
+            role=BuildRole.WRITER,
+            workspace=RoleWorkspace(BuildRole.WRITER, out),
+            blueprint=_VetCare(),
+            plan=plan,
+            state={
+                "resolved_blocks": tuple(store_ids),
+                "vendored_blocks": tuple(store_ids),
+            },
+        )
+    )
+    assert result.ok, result.detail
+    handler = (
+        out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
+    ).read_text(encoding="utf-8")
+    assert "_persist_record(" in handler
+    assert FACTORY_GROUNDED_PERSIST_SOURCE in handler
+    assert "deterministic contract template" not in handler
+    assert "FACTORY_CODE_CLI" not in handler
+    receipt = json.loads((out / "docs" / "coder_receipt.json").read_text(encoding="utf-8"))
+    assert receipt["ok"] is False
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
+    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
+    assert receipt["factory_llm_written_ids"] == []
+    assert "vetcare_hub_veterinary_core" in receipt["generate_persist_ids"]
+    assert receipt["inventory_gaps"] == []
+    specs = {
+        cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
+        for cid in ("vetcare_hub_veterinary_core", "audit")
+    }
+    assert persist_round_trip_errors(out, specs) == []
+    assert_persist_round_trip_ready(out, specs)
+    assert "pilot_zip" not in (result.detail or "").lower()
 
 
 def test_factory_llm_generate_does_not_claim_founding_on_cli_billing(tmp_path):
