@@ -81,6 +81,7 @@ STORE_IDS = {
     "analytics",
     "team",
     "formula_executor",
+    "vector_search",
 }
 
 
@@ -145,6 +146,7 @@ def _plant_store_block_json(root: Path) -> None:
         "analytics": ("track_event", ["track_event"]),
         "team": ("create_team", ["create_team", "invite_member"]),
         "formula_executor": ("execute", ["execute"]),
+        "vector_search": ("search", ["search"]),
     }
     for bid, (default, options) in planted.items():
         dest = root / "vendor" / "blocks" / bid
@@ -237,6 +239,7 @@ def test_photographed_roster_and_factory_store_defaults():
     assert default_block_action("workflow") == "run"
     assert default_block_action("formula_executor") == "execute"
     assert default_block_action("formula_executor_v2") == "execute"
+    assert default_block_action("vector_search") == "search"
     planted = default_action_from_block_json(
         {"inputs": [{"name": "action", "default": "check", "options": ["check"]}]}
     )
@@ -289,6 +292,7 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
     assert REUSE_ACCEPT_MISS in text
     assert "patient_records_management" in text
     assert "formula_executor" in text
+    assert "vector_search" in text
     for needle in reuse_accept_needles():
         assert needle.lower() in text.lower(), needle
     rules = reuse_accept_rules_text()
@@ -302,7 +306,9 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
     assert PRODUCT_WORKFLOW_RESULT_HALT in _WHOLE_JOB_SYSTEM
     assert "patient_records_management" in _WHOLE_JOB_SYSTEM
     assert "formula_executor" in _WHOLE_JOB_SYSTEM
+    assert "vector_search" in _WHOLE_JOB_SYSTEM
     assert "formula_executor" in contract
+    assert "vector_search" in contract
 
 
 def test_empty_block_default_actions_is_reuse_accept_miss():
@@ -367,6 +373,12 @@ def test_emit_keep_path_populates_block_default_actions(tmp_path):
             (tmp_path / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
         )
         assert defaults.get("formula_executor") == "execute", (cid, defaults)
+    records = parse_handler_default_actions(
+        (tmp_path / "app" / "actions" / "patient_records_management.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert records.get("vector_search") == "search", records
 
 
 def test_emit_keep_path_formula_executor_without_planted_vendor(tmp_path):
@@ -403,6 +415,7 @@ def test_emit_keep_path_formula_executor_without_planted_vendor(tmp_path):
             encoding="utf-8",
         )
     assert not (tmp_path / "vendor" / "blocks" / "formula_executor").exists()
+    assert not (tmp_path / "vendor" / "blocks" / "vector_search").exists()
     emitted = emit_factory_grounded_reuse_keep_path(tmp_path, compiled)
     assert set(emitted) == set(LIVE_VETCARE_REUSE_ACCEPT_CAPS)
     for cid in ("prescription_management", "billing_and_invoicing"):
@@ -414,6 +427,12 @@ def test_emit_keep_path_formula_executor_without_planted_vendor(tmp_path):
             LIVE_VETCARE_REUSE_ACCEPT_BLOCKS[cid],
             capability_id=cid,
         ) == []
+    records = parse_handler_default_actions(
+        (tmp_path / "app" / "actions" / "patient_records_management.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert records.get("vector_search") == "search", records
     assert_reuse_schema_accept(tmp_path, compiled)
 
 

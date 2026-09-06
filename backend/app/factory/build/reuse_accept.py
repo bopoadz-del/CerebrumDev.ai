@@ -27,8 +27,19 @@ then refused appointment_scheduling:
 
 Store workflow / kit shim reads input['result'] or out['result']. The
 schema-sample POST does not include that key. This is prepare + emit +
-CLONER rewrite — not a per-cap handle() micro-shot. Do not claim
-pilot_zip.
+CLONER rewrite — not a per-cap handle() micro-shot.
+
+Live sess_8259e197749b4441 (tip 467c83e / #350): the ``result`` key miss
+did not recur. WRITER stopped at [check:reuse_accept]:
+
+    patient_records_management: vector_search: reuse/accept miss —
+      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
+
+Registry-verified Cerebrum-Blocks ``vector_search/block.json`` has no
+``inputs[].name == action`` (Store runtime uses ``params.operation``
+default ``search``). Factory vendor_blocks_mirror also lacked that
+harvest, and the documented Store map omitted the id. Same class as
+#348 ``formula_executor``. Do not claim pilot_zip.
 """
 
 from __future__ import annotations
@@ -61,7 +72,8 @@ WRITER_REUSE_ACCEPT_HALT = (
 )
 REUSE_ACCEPT_MISS = "reuse/accept miss"
 
-#: Photographed VetCare Hub REUSE roster after #346 (sess_bb870f4fb29042f2).
+#: Photographed VetCare Hub REUSE roster after #346 (sess_bb870f4fb29042f2)
+#: plus sess_8259e197749b4441 ``vector_search`` on patient_records.
 LIVE_VETCARE_REUSE_ACCEPT_CAPS = (
     "patient_records_management",
     "appointment_scheduling",
@@ -71,7 +83,7 @@ LIVE_VETCARE_REUSE_ACCEPT_CAPS = (
 )
 
 LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
-    "patient_records_management": ["database", "validation"],
+    "patient_records_management": ["database", "validation", "vector_search"],
     "appointment_scheduling": ["event_bus", "workflow"],
     "prescription_management": ["validation", "formula_executor"],
     "billing_and_invoicing": ["analytics", "formula_executor"],
@@ -83,6 +95,9 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
 #: Harvest from vendored block.json / source wins when present.
 #: ``formula_executor`` is the sess_bb870f4fb29042f2 miss: dual-registered
 #: budget block; Store runtime alias is ``formula_executor_v2``.
+#: ``vector_search`` is the sess_8259e197749b4441 miss: registry
+#: block.json has no action input; Store ``process()`` defaults
+#: ``params.operation`` to ``search``.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
     "audit": "log",
@@ -96,6 +111,7 @@ STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "queue": "enqueue",
     "team": "create_team",
     "validation": "validate",
+    "vector_search": "search",
     "workflow": "run",
 }
 
@@ -116,6 +132,11 @@ _ACTION_NOT_IN = re.compile(
     re.IGNORECASE,
 )
 _IDENT_IN_LIST = re.compile(r"""['\"]([A-Za-z_][\w]*)['\"]""")
+#: Store vector_search (and similar) dispatch on operation, not action.
+_OPERATION_DEFAULT = re.compile(
+    r"""(?:params|kwargs)\.get\(\s*['\"]operation['\"]\s*,\s*['\"]([A-Za-z_][\w]*)['\"]"""
+)
+_ACTION_INPUT_NAMES = frozenset({"action", "operation"})
 
 
 class ReuseAcceptHalt(ValueError):
@@ -161,23 +182,34 @@ def default_block_action(
 
 
 def default_action_from_block_json(meta: Any) -> Optional[str]:
-    """``inputs[].name == action`` default, else first option."""
+    """``inputs[].name == action`` (or ``operation``) default, else first option."""
     if not isinstance(meta, Mapping):
         return None
+    found_operation: Optional[str] = None
     for item in meta.get("inputs") or ():
         if not isinstance(item, Mapping):
             continue
-        if str(item.get("name") or "") != "action":
+        name = str(item.get("name") or "")
+        if name not in _ACTION_INPUT_NAMES:
             continue
+        harvested: Optional[str] = None
         raw = item.get("default")
         if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-        options = item.get("options") or ()
-        if isinstance(options, (list, tuple)):
-            for opt in options:
-                if isinstance(opt, str) and opt.strip():
-                    return opt.strip()
-    return None
+            harvested = raw.strip()
+        else:
+            options = item.get("options") or ()
+            if isinstance(options, (list, tuple)):
+                for opt in options:
+                    if isinstance(opt, str) and opt.strip():
+                        harvested = opt.strip()
+                        break
+        if not harvested:
+            continue
+        if name == "action":
+            return harvested
+        if found_operation is None:
+            found_operation = harvested
+    return found_operation
 
 
 def default_action_from_source(source: str) -> Optional[str]:
@@ -191,6 +223,9 @@ def default_action_from_source(source: str) -> Optional[str]:
     match = _ACTION_EQ.search(blob)
     if match:
         return (match.group(1) or match.group(2) or "").strip() or None
+    match = _OPERATION_DEFAULT.search(blob)
+    if match:
+        return (match.group(1) or "").strip() or None
     return None
 
 
@@ -479,14 +514,19 @@ def reuse_accept_rules_text(
             "vendor_blocks_mirror / CEREBRUM_BLOCKS_ROOT action default or",
             "options[0]) or the factory-known Store map. formula_executor",
             "(and formula_executor_v2) must harvest a keyword action.",
-            "Pass action= as a keyword — never inside the payload dict.",
+            "vector_search must harvest a keyword action (Store operation",
+            "default search) even when registry block.json has no action",
+            "input. Pass action= as a keyword — never inside the payload dict.",
             "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
             "",
-            "Photographed VetCare Hub REUSE roster (sess_bb870f4fb29042f2):",
+            "Photographed VetCare Hub REUSE roster (sess_bb870f4fb29042f2 /",
+            "sess_8259e197749b4441):",
             *[f"- {cid}" for cid in roster],
             "Those ids are keep-path handlers, not per-cap micro-shots.",
             "prescription_management / billing_and_invoicing bind",
             "formula_executor — a missing default is reuse/accept miss.",
+            "patient_records_management binds vector_search — a missing",
+            "default is the sess_8259e197749b4441 reuse/accept miss.",
             f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
             "three PRODUCT reworks on Unknown action.",
         ]
@@ -525,8 +565,8 @@ def reuse_accept_brief_contract() -> str:
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
         "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map (including formula_executor) and pass action= as a keyword "
-        "(action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
+        "map (including formula_executor and vector_search) and pass action= "
+        "as a keyword (action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
         "Store workflow reads input['result'] — a schema-sample POST that "
@@ -547,6 +587,7 @@ def reuse_accept_needles() -> Sequence[str]:
         f"[check:{REUSE_ACCEPT_CHECK}]",
         LIVE_VETCARE_REUSE_ACCEPT_CAPS[0],
         "formula_executor",
+        "vector_search",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
     )
