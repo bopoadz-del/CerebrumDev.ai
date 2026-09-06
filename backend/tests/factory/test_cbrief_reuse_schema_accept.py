@@ -43,7 +43,6 @@ from app.factory.build.coder_session import (
 from app.factory.build.reuse_accept import (
     LIVE_VETCARE_REUSE_ACCEPT_BLOCKS,
     LIVE_VETCARE_REUSE_ACCEPT_CAPS,
-    PRODUCT_UNKNOWN_ACTION_HALT,
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
     REUSE_ACCEPT_MISS,
     STORE_BLOCK_DEFAULT_ACTIONS,
@@ -61,7 +60,7 @@ from app.factory.build.reuse_accept import (
     reuse_accept_needles,
     reuse_accept_rules_text,
 )
-from app.factory.build.roles import RoleContext, RoleError, run_writer
+from app.factory.build.roles import RoleContext, run_writer
 from app.factory.build.roles_handlers import (
     _capability_handler_body,
     _handler_module,
