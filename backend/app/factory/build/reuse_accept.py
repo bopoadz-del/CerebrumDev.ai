@@ -18,8 +18,17 @@ the factory-known default map. Harvest also skipped the factory
 vendor_blocks_mirror when workspace vendor/block.json had no action
 input.
 
-This module is the compiler + emit + harvest + WRITER halt — not a
-per-capability handle() micro-shot. Do not claim pilot_zip.
+Live sess_07dff0eaf8f64186 (tip da7cd2b / #348): Unknown action /
+formula_executor / ModuleNotFoundError did not recur. TESTER PRODUCT
+then refused appointment_scheduling:
+
+    workflow: RuntimeError: 'result'
+    schema sample refused; accept-payload persisted nothing
+
+Store workflow / kit shim reads input['result'] or out['result']. The
+schema-sample POST does not include that key. This is prepare + emit +
+CLONER rewrite — not a per-cap handle() micro-shot. Do not claim
+pilot_zip.
 """
 
 from __future__ import annotations
@@ -40,6 +49,7 @@ from app.factory.build.workflow_accept import (
     EVENT_BUS_STEP_ACTION,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
     PRODUCT_EVENT_BUS_STEP_CLASS,
+    PRODUCT_WORKFLOW_RESULT_HALT,
 )
 
 PRODUCT_UNKNOWN_ACTION_HALT = "Unknown action"
@@ -458,7 +468,11 @@ def reuse_accept_rules_text(
             f"action= keyword (or action=None) fails as {PRODUCT_UNKNOWN_ACTION_HALT!r}",
             f"/ {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. Workflow children without",
             f"step.action fail as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
-            f"({PRODUCT_EVENT_BUS_STEP_CLASS}).",
+            f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Store workflow / kit shim",
+            "reads input['result'] / out['result']; a schema-sample POST",
+            f"that omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT}.",
+            "prepare_block_input and keep-path emit MUST attach result from",
+            "the first prepared step so accept-payload can persist.",
             "",
             "factory-grounded REUSE emit MUST populate BLOCK_DEFAULT_ACTIONS",
             "from vendored block.json (workspace vendor/, then factory",
@@ -500,6 +514,8 @@ def reuse_accept_forbidden_lines() -> str:
             "- burying action inside the payload dict",
             f"- reaching TESTER PRODUCT with {PRODUCT_UNKNOWN_ACTION_HALT} "
             f"or {PRODUCT_EVENT_BUS_STEP_0_HALT} after keep-path emit",
+            "- omitting workflow input['result'] so PRODUCT fails as "
+            f"{PRODUCT_WORKFLOW_RESULT_HALT} (accept-payload persisted nothing)",
         ]
     )
 
@@ -513,6 +529,8 @@ def reuse_accept_brief_contract() -> str:
         "(action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
+        "Store workflow reads input['result'] — a schema-sample POST that "
+        f"omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER. "
         f"Photographed roster: {', '.join(LIVE_VETCARE_REUSE_ACCEPT_CAPS)}."
     )
@@ -529,4 +547,6 @@ def reuse_accept_needles() -> Sequence[str]:
         f"[check:{REUSE_ACCEPT_CHECK}]",
         LIVE_VETCARE_REUSE_ACCEPT_CAPS[0],
         "formula_executor",
+        PRODUCT_WORKFLOW_RESULT_HALT,
+        "input['result']",
     )

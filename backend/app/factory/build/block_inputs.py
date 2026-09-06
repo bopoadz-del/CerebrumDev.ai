@@ -475,6 +475,69 @@ def _shape_workflow_steps(
     return shaped
 
 
+def workflow_result_payload(
+    data: Dict[str, Any],
+    steps: Optional[Sequence[Any]] = None,
+) -> Any:
+    """Value Store workflow / kit shims read as ``input['result']``.
+
+    Live sess_07dff0eaf8f64186 (VetCare Hub ALL-REUSE, tip da7cd2b / #348):
+    PRODUCT schema-sample POST has pet/date/status — no ``result`` key.
+    The Store kit shim then did ``out['result']`` (or wrapped that KeyError
+    as ``RuntimeError: 'result'``). Keep-path prepare must supply this key
+    so ``appointment_scheduling`` accept-payload can persist.
+    """
+    if isinstance(data, dict):
+        existing = data.get("result")
+        if existing not in (None, ""):
+            return existing
+    chain = steps
+    if chain is None and isinstance(data, dict):
+        chain = data.get("steps")
+    for step in chain or ():
+        if not isinstance(step, dict):
+            continue
+        inner = step.get("input")
+        if isinstance(inner, dict) and inner:
+            return dict(inner)
+        if inner not in (None, ""):
+            return inner
+    if not isinstance(data, dict):
+        return {"reference": "record"}
+    scalars = {
+        key: value
+        for key, value in data.items()
+        if key
+        not in {
+            "steps",
+            "action",
+            "result",
+            "results",
+            "input",
+            "ok",
+            "error",
+            "block",
+            "blocks",
+        }
+        and value not in (None, "")
+    }
+    return scalars or {"reference": data.get("reference") or "record"}
+
+
+def ensure_workflow_result(
+    data: Dict[str, Any],
+    steps: Optional[Sequence[Any]] = None,
+) -> Dict[str, Any]:
+    """Attach ``result`` so Store workflow does not RuntimeError: 'result'."""
+    out = dict(data) if isinstance(data, dict) else {}
+    if steps is not None:
+        out["steps"] = list(steps)
+    if out.get("result") not in (None, ""):
+        return out
+    out["result"] = workflow_result_payload(out, out.get("steps"))
+    return out
+
+
 def _for_workflow(
     data: Dict[str, Any],
     roster: Sequence[str],
@@ -494,7 +557,7 @@ def _for_workflow(
             default_actions=default_actions,
             fallback_domain=data,
         )
-        return out
+        return ensure_workflow_result(out)
     peers = [b for b in roster if b and b != "workflow"]
     built: List[Dict[str, Any]] = []
     for block in peers[:3]:
@@ -522,7 +585,7 @@ def _for_workflow(
         # list so the block's required-field check is not the failure mode.
         built.append({"block": "workflow", "input": dict(data)})
     out["steps"] = built
-    return out
+    return ensure_workflow_result(out)
 
 
 def _looks_minted_team_id(value: Any) -> bool:
@@ -1534,6 +1597,53 @@ def _shape_workflow_steps(
     return shaped
 
 
+def _workflow_result_payload(data, steps=None):
+    if isinstance(data, dict):
+        existing = data.get("result")
+        if existing not in (None, ""):
+            return existing
+    chain = steps
+    if chain is None and isinstance(data, dict):
+        chain = data.get("steps")
+    for step in chain or ():
+        if not isinstance(step, dict):
+            continue
+        inner = step.get("input")
+        if isinstance(inner, dict) and inner:
+            return dict(inner)
+        if inner not in (None, ""):
+            return inner
+    if not isinstance(data, dict):
+        return {"reference": "record"}
+    scalars = {
+        key: value
+        for key, value in data.items()
+        if key not in {
+            "steps",
+            "action",
+            "result",
+            "results",
+            "input",
+            "ok",
+            "error",
+            "block",
+            "blocks",
+        }
+        and value not in (None, "")
+    }
+    return scalars or {"reference": data.get("reference") or "record"}
+
+
+def _ensure_workflow_result(data, steps=None):
+    out = dict(data) if isinstance(data, dict) else {}
+    if steps is not None:
+        out["steps"] = list(steps)
+    if out.get("result") not in (None, ""):
+        return out
+    out["result"] = _workflow_result_payload(out, out.get("steps"))
+    return out
+
+
 def _for_workflow(
     data: Dict[str, Any],
     roster: Sequence[str],
@@ -1553,7 +1663,7 @@ def _for_workflow(
             default_actions=default_actions,
             fallback_domain=data,
         )
-        return out
+        return _ensure_workflow_result(out)
     peers = [b for b in roster if b and b != "workflow"]
     built: List[Dict[str, Any]] = []
     for block in peers[:3]:
@@ -1575,7 +1685,7 @@ def _for_workflow(
     if not built:
         built.append({"block": "workflow", "input": dict(data)})
     out["steps"] = built
-    return out
+    return _ensure_workflow_result(out)
 
 
 def _looks_minted_team_id(value):

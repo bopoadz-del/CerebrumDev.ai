@@ -299,6 +299,42 @@ def test_mutation_drops_only_step0_reminders_needles():
     assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
 
 
+def test_mutation_drops_workflow_result_key_needles():
+    """sess_07dff0eaf8f64186: dropping RuntimeError: 'result' must lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")
+        ),
+        store_ids={"event_bus", "workflow"},
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("workflow: RuntimeError: 'result'", "")
+    compiled.text = compiled.text.replace("input['result']", "input['output']")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
+
+
 def test_mutation_drops_writer_behaviour_acceptance():
     compiled = _compiled()
     compiled.text = compiled.text.replace(

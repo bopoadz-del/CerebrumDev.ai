@@ -1512,7 +1512,11 @@ Rules:
   An unprepared first factory child fails as
   workflow: step_1 (event_bus): error. A prepared step_1 plus an
   unprepared step_2 still fails as workflow: step_2 (event_bus): error.
-  The factory wrap is not keep/done. Exact shape:
+  The factory wrap is not keep/done. Store workflow / kit shim reads
+  input['result'] or out['result']. A schema-sample POST that omits it
+  fails as workflow: RuntimeError: 'result' — prepare_block_input and
+  the keep-path emit MUST attach result from the first prepared step.
+  Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
    "channel": "mcp", "tool": "event_bus"}}.

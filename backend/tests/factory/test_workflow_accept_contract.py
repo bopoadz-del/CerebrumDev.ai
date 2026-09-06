@@ -48,6 +48,7 @@ from app.factory.build.workflow_accept import (
     PRODUCT_EVENT_BUS_STEP_2_HALT,
     PRODUCT_EVENT_BUS_STEP_CLASS,
     PRODUCT_EVENT_BUS_STEP_HALT,
+    PRODUCT_WORKFLOW_RESULT_HALT,
     WRITER_EVENT_BUS_WORKFLOW_HALT,
     EventBusWorkflowHalt,
     assert_event_bus_workflow_handlers,
@@ -369,6 +370,7 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in contract
+    assert PRODUCT_WORKFLOW_RESULT_HALT in contract
     assert AUTOMATED_REMINDERS_STYLE in contract
     assert "reminders_notifications" in contract
     assert "keep/done" in contract
@@ -740,6 +742,7 @@ def test_factory_grounded_body_is_prepared_step1_and_store_ready():
     assert "appointment.scheduled" in body
     assert '"tool": "event_bus"' in body
     assert "channel" in body and "mcp" in body
+    assert "'result':" in body or '"result":' in body
 
 
 def test_writer_replaces_unprepared_scheduling_with_grounded(tmp_path):
@@ -777,6 +780,7 @@ def test_brief_names_factory_grounded_emit():
     assert "input.tool" in compiled.text
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in compiled.text
     assert AUTOMATED_REMINDERS_STYLE in compiled.text
+    assert PRODUCT_WORKFLOW_RESULT_HALT in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 

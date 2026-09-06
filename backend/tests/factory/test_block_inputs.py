@@ -24,6 +24,7 @@ from app.factory.build.block_inputs import (
     STORE_NOTIFICATION_CHANNELS,
     align_spec_to_handler_fields,
     align_spec_to_handler_source,
+    ensure_workflow_result,
     handler_field_contracts,
     handler_required_fields,
     notification_channel,
@@ -32,6 +33,7 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
     split_execute_action,
+    workflow_result_payload,
 )
 from app.factory.build.roles import (
     _constraint_guard,
@@ -132,6 +134,9 @@ def test_workflow_payload_has_steps_built_from_roster():
     assert out["steps"][1]["block"] == "notification"
     assert out["steps"][1]["input"]["channel"] == "mcp"
     assert out["steps"][1]["input"]["message"]
+    # sess_07dff0eaf8f64186: schema-sample has no result key; Store workflow
+    # reads input['result'] / out['result'] and wraps KeyError as RuntimeError.
+    assert out.get("result") not in (None, "")
 
 
 def test_workflow_keeps_explicit_steps():
@@ -143,9 +148,31 @@ def test_workflow_keeps_explicit_steps():
     # Existing coder-built steps must still be prepared (sess_4fba2a2).
     assert isinstance(out["steps"][0]["input"]["name"], str)
     assert out["steps"][0]["input"]["name"]
+    assert out.get("result") not in (None, "")
 
 
-# -- team -----------------------------------------------------------------
+def test_schema_sample_workflow_prepare_supplies_result_key():
+    """Live sess_07dff0eaf8f64186: schema-sample POST has no result key."""
+    sample = _sample_payload(
+        {
+            "fields": [
+                {"name": "reference", "type": "str", "required": True},
+                {"name": "status", "type": "str", "required": True},
+            ]
+        }
+    )
+    assert "result" not in sample
+    out = prepare_block_input(
+        "workflow",
+        sample,
+        roster=["workflow", "event_bus"],
+    )
+    assert out.get("result") not in (None, "")
+    assert workflow_result_payload(sample) not in (None, "")
+    filled = ensure_workflow_result({"steps": [{"block": "event_bus", "input": {"topic": "t"}}]})
+    assert filled["result"] == {"topic": "t"}
+    kept = ensure_workflow_result({"result": {"kept": True}, "steps": []})
+    assert kept["result"] == {"kept": True}
 
 
 def test_team_payload_never_passes_none_to_lowercased_fields():

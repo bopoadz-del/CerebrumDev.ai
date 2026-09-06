@@ -857,6 +857,21 @@ def test_sess_f1fe691_reminders_result_key_is_not_required_on_envelope():
     rewritten = emit_result_key_access(workflow)
     assert 'output.get("result", output)' in rewritten
 
+    # sess_07dff0eaf8f64186: Store kit shim used ``out`` / ``step_result``,
+    # not the first whitelist (envelope/output/payload).
+    live_out = (
+        "out = {'status': 'success', 'results': []}\n"
+        "try:\n"
+        "    return out['result']\n"
+        "except KeyError as exc:\n"
+        "    raise RuntimeError(exc) from exc\n"
+    )
+    live_rewritten = emit_result_key_access(live_out)
+    assert 'out.get("result", out)' in live_rewritten
+    assert "out['result']" not in live_rewritten
+    step_result = emit_result_key_access("value = step_result['result']\n")
+    assert 'step_result.get("result", step_result)' in step_result
+
     # Constructor rewrite must not invent a cause — only rewrite zero-arg
     # Store construction that produces the live TypeError.
     live = "instance = DatabaseBlock()\n"

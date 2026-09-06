@@ -65,6 +65,7 @@ from app.factory.build.roles_handlers import (
 from app.factory.build.workflow_accept import (
     EVENT_BUS_STEP_ACTION,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
+    PRODUCT_WORKFLOW_RESULT_HALT,
 )
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
@@ -292,10 +293,13 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
         assert needle.lower() in text.lower(), needle
     rules = reuse_accept_rules_text()
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in rules
+    assert PRODUCT_WORKFLOW_RESULT_HALT in rules
+    assert "input['result']" in rules
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     contract = reuse_accept_brief_contract()
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_UNKNOWN_ACTION_NONE_HALT in _WHOLE_JOB_SYSTEM
+    assert PRODUCT_WORKFLOW_RESULT_HALT in _WHOLE_JOB_SYSTEM
     assert "patient_records_management" in _WHOLE_JOB_SYSTEM
     assert "formula_executor" in _WHOLE_JOB_SYSTEM
     assert "formula_executor" in contract
@@ -356,6 +360,8 @@ def test_emit_keep_path_populates_block_default_actions(tmp_path):
     assert EVENT_BUS_STEP_ACTION in sched
     assert "execute(" in sched
     assert not re.search(r"execute\s*\([^)]*action\s*=\s*None", sched)
+    assert "'result':" in sched or '"result":' in sched
+    assert "steps[0].get('input')" in sched or 'steps[0].get("input")' in sched
     for cid in ("prescription_management", "billing_and_invoicing"):
         defaults = parse_handler_default_actions(
             (tmp_path / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
@@ -512,3 +518,5 @@ def test_rendered_block_inputs_carries_store_default_map():
     assert "create_team" in text
     assert "validate" in text
     assert repr(dict(STORE_BLOCK_DEFAULT_ACTIONS)) in text
+    assert "def _ensure_workflow_result" in text
+    assert 'out["result"]' in text or "out['result']" in text

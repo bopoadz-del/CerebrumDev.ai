@@ -37,6 +37,11 @@ PRODUCT_ACCEPT_CHECK = "event_bus_workflow"
 PRODUCT_EVENT_BUS_STEP_HALT = "workflow: step_N (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_CLASS = "schema sample refused (event_bus workflow step)"
 PRODUCT_ACCEPT_EMPTY_CLASS = "accept-payload persisted nothing"
+#: Live sess_07dff0eaf8f64186 after #348: Unknown action cleared; PRODUCT
+#: then refused appointment_scheduling because Store workflow / kit shim
+#: read ``out['result']`` (schema-sample POST has no such key).
+PRODUCT_WORKFLOW_RESULT_HALT = "workflow: RuntimeError: 'result'"
+WORKFLOW_RESULT_KEY = "result"
 WRITER_EVENT_BUS_WORKFLOW_HALT = (
     "WRITER [check:event_bus_workflow] failed — plan binds "
     "workflow+event_bus without the prepared contract"
@@ -527,7 +532,8 @@ def grounded_event_bus_handler_body(
         f"{other_loop}"
         "    if 'workflow' in BLOCK_IDS:\n"
         "        result = execute(\n"
-        "            'workflow', {'steps': steps}, "
+        "            'workflow', {'steps': steps, 'result': ("
+        "steps[0].get('input') if steps else payload)}, "
         "action=BLOCK_DEFAULT_ACTIONS.get('workflow') or 'run',\n"
         "        )\n"
         "        results['workflow'] = result\n"
@@ -704,7 +710,7 @@ def workflow_accept_rules_text(
             f"  {{capability}} rejected a payload built from its own schema: "
             f"{PRODUCT_EVENT_BUS_STEP_HALT}",
             f"Named class: {PRODUCT_EVENT_BUS_STEP_CLASS}; "
-            f"{PRODUCT_ACCEPT_EMPTY_CLASS}.",
+            f"{PRODUCT_ACCEPT_EMPTY_CLASS}; {PRODUCT_WORKFLOW_RESULT_HALT}.",
             "",
             *bound_lines,
             "PRODUCT schema-sample rules (roles_handlers._sample_payload):",
@@ -729,6 +735,11 @@ def workflow_accept_rules_text(
             f"step_2 raw still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT}.",
             "The Store workflow records a child refusal as status=error — often",
             "only the banner string, no inner message.",
+            "Store kit shims also read input['result'] / out['result'] and wrap",
+            f"a missing key as {PRODUCT_WORKFLOW_RESULT_HALT}. The schema sample",
+            "does not include that key — prepare_block_input / keep-path emit",
+            "MUST attach result from the first prepared step so accept-payload",
+            "can persist.",
             "WRITER emits a factory-grounded prepared event_bus step for",
             "appointment / booking / reminder capabilities — do not burn",
             "rework on execute(block_id, payload) stubs, and do not",
@@ -808,6 +819,9 @@ def workflow_accept_forbidden_lines() -> str:
             "reminder capabilities (WRITER must emit the factory-grounded "
             "prepared event_bus step)",
             '- execute("workflow", payload) with the raw schema sample',
+            "- omitting workflow input['result'] so PRODUCT fails as "
+            f"{PRODUCT_WORKFLOW_RESULT_HALT} (schema-sample POST has no "
+            "result key; Store kit shim wraps KeyError as RuntimeError)",
         ]
     )
 
@@ -832,6 +846,10 @@ def workflow_accept_brief_contract() -> str:
         f"({PRODUCT_EVENT_BUS_STEP_CLASS}). The factory wrap is not keep/done. "
         f"WRITER emits a factory-grounded prepared event_bus step — do not "
         f'execute("workflow", payload) with the raw schema sample. '
+        "Store workflow / kit shim reads input['result'] or out['result'] "
+        "— a schema-sample POST that omits it fails as "
+        f"{PRODUCT_WORKFLOW_RESULT_HALT!r}. prepare_block_input and the "
+        f"keep-path emit MUST attach result from the first prepared step. "
         f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
@@ -873,6 +891,8 @@ def workflow_accept_needles() -> Sequence[str]:
         "execute(block_id, payload)",
         "input.tool",
         f'"tool": "{EVENT_BUS_MCP_BLOCK}"',
+        PRODUCT_WORKFLOW_RESULT_HALT,
+        "input['result']",
     )
 
 
