@@ -72,9 +72,9 @@ psycopg-binary==3.3.4
 py_rust_stemmers==0.1.8
 pybase64==1.5.0
 pycparser==3.0
-pydantic==2.10.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
-pydantic_core==2.27.2
+pydantic_core==2.46.5
 Pygments==2.21.0
 pypdf==6.16.2
 PyPika==0.51.1
