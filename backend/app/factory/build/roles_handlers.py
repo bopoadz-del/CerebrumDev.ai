@@ -2731,8 +2731,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.coder_session import (
         CLI_AUTH_BILLING_BLOCKERS,
         CLI_PREFLIGHT_BLOCKERS,
+        NAMED_BLOCKER_CLI_UNUSED,
         brief_dispatch_enabled,
         brief_requires_cli,
+        deepseek_cli_ready,
         dispatch_compiled_brief,
         factory_grounded_source_for,
         inventory_gap_ids,
@@ -2756,7 +2758,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
     write_brief_artifacts(ctx, compiled_brief)
     dispatch = None
-    use_brief_dispatch = brief_dispatch_enabled()
+    use_brief_dispatch = brief_dispatch_enabled() or deepseek_cli_ready()
     reuse_keep_path = False
     if use_brief_dispatch:
         dispatch = dispatch_compiled_brief(ctx, compiled_brief)
@@ -2783,6 +2785,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             done=1 if dispatch.ok else 0,
             total=1,
         )
+        if deepseek_cli_ready() and dispatch.via != "cli":
+            raise RoleError(
+                f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is "
+                f"ready but C-BRIEF dispatched via={dispatch.via!r}, not cli. "
+                "Store-complete REUSE/COMPOSE (no GENERATE gaps) is not a skip."
+            )
 
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     _vendor_product_kernel(ctx)

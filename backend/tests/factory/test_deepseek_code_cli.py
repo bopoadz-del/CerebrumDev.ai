@@ -16,6 +16,7 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI,
     NAMED_BLOCKER_CLI_BILLING,
     NAMED_BLOCKER_CLI_CREDS,
+    NAMED_BLOCKER_CLI_UNUSED,
     brief_dispatch_enabled,
     brief_requires_cli,
     classify_cli_exit,
@@ -25,9 +26,11 @@ from app.factory.build.coder_session import (
     deepseek_cli_ready,
     dispatch_compiled_brief,
     ensure_code_cli_credentials,
+    inventory_gap_ids,
     probe_code_cli,
     raise_if_cli_session_unready,
     should_factory_llm_generate_gaps,
+    thin_stub_success_blocked,
 )
 from app.factory.build.roles_models import RoleContext
 from app.factory.build.workspace import RoleWorkspace
@@ -660,3 +663,207 @@ def test_collector_skips_factory_llm_when_deepseek_ready(tmp_path, monkeypatch):
     assert result.ok
     assert called == [], "DeepSeek-ready COLLECTOR must not call factory LLM"
     assert any("FACTORY_CODE_CLI" in n and "DeepSeek" in n for n in notes)
+
+
+LETTINGS_STORE = {
+    "analytics",
+    "team",
+    "workflow",
+    "notification",
+    "document_engine",
+}
+
+
+class _ReuseCap:
+    def __init__(self, cid, bids, strategy="REUSE"):
+        self.capability_id = cid
+        self.block_ids = list(bids)
+        self.strategy = strategy
+        self.notes = cid
+
+
+class _LettingsReusePlan:
+    capabilities = (
+        _ReuseCap("unit_registry_and_vacancy_tracking", ["analytics"], "REUSE"),
+        _ReuseCap(
+            "viewing_management", ["team", "workflow", "notification"], "COMPOSE"
+        ),
+        _ReuseCap("maintenance_issue_tracking", ["team"], "REUSE"),
+        _ReuseCap(
+            "tenancy_application_pipeline", ["team", "document_engine"], "COMPOSE"
+        ),
+    )
+
+
+def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatch):
+    """Store-complete REUSE/COMPOSE (no GENERATE gaps) still dispatches via=cli."""
+    argv_log = tmp_path / "argv.log"
+    script = tmp_path / "claude"
+    script.write_text(
+        "#!/bin/sh\n"
+        '{ printf "%s\\n" "$0" "$@"; '
+        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
+        '} > "$CODE_CLI_ARGV_LOG"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _arm_deepseek_cli(tmp_path, monkeypatch, script)
+    monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw)
+        or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
+    )
+    ctx = _ctx(tmp_path)
+    ctx.plan = _LettingsReusePlan()
+    compiled = compile_brief(
+        ctx.blueprint, ctx.plan, store_ids=LETTINGS_STORE
+    )
+    assert inventory_gap_ids(compiled) == []
+    assert all(not item.is_gap for item in compiled.inventory)
+    assert "Do not skip the CLI because inventory_gaps is empty" in compiled.text
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert oneshot == []
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
+    logged = argv_log.read_text(encoding="utf-8")
+    assert "--print" in logged
+    assert "--prompt" not in logged
+    assert "@docs/coder_brief.md" not in logged
+    assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
+    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
+    assert stdin_line, logged
+    assert int(stdin_line[0].split("=", 1)[1]) > 0
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["via"] == "cli"
+    assert "pilot_zip" not in json.dumps(receipt)
+
+
+def test_writer_all_reuse_compose_dispatches_cli_when_deepseek_ready(
+    tmp_path, monkeypatch
+):
+    """WRITER path: DeepSeek ready + all-REUSE/COMPOSE ⇒ via=cli, not skip."""
+    from app.factory.build.roles import run_writer
+
+    script = tmp_path / "claude"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    _arm_deepseek_cli(tmp_path, monkeypatch, script)
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw)
+        or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
+    )
+    plan = _LettingsReusePlan()
+    compiled = compile_brief(_Blueprint(), plan, store_ids=LETTINGS_STORE)
+    assert inventory_gap_ids(compiled) == []
+    monkeypatch.setattr(
+        "app.factory.build.brief_compiler.compile_brief_from_ctx",
+        lambda _ctx: compiled,
+    )
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    ws = RoleWorkspace(BuildRole.WRITER, dest)
+    result = run_writer(
+        RoleContext(
+            role=BuildRole.WRITER,
+            workspace=ws,
+            blueprint=_Blueprint(),
+            plan=plan,
+            state={
+                "resolved_blocks": tuple(LETTINGS_STORE),
+                "vendored_blocks": tuple(LETTINGS_STORE),
+            },
+        )
+    )
+    assert result.ok, result.detail
+    assert oneshot == []
+    receipt = json.loads(
+        (dest / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
+    )
+    assert receipt["via"] == "cli"
+    assert receipt.get("factory_llm_generate_fallthrough") is False
+    assert "pilot_zip" not in json.dumps(receipt)
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
+
+
+def test_budget_inspect_does_not_success_thin_stubs_before_cli_when_deepseek_ready(
+    tmp_path, monkeypatch
+):
+    """8s stub_rate=1.0 written=0 must not SUCCESS when DeepSeek CLI is ready."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.budget_inspect import inspect_build, inspect_decision
+    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.runner import Outcome, RoleRunner
+    from app.factory.blueprint import load_blueprint
+
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    assert deepseek_cli_ready() is True
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="residential-lettings", inputs_hash="abc")
+    for cap in (
+        "unit_registry_and_vacancy_tracking",
+        "viewing_management",
+        "maintenance_issue_tracking",
+        "tenancy_application_pipeline",
+    ):
+        ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.WRITER,
+            detail=f"wrote handler {cap} (deterministic contract template)",
+            payload={
+                "stage": "handlers",
+                "capability": cap,
+                "source": "deterministic contract template",
+            },
+        )
+    snap = inspect_build(ledger)
+    assert snap["agent_written"] == 0
+    assert snap["templated"] == 4
+    assert snap["stub_rate"] == 1.0
+    assert snap["cli_attempted"] is False
+    decided = inspect_decision(
+        elapsed_s=8.0,
+        current_wall_s=1800.0,
+        snapshot=snap,
+        stage="pilot_open",
+    )
+    assert decided["decision"] == "await_cli"
+    assert decided["decision"] != "hard_stop"
+    blocker = thin_stub_success_blocked(
+        snapshot=snap, elapsed_s=8.0, ledger=ledger
+    )
+    assert blocker
+    assert NAMED_BLOCKER_CLI_UNUSED in blocker
+
+    root = Path(__file__).resolve().parents[3]
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        out,
+        ledger=ledger,
+    )
+    runner._run_started = runner.clock()
+    runner.state["brief_dispatch"] = {"via": "skipped"}
+    outcome = runner._finish(
+        Outcome.SUCCESS,
+        "CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+    )
+    assert outcome.ok is False
+    assert outcome.outcome.value == "FAILED_ROLE_ERROR"
+    assert NAMED_BLOCKER_CLI_UNUSED in (outcome.detail or "")
+    terminal = ledger.terminal_event()
+    assert terminal is not None
+    assert terminal.kind is EventKind.RUN_FAILED
+    assert "pilot_zip" not in (outcome.detail or "")
