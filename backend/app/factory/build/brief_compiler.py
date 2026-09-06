@@ -23,6 +23,7 @@ import re
 
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 from app.factory.build.persist_accept import (
+    FACTORY_GROUNDED_PERSIST_SOURCE,
     persist_accept_acceptance_line,
     persist_accept_forbidden_lines,
     persist_accept_rules_text,
@@ -32,7 +33,9 @@ from app.factory.build.schema_accept import (
     schema_accept_rules_text,
 )
 from app.factory.build.workflow_accept import (
+    FACTORY_GROUNDED_EVENT_BUS_SOURCE,
     event_bus_workflow_capability_ids,
+    needs_grounded_event_bus_handler,
     workflow_accept_acceptance_line,
     workflow_accept_forbidden_lines,
     workflow_accept_rules_text,
@@ -84,10 +87,15 @@ class InventoryItem:
     writes: List[str] = field(default_factory=list)
     never: List[str] = field(default_factory=list)
     acceptance: List[str] = field(default_factory=list)
+    handler_source: str = ""
 
     @property
     def is_reuse(self) -> bool:
-        return bool(self.verified_present) and not self.missing
+        return (
+            bool(self.verified_present)
+            and not self.missing
+            and bool(self.handler_source)
+        )
 
     @property
     def is_gap(self) -> bool:
@@ -205,14 +213,23 @@ def compile_inventory(
                 + ", ".join(dropped)
             )
             notes = f"{notes} ({drop_note})" if notes else drop_note
+        handler_source = ""
+        if present:
+            handler_source = (
+                FACTORY_GROUNDED_EVENT_BUS_SOURCE
+                if needs_grounded_event_bus_handler(cid, present)
+                else FACTORY_GROUNDED_PERSIST_SOURCE
+            )
         if missing:
             label = "MISSING"
-        elif present:
+        elif present and handler_source:
             label = "REUSE" if strategy in {"", "REUSE", "COMPOSE", "ADAPT"} else strategy
         elif dropped:
             label = "GAP"
         else:
             label = "GAP" if strategy in {"", "REUSE", "COMPOSE"} else strategy
+        if label == "REUSE" and not handler_source:
+            label = "GAP"
         items.append(
             InventoryItem(
                 capability_id=cid,
@@ -226,6 +243,7 @@ def compile_inventory(
                 writes=sorted(set(writes)),
                 never=sorted(set(never)),
                 acceptance=sorted(set(acceptance)),
+                handler_source=handler_source,
             )
         )
     return items
@@ -240,6 +258,8 @@ def verify_inventory(compiled: CompiledBrief) -> None:
     missing = list(compiled.missing_reuse)
     for item in compiled.inventory:
         missing.extend(f"{item.capability_id}:{bid}" for bid in item.missing)
+        if item.strategy == "REUSE" and not item.handler_source:
+            missing.append(f"{item.capability_id}:no-handler-source")
     seen: Set[str] = set()
     ordered: List[str] = []
     for name in missing:
@@ -248,7 +268,8 @@ def verify_inventory(compiled: CompiledBrief) -> None:
             ordered.append(name)
     if ordered:
         raise InventoryHalt(
-            "claimed REUSE is not in the Store registry — HALT before WRITER "
+            "claimed REUSE is not in the Store registry or has no "
+            "registry-verified handler source — HALT before WRITER "
             "build (not at CLONER): " + ", ".join(ordered)
         )
 
@@ -433,10 +454,11 @@ def render_slot_bodies(
                 f"- {item.capability_id}: claimed {item.block_ids} but NOT in Store: "
                 + ", ".join(item.missing)
             )
-        if item.verified_present:
+        if item.verified_present and item.handler_source:
             reuse_lines.append(
                 f"- {item.capability_id}: REUSE {item.verified_present} "
-                "(verified present in Store registry)"
+                "(verified present in Store registry; handler source "
+                f"{item.handler_source}; emit app/actions/{item.capability_id}.py)"
             )
         if item.dropped_reuse and not item.verified_present:
             gap_lines.append(
@@ -499,6 +521,11 @@ def render_slot_bodies(
 
     do_lines = [
         "Build only confirmed gaps. Do not re-implement a verified REUSE block.",
+        "Every verified REUSE row must emit a loadable "
+        "app/actions/{capability_id}.py (factory persist / event_bus "
+        "envelope — the registry-verified handler source). A REUSE claim "
+        "without that source is a GAP or HALT — do not reach "
+        "writer_behaviour with ModuleNotFoundError.",
         "Invocation contracts: pass action= as a keyword, never inside the payload dict.",
         "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
         "Call execute() for EVERY id in BLOCK_IDS.",
@@ -609,6 +636,8 @@ def render_slot_bodies(
         "- reserved-keyword fields (action inside the payload dict, id as a domain field)",
         "- unlisted blocks (ids not in the Store registry / inventory)",
         "- assuming a REUSE id is present when STEP 0 flagged it missing",
+        "- claiming REUSE without a loadable app/actions/{capability_id}.py "
+        "handler source",
         "- inventing READS/WRITES/NEVER/ACCEPTANCE when block.json has not declared them",
         "- inventing a stricter accept-contract than the spec (writer_behaviour schema-accept)",
         "- eager from app.actions import re-exports in app/actions/__init__.py "
@@ -847,6 +876,7 @@ def brief_fingerprint(compiled: CompiledBrief) -> Dict[str, Any]:
                 "block_ids": list(item.block_ids),
                 "verified_present": list(item.verified_present),
                 "missing": list(item.missing),
+                "handler_source": item.handler_source,
             }
             for item in compiled.inventory
         ],

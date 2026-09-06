@@ -32,6 +32,7 @@ from app.factory.build.block_inputs import (
 )
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
+    WRITER_REUSE_HANDLER_HALT,
     persist_handler_rel,
     persist_workspace_root,
 )
@@ -1280,6 +1281,22 @@ def _persist_record(payload: Dict[str, Any]) -> Dict[str, Any]:
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
 {_ensure_handler_fails_closed(body)}
 '''
+
+
+def _stage_handler_for_commit(ctx: RoleContext, handler_rel: Path) -> None:
+    """Record a harvested/keep-path handler so staged WRITER commit copies it.
+
+    Live sess_bc0527bad93f4c66: ``emit_factory_grounded_reuse_keep_path``
+    wrote ``app/actions/{cap}.py`` into staging via ``Path.write_text``.
+    WRITER then ratcheted/kept those files without ``workspace.write_text``,
+    so ``commit()`` copied routes (which import the modules) but not the
+    handlers. ``writer_behaviour`` POSTed ``ModuleNotFoundError``.
+    """
+    persist_root = persist_workspace_root(ctx.workspace)
+    path = persist_root / handler_rel
+    if not path.is_file():
+        return
+    ctx.workspace.write_text(handler_rel, path.read_text(encoding="utf-8"))
 
 
 def _capability_handler_body(
@@ -2842,6 +2859,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             # a leftover destination GENERATE handler is how staging
             # then fails [check:round_trip] with handler missing.
             sources[cid] = previous_sources.get(cid, "unchanged from previous round")
+            _stage_handler_for_commit(ctx, handler_rel)
             continue
 
         usable = [b for b in cap.block_ids if b in vendored]
@@ -2902,6 +2920,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                     done=len([k for k in sources if k in set(cap_ids)]),
                     total=len(cap_ids),
                 )
+                _stage_handler_for_commit(ctx, handler_rel)
                 continue
         elif use_brief_dispatch:
             authored = None
@@ -2979,6 +2998,26 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             done=len([k for k in sources if k in set(cap_ids)]),
             total=len(cap_ids),
         )
+
+    reuse_miss: List[str] = []
+    inv_by_cid = {
+        item.capability_id: item
+        for item in getattr(compiled_brief, "inventory", ()) or ()
+    }
+    persist_root = persist_workspace_root(ctx.workspace)
+    for cap in ctx.plan.capabilities:
+        cid = cap.capability_id
+        handler_rel = persist_handler_rel(cid)
+        path = persist_root / handler_rel
+        if path.is_file():
+            if handler_rel.as_posix() not in ctx.workspace.written:
+                _stage_handler_for_commit(ctx, handler_rel)
+            continue
+        item = inv_by_cid.get(cid)
+        if item is not None and getattr(item, "is_reuse", False):
+            reuse_miss.append(cid)
+    if reuse_miss:
+        raise RoleError(WRITER_REUSE_HANDLER_HALT + ": " + ", ".join(reuse_miss))
 
     ctx.workspace.write_text(
         Path("app") / "actions" / "__init__.py",
