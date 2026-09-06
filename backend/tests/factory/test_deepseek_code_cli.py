@@ -6,7 +6,10 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
+
+import pytest
 
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -33,10 +36,14 @@ from app.factory.build.roles_models import RoleContext
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.authority import BuildRole
 from app.factory.code_cli import (
+    CLAUDE_PRINT_STDIN_INSTRUCTION,
     DEFAULT_DEEPSEEK_FLASH_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
     DEEPSEEK_ANTHROPIC_BASE_URL,
+    ClaudePrintPromptEmpty,
     claude_print_argv,
+    claude_print_log_argv,
+    claude_print_prompt,
     code_cli_command,
     deepseek_cli_environ,
     deepseek_coder_selected,
@@ -225,6 +232,7 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
         'printf "MODEL=%s\\n" "$ANTHROPIC_MODEL"; '
         'printf "BASE=%s\\n" "$ANTHROPIC_BASE_URL"; '
         'printf "TOKEN_SET=%s\\n" "${ANTHROPIC_AUTH_TOKEN:+yes}"; '
+        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
         '} > "$CODE_CLI_ARGV_LOG"\n'
         "exit 0\n",
         encoding="utf-8",
@@ -252,9 +260,14 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
     assert "--print" in logged
     assert "--dangerously-skip-permissions" in logged
     assert "--prompt" not in logged
+    assert "@docs/coder_brief.md" not in logged
+    assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
     assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
     assert "TOKEN_SET=yes" in logged
+    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
+    assert stdin_line, logged
+    assert int(stdin_line[0].split("=", 1)[1]) > 0
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -273,13 +286,200 @@ def test_classify_deepseek_429_is_billing():
 
 
 def test_claude_print_argv_shape():
-    argv = claude_print_argv("/usr/local/bin/claude", "@docs/coder_brief.md")
+    brief = (
+        "# TARGET\nResidential Lettings — implement the gated Factory C-BRIEF.\n"
+        "## STEP 0 INVENTORY\nlettings_core GENERATE\n"
+    )
+    argv = claude_print_argv("/usr/local/bin/claude", brief)
     assert argv[0] == "/usr/local/bin/claude"
-    assert "--print" in argv
+    assert argv[1] == "--print"
+    assert argv[2] == brief.strip()
     assert "--dangerously-skip-permissions" in argv
     assert "--add-dir" in argv
-    assert "@docs/coder_brief.md" in argv
+    assert "@docs/coder_brief.md" not in argv
     assert "--prompt" not in argv
+    logged = claude_print_log_argv("/usr/local/bin/claude", len(brief))
+    assert "<docs/coder_brief.md" in logged[2]
+
+
+def test_claude_print_argv_rejects_empty_and_bare_at_path():
+    for empty in ("", "   ", "@docs/coder_brief.md", "@docs/coder_brief.md\n"):
+        with pytest.raises(ClaudePrintPromptEmpty):
+            claude_print_argv("/usr/local/bin/claude", empty)
+        with pytest.raises(ClaudePrintPromptEmpty):
+            claude_print_prompt(empty)
+
+
+def test_claude_print_argv_large_brief_keeps_nonempty_print_arg():
+    brief = "# TARGET\n" + ("x" * 90_000)
+    argv = claude_print_argv("/usr/local/bin/claude", brief)
+    assert argv[1] == "--print"
+    assert argv[2] == CLAUDE_PRINT_STDIN_INSTRUCTION
+    assert argv[2].strip()
+    assert "@docs/coder_brief.md" not in argv
+
+
+def test_classify_claude_print_missing_input():
+    blocker, detail = classify_cli_exit(
+        1,
+        "Error: Input must be provided either through stdin or as a "
+        "prompt argument when using --print",
+    )
+    assert blocker == "FACTORY_CODE_CLI_FAILED"
+    assert "coder_brief.md" in detail
+    assert "@docs/coder_brief.md" in detail
+
+
+_STRICT_CLAUDE = textwrap.dedent(
+    r"""
+    #!/usr/bin/env python3
+    import os
+    import sys
+    from pathlib import Path
+
+    argv = sys.argv[1:]
+    prompt = ""
+    saw_print = False
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("--print", "-p"):
+            saw_print = True
+            if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                prompt = argv[i + 1]
+                i += 2
+                continue
+        i += 1
+    stdin_data = sys.stdin.read() if not sys.stdin.isatty() else ""
+
+    def fail() -> None:
+        print(
+            "Error: Input must be provided either through stdin or as a "
+            "prompt argument when using --print"
+        )
+        raise SystemExit(1)
+
+    if not saw_print:
+        fail()
+    if prompt.startswith("@") and "/" in prompt and "\n" not in prompt:
+        if not stdin_data.strip():
+            fail()
+    if not prompt.strip() and not stdin_data.strip():
+        fail()
+    body = f"{prompt}\n{stdin_data}"
+    if not any(tok in body for tok in ("TARGET", "STEP 0", "INVENTORY")):
+        fail()
+    dest = os.environ.get("CODE_CLI_ARGV_LOG")
+    if dest:
+        Path(dest).write_text(
+            "ARGC={0}\nPRINT={1}\nPROMPT_BYTES={2}\nSTDIN_BYTES={3}\n"
+            "MODEL={4}\nBASE={5}\nTOKEN_SET={6}\nBODY_HEAD={7}\n".format(
+                len(sys.argv),
+                "yes" if saw_print else "no",
+                len(prompt),
+                len(stdin_data),
+                os.environ.get("ANTHROPIC_MODEL", ""),
+                os.environ.get("ANTHROPIC_BASE_URL", ""),
+                "yes" if os.environ.get("ANTHROPIC_AUTH_TOKEN") else "no",
+                body[:240].replace("\n", " "),
+            ),
+            encoding="utf-8",
+        )
+    Path("docs").mkdir(parents=True, exist_ok=True)
+    Path("docs/claude_received_brief.txt").write_text(
+        f"ok prompt={len(prompt)} stdin={len(stdin_data)}\n",
+        encoding="utf-8",
+    )
+    raise SystemExit(0)
+    """
+).lstrip()
+
+
+def _strict_claude(tmp_path: Path) -> Path:
+    script = tmp_path / "claude"
+    script.write_text(_STRICT_CLAUDE, encoding="utf-8")
+    script.chmod(0o755)
+    return script
+
+
+def test_strict_claude_mock_fails_on_empty_print_and_at_file(tmp_path):
+    """Live Claude Code 2.1.x contract: no prompt/stdin → Input must be provided."""
+    import subprocess
+
+    script = _strict_claude(tmp_path)
+    old_shape = subprocess.run(
+        [
+            str(script),
+            "--print",
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            ".",
+            "@docs/coder_brief.md",
+        ],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        input="",
+    )
+    assert old_shape.returncode == 1
+    assert "Input must be provided" in (old_shape.stdout + old_shape.stderr)
+
+    empty_print = subprocess.run(
+        [str(script), "--print", "--dangerously-skip-permissions"],
+        cwd=str(tmp_path),
+        capture_output=True,
+        text=True,
+        input="",
+    )
+    assert empty_print.returncode == 1
+    assert "Input must be provided" in (empty_print.stdout + empty_print.stderr)
+
+
+def test_dispatch_deepseek_strict_claude_receives_brief(tmp_path, monkeypatch):
+    """FACTORY_CODE_CLI=claude must feed coder_brief.md as --print + stdin."""
+    argv_log = tmp_path / "argv.log"
+    script = _strict_claude(tmp_path)
+    _arm_deepseek_cli(tmp_path, monkeypatch, script)
+    monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert oneshot == []
+    logged = argv_log.read_text(encoding="utf-8")
+    assert "PRINT=yes" in logged
+    assert "TOKEN_SET=yes" in logged
+    assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
+    assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
+    prompt_bytes = int(
+        [ln for ln in logged.splitlines() if ln.startswith("PROMPT_BYTES=")][0].split(
+            "=", 1
+        )[1]
+    )
+    stdin_bytes = int(
+        [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")][0].split(
+            "=", 1
+        )[1]
+    )
+    assert prompt_bytes > 0
+    assert stdin_bytes > 0
+    received = tmp_path / "build" / "docs" / "claude_received_brief.txt"
+    assert received.is_file(), "mock claude must write a workspace artifact"
+    assert "ok" in received.read_text(encoding="utf-8")
+    session_log = (tmp_path / "build" / "docs" / "coder_session.log").read_text(
+        encoding="utf-8"
+    )
+    assert "--print" in session_log
+    assert "@docs/coder_brief.md" not in session_log.split("$", 1)[-1].split("\n", 1)[0]
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
 
 
 def _arm_deepseek_cli(tmp_path, monkeypatch, script: Path | None = None) -> Path:
@@ -501,7 +701,9 @@ def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatc
     script = tmp_path / "claude"
     script.write_text(
         "#!/bin/sh\n"
-        '{ printf "%s\\n" "$0" "$@"; } > "$CODE_CLI_ARGV_LOG"\n'
+        '{ printf "%s\\n" "$0" "$@"; '
+        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
+        '} > "$CODE_CLI_ARGV_LOG"\n'
         "exit 0\n",
         encoding="utf-8",
     )
@@ -532,6 +734,12 @@ def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatc
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
     logged = argv_log.read_text(encoding="utf-8")
     assert "--print" in logged
+    assert "--prompt" not in logged
+    assert "@docs/coder_brief.md" not in logged
+    assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
+    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
+    assert stdin_line, logged
+    assert int(stdin_line[0].split("=", 1)[1]) > 0
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )

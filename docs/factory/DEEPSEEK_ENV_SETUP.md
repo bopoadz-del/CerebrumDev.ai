@@ -93,7 +93,11 @@ Leave Floor chat on OpenRouter. Do not put API keys in this repo.
 | Auto-update | `DISABLE_AUTOUPDATER=1` |
 
 Bump the pin by changing `CLAUDE_CODE_VERSION` (and rebuild). Headless Floor
-uses `claude --print --dangerously-skip-permissions` (not Kimi `--prompt`).
+uses `claude --print "<coder_brief.md body>" --dangerously-skip-permissions`
+and pipes the same brief on stdin (official `cat brief | claude -p "query"`).
+A trailing `@docs/coder_brief.md` mention is **not** a prompt — Claude Code
+2.1.x then exits `Input must be provided either through stdin or as a prompt
+argument when using --print`. Do not use Kimi `--prompt`.
 
 ## Local / Cloud Agent
 
