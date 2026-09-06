@@ -1059,6 +1059,7 @@ def emit_factory_grounded_reuse_keep_path(
     ``only_missing`` fills holes after a partial CLI write without
     overwriting a keepable handler.
     """
+    from app.factory.build.reuse_accept import harvest_block_default_actions
     from app.factory.build.roles_handlers import (
         _capability_handler_body,
         _handler_module,
@@ -1094,8 +1095,11 @@ def emit_factory_grounded_reuse_keep_path(
             continue
         body = _capability_handler_body(cid, bids)
         source = factory_grounded_source_for(cid, bids)
+        defaults = harvest_block_default_actions(bids, root)
         path.write_text(
-            _handler_module(cid, bids, body, source, entity=name),
+            _handler_module(
+                cid, bids, body, source, defaults, entity=name
+            ),
             encoding="utf-8",
         )
         written.append(cid)
