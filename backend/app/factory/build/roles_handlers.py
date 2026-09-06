@@ -2033,9 +2033,13 @@ def main() -> int:
     if manifest.is_file():
         prov = json.loads(manifest.read_text(encoding="utf-8"))
         sources = prov.get("artifact_sources", {{}})
-        from app.factory.build.coder_session import is_agent_written_source as _agent_src
-
-        agent = sorted(k for k, v in sources.items() if _agent_src(str(v)))
+        agent = sorted(
+            k
+            for k, v in sources.items()
+            if str(v).startswith("coder LLM")
+            or str(v).startswith("coder CLI")
+            or str(v).startswith("FACTORY_CODE_CLI")
+        )
         print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
     else:
         print("docs/build_provenance.json: MISSING")
