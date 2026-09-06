@@ -549,9 +549,29 @@ def execute(
     return result
 '''
 
-_PY_DEFAULTS = {"str": '""', "int": "0", "float": "0.0", "bool": "False"}
+_PY_DEFAULTS = {
+    "str": '""',
+    "int": "0",
+    "float": "0.0",
+    "bool": "False",
+    "datetime": "'2026-09-03T10:00:00'",
+    "date": "'2026-09-03'",
+    "time": "'10:00:00'",
+    "uuid": "'00000000-0000-4000-8000-000000000001'",
+    "email": "'guest@example.com'",
+}
 
-_SAMPLE_VALUES = {"str": "sample", "int": 1, "float": 1.5, "bool": True}
+_SAMPLE_VALUES = {
+    "str": "sample",
+    "int": 1,
+    "float": 1.5,
+    "bool": True,
+    "datetime": "2026-09-03T10:00:00",
+    "date": "2026-09-03",
+    "time": "10:00:00",
+    "uuid": "00000000-0000-4000-8000-000000000001",
+    "email": "guest@example.com",
+}
 
 _CONFTEST = '''"""Test bootstrap for the generated platform.
 

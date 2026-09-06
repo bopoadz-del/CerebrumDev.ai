@@ -3496,7 +3496,10 @@ def _looks_like_email_field(field: Dict[str, Any]) -> bool:
     TESTER sent guest_email='sample' and WRITER (correctly) required '@'.
     Vocabulary/min/max cannot express that; the name is the constraint.
     """
-    if str(field.get("type") or "str") != "str":
+    resolved = _resolve_known_field_type(field.get("type") or "str")
+    if resolved == "email":
+        return True
+    if resolved not in (None, "str"):
         return False
     fmt = str(field.get("format") or "").lower().replace("-", "")
     if fmt == "email":
@@ -3512,12 +3515,16 @@ _TYPE_ALIASES = {
     "int": "int",
     "integer": "int",
     "float": "float",
+    "real": "float",
+    "number": "float",
     "bool": "bool",
     "boolean": "bool",
     "datetime": "datetime",
     "timestamp": "datetime",
     "date": "date",
     "time": "time",
+    "uuid": "uuid",
+    "email": "email",
 }
 
 _TEMPORAL_SAMPLES = {
@@ -3527,11 +3534,28 @@ _TEMPORAL_SAMPLES = {
 }
 
 
+def _resolve_known_field_type(raw: Any) -> Optional[str]:
+    """Canonical type if WRITER/LLM spelling is known; None if unknown.
+
+    TESTER sample emission must distinguish unknown types from ``str``.
+    Mapping them to ``str`` hid ``datetime`` only because that alias is
+    listed; a four-key literal map then KeyError'd (sess_f48f60b / BACKEND-S).
+    """
+    kind = str(raw or "str").strip().lower()
+    kind = (
+        kind.replace("datetime.", "")
+        .replace("uuid.", "")
+        .replace("optional[", "")
+        .replace("]", "")
+    )
+    if not kind:
+        return "str"
+    return _TYPE_ALIASES.get(kind)
+
+
 def _normalize_field_type(raw: Any) -> str:
     """Map LLM/SQL/annotation spellings onto the emitter's type set."""
-    kind = str(raw or "str").strip().lower()
-    kind = kind.replace("datetime.", "").replace("optional[", "").replace("]", "")
-    return _TYPE_ALIASES.get(kind, "str")
+    return _resolve_known_field_type(raw) or "str"
 
 
 def _python_annotation(field: Dict[str, Any]) -> str:
@@ -3545,7 +3569,48 @@ def _python_annotation(field: Dict[str, Any]) -> str:
         "datetime": "str",
         "date": "str",
         "time": "str",
+        "uuid": "str",
+        "email": "str",
     }.get(ftype, "str")
+
+
+def _assert_fields_sampleable(specs: Dict[str, Any]) -> None:
+    """Refuse unknown field types as RoleError, never an uncaught KeyError."""
+    unknown: List[str] = []
+    for cap_id, spec in specs.items():
+        if not isinstance(spec, dict):
+            continue
+        for field in spec.get("fields") or []:
+            if not isinstance(field, dict) or not field.get("name"):
+                continue
+            raw = field.get("type") or "str"
+            if _resolve_known_field_type(raw) is None:
+                unknown.append(f"{cap_id}.{field['name']}: {raw!r}")
+    if unknown:
+        raise RoleError(
+            "TESTER cannot sample field type(s): "
+            + "; ".join(unknown)
+            + ". Known types: str, int, float, bool, datetime, date, time, "
+            "uuid, email (and aliases text/string/integer/boolean/timestamp/"
+            "real/number)"
+        )
+
+
+def _model_roundtrip_literal(field: Dict[str, Any]) -> str:
+    """Python source fragment for ``tests/test_models.py`` sample records.
+
+    The live residential-lettings crash used a four-key map
+    ``str/int/float/bool`` and KeyError'd on ``type: datetime``. Common
+    WRITER types get a constraint-aware literal; anything else is
+    RoleError so RoleRunner records RUN_FAILED instead of a thread crash.
+    """
+    raw = field.get("type") or "str"
+    if _resolve_known_field_type(raw) is None:
+        name = field.get("name")
+        raise RoleError(
+            f"TESTER cannot sample field {name!r}: unknown type {raw!r}"
+        )
+    return repr(_sample_value(field))
 
 
 def _temporal_sample(field: Dict[str, Any]) -> str | None:
@@ -3743,6 +3808,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "\n".join(parts),
         )
         specs[cid], _env = ensure_record_envelope(specs[cid])
+    _assert_fields_sampleable(specs)
     entities = {
         cap.capability_id.replace("-", "_"): specs.get(cap.capability_id, {}).get(
             "entity", cap.capability_id.replace("-", "_")
@@ -3890,10 +3956,9 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         for cap_id, spec in sorted(specs.items()):
             entity = spec.get("entity", cap_id)
             sample = {
-                f["name"]: {"str": "'x'", "int": "1", "float": "1.5", "bool": "True"}[
-                    f["type"]
-                ]
+                f["name"]: _model_roundtrip_literal(f)
                 for f in spec.get("fields", [])
+                if isinstance(f, dict) and f.get("name")
             }
             payload = "{" + ", ".join(f"'{k}': {v}" for k, v in sample.items()) + "}"
             model_lines += [
