@@ -114,6 +114,7 @@ def inspect_build(
     stubbed = len(caps_templated)
     denom = authored + stubbed
     stub_rate = (stubbed / denom) if denom else 1.0 if not authored else 0.0
+    cli_attempted = _cli_attempted(events, state)
 
     pilot_ready = False
     try:
@@ -151,6 +152,7 @@ def inspect_build(
         "pilot_ready": pilot_ready,
         "pilot_ready_blockers": blockers,
         "progressing": progressing,
+        "cli_attempted": cli_attempted,
     }
     return snapshot
 
@@ -238,17 +240,34 @@ def inspect_decision(
         decision = "already_pilot_ready"
         reason = f"inspect {stage}: pilot_ready already true"
     else:
-        decision = "hard_stop"
-        reason = (
-            f"inspect {stage}: hard-stop — "
-            f"cap={snapshot.get('current_capability') or 'none'}, "
-            f"written={snapshot.get('agent_written')}, "
-            f"templated={snapshot.get('templated')}, "
-            f"stub_rate={snapshot.get('stub_rate')}, "
-            f"timeouts={len(snapshot.get('timeouts') or [])}, "
-            f"contract_misses={len(snapshot.get('contract_misses') or [])}, "
-            f"pilot_ready=false ({'; '.join(snapshot.get('pilot_ready_blockers') or ['unknown'])})"
+        from app.factory.build.coder_session import thin_stub_success_blocked
+
+        unused = thin_stub_success_blocked(
+            snapshot=snapshot,
+            elapsed_s=elapsed_s,
+            state=None,
+            ledger=None,
         )
+        if unused:
+            # Keep the staged wall alive — do not SUCCESS thin templates
+            # and do not treat 8s stub_rate=1.0 as the only coding chance.
+            decision = "await_cli"
+            reason = (
+                f"inspect {stage}: await FACTORY_CODE_CLI stage-1 wall — "
+                f"{unused}"
+            )
+        else:
+            decision = "hard_stop"
+            reason = (
+                f"inspect {stage}: hard-stop — "
+                f"cap={snapshot.get('current_capability') or 'none'}, "
+                f"written={snapshot.get('agent_written')}, "
+                f"templated={snapshot.get('templated')}, "
+                f"stub_rate={snapshot.get('stub_rate')}, "
+                f"timeouts={len(snapshot.get('timeouts') or [])}, "
+                f"contract_misses={len(snapshot.get('contract_misses') or [])}, "
+                f"pilot_ready=false ({'; '.join(snapshot.get('pilot_ready_blockers') or ['unknown'])})"
+            )
     out = dict(snapshot)
     out.update(
         {
@@ -263,6 +282,23 @@ def inspect_decision(
     )
     logger.info("factory budget inspect: %s", reason)
     return out
+
+
+def _cli_attempted(
+    events: Sequence[Any], state: Optional[Mapping[str, Any]]
+) -> bool:
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    if str(dispatch.get("via") or "") == "cli":
+        return True
+    for event in events:
+        detail = str(getattr(event, "detail", "") or "")
+        payload = getattr(event, "payload", None) or {}
+        source = str(payload.get("source") or "")
+        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
+            return True
+        if source == "coder CLI":
+            return True
+    return False
 
 
 def _provenance(workspace: Any) -> Dict[str, Any]:

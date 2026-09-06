@@ -63,6 +63,10 @@ NAMED_BLOCKER_CLI_FAILED = "FACTORY_CODE_CLI_FAILED"
 NAMED_BLOCKER_CLI_NO_MODEL = "FACTORY_CODE_CLI_NO_MODEL"
 NAMED_BLOCKER_CLI_MODEL_DENIED = "FACTORY_CODE_CLI_MODEL_DENIED"
 NAMED_BLOCKER_CLI_BILLING = "FACTORY_CODE_CLI_BILLING"
+#: DeepSeek CLI was ready but C-BRIEF never ran, or the run SUCCESS-ed
+#: thin templates (stub_rate≈1.0 / written=0) before a real stage-1 wall.
+#: Store-complete REUSE/COMPOSE is not a skip (sess_9d0b43c81b2b4620).
+NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset(
@@ -380,6 +384,10 @@ def deepseek_cli_ready(command: Optional[str] = None) -> bool:
     Health-ready photograph: ``FACTORY_CODE_CLI=claude`` (or DeepSeek default)
     is an executable, ``DEEPSEEK_API_KEY`` is present, and a DeepSeek coding
     model id is resolvable. HTTP oneshot stays the CI escape.
+
+    When this is true, Floor Approve must dispatch the compiled brief
+    through FACTORY_CODE_CLI even if STEP 0 is 100% REUSE/COMPOSE
+    (zero GENERATE gaps). Empty ``inventory_gaps`` is not a skip.
     """
     if http_oneshot_enabled():
         return False
@@ -400,6 +408,73 @@ def deepseek_cli_ready(command: Optional[str] = None) -> bool:
     if not cli_credentials_ok(command):
         return False
     return cli_default_model_ok(command)
+
+
+def cli_dispatch_attempted(
+    state: Optional[Mapping[str, Any]] = None, ledger: Any = None
+) -> bool:
+    """True when WRITER actually started FACTORY_CODE_CLI (via=cli)."""
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    if str(dispatch.get("via") or "") == "cli":
+        return True
+    if ledger is None:
+        return False
+    for event in getattr(ledger, "events", lambda: ())():
+        detail = str(getattr(event, "detail", "") or "")
+        payload = getattr(event, "payload", None) or {}
+        source = str(payload.get("source") or "")
+        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
+            return True
+        if source == "coder CLI":
+            return True
+    return False
+
+
+def thin_stub_success_blocked(
+    *,
+    snapshot: Mapping[str, Any],
+    elapsed_s: float,
+    state: Optional[Mapping[str, Any]] = None,
+    ledger: Any = None,
+) -> Optional[str]:
+    """Named blocker: DeepSeek CLI ready, thin stubs, no real stage-1 wall.
+
+    sess_9d0b43c81b2b4620: 8s ``budget_inspect`` hard-stop
+    ``written=0 templated=4 stub_rate=1.0`` then ``outcome=SUCCESS`` on a
+    store-complete lettings golden — C-BRIEF never got the remapped ≥1800s
+    wall. Prefer keep-running CLI or fail-closed STOPPED; never thin
+    Store-green SUCCESS from pure templates when the CLI was ready.
+    """
+    if not deepseek_cli_ready():
+        return None
+    written = int(snapshot.get("agent_written") or 0)
+    try:
+        stub_rate = float(snapshot.get("stub_rate") or 0.0)
+    except (TypeError, ValueError):
+        stub_rate = 0.0
+    if written > 0 or stub_rate < 0.99:
+        return None
+    attempted = bool(snapshot.get("cli_attempted")) or cli_dispatch_attempted(
+        state, ledger
+    )
+    from app.factory.build.budget_inspect import STAGE_1_S
+
+    if not attempted:
+        return (
+            f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is ready "
+            "but C-BRIEF was not dispatched (via≠cli). Store-complete "
+            "REUSE/COMPOSE is not a skip — do not SUCCESS thin templates "
+            f"(written={written}, stub_rate={stub_rate})."
+        )
+    if float(elapsed_s) + 1.0 < float(STAGE_1_S):
+        return (
+            f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is ready "
+            f"but has not had a stage-1 wall ({elapsed_s:.0f}s < "
+            f"{int(STAGE_1_S)}s) and authorship is still thin "
+            f"(written={written}, stub_rate={stub_rate}). Do not SUCCESS "
+            "a Store-green pilot from pure templates."
+        )
+    return None
 
 
 def kimi_prompt_model_alias() -> str:
@@ -1195,7 +1270,12 @@ class DispatchResult:
 
 
 def inventory_gap_ids(compiled: Any) -> List[str]:
-    """STEP 0 inventory ids that required agentic CLI writes (GENERATE/GAP)."""
+    """STEP 0 GENERATE/GAP ids. Empty does **not** skip FACTORY_CODE_CLI.
+
+    Store-complete REUSE/COMPOSE still needs the CLI to bind and deepen
+    handlers. This list only gates the OpenRouter GENERATE fallthrough
+    (#367), not C-BRIEF dispatch.
+    """
     out: List[str] = []
     for item in getattr(compiled, "inventory", ()) or ():
         if getattr(item, "is_gap", False):
@@ -1247,6 +1327,9 @@ def should_factory_llm_generate_gaps(
     A ready DeepSeek+claude session must not fall through to OpenRouter
     (sess_b9fbae7 photographed in-process minimax-m3:free while health
     already showed command=claude / provider=deepseek).
+
+    Empty ``inventory_gaps`` (all REUSE/COMPOSE) must not be treated as
+    "skip CLI" — that is a dispatch decision, not this fallthrough.
     """
     if deepseek_cli_ready():
         return False
@@ -1601,6 +1684,14 @@ def _run_cli_session(
     if deepseek_coder_selected(cli):
         session_env.update(deepseek_cli_environ())
     _append_log(log_path, f"$ {' '.join(cmd)}")
+    logger.info(
+        "FACTORY_CODE_CLI C-BRIEF dispatch via=cli command=%s "
+        "gaps=%s reuse=%s timeout_s=%.0f",
+        cli,
+        inventory_gap_ids(compiled),
+        reuse_inventory_ids(compiled),
+        timeout_s,
+    )
     ctx.note(
         f"dispatching compiled brief via FACTORY_CODE_CLI ({cli})",
         stage="dispatch",
@@ -1931,12 +2022,31 @@ def harvest_cli_artifacts(
 
 
 def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
-    """Hand the compiled brief to the agentic coder. One session."""
+    """Hand the compiled brief to the agentic coder. One session.
+
+    DeepSeek-ready Floor Approve always starts FACTORY_CODE_CLI here,
+    including inventories that are 100% REUSE/COMPOSE (no GENERATE gaps).
+    """
     root = _workspace_root(ctx)
     timeout_s = 1500.0
     left = ctx.coder_time_left() if hasattr(ctx, "coder_time_left") else None
     if left is not None:
         timeout_s = max(30.0, float(left) - 15.0)
+    if deepseek_cli_ready():
+        from app.factory.build.budget_inspect import STAGE_1_S
+
+        # Honour remapped ≥1800s from #367 even when leftover time is tiny.
+        timeout_s = max(timeout_s, float(STAGE_1_S) - 15.0)
+        if left is not None and 0 < float(left) <= 600.0:
+            timeout_s = max(timeout_s, float(STAGE_1_S) - 15.0)
+        logger.info(
+            "FACTORY_CODE_CLI C-BRIEF dispatch starting command=%s "
+            "gaps=%s reuse=%s timeout_s=%.0f",
+            resolve_code_cli() or "",
+            inventory_gap_ids(compiled),
+            reuse_inventory_ids(compiled),
+            timeout_s,
+        )
 
     if cli_available() and brief_requires_cli() and not cli_credentials_ok():
         detail = cli_credentials_missing_detail()
