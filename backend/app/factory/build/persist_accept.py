@@ -475,6 +475,16 @@ def emit_factory_grounded_generate_persist(
             if isinstance(f, dict) and f.get("name")
         ]
         path = root / persist_handler_rel(cid)
+        if path.is_file():
+            try:
+                existing = path.read_text(encoding="utf-8")
+            except OSError:
+                existing = ""
+            if handler_declares_persist(existing, entity):
+                # Keep a persist-capable handler (WRITER ratchet / sentinel /
+                # leftover LLM wrap). Only fill holes.
+                written.append(cid)
+                continue
         defaults = harvest_block_default_actions(bids, root)
         path.write_text(
             _handler_module(

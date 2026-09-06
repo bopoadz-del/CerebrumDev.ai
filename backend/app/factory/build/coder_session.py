@@ -1130,6 +1130,10 @@ def apply_factory_llm_generate_gaps(
     )
     from app.factory.coder import CoderError, coder_enabled, generate_from_compiled_brief
 
+    if not coder_enabled():
+        # Unkeyed / coder-disabled still uses honest templates. Persist
+        # emit is the billing keep-path after a factory-LLM attempt.
+        return result
     gap_ids = inventory_gap_ids(compiled)
     result.factory_llm_generate_fallthrough = True
     result.factory_llm_generate_ids = list(gap_ids)
@@ -1153,28 +1157,27 @@ def apply_factory_llm_generate_gaps(
         total=1,
     )
     llm: Dict[str, Any] = {}
-    if coder_enabled():
-        try:
-            llm = generate_from_compiled_brief(
-                brief=brief + suffix,
-                capabilities=list(gap_ids),
-                product_name=compiled.product_name,
-                vertical=compiled.vertical,
-            )
-        except CoderError as exc:
-            _append_log(
-                root / LOG_REL,
-                f"[factory-llm] GENERATE-gap fallthrough after {result.blocker} "
-                f"failed: {exc}",
-            )
-            ctx.state.setdefault("coder_failures", {})["factory_llm_generate"] = str(exc)
-            ctx.note(
-                f"factory coder LLM GENERATE fallthrough failed: {exc}",
-                stage="dispatch",
-                source="factory coder LLM (GENERATE gaps)",
-                done=0,
-                total=1,
-            )
+    try:
+        llm = generate_from_compiled_brief(
+            brief=brief + suffix,
+            capabilities=list(gap_ids),
+            product_name=compiled.product_name,
+            vertical=compiled.vertical,
+        )
+    except CoderError as exc:
+        _append_log(
+            root / LOG_REL,
+            f"[factory-llm] GENERATE-gap fallthrough after {result.blocker} "
+            f"failed: {exc}",
+        )
+        ctx.state.setdefault("coder_failures", {})["factory_llm_generate"] = str(exc)
+        ctx.note(
+            f"factory coder LLM GENERATE fallthrough failed: {exc}",
+            stage="dispatch",
+            source="factory coder LLM (GENERATE gaps)",
+            done=0,
+            total=1,
+        )
     model = str(llm.get("model") or "")
     result.factory_llm_model = model
     written: List[str] = []
