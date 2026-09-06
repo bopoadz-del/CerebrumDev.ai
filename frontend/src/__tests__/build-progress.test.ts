@@ -418,6 +418,7 @@ describe('build progress copy', () => {
         state: 'succeeded',
         cycle: 'pilot',
         pilot_ready: true,
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
@@ -451,6 +452,7 @@ describe('build progress copy', () => {
       isPilotZipReady({
         state: 'succeeded',
         pilot_ready: true,
+        authorship: { artifacts: 28, agent_written: 22, templated: 6 },
         level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
       }),
     ).toBe(true)
@@ -585,6 +587,95 @@ describe('build progress copy', () => {
     expect(honestLevel(thinKeep)).toBe('STORE_GREEN')
     expect(shouldRefuseExport(thinKeep)).toBe(false)
     expect(isPilotZipReady(thinKeep)).toBe(true)
+  })
+
+  it('sess_45729bb 0639 photograph: template-majority Store-green is not founding', () => {
+    // Live 2026-09-06 launching-ready cycle 0639: FINISHED / Store-green /
+    // Download enabled / Pilot-ready thin authorship (factory-LLM 8/16),
+    // but the UI painted Founding-customer-ready. c220 on the same pattern
+    // already said NOT founding. Thin Store-green is not founding product.
+    const sess45729Photo: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        pilot_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(isCoderCliFailed(sess45729Photo)).toBe(false)
+    expect(isThinTemplatedAuthorship(sess45729Photo.authorship)).toBe(true)
+    expect(shouldDemoteFounding(sess45729Photo)).toBe(true)
+    expect(isAuthoritativePilotReady(sess45729Photo)).toBe(true)
+    expect(shouldRefuseExport(sess45729Photo)).toBe(false)
+    expect(honestLevel(sess45729Photo)).toBe('STORE_GREEN')
+    expect(honestLevel(sess45729Photo)).not.toBe('FOUNDING_CUSTOMER_READY')
+    expect(isPilotZipReady(sess45729Photo)).toBe(true)
+    expect(exportAffordance(sess45729Photo)).toEqual({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+      ghost: false,
+    })
+    expect(levelGradeLabel(honestLevel(sess45729Photo)!)).toBe('Store-green')
+    expect(
+      formatFinishedAuthorship(sess45729Photo.authorship, {
+        pilotReady: isPilotZipReady(sess45729Photo),
+        demoteFounding: shouldDemoteFounding(sess45729Photo),
+      }),
+    ).toMatch(/^Pilot-ready —/)
+    expect(
+      formatFinishedAuthorship(sess45729Photo.authorship, {
+        pilotReady: isPilotZipReady(sess45729Photo),
+        demoteFounding: shouldDemoteFounding(sess45729Photo),
+      }),
+    ).not.toMatch(/Finished/)
+    expect(
+      honestLevel({
+        ...sess45729Photo,
+        level_grade: {
+          ...sess45729Photo.level_grade,
+          level: 'STORE_GREEN',
+          founding_customer_ready: true,
+        },
+      }),
+    ).toBe('STORE_GREEN')
+  })
+
+  it('founding claim without authorship counts is demoted on the glass', () => {
+    const unsourcedFounding: BuildStatus = {
+      state: 'succeeded',
+      pilot_ready: true,
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(shouldDemoteFounding(unsourcedFounding)).toBe(true)
+    expect(honestLevel(unsourcedFounding)).toBe('STORE_GREEN')
+    expect(isPilotZipReady(unsourcedFounding)).toBe(true)
+  })
+
+  it('factory-LLM GENERATE fallthrough demotes founding even with writer counts', () => {
+    const fallthrough: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+      level_grade: {
+        level: 'FOUNDING_CUSTOMER_READY',
+        founding_customer_ready: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+      coder_receipt: { factory_llm_generate_fallthrough: true },
+    }
+    expect(shouldDemoteFounding(fallthrough)).toBe(true)
+    expect(honestLevel(fallthrough)).toBe('STORE_GREEN')
+    expect(shouldRefuseExport(fallthrough)).toBe(false)
   })
 
   it('CLI-failed + pilot_ready=false still refuses Export', () => {

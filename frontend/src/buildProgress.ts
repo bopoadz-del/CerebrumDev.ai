@@ -36,8 +36,9 @@ const CLAIMED_LEVELS = new Set<string>([
  * Store-green or founding-customer-ready, even if ``level_grade.level``
  * overclaims. Missing grade falls back to cycle + pilot_ready.
  *
- * CLI billing/auth miss + thin templated authorship can stay Store-green
- * (Export allowed) but must not paint founding-customer-ready.
+ * CLI billing/auth miss + thin / template-majority authorship can stay
+ * Store-green (Export allowed) but must not paint founding-customer-ready.
+ * A Store-green claim is never upgraded to founding.
  */
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
@@ -61,15 +62,16 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
     if (build.state === 'succeeded') return 'CODE_GREEN'
     return null
   }
+  // Fail-closed: STORE_GREEN stays Store-green even if a boolean overclaims.
+  if (claimed === 'STORE_GREEN') {
+    return 'STORE_GREEN'
+  }
   if (
     (build.level_grade?.founding_customer_ready === true ||
       claimed === 'FOUNDING_CUSTOMER_READY') &&
     !shouldDemoteFounding(build)
   ) {
     return 'FOUNDING_CUSTOMER_READY'
-  }
-  if (claimed === 'STORE_GREEN' || claimed === 'FOUNDING_CUSTOMER_READY') {
-    return 'STORE_GREEN'
   }
   return 'STORE_GREEN'
 }
@@ -314,30 +316,56 @@ export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean
   return blobs.some((text) => CLI_FAIL_TEXT.test(text))
 }
 
+function authorshipCount(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) return Number(value)
+  return null
+}
+
 /**
- * Near-zero writer keep-path: 0–1 agent-written vs a templated majority.
- * Live photograph: 1 agent-written / 23 templated after a CLI billing miss.
+ * Near-zero or template-majority writer keep-path.
+ * Live photographs: 1/23 after a CLI billing miss; sess_45729 0639 8/16
+ * factory-LLM thin zip that still painted Finished / founding.
  */
 export function isThinTemplatedAuthorship(
   authorship: BuildAuthorship | null | undefined,
 ): boolean {
   if (!authorship) return false
-  const written = authorship.agent_written
-  const templated = authorship.templated
-  if (typeof written !== 'number') return false
-  if (written <= 0) return true
-  if (typeof templated !== 'number') return written <= 1
-  return written <= 1 && templated >= 8 && templated >= written * 8
+  const written = authorshipCount(authorship.agent_written)
+  const templated = authorshipCount(authorship.templated)
+  const artifacts = authorshipCount(authorship.artifacts)
+  if (written == null) return false
+  if (written <= 1) return true
+  if (templated != null && templated >= written) return true
+  if (artifacts != null && artifacts > 0 && written * 2 <= artifacts) return true
+  return false
+}
+
+/** Factory-LLM GENERATE keep-path is not a founding writer session. */
+export function isFactoryLlmFallthrough(build: BuildStatus | null | undefined): boolean {
+  return build?.coder_receipt?.factory_llm_generate_fallthrough === true
 }
 
 /**
- * CLI billing/auth miss or thin templated authorship. Export may still be
- * allowed on a pilot_ready SUCCESS keep-path — founding paint must not.
+ * CLI billing/auth miss, factory-LLM fallthrough, or thin / template-majority
+ * authorship. Export may still be allowed on a pilot_ready SUCCESS keep-path
+ * — founding paint must not. A founding claim with no authorship counts
+ * cannot be proven on the glass and is demoted.
  */
 export function shouldDemoteFounding(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
   if (isCoderCliFailed(build)) return true
-  return isThinTemplatedAuthorship(build.authorship)
+  if (isFactoryLlmFallthrough(build)) return true
+  if (isThinTemplatedAuthorship(build.authorship)) return true
+  const claimed = String(build.level_grade?.level || '').toUpperCase()
+  const claimsFounding =
+    build.level_grade?.founding_customer_ready === true || claimed === 'FOUNDING_CUSTOMER_READY'
+  if (claimsFounding && authorshipCount(build.authorship?.agent_written) == null) {
+    return true
+  }
+  return false
 }
 
 export function isScaffoldClaim(build: BuildStatus | null | undefined): boolean {

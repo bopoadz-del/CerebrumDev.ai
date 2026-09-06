@@ -403,6 +403,7 @@ export type BuildStatus = {
     blocker?: string | null
     honesty_class?: string | null
     model?: string
+    factory_llm_generate_fallthrough?: boolean
   }
   brief_dispatch?: string | null
   /**

@@ -146,6 +146,51 @@ def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
     assert any("FACTORY_CODE_CLI_BILLING" in b or "templated" in b for b in grade["blockers"])
 
 
+def test_template_majority_authorship_is_store_green_not_founding(tmp_path):
+    """sess_45729 0639: 8/16 factory-LLM thin zip is Store-green, not founding."""
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": (
+                "CODE PASS — the code-phase suite; "
+                "PRODUCT PASS — round-trip; "
+                "STORE PASS — restart"
+            ),
+            "authorship": {"artifacts": 24, "agent_written": 8, "templated": 16},
+        },
+    )
+    assert grade["founding_customer_ready"] is False
+    assert grade["level"] == Level.STORE_GREEN.value
+    assert grade["pilot_ready"] is True
+    assert any("templated" in b for b in grade["blockers"])
+
+
+def test_factory_llm_fallthrough_blocks_founding_without_cli_name(tmp_path):
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {"artifacts": 28, "agent_written": 22, "templated": 6},
+            "coder_receipt": {
+                "ok": True,
+                "factory_llm_generate_fallthrough": True,
+                "factory_llm_written_ids": ["veterinary_care_core"],
+            },
+        },
+    )
+    assert grade["founding_customer_ready"] is False
+    assert grade["level"] == Level.STORE_GREEN.value
+    assert any("factory_llm_generate_fallthrough" in b for b in grade["blockers"])
+
+
 def test_http_store_callback_blocks_founding(tmp_path):
     _full_repo(tmp_path)
     (tmp_path / "app" / "actions" / "viewing_management.py").write_text(

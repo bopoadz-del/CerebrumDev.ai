@@ -8,9 +8,11 @@ FOUNDING_CUSTOMER_READY. Missing 14-class files, HTTP store callbacks, or
 absent payload-contract helpers also block founding.
 
 A CLI billing/auth miss (``FACTORY_CODE_CLI_FAILED`` /
-``FACTORY_CODE_CLI_BILLING`` / equivalent) or near-zero agent-written
-authorship cannot stamp founding-customer-ready. Those keep-paths may
-still be Store-green when PRODUCT + STORE pass — Export stays allowed.
+``FACTORY_CODE_CLI_BILLING`` / equivalent), factory-LLM GENERATE
+fallthrough, or template-majority / near-zero agent-written authorship
+cannot stamp founding-customer-ready. Those keep-paths may still be
+Store-green when PRODUCT + STORE pass — Export stays allowed. Thin
+Store-green zips are Pilot-ready, never founding product.
 """
 
 from __future__ import annotations
@@ -110,20 +112,46 @@ def _cli_honesty_miss(status: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def _as_nonneg_int(value: Any) -> Optional[int]:
+    """Authorship counts. ``bool`` is excluded (``True`` is an ``int``)."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
 def _thin_templated_authorship(status: Mapping[str, Any]) -> bool:
-    """Near-zero agent-written vs a templated majority (live 1 / 23)."""
+    """Template-majority or near-zero writer (live 1/23 and 8/16).
+
+    Missing authorship is not thin here: workspace file checks can still
+    earn founding. When counts are present, a templated majority cannot.
+    """
     authorship = status.get("authorship")
     if not isinstance(authorship, Mapping):
         return False
-    written = authorship.get("agent_written")
-    templated = authorship.get("templated")
-    if not isinstance(written, int):
+    written = _as_nonneg_int(authorship.get("agent_written"))
+    templated = _as_nonneg_int(authorship.get("templated"))
+    artifacts = _as_nonneg_int(authorship.get("artifacts"))
+    if written is None:
         return False
-    if written <= 0:
+    if written <= 1:
         return True
-    if not isinstance(templated, int):
-        return written <= 1
-    return written <= 1 and templated >= 8 and templated >= written * 8
+    if templated is not None and templated >= written:
+        return True
+    if artifacts is not None and artifacts > 0 and written * 2 <= artifacts:
+        return True
+    return False
+
+
+def _factory_llm_fallthrough(status: Mapping[str, Any]) -> bool:
+    """Factory-LLM GENERATE keep-path is not a founding writer session."""
+    receipt = status.get("coder_receipt")
+    if not isinstance(receipt, Mapping):
+        return False
+    return receipt.get("factory_llm_generate_fallthrough") is True
 
 
 def _accept_payload_test_present(root: Path) -> bool:
@@ -188,6 +216,10 @@ def grade_workspace(
     if cli_miss:
         blockers.append(
             f"coder_receipt honesty {cli_miss} is not a founding writer product"
+        )
+    if _factory_llm_fallthrough(status):
+        blockers.append(
+            "coder_receipt factory_llm_generate_fallthrough is not a founding writer product"
         )
     if _thin_templated_authorship(status):
         blockers.append(
