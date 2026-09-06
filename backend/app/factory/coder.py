@@ -1555,6 +1555,10 @@ def generate_from_compiled_brief(
         raw_specs = {}
     if not isinstance(raw_handlers, dict):
         raw_handlers = {}
+    from app.factory.build.persist_accept import bind_generate_artifacts
+
+    raw_specs = bind_generate_artifacts(known, raw_specs)
+    raw_handlers = bind_generate_artifacts(known, raw_handlers)
     for cid in known:
         spec = raw_specs.get(cid)
         if isinstance(spec, dict) and spec.get("entity"):

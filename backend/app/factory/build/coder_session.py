@@ -922,6 +922,7 @@ class DispatchResult:
     factory_llm_generate_ids: List[str] = field(default_factory=list)
     factory_llm_written_ids: List[str] = field(default_factory=list)
     factory_llm_model: str = ""
+    generate_persist_ids: List[str] = field(default_factory=list)
     receipt: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -936,6 +937,7 @@ class DispatchResult:
             "factory_llm_generate_ids": list(self.factory_llm_generate_ids),
             "factory_llm_written_ids": list(self.factory_llm_written_ids),
             "factory_llm_model": self.factory_llm_model,
+            "generate_persist_ids": list(self.generate_persist_ids),
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
             "spec_ids": sorted(self.specs),
@@ -986,7 +988,9 @@ def reuse_inventory_ids(compiled: Any) -> List[str]:
 
 def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]:
     """Gaps still open after factory-LLM writes land. Fail-closed until then."""
-    landed = set(result.factory_llm_written_ids or ())
+    landed = set(result.factory_llm_written_ids or ()) | set(
+        getattr(result, "generate_persist_ids", None) or ()
+    )
     return [cid for cid in inventory_gap_ids(compiled) if cid not in landed]
 
 
@@ -1112,15 +1116,23 @@ def apply_factory_llm_generate_gaps(
     """Second leg: one factory-LLM compiled-brief shot for GENERATE gaps.
 
     Receipt stays ``ok=false`` with the CLI billing/auth blocker. Not
-    ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session. Landed
-    GENERATE handlers are persist-grounded on disk (alembic entity +
-    ``_persist_record``) so WRITER ``[check:round_trip]`` sees them.
+    ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session. GENERATE
+    handlers are persist-grounded on disk (alembic entity +
+    ``_persist_record``) even when the factory LLM is empty, raises, or
+    keys a body under an alias (sess_336246 ``veterinary_care_core`` vs
+    ``vetcare_hub_veterinary_core``).
     """
     if not should_factory_llm_generate_gaps(compiled, result):
         return result
+    from app.factory.build.persist_accept import (
+        bind_generate_artifacts,
+        emit_factory_grounded_generate_persist,
+    )
     from app.factory.coder import CoderError, coder_enabled, generate_from_compiled_brief
 
     if not coder_enabled():
+        # Unkeyed / coder-disabled still uses honest templates. Persist
+        # emit is the billing keep-path after a factory-LLM attempt.
         return result
     gap_ids = inventory_gap_ids(compiled)
     result.factory_llm_generate_fallthrough = True
@@ -1144,6 +1156,7 @@ def apply_factory_llm_generate_gaps(
         done=0,
         total=1,
     )
+    llm: Dict[str, Any] = {}
     try:
         llm = generate_from_compiled_brief(
             brief=brief + suffix,
@@ -1165,16 +1178,11 @@ def apply_factory_llm_generate_gaps(
             done=0,
             total=1,
         )
-        return result
     model = str(llm.get("model") or "")
     result.factory_llm_model = model
     written: List[str] = []
-    raw_specs = llm.get("specs") or {}
-    raw_handlers = llm.get("handlers") or {}
-    if not isinstance(raw_specs, dict):
-        raw_specs = {}
-    if not isinstance(raw_handlers, dict):
-        raw_handlers = {}
+    raw_specs = bind_generate_artifacts(gap_ids, llm.get("specs") or {})
+    raw_handlers = bind_generate_artifacts(gap_ids, llm.get("handlers") or {})
     for cid in gap_ids:
         spec = raw_specs.get(cid)
         if isinstance(spec, dict) and spec.get("entity"):
@@ -1184,41 +1192,41 @@ def apply_factory_llm_generate_gaps(
             result.handlers[cid] = body
             written.append(cid)
     result.factory_llm_written_ids = written
-    if written:
-        from app.factory.build.persist_accept import (
-            emit_factory_grounded_generate_persist,
-        )
-
-        persist_source = (
-            f"coder LLM ({model})" if model else "coder LLM (factory)"
-        )
-        landed = emit_factory_grounded_generate_persist(
-            root,
-            compiled,
-            handlers=result.handlers,
-            specs=result.specs,
-            source=persist_source,
-        )
-        _append_log(
-            root / LOG_REL,
-            "[factory-llm] persist-grounded GENERATE emit "
-            f"after {result.blocker}: {landed}",
-        )
+    if written and model:
+        persist_source = f"coder LLM ({model})"
+    elif written:
+        persist_source = "coder LLM (factory)"
+    else:
+        persist_source = "factory-grounded persist"
+    landed = emit_factory_grounded_generate_persist(
+        root,
+        compiled,
+        handlers=result.handlers,
+        specs=result.specs,
+        source=persist_source,
+    )
+    result.generate_persist_ids = list(landed)
+    _append_log(
+        root / LOG_REL,
+        "[factory-llm] persist-grounded GENERATE emit "
+        f"after {result.blocker}: {landed}",
+    )
     _append_log(
         root / LOG_REL,
         f"[factory-llm] GENERATE-gap fallthrough after {result.blocker}: "
-        f"attempted={gap_ids} written={written} model={model}",
+        f"attempted={gap_ids} written={written} persist={landed} model={model}",
     )
     ctx.note(
         (
             f"{result.blocker} — factory coder LLM wrote {len(written)}/"
-            f"{len(gap_ids)} GENERATE gap(s); not a ≥2h CLI session"
+            f"{len(gap_ids)} GENERATE gap(s); persist emit {len(landed)}; "
+            "not a ≥2h CLI session"
         ),
         stage="dispatch",
         source=(
             f"coder LLM ({model})" if model else "factory coder LLM (GENERATE gaps)"
         ),
-        done=1 if written else 0,
+        done=1 if landed else 0,
         total=1,
     )
     return result
@@ -1249,6 +1257,7 @@ def write_dispatch_receipt(
         "factory_llm_generate_ids": list(result.factory_llm_generate_ids),
         "factory_llm_written_ids": list(result.factory_llm_written_ids),
         "factory_llm_model": result.factory_llm_model,
+        "generate_persist_ids": list(result.generate_persist_ids),
         "model": result.model,
         "product_id": compiled.product_id,
         "vertical": compiled.vertical,

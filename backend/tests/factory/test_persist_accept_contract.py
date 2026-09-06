@@ -49,6 +49,7 @@ from app.factory.build.persist_accept import (
     persist_handler_rel,
     persist_round_trip_errors,
     persist_workspace_root,
+    bind_generate_artifacts,
     emit_factory_grounded_generate_persist,
     wipe_workspace_runtime_db,
 )
@@ -431,7 +432,42 @@ def test_emit_factory_grounded_generate_persist_wraps_llm_body(tmp_path):
         handlers={},
         specs={},
     )
-    assert empty == []
-    assert not (
+    assert empty == ["veterinary_care_core"]
+    empty_text = (
         tmp_path / "empty" / "app" / "actions" / "veterinary_care_core.py"
-    ).is_file()
+    ).read_text(encoding="utf-8")
+    assert "_persist_record(" in empty_text
+    assert FACTORY_GROUNDED_PERSIST_SOURCE in empty_text
+    assert "deterministic contract template" not in empty_text
+
+
+def test_bind_generate_artifacts_sess_336246_alias_and_unique_leftover():
+    """Architect GENERATE id vs factory-LLM veterinary_care_core key."""
+    bound = bind_generate_artifacts(
+        ["vetcare_hub_veterinary_core"],
+        {"veterinary_care_core": "    return {'ok': True}"},
+    )
+    assert list(bound) == ["vetcare_hub_veterinary_core"]
+    hyphen = bind_generate_artifacts(
+        ["vetcare_hub_veterinary_core"],
+        {"vetcare-hub-veterinary-core": {"entity": "vetcare_hub_veterinary_core"}},
+    )
+    assert "vetcare_hub_veterinary_core" in hyphen
+    exact = bind_generate_artifacts(
+        ["vetcare_hub_veterinary_core"],
+        {"vetcare_hub_veterinary_core": "body", "noise": "x"},
+    )
+    assert exact == {"vetcare_hub_veterinary_core": "body"}
+    two = bind_generate_artifacts(
+        ["alpha_core", "beta_core"],
+        {"veterinary_care_core": "nope"},
+    )
+    assert two == {}
+    noisy = bind_generate_artifacts(
+        ["vetcare_hub_veterinary_core"],
+        {
+            "veterinary_care_core": "body",
+            "readme": "ignore",
+        },
+    )
+    assert noisy == {"vetcare_hub_veterinary_core": "body"}
