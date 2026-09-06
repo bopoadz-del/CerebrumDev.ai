@@ -212,6 +212,8 @@ class RoleRunner:
         self._run_started: Optional[float] = None
         self._inspects_done: set = set()
         self._stage_halt: Optional[Dict[str, Any]] = None
+        #: Reopen WRITER once when DeepSeek CLI was ready but unused.
+        self._cli_writer_reopened: bool = False
         resolved = (cycle or "code").strip().lower()
         self.cycle = "pilot" if resolved == "pilot" else "code"
         #: Floor ``_run`` passes True when a factory coder key is set.
@@ -380,6 +382,37 @@ class RoleRunner:
 
     # -- terminal bookkeeping --------------------------------------------
 
+    def _thin_cli_success_blocker(self) -> Optional[str]:
+        """Refuse Store-green SUCCESS from pure templates when CLI is ready."""
+        from app.factory.build.budget_inspect import inspect_build
+        from app.factory.build.coder_session import thin_stub_success_blocked
+
+        elapsed = 0.0
+        if self._run_started is not None:
+            elapsed = self.clock() - self._run_started
+        snap = inspect_build(self.ledger, self.workspace, self.state)
+        return thin_stub_success_blocked(
+            snapshot=snap,
+            elapsed_s=elapsed,
+            state=self.state,
+            ledger=self.ledger,
+        )
+
+    def _should_reopen_writer_for_cli(self) -> bool:
+        """Code-cycle skipped C-BRIEF on a DeepSeek-ready store-complete plan."""
+        from app.factory.build.coder_session import (
+            cli_dispatch_attempted,
+            deepseek_cli_ready,
+        )
+
+        if self._cli_writer_reopened:
+            return False
+        if not deepseek_cli_ready():
+            return False
+        if cli_dispatch_attempted(self.state, self.ledger):
+            return False
+        return True
+
     def _finish(
         self,
         outcome: Outcome,
@@ -389,6 +422,14 @@ class RoleRunner:
         rework: int = 0,
         findings: Sequence[str] = (),
     ) -> BuildOutcome:
+        if outcome is Outcome.SUCCESS:
+            blocked = self._thin_cli_success_blocker()
+            if blocked:
+                logger.error("factory refuse thin SUCCESS: %s", blocked)
+                outcome = Outcome.FAILED_ROLE_ERROR
+                detail = blocked
+                findings = list(findings) + [blocked]
+                phase = phase or BuildRole.WRITER
         kind = (
             EventKind.RUN_SUCCEEDED
             if outcome is Outcome.SUCCESS
@@ -783,7 +824,22 @@ class RoleRunner:
                 rework_used = 0
                 work_list = ()
                 done = self.ledger.completed_roles()
-                index = BUILD_PHASES.index(BuildRole.TESTER)
+                if self._should_reopen_writer_for_cli():
+                    self._cli_writer_reopened = True
+                    done.discard(BuildRole.WRITER)
+                    self.ledger.append(
+                        EventKind.NOTE,
+                        role=BuildRole.WRITER,
+                        detail=(
+                            "reopening WRITER — DeepSeek FACTORY_CODE_CLI is "
+                            "ready but C-BRIEF was unused on a store-complete "
+                            "REUSE/COMPOSE inventory"
+                        ),
+                        payload={"cli_reopen": True, "stage": "dispatch"},
+                    )
+                    index = BUILD_PHASES.index(BuildRole.WRITER)
+                else:
+                    index = BUILD_PHASES.index(BuildRole.TESTER)
                 continue
             break
 

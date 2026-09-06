@@ -525,7 +525,13 @@ def render_slot_bodies(
     )
 
     do_lines = [
-        "Build only confirmed gaps. Do not re-implement a verified REUSE block.",
+        "C-BRIEF / FACTORY_CODE_CLI owns this workspace even when STEP 0 "
+        "is 100% REUSE/COMPOSE (no GENERATE gaps). Bind and write real "
+        "handlers for every capability — deepen REUSE/COMPOSE (persist, "
+        "constructed block inputs, BLOCK_DEFAULT_ACTIONS, prepared "
+        "event_bus steps). Do not leave deterministic templates. Do not "
+        "skip the CLI because inventory_gaps is empty. Do not re-implement "
+        "a verified Store block from scratch — bind the registry-verified ids.",
         "Every verified REUSE row must emit a loadable "
         "app/actions/{capability_id}.py (factory persist / event_bus "
         "envelope — the registry-verified handler source). A REUSE claim "
