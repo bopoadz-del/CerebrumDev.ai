@@ -214,9 +214,21 @@ def _collector_block_meta(ctx: RoleContext, block_id: str) -> Dict[str, Any]:
 
 def _collector_agent_review(ctx: RoleContext) -> tuple:
     """Ask the coding agent to judge bindings. Empty if unavailable."""
+    from app.factory.build.coder_session import deepseek_cli_ready
     from app.factory.coder import coder_enabled, review_capability_bindings
 
     if not coder_enabled():
+        return [], ""
+    if deepseek_cli_ready():
+        # C-BRIEF owns coding. An in-process OpenRouter collector review
+        # on a leftover ~47s wall expires the run before WRITER can start
+        # FACTORY_CODE_CLI (sess_b9fbae7 FAILED_BUDGET_SPENT).
+        ctx.note(
+            "skipping factory-LLM collector review — FACTORY_CODE_CLI "
+            "(DeepSeek) is ready",
+            stage="collector",
+            source="FACTORY_CODE_CLI",
+        )
         return [], ""
     if _budget_too_low(ctx, "collector review"):
         return [], ""
@@ -2420,9 +2432,12 @@ def _coder_readme(
     Kept on the dual path anyway so every artifact class is consistent, but a
     failure here is uninteresting and silently templated.
     """
+    from app.factory.build.coder_session import deepseek_cli_ready
     from app.factory.coder import CoderError, coder_enabled
 
     if not coder_enabled():
+        return None
+    if deepseek_cli_ready():
         return None
     try:
         from app.factory.coder import _llm_code_call

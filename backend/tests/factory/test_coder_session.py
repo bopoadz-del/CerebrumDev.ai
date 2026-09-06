@@ -96,6 +96,8 @@ def _ctx(tmp_path: Path) -> RoleContext:
 
 def test_brief_dispatch_defaults_on(monkeypatch):
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     assert brief_dispatch_enabled() is True
     monkeypatch.setenv("FACTORY_BRIEF_DISPATCH", "0")
     assert brief_dispatch_enabled() is False
@@ -190,6 +192,8 @@ def test_brief_requires_cli_when_coder_on(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     assert brief_requires_cli() is True
     assert http_oneshot_enabled() is False
@@ -1168,6 +1172,8 @@ def test_env_test_template_path_skips_credentials_gate(tmp_path, monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
     assert brief_requires_cli() is False
@@ -1564,7 +1570,9 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     assert "deterministic contract template" not in persist
 
 
-def test_should_factory_llm_generate_gaps_only_on_named_cli_miss():
+def test_should_factory_llm_generate_gaps_only_on_named_cli_miss(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     compiled = compile_brief(
         _Blueprint(),
         type("P", (), {"capabilities": (
