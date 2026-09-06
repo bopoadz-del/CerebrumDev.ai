@@ -13,13 +13,16 @@ See [Kimi Code config files](https://www.kimi.com/code/docs/en/kimi-code-cli/con
 ## Production Floor (C-BRIEF)
 
 DeepSeek V4 Pro is the default Factory coding path when `DEEPSEEK_API_KEY` is
-set (Claude Code CLI). See [DEEPSEEK_ENV_SETUP.md](DEEPSEEK_ENV_SETUP.md).
-This page stays the Kimi path (`FACTORY_CODE_CLI=kimi` / `KIMI_CODE_API_KEY`).
+set (Kimi Code CLI + OpenAI-compat DeepSeek backend). See
+[DEEPSEEK_ENV_SETUP.md](DEEPSEEK_ENV_SETUP.md).
+This page stays the historical Moonshot path (`FACTORY_CODE_PROVIDER=kimi` /
+`KIMI_CODE_API_KEY`).
 
 A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CLI`
-(default name `kimi` unless DeepSeek is selected; `KIMI_CODE_CLI` still honoured). The production image
-(`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`,
-and official Claude Code so `claude` is on `PATH`.
+(default name `kimi`; `KIMI_CODE_CLI` still honoured). The production image
+(`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`.
+Official Claude Code may still be planted as leftover unused binary —
+it is not the DeepSeek vehicle.
 If the coder is on and the executable is still missing, dispatch fail-closes
 as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
 `~/.kimi-code/config.toml` is absent (`credentials_file_present=false`),
@@ -45,7 +48,7 @@ Exact env (owner-gated on Render; this doc does not claim the dashboard is set):
 
 | Variable | Role |
 |----------|------|
-| `FACTORY_CODE_CLI` | Binary name or absolute path (`kimi` / `claude` / `/abs/path`) |
+| `FACTORY_CODE_CLI` | Binary name or absolute path (`kimi` / `/abs/path`). Leftover `claude` remaps to `kimi` when DeepSeek is selected |
 | `KIMI_CODE_CLI` | Legacy alias; `FACTORY_CODE_CLI` wins |
 | `KIMI_CODE_API_KEY` | Writes `~/.kimi-code/config.toml` at boot when set (`[providers.kimi]` + `default_model`). Missing file + keyed Floor → `FACTORY_CODE_CLI_CREDENTIALS_MISSING` |
 | `KIMI_CODE_MODEL` | Default-model alias written into that file. Default `kimi-k3` ([Moonshot API](https://platform.moonshot.ai/docs/guide/start-using-kimi-api)). Kimi Code CLI 0.41 [config-files](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/config-files) still show managed `kimi-code/k3` (`k3` on `api.kimi.com/coding/v1` via `/login`) — that pair 404s on a platform key. Boot maps it to `kimi-k3`. Owner-gated — this doc does not claim Render is set |

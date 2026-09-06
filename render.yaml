@@ -224,15 +224,16 @@ services:
         value: "7200"
       # Owner-gated FACTORY_CODE_CLI. This blueprint is not applied; the
       # dashboard is source of truth. The production image installs official
-      # `kimi` at /usr/local/bin/kimi and official `claude` at
-      # /usr/local/bin/claude. DeepSeek V4 Pro is the default coding path
-      # when DEEPSEEK_API_KEY is set (FACTORY_CODE_CLI=claude). Kimi stays
-      # available via FACTORY_CODE_CLI=kimi + KIMI_CODE_API_KEY.
+      # `kimi` at /usr/local/bin/kimi. DeepSeek V4 Pro is the default coding
+      # path when DEEPSEEK_API_KEY is set (FACTORY_CODE_CLI=kimi,
+      # OpenAI-compat https://api.deepseek.com, model deepseek-v4-pro).
+      # Historical Moonshot stays via FACTORY_CODE_PROVIDER=kimi +
+      # KIMI_CODE_API_KEY. Leftover FACTORY_CODE_CLI=claude remaps to kimi.
+      # Claude Code is not the DeepSeek vehicle.
       # A keyed Floor without the selected executable still fail-closes
       # FACTORY_CODE_CLI_UNAVAILABLE (no HTTP oneshot takeover).
-      # Do not set ANTHROPIC_BASE_URL process-wide — Factory injects the
-      # DeepSeek Anthropic-compat URL into the Claude Code subprocess only
-      # so Floor chat stays on OpenRouter. Secrets are not in git.
+      # Do not set ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY process-wide —
+      # Floor chat stays on OpenRouter. Secrets are not in git.
       - key: FACTORY_CODE_CLI
         sync: false
       - key: FACTORY_CODE_PROVIDER

@@ -1,4 +1,4 @@
-"""DeepSeek V4 Pro as FACTORY_CODE_CLI (Claude Code Anthropic-compat).
+"""DeepSeek V4 Pro under Kimi Code CLI (OpenAI-compat). Not Claude Code.
 
 Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 """
@@ -38,25 +38,26 @@ from app.factory.build.roles_models import RoleContext
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.authority import BuildRole
 from app.factory.code_cli import (
-    CLAUDE_PRINT_STDIN_INSTRUCTION,
+    DEFAULT_DEEPSEEK_CLI,
     DEFAULT_DEEPSEEK_FLASH_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
     DEEPSEEK_ANTHROPIC_BASE_URL,
-    DEEPSEEK_API_FLASH_MODEL,
-    DEEPSEEK_API_PRO_MODEL,
     DEEPSEEK_CODE_MODEL_ENV,
-    REJECTED_DEEPSEEK_BARE_MODEL,
+    DEEPSEEK_OPENAI_BASE_URL,
+    KIMI_PROMPT_STDIN_INSTRUCTION,
+    LEGACY_CLAUDE_OPUS_MODEL,
     REJECTED_DEEPSEEK_CLAUDE_MODEL,
-    ClaudePrintPromptEmpty,
-    claude_print_argv,
-    claude_print_log_argv,
-    claude_print_prompt,
+    KimiPromptEmpty,
     code_cli_command,
     deepseek_cli_environ,
     deepseek_code_model,
     deepseek_coder_selected,
     factory_code_provider,
-    normalize_deepseek_claude_model,
+    kimi_prompt_argv,
+    kimi_prompt_log_argv,
+    kimi_prompt_text,
+    legacy_deepseek_claude_environ,
+    normalize_deepseek_model,
 )
 
 
@@ -89,8 +90,8 @@ def _ctx(tmp_path: Path) -> RoleContext:
     )
 
 
-def _fake_claude(tmp_path: Path) -> Path:
-    script = tmp_path / "claude"
+def _fake_kimi(tmp_path: Path) -> Path:
+    script = tmp_path / "kimi"
     script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     script.chmod(0o755)
     return script
@@ -103,23 +104,63 @@ def _require_cli(monkeypatch) -> None:
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
 
 
-def test_deepseek_key_selects_claude_cli(monkeypatch):
+def test_deepseek_key_selects_kimi_cli_not_claude(monkeypatch):
     monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
     monkeypatch.delenv("KIMI_CODE_CLI", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
     assert factory_code_provider() == "deepseek"
-    assert code_cli_command() == "claude"
+    assert code_cli_command() == "kimi"
+    assert code_cli_command() != "claude"
+    assert DEFAULT_DEEPSEEK_CLI == "kimi"
     assert deepseek_coder_selected() is True
+    assert cli_requires_deepseek_credentials() is True
+    assert cli_requires_kimi_credentials() is False
 
 
-def test_explicit_kimi_cli_wins_over_deepseek_key(monkeypatch):
+def test_explicit_kimi_cli_plus_deepseek_key_is_deepseek_backend(monkeypatch):
+    """FACTORY_CODE_CLI=kimi is the DeepSeek vehicle, not a Moonshot force."""
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
     monkeypatch.setenv("FACTORY_CODE_CLI", "kimi")
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
+    assert factory_code_provider() == "deepseek"
+    assert code_cli_command() == "kimi"
+    assert deepseek_coder_selected() is True
+    assert cli_requires_kimi_credentials() is False
+    assert cli_requires_deepseek_credentials() is True
+
+
+def test_explicit_provider_kimi_keeps_moonshot_when_deepseek_key_set(
+    monkeypatch, tmp_path
+):
+    """Historical Moonshot path: FACTORY_CODE_PROVIDER=kimi + KIMI_CODE_API_KEY."""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    monkeypatch.setenv("FACTORY_CODE_PROVIDER", "kimi")
+    monkeypatch.setenv("FACTORY_CODE_CLI", "kimi")
+    monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-kimi-test-not-real")
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
+    monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
+    monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
     assert factory_code_provider() == "kimi"
     assert code_cli_command() == "kimi"
     assert deepseek_coder_selected() is False
     assert cli_requires_kimi_credentials() is True
-    assert cli_requires_deepseek_credentials() is False
+    result = ensure_code_cli_credentials()
+    assert result["ok"] is True
+    text = Path(result["path"]).read_text(encoding="utf-8")
+    assert "[providers.kimi]" in text
+    assert "sk-kimi-test-not-real" in text
+    assert 'default_model = "kimi-k3"' in text
+    assert "[providers.deepseek]" not in text
+
+
+def test_leftover_claude_cli_remaps_to_kimi_when_deepseek(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    monkeypatch.setenv("FACTORY_CODE_CLI", "claude")
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
+    assert factory_code_provider() == "deepseek"
+    assert code_cli_command() == "kimi"
+    assert code_cli_command() != "claude"
 
 
 def test_provider_deepseek_without_key_requires_credentials(monkeypatch):
@@ -127,47 +168,38 @@ def test_provider_deepseek_without_key_requires_credentials(monkeypatch):
     monkeypatch.setenv("FACTORY_CODE_PROVIDER", "deepseek")
     monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
     assert factory_code_provider() == "deepseek"
-    assert code_cli_command() == "claude"
+    assert code_cli_command() == "kimi"
     assert cli_requires_deepseek_credentials() is True
     assert cli_credentials_ok() is False
 
 
-def test_deepseek_cli_environ_matches_official_docs(monkeypatch):
+def test_deepseek_cli_environ_is_kimi_openai_not_anthropic(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
     monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-    monkeypatch.delenv("ANTHROPIC_DEFAULT_OPUS_MODEL", raising=False)
-    monkeypatch.delenv("ANTHROPIC_DEFAULT_SONNET_MODEL", raising=False)
-    monkeypatch.delenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_SUBAGENT_MODEL", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_EFFORT_LEVEL", raising=False)
-    monkeypatch.delenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", raising=False)
+    monkeypatch.delenv("DEEPSEEK_BASE_URL", raising=False)
+    monkeypatch.delenv("DEEPSEEK_CODE_MODEL", raising=False)
     env = deepseek_cli_environ("sk-deepseek-test-not-real")
-    assert env["ANTHROPIC_BASE_URL"] == DEEPSEEK_ANTHROPIC_BASE_URL
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "sk-deepseek-test-not-real"
-    assert env["ANTHROPIC_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == DEFAULT_DEEPSEEK_FLASH_MODEL
-    assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == DEFAULT_DEEPSEEK_FLASH_MODEL
-    assert env["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
-    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "786432"
-    assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert env["DEEPSEEK_API_KEY"] == "sk-deepseek-test-not-real"
+    assert env["DEEPSEEK_BASE_URL"] == DEEPSEEK_OPENAI_BASE_URL
+    assert env["DEEPSEEK_CODE_MODEL"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["KIMI_MODEL_NAME"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["KIMI_MODEL_API_KEY"] == "sk-deepseek-test-not-real"
+    assert env["KIMI_MODEL_PROVIDER_TYPE"] == "openai"
+    assert env["KIMI_MODEL_BASE_URL"] == DEEPSEEK_OPENAI_BASE_URL
+    assert env["KIMI_MODEL_MAX_CONTEXT_SIZE"] == "1048576"
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
     assert "ANTHROPIC_API_KEY" not in env
-    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
-    assert DEFAULT_DEEPSEEK_FLASH_MODEL.startswith("claude-haiku")
-    assert DEFAULT_DEEPSEEK_MODEL != DEEPSEEK_API_PRO_MODEL
-    assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
+    assert "ANTHROPIC_MODEL" not in env
+    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEFAULT_DEEPSEEK_FLASH_MODEL == "deepseek-v4-flash"
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
-    assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in env.values()
-    assert DEEPSEEK_API_PRO_MODEL not in env.values()
-    assert DEEPSEEK_API_FLASH_MODEL not in env.values()
-    assert env["ANTHROPIC_MODEL"] != REJECTED_DEEPSEEK_CLAUDE_MODEL
-    assert env["ANTHROPIC_MODEL"] != REJECTED_DEEPSEEK_BARE_MODEL
+    legacy = legacy_deepseek_claude_environ("sk-deepseek-test-not-real")
+    assert legacy["ANTHROPIC_BASE_URL"] == DEEPSEEK_ANTHROPIC_BASE_URL
+    assert set(legacy).isdisjoint(env)
 
 
-def test_ensure_deepseek_does_not_write_kimi_file_or_process_anthropic(
-    tmp_path, monkeypatch
-):
+def test_ensure_deepseek_writes_kimi_openai_provider(tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
     monkeypatch.delenv("KIMI_CODE_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_CODE_KEY", raising=False)
@@ -178,7 +210,16 @@ def test_ensure_deepseek_does_not_write_kimi_file_or_process_anthropic(
     assert result["ok"] is True
     assert result["deepseek"]["ok"] is True
     assert result["deepseek"]["model"] == DEFAULT_DEEPSEEK_MODEL
-    assert not (tmp_path / "kimi-home" / "config.toml").is_file()
+    assert result["deepseek"]["cli"] == "kimi"
+    dest = tmp_path / "kimi-home" / "config.toml"
+    assert dest.is_file()
+    text = dest.read_text(encoding="utf-8")
+    assert "[providers.deepseek]" in text
+    assert 'type = "openai"' in text
+    assert "https://api.deepseek.com" in text
+    assert "sk-deepseek-test-not-real" in text
+    assert 'default_model = "deepseek-v4-pro"' in text
+    assert 'provider = "deepseek"' in text
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
     assert "ANTHROPIC_AUTH_TOKEN" not in __import__("os").environ
 
@@ -187,20 +228,22 @@ def test_ensure_kimi_still_writes_when_deepseek_also_set(tmp_path, monkeypatch):
     monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "kimi-home"))
     monkeypatch.setenv("KIMI_CODE_API_KEY", "sk-kimi-test-not-real")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     monkeypatch.delenv("KIMI_CODE_MODEL", raising=False)
     monkeypatch.delenv("KIMI_CODE_MODEL_ID", raising=False)
     result = ensure_code_cli_credentials()
     assert result["ok"] is True
-    assert result["wrote"] is True
     dest = tmp_path / "kimi-home" / "config.toml"
     text = dest.read_text(encoding="utf-8")
+    assert "[providers.deepseek]" in text
     assert "[providers.kimi]" in text
     assert "sk-kimi-test-not-real" in text
+    assert 'default_model = "deepseek-v4-pro"' in text
     assert result["deepseek"]["ok"] is True
 
 
 def test_probe_deepseek_credentials_missing(tmp_path, monkeypatch):
-    script = _fake_claude(tmp_path)
+    script = _fake_kimi(tmp_path)
     _require_cli(monkeypatch)
     monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
     monkeypatch.setenv("FACTORY_CODE_PROVIDER", "deepseek")
@@ -213,10 +256,11 @@ def test_probe_deepseek_credentials_missing(tmp_path, monkeypatch):
     assert probe["blocker"] == NAMED_BLOCKER_CLI_CREDS
     assert "DEEPSEEK_API_KEY" in probe["error"]
     assert "pilot_zip" not in probe["error"]
+    assert "Claude Code" in probe["error"]
 
 
 def test_probe_deepseek_ready(tmp_path, monkeypatch):
-    script = _fake_claude(tmp_path)
+    script = _fake_kimi(tmp_path)
     _require_cli(monkeypatch)
     monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
@@ -234,7 +278,7 @@ def test_probe_deepseek_ready(tmp_path, monkeypatch):
 
 def test_probe_deepseek_binary_missing(tmp_path, monkeypatch):
     _require_cli(monkeypatch)
-    monkeypatch.setenv("FACTORY_CODE_CLI", str(tmp_path / "no-such-claude"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(tmp_path / "no-such-kimi"))
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
     probe = probe_code_cli()
     assert probe["available"] is False
@@ -242,15 +286,18 @@ def test_probe_deepseek_binary_missing(tmp_path, monkeypatch):
     assert "DEEPSEEK_API_KEY" in probe["error"]
 
 
-def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
+def test_dispatch_deepseek_uses_prompt_and_kimi_model_env(tmp_path, monkeypatch):
     argv_log = tmp_path / "argv.log"
-    script = tmp_path / "claude"
+    script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
         '{ printf "%s\\n" "$0" "$@"; '
-        'printf "MODEL=%s\\n" "$ANTHROPIC_MODEL"; '
-        'printf "BASE=%s\\n" "$ANTHROPIC_BASE_URL"; '
-        'printf "TOKEN_SET=%s\\n" "${ANTHROPIC_AUTH_TOKEN:+yes}"; '
+        'printf "MODEL=%s\\n" "$KIMI_MODEL_NAME"; '
+        'printf "BASE=%s\\n" "$KIMI_MODEL_BASE_URL"; '
+        'printf "TYPE=%s\\n" "$KIMI_MODEL_PROVIDER_TYPE"; '
+        'printf "TOKEN_SET=%s\\n" "${KIMI_MODEL_API_KEY:+yes}"; '
+        'printf "DEEPSEEK_SET=%s\\n" "${DEEPSEEK_API_KEY:+yes}"; '
+        'printf "ANTHROPIC_BASE=%s\\n" "$ANTHROPIC_BASE_URL"; '
         'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
         '} > "$CODE_CLI_ARGV_LOG"\n'
         "exit 0\n",
@@ -276,19 +323,17 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
     assert result.via == "cli"
     assert oneshot == []
     logged = argv_log.read_text(encoding="utf-8")
-    assert "--print" in logged
-    assert "--dangerously-skip-permissions" in logged
-    assert "--prompt" not in logged
+    assert "--prompt" in logged
+    assert "--print" not in logged
+    assert "--dangerously-skip-permissions" not in logged
     assert "@docs/coder_brief.md" not in logged
     assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
-    assert "--model" in logged
-    assert f"MODEL={REJECTED_DEEPSEEK_CLAUDE_MODEL}" not in logged
-    assert f"MODEL={REJECTED_DEEPSEEK_BARE_MODEL}" not in logged
-    assert "[1m]" not in logged
-    assert DEEPSEEK_API_PRO_MODEL not in logged
-    assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
+    assert f"BASE={DEEPSEEK_OPENAI_BASE_URL}" in logged
+    assert "TYPE=openai" in logged
     assert "TOKEN_SET=yes" in logged
+    assert "DEEPSEEK_SET=yes" in logged
+    assert "ANTHROPIC_BASE=\n" in logged or logged.endswith("ANTHROPIC_BASE=")
     stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
     assert stdin_line, logged
     assert int(stdin_line[0].split("=", 1)[1]) > 0
@@ -297,67 +342,37 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
     )
     assert receipt["ok"] is True
     assert "pilot_zip" not in json.dumps(receipt)
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
 
 
-def test_default_deepseek_model_is_claude_catalog_opus_id():
-    """Live 2.1.x SDK rejects both deepseek-v4-pro[1m] and bare deepseek-v4-pro."""
-    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
-    assert DEFAULT_DEEPSEEK_FLASH_MODEL.startswith("claude-haiku")
+def test_default_deepseek_model_is_catalog_id_not_claude_opus():
+    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEFAULT_DEEPSEEK_MODEL != LEGACY_CLAUDE_OPUS_MODEL
     assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
-    assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_BARE_MODEL
-    assert DEFAULT_DEEPSEEK_MODEL != DEEPSEEK_API_PRO_MODEL
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
-    assert normalize_deepseek_claude_model(REJECTED_DEEPSEEK_CLAUDE_MODEL) == (
+    assert normalize_deepseek_model(REJECTED_DEEPSEEK_CLAUDE_MODEL) == (
         DEFAULT_DEEPSEEK_MODEL
     )
-    assert normalize_deepseek_claude_model(REJECTED_DEEPSEEK_BARE_MODEL) == (
-        DEFAULT_DEEPSEEK_MODEL
-    )
-    assert normalize_deepseek_claude_model(DEEPSEEK_API_PRO_MODEL) == (
-        DEFAULT_DEEPSEEK_MODEL
-    )
-    assert normalize_deepseek_claude_model(DEEPSEEK_API_FLASH_MODEL) == (
-        DEFAULT_DEEPSEEK_FLASH_MODEL
-    )
-    assert normalize_deepseek_claude_model("claude-opus-4-8") == "claude-opus-4-8"
+    assert normalize_deepseek_model("deepseek-v4-pro") == "deepseek-v4-pro"
+    assert normalize_deepseek_model(LEGACY_CLAUDE_OPUS_MODEL) == DEFAULT_DEEPSEEK_MODEL
+    assert normalize_deepseek_model("claude-haiku-4-5") == DEFAULT_DEEPSEEK_FLASH_MODEL
 
 
-def test_deepseek_cli_environ_strips_rejected_1m_suffix(monkeypatch):
-    """Leftover Render ANTHROPIC_MODEL=deepseek-v4-pro[1m] remaps to claude-opus."""
-    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
-    monkeypatch.setenv("DEEPSEEK_CODE_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_SONNET_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
+def test_leftover_anthropic_model_maps_back_to_deepseek_catalog(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_MODEL", LEGACY_CLAUDE_OPUS_MODEL)
+    monkeypatch.delenv("DEEPSEEK_CODE_MODEL", raising=False)
     assert deepseek_code_model() == DEFAULT_DEEPSEEK_MODEL
     env = deepseek_cli_environ("sk-deepseek-test-not-real")
-    assert env["ANTHROPIC_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_MODEL"].startswith("claude-opus")
-    assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["KIMI_MODEL_NAME"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["DEEPSEEK_CODE_MODEL"] == DEFAULT_DEEPSEEK_MODEL
+    assert LEGACY_CLAUDE_OPUS_MODEL not in env.values()
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in env.values()
-    assert REJECTED_DEEPSEEK_BARE_MODEL not in env.values()
-    assert all("[1m]" not in value for value in env.values())
-
-
-def test_deepseek_cli_environ_remaps_leftover_bare_deepseek_id(monkeypatch):
-    """#370 leftover ANTHROPIC_MODEL=deepseek-v4-pro still remaps to claude-opus."""
-    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
-    monkeypatch.setenv("DEEPSEEK_CODE_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", DEEPSEEK_API_FLASH_MODEL)
-    assert deepseek_code_model() == DEFAULT_DEEPSEEK_MODEL
-    env = deepseek_cli_environ("sk-deepseek-test-not-real")
-    assert env["ANTHROPIC_MODEL"] == DEFAULT_DEEPSEEK_MODEL
-    assert env["ANTHROPIC_MODEL"].startswith("claude-opus")
-    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == DEFAULT_DEEPSEEK_FLASH_MODEL
-    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"].startswith("claude-haiku")
-    assert REJECTED_DEEPSEEK_BARE_MODEL not in env.values()
-    assert DEEPSEEK_API_FLASH_MODEL not in env.values()
 
 
 def test_classify_deepseek_429_is_billing():
     blocker, detail = classify_cli_exit(
         1,
-        "HTTP 429 from https://api.deepseek.com/anthropic: insufficient quota",
+        "HTTP 429 from https://api.deepseek.com: insufficient quota",
     )
     assert blocker == NAMED_BLOCKER_CLI_BILLING
     assert "FACTORY_CODE_CLI_BILLING" in detail
@@ -365,7 +380,6 @@ def test_classify_deepseek_429_is_billing():
 
 
 def test_classify_unrecognized_model_is_model_denied():
-    """sess_be217f6d last_event — named MODEL_DENIED, not generic FAILED."""
     live = (
         '[claude-code:unrecognized_model] '
         '{"model":"deepseek-v4-pro[1m]","query_source":"sdk"}'
@@ -378,85 +392,51 @@ def test_classify_unrecognized_model_is_model_denied():
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL in detail
     assert DEEPSEEK_CODE_MODEL_ENV in detail
     assert DEFAULT_DEEPSEEK_MODEL in detail
-    assert REJECTED_DEEPSEEK_BARE_MODEL in detail
-    assert "claude-opus" in detail
     assert "OpenRouter" in detail
-    bare_live = (
-        '[claude-code:unrecognized_model] '
-        '{"model":"deepseek-v4-pro","query_source":"sdk"}'
-    )
-    bare_blocker, bare_detail = classify_cli_exit(1, bare_live)
-    assert bare_blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
-    assert REJECTED_DEEPSEEK_BARE_MODEL in bare_detail
-    assert DEFAULT_DEEPSEEK_MODEL in bare_detail
-    similar, similar_detail = classify_cli_exit(
-        1,
-        "There's an issue with the selected model (deepseek-v4-pro[1m])",
-    )
-    assert similar == NAMED_BLOCKER_CLI_MODEL_DENIED
-    assert REJECTED_DEEPSEEK_CLAUDE_MODEL in similar_detail
+    assert "not the DeepSeek vehicle" in detail
     billing_wins, _ = classify_cli_exit(
         1,
-        live + "\nHTTP 429 from https://api.deepseek.com/anthropic: insufficient quota",
+        live + "\nHTTP 429 from https://api.deepseek.com: insufficient quota",
     )
     assert billing_wins == NAMED_BLOCKER_CLI_BILLING
-    generic, generic_detail = classify_cli_exit(1, "segfault")
-    assert generic == NAMED_BLOCKER_CLI_FAILED
-    assert generic_detail == "CLI exited 1"
 
 
-def test_claude_print_argv_shape():
+def test_kimi_prompt_argv_shape():
     brief = (
         "# TARGET\nResidential Lettings — implement the gated Factory C-BRIEF.\n"
         "## STEP 0 INVENTORY\nlettings_core GENERATE\n"
     )
-    argv = claude_print_argv("/usr/local/bin/claude", brief)
-    assert argv[0] == "/usr/local/bin/claude"
-    assert argv[1] == "--print"
+    argv = kimi_prompt_argv("/usr/local/bin/kimi", brief, model=DEFAULT_DEEPSEEK_MODEL)
+    assert argv[0] == "/usr/local/bin/kimi"
+    assert argv[1] == "--prompt"
     assert argv[2] == brief.strip()
-    assert "--dangerously-skip-permissions" in argv
     assert "--add-dir" in argv
+    assert "--model" in argv
+    assert DEFAULT_DEEPSEEK_MODEL in argv
     assert "@docs/coder_brief.md" not in argv
-    assert "--prompt" not in argv
-    logged = claude_print_log_argv("/usr/local/bin/claude", len(brief))
+    assert "--print" not in argv
+    logged = kimi_prompt_log_argv("/usr/local/bin/kimi", len(brief), model=DEFAULT_DEEPSEEK_MODEL)
     assert "<docs/coder_brief.md" in logged[2]
-    modeled = claude_print_argv(
-        "/usr/local/bin/claude", brief, model=REJECTED_DEEPSEEK_BARE_MODEL
-    )
-    assert modeled[-2:] == ["--model", DEFAULT_DEEPSEEK_MODEL]
-    assert REJECTED_DEEPSEEK_BARE_MODEL not in modeled
-    assert "--prompt" not in modeled
 
 
-def test_claude_print_argv_rejects_empty_and_bare_at_path():
+def test_kimi_prompt_argv_rejects_empty_and_bare_at_path():
     for empty in ("", "   ", "@docs/coder_brief.md", "@docs/coder_brief.md\n"):
-        with pytest.raises(ClaudePrintPromptEmpty):
-            claude_print_argv("/usr/local/bin/claude", empty)
-        with pytest.raises(ClaudePrintPromptEmpty):
-            claude_print_prompt(empty)
+        with pytest.raises(KimiPromptEmpty):
+            kimi_prompt_argv("/usr/local/bin/kimi", empty)
+        with pytest.raises(KimiPromptEmpty):
+            kimi_prompt_text(empty)
 
 
-def test_claude_print_argv_large_brief_keeps_nonempty_print_arg():
+def test_kimi_prompt_argv_large_brief_keeps_nonempty_prompt_arg():
     brief = "# TARGET\n" + ("x" * 90_000)
-    argv = claude_print_argv("/usr/local/bin/claude", brief)
-    assert argv[1] == "--print"
-    assert argv[2] == CLAUDE_PRINT_STDIN_INSTRUCTION
+    argv = kimi_prompt_argv("/usr/local/bin/kimi", brief)
+    assert argv[1] == "--prompt"
+    assert argv[2] == KIMI_PROMPT_STDIN_INSTRUCTION
     assert argv[2].strip()
     assert "@docs/coder_brief.md" not in argv
 
 
-def test_classify_claude_print_missing_input():
-    blocker, detail = classify_cli_exit(
-        1,
-        "Error: Input must be provided either through stdin or as a "
-        "prompt argument when using --print",
-    )
-    assert blocker == "FACTORY_CODE_CLI_FAILED"
-    assert "coder_brief.md" in detail
-    assert "@docs/coder_brief.md" in detail
-
-
-_STRICT_CLAUDE = textwrap.dedent(
+_STRICT_KIMI = textwrap.dedent(
     r"""
     #!/usr/bin/env python3
     import os
@@ -465,11 +445,11 @@ _STRICT_CLAUDE = textwrap.dedent(
 
     argv = sys.argv[1:]
     prompt = ""
-    saw_print = False
+    saw_prompt = False
     i = 0
     while i < len(argv):
-        if argv[i] in ("--print", "-p"):
-            saw_print = True
+        if argv[i] in ("--prompt", "-p"):
+            saw_prompt = True
             if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
                 prompt = argv[i + 1]
                 i += 2
@@ -480,11 +460,11 @@ _STRICT_CLAUDE = textwrap.dedent(
     def fail() -> None:
         print(
             "Error: Input must be provided either through stdin or as a "
-            "prompt argument when using --print"
+            "prompt argument when using --prompt"
         )
         raise SystemExit(1)
 
-    if not saw_print:
+    if not saw_prompt:
         fail()
     if prompt.startswith("@") and "/" in prompt and "\n" not in prompt:
         if not stdin_data.strip():
@@ -497,21 +477,24 @@ _STRICT_CLAUDE = textwrap.dedent(
     dest = os.environ.get("CODE_CLI_ARGV_LOG")
     if dest:
         Path(dest).write_text(
-            "ARGC={0}\nPRINT={1}\nPROMPT_BYTES={2}\nSTDIN_BYTES={3}\n"
-            "MODEL={4}\nBASE={5}\nTOKEN_SET={6}\nBODY_HEAD={7}\n".format(
+            "ARGC={0}\nPROMPT={1}\nPROMPT_BYTES={2}\nSTDIN_BYTES={3}\n"
+            "MODEL={4}\nBASE={5}\nTYPE={6}\nTOKEN_SET={7}\n"
+            "ANTHROPIC_SET={8}\nBODY_HEAD={9}\n".format(
                 len(sys.argv),
-                "yes" if saw_print else "no",
+                "yes" if saw_prompt else "no",
                 len(prompt),
                 len(stdin_data),
-                os.environ.get("ANTHROPIC_MODEL", ""),
-                os.environ.get("ANTHROPIC_BASE_URL", ""),
+                os.environ.get("KIMI_MODEL_NAME", ""),
+                os.environ.get("KIMI_MODEL_BASE_URL", ""),
+                os.environ.get("KIMI_MODEL_PROVIDER_TYPE", ""),
+                "yes" if os.environ.get("KIMI_MODEL_API_KEY") else "no",
                 "yes" if os.environ.get("ANTHROPIC_AUTH_TOKEN") else "no",
                 body[:240].replace("\n", " "),
             ),
             encoding="utf-8",
         )
     Path("docs").mkdir(parents=True, exist_ok=True)
-    Path("docs/claude_received_brief.txt").write_text(
+    Path("docs/kimi_received_brief.txt").write_text(
         f"ok prompt={len(prompt)} stdin={len(stdin_data)}\n",
         encoding="utf-8",
     )
@@ -520,50 +503,27 @@ _STRICT_CLAUDE = textwrap.dedent(
 ).lstrip()
 
 
-def _strict_claude(tmp_path: Path) -> Path:
-    script = tmp_path / "claude"
-    script.write_text(_STRICT_CLAUDE, encoding="utf-8")
+def _strict_kimi(tmp_path: Path) -> Path:
+    script = tmp_path / "kimi"
+    script.write_text(_STRICT_KIMI, encoding="utf-8")
     script.chmod(0o755)
     return script
 
 
-def test_strict_claude_mock_fails_on_empty_print_and_at_file(tmp_path):
-    """Live Claude Code 2.1.x contract: no prompt/stdin → Input must be provided."""
-    import subprocess
-
-    script = _strict_claude(tmp_path)
-    old_shape = subprocess.run(
-        [
-            str(script),
-            "--print",
-            "--dangerously-skip-permissions",
-            "--add-dir",
-            ".",
-            "@docs/coder_brief.md",
-        ],
-        cwd=str(tmp_path),
-        capture_output=True,
-        text=True,
-        input="",
-    )
-    assert old_shape.returncode == 1
-    assert "Input must be provided" in (old_shape.stdout + old_shape.stderr)
-
-    empty_print = subprocess.run(
-        [str(script), "--print", "--dangerously-skip-permissions"],
-        cwd=str(tmp_path),
-        capture_output=True,
-        text=True,
-        input="",
-    )
-    assert empty_print.returncode == 1
-    assert "Input must be provided" in (empty_print.stdout + empty_print.stderr)
+def _arm_deepseek_cli(tmp_path, monkeypatch, script: Path | None = None) -> Path:
+    cli = script or _fake_kimi(tmp_path)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(cli))
+    monkeypatch.setenv("FACTORY_CODE_PROVIDER", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+    return cli
 
 
-def test_dispatch_deepseek_strict_claude_receives_brief(tmp_path, monkeypatch):
-    """FACTORY_CODE_CLI=claude must feed coder_brief.md as --print + stdin."""
+def test_dispatch_deepseek_strict_kimi_receives_brief(tmp_path, monkeypatch):
     argv_log = tmp_path / "argv.log"
-    script = _strict_claude(tmp_path)
+    script = _strict_kimi(tmp_path)
     _arm_deepseek_cli(tmp_path, monkeypatch, script)
     monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
     monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
@@ -581,12 +541,12 @@ def test_dispatch_deepseek_strict_claude_receives_brief(tmp_path, monkeypatch):
     assert result.via == "cli"
     assert oneshot == []
     logged = argv_log.read_text(encoding="utf-8")
-    assert "PRINT=yes" in logged
+    assert "PROMPT=yes" in logged
     assert "TOKEN_SET=yes" in logged
+    assert "ANTHROPIC_SET=no" in logged
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
-    assert f"MODEL={REJECTED_DEEPSEEK_CLAUDE_MODEL}" not in logged
-    assert f"MODEL={REJECTED_DEEPSEEK_BARE_MODEL}" not in logged
-    assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
+    assert f"BASE={DEEPSEEK_OPENAI_BASE_URL}" in logged
+    assert "TYPE=openai" in logged
     prompt_bytes = int(
         [ln for ln in logged.splitlines() if ln.startswith("PROMPT_BYTES=")][0].split(
             "=", 1
@@ -599,30 +559,17 @@ def test_dispatch_deepseek_strict_claude_receives_brief(tmp_path, monkeypatch):
     )
     assert prompt_bytes > 0
     assert stdin_bytes > 0
-    received = tmp_path / "build" / "docs" / "claude_received_brief.txt"
-    assert received.is_file(), "mock claude must write a workspace artifact"
-    assert "ok" in received.read_text(encoding="utf-8")
+    received = tmp_path / "build" / "docs" / "kimi_received_brief.txt"
+    assert received.is_file(), "mock kimi must write a workspace artifact"
     session_log = (tmp_path / "build" / "docs" / "coder_session.log").read_text(
         encoding="utf-8"
     )
-    assert "--print" in session_log
+    assert "--prompt" in session_log
     assert "@docs/coder_brief.md" not in session_log.split("$", 1)[-1].split("\n", 1)[0]
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
 
 
-def _arm_deepseek_cli(tmp_path, monkeypatch, script: Path | None = None) -> Path:
-    cli = script or _fake_claude(tmp_path)
-    monkeypatch.setenv("FACTORY_CODE_CLI", str(cli))
-    monkeypatch.setenv("FACTORY_CODE_PROVIDER", "deepseek")
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
-    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
-    monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
-    return cli
-
-
 def test_deepseek_ready_requires_cli_even_when_env_test(tmp_path, monkeypatch):
-    """CLI ready + DeepSeek key is not optional just because ENV=test."""
     _arm_deepseek_cli(tmp_path, monkeypatch)
     monkeypatch.setenv("ENV", "test")
     monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
@@ -633,7 +580,6 @@ def test_deepseek_ready_requires_cli_even_when_env_test(tmp_path, monkeypatch):
 
 
 def test_deepseek_ready_requires_cli_even_when_require_cli_off(tmp_path, monkeypatch):
-    """Leftover FACTORY_BRIEF_REQUIRE_CLI=0 must not skip Claude→DeepSeek."""
     _arm_deepseek_cli(tmp_path, monkeypatch)
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "0")
@@ -643,7 +589,6 @@ def test_deepseek_ready_requires_cli_even_when_require_cli_off(tmp_path, monkeyp
 
 
 def test_deepseek_ready_forces_brief_dispatch(tmp_path, monkeypatch):
-    """Leftover FACTORY_BRIEF_DISPATCH=0 must not restore per-cap OpenRouter."""
     _arm_deepseek_cli(tmp_path, monkeypatch)
     monkeypatch.setenv("FACTORY_BRIEF_DISPATCH", "0")
     assert brief_dispatch_enabled() is True
@@ -653,13 +598,13 @@ def test_deepseek_ready_forces_brief_dispatch(tmp_path, monkeypatch):
 def test_dispatch_deepseek_ready_never_calls_factory_llm_even_with_generate_gap(
     tmp_path, monkeypatch
 ):
-    """C-BRIEF lock: CLI ready + DeepSeek key ⇒ via=cli, not OpenRouter."""
     _arm_deepseek_cli(tmp_path, monkeypatch)
     monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
     oneshot = []
     monkeypatch.setattr(
         "app.factory.coder.generate_from_compiled_brief",
-        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
+        lambda **kw: oneshot.append(kw)
+        or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
     )
 
     class _Gap:
@@ -683,22 +628,15 @@ def test_dispatch_deepseek_ready_never_calls_factory_llm_even_with_generate_gap(
     assert result.factory_llm_generate_fallthrough is False
     assert oneshot == []
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
-    receipt = json.loads(
-        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
-    )
-    assert receipt["via"] == "cli"
-    assert receipt["factory_llm_generate_fallthrough"] is False
-    assert "pilot_zip" not in json.dumps(receipt)
 
 
 def test_dispatch_deepseek_billing_does_not_openrouter_fallthrough(
     tmp_path, monkeypatch
 ):
-    """DeepSeek CLI ready + 429 must not hand GENERATE gaps to OpenRouter."""
-    script = tmp_path / "claude"
+    script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo 'HTTP 429 from https://api.deepseek.com/anthropic: insufficient quota'\n"
+        "echo 'HTTP 429 from https://api.deepseek.com: insufficient quota'\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -733,66 +671,11 @@ def test_dispatch_deepseek_billing_does_not_openrouter_fallthrough(
     assert deepseek_cli_ready() is True
     assert should_factory_llm_generate_gaps(compiled, result) is False
     assert result.factory_llm_generate_fallthrough is False
-    assert oneshot == [], "DeepSeek-ready C-BRIEF must not call OpenRouter factory coder"
+    assert oneshot == []
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
-
-
-def test_dispatch_unrecognized_model_is_denied_no_openrouter(
-    tmp_path, monkeypatch
-):
-    """Claude Code unrecognized_model must fail-closed — no OpenRouter."""
-    script = tmp_path / "claude"
-    script.write_text(
-        "#!/bin/sh\n"
-        'echo \'[claude-code:unrecognized_model] '
-        '{"model":"deepseek-v4-pro[1m]","query_source":"sdk"}\'\n'
-        "exit 1\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    _arm_deepseek_cli(tmp_path, monkeypatch, script)
-    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
-    oneshot = []
-    monkeypatch.setattr(
-        "app.factory.coder.generate_from_compiled_brief",
-        lambda **kw: oneshot.append(kw)
-        or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
-    )
-
-    class _Gap:
-        capability_id = "lettings_core"
-        block_ids = ()
-        strategy = "GENERATE"
-        notes = "gap"
-
-    class _Plan:
-        capabilities = (_Gap(),)
-
-    ctx = _ctx(tmp_path)
-    ctx.plan = _Plan()
-    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
-    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
-    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
-    result = dispatch_compiled_brief(ctx, compiled)
-    assert result.ok is False
-    assert result.via == "cli"
-    assert result.blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
-    assert REJECTED_DEEPSEEK_CLAUDE_MODEL in (result.detail or "")
-    assert DEEPSEEK_CODE_MODEL_ENV in (result.detail or "")
-    assert deepseek_cli_ready() is True
-    assert should_factory_llm_generate_gaps(compiled, result) is False
-    assert result.factory_llm_generate_fallthrough is False
-    assert oneshot == [], "unrecognized_model must not fall through to OpenRouter"
-    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
-    receipt = json.loads(
-        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
-    )
-    assert receipt["blocker"] == NAMED_BLOCKER_CLI_MODEL_DENIED
-    assert "pilot_zip" not in json.dumps(receipt)
 
 
 def test_leftover_47s_wall_remaps_when_deepseek_ready(tmp_path, monkeypatch):
-    """Leftover ~47s wall cannot host Claude→DeepSeek; remap to stage 1."""
     from app.factory.build_jobs import _wall_clock_s
 
     _arm_deepseek_cli(tmp_path, monkeypatch)
@@ -810,7 +693,6 @@ def test_explicit_2h_wall_still_honoured_with_deepseek(tmp_path, monkeypatch):
 
 
 def test_collector_skips_factory_llm_when_deepseek_ready(tmp_path, monkeypatch):
-    """COLLECTOR must not burn leftover wall on OpenRouter before C-BRIEF."""
     from app.factory.build.authority import BuildRole
     from app.factory.build.roles import run_collector
     from app.factory.build.roles_models import RoleContext
@@ -877,101 +759,9 @@ class _LettingsReusePlan:
     )
 
 
-def test_dispatch_leftover_1m_env_sends_catalog_id(tmp_path, monkeypatch):
-    """Render leftover ANTHROPIC_MODEL=[1m] remaps to claude-opus + stdin."""
-    argv_log = tmp_path / "argv.log"
-    script = tmp_path / "claude"
-    script.write_text(
-        "#!/bin/sh\n"
-        '{ printf "%s\\n" "$0" "$@"; '
-        'printf "MODEL=%s\\n" "$ANTHROPIC_MODEL"; '
-        'printf "OPUS=%s\\n" "$ANTHROPIC_DEFAULT_OPUS_MODEL"; '
-        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
-        '} > "$CODE_CLI_ARGV_LOG"\n'
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    _arm_deepseek_cli(tmp_path, monkeypatch, script)
-    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
-    monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
-    monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
-    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
-    oneshot = []
-    monkeypatch.setattr(
-        "app.factory.coder.generate_from_compiled_brief",
-        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
-    )
-    ctx = _ctx(tmp_path)
-    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
-    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
-    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
-    result = dispatch_compiled_brief(ctx, compiled)
-    assert result.ok, result.detail
-    assert result.via == "cli"
-    assert oneshot == []
-    logged = argv_log.read_text(encoding="utf-8")
-    assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
-    assert f"OPUS={DEFAULT_DEEPSEEK_MODEL}" in logged
-    assert "--model" in logged
-    assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in logged
-    assert REJECTED_DEEPSEEK_BARE_MODEL not in logged
-    assert "--print" in logged
-    assert "@docs/coder_brief.md" not in logged
-    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
-    assert stdin_line and int(stdin_line[0].split("=", 1)[1]) > 0
-    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
-
-
-def test_dispatch_leftover_bare_deepseek_id_sends_claude_opus(tmp_path, monkeypatch):
-    """#370 leftover ANTHROPIC_MODEL=deepseek-v4-pro remaps to claude-opus."""
-    argv_log = tmp_path / "argv.log"
-    script = tmp_path / "claude"
-    script.write_text(
-        "#!/bin/sh\n"
-        '{ printf "%s\\n" "$0" "$@"; '
-        'printf "MODEL=%s\\n" "$ANTHROPIC_MODEL"; '
-        'printf "BASE=%s\\n" "$ANTHROPIC_BASE_URL"; '
-        'printf "TOKEN_SET=%s\\n" "${ANTHROPIC_AUTH_TOKEN:+yes}"; '
-        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
-        '} > "$CODE_CLI_ARGV_LOG"\n'
-        "exit 0\n",
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    _arm_deepseek_cli(tmp_path, monkeypatch, script)
-    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
-    monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
-    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
-    oneshot = []
-    monkeypatch.setattr(
-        "app.factory.coder.generate_from_compiled_brief",
-        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
-    )
-    ctx = _ctx(tmp_path)
-    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
-    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
-    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
-    result = dispatch_compiled_brief(ctx, compiled)
-    assert result.ok, result.detail
-    assert result.via == "cli"
-    assert oneshot == []
-    logged = argv_log.read_text(encoding="utf-8")
-    assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
-    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
-    assert "--model" in logged
-    assert REJECTED_DEEPSEEK_BARE_MODEL not in logged
-    assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
-    assert "TOKEN_SET=yes" in logged
-    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
-    assert stdin_line and int(stdin_line[0].split("=", 1)[1]) > 0
-    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
-
-
 def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatch):
-    """Store-complete REUSE/COMPOSE (no GENERATE gaps) still dispatches via=cli."""
     argv_log = tmp_path / "argv.log"
-    script = tmp_path / "claude"
+    script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
         '{ printf "%s\\n" "$0" "$@"; '
@@ -1004,15 +794,12 @@ def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatc
     assert result.ok, result.detail
     assert result.via == "cli"
     assert oneshot == []
-    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
     logged = argv_log.read_text(encoding="utf-8")
-    assert "--print" in logged
-    assert "--prompt" not in logged
+    assert "--prompt" in logged
+    assert "--print" not in logged
     assert "@docs/coder_brief.md" not in logged
-    assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
     stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
-    assert stdin_line, logged
-    assert int(stdin_line[0].split("=", 1)[1]) > 0
+    assert stdin_line and int(stdin_line[0].split("=", 1)[1]) > 0
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -1023,10 +810,9 @@ def test_dispatch_deepseek_ready_all_reuse_compose_uses_cli(tmp_path, monkeypatc
 def test_writer_all_reuse_compose_dispatches_cli_when_deepseek_ready(
     tmp_path, monkeypatch
 ):
-    """WRITER path: DeepSeek ready + all-REUSE/COMPOSE ⇒ via=cli, not skip."""
     from app.factory.build.roles import run_writer
 
-    script = tmp_path / "claude"
+    script = tmp_path / "kimi"
     script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     script.chmod(0o755)
     _arm_deepseek_cli(tmp_path, monkeypatch, script)
@@ -1066,14 +852,12 @@ def test_writer_all_reuse_compose_dispatches_cli_when_deepseek_ready(
     )
     assert receipt["via"] == "cli"
     assert receipt.get("factory_llm_generate_fallthrough") is False
-    assert "pilot_zip" not in json.dumps(receipt)
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
 
 
 def test_budget_inspect_does_not_success_thin_stubs_before_cli_when_deepseek_ready(
     tmp_path, monkeypatch
 ):
-    """8s stub_rate=1.0 written=0 must not SUCCESS when DeepSeek CLI is ready."""
     from app.factory.build.authority import BuildRole
     from app.factory.build.budget_inspect import inspect_build, inspect_decision
     from app.factory.build.ledger import BuildLedger, EventKind

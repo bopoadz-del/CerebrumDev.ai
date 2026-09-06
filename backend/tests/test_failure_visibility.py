@@ -197,32 +197,25 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         assert "KIMI_CODE_VERSION" in docs
 
     def test_production_image_installs_official_claude_code_cli(self):
-        """FACTORY_CODE_CLI=claude must resolve in the Render image.
+        """Leftover Claude Code may still be in the image; DeepSeek uses kimi.
 
-        DeepSeek V4 Pro C-BRIEF uses Claude Code on the Anthropic-compat
-        endpoint. The production Dockerfile installs the official Claude
-        Code CLI (docs + install.sh), pinned, at /usr/local/bin/claude.
-        CI ``docker run`` asserts ``which claude`` / ``claude --version``.
-        Do not replace the official installer with a stub binary. Do not
-        weaken the missing-CLI fail-closed path.
+        Claude Code is not the DeepSeek vehicle. The production Dockerfile
+        still plants official Claude at /usr/local/bin/claude as unused
+        leftover. DeepSeek C-BRIEF is FACTORY_CODE_CLI=kimi +
+        DEEPSEEK_API_KEY over OpenAI-compat https://api.deepseek.com.
         """
         dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-        assert "https://claude.ai/install.sh" in dockerfile
-        assert "CLAUDE_CODE_VERSION" in dockerfile
-        assert "/usr/local/bin/claude" in dockerfile
-        assert "claude --version" in dockerfile
-        assert "DISABLE_AUTOUPDATER" in dockerfile
+        assert "https://code.kimi.com/kimi-code/install.sh" in dockerfile
+        assert "/usr/local/bin/kimi" in dockerfile
         assert "DEEPSEEK_API_KEY" in dockerfile
         docs = (REPO_ROOT / "docs/factory/DEEPSEEK_ENV_SETUP.md").read_text(
             encoding="utf-8"
         )
-        assert "/usr/local/bin/claude" in docs
-        assert "CLAUDE_CODE_VERSION" in docs
+        assert "FACTORY_CODE_CLI=kimi" in docs
+        assert "https://api.deepseek.com" in docs
         assert "deepseek-v4-pro" in docs
-        assert "claude-opus" in docs
-        assert "unrecognized_model" in docs
-        assert "Do **not** set `ANTHROPIC_MODEL=deepseek-v4-pro[1m]`" in docs
-        assert "bare" in docs and "deepseek-v4-pro" in docs
+        assert "KIMI_MODEL_" in docs
+        assert "Claude Code is **not** the DeepSeek vehicle" in docs
         assert "FACTORY_BRIEF_HTTP_ONESHOT" in docs
         assert "pilot_zip" in docs
 

@@ -61,12 +61,12 @@ RUN set -eu \
     && test -x /usr/local/bin/kimi \
     && /usr/local/bin/kimi --version
 
-# Official Claude Code CLI (FACTORY_CODE_CLI=claude). DeepSeek V4 Pro is
-# reached at dispatch via the Anthropic-compat endpoint; credentials stay
-# out of the image (DEEPSEEK_API_KEY → subprocess ANTHROPIC_* only).
+# Leftover official Claude Code CLI. DeepSeek V4 Pro is NOT reached
+# through this binary — Factory coding uses FACTORY_CODE_CLI=kimi +
+# DEEPSEEK_API_KEY (OpenAI-compat https://api.deepseek.com). Kept in the
+# image as unused leftover so existing pins do not break the build.
 # Native installer, pinned. Docs:
 #   https://code.claude.com/docs/en/install
-#   https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 #   curl -fsSL https://claude.ai/install.sh | bash -s <version>
 # The launcher is a symlink into ~/.local/share/claude/versions/; copy the
 # resolved binary to /usr/local/bin so appuser (HOME=/app) can exec it.
@@ -118,13 +118,14 @@ COPY backend/scripts /app/scripts
 RUN mkdir -p /app/backend && ln -s /app/app /app/backend/app
 COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 
-# FACTORY_CODE_CLI=kimi → /usr/local/bin/kimi; FACTORY_CODE_CLI=claude →
-# /usr/local/bin/claude (DeepSeek V4 Pro when DEEPSEEK_API_KEY is set).
+# FACTORY_CODE_CLI=kimi → /usr/local/bin/kimi (DeepSeek V4 Pro when
+# DEEPSEEK_API_KEY is set; Moonshot when FACTORY_CODE_PROVIDER=kimi).
+# Leftover /usr/local/bin/claude is unused for Factory DeepSeek coding.
 # A keyed Floor still fail-closes FACTORY_CODE_CLI_UNAVAILABLE if the
-# selected executable is missing. KIMI_CODE_API_KEY at boot writes
-# ~/.kimi-code/config.toml. DEEPSEEK_API_KEY is injected into the Claude
-# Code subprocess only (not process-wide ANTHROPIC_* — Floor chat stays
-# on OpenRouter). See docs/factory/DEEPSEEK_ENV_SETUP.md.
+# selected executable is missing. DEEPSEEK_API_KEY at boot writes
+# [providers.deepseek] into ~/.kimi-code/config.toml. KIMI_CODE_API_KEY
+# writes [providers.kimi]. Do not set process-wide ANTHROPIC_* — Floor
+# chat stays on OpenRouter. See docs/factory/DEEPSEEK_ENV_SETUP.md.
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is

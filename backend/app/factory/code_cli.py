@@ -1,14 +1,14 @@
-"""FACTORY_CODE_CLI selection + DeepSeek / Kimi / Claude credential helpers.
+"""FACTORY_CODE_CLI selection + DeepSeek / Kimi credential helpers.
 
 Floor C-BRIEF dispatches one compiled brief through this CLI. Chat / architect
 stay on their own LLM config (OpenRouter free in production) and must not
 consume ``DEEPSEEK_API_KEY``.
 
-DeepSeek V4 Pro is reached through the official Claude Code Anthropic-compat
-endpoint (https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/).
-Those ``ANTHROPIC_*`` names are injected into the Claude Code **subprocess**
-only — never process-wide — so ``LLM_PROVIDER=claude`` cannot silently bill
-DeepSeek for Floor chat.
+DeepSeek V4 Pro is reached through **Kimi Code CLI** as an OpenAI-compat
+provider (``https://api.deepseek.com`` + ``DEEPSEEK_API_KEY`` +
+``deepseek-v4-pro``). That is not Claude Code. Claude Code → DeepSeek
+Anthropic-compat is a leftover dead path (sess_be217f6d /
+sess_401e6619 / #371 owner reject).
 """
 
 from __future__ import annotations
@@ -18,36 +18,34 @@ import re
 from typing import Dict, Optional
 
 #: Provider-agnostic name for the agentic coding CLI. ``KIMI_CODE_CLI`` stays
-#: honoured so existing deployments keep working unchanged; point
-#: FACTORY_CODE_CLI at the Claude Code CLI to use Claude / DeepSeek.
+#: honoured so existing deployments keep working unchanged.
 CODE_CLI_ENV = "FACTORY_CODE_CLI"
 LEGACY_CODE_CLI_ENV = "KIMI_CODE_CLI"
 CODE_PROVIDER_ENV = "FACTORY_CODE_PROVIDER"
 DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEEPSEEK_CODE_MODEL_ENV = "DEEPSEEK_CODE_MODEL"
+DEEPSEEK_BASE_URL_ENV = "DEEPSEEK_BASE_URL"
 
 DEFAULT_KIMI_CLI = "kimi"
-DEFAULT_DEEPSEEK_CLI = "claude"
+#: DeepSeek's vehicle is Kimi Code CLI — never Claude Code.
+DEFAULT_DEEPSEEK_CLI = "kimi"
 
-#: Claude Code 2.1.x SDK allowlists Anthropic catalog ids (``query_source=sdk``).
-#: Live ``sess_be217f6d`` rejected ``deepseek-v4-pro[1m]``; ``sess_401e6619``
-#: rejected bare ``deepseek-v4-pro`` after #370 stripped the suffix. DeepSeek's
-#: Anthropic-compat endpoint maps ``claude-opus*`` → ``deepseek-v4-pro`` and
-#: ``claude-haiku*`` / ``claude-sonnet*`` → ``deepseek-v4-flash``
-#: (https://api-docs.deepseek.com/guides/anthropic_api). Their Claude Code
-#: setup page still prints ``deepseek-v4-pro[1m]`` — do not send that, or the
-#: bare catalog id, to Claude Code 2.1.x. Override with ``ANTHROPIC_MODEL`` /
-#: ``DEEPSEEK_CODE_MODEL`` (still remapped when the value is a DeepSeek id).
-DEFAULT_DEEPSEEK_MODEL = "claude-opus-4-6"
-DEFAULT_DEEPSEEK_FLASH_MODEL = "claude-haiku-4-5"
+#: DeepSeek OpenAI-compat catalog id.
+#: https://api-docs.deepseek.com/quick_start/pricing lists ``deepseek-v4-pro``.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
+DEFAULT_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash"
 DEEPSEEK_API_PRO_MODEL = "deepseek-v4-pro"
 DEEPSEEK_API_FLASH_MODEL = "deepseek-v4-flash"
+DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
+#: Leftover #371 Claude-catalog ids. OpenAI-compat DeepSeek does not want these.
+LEGACY_CLAUDE_OPUS_MODEL = "claude-opus-4-6"
+LEGACY_CLAUDE_HAIKU_MODEL = "claude-haiku-4-5"
 REJECTED_DEEPSEEK_CLAUDE_MODEL = "deepseek-v4-pro[1m]"
 REJECTED_DEEPSEEK_BARE_MODEL = "deepseek-v4-pro"
+#: Leftover Claude Code Anthropic-compat URL. Not used for live DeepSeek.
 DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
 DEEPSEEK_AUTO_COMPACT_WINDOW = "786432"
-#: DeepSeek ``[1m]`` / ``[128k]`` context-window tag. Claude Code's model
-#: allowlist does not understand it even when DeepSeek's Anthropic API does.
+DEFAULT_DEEPSEEK_CONTEXT = "1048576"
 _DEEPSEEK_CONTEXT_SUFFIX_RE = re.compile(r"\[\d+[km]?\]$", re.IGNORECASE)
 
 
@@ -72,19 +70,14 @@ def factory_code_provider() -> str:
     """Who authenticates FACTORY_CODE_CLI. Not the Floor chat LLM.
 
     Explicit ``FACTORY_CODE_PROVIDER`` wins. Otherwise:
-    * ``FACTORY_CODE_CLI`` / ``KIMI_CODE_CLI`` whose basename contains ``kimi``
-      stays on the Kimi path even when ``DEEPSEEK_API_KEY`` is also set.
-    * ``DEEPSEEK_API_KEY`` (or provider=deepseek) selects DeepSeek → ``claude``.
-    * a ``claude`` binary without DeepSeek signals is Anthropic-native Claude.
+    * ``DEEPSEEK_API_KEY`` (or provider=deepseek) selects DeepSeek under
+      Kimi Code CLI — even when ``FACTORY_CODE_CLI=kimi``.
+    * ``FACTORY_CODE_PROVIDER=kimi`` keeps the historical Moonshot path
+      even when a DeepSeek key is also set.
+    * a leftover ``claude`` binary without DeepSeek is Anthropic-native
+      (unused for Factory DeepSeek coding).
     * otherwise Kimi (historical default).
     """
-    cli = (
-        os.getenv(CODE_CLI_ENV, "").strip()
-        or os.getenv(LEGACY_CODE_CLI_ENV, "").strip()
-    )
-    # An explicit Kimi binary keeps the Kimi path even if a DeepSeek key is set.
-    if cli and is_kimi_code_cli(cli):
-        return "kimi"
     explicit = os.getenv(CODE_PROVIDER_ENV, "").strip().lower()
     if explicit == "moonshot":
         return "kimi"
@@ -92,22 +85,28 @@ def factory_code_provider() -> str:
         return explicit
     if deepseek_api_key():
         return "deepseek"
+    cli = (
+        os.getenv(CODE_CLI_ENV, "").strip()
+        or os.getenv(LEGACY_CODE_CLI_ENV, "").strip()
+    )
     if cli and is_claude_code_cli(cli):
         return "claude"
     return "kimi"
 
 
 def deepseek_coder_selected(command: Optional[str] = None) -> bool:
-    """True when C-BRIEF should authenticate Claude Code via DeepSeek."""
+    """True when C-BRIEF should authenticate Kimi Code via DeepSeek."""
+    if factory_code_provider() == "deepseek":
+        return True
     cli = (command or "").strip()
     if cli and is_kimi_code_cli(cli):
         return False
-    if factory_code_provider() == "deepseek":
-        return True
     if cli and is_claude_code_cli(cli) and (
         deepseek_api_key()
         or os.getenv(CODE_PROVIDER_ENV, "").strip().lower() == "deepseek"
     ):
+        # Leftover Claude binary name — still DeepSeek-selected, but
+        # ``code_cli_command`` remaps the vehicle to kimi.
         return True
     return False
 
@@ -115,14 +114,16 @@ def deepseek_coder_selected(command: Optional[str] = None) -> bool:
 def code_cli_command(default: Optional[str] = None) -> str:
     """The agentic coder CLI to invoke. FACTORY_CODE_CLI wins, then legacy.
 
-    When neither CLI name is set, DeepSeek V4 Pro (``claude``) is the default
-    Factory coding path if ``DEEPSEEK_API_KEY`` is present or
-    ``FACTORY_CODE_PROVIDER=deepseek``. Otherwise ``kimi``.
+    When neither CLI name is set, DeepSeek V4 Pro defaults to ``kimi``.
+    Leftover ``FACTORY_CODE_CLI=claude`` while DeepSeek is selected is
+    remapped to ``kimi`` (Claude Code is not the DeepSeek vehicle).
     """
     explicit = os.getenv(CODE_CLI_ENV, "").strip() or os.getenv(
         LEGACY_CODE_CLI_ENV, ""
     ).strip()
     if explicit:
+        if factory_code_provider() == "deepseek" and is_claude_code_cli(explicit):
+            return DEFAULT_DEEPSEEK_CLI
         return explicit
     if default is not None:
         return default
@@ -131,50 +132,56 @@ def code_cli_command(default: Optional[str] = None) -> str:
     return DEFAULT_KIMI_CLI
 
 
-def normalize_deepseek_claude_model(model: str) -> str:
-    """Map a DeepSeek / leftover id to one Claude Code 2.1.x SDK accepts.
+def normalize_deepseek_model(model: str) -> str:
+    """Strip ``[1m]`` and map leftover Claude-catalog ids to DeepSeek catalog.
 
-    Live Claude Code 2.1.x rejects both ``deepseek-v4-pro[1m]`` and bare
-    ``deepseek-v4-pro`` (``[claude-code:unrecognized_model]``,
-    ``query_source=sdk``). DeepSeek's Anthropic-compat endpoint maps
-    ``claude-opus*`` → ``deepseek-v4-pro``, so the subprocess must send a
-    Claude-catalog opus id while ``ANTHROPIC_BASE_URL`` points at DeepSeek.
-    Leftover Render ``ANTHROPIC_MODEL=deepseek-v4-pro`` / ``[1m]`` values
-    are remapped. Explicit ``claude-*`` overrides are kept (suffix stripped).
+    Live Claude Code rejected both ``deepseek-v4-pro[1m]`` and (after #371)
+    remapped to ``claude-opus-4-6``. OpenAI-compat DeepSeek wants the
+    catalog id ``deepseek-v4-pro``. Leftover Render ``ANTHROPIC_MODEL`` /
+    ``DEEPSEEK_CODE_MODEL=claude-opus-*`` values map back.
     """
     raw = (model or "").strip()
     stripped = _DEEPSEEK_CONTEXT_SUFFIX_RE.sub("", raw).strip() or raw
     lowered = stripped.lower()
-    if lowered == DEEPSEEK_API_PRO_MODEL or lowered.startswith(
-        f"{DEEPSEEK_API_PRO_MODEL}"
-    ):
+    if lowered.startswith("claude-opus"):
         return DEFAULT_DEEPSEEK_MODEL
-    if lowered == DEEPSEEK_API_FLASH_MODEL or lowered.startswith(
-        f"{DEEPSEEK_API_FLASH_MODEL}"
-    ):
+    if lowered.startswith("claude-haiku") or lowered.startswith("claude-sonnet"):
         return DEFAULT_DEEPSEEK_FLASH_MODEL
     return stripped
 
 
+def normalize_deepseek_claude_model(model: str) -> str:
+    """Legacy alias — DeepSeek no longer remaps *to* Claude catalog ids."""
+    return normalize_deepseek_model(model)
+
+
 def deepseek_code_model() -> str:
-    """Primary coding model for the Claude Code → DeepSeek subprocess."""
-    for name in (
-        "ANTHROPIC_MODEL",
-        DEEPSEEK_CODE_MODEL_ENV,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    ):
-        raw = os.getenv(name, "").strip()
-        if raw:
-            return normalize_deepseek_claude_model(raw)
+    """Primary coding model for the Kimi → DeepSeek OpenAI-compat subprocess."""
+    raw = os.getenv(DEEPSEEK_CODE_MODEL_ENV, "").strip()
+    if raw:
+        return normalize_deepseek_model(raw)
+    leftover = os.getenv("ANTHROPIC_MODEL", "").strip()
+    if leftover:
+        return normalize_deepseek_model(leftover)
+    leftover_opus = os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "").strip()
+    if leftover_opus:
+        return normalize_deepseek_model(leftover_opus)
     return DEFAULT_DEEPSEEK_MODEL
 
 
 def deepseek_flash_model() -> str:
-    for name in ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"):
-        raw = os.getenv(name, "").strip()
-        if raw:
-            return normalize_deepseek_claude_model(raw)
+    leftover = os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "").strip() or os.getenv(
+        "CLAUDE_CODE_SUBAGENT_MODEL", ""
+    ).strip()
+    if leftover:
+        return normalize_deepseek_model(leftover)
     return DEFAULT_DEEPSEEK_FLASH_MODEL
+
+
+def deepseek_openai_base_url() -> str:
+    return (
+        os.getenv(DEEPSEEK_BASE_URL_ENV, "").strip() or DEEPSEEK_OPENAI_BASE_URL
+    )
 
 
 def deepseek_model_configured() -> bool:
@@ -183,101 +190,155 @@ def deepseek_model_configured() -> bool:
 
 
 def deepseek_cli_environ(key: Optional[str] = None) -> Dict[str, str]:
-    """Official DeepSeek ↔ Claude Code env for the CLI subprocess only.
+    """Kimi Code OpenAI-compat env for the DeepSeek CLI subprocess only.
 
-    Does not set ``ANTHROPIC_API_KEY`` (that arms Floor/architect Claude).
-    Operator overrides on the named vars are honoured except
-    ``ANTHROPIC_AUTH_TOKEN``, which always comes from ``DEEPSEEK_API_KEY``.
+    Official Kimi Code ``KIMI_MODEL_*`` is the session-only channel that
+    **does** read credentials from the subprocess environment
+    (https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/environment-variables.html).
+    Also sets ``DEEPSEEK_*`` so operators can see the auth source.
+
+    Does **not** set ``ANTHROPIC_*`` / ``ANTHROPIC_API_KEY`` (those would
+    arm Floor/architect Claude or revive the dead Claude Code path).
     """
     token = (key if key is not None else deepseek_api_key()).strip()
-    primary = normalize_deepseek_claude_model(deepseek_code_model())
-    flash = normalize_deepseek_claude_model(deepseek_flash_model())
-    base = os.getenv("ANTHROPIC_BASE_URL", "").strip() or DEEPSEEK_ANTHROPIC_BASE_URL
-    env: Dict[str, str] = {
-        "ANTHROPIC_BASE_URL": base,
+    primary = normalize_deepseek_model(deepseek_code_model())
+    base = deepseek_openai_base_url()
+    context = (
+        os.getenv("DEEPSEEK_MAX_CONTEXT_SIZE", "").strip() or DEFAULT_DEEPSEEK_CONTEXT
+    )
+    effort = os.getenv("DEEPSEEK_THINKING_EFFORT", "").strip() or "high"
+    return {
+        DEEPSEEK_API_KEY_ENV: token,
+        DEEPSEEK_BASE_URL_ENV: base,
+        DEEPSEEK_CODE_MODEL_ENV: primary,
+        "KIMI_MODEL_NAME": primary,
+        "KIMI_MODEL_API_KEY": token,
+        "KIMI_MODEL_PROVIDER_TYPE": "openai",
+        "KIMI_MODEL_BASE_URL": base,
+        "KIMI_MODEL_MAX_CONTEXT_SIZE": context,
+        "KIMI_MODEL_THINKING_EFFORT": effort,
+        "KIMI_DISABLE_TELEMETRY": "1",
+        "KIMI_CODE_NO_AUTO_UPDATE": "1",
+    }
+
+
+def legacy_deepseek_claude_environ(key: Optional[str] = None) -> Dict[str, str]:
+    """Dead Claude Code Anthropic-compat env. Not used for live DeepSeek.
+
+    Kept so leftover Render ``ANTHROPIC_*`` names have a documented
+    quarantine. Dispatch must not call this.
+    """
+    token = (key if key is not None else deepseek_api_key()).strip()
+    primary = normalize_deepseek_model(deepseek_code_model())
+    flash = normalize_deepseek_model(deepseek_flash_model())
+    return {
+        "ANTHROPIC_BASE_URL": DEEPSEEK_ANTHROPIC_BASE_URL,
         "ANTHROPIC_AUTH_TOKEN": token,
         "ANTHROPIC_MODEL": primary,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": normalize_deepseek_claude_model(
-            os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "").strip() or primary
-        ),
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": normalize_deepseek_claude_model(
-            os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "").strip() or primary
-        ),
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": normalize_deepseek_claude_model(
-            os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "").strip() or flash
-        ),
-        "CLAUDE_CODE_SUBAGENT_MODEL": normalize_deepseek_claude_model(
-            os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", "").strip() or flash
-        ),
-        "CLAUDE_CODE_EFFORT_LEVEL": (
-            os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "").strip() or "max"
-        ),
-        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": (
-            os.getenv("CLAUDE_CODE_AUTO_COMPACT_WINDOW", "").strip()
-            or DEEPSEEK_AUTO_COMPACT_WINDOW
-        ),
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": (
-            os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "").strip() or "1"
-        ),
-        "DISABLE_AUTOUPDATER": os.getenv("DISABLE_AUTOUPDATER", "").strip() or "1",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": primary,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": primary,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": flash,
+        "CLAUDE_CODE_SUBAGENT_MODEL": flash,
+        "CLAUDE_CODE_EFFORT_LEVEL": "max",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": DEEPSEEK_AUTO_COMPACT_WINDOW,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "DISABLE_AUTOUPDATER": "1",
     }
-    return env
 
 
-#: Keep ``--print <prompt>`` under typical Linux ARG_MAX. Stdin still
-#: carries the full brief (official ``cat file | claude -p "query"``).
-CLAUDE_PRINT_ARGV_MAX = 80_000
-CLAUDE_PRINT_STDIN_INSTRUCTION = (
+#: Keep ``--prompt <brief>`` under typical Linux ARG_MAX. Stdin still
+#: carries the full brief.
+KIMI_PROMPT_ARGV_MAX = 80_000
+KIMI_PROMPT_STDIN_INSTRUCTION = (
     "Implement the gated Factory coder brief provided on stdin. "
     "The same brief is written at docs/coder_brief.md. "
     "Do not ask for more input."
 )
+# Legacy Claude Code argv helpers — unused for DeepSeek. Kept so leftover
+# Anthropic-native ``FACTORY_CODE_CLI=claude`` (no DeepSeek) still has a
+# headless shape.
+CLAUDE_PRINT_ARGV_MAX = KIMI_PROMPT_ARGV_MAX
+CLAUDE_PRINT_STDIN_INSTRUCTION = KIMI_PROMPT_STDIN_INSTRUCTION
 
 
-class ClaudePrintPromptEmpty(ValueError):
-    """Claude Code ``--print`` requires a non-empty prompt or stdin."""
+class KimiPromptEmpty(ValueError):
+    """Kimi Code ``--prompt`` requires a non-empty prompt or stdin."""
+
+
+class ClaudePrintPromptEmpty(KimiPromptEmpty):
+    """Legacy alias for the leftover Claude Code ``--print`` contract."""
 
 
 def _is_bare_at_mention(text: str) -> bool:
-    """True for a lone ``@path`` token — a file mention, not prompt input.
-
-    Live sess_9d0b43c dispatched ``claude --print … @docs/coder_brief.md``
-    and Claude Code 2.1.x exited: ``Input must be provided either through
-    stdin or as a prompt argument when using --print``.
-    """
+    """True for a lone ``@path`` token — a file mention, not prompt input."""
     if not text.startswith("@") or "\n" in text or " " in text:
         return False
     return len(text) < 256 and "/" in text
 
 
-def claude_print_prompt(brief_text: str) -> str:
-    """Non-empty coder-brief body for Claude Code ``--print`` / stdin."""
+def kimi_prompt_text(brief_text: str) -> str:
+    """Non-empty coder-brief body for Kimi ``--prompt`` / stdin."""
     text = (brief_text or "").strip()
     if not text:
-        raise ClaudePrintPromptEmpty(
-            "Claude Code --print requires a non-empty prompt; "
+        raise KimiPromptEmpty(
+            "Kimi Code --prompt requires a non-empty prompt; "
             "docs/coder_brief.md was empty"
         )
     if _is_bare_at_mention(text):
-        raise ClaudePrintPromptEmpty(
-            "Claude Code --print requires the coder_brief.md content, "
+        raise KimiPromptEmpty(
+            "Kimi Code --prompt requires the coder_brief.md content, "
             f"not a bare file mention ({text})"
         )
     return text
 
 
+def claude_print_prompt(brief_text: str) -> str:
+    """Legacy leftover — same empty/at-mention gate as ``kimi_prompt_text``."""
+    return kimi_prompt_text(brief_text)
+
+
+def kimi_prompt_argv(
+    cli: str, brief_arg: str, model: Optional[str] = None
+) -> list[str]:
+    """Headless Kimi Code: ``--prompt <brief body>``, not a bare ``@file``.
+
+    Official CLI: ``kimi -p "query"`` / ``kimi --prompt "query"``.
+    ``--prompt`` cannot be combined with ``--yolo`` / ``--auto`` — non-
+    interactive mode already uses auto permission.
+    """
+    prompt = kimi_prompt_text(brief_arg)
+    print_arg = (
+        KIMI_PROMPT_STDIN_INSTRUCTION
+        if len(prompt) > KIMI_PROMPT_ARGV_MAX
+        else prompt
+    )
+    argv = [cli, "--prompt", print_arg, "--add-dir", "."]
+    if model:
+        argv.extend(["--model", model])
+    return argv
+
+
+def kimi_prompt_log_argv(
+    cli: str, brief_bytes: int, model: Optional[str] = None
+) -> list[str]:
+    """Session-log argv — do not dump the full brief onto the Floor log."""
+    argv = [
+        cli,
+        "--prompt",
+        f"<docs/coder_brief.md {brief_bytes} bytes>",
+        "--add-dir",
+        ".",
+    ]
+    if model:
+        argv.extend(["--model", model])
+    return argv
+
+
 def claude_print_argv(
     cli: str, brief_arg: str, model: Optional[str] = None
 ) -> list[str]:
-    """Headless Claude Code: ``--print <prompt>``, not Kimi ``--prompt @file``.
-
-    Official CLI (v2.1.x): ``claude -p "query"`` or
-    ``cat brief | claude -p "query"``. A trailing ``@docs/coder_brief.md``
-    positional is a file mention, not a prompt argument. DeepSeek dispatch
-    also passes ``--model`` so the SDK sees a Claude-catalog id (not a
-    DeepSeek catalog string the 2.1.x SDK rejects).
-    """
-    prompt = claude_print_prompt(brief_arg)
+    """Leftover Anthropic-native Claude Code ``--print``. Not DeepSeek."""
+    prompt = kimi_prompt_text(brief_arg)
     print_arg = (
         CLAUDE_PRINT_STDIN_INSTRUCTION
         if len(prompt) > CLAUDE_PRINT_ARGV_MAX
@@ -292,14 +353,14 @@ def claude_print_argv(
         ".",
     ]
     if model:
-        argv.extend(["--model", normalize_deepseek_claude_model(model)])
+        argv.extend(["--model", normalize_deepseek_model(model)])
     return argv
 
 
 def claude_print_log_argv(
     cli: str, brief_bytes: int, model: Optional[str] = None
 ) -> list[str]:
-    """Session-log argv — do not dump the full brief onto the Floor log."""
+    """Leftover Claude session-log argv. Not used for DeepSeek."""
     argv = [
         cli,
         "--print",
@@ -309,5 +370,5 @@ def claude_print_log_argv(
         ".",
     ]
     if model:
-        argv.extend(["--model", normalize_deepseek_claude_model(model)])
+        argv.extend(["--model", normalize_deepseek_model(model)])
     return argv

@@ -307,7 +307,7 @@ def test_code_cli_prefers_the_provider_agnostic_name(monkeypatch):
     assert code_cli_command() == "/usr/bin/claude"
 
 
-def test_code_cli_defaults_to_claude_when_deepseek_key_present(monkeypatch):
+def test_code_cli_defaults_to_kimi_when_deepseek_key_present(monkeypatch):
     from app.factory.coder import code_cli_command, factory_code_provider
 
     monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
@@ -315,9 +315,11 @@ def test_code_cli_defaults_to_claude_when_deepseek_key_present(monkeypatch):
     monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
     assert factory_code_provider() == "deepseek"
-    assert code_cli_command() == "claude"
+    assert code_cli_command() == "kimi"
     monkeypatch.setenv("FACTORY_CODE_CLI", "kimi")
     assert code_cli_command() == "kimi"
+    assert factory_code_provider() == "deepseek"
+    monkeypatch.setenv("FACTORY_CODE_PROVIDER", "kimi")
     assert factory_code_provider() == "kimi"
 
 

@@ -155,22 +155,23 @@ request-shape test.
 to this CLI. The seam is shallow — run a command, read its result:
 
 ```bash
-FACTORY_CODE_CLI=claude    # Claude Code → DeepSeek V4 Pro when DEEPSEEK_API_KEY is set
-FACTORY_CODE_CLI=kimi      # Kimi CLI (still the default when no DeepSeek key)
+FACTORY_CODE_CLI=kimi      # Kimi Code → DeepSeek V4 Pro when DEEPSEEK_API_KEY is set
+FACTORY_CODE_PROVIDER=kimi # historical Moonshot when KIMI_CODE_API_KEY is set
 ```
 
 `KIMI_CODE_CLI` is still honoured; `FACTORY_CODE_CLI` wins. When
-`DEEPSEEK_API_KEY` is set and the CLI name is not an explicit `kimi`,
-DeepSeek is the default Factory coding path (`claude` + official Anthropic-compat
-env on the **subprocess only**). Floor / architect chat stays on OpenRouter —
-do not burn DeepSeek for chat. See `docs/factory/DEEPSEEK_ENV_SETUP.md` and
-`docs/factory/KIMI_ENV_SETUP.md`.
+`DEEPSEEK_API_KEY` is set, DeepSeek is the default Factory coding path
+(`kimi` + official OpenAI-compat `https://api.deepseek.com` on the
+**subprocess only**). Leftover `FACTORY_CODE_CLI=claude` remaps to `kimi`.
+Claude Code is not the DeepSeek vehicle. Floor / architect chat stays on
+OpenRouter — do not burn DeepSeek for chat. See
+`docs/factory/DEEPSEEK_ENV_SETUP.md` and `docs/factory/KIMI_ENV_SETUP.md`.
 
 The production `Dockerfile` installs official Kimi Code at `/usr/local/bin/kimi`
-(pin `KIMI_CODE_VERSION`) and official Claude Code at `/usr/local/bin/claude`
-(pin `CLAUDE_CODE_VERSION`). A keyed Floor without the selected binary
-fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Kimi
-binary without `~/.kimi-code/config.toml` fail-closes as
+(pin `KIMI_CODE_VERSION`). Official Claude Code may still be planted at
+`/usr/local/bin/claude` as leftover unused binary. A keyed Floor without the
+selected binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Moonshot
+Kimi binary without `~/.kimi-code/config.toml` fail-closes as
 `FACTORY_CODE_CLI_CREDENTIALS_MISSING`. DeepSeek selected without
 `DEEPSEEK_API_KEY` is the same named class. A credentials file without a usable `default_model` / `[models]` entry
 fail-closes as `FACTORY_CODE_CLI_NO_MODEL` before WRITER takeover (still
@@ -178,14 +179,12 @@ fail-closes as `FACTORY_CODE_CLI_NO_MODEL` before WRITER takeover (still
 takeover). A CLI exit of `No model configured` is the same named class
 and stops the coding-agent takeover (no perpetual "still working"). A 404 / Permission
 denied on the configured model fail-closes as
-`FACTORY_CODE_CLI_MODEL_DENIED`. Boot writes Kimi `default_model` from
-`KIMI_CODE_MODEL` / `KIMI_CODE_MODEL_ID` (default Moonshot `kimi-k3`, not
-managed `kimi-code/k3`) so headless `kimi --prompt` does not need TTY
-`/login`. DeepSeek uses `claude --print "<coder_brief.md>"` (prompt + stdin,
-not a bare `@docs/coder_brief.md` mention) with `claude-opus-4-6`
-(DeepSeek maps `claude-opus*` → `deepseek-v4-pro`; bare `deepseek-v4-pro`
-and the `[1m]` suffix both fail live Claude Code 2.1.x as
-`unrecognized_model`). A
+`FACTORY_CODE_CLI_MODEL_DENIED`. Boot writes DeepSeek
+`[providers.deepseek]` from `DEEPSEEK_API_KEY` (model `deepseek-v4-pro`)
+or Moonshot `default_model` from `KIMI_CODE_MODEL` / `KIMI_CODE_MODEL_ID`
+(default `kimi-k3`) so headless `kimi --prompt` does not need TTY
+`/login`. DeepSeek uses `kimi --prompt "<coder_brief.md>"` (prompt + stdin,
+not a bare `@docs/coder_brief.md` mention) with `deepseek-v4-pro`. A
 templated pilot zip after that skip is not a ≥2h CLI session. CLI
 credentials are `DEEPSEEK_API_KEY` or `KIMI_CODE_API_KEY` →
 `~/.kimi-code/config.toml`, not the in-app `CEREBRUM_LLM_API_KEY`. Render

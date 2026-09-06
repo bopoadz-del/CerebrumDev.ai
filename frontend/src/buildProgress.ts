@@ -548,6 +548,13 @@ const MISSING_KIMI_CLI_CREDS =
   'The CLI binary can be present while credentials_file_present is false — ' +
   'CEREBRUM_LLM_API_KEY and HTTP architect keys do not authenticate the Kimi Code CLI.'
 
+const MISSING_DEEPSEEK_CLI_CREDS =
+  'DeepSeek FACTORY_CODE_CLI credentials are missing (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
+  'Set DEEPSEEK_API_KEY so boot writes ~/.kimi-code/config.toml [providers.deepseek] ' +
+  '(OpenAI-compat https://api.deepseek.com, model deepseek-v4-pro) and injects ' +
+  'KIMI_MODEL_* on the kimi subprocess. FACTORY_CODE_CLI=kimi. Floor chat stays ' +
+  'on OpenRouter — do not use DEEPSEEK_API_KEY for chat. Claude Code is not the DeepSeek vehicle.'
+
 const MISSING_KIMI_CLI_MODEL =
   'Kimi Code CLI has no usable default_model (FACTORY_CODE_CLI_NO_MODEL). ' +
   'config.toml can be present (credentials_file_present=true) while default_model ' +
@@ -558,8 +565,9 @@ const MISSING_KIMI_CLI_MODEL =
 /**
  * Operator copy from GET /health factory_code_cli. Named blocker wins;
  * credentials_file_present=false also fires unless Kimi credentials are
- * explicitly not required (Claude login). A credentials file without
- * default_model is FACTORY_CODE_CLI_NO_MODEL, not a successful probe.
+ * explicitly not required (DeepSeek uses DEEPSEEK_API_KEY). A credentials
+ * file without default_model is FACTORY_CODE_CLI_NO_MODEL, not a successful
+ * probe.
  */
 export function factoryCodeCliHonesty(
   probe: FactoryCodeCliProbe | null | undefined,
@@ -576,6 +584,9 @@ export function factoryCodeCliHonesty(
     return MISSING_KIMI_CLI_MODEL
   }
   if (probe.blocker === FACTORY_CODE_CLI_CREDENTIALS_MISSING) {
+    if (probe.requires_deepseek_credentials) {
+      return MISSING_DEEPSEEK_CLI_CREDS
+    }
     return MISSING_KIMI_CLI_CREDS
   }
   if (probe.credentials_file_present === false && probe.requires_kimi_credentials !== false) {
@@ -594,6 +605,9 @@ export function factoryCodeCliStatusTitle(
       : factoryCodeCliHonesty(probeOrMessage) || ''
   if (text.includes(FACTORY_CODE_CLI_NO_MODEL) || text.includes('default_model')) {
     return 'Kimi Code CLI has no model'
+  }
+  if (text.includes('DEEPSEEK_API_KEY') || text.includes('DeepSeek')) {
+    return 'DeepSeek CLI credentials missing'
   }
   return 'Kimi Code CLI credentials missing'
 }
