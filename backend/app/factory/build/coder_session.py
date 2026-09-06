@@ -1097,7 +1097,9 @@ def apply_factory_llm_generate_gaps(
     """Second leg: one factory-LLM compiled-brief shot for GENERATE gaps.
 
     Receipt stays ``ok=false`` with the CLI billing/auth blocker. Not
-    ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session.
+    ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session. Landed
+    GENERATE handlers are persist-grounded on disk (alembic entity +
+    ``_persist_record``) so WRITER ``[check:round_trip]`` sees them.
     """
     if not should_factory_llm_generate_gaps(compiled, result):
         return result
@@ -1167,6 +1169,26 @@ def apply_factory_llm_generate_gaps(
             result.handlers[cid] = body
             written.append(cid)
     result.factory_llm_written_ids = written
+    if written:
+        from app.factory.build.persist_accept import (
+            emit_factory_grounded_generate_persist,
+        )
+
+        persist_source = (
+            f"coder LLM ({model})" if model else "coder LLM (factory)"
+        )
+        landed = emit_factory_grounded_generate_persist(
+            root,
+            compiled,
+            handlers=result.handlers,
+            specs=result.specs,
+            source=persist_source,
+        )
+        _append_log(
+            root / LOG_REL,
+            "[factory-llm] persist-grounded GENERATE emit "
+            f"after {result.blocker}: {landed}",
+        )
     _append_log(
         root / LOG_REL,
         f"[factory-llm] GENERATE-gap fallthrough after {result.blocker}: "

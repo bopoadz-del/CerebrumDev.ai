@@ -30,7 +30,11 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
 )
-from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
+from app.factory.build.persist_accept import (
+    FACTORY_GROUNDED_PERSIST_SOURCE,
+    persist_handler_rel,
+    persist_workspace_root,
+)
 from app.factory.build.workflow_accept import (
     FACTORY_GROUNDED_EVENT_BUS_SOURCE,
     grounded_event_bus_handler_body,
@@ -2827,12 +2831,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
         name = cid.replace("-", "_")
-        handler_rel = Path("app") / "actions" / f"{name}.py"
+        handler_rel = persist_handler_rel(cid)
         action_names.append(name)
         written.append(name)
 
-        if cid not in failing and ctx.workspace.exists(handler_rel):
-            # Ratchet: the previous round's handler passed; keep it.
+        persist_root = persist_workspace_root(ctx.workspace)
+        if cid not in failing and (persist_root / handler_rel).is_file():
+            # Ratchet only when the persist-check tree has the file.
+            # RoleWorkspace.exists also sees destination / store_root;
+            # a leftover destination GENERATE handler is how staging
+            # then fails [check:round_trip] with handler missing.
             sources[cid] = previous_sources.get(cid, "unchanged from previous round")
             continue
 
@@ -2854,7 +2862,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             use_brief_dispatch
             and dispatch
             and cid in (getattr(dispatch, "kept_handler_ids", None) or ())
-            and ctx.workspace.exists(handler_rel)
+            and (persist_root / handler_rel).is_file()
         ):
             kept_text = ctx.workspace.read_text(handler_rel)
             if needs_grounded_event_bus_handler(cid, usable) and not (
@@ -2899,8 +2907,36 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             authored = None
         else:
             authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
+        generate_ids = set(
+            getattr(dispatch, "factory_llm_generate_ids", None) or ()
+            if dispatch is not None
+            else ()
+        )
+        written_ids = set(
+            getattr(dispatch, "factory_llm_written_ids", None) or ()
+            if dispatch is not None
+            else ()
+        )
         if authored:
             body, source = authored
+        elif (
+            dispatch is not None
+            and getattr(dispatch, "factory_llm_generate_fallthrough", False)
+            and cid in generate_ids
+            and cid not in written_ids
+        ):
+            # Empty factory-LLM GENERATE: do not ship a deterministic
+            # contract template. persist_accept reports the miss.
+            sources[cid] = "factory-llm GENERATE miss"
+            ctx.note(
+                f"factory-llm GENERATE miss {cid} — persist gate will refuse",
+                stage="handlers",
+                capability=cid,
+                source=sources[cid],
+                done=len([k for k in sources if k in set(cap_ids)]),
+                total=len(cap_ids),
+            )
+            continue
         else:
             body = _capability_handler_body(cid, usable)
             if needs_grounded_event_bus_handler(cid, usable):
@@ -3195,7 +3231,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 
     wipe_workspace_runtime_db(ctx.workspace)
     try:
-        assert_persist_round_trip_ready(ctx.workspace.workspace, specs)
+        assert_persist_round_trip_ready(persist_workspace_root(ctx.workspace), specs)
     except PersistRoundTripHalt as exc:
         raise RoleError(str(exc)) from exc
 
