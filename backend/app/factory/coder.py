@@ -38,6 +38,23 @@ from .blueprint import CapabilitySpec, ProductBlueprint
 from .build.authority import kernel_seat_brief
 from .build.block_inputs import sanitize_python_identifier
 from .build.writer_brief import writer_system_brief
+from .code_cli import (  # noqa: F401 — re-export the public FACTORY_CODE_CLI seam
+    CODE_CLI_ENV,
+    CODE_PROVIDER_ENV,
+    DEEPSEEK_API_KEY_ENV,
+    DEFAULT_DEEPSEEK_CLI,
+    DEFAULT_DEEPSEEK_MODEL,
+    LEGACY_CODE_CLI_ENV,
+    claude_print_argv,
+    code_cli_command,
+    deepseek_api_key,
+    deepseek_cli_environ,
+    deepseek_coder_selected,
+    deepseek_code_model,
+    factory_code_provider,
+    is_claude_code_cli,
+    is_kimi_code_cli,
+)
 from .llm_watchdog import (
     attempt_wall_s,
     call_timeout_s,
@@ -58,18 +75,9 @@ CODER_ENABLED_ENV = "FACTORY_CODER_ENABLED"
 
 #: Provider-agnostic name for the agentic coding CLI. ``KIMI_CODE_CLI`` stays
 #: honoured so existing deployments keep working unchanged; point
-#: FACTORY_CODE_CLI at the Claude Code CLI to use Claude as the agentic coder.
-#: The seam is "run this command, read its result" -- no CLI's internals are
-#: depended on, and neither CLI's name is hardcoded at a call site.
-CODE_CLI_ENV = "FACTORY_CODE_CLI"
-LEGACY_CODE_CLI_ENV = "KIMI_CODE_CLI"
-
-
-def code_cli_command(default: str = "kimi") -> str:
-    """The agentic coder CLI to invoke. FACTORY_CODE_CLI wins, then legacy."""
-    return os.getenv(CODE_CLI_ENV, "").strip() or os.getenv(
-        LEGACY_CODE_CLI_ENV, ""
-    ).strip() or default
+#: FACTORY_CODE_CLI at the Claude Code CLI (DeepSeek V4 Pro or Anthropic).
+#: The seam is "run this command, read its result". Selection + DeepSeek
+#: subprocess env live in ``app.factory.code_cli`` (re-exported above).
 
 
 class CoderError(RuntimeError):

@@ -26,6 +26,11 @@ def _clear_env():
         "CEREBRUM_FACTORY_LLM_MODEL",
         "OPENROUTER_API_KEY",
         "FACTORY_LLM_FALLBACK_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_MODEL",
     ]
     old = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -202,4 +207,17 @@ def test_openrouter_base_uses_factory_fallback_api_key_when_openrouter_unset():
 
     assert chat_cfg["api_key"] == "sk-or-fallback"
     assert factory_cfg["api_key"] == "sk-or-fallback"
+
+
+def test_deepseek_key_does_not_arm_chat_or_factory_llm():
+    """DEEPSEEK_API_KEY is FACTORY_CODE_CLI only — Floor chat stays off it."""
+    os.environ["DEEPSEEK_API_KEY"] = "sk-deepseek-test-not-real"
+    os.environ.pop("ANTHROPIC_API_KEY", None)
+    os.environ.pop("LLM_PROVIDER", None)
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+    assert chat_cfg.get("api_key") != "sk-deepseek-test-not-real"
+    assert factory_cfg.get("api_key") != "sk-deepseek-test-not-real"
+    assert "deepseek.com" not in (chat_cfg.get("base_url") or "")
+    assert "deepseek.com" not in (factory_cfg.get("base_url") or "")
 

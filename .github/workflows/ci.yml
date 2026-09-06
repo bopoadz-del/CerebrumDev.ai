@@ -264,3 +264,12 @@ jobs:
             test "$(command -v kimi)" = /usr/local/bin/kimi
             kimi --version
           '
+
+      - name: FACTORY_CODE_CLI (claude) is on PATH
+        run: |
+          docker run --rm --user 10001 --entrypoint /bin/sh cerebrumdev-backend:ci -c '
+            set -eu
+            command -v claude
+            test "$(command -v claude)" = /usr/local/bin/claude
+            claude --version
+          '

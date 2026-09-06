@@ -61,6 +61,42 @@ RUN set -eu \
     && test -x /usr/local/bin/kimi \
     && /usr/local/bin/kimi --version
 
+# Official Claude Code CLI (FACTORY_CODE_CLI=claude). DeepSeek V4 Pro is
+# reached at dispatch via the Anthropic-compat endpoint; credentials stay
+# out of the image (DEEPSEEK_API_KEY → subprocess ANTHROPIC_* only).
+# Native installer, pinned. Docs:
+#   https://code.claude.com/docs/en/install
+#   https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
+#   curl -fsSL https://claude.ai/install.sh | bash -s <version>
+# The launcher is a symlink into ~/.local/share/claude/versions/; copy the
+# resolved binary to /usr/local/bin so appuser (HOME=/app) can exec it.
+# DISABLE_AUTOUPDATER keeps the pin; do not stub claude.
+ARG CLAUDE_CODE_VERSION=2.1.263
+ENV DISABLE_AUTOUPDATER=1
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+RUN set -eu \
+    && printf '%s\n' \
+         '#!/bin/sh' \
+         'exec /usr/bin/curl --retry 5 --retry-all-errors --retry-delay 2 --http1.1 "$@"' \
+         > /tmp/curl \
+    && chmod +x /tmp/curl \
+    && PATH="/tmp:${PATH}" \
+       curl -fsSL https://claude.ai/install.sh \
+         -o /tmp/claude-code-install.sh \
+    && HOME=/tmp/claude-code-home \
+       PATH="/tmp:${PATH}" \
+       bash /tmp/claude-code-install.sh "${CLAUDE_CODE_VERSION}" \
+    && src="$(readlink -f /tmp/claude-code-home/.local/bin/claude 2>/dev/null || true)" \
+    && if [ -z "${src}" ] || [ ! -f "${src}" ]; then \
+         src="$(find /tmp/claude-code-home -type f -name claude | head -n 1)"; \
+       fi \
+    && test -n "${src}" && test -f "${src}" \
+    && install -m 0755 "${src}" /usr/local/bin/claude \
+    && rm -f /tmp/claude-code-install.sh /tmp/curl \
+    && rm -rf /tmp/claude-code-home /root/.claude /root/.local/share/claude \
+    && test -x /usr/local/bin/claude \
+    && /usr/local/bin/claude --version
+
 COPY backend/app /app/app
 # Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
 COPY blueprints /app/blueprints
@@ -82,11 +118,13 @@ COPY backend/scripts /app/scripts
 RUN mkdir -p /app/backend && ln -s /app/app /app/backend/app
 COPY .github/workflows/ci.yml /app/.github/workflows/ci.yml
 
-# FACTORY_CODE_CLI=kimi resolves to /usr/local/bin/kimi (installed above).
+# FACTORY_CODE_CLI=kimi → /usr/local/bin/kimi; FACTORY_CODE_CLI=claude →
+# /usr/local/bin/claude (DeepSeek V4 Pro when DEEPSEEK_API_KEY is set).
 # A keyed Floor still fail-closes FACTORY_CODE_CLI_UNAVAILABLE if the
-# executable is missing (wrong FACTORY_CODE_CLI, deleted binary, etc.).
-# KIMI_CODE_API_KEY at boot writes ~/.kimi-code/config.toml
-# ([providers.kimi] + default_model from KIMI_CODE_MODEL, Moonshot kimi-k3).
+# selected executable is missing. KIMI_CODE_API_KEY at boot writes
+# ~/.kimi-code/config.toml. DEEPSEEK_API_KEY is injected into the Claude
+# Code subprocess only (not process-wide ANTHROPIC_* — Floor chat stays
+# on OpenRouter). See docs/factory/DEEPSEEK_ENV_SETUP.md.
 ENV PORT=8000
 # libpq defaults sslcert to $HOME/.postgresql/postgresql.crt. python:slim
 # leaves HOME=/root. After the entrypoint drops to uid 10001 that path is

@@ -294,6 +294,8 @@ def test_code_cli_prefers_the_provider_agnostic_name(monkeypatch):
 
     monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
     monkeypatch.delenv("KIMI_CODE_CLI", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
     assert code_cli_command() == "kimi"
 
     # Backwards compatibility: existing deployments keep working untouched.
@@ -303,6 +305,20 @@ def test_code_cli_prefers_the_provider_agnostic_name(monkeypatch):
     # And the new name wins when both are set.
     monkeypatch.setenv("FACTORY_CODE_CLI", "/usr/bin/claude")
     assert code_cli_command() == "/usr/bin/claude"
+
+
+def test_code_cli_defaults_to_claude_when_deepseek_key_present(monkeypatch):
+    from app.factory.coder import code_cli_command, factory_code_provider
+
+    monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
+    monkeypatch.delenv("KIMI_CODE_CLI", raising=False)
+    monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    assert factory_code_provider() == "deepseek"
+    assert code_cli_command() == "claude"
+    monkeypatch.setenv("FACTORY_CODE_CLI", "kimi")
+    assert code_cli_command() == "kimi"
+    assert factory_code_provider() == "kimi"
 
 
 def test_supported_providers_are_exactly_kimi_and_claude():

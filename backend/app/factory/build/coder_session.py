@@ -1,15 +1,16 @@
 """One-session coder dispatch + owner Pause/Stop control.
 
 The WRITER compiles one brief, then this module hands it to FACTORY_CODE_CLI.
-A keyed production Floor must have that binary AND, for Kimi, a credentials
-file with a usable ``default_model`` + ``[models]`` entry (or fail-closed
-with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
-``FACTORY_CODE_CLI_CREDENTIALS_MISSING`` / ``FACTORY_CODE_CLI_NO_MODEL``)
+A keyed production Floor must have that binary AND credentials for the
+selected coder (Kimi: ``~/.kimi-code/config.toml`` with a usable
+``default_model``; DeepSeek: ``DEEPSEEK_API_KEY`` for Claude Code →
+DeepSeek V4 Pro) or fail-closed with ``FACTORY_CODE_CLI_UNAVAILABLE`` /
+``FACTORY_CODE_CLI_CREDENTIALS_MISSING`` / ``FACTORY_CODE_CLI_NO_MODEL``
 BEFORE it claims the coding agent has taken over. A CLI exit of
 ``No model configured`` is also ``FACTORY_CODE_CLI_NO_MODEL``
 (still ``FACTORY_CODE_CLI_FAILED`` honesty).
 A 404 / Permission denied on the configured model is
-``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A Moonshot
+``FACTORY_CODE_CLI_MODEL_DENIED`` (distinct from NO_MODEL). A
 ``429`` / insufficient-balance / account-suspended exit is
 ``FACTORY_CODE_CLI_BILLING`` (still ``FACTORY_CODE_CLI_FAILED`` honesty).
 When STEP 0 inventory has **zero gaps** (all capabilities REUSE-present),
@@ -151,7 +152,8 @@ _BILLING_HINTS = (
 
 #: One-line operator note. Dashboard clicks stay owner-gated.
 OWNER_GATED_CLI_LOG = (
-    "FACTORY_CODE_CLI / KIMI_CODE_API_KEY owner-gated on Render — not claimed set"
+    "FACTORY_CODE_CLI / DEEPSEEK_API_KEY / KIMI_CODE_API_KEY owner-gated "
+    "on Render — not claimed set"
 )
 
 
@@ -162,7 +164,11 @@ class CodeCliUnavailable(RuntimeError):
 
 
 class CodeCliCredentialsMissing(CodeCliUnavailable):
-    """Kimi CLI is on PATH but ~/.kimi-code/config.toml is missing."""
+    """Selected coder is on PATH but its credentials are missing.
+
+    Kimi: ``~/.kimi-code/config.toml`` absent. DeepSeek:
+    ``DEEPSEEK_API_KEY`` unset while DeepSeek is the selected coder.
+    """
 
     blocker = NAMED_BLOCKER_CLI_CREDS
 
@@ -239,15 +245,27 @@ def brief_requires_cli() -> bool:
 
 def cli_unavailable_detail(command: Optional[str] = None) -> str:
     """Named-class operator text. Names the env, not a dashboard click."""
-    from app.factory.coder import CODE_CLI_ENV, LEGACY_CODE_CLI_ENV, code_cli_command
+    from app.factory.coder import (
+        CODE_CLI_ENV,
+        DEEPSEEK_API_KEY_ENV,
+        LEGACY_CODE_CLI_ENV,
+        code_cli_command,
+        factory_code_provider,
+    )
 
     cli = (command or code_cli_command()).strip() or "kimi"
+    provider = factory_code_provider()
+    creds = (
+        f"{DEEPSEEK_API_KEY_ENV} (Claude Code → DeepSeek V4 Pro)"
+        if provider == "deepseek"
+        else "KIMI_CODE_API_KEY writes ~/.kimi-code/config.toml; "
+        "Claude uses its own login unless DeepSeek is selected"
+    )
     return (
         f"{NAMED_BLOCKER_CLI}: {cli!r} is not an executable on this host. "
         f"Set {CODE_CLI_ENV} (wins) or {LEGACY_CODE_CLI_ENV} to the agentic "
         "coder binary (`kimi` or `claude`, or an absolute path) and provide "
-        "CLI credentials (KIMI_CODE_API_KEY writes ~/.kimi-code/config.toml; "
-        "Claude uses its own login). HTTP oneshot is not a FACTORY_CODE_CLI "
+        f"CLI credentials ({creds}). HTTP oneshot is not a FACTORY_CODE_CLI "
         f"session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. "
         f"{OWNER_GATED_CLI_LOG}."
     )
@@ -270,9 +288,12 @@ def cli_requires_kimi_credentials(command: Optional[str] = None) -> bool:
 
     Credentials are expected when the resolved command is kimi (default
     name, ``KIMI_CODE_CLI``, or a path whose basename contains ``kimi``).
+    DeepSeek (Claude Code + ``DEEPSEEK_API_KEY``) does not use this file.
     """
-    from app.factory.coder import code_cli_command
+    from app.factory.coder import code_cli_command, deepseek_coder_selected
 
+    if deepseek_coder_selected(command):
+        return False
     cli = (command or code_cli_command()).strip()
     names = [Path(cli).name.lower()] if cli else []
     resolved = resolve_code_cli(cli) if cli else resolve_code_cli()
@@ -281,7 +302,18 @@ def cli_requires_kimi_credentials(command: Optional[str] = None) -> bool:
     return any("kimi" in name for name in names)
 
 
+def cli_requires_deepseek_credentials(command: Optional[str] = None) -> bool:
+    """DeepSeek V4 Pro authenticates Claude Code via ``DEEPSEEK_API_KEY``."""
+    from app.factory.coder import deepseek_coder_selected
+
+    return deepseek_coder_selected(command)
+
+
 def cli_credentials_ok(command: Optional[str] = None) -> bool:
+    if cli_requires_deepseek_credentials(command):
+        from app.factory.coder import deepseek_api_key
+
+        return bool(deepseek_api_key())
     if not cli_requires_kimi_credentials(command):
         return True
     return credentials_file_present()
@@ -317,6 +349,10 @@ def config_has_usable_default_model(text: str) -> bool:
 
 def cli_default_model_ok(command: Optional[str] = None) -> bool:
     """Credentials-only config.toml is not a usable Kimi model."""
+    if cli_requires_deepseek_credentials(command):
+        from app.factory.code_cli import deepseek_model_configured
+
+        return deepseek_model_configured()
     if not cli_requires_kimi_credentials(command):
         return True
     if not credentials_file_present():
@@ -340,9 +376,25 @@ def kimi_prompt_model_alias() -> str:
 
 def cli_no_model_detail(command: Optional[str] = None) -> str:
     """Named-class operator text for binary + file, no usable default_model."""
-    from app.factory.coder import CODE_CLI_ENV, code_cli_command
+    from app.factory.coder import (
+        CODE_CLI_ENV,
+        DEFAULT_DEEPSEEK_MODEL,
+        code_cli_command,
+    )
 
     cli = (command or code_cli_command()).strip() or "kimi"
+    if cli_requires_deepseek_credentials(command):
+        return (
+            f"{NAMED_BLOCKER_CLI_NO_MODEL}: {cli!r} is an executable on this "
+            "host but no DeepSeek coding model is configured. Set "
+            f"ANTHROPIC_MODEL / DEEPSEEK_CODE_MODEL (default "
+            f"{DEFAULT_DEEPSEEK_MODEL}) for the Claude Code subprocess. "
+            f"{CODE_CLI_ENV} / CEREBRUM_LLM_API_KEY do not configure the "
+            "DeepSeek coding model. HTTP oneshot is not a FACTORY_CODE_CLI "
+            f"session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only for CI. A "
+            f"templated pilot zip is not a ≥2h CLI session. "
+            f"{OWNER_GATED_CLI_LOG}."
+        )
     dest = kimi_credentials_file()
     return (
         f"{NAMED_BLOCKER_CLI_NO_MODEL}: {cli!r} is an executable on this host "
@@ -360,9 +412,27 @@ def cli_no_model_detail(command: Optional[str] = None) -> str:
 
 def cli_credentials_missing_detail(command: Optional[str] = None) -> str:
     """Named-class operator text for binary-present / credentials-absent."""
-    from app.factory.coder import CODE_CLI_ENV, code_cli_command
+    from app.factory.coder import (
+        CODE_CLI_ENV,
+        DEEPSEEK_API_KEY_ENV,
+        DEFAULT_DEEPSEEK_MODEL,
+        code_cli_command,
+    )
 
     cli = (command or code_cli_command()).strip() or "kimi"
+    if cli_requires_deepseek_credentials(command):
+        return (
+            f"{NAMED_BLOCKER_CLI_CREDS}: {cli!r} is an executable on this host "
+            f"but {DEEPSEEK_API_KEY_ENV} is unset. DeepSeek is the selected "
+            "FACTORY_CODE_CLI coder (FACTORY_CODE_PROVIDER=deepseek or "
+            f"{DEEPSEEK_API_KEY_ENV} / FACTORY_CODE_CLI=claude). Set "
+            f"{DEEPSEEK_API_KEY_ENV} so boot injects the official Claude Code "
+            f"Anthropic-compat env (model default {DEFAULT_DEEPSEEK_MODEL}). "
+            f"{CODE_CLI_ENV} / CEREBRUM_LLM_API_KEY / ANTHROPIC_API_KEY do "
+            "not authenticate DeepSeek. HTTP oneshot is not a "
+            f"FACTORY_CODE_CLI session; set {BRIEF_HTTP_ONESHOT_ENV}=1 only "
+            f"for CI. {OWNER_GATED_CLI_LOG}."
+        )
     dest = kimi_credentials_file()
     return (
         f"{NAMED_BLOCKER_CLI_CREDS}: {cli!r} is an executable on this host but "
@@ -522,23 +592,41 @@ def cli_available(command: Optional[str] = None) -> bool:
 
 def probe_code_cli() -> Dict[str, Any]:
     """Health / operator view of FACTORY_CODE_CLI (binary, not workbench flag)."""
-    from app.factory.coder import code_cli_command
+    from app.factory.coder import (
+        code_cli_command,
+        deepseek_api_key,
+        deepseek_code_model,
+        factory_code_provider,
+    )
 
     command = code_cli_command()
     resolved = resolve_code_cli(command)
-    creds_ok = credentials_file_present()
-    config_text = read_kimi_config_text() if creds_ok else ""
-    alias = config_default_model(config_text) if creds_ok else ""
+    provider = factory_code_provider()
+    wants_deepseek = cli_requires_deepseek_credentials(command)
+    wants_kimi = cli_requires_kimi_credentials(command)
+    kimi_file = credentials_file_present()
+    config_text = read_kimi_config_text() if kimi_file else ""
+    kimi_alias = config_default_model(config_text) if kimi_file else ""
     model_ok = cli_default_model_ok(command)
+    deepseek_key = bool(deepseek_api_key())
+    if wants_deepseek:
+        default_model = deepseek_code_model()
+        default_configured = bool(model_ok)
+    else:
+        default_model = kimi_alias or None
+        default_configured = bool(model_ok) if kimi_file else False
     probe: Dict[str, Any] = {
         "command": command,
+        "provider": provider,
         "available": bool(resolved),
         "resolved": resolved,
-        "credentials_file_present": creds_ok,
-        "default_model": alias or None,
-        "default_model_configured": bool(model_ok) if creds_ok else False,
+        "credentials_file_present": kimi_file,
+        "deepseek_key_present": deepseek_key,
+        "default_model": default_model or None,
+        "default_model_configured": default_configured,
         "requires_cli": brief_requires_cli(),
-        "requires_kimi_credentials": cli_requires_kimi_credentials(command),
+        "requires_kimi_credentials": wants_kimi,
+        "requires_deepseek_credentials": wants_deepseek,
     }
     if not resolved:
         probe["blocker"] = NAMED_BLOCKER_CLI
@@ -781,20 +869,103 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
         )
     billing = any(hint in lowered for hint in _BILLING_HINTS)
     rate_suspended = "429" in lowered and "suspended" in lowered
-    if billing or rate_suspended:
+    deepseek_denied = "429" in lowered and any(
+        token in lowered
+        for token in ("deepseek", "insufficient", "quota", "balance", "billing")
+    )
+    if billing or rate_suspended or deepseek_denied:
         return (
             NAMED_BLOCKER_CLI_BILLING,
             (
-                f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — Moonshot account "
+                f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — coder account "
                 "billing/auth refused the session (insufficient balance / "
-                "429 suspended). Still FACTORY_CODE_CLI_FAILED honesty — "
-                "not a ≥2h CLI session. Verified REUSE continues "
+                "429 / DeepSeek or Moonshot). Still FACTORY_CODE_CLI_FAILED "
+                "honesty — not a ≥2h CLI session. Verified REUSE continues "
                 "factory-grounded emit + harvest; GENERATE inventory_gaps "
                 "fall through to the factory coder LLM and stay listed "
                 f"until artifacts land. {OWNER_GATED_CLI_LOG}."
             ),
         )
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
+
+
+def _wire_deepseek_cli_credentials() -> Dict[str, Any]:
+    """Validate DeepSeek for Claude Code. Does not mutate process ANTHROPIC_*.
+
+    Official DeepSeek env is applied to the FACTORY_CODE_CLI **subprocess**
+    at dispatch (see ``deepseek_cli_environ``). Setting those names
+    process-wide would leak into ``LLM_PROVIDER=claude`` Floor chat.
+    """
+    from app.factory.coder import (
+        DEEPSEEK_API_KEY_ENV,
+        DEFAULT_DEEPSEEK_MODEL,
+        deepseek_api_key,
+        deepseek_cli_environ,
+        deepseek_code_model,
+        deepseek_coder_selected,
+        factory_code_provider,
+    )
+
+    selected = deepseek_coder_selected() or factory_code_provider() == "deepseek"
+    key = deepseek_api_key()
+    if not selected and not key:
+        return {
+            "ok": False,
+            "wrote": False,
+            "mutated": False,
+            "reason": f"{DEEPSEEK_API_KEY_ENV} unset",
+            "provider": factory_code_provider(),
+        }
+    if selected and not key:
+        logger.info(OWNER_GATED_CLI_LOG)
+        return {
+            "ok": False,
+            "wrote": False,
+            "mutated": False,
+            "reason": f"{DEEPSEEK_API_KEY_ENV} unset",
+            "provider": "deepseek",
+        }
+    env = deepseek_cli_environ(key)
+    model = env.get("ANTHROPIC_MODEL") or deepseek_code_model() or DEFAULT_DEEPSEEK_MODEL
+    logger.info(
+        "wired DeepSeek V4 Pro for FACTORY_CODE_CLI subprocess "
+        "(model=%s base=%s; ANTHROPIC_* not exported process-wide)",
+        model,
+        env.get("ANTHROPIC_BASE_URL"),
+    )
+    return {
+        "ok": True,
+        "wrote": False,
+        "mutated": False,
+        "reason": "deepseek wired",
+        "provider": "deepseek",
+        "model": model,
+        "cli": "claude",
+        "subprocess_env_keys": sorted(env),
+    }
+
+
+def _merge_cli_credential_result(
+    kimi: Dict[str, Any], deepseek: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Keep the Kimi write shape; surface DeepSeek when it is the live coder."""
+    out = dict(kimi)
+    out["deepseek"] = dict(deepseek)
+    if deepseek.get("ok") and not out.get("ok"):
+        out["ok"] = True
+        out["reason"] = deepseek.get("reason") or out.get("reason")
+        out.setdefault("model", deepseek.get("model"))
+        out["provider"] = "deepseek"
+    elif (
+        not deepseek.get("ok")
+        and deepseek.get("provider") == "deepseek"
+        and not out.get("ok")
+    ):
+        out["reason"] = deepseek.get("reason") or out.get("reason")
+        out["provider"] = "deepseek"
+    elif out.get("ok"):
+        out.setdefault("provider", "kimi")
+    return out
 
 
 def ensure_code_cli_credentials() -> Dict[str, Any]:
@@ -810,7 +981,13 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
     that already has ``[providers.kimi]`` is still repaired with
     ``default_model`` on the next start. Does not claim the Render
     dashboard is set. Does not claim Floor re-prove.
+
+    When DeepSeek is selected (or ``DEEPSEEK_API_KEY`` is set), also
+    validates that key and records the official Claude Code subprocess
+    env. Does not set ``ANTHROPIC_BASE_URL`` / ``ANTHROPIC_MODEL`` on
+    the process (Floor chat stays off DeepSeek).
     """
+    deepseek = _wire_deepseek_cli_credentials()
     key = (
         os.getenv("KIMI_CODE_API_KEY", "").strip()
         or os.getenv("KIMI_CODE_KEY", "").strip()
@@ -843,32 +1020,41 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
                 written_alias,
                 written_id,
             )
-            return {
+            return _merge_cli_credential_result(
+                {
+                    "ok": True,
+                    "wrote": False,
+                    "mutated": bool(mutated_model),
+                    "path": str(dest),
+                    "model": written_alias,
+                    "model_id": written_id,
+                    "reason": "mutated",
+                },
+                deepseek,
+            )
+        logger.info(OWNER_GATED_CLI_LOG)
+        return _merge_cli_credential_result(
+            {
+                "ok": False,
+                "wrote": False,
+                "mutated": False,
+                "reason": "KIMI_CODE_API_KEY unset",
+            },
+            deepseek,
+        )
+    if has_provider and current_model and not rewrite_model:
+        return _merge_cli_credential_result(
+            {
                 "ok": True,
                 "wrote": False,
-                "mutated": bool(mutated_model),
+                "mutated": False,
                 "path": str(dest),
-                "model": written_alias,
-                "model_id": written_id,
-                "reason": "mutated",
-            }
-        logger.info(OWNER_GATED_CLI_LOG)
-        return {
-            "ok": False,
-            "wrote": False,
-            "mutated": False,
-            "reason": "KIMI_CODE_API_KEY unset",
-        }
-    if has_provider and current_model and not rewrite_model:
-        return {
-            "ok": True,
-            "wrote": False,
-            "mutated": False,
-            "path": str(dest),
-            "model": current_model,
-            "model_id": current_id,
-            "reason": "already present",
-        }
+                "model": current_model,
+                "model_id": current_id,
+                "reason": "already present",
+            },
+            deepseek,
+        )
     home.mkdir(parents=True, exist_ok=True)
     base_url = os.getenv("KIMI_CODE_BASE_URL", "https://api.moonshot.ai/v1").strip()
     text = existing
@@ -896,15 +1082,18 @@ def ensure_code_cli_credentials() -> Dict[str, Any]:
         written_alias,
         written_id,
     )
-    return {
-        "ok": True,
-        "wrote": wrote_provider,
-        "mutated": bool(existed and mutated_model),
-        "path": str(dest),
-        "model": written_alias,
-        "model_id": written_id,
-        "reason": "mutated" if existed and mutated_model else "wrote",
-    }
+    return _merge_cli_credential_result(
+        {
+            "ok": True,
+            "wrote": wrote_provider,
+            "mutated": bool(existed and mutated_model),
+            "path": str(dest),
+            "model": written_alias,
+            "model_id": written_id,
+            "reason": "mutated" if existed and mutated_model else "wrote",
+        },
+        deepseek,
+    )
 
 
 @dataclass
@@ -1336,20 +1525,32 @@ def _run_cli_session(
     *,
     timeout_s: float,
 ) -> DispatchResult:
-    from app.factory.coder import code_cli_command
+    from app.factory.coder import (
+        claude_print_argv,
+        code_cli_command,
+        deepseek_cli_environ,
+        deepseek_coder_selected,
+        is_claude_code_cli,
+    )
 
     root = _workspace_root(ctx)
     log_path = root / LOG_REL
     cli = resolve_code_cli() or code_cli_command()
     brief_arg = f"@{BRIEF_REL.as_posix()}"
-    cmd = [cli, "--prompt", brief_arg, "--add-dir", "."]
-    # Kimi Code CLI 0.41 documents ``-m`` / ``--model`` on ``--prompt``
-    # (https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html).
-    # Headless Floor must not depend solely on config.toml mutation.
-    if cli_requires_kimi_credentials(cli):
-        alias = kimi_prompt_model_alias()
-        if alias and _MODEL_ALIAS_RE.match(alias):
-            cmd.extend(["--model", alias])
+    if is_claude_code_cli(cli) or deepseek_coder_selected(cli):
+        cmd = claude_print_argv(cli, brief_arg)
+    else:
+        cmd = [cli, "--prompt", brief_arg, "--add-dir", "."]
+        # Kimi Code CLI 0.41 documents ``-m`` / ``--model`` on ``--prompt``
+        # (https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html).
+        # Headless Floor must not depend solely on config.toml mutation.
+        if cli_requires_kimi_credentials(cli):
+            alias = kimi_prompt_model_alias()
+            if alias and _MODEL_ALIAS_RE.match(alias):
+                cmd.extend(["--model", alias])
+    session_env = os.environ.copy()
+    if deepseek_coder_selected(cli):
+        session_env.update(deepseek_cli_environ())
     _append_log(log_path, f"$ {' '.join(cmd)}")
     ctx.note(
         f"dispatching compiled brief via FACTORY_CODE_CLI ({cli})",
@@ -1367,6 +1568,7 @@ def _run_cli_session(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=session_env,
         )
     except FileNotFoundError:
         return DispatchResult(

@@ -41,6 +41,49 @@ async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_health_reports_deepseek_credentials_missing(tmp_path, monkeypatch):
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\necho claude 9.9.9\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
+    monkeypatch.setenv("FACTORY_CODE_PROVIDER", "deepseek")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is True
+    assert probe["provider"] == "deepseek"
+    assert probe["deepseek_key_present"] is False
+    assert probe["blocker"] == "FACTORY_CODE_CLI_CREDENTIALS_MISSING"
+    assert "DEEPSEEK_API_KEY" in probe["error"]
+
+
+@pytest.mark.asyncio
+async def test_health_reports_deepseek_ready(tmp_path, monkeypatch):
+    fake = tmp_path / "claude"
+    fake.write_text("#!/bin/sh\necho claude 9.9.9\nexit 0\n", encoding="utf-8")
+    fake.chmod(0o755)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test-not-real")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is True
+    assert probe["provider"] == "deepseek"
+    assert probe["deepseek_key_present"] is True
+    assert probe["default_model"] == "deepseek-v4-pro[1m]"
+    assert "blocker" not in probe
+
+
+@pytest.mark.asyncio
 async def test_health_reports_no_model_when_config_lacks_default_model(
     tmp_path, monkeypatch
 ):

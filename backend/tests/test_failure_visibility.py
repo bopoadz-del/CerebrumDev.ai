@@ -196,6 +196,32 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         assert "/usr/local/bin/kimi" in docs
         assert "KIMI_CODE_VERSION" in docs
 
+    def test_production_image_installs_official_claude_code_cli(self):
+        """FACTORY_CODE_CLI=claude must resolve in the Render image.
+
+        DeepSeek V4 Pro C-BRIEF uses Claude Code on the Anthropic-compat
+        endpoint. The production Dockerfile installs the official Claude
+        Code CLI (docs + install.sh), pinned, at /usr/local/bin/claude.
+        CI ``docker run`` asserts ``which claude`` / ``claude --version``.
+        Do not replace the official installer with a stub binary. Do not
+        weaken the missing-CLI fail-closed path.
+        """
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "https://claude.ai/install.sh" in dockerfile
+        assert "CLAUDE_CODE_VERSION" in dockerfile
+        assert "/usr/local/bin/claude" in dockerfile
+        assert "claude --version" in dockerfile
+        assert "DISABLE_AUTOUPDATER" in dockerfile
+        assert "DEEPSEEK_API_KEY" in dockerfile
+        docs = (REPO_ROOT / "docs/factory/DEEPSEEK_ENV_SETUP.md").read_text(
+            encoding="utf-8"
+        )
+        assert "/usr/local/bin/claude" in docs
+        assert "CLAUDE_CODE_VERSION" in docs
+        assert "deepseek-v4-pro[1m]" in docs
+        assert "FACTORY_BRIEF_HTTP_ONESHOT" in docs
+        assert "pilot_zip" in docs
+
     def test_production_image_plants_s0_factory_source_in_the_workdir(self):
         """S0 fingerprints repo-relative paths from factory_repo_root()=/app.
 
