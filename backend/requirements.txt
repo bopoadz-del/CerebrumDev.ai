@@ -1,10 +1,10 @@
 fastapi==0.141.1
 uvicorn==0.52.4
-pydantic==2.10.4
+pydantic==2.13.5
 python-multipart==0.0.20
 httpx==0.28.1
 python-dotenv==1.2.3
-cryptography==43.0.3
+cryptography==50.0.1
 pypdf==6.16.2
 python-docx==1.2.0
 beautifulsoup4==4.15.0
@@ -14,7 +14,7 @@ chromadb==1.5.9
 # file and Postgres (ACCOUNTS_DATABASE_URL). psycopg is only exercised when a
 # Postgres URL is configured.
 sqlalchemy==2.0.51
-psycopg[binary]==3.3.4
+psycopg[binary]==3.3.5
 
 # Accounts DB migrations (Alembic). Runs at container boot; see backend/alembic/.
 alembic==1.19.1
@@ -32,7 +32,7 @@ prometheus-client==0.21.1
 
 # Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
 # session fan-out. Optional — everything falls back to in-memory.
-redis==8.0.1
+redis==8.1.0
 
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is

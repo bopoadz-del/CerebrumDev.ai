@@ -19,7 +19,7 @@ cffi==2.1.1
 charset-normalizer==3.5.1
 chromadb==1.5.9
 click==8.4.2
-cryptography==43.0.3
+cryptography==50.0.1
 durationpy==0.11
 fastapi==0.115.6
 fastembed==0.8.0
@@ -72,9 +72,9 @@ psycopg-binary==3.3.4
 py_rust_stemmers==0.1.8
 pybase64==1.5.0
 pycparser==3.0
-pydantic==2.10.4
+pydantic==2.13.5
 pydantic-settings==2.15.0
-pydantic_core==2.27.2
+pydantic_core==2.46.5
 Pygments==2.21.0
 pypdf==6.16.2
 PyPika==0.51.1
@@ -85,7 +85,7 @@ python-docx==1.2.0
 python-dotenv==1.2.3
 python-multipart==0.0.20
 PyYAML==6.0.3
-redis==8.0.1
+redis==8.1.0
 referencing==0.37.0
 regex==2026.9.3
 requests==2.34.2
