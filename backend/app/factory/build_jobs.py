@@ -329,15 +329,21 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
         prov = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+    from app.factory.build.authorship import (
+        coding_agent_artifact_ids,
+        kept_handler_ids_from,
+        writer_authorship_counts,
+    )
+
     sources = prov.get("artifact_sources") or {}
-    agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+    counts = writer_authorship_counts(sources)
+    agent = coding_agent_artifact_ids(sources)
     failures = prov.get("coder_failures") or {}
     return {
         "authorship": {
-            "artifacts": len(sources),
-            "agent_written": len(agent),
-            "templated": len(sources) - len(agent),
+            **counts,
             "agent_artifacts": agent,
+            "kept_handler_ids": kept_handler_ids_from(prov.get("brief_dispatch") or {}),
             # Named, not counted: "3 stubs" tells the customer nothing about
             # which parts of their platform are degraded.
             "coder_failures": {k: str(v)[:300] for k, v in failures.items()},

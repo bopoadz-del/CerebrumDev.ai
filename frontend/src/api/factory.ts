@@ -335,6 +335,7 @@ export type BuildAuthorship = {
   agent_written?: number
   templated?: number
   agent_artifacts?: string[]
+  kept_handler_ids?: string[]
   coder_failures?: Record<string, string>
 }
 
