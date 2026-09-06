@@ -185,13 +185,78 @@ def deepseek_cli_environ(key: Optional[str] = None) -> Dict[str, str]:
     return env
 
 
+#: Keep ``--print <prompt>`` under typical Linux ARG_MAX. Stdin still
+#: carries the full brief (official ``cat file | claude -p "query"``).
+CLAUDE_PRINT_ARGV_MAX = 80_000
+CLAUDE_PRINT_STDIN_INSTRUCTION = (
+    "Implement the gated Factory coder brief provided on stdin. "
+    "The same brief is written at docs/coder_brief.md. "
+    "Do not ask for more input."
+)
+
+
+class ClaudePrintPromptEmpty(ValueError):
+    """Claude Code ``--print`` requires a non-empty prompt or stdin."""
+
+
+def _is_bare_at_mention(text: str) -> bool:
+    """True for a lone ``@path`` token — a file mention, not prompt input.
+
+    Live sess_9d0b43c dispatched ``claude --print … @docs/coder_brief.md``
+    and Claude Code 2.1.x exited: ``Input must be provided either through
+    stdin or as a prompt argument when using --print``.
+    """
+    if not text.startswith("@") or "\n" in text or " " in text:
+        return False
+    return len(text) < 256 and "/" in text
+
+
+def claude_print_prompt(brief_text: str) -> str:
+    """Non-empty coder-brief body for Claude Code ``--print`` / stdin."""
+    text = (brief_text or "").strip()
+    if not text:
+        raise ClaudePrintPromptEmpty(
+            "Claude Code --print requires a non-empty prompt; "
+            "docs/coder_brief.md was empty"
+        )
+    if _is_bare_at_mention(text):
+        raise ClaudePrintPromptEmpty(
+            "Claude Code --print requires the coder_brief.md content, "
+            f"not a bare file mention ({text})"
+        )
+    return text
+
+
 def claude_print_argv(cli: str, brief_arg: str) -> list[str]:
-    """Headless Claude Code (``--print``), not Kimi ``--prompt``."""
+    """Headless Claude Code: ``--print <prompt>``, not Kimi ``--prompt @file``.
+
+    Official CLI (v2.1.x): ``claude -p "query"`` or
+    ``cat brief | claude -p "query"``. A trailing ``@docs/coder_brief.md``
+    positional is a file mention, not a prompt argument.
+    """
+    prompt = claude_print_prompt(brief_arg)
+    print_arg = (
+        CLAUDE_PRINT_STDIN_INSTRUCTION
+        if len(prompt) > CLAUDE_PRINT_ARGV_MAX
+        else prompt
+    )
     return [
         cli,
         "--print",
+        print_arg,
         "--dangerously-skip-permissions",
         "--add-dir",
         ".",
-        brief_arg,
+    ]
+
+
+def claude_print_log_argv(cli: str, brief_bytes: int) -> list[str]:
+    """Session-log argv — do not dump the full brief onto the Floor log."""
+    return [
+        cli,
+        "--print",
+        f"<docs/coder_brief.md {brief_bytes} bytes>",
+        "--dangerously-skip-permissions",
+        "--add-dir",
+        ".",
     ]

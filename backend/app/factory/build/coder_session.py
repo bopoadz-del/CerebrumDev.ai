@@ -909,6 +909,18 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
             ),
         )
+    if "input must be provided" in lowered and (
+        "--print" in lowered or "stdin" in lowered or "prompt" in lowered
+    ):
+        return (
+            NAMED_BLOCKER_CLI_FAILED,
+            (
+                f"{NAMED_BLOCKER_CLI_FAILED}: {exit_bit} — Claude Code --print "
+                "received no prompt/stdin. Pass the docs/coder_brief.md body as "
+                "the --print prompt argument and on stdin (not a bare "
+                f"@docs/coder_brief.md mention). {OWNER_GATED_CLI_LOG}."
+            ),
+        )
     billing = any(hint in lowered for hint in _BILLING_HINTS)
     rate_suspended = "429" in lowered and "suspended" in lowered
     deepseek_denied = "429" in lowered and any(
@@ -1568,14 +1580,46 @@ def write_brief_artifacts(ctx: Any, compiled: Any) -> None:
     )
 
 
+def _claude_brief_text(root: Path, compiled: Any) -> str:
+    """Gated ``docs/coder_brief.md`` body for Claude Code ``--print`` / stdin."""
+    path = Path(root) / BRIEF_REL
+    if path.is_file():
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        if (text or "").strip():
+            return text
+    return str(getattr(compiled, "text", None) or "")
+
+
+def _feed_cli_stdin(proc: subprocess.Popen, payload: str) -> None:
+    """Write the brief once and close stdin (Claude ``--print`` contract)."""
+    if proc.stdin is None:
+        return
+    try:
+        proc.stdin.write(payload)
+    except BrokenPipeError:
+        return
+    finally:
+        try:
+            proc.stdin.close()
+        except BrokenPipeError:
+            pass
+
+
 def _run_cli_session(
     ctx: Any,
     compiled: Any,
     *,
     timeout_s: float,
 ) -> DispatchResult:
-    from app.factory.coder import (
+    from app.factory.code_cli import (
+        ClaudePrintPromptEmpty,
         claude_print_argv,
+        claude_print_log_argv,
+    )
+    from app.factory.coder import (
         code_cli_command,
         deepseek_cli_environ,
         deepseek_coder_selected,
@@ -1586,8 +1630,25 @@ def _run_cli_session(
     log_path = root / LOG_REL
     cli = resolve_code_cli() or code_cli_command()
     brief_arg = f"@{BRIEF_REL.as_posix()}"
+    stdin_payload: Optional[str] = None
     if is_claude_code_cli(cli) or deepseek_coder_selected(cli):
-        cmd = claude_print_argv(cli, brief_arg)
+        brief_text = _claude_brief_text(root, compiled)
+        try:
+            cmd = claude_print_argv(cli, brief_text)
+        except ClaudePrintPromptEmpty as exc:
+            _append_log(log_path, f"[{NAMED_BLOCKER_CLI_FAILED}] {exc}")
+            return DispatchResult(
+                via="cli",
+                ok=False,
+                detail=str(exc),
+                blocker=NAMED_BLOCKER_CLI_FAILED,
+                model=cli,
+            )
+        stdin_payload = brief_text
+        _append_log(
+            log_path,
+            f"$ {' '.join(claude_print_log_argv(cli, len(brief_text)))}",
+        )
     else:
         cmd = [cli, "--prompt", brief_arg, "--add-dir", "."]
         # Kimi Code CLI 0.41 documents ``-m`` / ``--model`` on ``--prompt``
@@ -1597,10 +1658,10 @@ def _run_cli_session(
             alias = kimi_prompt_model_alias()
             if alias and _MODEL_ALIAS_RE.match(alias):
                 cmd.extend(["--model", alias])
+        _append_log(log_path, f"$ {' '.join(cmd)}")
     session_env = os.environ.copy()
     if deepseek_coder_selected(cli):
         session_env.update(deepseek_cli_environ())
-    _append_log(log_path, f"$ {' '.join(cmd)}")
     ctx.note(
         f"dispatching compiled brief via FACTORY_CODE_CLI ({cli})",
         stage="dispatch",
@@ -1609,16 +1670,20 @@ def _run_cli_session(
         done=0,
         total=1,
     )
+    popen_kw: Dict[str, Any] = {
+        "cwd": str(root),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "bufsize": 1,
+        "env": session_env,
+    }
+    if stdin_payload is not None:
+        popen_kw["stdin"] = subprocess.PIPE
     try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=str(root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-            env=session_env,
-        )
+        proc = subprocess.Popen(cmd, **popen_kw)
     except FileNotFoundError:
         return DispatchResult(
             via="unavailable",
@@ -1626,6 +1691,8 @@ def _run_cli_session(
             detail=f"{cli} not found on PATH",
             blocker=NAMED_BLOCKER_CLI,
         )
+    if stdin_payload is not None:
+        _feed_cli_stdin(proc, stdin_payload)
 
     deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
     stopped = False
