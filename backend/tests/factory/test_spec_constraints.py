@@ -67,6 +67,11 @@ def test_appointment_time_fields_sample_iso_not_the_word_sample():
     assert _sample_value({"name": "when", "type": "str", "format": "datetime"}) == (
         "2026-09-03T10:00:00"
     )
+    assert _sample_value({"name": "contact", "type": "email"}) == "guest@example.com"
+    assert (
+        _sample_value({"name": "listing_uid", "type": "uuid"})
+        == "00000000-0000-4000-8000-000000000001"
+    )
     assert _sample_value({"name": "service_type", "type": "str"}) == "sample"
     assert _sample_value({"name": "duration_minutes", "type": "int", "min": 1}) == 1
 
