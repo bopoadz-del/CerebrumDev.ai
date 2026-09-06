@@ -2633,9 +2633,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     FACTORY_CODE_CLI_MODEL_DENIED (distinct from NO_MODEL).
     A Moonshot 429 / insufficient-balance exit is
     FACTORY_CODE_CLI_BILLING (still FACTORY_CODE_CLI_FAILED honesty).
-    When STEP 0 inventory_gaps is empty, that billing/auth miss continues
+    When verified REUSE rows remain, that billing/auth miss continues
     factory-grounded persist / event_bus emit + harvest (sess_d5789a91)
-    instead of a templated SCAFFOLD. Non-empty gaps still fail-closed.
+    instead of a templated SCAFFOLD. Remaining GENERATE inventory_gaps
+    fall through to the factory coder LLM (compiled-brief path, not a
+    per-capability handle() loop). Receipt stays ok=false with the CLI
+    miss; inventory_gaps stay listed until artifacts land.
     HTTP oneshot stays behind FACTORY_BRIEF_HTTP_ONESHOT=1 (CI).
     Per-capability handle() shots stay behind FACTORY_BRIEF_DISPATCH=0.
     Inventory is checked against the Store registry before any handler
@@ -2701,9 +2704,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         reuse_keep_path = bool(getattr(dispatch, "reuse_keep_path", False))
         gaps = inventory_gap_ids(compiled_brief)
         if dispatch.blocker in CLI_PREFLIGHT_BLOCKERS and brief_requires_cli():
-            # Empty-gap REUSE + named billing/auth miss: continue emit.
-            # Binary-missing (UNAVAILABLE) and non-empty gaps stay halt.
-            if gaps or dispatch.blocker not in CLI_AUTH_BILLING_BLOCKERS:
+            # Verified REUSE + named billing/auth miss: continue emit.
+            # GENERATE-gap factory-LLM fallthrough: continue (honest receipt).
+            # Binary-missing without that second leg still halt.
+            fallthrough = bool(
+                getattr(dispatch, "factory_llm_generate_fallthrough", False)
+            )
+            reuse_ok = reuse_keep_path or (
+                not gaps and dispatch.blocker in CLI_AUTH_BILLING_BLOCKERS
+            )
+            if not fallthrough and not reuse_ok:
                 raise RoleError(dispatch.detail)
         ctx.note(
             f"brief dispatch via {dispatch.via}: {dispatch.detail}",
@@ -2759,9 +2769,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             specs[cid] = augment_model_spec(specs[cid], _kept)
             specs[cid], _envelope = ensure_record_envelope(specs[cid])
             assert_feedable(cid, _kept, specs[cid])
-            sources[f"model:{cid}"] = (
-                f"coder LLM ({dispatch.model})" if dispatch.model else "compiled-brief oneshot"
-            )
+            sources[f"model:{cid}"] = dispatch.artifact_source(cid)
             continue
         if use_brief_dispatch:
             spec = _fallback_spec(cap)
@@ -2840,7 +2848,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         if use_brief_dispatch and dispatch and cid in (dispatch.handlers or {}):
             authored = (
                 dispatch.handlers[cid],
-                f"coder LLM ({dispatch.model})" if dispatch.model else "compiled-brief oneshot",
+                dispatch.artifact_source(cid),
             )
         elif (
             use_brief_dispatch
@@ -2940,7 +2948,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         Path("app") / "actions" / "__init__.py",
         _render_actions_init(action_names),
     )
-    if reuse_keep_path and dispatch is not None:
+    if dispatch is not None and (
+        reuse_keep_path
+        or getattr(dispatch, "factory_llm_generate_fallthrough", False)
+    ):
         refresh_receipt_harvest(ctx, compiled_brief, dispatch)
         ctx.state["brief_dispatch"] = dispatch.to_dict()
 
