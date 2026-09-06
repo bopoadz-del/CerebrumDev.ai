@@ -469,7 +469,7 @@ def reuse_accept_rules_text(
             f"/ {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. Workflow children without",
             f"step.action fail as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
             f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Store workflow / kit shim",
-            f"reads input['result'] / out['result']; a schema-sample POST",
+            "reads input['result'] / out['result']; a schema-sample POST",
             f"that omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT}.",
             "prepare_block_input and keep-path emit MUST attach result from",
             "the first prepared step so accept-payload can persist.",
@@ -514,7 +514,7 @@ def reuse_accept_forbidden_lines() -> str:
             "- burying action inside the payload dict",
             f"- reaching TESTER PRODUCT with {PRODUCT_UNKNOWN_ACTION_HALT} "
             f"or {PRODUCT_EVENT_BUS_STEP_0_HALT} after keep-path emit",
-            f"- omitting workflow input['result'] so PRODUCT fails as "
+            "- omitting workflow input['result'] so PRODUCT fails as "
             f"{PRODUCT_WORKFLOW_RESULT_HALT} (accept-payload persisted nothing)",
         ]
     )
@@ -529,7 +529,7 @@ def reuse_accept_brief_contract() -> str:
         "(action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
-        f"Store workflow reads input['result'] — a schema-sample POST that "
+        "Store workflow reads input['result'] — a schema-sample POST that "
         f"omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER. "
         f"Photographed roster: {', '.join(LIVE_VETCARE_REUSE_ACCEPT_CAPS)}."

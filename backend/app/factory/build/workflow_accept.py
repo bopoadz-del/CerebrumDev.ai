@@ -819,7 +819,7 @@ def workflow_accept_forbidden_lines() -> str:
             "reminder capabilities (WRITER must emit the factory-grounded "
             "prepared event_bus step)",
             '- execute("workflow", payload) with the raw schema sample',
-            f"- omitting workflow input['result'] so PRODUCT fails as "
+            "- omitting workflow input['result'] so PRODUCT fails as "
             f"{PRODUCT_WORKFLOW_RESULT_HALT} (schema-sample POST has no "
             "result key; Store kit shim wraps KeyError as RuntimeError)",
         ]
@@ -846,8 +846,8 @@ def workflow_accept_brief_contract() -> str:
         f"({PRODUCT_EVENT_BUS_STEP_CLASS}). The factory wrap is not keep/done. "
         f"WRITER emits a factory-grounded prepared event_bus step — do not "
         f'execute("workflow", payload) with the raw schema sample. '
-        f"Store workflow / kit shim reads input['result'] or out['result'] "
-        f"— a schema-sample POST that omits it fails as "
+        "Store workflow / kit shim reads input['result'] or out['result'] "
+        "— a schema-sample POST that omits it fails as "
         f"{PRODUCT_WORKFLOW_RESULT_HALT!r}. prepare_block_input and the "
         f"keep-path emit MUST attach result from the first prepared step. "
         f"Exact shape: "
