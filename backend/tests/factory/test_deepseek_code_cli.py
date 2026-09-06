@@ -42,7 +42,10 @@ from app.factory.code_cli import (
     DEFAULT_DEEPSEEK_FLASH_MODEL,
     DEFAULT_DEEPSEEK_MODEL,
     DEEPSEEK_ANTHROPIC_BASE_URL,
+    DEEPSEEK_API_FLASH_MODEL,
+    DEEPSEEK_API_PRO_MODEL,
     DEEPSEEK_CODE_MODEL_ENV,
+    REJECTED_DEEPSEEK_BARE_MODEL,
     REJECTED_DEEPSEEK_CLAUDE_MODEL,
     ClaudePrintPromptEmpty,
     claude_print_argv,
@@ -150,10 +153,16 @@ def test_deepseek_cli_environ_matches_official_docs(monkeypatch):
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "786432"
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
     assert "ANTHROPIC_API_KEY" not in env
-    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
+    assert DEFAULT_DEEPSEEK_FLASH_MODEL.startswith("claude-haiku")
+    assert DEFAULT_DEEPSEEK_MODEL != DEEPSEEK_API_PRO_MODEL
+    assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in env.values()
+    assert DEEPSEEK_API_PRO_MODEL not in env.values()
+    assert DEEPSEEK_API_FLASH_MODEL not in env.values()
     assert env["ANTHROPIC_MODEL"] != REJECTED_DEEPSEEK_CLAUDE_MODEL
+    assert env["ANTHROPIC_MODEL"] != REJECTED_DEEPSEEK_BARE_MODEL
 
 
 def test_ensure_deepseek_does_not_write_kimi_file_or_process_anthropic(
@@ -273,8 +282,11 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
     assert "@docs/coder_brief.md" not in logged
     assert "TARGET" in logged or "STEP 0" in logged or "INVENTORY" in logged
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
+    assert "--model" in logged
     assert f"MODEL={REJECTED_DEEPSEEK_CLAUDE_MODEL}" not in logged
+    assert f"MODEL={REJECTED_DEEPSEEK_BARE_MODEL}" not in logged
     assert "[1m]" not in logged
+    assert DEEPSEEK_API_PRO_MODEL not in logged
     assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
     assert "TOKEN_SET=yes" in logged
     stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
@@ -287,22 +299,31 @@ def test_dispatch_deepseek_uses_print_and_subprocess_env(tmp_path, monkeypatch):
     assert "pilot_zip" not in json.dumps(receipt)
 
 
-def test_default_deepseek_model_is_catalog_id_not_1m_suffix():
-    """Live sess_be217f6d: Claude Code SDK rejects deepseek-v4-pro[1m]."""
-    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+def test_default_deepseek_model_is_claude_catalog_opus_id():
+    """Live 2.1.x SDK rejects both deepseek-v4-pro[1m] and bare deepseek-v4-pro."""
+    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
+    assert DEFAULT_DEEPSEEK_FLASH_MODEL.startswith("claude-haiku")
     assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
+    assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_BARE_MODEL
+    assert DEFAULT_DEEPSEEK_MODEL != DEEPSEEK_API_PRO_MODEL
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
     assert normalize_deepseek_claude_model(REJECTED_DEEPSEEK_CLAUDE_MODEL) == (
         DEFAULT_DEEPSEEK_MODEL
     )
-    assert normalize_deepseek_claude_model("deepseek-v4-pro") == "deepseek-v4-pro"
-    assert normalize_deepseek_claude_model("deepseek-v4-flash") == (
+    assert normalize_deepseek_claude_model(REJECTED_DEEPSEEK_BARE_MODEL) == (
+        DEFAULT_DEEPSEEK_MODEL
+    )
+    assert normalize_deepseek_claude_model(DEEPSEEK_API_PRO_MODEL) == (
+        DEFAULT_DEEPSEEK_MODEL
+    )
+    assert normalize_deepseek_claude_model(DEEPSEEK_API_FLASH_MODEL) == (
         DEFAULT_DEEPSEEK_FLASH_MODEL
     )
+    assert normalize_deepseek_claude_model("claude-opus-4-8") == "claude-opus-4-8"
 
 
 def test_deepseek_cli_environ_strips_rejected_1m_suffix(monkeypatch):
-    """Leftover Render ANTHROPIC_MODEL=deepseek-v4-pro[1m] must not reach argv."""
+    """Leftover Render ANTHROPIC_MODEL=deepseek-v4-pro[1m] remaps to claude-opus."""
     monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
     monkeypatch.setenv("DEEPSEEK_CODE_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
     monkeypatch.setenv("ANTHROPIC_DEFAULT_OPUS_MODEL", REJECTED_DEEPSEEK_CLAUDE_MODEL)
@@ -310,10 +331,27 @@ def test_deepseek_cli_environ_strips_rejected_1m_suffix(monkeypatch):
     assert deepseek_code_model() == DEFAULT_DEEPSEEK_MODEL
     env = deepseek_cli_environ("sk-deepseek-test-not-real")
     assert env["ANTHROPIC_MODEL"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["ANTHROPIC_MODEL"].startswith("claude-opus")
     assert env["ANTHROPIC_DEFAULT_OPUS_MODEL"] == DEFAULT_DEEPSEEK_MODEL
     assert env["ANTHROPIC_DEFAULT_SONNET_MODEL"] == DEFAULT_DEEPSEEK_MODEL
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in env.values()
+    assert REJECTED_DEEPSEEK_BARE_MODEL not in env.values()
     assert all("[1m]" not in value for value in env.values())
+
+
+def test_deepseek_cli_environ_remaps_leftover_bare_deepseek_id(monkeypatch):
+    """#370 leftover ANTHROPIC_MODEL=deepseek-v4-pro still remaps to claude-opus."""
+    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
+    monkeypatch.setenv("DEEPSEEK_CODE_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
+    monkeypatch.setenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", DEEPSEEK_API_FLASH_MODEL)
+    assert deepseek_code_model() == DEFAULT_DEEPSEEK_MODEL
+    env = deepseek_cli_environ("sk-deepseek-test-not-real")
+    assert env["ANTHROPIC_MODEL"] == DEFAULT_DEEPSEEK_MODEL
+    assert env["ANTHROPIC_MODEL"].startswith("claude-opus")
+    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == DEFAULT_DEEPSEEK_FLASH_MODEL
+    assert env["ANTHROPIC_DEFAULT_HAIKU_MODEL"].startswith("claude-haiku")
+    assert REJECTED_DEEPSEEK_BARE_MODEL not in env.values()
+    assert DEEPSEEK_API_FLASH_MODEL not in env.values()
 
 
 def test_classify_deepseek_429_is_billing():
@@ -340,7 +378,17 @@ def test_classify_unrecognized_model_is_model_denied():
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL in detail
     assert DEEPSEEK_CODE_MODEL_ENV in detail
     assert DEFAULT_DEEPSEEK_MODEL in detail
+    assert REJECTED_DEEPSEEK_BARE_MODEL in detail
+    assert "claude-opus" in detail
     assert "OpenRouter" in detail
+    bare_live = (
+        '[claude-code:unrecognized_model] '
+        '{"model":"deepseek-v4-pro","query_source":"sdk"}'
+    )
+    bare_blocker, bare_detail = classify_cli_exit(1, bare_live)
+    assert bare_blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
+    assert REJECTED_DEEPSEEK_BARE_MODEL in bare_detail
+    assert DEFAULT_DEEPSEEK_MODEL in bare_detail
     similar, similar_detail = classify_cli_exit(
         1,
         "There's an issue with the selected model (deepseek-v4-pro[1m])",
@@ -372,6 +420,12 @@ def test_claude_print_argv_shape():
     assert "--prompt" not in argv
     logged = claude_print_log_argv("/usr/local/bin/claude", len(brief))
     assert "<docs/coder_brief.md" in logged[2]
+    modeled = claude_print_argv(
+        "/usr/local/bin/claude", brief, model=REJECTED_DEEPSEEK_BARE_MODEL
+    )
+    assert modeled[-2:] == ["--model", DEFAULT_DEEPSEEK_MODEL]
+    assert REJECTED_DEEPSEEK_BARE_MODEL not in modeled
+    assert "--prompt" not in modeled
 
 
 def test_claude_print_argv_rejects_empty_and_bare_at_path():
@@ -531,6 +585,7 @@ def test_dispatch_deepseek_strict_claude_receives_brief(tmp_path, monkeypatch):
     assert "TOKEN_SET=yes" in logged
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
     assert f"MODEL={REJECTED_DEEPSEEK_CLAUDE_MODEL}" not in logged
+    assert f"MODEL={REJECTED_DEEPSEEK_BARE_MODEL}" not in logged
     assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
     prompt_bytes = int(
         [ln for ln in logged.splitlines() if ln.startswith("PROMPT_BYTES=")][0].split(
@@ -823,7 +878,7 @@ class _LettingsReusePlan:
 
 
 def test_dispatch_leftover_1m_env_sends_catalog_id(tmp_path, monkeypatch):
-    """Render leftover ANTHROPIC_MODEL=[1m] still feeds catalog id + stdin."""
+    """Render leftover ANTHROPIC_MODEL=[1m] remaps to claude-opus + stdin."""
     argv_log = tmp_path / "argv.log"
     script = tmp_path / "claude"
     script.write_text(
@@ -858,9 +913,56 @@ def test_dispatch_leftover_1m_env_sends_catalog_id(tmp_path, monkeypatch):
     logged = argv_log.read_text(encoding="utf-8")
     assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
     assert f"OPUS={DEFAULT_DEEPSEEK_MODEL}" in logged
+    assert "--model" in logged
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in logged
+    assert REJECTED_DEEPSEEK_BARE_MODEL not in logged
     assert "--print" in logged
     assert "@docs/coder_brief.md" not in logged
+    stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
+    assert stdin_line and int(stdin_line[0].split("=", 1)[1]) > 0
+    assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
+
+
+def test_dispatch_leftover_bare_deepseek_id_sends_claude_opus(tmp_path, monkeypatch):
+    """#370 leftover ANTHROPIC_MODEL=deepseek-v4-pro remaps to claude-opus."""
+    argv_log = tmp_path / "argv.log"
+    script = tmp_path / "claude"
+    script.write_text(
+        "#!/bin/sh\n"
+        '{ printf "%s\\n" "$0" "$@"; '
+        'printf "MODEL=%s\\n" "$ANTHROPIC_MODEL"; '
+        'printf "BASE=%s\\n" "$ANTHROPIC_BASE_URL"; '
+        'printf "TOKEN_SET=%s\\n" "${ANTHROPIC_AUTH_TOKEN:+yes}"; '
+        'printf "STDIN_BYTES=%s\\n" "$(wc -c)"; '
+        '} > "$CODE_CLI_ARGV_LOG"\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    _arm_deepseek_cli(tmp_path, monkeypatch, script)
+    monkeypatch.setenv("ANTHROPIC_MODEL", REJECTED_DEEPSEEK_BARE_MODEL)
+    monkeypatch.setenv("CODE_CLI_ARGV_LOG", str(argv_log))
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw) or {"specs": {}, "handlers": {}, "model": "x"},
+    )
+    ctx = _ctx(tmp_path)
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    assert result.via == "cli"
+    assert oneshot == []
+    logged = argv_log.read_text(encoding="utf-8")
+    assert f"MODEL={DEFAULT_DEEPSEEK_MODEL}" in logged
+    assert DEFAULT_DEEPSEEK_MODEL.startswith("claude-opus")
+    assert "--model" in logged
+    assert REJECTED_DEEPSEEK_BARE_MODEL not in logged
+    assert f"BASE={DEEPSEEK_ANTHROPIC_BASE_URL}" in logged
+    assert "TOKEN_SET=yes" in logged
     stdin_line = [ln for ln in logged.splitlines() if ln.startswith("STDIN_BYTES=")]
     assert stdin_line and int(stdin_line[0].split("=", 1)[1]) > 0
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ

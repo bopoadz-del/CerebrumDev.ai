@@ -29,16 +29,21 @@ DEEPSEEK_CODE_MODEL_ENV = "DEEPSEEK_CODE_MODEL"
 DEFAULT_KIMI_CLI = "kimi"
 DEFAULT_DEEPSEEK_CLI = "claude"
 
-#: DeepSeek Anthropic-compat / OpenAI catalog id.
-#: https://api-docs.deepseek.com/quick_start/pricing lists ``deepseek-v4-pro``.
-#: DeepSeek's Claude Code page still prints ``deepseek-v4-pro[1m]`` (a
-#: context-window suffix). Live Claude Code 2.1.x SDK rejects that string as
-#: ``[claude-code:unrecognized_model]`` (sess_be217f6d, 2026-09-06). DeepSeek
-#: also maps ``claude-opus*`` → ``deepseek-v4-pro`` (no suffix). Override with
-#: ``ANTHROPIC_MODEL`` / ``DEEPSEEK_CODE_MODEL``.
-DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
+#: Claude Code 2.1.x SDK allowlists Anthropic catalog ids (``query_source=sdk``).
+#: Live ``sess_be217f6d`` rejected ``deepseek-v4-pro[1m]``; ``sess_401e6619``
+#: rejected bare ``deepseek-v4-pro`` after #370 stripped the suffix. DeepSeek's
+#: Anthropic-compat endpoint maps ``claude-opus*`` → ``deepseek-v4-pro`` and
+#: ``claude-haiku*`` / ``claude-sonnet*`` → ``deepseek-v4-flash``
+#: (https://api-docs.deepseek.com/guides/anthropic_api). Their Claude Code
+#: setup page still prints ``deepseek-v4-pro[1m]`` — do not send that, or the
+#: bare catalog id, to Claude Code 2.1.x. Override with ``ANTHROPIC_MODEL`` /
+#: ``DEEPSEEK_CODE_MODEL`` (still remapped when the value is a DeepSeek id).
+DEFAULT_DEEPSEEK_MODEL = "claude-opus-4-6"
+DEFAULT_DEEPSEEK_FLASH_MODEL = "claude-haiku-4-5"
+DEEPSEEK_API_PRO_MODEL = "deepseek-v4-pro"
+DEEPSEEK_API_FLASH_MODEL = "deepseek-v4-flash"
 REJECTED_DEEPSEEK_CLAUDE_MODEL = "deepseek-v4-pro[1m]"
-DEFAULT_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash"
+REJECTED_DEEPSEEK_BARE_MODEL = "deepseek-v4-pro"
 DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
 DEEPSEEK_AUTO_COMPACT_WINDOW = "786432"
 #: DeepSeek ``[1m]`` / ``[128k]`` context-window tag. Claude Code's model
@@ -127,15 +132,28 @@ def code_cli_command(default: Optional[str] = None) -> str:
 
 
 def normalize_deepseek_claude_model(model: str) -> str:
-    """Strip DeepSeek ``[1m]`` context suffix — Claude Code SDK rejects it.
+    """Map a DeepSeek / leftover id to one Claude Code 2.1.x SDK accepts.
 
-    Catalog id stays ``deepseek-v4-pro`` / ``deepseek-v4-flash``. A leftover
-    Render ``ANTHROPIC_MODEL=deepseek-v4-pro[1m]`` must not reach
-    ``claude --print``.
+    Live Claude Code 2.1.x rejects both ``deepseek-v4-pro[1m]`` and bare
+    ``deepseek-v4-pro`` (``[claude-code:unrecognized_model]``,
+    ``query_source=sdk``). DeepSeek's Anthropic-compat endpoint maps
+    ``claude-opus*`` → ``deepseek-v4-pro``, so the subprocess must send a
+    Claude-catalog opus id while ``ANTHROPIC_BASE_URL`` points at DeepSeek.
+    Leftover Render ``ANTHROPIC_MODEL=deepseek-v4-pro`` / ``[1m]`` values
+    are remapped. Explicit ``claude-*`` overrides are kept (suffix stripped).
     """
     raw = (model or "").strip()
-    stripped = _DEEPSEEK_CONTEXT_SUFFIX_RE.sub("", raw).strip()
-    return stripped or raw
+    stripped = _DEEPSEEK_CONTEXT_SUFFIX_RE.sub("", raw).strip() or raw
+    lowered = stripped.lower()
+    if lowered == DEEPSEEK_API_PRO_MODEL or lowered.startswith(
+        f"{DEEPSEEK_API_PRO_MODEL}"
+    ):
+        return DEFAULT_DEEPSEEK_MODEL
+    if lowered == DEEPSEEK_API_FLASH_MODEL or lowered.startswith(
+        f"{DEEPSEEK_API_FLASH_MODEL}"
+    ):
+        return DEFAULT_DEEPSEEK_FLASH_MODEL
+    return stripped
 
 
 def deepseek_code_model() -> str:
@@ -248,12 +266,16 @@ def claude_print_prompt(brief_text: str) -> str:
     return text
 
 
-def claude_print_argv(cli: str, brief_arg: str) -> list[str]:
+def claude_print_argv(
+    cli: str, brief_arg: str, model: Optional[str] = None
+) -> list[str]:
     """Headless Claude Code: ``--print <prompt>``, not Kimi ``--prompt @file``.
 
     Official CLI (v2.1.x): ``claude -p "query"`` or
     ``cat brief | claude -p "query"``. A trailing ``@docs/coder_brief.md``
-    positional is a file mention, not a prompt argument.
+    positional is a file mention, not a prompt argument. DeepSeek dispatch
+    also passes ``--model`` so the SDK sees a Claude-catalog id (not a
+    DeepSeek catalog string the 2.1.x SDK rejects).
     """
     prompt = claude_print_prompt(brief_arg)
     print_arg = (
@@ -261,7 +283,7 @@ def claude_print_argv(cli: str, brief_arg: str) -> list[str]:
         if len(prompt) > CLAUDE_PRINT_ARGV_MAX
         else prompt
     )
-    return [
+    argv = [
         cli,
         "--print",
         print_arg,
@@ -269,11 +291,16 @@ def claude_print_argv(cli: str, brief_arg: str) -> list[str]:
         "--add-dir",
         ".",
     ]
+    if model:
+        argv.extend(["--model", normalize_deepseek_claude_model(model)])
+    return argv
 
 
-def claude_print_log_argv(cli: str, brief_bytes: int) -> list[str]:
+def claude_print_log_argv(
+    cli: str, brief_bytes: int, model: Optional[str] = None
+) -> list[str]:
     """Session-log argv — do not dump the full brief onto the Floor log."""
-    return [
+    argv = [
         cli,
         "--print",
         f"<docs/coder_brief.md {brief_bytes} bytes>",
@@ -281,3 +308,6 @@ def claude_print_log_argv(cli: str, brief_bytes: int) -> list[str]:
         "--add-dir",
         ".",
     ]
+    if model:
+        argv.extend(["--model", normalize_deepseek_claude_model(model)])
+    return argv

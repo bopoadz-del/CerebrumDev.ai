@@ -219,8 +219,10 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         assert "/usr/local/bin/claude" in docs
         assert "CLAUDE_CODE_VERSION" in docs
         assert "deepseek-v4-pro" in docs
+        assert "claude-opus" in docs
         assert "unrecognized_model" in docs
         assert "Do **not** set `ANTHROPIC_MODEL=deepseek-v4-pro[1m]`" in docs
+        assert "bare" in docs and "deepseek-v4-pro" in docs
         assert "FACTORY_BRIEF_HTTP_ONESHOT" in docs
         assert "pilot_zip" in docs
 
