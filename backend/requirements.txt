@@ -32,7 +32,7 @@ prometheus-client==0.21.1
 
 # Redis / Render Key Value: auth rate limits, Drive OAuth pending states,
 # session fan-out. Optional — everything falls back to in-memory.
-redis==8.0.1
+redis==8.1.0
 
 # Default semantic embedding backend. fastembed uses lightweight ONNX models
 # (CPU-only, no torch), so RAG works on a bare install. The default model is
