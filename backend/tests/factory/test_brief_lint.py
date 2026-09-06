@@ -358,6 +358,52 @@ def test_mutation_drops_vector_search_reuse_accept_needles():
     )
 
 
+def test_mutation_drops_fail_closed_rewrite_reads_needles():
+    """sess_aed3e6e288414fcf: dropping fail-closed read rewrite must lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+
+    class _Cap:
+        def __init__(self, cid, block_ids=(), strategy="REUSE"):
+            self.capability_id = cid
+            self.block_ids = list(block_ids)
+            self.strategy = strategy
+            self.notes = cid
+
+    class _Plan:
+        def __init__(self, *caps):
+            self.capabilities = caps
+
+    class _VetCare:
+        product_name = "VetCare Hub"
+        product_id = "veterinary-care"
+        vertical = "veterinary_care"
+        summary = "Clinic appointments, reminders, and pet records."
+
+    compiled = compile_brief(
+        _VetCare(),
+        _Plan(
+            _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE"),
+            _Cap("billing_and_invoicing", ["analytics", "formula_executor"], "REUSE"),
+        ),
+        store_ids={"event_bus", "workflow", "analytics", "formula_executor"},
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace(
+        "fail-closed keep original must still rewrite reads", ""
+    )
+    compiled.text = compiled.text.replace(
+        "appointment_scheduling rejected a payload built from its own schema",
+        "appointment_other rejected a payload",
+    )
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any(
+        "REUSE schema-sample accept contract" in e
+        or "event_bus / accept-payload workflow contract" in e
+        for e in result.errors
+    )
+
+
 def test_mutation_drops_assign_to_call_needles():
     """sess_c63cc1a274994b33: dropping assign-to-call halt must lint-fail."""
     from app.factory.build.brief_compiler import compile_brief

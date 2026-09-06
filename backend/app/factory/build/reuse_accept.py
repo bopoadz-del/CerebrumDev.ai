@@ -54,6 +54,19 @@ rework×3:
 #350 rewrote any identifier ``['result']`` to ``.get("result", obj)``,
 including assignment targets (``something(x) = ...``). That is emit /
 CLONER, not a per-cap handle() micro-shot. Do not claim pilot_zip.
+
+Live sess_aed3e6e288414fcf (VetClinic Hub ALL-REUSE, tip 0963a6b / #352):
+#351 vector_search Unknown action CLEARED. #352 SyntaxError CLEARED
+(did not recur). TESTER PRODUCT then refused after rework×3:
+
+    appointment_scheduling rejected a payload built from its own schema:
+    workflow: RuntimeError: 'result'
+
+#352 fail-closed kept the *whole* original module when any rewrite
+missed a Store-ctx target (``for name['result'] in …``). Store workflow
+reads stayed as ``['result']`` and wrapped KeyError as RuntimeError.
+Fail-closed must skip that write and still rewrite reads. prepare /
+keep-path emit must still attach input['result']. Do not claim pilot_zip.
 """
 
 from __future__ import annotations
@@ -82,6 +95,14 @@ PRODUCT_UNKNOWN_ACTION_NONE_HALT = "Unknown action: None"
 #: Live sess_c63cc1a274994b33 after #350: CLONER result-key rewrite
 #: turned ``name['result'] =`` into ``name.get("result", name) =``.
 PRODUCT_ASSIGN_TO_CALL_HALT = "SyntaxError: cannot assign to function call"
+#: Live sess_aed3e6e288414fcf after #352: whole-module keep-original
+#: dropped workflow ``['result']`` read rewrites. TESTER exact class:
+PRODUCT_SCHEMA_SAMPLE_REJECT = (
+    "appointment_scheduling rejected a payload built from its own schema"
+)
+FAIL_CLOSED_MUST_REWRITE_READS = (
+    "fail-closed keep original must still rewrite reads"
+)
 REUSE_ACCEPT_CHECK = "reuse_accept"
 WRITER_REUSE_ACCEPT_HALT = (
     "WRITER [check:reuse_accept] failed — REUSE handler cannot accept "
@@ -529,6 +550,10 @@ def reuse_accept_rules_text(
             "only — assignment targets must stay subscripts. Rewriting",
             f"name['result'] = into a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT}",
             "(live queue.py ~189 / formula_executor ~242).",
+            f"{FAIL_CLOSED_MUST_REWRITE_READS} — a whole-module keep of the",
+            "original Store workflow.py leaves envelope['result'] /",
+            f"input['result'] as KeyError → {PRODUCT_WORKFLOW_RESULT_HALT}",
+            f"({PRODUCT_SCHEMA_SAMPLE_REJECT}).",
             "",
             "factory-grounded REUSE emit MUST populate BLOCK_DEFAULT_ACTIONS",
             "from vendored block.json (workspace vendor/, then factory",
@@ -580,6 +605,9 @@ def reuse_accept_forbidden_lines() -> str:
             "- rewriting name['result'] = into name.get(...) = so PRODUCT "
             f"fails as {PRODUCT_ASSIGN_TO_CALL_HALT} (queue / "
             "formula_executor Store shims assign that key)",
+            "- fail-closed keeping the whole original module so PRODUCT "
+            f"fails as {PRODUCT_WORKFLOW_RESULT_HALT} "
+            f"({FAIL_CLOSED_MUST_REWRITE_READS})",
         ]
     )
 
@@ -598,6 +626,8 @@ def reuse_accept_brief_contract() -> str:
         "CLONER must not rewrite assignment targets: name['result'] = "
         f"becoming a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT!r} "
         "(queue / formula_executor). "
+        f"{FAIL_CLOSED_MUST_REWRITE_READS} or TESTER refuses "
+        f"{PRODUCT_SCHEMA_SAMPLE_REJECT}: {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER. "
         f"Photographed roster: {', '.join(LIVE_VETCARE_REUSE_ACCEPT_CAPS)}."
     )
@@ -619,4 +649,6 @@ def reuse_accept_needles() -> Sequence[str]:
         "input['result']",
         PRODUCT_ASSIGN_TO_CALL_HALT,
         "name['result'] =",
+        FAIL_CLOSED_MUST_REWRITE_READS,
+        PRODUCT_SCHEMA_SAMPLE_REJECT,
     )

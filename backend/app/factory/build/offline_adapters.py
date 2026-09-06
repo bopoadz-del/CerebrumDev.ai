@@ -449,6 +449,62 @@ def _is_assignment_target_suffix(rest: str) -> bool:
     return False
 
 
+def _line_starts(text: str) -> tuple:
+    starts = [0]
+    for idx, char in enumerate(text):
+        if char == "\n":
+            starts.append(idx + 1)
+    return tuple(starts)
+
+
+def _is_result_key_slice(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant) and node.value == "result":
+        return True
+    index = getattr(ast, "Index", None)
+    if index is not None and isinstance(node, index):
+        inner = getattr(node, "value", None)
+        if isinstance(inner, ast.Constant) and inner.value == "result":
+            return True
+        str_node = getattr(ast, "Str", None)
+        if str_node is not None and isinstance(inner, str_node) and inner.s == "result":
+            return True
+    return False
+
+
+def _store_result_key_offsets(text: str) -> set:
+    """Byte offsets of ``name['result']`` that AST marks Store / Del.
+
+    Suffix heuristics miss ``for name['result'] in items:`` (Store ctx).
+    #352 then fail-closed the *whole* module, leaving workflow
+    ``envelope['result']`` reads as KeyError → RuntimeError: 'result'
+    (sess_aed3e6e288414fcf after #352, tip 0963a6b).
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    starts = _line_starts(text)
+    store_ctx = (ast.Store, ast.Del)
+    aug = getattr(ast, "AugStore", None)
+    if aug is not None:
+        store_ctx = store_ctx + (aug,)
+    offsets: set = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Subscript):
+            continue
+        if not isinstance(node.ctx, store_ctx):
+            continue
+        if not _is_result_key_slice(node.slice):
+            continue
+        lineno = getattr(node, "lineno", None)
+        col = getattr(node, "col_offset", None)
+        if not isinstance(lineno, int) or not isinstance(col, int):
+            continue
+        if 1 <= lineno <= len(starts):
+            offsets.add(starts[lineno - 1] + col)
+    return offsets
+
+
 def emit_result_key_access(text: str) -> str:
     """Do not KeyError a missing ``result`` on a block envelope.
 
@@ -467,24 +523,40 @@ def emit_result_key_access(text: str) -> str:
     *assign* ``name['result']``. The #350 substitution turned those into
     ``name.get("result", name) = ...`` — ``SyntaxError: cannot assign to
     function call``. Only Load-ctx reads are rewritten.
+
+    Live sess_aed3e6e288414fcf (VetClinic Hub ALL-REUSE, tip 0963a6b / #352):
+    whole-module fail-closed (keep original if *any* rewrite did not
+    compile) left Store workflow reads as ``['result']``. TESTER then
+    refused ``workflow: RuntimeError: 'result'``. Fail-closed is per
+    match — skip the illegal write, keep the read rewrite.
     """
     if not text:
         return text
 
-    def _repl(match: re.Match) -> str:
+    store_offsets = _store_result_key_offsets(text)
+    original_compiles = _module_compiles(text)
+    replacements = []
+    for match in _RESULT_KEY_SUB.finditer(text):
         if _preceded_by_del(text, match.start()):
-            return match.group(0)
+            continue
+        if match.start() in store_offsets:
+            continue
         if _is_assignment_target_suffix(text[match.end() :]):
-            return match.group(0)
+            continue
         name = match.group(1)
-        return f'{name}.get("result", {name})'
+        replacements.append(
+            (match.start(), match.end(), f'{name}.get("result", {name})')
+        )
 
-    rewritten = _RESULT_KEY_SUB.sub(_repl, text)
-    # Fail-closed: never ship SyntaxError: cannot assign to function call.
-    # Fragments used in unit tests (bare ``return``) do not compile either
-    # before or after — leave those as the read rewrite.
-    if _module_compiles(text) and not _module_compiles(rewritten):
-        return text
+    rewritten = text
+    for start, end, repl in reversed(replacements):
+        candidate = rewritten[:start] + repl + rewritten[end:]
+        # Per-match fail-closed: never ship
+        # SyntaxError: cannot assign to function call, and never discard
+        # every read rewrite because one Store-ctx miss slipped through.
+        if original_compiles and not _module_compiles(candidate):
+            continue
+        rewritten = candidate
     return rewritten
 
 

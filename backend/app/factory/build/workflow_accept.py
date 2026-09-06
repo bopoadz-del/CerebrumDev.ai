@@ -743,6 +743,10 @@ def workflow_accept_rules_text(
             "name['result'] = becoming a .get() call fails as",
             "SyntaxError: cannot assign to function call (queue.py ~189 /",
             "formula_executor ~242).",
+            "fail-closed keep original must still rewrite reads — keeping",
+            "the whole Store workflow.py leaves envelope['result'] as",
+            f"{PRODUCT_WORKFLOW_RESULT_HALT} (appointment_scheduling "
+            "rejected a payload built from its own schema).",
             "WRITER emits a factory-grounded prepared event_bus step for",
             "appointment / booking / reminder capabilities — do not burn",
             "rework on execute(block_id, payload) stubs, and do not",
@@ -828,6 +832,9 @@ def workflow_accept_forbidden_lines() -> str:
             "- rewriting name['result'] = into name.get(...) = so PRODUCT "
             "fails as SyntaxError: cannot assign to function call "
             "(queue / formula_executor Store shims)",
+            "- fail-closed keeping the whole original module so PRODUCT "
+            f"fails as {PRODUCT_WORKFLOW_RESULT_HALT} (fail-closed keep "
+            "original must still rewrite reads)",
         ]
     )
 
@@ -859,6 +866,9 @@ def workflow_accept_brief_contract() -> str:
         "CLONER must not rewrite assignment targets: name['result'] = "
         "becoming a .get() call fails as "
         "'SyntaxError: cannot assign to function call'. "
+        "fail-closed keep original must still rewrite reads or TESTER "
+        "refuses appointment_scheduling rejected a payload built from "
+        f"its own schema: {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
@@ -904,6 +914,8 @@ def workflow_accept_needles() -> Sequence[str]:
         "input['result']",
         "SyntaxError: cannot assign to function call",
         "name['result'] =",
+        "fail-closed keep original must still rewrite reads",
+        "appointment_scheduling rejected a payload built from its own schema",
     )
 
 
