@@ -14,6 +14,7 @@ DeepSeek for Floor chat.
 from __future__ import annotations
 
 import os
+import re
 from typing import Dict, Optional
 
 #: Provider-agnostic name for the agentic coding CLI. ``KIMI_CODE_CLI`` stays
@@ -28,13 +29,21 @@ DEEPSEEK_CODE_MODEL_ENV = "DEEPSEEK_CODE_MODEL"
 DEFAULT_KIMI_CLI = "kimi"
 DEFAULT_DEEPSEEK_CLI = "claude"
 
-#: Official Claude Code model ids on the DeepSeek Anthropic-compat endpoint.
-#: OpenAI-format API uses ``deepseek-v4-pro`` (no suffix); prefer ``[1m]``
-#: here. Override with ``ANTHROPIC_MODEL`` / ``DEEPSEEK_CODE_MODEL``.
-DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro[1m]"
+#: DeepSeek Anthropic-compat / OpenAI catalog id.
+#: https://api-docs.deepseek.com/quick_start/pricing lists ``deepseek-v4-pro``.
+#: DeepSeek's Claude Code page still prints ``deepseek-v4-pro[1m]`` (a
+#: context-window suffix). Live Claude Code 2.1.x SDK rejects that string as
+#: ``[claude-code:unrecognized_model]`` (sess_be217f6d, 2026-09-06). DeepSeek
+#: also maps ``claude-opus*`` → ``deepseek-v4-pro`` (no suffix). Override with
+#: ``ANTHROPIC_MODEL`` / ``DEEPSEEK_CODE_MODEL``.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
+REJECTED_DEEPSEEK_CLAUDE_MODEL = "deepseek-v4-pro[1m]"
 DEFAULT_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash"
 DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
 DEEPSEEK_AUTO_COMPACT_WINDOW = "786432"
+#: DeepSeek ``[1m]`` / ``[128k]`` context-window tag. Claude Code's model
+#: allowlist does not understand it even when DeepSeek's Anthropic API does.
+_DEEPSEEK_CONTEXT_SUFFIX_RE = re.compile(r"\[\d+[km]?\]$", re.IGNORECASE)
 
 
 def _cli_basename(command: str) -> str:
@@ -117,6 +126,18 @@ def code_cli_command(default: Optional[str] = None) -> str:
     return DEFAULT_KIMI_CLI
 
 
+def normalize_deepseek_claude_model(model: str) -> str:
+    """Strip DeepSeek ``[1m]`` context suffix — Claude Code SDK rejects it.
+
+    Catalog id stays ``deepseek-v4-pro`` / ``deepseek-v4-flash``. A leftover
+    Render ``ANTHROPIC_MODEL=deepseek-v4-pro[1m]`` must not reach
+    ``claude --print``.
+    """
+    raw = (model or "").strip()
+    stripped = _DEEPSEEK_CONTEXT_SUFFIX_RE.sub("", raw).strip()
+    return stripped or raw
+
+
 def deepseek_code_model() -> str:
     """Primary coding model for the Claude Code → DeepSeek subprocess."""
     for name in (
@@ -126,7 +147,7 @@ def deepseek_code_model() -> str:
     ):
         raw = os.getenv(name, "").strip()
         if raw:
-            return raw
+            return normalize_deepseek_claude_model(raw)
     return DEFAULT_DEEPSEEK_MODEL
 
 
@@ -134,7 +155,7 @@ def deepseek_flash_model() -> str:
     for name in ("ANTHROPIC_DEFAULT_HAIKU_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"):
         raw = os.getenv(name, "").strip()
         if raw:
-            return raw
+            return normalize_deepseek_claude_model(raw)
     return DEFAULT_DEEPSEEK_FLASH_MODEL
 
 
@@ -151,23 +172,23 @@ def deepseek_cli_environ(key: Optional[str] = None) -> Dict[str, str]:
     ``ANTHROPIC_AUTH_TOKEN``, which always comes from ``DEEPSEEK_API_KEY``.
     """
     token = (key if key is not None else deepseek_api_key()).strip()
-    primary = deepseek_code_model()
-    flash = deepseek_flash_model()
+    primary = normalize_deepseek_claude_model(deepseek_code_model())
+    flash = normalize_deepseek_claude_model(deepseek_flash_model())
     base = os.getenv("ANTHROPIC_BASE_URL", "").strip() or DEEPSEEK_ANTHROPIC_BASE_URL
     env: Dict[str, str] = {
         "ANTHROPIC_BASE_URL": base,
         "ANTHROPIC_AUTH_TOKEN": token,
         "ANTHROPIC_MODEL": primary,
-        "ANTHROPIC_DEFAULT_OPUS_MODEL": (
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": normalize_deepseek_claude_model(
             os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "").strip() or primary
         ),
-        "ANTHROPIC_DEFAULT_SONNET_MODEL": (
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": normalize_deepseek_claude_model(
             os.getenv("ANTHROPIC_DEFAULT_SONNET_MODEL", "").strip() or primary
         ),
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL": (
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": normalize_deepseek_claude_model(
             os.getenv("ANTHROPIC_DEFAULT_HAIKU_MODEL", "").strip() or flash
         ),
-        "CLAUDE_CODE_SUBAGENT_MODEL": (
+        "CLAUDE_CODE_SUBAGENT_MODEL": normalize_deepseek_claude_model(
             os.getenv("CLAUDE_CODE_SUBAGENT_MODEL", "").strip() or flash
         ),
         "CLAUDE_CODE_EFFORT_LEVEL": (

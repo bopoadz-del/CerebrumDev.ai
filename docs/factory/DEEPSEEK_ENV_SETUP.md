@@ -19,7 +19,7 @@ https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/
 A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CLI`.
 When `DEEPSEEK_API_KEY` is set (or `FACTORY_CODE_PROVIDER=deepseek`), the default
 binary is `claude` and the session uses DeepSeek V4 Pro
-(`deepseek-v4-pro[1m]` on the Anthropic-compat endpoint).
+(`deepseek-v4-pro` — the Anthropic-compat / OpenAI catalog id).
 
 When that CLI is ready (binary + DeepSeek key), C-BRIEF **must** dispatch via
 the Claude subprocess — including store-complete inventories that are 100%
@@ -43,6 +43,7 @@ Fail-closed (same named classes as Kimi; no HTTP oneshot takeover):
 | `claude` not on `PATH` while DeepSeek is the selected coder | `FACTORY_CODE_CLI_UNAVAILABLE` |
 | DeepSeek selected, `DEEPSEEK_API_KEY` unset | `FACTORY_CODE_CLI_CREDENTIALS_MISSING` |
 | 404 / permission denied on the model | `FACTORY_CODE_CLI_MODEL_DENIED` |
+| `[claude-code:unrecognized_model]` (or similar SDK reject) | `FACTORY_CODE_CLI_MODEL_DENIED` |
 | 429 / insufficient balance / quota | `FACTORY_CODE_CLI_BILLING` |
 
 None of those paths claim a ≥2h CLI session or founding-customer-ready /
@@ -64,10 +65,10 @@ Set these after merge. This doc does **not** claim the dashboard is already set.
 | `DEEPSEEK_API_KEY` | yes (DeepSeek path) | DeepSeek Platform key. Boot/dispatch injects it as `ANTHROPIC_AUTH_TOKEN` on the Claude Code subprocess only |
 | `FACTORY_CODE_CLI` | recommended | `claude` (DeepSeek / Anthropic Claude Code) or `kimi`. When unset, `DEEPSEEK_API_KEY` defaults the binary to `claude` |
 | `FACTORY_CODE_PROVIDER` | optional | `deepseek` forces the DeepSeek coder even before the key is present (fail-closed `CREDENTIALS_MISSING`) |
-| `ANTHROPIC_MODEL` | optional | Override; default `deepseek-v4-pro[1m]` (official Claude Code suffix). OpenAI-format id is `deepseek-v4-pro` |
-| `DEEPSEEK_CODE_MODEL` | optional | Same override if you do not want `ANTHROPIC_MODEL` on the service (chat leak risk) |
-| `ANTHROPIC_DEFAULT_OPUS_MODEL` | optional | Default `deepseek-v4-pro[1m]` |
-| `ANTHROPIC_DEFAULT_SONNET_MODEL` | optional | Default `deepseek-v4-pro[1m]` |
+| `ANTHROPIC_MODEL` | optional | Override; default `deepseek-v4-pro` (catalog id). **Do not** set `deepseek-v4-pro[1m]` — Claude Code 2.1.x rejects the `[1m]` suffix as `unrecognized_model` (sess_be217f6d) |
+| `DEEPSEEK_CODE_MODEL` | optional | Same override if you do not want `ANTHROPIC_MODEL` on the service (chat leak risk). Use `deepseek-v4-pro` |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | optional | Default `deepseek-v4-pro` |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | optional | Default `deepseek-v4-pro` |
 | `ANTHROPIC_DEFAULT_HAIKU_MODEL` | optional | Default `deepseek-v4-flash` |
 | `CLAUDE_CODE_SUBAGENT_MODEL` | optional | Default `deepseek-v4-flash` |
 | `CLAUDE_CODE_EFFORT_LEVEL` | optional | Default `max` |
@@ -77,6 +78,15 @@ Set these after merge. This doc does **not** claim the dashboard is already set.
 Do **not** set process-wide `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`
 on the web service unless you intend every `LLM_PROVIDER=claude` call to hit
 DeepSeek. Factory injects that URL into the CLI subprocess automatically.
+
+Do **not** set `ANTHROPIC_MODEL=deepseek-v4-pro[1m]` (or the matching
+`ANTHROPIC_DEFAULT_*` / `DEEPSEEK_CODE_MODEL` values) on Render. DeepSeek's
+Claude Code setup page still prints the `[1m]` context-window suffix;
+live Claude Code SDK rejects it as `[claude-code:unrecognized_model]` and
+the Floor fail-closes as `FACTORY_CODE_CLI_MODEL_DENIED`. Use the catalog
+id `deepseek-v4-pro` (https://api-docs.deepseek.com/quick_start/pricing).
+DeepSeek maps `claude-opus*` → `deepseek-v4-pro`. Factory also strips a
+leftover `[1m]` suffix if an old dashboard value is still set.
 
 Leave Floor chat on OpenRouter. Do not put API keys in this repo.
 
