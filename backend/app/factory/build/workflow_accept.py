@@ -739,7 +739,10 @@ def workflow_accept_rules_text(
             f"a missing key as {PRODUCT_WORKFLOW_RESULT_HALT}. The schema sample",
             "does not include that key — prepare_block_input / keep-path emit",
             "MUST attach result from the first prepared step so accept-payload",
-            "can persist.",
+            "can persist. CLONER must not rewrite assignment targets:",
+            "name['result'] = becoming a .get() call fails as",
+            "SyntaxError: cannot assign to function call (queue.py ~189 /",
+            "formula_executor ~242).",
             "WRITER emits a factory-grounded prepared event_bus step for",
             "appointment / booking / reminder capabilities — do not burn",
             "rework on execute(block_id, payload) stubs, and do not",
@@ -822,6 +825,9 @@ def workflow_accept_forbidden_lines() -> str:
             "- omitting workflow input['result'] so PRODUCT fails as "
             f"{PRODUCT_WORKFLOW_RESULT_HALT} (schema-sample POST has no "
             "result key; Store kit shim wraps KeyError as RuntimeError)",
+            "- rewriting name['result'] = into name.get(...) = so PRODUCT "
+            "fails as SyntaxError: cannot assign to function call "
+            "(queue / formula_executor Store shims)",
         ]
     )
 
@@ -850,6 +856,9 @@ def workflow_accept_brief_contract() -> str:
         "— a schema-sample POST that omits it fails as "
         f"{PRODUCT_WORKFLOW_RESULT_HALT!r}. prepare_block_input and the "
         f"keep-path emit MUST attach result from the first prepared step. "
+        "CLONER must not rewrite assignment targets: name['result'] = "
+        "becoming a .get() call fails as "
+        "'SyntaxError: cannot assign to function call'. "
         f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
@@ -893,6 +902,8 @@ def workflow_accept_needles() -> Sequence[str]:
         f'"tool": "{EVENT_BUS_MCP_BLOCK}"',
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
+        "SyntaxError: cannot assign to function call",
+        "name['result'] =",
     )
 
 

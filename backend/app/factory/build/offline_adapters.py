@@ -7,6 +7,7 @@ They do not invent Blocks source and they do not write Cerebrum-Blocks.
 
 from __future__ import annotations
 
+import ast
 import re
 
 ENSURE_READY_MARKER = "def _ensure_store_block_ready"
@@ -381,7 +382,14 @@ def emit_storage_aiofiles(text: str) -> str:
 #: ``step_result['result']``, then wrapped the KeyError as
 #: ``RuntimeError: 'result'``. The first whitelist (envelope/result/output/
 #: data/response/payload) missed those names. Any identifier subscript is
-#: the same miss — rewrite to ``.get("result", <obj>)``.
+#: the same miss — rewrite *reads* to ``.get("result", <obj>)``.
+#:
+#: Live sess_c63cc1a274994b33 (VetClinic Hub ALL-REUSE, tip 467c83e / #350):
+#: applying that rewrite to assignment targets produced
+#: ``SyntaxError: cannot assign to function call`` in Store ``queue``
+#: (~line 189) and ``formula_executor`` (~line 242). ``foo['result'] =``
+#: became ``foo.get("result", foo) =``. Reads stay rewritten; stores,
+#: augassigns, annotated assigns, unpacks, and ``del`` stay subscripts.
 _RESULT_KEY_SUB = re.compile(
     r"""\b([A-Za-z_][\w]*)\s*\[\s*['\"]result['\"]\s*\]"""
 )
@@ -389,6 +397,56 @@ _DEPENDENCIES_IMPORT = re.compile(
     r"^([ \t]*)from app\.dependencies import _create_block_instance[^\n]*\n",
     re.MULTILINE,
 )
+_AUGASSIGN_OPS = (
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "//=",
+    "%=",
+    "**=",
+    "@=",
+    "&=",
+    "|=",
+    "^=",
+    ">>=",
+    "<<=",
+)
+
+
+def _module_compiles(text: str) -> bool:
+    try:
+        ast.parse(text)
+    except SyntaxError:
+        return False
+    return True
+
+
+def _preceded_by_del(text: str, start: int) -> bool:
+    prefix = text[:start].rstrip()
+    if not prefix.endswith("del"):
+        return False
+    if len(prefix) == 3:
+        return True
+    ch = prefix[-4]
+    return not (ch.isalnum() or ch == "_")
+
+
+def _is_assignment_target_suffix(rest: str) -> bool:
+    """True when ``name['result']`` is a store / augassign / unpack target."""
+    stripped = rest.lstrip()
+    if not stripped:
+        return False
+    if stripped.startswith(":="):
+        return True
+    if any(stripped.startswith(op) for op in _AUGASSIGN_OPS):
+        return True
+    if stripped.startswith("=") and not stripped.startswith("=="):
+        return True
+    if stripped.startswith(":") or stripped.startswith(","):
+        line = stripped.split("\n", 1)[0]
+        return bool(re.search(r"(?<![!<>=])=(?!=)", line))
+    return False
 
 
 def emit_result_key_access(text: str) -> str:
@@ -403,10 +461,31 @@ def emit_result_key_access(text: str) -> str:
     ``appointment_scheduling`` PRODUCT schema-sample then failed as
     ``workflow: RuntimeError: 'result'``. The Store kit shim used ``out`` /
     ``step_result``, not ``envelope``.
+
+    Live sess_c63cc1a274994b33 (tip 467c83e / #350): CLONER applied this
+    rewrite to every vendored ``.py``. Store ``queue`` / ``formula_executor``
+    *assign* ``name['result']``. The #350 substitution turned those into
+    ``name.get("result", name) = ...`` — ``SyntaxError: cannot assign to
+    function call``. Only Load-ctx reads are rewritten.
     """
     if not text:
         return text
-    return _RESULT_KEY_SUB.sub(r'\1.get("result", \1)', text)
+
+    def _repl(match: re.Match) -> str:
+        if _preceded_by_del(text, match.start()):
+            return match.group(0)
+        if _is_assignment_target_suffix(text[match.end() :]):
+            return match.group(0)
+        name = match.group(1)
+        return f'{name}.get("result", {name})'
+
+    rewritten = _RESULT_KEY_SUB.sub(_repl, text)
+    # Fail-closed: never ship SyntaxError: cannot assign to function call.
+    # Fragments used in unit tests (bare ``return``) do not compile either
+    # before or after — leave those as the read rewrite.
+    if _module_compiles(text) and not _module_compiles(rewritten):
+        return text
+    return rewritten
 
 
 def emit_store_host_di(text: str) -> str:

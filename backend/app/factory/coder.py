@@ -1516,6 +1516,9 @@ Rules:
   input['result'] or out['result']. A schema-sample POST that omits it
   fails as workflow: RuntimeError: 'result' — prepare_block_input and
   the keep-path emit MUST attach result from the first prepared step.
+  CLONER emit_result_key_access rewrites reads of name['result'] only.
+  Rewriting name['result'] = into a .get() call fails as
+  SyntaxError: cannot assign to function call (queue / formula_executor).
   Exact shape:
   {"block": "event_bus", "action": "publish",
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",

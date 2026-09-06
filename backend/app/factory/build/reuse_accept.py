@@ -40,6 +40,20 @@ Registry-verified Cerebrum-Blocks ``vector_search/block.json`` has no
 default ``search``). Factory vendor_blocks_mirror also lacked that
 harvest, and the documented Store map omitted the id. Same class as
 #348 ``formula_executor``. Do not claim pilot_zip.
+
+Live sess_c63cc1a274994b33 (VetClinic Hub ALL-REUSE, tip 467c83e / #350):
+RuntimeError: 'result' did not recur. TESTER PRODUCT then refused after
+rework×3:
+
+    appointment_scheduling rejected a payload built from its own schema:
+    queue: SyntaxError: cannot assign to function call  (queue.py ~line 189)
+    workflow: step_0 (event_bus): error
+    billing_and_invoicing: formula_executor same SyntaxError (~line 242)
+    schema sample refused; accept-payload persisted nothing
+
+#350 rewrote any identifier ``['result']`` to ``.get("result", obj)``,
+including assignment targets (``something(x) = ...``). That is emit /
+CLONER, not a per-cap handle() micro-shot. Do not claim pilot_zip.
 """
 
 from __future__ import annotations
@@ -65,6 +79,9 @@ from app.factory.build.workflow_accept import (
 
 PRODUCT_UNKNOWN_ACTION_HALT = "Unknown action"
 PRODUCT_UNKNOWN_ACTION_NONE_HALT = "Unknown action: None"
+#: Live sess_c63cc1a274994b33 after #350: CLONER result-key rewrite
+#: turned ``name['result'] =`` into ``name.get("result", name) =``.
+PRODUCT_ASSIGN_TO_CALL_HALT = "SyntaxError: cannot assign to function call"
 REUSE_ACCEPT_CHECK = "reuse_accept"
 WRITER_REUSE_ACCEPT_HALT = (
     "WRITER [check:reuse_accept] failed — REUSE handler cannot accept "
@@ -508,6 +525,10 @@ def reuse_accept_rules_text(
             f"that omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT}.",
             "prepare_block_input and keep-path emit MUST attach result from",
             "the first prepared step so accept-payload can persist.",
+            "CLONER emit_result_key_access rewrites reads of name['result']",
+            "only — assignment targets must stay subscripts. Rewriting",
+            f"name['result'] = into a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT}",
+            "(live queue.py ~189 / formula_executor ~242).",
             "",
             "factory-grounded REUSE emit MUST populate BLOCK_DEFAULT_ACTIONS",
             "from vendored block.json (workspace vendor/, then factory",
@@ -556,6 +577,9 @@ def reuse_accept_forbidden_lines() -> str:
             f"or {PRODUCT_EVENT_BUS_STEP_0_HALT} after keep-path emit",
             "- omitting workflow input['result'] so PRODUCT fails as "
             f"{PRODUCT_WORKFLOW_RESULT_HALT} (accept-payload persisted nothing)",
+            "- rewriting name['result'] = into name.get(...) = so PRODUCT "
+            f"fails as {PRODUCT_ASSIGN_TO_CALL_HALT} (queue / "
+            "formula_executor Store shims assign that key)",
         ]
     )
 
@@ -571,6 +595,9 @@ def reuse_accept_brief_contract() -> str:
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
         "Store workflow reads input['result'] — a schema-sample POST that "
         f"omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
+        "CLONER must not rewrite assignment targets: name['result'] = "
+        f"becoming a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT!r} "
+        "(queue / formula_executor). "
         f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER. "
         f"Photographed roster: {', '.join(LIVE_VETCARE_REUSE_ACCEPT_CAPS)}."
     )
@@ -590,4 +617,6 @@ def reuse_accept_needles() -> Sequence[str]:
         "vector_search",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
+        PRODUCT_ASSIGN_TO_CALL_HALT,
+        "name['result'] =",
     )

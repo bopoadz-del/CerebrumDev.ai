@@ -371,6 +371,7 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in contract
     assert PRODUCT_WORKFLOW_RESULT_HALT in contract
+    assert "SyntaxError: cannot assign to function call" in contract
     assert AUTOMATED_REMINDERS_STYLE in contract
     assert "reminders_notifications" in contract
     assert "keep/done" in contract
