@@ -123,8 +123,8 @@ def persist_accept_rules_text() -> str:
             "- write app/actions/{capability}.py through the same persist",
             "  envelope as REUSE keep-path (_persist_record / store.save)",
             "- alembic 0001 and store.COLUMNS still use spec.entity",
-            "- an empty LLM return is a persist miss, not a deterministic",
-            "  contract template and not a ≥2h CLI session",
+            "- an empty LLM return is a persist miss, not a "
+            "deterministic contract template and not a ≥2h CLI session",
         ]
     )
 

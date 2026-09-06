@@ -3226,7 +3226,6 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.persist_accept import (
         PersistRoundTripHalt,
         assert_persist_round_trip_ready,
-        persist_workspace_root,
         wipe_workspace_runtime_db,
     )
 
