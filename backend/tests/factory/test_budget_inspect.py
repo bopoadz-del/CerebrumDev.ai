@@ -372,7 +372,8 @@ def test_inflight_cli_stage_1_inspect_bumps_to_45_not_unused(tmp_path):
     assert decided["decision"] == "continue_stage_2"
     assert decided["next_wall_s"] == STAGE_2_S
     assert decided["decision"] != "hard_stop"
-    assert "FACTORY_CODE_CLI_UNUSED" not in decided["reason"]
+    assert "hard-stop" not in decided["reason"]
+    assert "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
     assert "in-flight" in decided["reason"]
     assert "7230" in decided["reason"]
 
@@ -389,7 +390,8 @@ def test_inflight_cli_stage_2_inspect_waits_not_unused(tmp_path):
     assert decided["decision"] == "await_cli"
     assert decided["next_wall_s"] is None
     assert decided["decision"] != "hard_stop"
-    assert "FACTORY_CODE_CLI_UNUSED" not in decided["reason"]
+    assert "hard-stop" not in decided["reason"]
+    assert "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
 
 
 def test_unused_cli_after_wall_still_hard_stops(tmp_path, monkeypatch):
@@ -515,7 +517,8 @@ def test_runner_inflight_cli_stage_1_extends_wall_not_unused(tmp_path):
     snap = inspects[0].payload
     assert snap["decision"] == "continue_stage_2"
     assert snap.get("next_wall_s") == STAGE_2_S
-    assert "FACTORY_CODE_CLI_UNUSED" not in str(snap.get("reason") or "")
+    assert "hard-stop" not in str(snap.get("reason") or "")
+    assert "not FACTORY_CODE_CLI_UNUSED" in str(snap.get("reason") or "")
     assert runner.budget.wall_clock_s == STAGE_2_S
     extends = [
         e
