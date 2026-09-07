@@ -253,6 +253,21 @@ def should_continue_after_inspect(snapshot: Mapping[str, Any]) -> bool:
     return bool(snapshot.get("progressing"))
 
 
+def _cli_progressing_for_ceiling_bump(snapshot: Mapping[str, Any]) -> bool:
+    """One STAGE_2→CEILING bump needs visible work, not a quiet kimi."""
+    if snapshot.get("progressing"):
+        return True
+    done = int(snapshot.get("phase_done") or 0)
+    total = int(snapshot.get("phase_total") or 0)
+    if total > 0 and 0 < done < total:
+        return True
+    if int(snapshot.get("agent_written") or 0) > 0:
+        return True
+    if int(snapshot.get("cli_or_llm_written") or 0) > 0:
+        return True
+    return False
+
+
 def next_stage_wall(
     elapsed_s: float,
     current_wall_s: float,
@@ -319,6 +334,21 @@ def inspect_decision(
                 f"stub_rate={snapshot.get('stub_rate')}) — bump wall "
                 f"{current_wall_s:g}s → {new_wall:g}s; not "
                 "FACTORY_CODE_CLI_UNUSED"
+            )
+        elif (
+            elapsed_s + 1 >= STAGE_2_S
+            and current_wall_s <= STAGE_2_S + 1
+            and _cli_progressing_for_ceiling_bump(snapshot)
+        ):
+            new_wall = CEILING_S
+            decision = "continue_ceiling"
+            reason = (
+                f"inspect {stage}: FACTORY_CODE_CLI in-flight and progressing "
+                f"({watchdog_bit}, written={snapshot.get('agent_written')}, "
+                f"phase={snapshot.get('phase_done')}/"
+                f"{snapshot.get('phase_total')}) — one inspect-gated bump "
+                f"{current_wall_s:g}s → {new_wall:g}s; not "
+                "FACTORY_CODE_CLI_UNUSED; not a silent 2h grant"
             )
         else:
             decision = "await_cli"
