@@ -11,6 +11,7 @@ first try.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -296,6 +297,26 @@ def test_mutation_protect_blocks_raw_cli_scribble(ledger):
         assert "seq" in json.loads(ledger.path.read_text(encoding="utf-8").splitlines()[-1])
     # Unprotected again so later factory writes and tests can rewrite.
     assert ledger.path.stat().st_mode & 0o200
+
+
+def test_append_after_killed_protect_leftover_readonly(tmp_path):
+    """Process restart leaves 0444 from protect(); a new instance must still append.
+
+    Live 2026-09-07 ~05:08Z: orphan_recovery could not note resume because
+    build_ledger.jsonl under the Render disk stayed owner-readonly after
+    the previous WRITER protect() never reached finally.
+    """
+    path = tmp_path / "estate-management" / "build_ledger.jsonl"
+    path.parent.mkdir(parents=True)
+    first = BuildLedger(path)
+    first.start_run(product_id="estate-management", inputs_hash="h")
+    os.chmod(path, 0o444)
+    assert path.stat().st_mode & 0o222 == 0
+
+    restarted = BuildLedger(path)
+    event = restarted.append(EventKind.NOTE, detail="boot note after restart")
+    assert event.seq == 2
+    assert "boot note after restart" in path.read_text(encoding="utf-8")
 
 
 def test_mutation_build_status_survives_sentry_note(tmp_path):
