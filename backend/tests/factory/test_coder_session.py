@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -186,6 +187,41 @@ def test_dispatch_with_cli_does_not_use_oneshot(tmp_path, monkeypatch):
     assert result.ok, result.detail
     assert result.via == "cli"
     assert oneshot == [], "CLI present must not call HTTP oneshot"
+
+
+def test_dispatch_deadline_tracks_7200s_timeout_not_1785(tmp_path, monkeypatch):
+    """sess_2fba31ab: Floor deadline_s must follow FACTORY_CODER_TIMEOUT_S."""
+    from app.factory.llm_watchdog import MODEL_CALL_GRACE_S
+
+    script = tmp_path / "fake_coder.sh"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "7200")
+    monkeypatch.delenv("FACTORY_CODER_ATTEMPT_WALL_S", raising=False)
+    monkeypatch.delenv("FACTORY_CODER_BUDGET_S", raising=False)
+    notes: list = []
+    ctx = _ctx(tmp_path)
+    started = time.monotonic()
+    ctx.deadline = started + 1800.0
+    ctx.deadline_box = {"at": started + 1800.0, "clock": time.monotonic}
+    ctx.progress = lambda detail, payload: notes.append((detail, dict(payload)))
+    compiled = compile_brief(ctx.blueprint, ctx.plan, store_ids={"analytics"})
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.ok, result.detail
+    dispatch = [
+        payload
+        for detail, payload in notes
+        if payload.get("model_call") and "dispatching compiled brief" in detail
+    ]
+    assert dispatch, notes
+    deadline = float(dispatch[0]["deadline_s"])
+    assert deadline == pytest.approx(7200.0 + MODEL_CALL_GRACE_S)
+    assert deadline != 1785.0
+    assert deadline != pytest.approx(1800.0 - 15.0)
 
 
 def test_brief_requires_cli_when_coder_on(monkeypatch):

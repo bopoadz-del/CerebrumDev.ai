@@ -81,6 +81,9 @@ Set these after merge. This doc does **not** claim the dashboard is already set.
 | `DEEPSEEK_BASE_URL` | optional | Default `https://api.deepseek.com` |
 | `DEEPSEEK_THINKING_EFFORT` | optional | Default `high` (`KIMI_MODEL_THINKING_EFFORT`) |
 | `KIMI_CODE_HOME` | optional | Render: `/app/.kimi-code` |
+| `FACTORY_CODER_TIMEOUT_S` | recommended (C-BRIEF wall) | `7200` so the kimi/DeepSeek wait + Floor `deadline_s` are ~7230s (timeout + 30s grace). A leftover `1800` pin freezes dispatch at `STAGE_1-15=1785s` and kills a quiet CLI before harvest (sess_2fba31ab1a194a73). `1200` in `render.yaml` is the **HTTP hang abort** only — CLI dispatch does not freeze at 1785 when TIMEOUT or `FACTORY_CODER_BUDGET_S` is higher |
+| `FACTORY_CODER_BUDGET_S` | recommended | `7200`. Honoured by the C-BRIEF CLI wait when ≥1800. Keep Floor chat on OpenRouter; DeepSeek stays on the kimi subprocess |
+| `FACTORY_CODER_ATTEMPT_WALL_S` | optional | Override the Floor calling-NOTE twin. Default follows TIMEOUT (`7200` → `7230`) |
 
 Do **not** set process-wide `ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic`
 or `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` on the web service. That is

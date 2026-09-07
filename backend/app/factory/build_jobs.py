@@ -158,6 +158,26 @@ def _phase_ref(role: Any) -> Dict[str, str]:
     return {"id": resolved.value, "label": role_contract(resolved).title}
 
 
+def _open_model_call_note(activity_notes: Any) -> Any:
+    """Latest in-flight model_call NOTE. CLI stdout must not drop the wall.
+
+    A finished / hung-killed CLI NOTE closes the call so Floor does not
+    keep 'inside watchdog' after harvest or HUNG_KILLED_BY_WALL.
+    """
+    for note in reversed(list(activity_notes or ())):
+        detail = str(getattr(note, "detail", "") or "")
+        payload = getattr(note, "payload", None) or {}
+        if "FACTORY_CODE_CLI session finished" in detail:
+            return None
+        if "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL" in detail:
+            return None
+        if "budget wall — stopping CLI session" in detail:
+            return None
+        if payload.get("model_call"):
+            return note
+    return None
+
+
 def _model_call_fields(last_note: Any) -> Dict[str, Any]:
     """Surface an in-flight coder call so the Floor can bound 'quiet' copy."""
     payload = (getattr(last_note, "payload", None) or {}) if last_note else {}
@@ -452,6 +472,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     last_inspect = (inspects[-1].payload or {}) if inspects else None
     activity_notes = [e for e in notes if e not in inspects]
     last_note = activity_notes[-1] if activity_notes else None
+    calling_note = _open_model_call_note(activity_notes)
     try:
         import time
 
@@ -471,7 +492,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "last_event_at": last_any.ts if last_any else None,
         "last_event_age_s": round(idle_s, 1),
         "stale": idle_s > _STALE_AFTER_S,
-        **_model_call_fields(last_note),
+        **_model_call_fields(calling_note or last_note),
     }
     if last_note is not None:
         payload = last_note.payload or {}
@@ -546,7 +567,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     # A calling-NOTE that outlived the watchdog wall means the WRITER thread
     # is stuck in a model call that will never complete. Fail now so the
     # Floor shows CODING AGENT STOPPED instead of "quiet for N min".
-    overdue = _model_call_overdue(last_note, idle_s)
+    overdue = _model_call_overdue(calling_note or last_note, idle_s)
     if overdue:
         return _with_level_grade(
             {
@@ -566,7 +587,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     # working on it, and saying so is the honest answer.
     # An in-flight coder call inside its deadline is work, not a dead
     # process — stalling at 30 min would abort a legitimate 40 min write.
-    in_flight_call = bool(_model_call_fields(last_note))
+    in_flight_call = bool(_model_call_fields(calling_note or last_note))
     if idle_s > _STALL_AFTER_S and not in_flight_call:
         return _with_level_grade(
             {

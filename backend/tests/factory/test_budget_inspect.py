@@ -558,3 +558,118 @@ def test_cli_live_deadline_grows_with_inspect_bump_not_slash():
     bumped = _cli_live_deadline(ctx, 1785.0, started)
     assert bumped > first
     assert bumped == pytest.approx(now["t"] + (2700.0 - 1805.0) - 15.0, abs=1.0)
+
+
+def test_cli_dispatch_timeout_tracks_factory_coder_timeout_not_1785(monkeypatch):
+    """sess_2fba31ab: leftover stage-1 box must not freeze a 7200s pin at 1785."""
+    from app.factory.build.coder_session import (
+        cli_dispatch_timeout_s,
+        cli_watchdog_remaining_s,
+        _cli_live_deadline,
+    )
+    from app.factory.build.roles_models import RoleContext
+    from app.factory.llm_watchdog import MODEL_CALL_GRACE_S
+
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "7200")
+    monkeypatch.delenv("FACTORY_CODER_ATTEMPT_WALL_S", raising=False)
+    monkeypatch.delenv("FACTORY_CODER_BUDGET_S", raising=False)
+    leftover = 1800.0
+    timeout_s = cli_dispatch_timeout_s(leftover_s=leftover)
+    assert timeout_s == pytest.approx(7200.0 + MODEL_CALL_GRACE_S)
+    assert timeout_s >= 7200.0
+    assert timeout_s != pytest.approx(STAGE_1_S - 15.0)
+    assert timeout_s != 1785.0
+
+    started = time.monotonic()
+    now = {"t": started}
+
+    def clock():
+        return now["t"]
+
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=None,  # type: ignore[arg-type]
+        blueprint=None,
+        plan=None,
+        deadline=started + leftover,
+        deadline_box={"at": started + leftover, "clock": clock},
+    )
+    live = _cli_live_deadline(ctx, timeout_s, started)
+    assert live == pytest.approx(started + timeout_s, abs=1.0)
+    now["t"] = started + 1896.0
+    still_open = _cli_live_deadline(ctx, timeout_s, started)
+    assert still_open is not None
+    assert still_open > now["t"]
+    remaining = cli_watchdog_remaining_s(leftover_s=leftover - 1896.0, elapsed_s=1896.0)
+    assert remaining > 1785.0
+    assert remaining == pytest.approx(timeout_s - 1896.0, abs=1.0)
+
+
+def test_cli_dispatch_timeout_test_scale_stays_tight(monkeypatch):
+    from app.factory.build.coder_session import cli_dispatch_timeout_s
+
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "0.2")
+    monkeypatch.delenv("FACTORY_CODER_ATTEMPT_WALL_S", raising=False)
+    assert cli_dispatch_timeout_s(leftover_s=5.0) == 30.0
+    assert cli_dispatch_timeout_s(leftover_s=0.4) == 30.0
+
+
+def test_stage_1_extend_does_not_slash_7200s_cli_watchdog(tmp_path, monkeypatch):
+    """30→45 leftover-15 must not replace a 7230s Floor deadline with ~885s."""
+    from app.factory.llm_watchdog import MODEL_CALL_GRACE_S
+
+    monkeypatch.setenv("FACTORY_CODER_TIMEOUT_S", "7200")
+    monkeypatch.delenv("FACTORY_CODER_ATTEMPT_WALL_S", raising=False)
+    monkeypatch.delenv("FACTORY_CODER_BUDGET_S", raising=False)
+
+    now = {"t": 0.0}
+
+    def clock():
+        return now["t"]
+
+    def hanging_cli(ctx):
+        from app.factory.build.coder_session import cli_dispatch_timeout_s
+
+        ctx.note(
+            "dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+            stage="dispatch",
+            source="coder CLI",
+            model_call=True,
+            deadline_s=cli_dispatch_timeout_s(leftover_s=ctx.coder_time_left()),
+            done=0,
+            total=1,
+        )
+        now["t"] = STAGE_1_S + 5
+        ctx.note("kimi still running", stage="dispatch", source="coder CLI")
+        from app.factory.build.roles_models import RoleResult
+
+        return RoleResult(ok=True, detail="cli still in-flight")
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.build.roles import ROLE_IMPLEMENTATIONS
+
+    root = Path(__file__).resolve().parents[3]
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = hanging_cli
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        tmp_path / "build",
+        roles=roles,
+        budget=BuildBudget(
+            max_rework=1, wall_clock_s=STAGE_1_S, phase_wall_clock_s=STAGE_1_S
+        ),
+        clock=clock,
+        auto_pilot=True,
+    )
+    runner.run()
+    extends = [
+        e
+        for e in runner.ledger.events()
+        if (e.payload or {}).get("cli_wall_extended")
+    ]
+    assert extends
+    advertised = float(extends[0].payload.get("deadline_s"))
+    expected = 7200.0 + MODEL_CALL_GRACE_S - (STAGE_1_S + 5)
+    assert advertised == pytest.approx(expected, abs=2.0)
+    assert advertised > 5000.0
+    assert advertised != pytest.approx(STAGE_2_S - STAGE_1_S - 15.0, abs=5.0)

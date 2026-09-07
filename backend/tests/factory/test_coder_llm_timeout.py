@@ -717,6 +717,126 @@ def test_in_flight_call_does_not_stall_before_the_watchdog_wall(tmp_path):
     assert status["pilot_ready"] is not True
 
 
+def test_cli_dispatch_1896s_against_7230s_is_still_building(tmp_path):
+    """sess_2fba31ab: quiet kimi at 1896s must not fail a 7230s C-BRIEF wall."""
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="insurehub", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+        payload={
+            "stage": "dispatch",
+            "source": "coder CLI",
+            "model_call": True,
+            "deadline_s": 7230.0,
+            "done": 0,
+            "total": 1,
+        },
+    )
+    aged_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=1896)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = aged_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+    status = build_status(out)
+    assert status["state"] == "building", status
+    assert status["model_call_in_progress"] is True
+    assert status["model_call_deadline_s"] == 7230.0
+    assert "timed out" not in str(status.get("detail") or "")
+    assert status["pilot_ready"] is not True
+
+
+def test_cli_dispatch_past_7230s_fails_with_named_timeout(tmp_path):
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="insurehub", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+        payload={
+            "stage": "dispatch",
+            "source": "coder CLI",
+            "model_call": True,
+            "deadline_s": 7230.0,
+        },
+    )
+    stale_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=7300)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = stale_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+
+    status = build_status(out)
+    assert status["state"] == "failed", status
+    assert "coder LLM timed out" in status["detail"]
+    assert "deadline 7230s" in status["detail"]
+    assert status["pilot_ready"] is False
+
+
+def test_cli_stdout_note_does_not_drop_7230s_watchdog(tmp_path):
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="insurehub", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+        payload={
+            "stage": "dispatch",
+            "source": "coder CLI",
+            "model_call": True,
+            "deadline_s": 7230.0,
+            "done": 0,
+            "total": 1,
+        },
+    )
+    aged_ts = (
+        datetime.now(timezone.utc) - timedelta(seconds=1896)
+    ).isoformat(timespec="seconds")
+    aged = []
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        payload = json.loads(line)
+        payload["ts"] = aged_ts
+        aged.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="thinking…",
+        payload={"stage": "dispatch", "source": "coder CLI"},
+    )
+
+    status = build_status(out)
+    assert status["state"] == "building", status
+    assert status["model_call_in_progress"] is True
+    assert status["model_call_deadline_s"] == 7230.0
+    assert "timed out" not in str(status.get("detail") or "")
+
+
 def test_generic_coder_error_still_templates(monkeypatch):
     """Timeout is fatal; a refused/empty completion still ships the template."""
     from app.factory.build import roles_handlers

@@ -2032,13 +2032,75 @@ def _cli_clock(ctx: Any) -> Callable[[], float]:
     return time.monotonic
 
 
+def cli_dispatch_timeout_s(leftover_s: Optional[float] = None) -> float:
+    """FACTORY_CODE_CLI wait + Floor ``deadline_s`` for one C-BRIEF.
+
+    Tracks ``FACTORY_CODER_TIMEOUT_S`` via ``attempt_wall_s()`` so a
+    production 7200s pin is ~7230 (timeout + grace), not a frozen
+    ``STAGE_1_S - 15`` (1785). sess_2fba31ab1a194a73 died at 1896s
+    against that 1785s model-call deadline while stage inspect / Floor
+    still advertised a longer watchdog.
+
+    A leftover stage-1 box cannot slash a higher timeout.
+    ``FACTORY_CODER_BUDGET_S`` ≥ stage-1 is honoured the same way
+    (Render 7200). DeepSeek C-BRIEF is a ≥2h-capable session, so the
+    production ceiling + grace (7230) wins over the HTTP hang default
+    (1200 → 2400). Test-scale timeouts (< 60s) keep the leftover / 30s
+    formula so hung-CLI tests stay tight.
+    """
+    from app.factory.build.budget_inspect import CEILING_S, STAGE_1_S
+    from app.factory.coder import coder_budget_s
+    from app.factory.llm_watchdog import (
+        LEGACY_TIMEOUT_BAND_MIN_S,
+        MODEL_CALL_GRACE_S,
+        attempt_wall_s,
+        call_timeout_s,
+    )
+
+    timeout_s = 1500.0
+    if leftover_s is not None:
+        timeout_s = max(30.0, float(leftover_s) - 15.0)
+
+    per = call_timeout_s()
+    if per < LEGACY_TIMEOUT_BAND_MIN_S:
+        return timeout_s
+
+    timeout_s = max(timeout_s, float(attempt_wall_s()))
+    budget = coder_budget_s()
+    if budget >= STAGE_1_S:
+        timeout_s = max(timeout_s, float(budget) + MODEL_CALL_GRACE_S)
+    if deepseek_cli_ready():
+        timeout_s = max(
+            timeout_s,
+            float(STAGE_1_S) - 15.0,
+            float(CEILING_S) + MODEL_CALL_GRACE_S,
+        )
+    return timeout_s
+
+
+def cli_watchdog_remaining_s(
+    *, leftover_s: Optional[float], elapsed_s: float
+) -> float:
+    """Floor ``deadline_s`` from *this* NOTE so age + deadline ≈ the CLI wall.
+
+    A 30→45 inspect bump must not advertise leftover-15 (~885s) and
+    slash a 7230s C-BRIEF watchdog.
+    """
+    wall = cli_dispatch_timeout_s(leftover_s=leftover_s)
+    remaining = max(30.0, float(wall) - max(0.0, float(elapsed_s)))
+    if leftover_s is not None:
+        remaining = max(remaining, max(30.0, float(leftover_s) - 15.0))
+    return remaining
+
+
 def _cli_live_deadline(
     ctx: Any, timeout_s: float, started_mono: float
 ) -> Optional[float]:
     """CLI wall: remapped dispatch timeout, grown by a 30→45 inspect bump.
 
-    ``max`` so leftover COLLECTOR/CLONER time cannot slash a remapped
-    ≥1800s C-BRIEF, while a stage-2 box can still expire the session.
+    ``max`` so leftover COLLECTOR/CLONER / stage-1 time cannot slash a
+    remapped FACTORY_CODER_TIMEOUT_S (7200 → ~7230) C-BRIEF, while a
+    stage-2 box can still expire a short test-scale session.
     """
     now = float(_cli_clock(ctx)())
     candidates: List[float] = []
@@ -2512,17 +2574,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     including inventories that are 100% REUSE/COMPOSE (no GENERATE gaps).
     """
     root = _workspace_root(ctx)
-    timeout_s = 1500.0
     left = ctx.coder_time_left() if hasattr(ctx, "coder_time_left") else None
-    if left is not None:
-        timeout_s = max(30.0, float(left) - 15.0)
+    timeout_s = cli_dispatch_timeout_s(leftover_s=left)
     if deepseek_cli_ready():
-        from app.factory.build.budget_inspect import STAGE_1_S
-
-        # Honour remapped ≥1800s from #367 even when leftover time is tiny.
-        timeout_s = max(timeout_s, float(STAGE_1_S) - 15.0)
-        if left is not None and 0 < float(left) <= 600.0:
-            timeout_s = max(timeout_s, float(STAGE_1_S) - 15.0)
         logger.info(
             "FACTORY_CODE_CLI C-BRIEF dispatch starting command=%s "
             "gaps=%s reuse=%s timeout_s=%.0f",
