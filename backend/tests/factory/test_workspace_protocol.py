@@ -18,10 +18,39 @@ from app.factory.build.reuse_accept import (
 )
 from app.factory.build.workspace import (
     RoleWorkspace,
+    relpath_exists,
+    relpath_read_text,
     supports_relpath_io,
     supports_relpath_write,
     write_workspace_text,
 )
+
+
+class _PathMethodDuck:
+    """Looks like a workspace but bound Path.exists/read_text take no relpath.
+
+    #377 rejected isinstance(Path) only. A wrapper that copies those methods
+    still TypeError'd on exists(rel) — the remaining CEREBRUMDEV-BACKEND-W hole.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.workspace = root
+        self.exists = root.exists
+        self.read_text = root.read_text
+        self.write_text = root.write_text
+
+
+class _TypeErrorWorkspace:
+    """Signature says exists(rel), but the call raises the live TypeError."""
+
+    def __init__(self, root: Path) -> None:
+        self.workspace = root
+
+    def exists(self, relpath) -> bool:
+        raise TypeError("Path.exists() takes 1 positional argument but 2 were given")
+
+    def read_text(self, relpath) -> str:
+        raise TypeError("Path.read_text() takes from 1 to 4 positional arguments")
 
 
 _PLANTED_ACTION = "planted_query"
@@ -68,9 +97,13 @@ def _disable_factory_harvest(monkeypatch) -> None:
 def test_path_is_not_relpath_workspace_protocol(tmp_path):
     assert supports_relpath_io(tmp_path) is False
     assert supports_relpath_write(tmp_path) is False
+    assert relpath_exists(tmp_path, Path("vendor") / "blocks" / "database" / "block.json") is False
     ws = RoleWorkspace(BuildRole.WRITER, tmp_path)
     assert supports_relpath_io(ws) is True
     assert supports_relpath_write(ws) is True
+    duck = _PathMethodDuck(tmp_path)
+    assert supports_relpath_io(duck) is False
+    assert supports_relpath_write(duck) is False
 
 
 def test_harvest_path_workspace_missing_vendor_does_not_typeerror(
@@ -93,6 +126,30 @@ def test_harvest_path_workspace_reads_vendor_block_json(tmp_path, monkeypatch):
     assert harvest_block_default_actions(
         ["database"], tmp_path, workspace=tmp_path
     ) == {"database": _PLANTED_ACTION}
+
+
+def test_harvest_path_method_duck_does_not_typeerror(tmp_path, monkeypatch):
+    """Bound Path.exists on a non-Path wrapper must not crash harvest."""
+    _disable_factory_harvest(monkeypatch)
+    _plant_vendor_block_json(tmp_path)
+    duck = _PathMethodDuck(tmp_path)
+    rel = Path("vendor") / "blocks" / "database" / "block.json"
+    assert relpath_exists(duck, rel) is False
+    assert relpath_read_text(duck, rel) == ""
+    assert harvest_block_default_action("database", workspace=duck) == _PLANTED_ACTION
+    assert harvest_block_default_actions(["database"], workspace=duck) == {
+        "database": _PLANTED_ACTION
+    }
+
+
+def test_harvest_exists_typeerror_is_fail_soft(tmp_path, monkeypatch):
+    """Live TypeError from exists(rel) must fall through to Path roots."""
+    _disable_factory_harvest(monkeypatch)
+    _plant_vendor_block_json(tmp_path)
+    lying = _TypeErrorWorkspace(tmp_path)
+    assert supports_relpath_io(lying) is True
+    assert relpath_exists(lying, Path("vendor") / "blocks" / "database" / "block.json") is False
+    assert harvest_block_default_action("database", workspace=lying) == _PLANTED_ACTION
 
 
 def test_harvest_role_workspace_reads_vendor_block_json(tmp_path, monkeypatch):

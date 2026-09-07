@@ -95,7 +95,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.persist_accept import persist_handler_rel, persist_workspace_root
 from app.factory.build.product_gate import GATE_SCOPES
-from app.factory.build.workspace import supports_relpath_io
+from app.factory.build.workspace import relpath_exists, relpath_read_text
 from app.factory.build.reuse_lookup import (
     load_local_block_json,
     local_block_json_candidates,
@@ -362,26 +362,28 @@ def harvest_block_default_action(
     candidates = _harvest_candidate_ids(bid)
     # Path.has exists(), but exists(rel) is the RoleWorkspace protocol.
     # getattr(..., "exists") treated Path as that duck-type and crashed
-    # (CEREBRUMDEV-BACKEND-W). Path roots fall through to _workspace_roots.
-    if supports_relpath_io(workspace):
-        for cand in candidates:
-            meta_rel = Path("vendor") / "blocks" / cand / "block.json"
-            if workspace.exists(meta_rel):
-                try:
-                    meta = json.loads(workspace.read_text(meta_rel))
-                except (ValueError, OSError, TypeError):
-                    meta = None
-                harvested = default_action_from_block_json(meta)
+    # (CEREBRUMDEV-BACKEND-W). Protocol detection requires exists(rel) /
+    # read_text(rel); Path-like bound methods fall through to _workspace_roots.
+    for cand in candidates:
+        meta_rel = Path("vendor") / "blocks" / cand / "block.json"
+        if relpath_exists(workspace, meta_rel):
+            try:
+                meta = json.loads(relpath_read_text(workspace, meta_rel))
+            except (ValueError, TypeError):
+                meta = None
+            harvested = default_action_from_block_json(meta)
+            if harvested:
+                return harvested
+        for rel in (
+            Path("vendor") / "blocks" / cand / "block.py",
+            Path("vendor") / "cerebrum" / "blocks" / f"{cand}.py",
+        ):
+            if relpath_exists(workspace, rel):
+                harvested = default_action_from_source(
+                    relpath_read_text(workspace, rel)
+                )
                 if harvested:
                     return harvested
-            for rel in (
-                Path("vendor") / "blocks" / cand / "block.py",
-                Path("vendor") / "cerebrum" / "blocks" / f"{cand}.py",
-            ):
-                if workspace.exists(rel):
-                    harvested = default_action_from_source(workspace.read_text(rel))
-                    if harvested:
-                        return harvested
     for root in _workspace_roots(*roots, workspace=workspace):
         for cand in candidates:
             meta = _load_json(root / "vendor" / "blocks" / cand / "block.json")

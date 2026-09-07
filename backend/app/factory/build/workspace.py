@@ -15,6 +15,7 @@ store root, when one is supplied) so a role cannot exfiltrate the factory.
 
 from __future__ import annotations
 
+import inspect
 import shutil
 from pathlib import Path
 from typing import Any, List, Optional, Sequence
@@ -26,18 +27,53 @@ from app.factory.build.authority import (
 )
 
 
+def _required_positionals(fn: Any) -> Optional[int]:
+    """Count required positional params on a (possibly bound) callable.
+
+    ``pathlib.Path.exists`` / ``read_text`` / ``write_text`` are truthy
+    callables, but they operate on *self*. A bound ``Path.exists`` has
+    zero required positionals (3.12+ only keyword ``follow_symlinks``).
+    :meth:`RoleWorkspace.exists` requires ``relpath``. Un-inspectable
+    builtins return ``None`` so callers fail closed to the Path-root walk.
+    """
+    if not callable(fn):
+        return None
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return None
+    count = 0
+    for param in sig.parameters.values():
+        if param.kind is inspect.Parameter.VAR_POSITIONAL:
+            return max(count, 1)
+        if param.kind not in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            continue
+        if param.default is inspect.Parameter.empty:
+            count += 1
+    return count
+
+
 def supports_relpath_io(workspace: Any) -> bool:
     """True for ``exists(rel)`` / ``read_text(rel)`` — not pathlib.Path.
 
     ``pathlib.Path`` also has ``exists`` / ``read_text`` / ``write_text``, but
-    those operate on *self*. Treating a Path as this duck-type raises
+    those operate on *self*. Treating a Path (or a duck that bound those
+    methods) as this API raises
     ``TypeError: Path.exists() takes 1 positional argument but 2 were given``
     (CEREBRUMDEV-BACKEND-W). Floor WRITER uses :class:`RoleWorkspace`.
     """
     if workspace is None or isinstance(workspace, Path):
         return False
-    return callable(getattr(workspace, "exists", None)) and callable(
-        getattr(workspace, "read_text", None)
+    exists_n = _required_positionals(getattr(workspace, "exists", None))
+    read_n = _required_positionals(getattr(workspace, "read_text", None))
+    return (
+        exists_n is not None
+        and exists_n >= 1
+        and read_n is not None
+        and read_n >= 1
     )
 
 
@@ -45,7 +81,31 @@ def supports_relpath_write(workspace: Any) -> bool:
     """True for ``write_text(rel, content)`` — :class:`RoleWorkspace`, not Path."""
     if workspace is None or isinstance(workspace, Path):
         return False
-    return callable(getattr(workspace, "write_text", None))
+    write_n = _required_positionals(getattr(workspace, "write_text", None))
+    return write_n is not None and write_n >= 2
+
+
+def relpath_exists(workspace: Any, relpath: str | Path) -> bool:
+    """``exists(rel)`` when the handle is a protocol workspace; else False.
+
+    A TypeError (Path-like ``exists(self)``) must not abort REUSE harvest.
+    """
+    if not supports_relpath_io(workspace):
+        return False
+    try:
+        return bool(workspace.exists(relpath))
+    except TypeError:
+        return False
+
+
+def relpath_read_text(workspace: Any, relpath: str | Path) -> str:
+    """``read_text(rel)`` when the handle is a protocol workspace; else ``""``."""
+    if not supports_relpath_io(workspace):
+        return ""
+    try:
+        return workspace.read_text(relpath)
+    except (TypeError, OSError):
+        return ""
 
 
 def _fs_root(workspace: Any) -> Path:
