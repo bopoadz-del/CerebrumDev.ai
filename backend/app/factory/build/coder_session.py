@@ -72,6 +72,9 @@ NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 #: Factory-grounded fill after that exit is not C-BRIEF authorship
 #: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
 NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
+#: In-flight FACTORY_CODE_CLI was terminated after the staged 30→45
+#: wall — not UNUSED (never started) and not a zero-harvest exit 0.
+NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL = "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL"
 NAMED_BLOCKER_STOPPED = "CODER_SESSION_STOPPED"
 NAMED_BLOCKER_PAUSED = "CODER_SESSION_PAUSED"
 CLI_PREFLIGHT_BLOCKERS = frozenset(
@@ -521,6 +524,15 @@ def thin_stub_success_blocked(
     via_cli = str(dispatch.get("via") or "") == "cli" or attempted
     from app.factory.build.budget_inspect import STAGE_1_S
 
+    hung = str(dispatch.get("blocker") or "") == NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL
+    if hung and written == 0:
+        return (
+            f"{NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL}: FACTORY_CODE_CLI was "
+            "killed after the staged coder wall while a model call was still "
+            f"open (written={written}, stub_rate={stub_rate}, "
+            f"elapsed={float(elapsed_s):.0f}s). Not UNUSED — do not SUCCESS "
+            "a Store-green pilot from pure templates."
+        )
     if (
         via_cli
         and "cli_authored_ids" in dispatch
@@ -2011,6 +2023,45 @@ def _feed_cli_stdin(proc: subprocess.Popen, payload: str) -> None:
             pass
 
 
+def _cli_clock(ctx: Any) -> Callable[[], float]:
+    """Prefer the runner clock so inspect bumps and CLI walls share a timeline."""
+    box = getattr(ctx, "deadline_box", None) or {}
+    clock = box.get("clock") if isinstance(box, Mapping) else None
+    if callable(clock):
+        return clock
+    return time.monotonic
+
+
+def _cli_live_deadline(
+    ctx: Any, timeout_s: float, started_mono: float
+) -> Optional[float]:
+    """CLI wall: remapped dispatch timeout, grown by a 30→45 inspect bump.
+
+    ``max`` so leftover COLLECTOR/CLONER time cannot slash a remapped
+    ≥1800s C-BRIEF, while a stage-2 box can still expire the session.
+    """
+    now = float(_cli_clock(ctx)())
+    candidates: List[float] = []
+    if timeout_s > 0:
+        candidates.append(started_mono + float(timeout_s))
+    if hasattr(ctx, "coder_time_left"):
+        left = ctx.coder_time_left()
+        if left is not None:
+            candidates.append(now + max(0.0, float(left) - 15.0))
+    return max(candidates) if candidates else None
+
+
+def _pulse_stage_inspect(ctx: Any) -> None:
+    """Let a quiet CLI still hit staged inspect without a Floor NOTE."""
+    box = getattr(ctx, "deadline_box", None) or {}
+    pulse = box.get("inspect") if isinstance(box, Mapping) else None
+    if callable(pulse):
+        try:
+            pulse()
+        except Exception:  # noqa: BLE001 — inspect must never fail the CLI
+            logger.exception("FACTORY_CODE_CLI stage inspect pulse failed")
+
+
 def _run_cli_session(
     ctx: Any,
     compiled: Any,
@@ -2091,13 +2142,18 @@ def _run_cli_session(
         reuse_inventory_ids(compiled),
         timeout_s,
     )
+    dispatch_payload: Dict[str, Any] = {
+        "stage": "dispatch",
+        "model_call": True,
+        "source": "coder CLI",
+        "done": 0,
+        "total": 1,
+    }
+    if timeout_s > 0:
+        dispatch_payload["deadline_s"] = float(timeout_s)
     ctx.note(
         f"dispatching compiled brief via FACTORY_CODE_CLI ({cli})",
-        stage="dispatch",
-        model_call=True,
-        source="coder CLI",
-        done=0,
-        total=1,
+        **dispatch_payload,
     )
     popen_kw: Dict[str, Any] = {
         "cwd": str(root),
@@ -2123,11 +2179,16 @@ def _run_cli_session(
     if stdin_payload is not None:
         _feed_cli_stdin(proc, stdin_payload)
 
-    deadline = time.monotonic() + timeout_s if timeout_s > 0 else None
+    clock = _cli_clock(ctx)
+    started_mono = float(clock())
+    deadline = _cli_live_deadline(ctx, timeout_s, started_mono)
     stopped = False
+    hung_killed = False
     try:
         while True:
-            action = wait_if_paused(root, deadline=deadline)
+            _pulse_stage_inspect(ctx)
+            deadline = _cli_live_deadline(ctx, timeout_s, started_mono)
+            action = wait_if_paused(root, deadline=deadline, clock=clock)
             if action == CONTROL_STOP:
                 stopped = True
                 _append_log(log_path, "[owner STOP]")
@@ -2137,8 +2198,13 @@ def _run_cli_session(
                 except subprocess.TimeoutExpired:
                     proc.kill()
                 break
-            if deadline is not None and time.monotonic() >= deadline:
-                _append_log(log_path, "[budget wall — stopping CLI session]")
+            if deadline is not None and clock() >= deadline:
+                hung_killed = True
+                _append_log(
+                    log_path,
+                    f"[{NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL}] "
+                    "budget wall — stopping CLI session",
+                )
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -2178,6 +2244,19 @@ def _run_cli_session(
             ok=False,
             detail="owner stopped the coder session",
             blocker=NAMED_BLOCKER_STOPPED,
+        )
+    if hung_killed:
+        return DispatchResult(
+            via="cli",
+            ok=False,
+            detail=(
+                f"{NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL}: FACTORY_CODE_CLI "
+                "was still running when the staged coder wall expired. "
+                "Not FACTORY_CODE_CLI_UNUSED — the in-flight session was "
+                "killed after inspect, not skipped."
+            ),
+            blocker=NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
+            model=cli,
         )
     if code != 0:
         log_text = ""

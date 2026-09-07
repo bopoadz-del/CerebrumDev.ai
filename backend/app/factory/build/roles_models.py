@@ -48,15 +48,21 @@ class RoleContext:
     def coder_time_left(self) -> Optional[float]:
         """Seconds of build budget remaining, or None when unbounded."""
         deadline = self.deadline
+        clock = None
         if self.deadline_box is not None:
             boxed = self.deadline_box.get("at")
             if boxed is not None:
                 deadline = boxed
+            boxed_clock = self.deadline_box.get("clock")
+            if callable(boxed_clock):
+                clock = boxed_clock
         if deadline is None:
             return None
-        import time as _time
+        if clock is None:
+            import time as _time
 
-        return deadline - _time.monotonic()
+            clock = _time.monotonic
+        return deadline - clock()
 
     def note(self, detail: str, **payload: Any) -> None:
         if self.progress is None:

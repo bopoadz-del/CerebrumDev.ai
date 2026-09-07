@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+
+import pytest
 
 from app.factory.build.authority import BuildRole
 from app.factory.build.budget_inspect import (
@@ -331,3 +334,227 @@ def test_runner_ramps_to_45m_only_when_inspect_sees_agent_work(tmp_path):
     # Replaced WRITER may fail later gates; the contract is the staged ramp.
     assert runner.ledger.pilot_ready() is False
     assert outcome.outcome is not None
+
+
+def _inflight_cli_ledger(tmp_path: Path, *, deadline_s: float = 7230.0) -> BuildLedger:
+    ledger = _ledger(tmp_path)
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+        payload={
+            "stage": "dispatch",
+            "source": "coder CLI",
+            "model_call": True,
+            "deadline_s": deadline_s,
+            "done": 0,
+            "total": 1,
+        },
+    )
+    return ledger
+
+
+def test_inflight_cli_stage_1_inspect_bumps_to_45_not_unused(tmp_path):
+    """sess_9d8e9a2: live CLI inside 7230s watchdog must not hard-stop as UNUSED."""
+    ledger = _inflight_cli_ledger(tmp_path)
+    snap = inspect_build(ledger)
+    assert snap["cli_attempted"] is True
+    assert snap["cli_in_flight"] is True
+    assert snap["cli_finished"] is False
+    assert snap["model_call_deadline_s"] == 7230.0
+    assert snap["agent_written"] == 0
+    decided = inspect_decision(
+        elapsed_s=STAGE_1_S + 107.0,
+        current_wall_s=STAGE_1_S,
+        snapshot=snap,
+        stage="stage_1",
+    )
+    assert decided["decision"] == "continue_stage_2"
+    assert decided["next_wall_s"] == STAGE_2_S
+    assert decided["decision"] != "hard_stop"
+    assert "hard-stop" not in decided["reason"]
+    assert "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
+    assert "in-flight" in decided["reason"]
+    assert "7230" in decided["reason"]
+
+
+def test_inflight_cli_stage_2_inspect_waits_not_unused(tmp_path):
+    ledger = _inflight_cli_ledger(tmp_path)
+    snap = inspect_build(ledger)
+    decided = inspect_decision(
+        elapsed_s=STAGE_2_S,
+        current_wall_s=STAGE_2_S,
+        snapshot=snap,
+        stage="stage_2",
+    )
+    assert decided["decision"] == "await_cli"
+    assert decided["next_wall_s"] is None
+    assert decided["decision"] != "hard_stop"
+    assert "hard-stop" not in decided["reason"]
+    assert "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
+
+
+def test_unused_cli_after_wall_still_hard_stops(tmp_path, monkeypatch):
+    from app.factory.build.coder_session import NAMED_BLOCKER_CLI_UNUSED
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setenv("FACTORY_CODE_CLI", "/usr/local/bin/kimi")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.deepseek_cli_ready", lambda: True
+    )
+    ledger = _ledger(tmp_path)
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="wrote handler billing (deterministic contract template)",
+        payload={
+            "stage": "handlers",
+            "capability": "billing",
+            "source": "deterministic contract template",
+        },
+    )
+    snap = inspect_build(ledger)
+    assert snap["cli_attempted"] is False
+    assert snap["cli_in_flight"] is False
+    decided = inspect_decision(
+        elapsed_s=STAGE_1_S + 10.0,
+        current_wall_s=STAGE_1_S,
+        snapshot=snap,
+        stage="stage_1",
+    )
+    assert decided["decision"] == "hard_stop"
+    assert NAMED_BLOCKER_CLI_UNUSED in decided["reason"]
+    assert "in-flight" not in decided["reason"]
+
+
+def test_zero_harvest_after_cli_finish_hard_stops_not_unused_inflight(tmp_path, monkeypatch):
+    from app.factory.build.coder_session import NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.deepseek_cli_ready", lambda: True
+    )
+    ledger = _inflight_cli_ledger(tmp_path)
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="FACTORY_CODE_CLI session finished",
+        payload={"stage": "dispatch", "source": "coder CLI", "done": 1, "total": 1},
+    )
+    state = {
+        "brief_dispatch": {
+            "via": "cli",
+            "ok": True,
+            "cli_authored_ids": [],
+            "handler_ids": [],
+        }
+    }
+    snap = inspect_build(ledger, state=state)
+    assert snap["cli_in_flight"] is False
+    assert snap["cli_finished"] is True
+    decided = inspect_decision(
+        elapsed_s=STAGE_1_S + 10.0,
+        current_wall_s=STAGE_1_S,
+        snapshot=snap,
+        stage="stage_1",
+        state=state,
+    )
+    assert decided["decision"] == "hard_stop"
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in decided["reason"]
+    assert "in-flight" not in decided["reason"]
+
+
+def test_runner_inflight_cli_stage_1_extends_wall_not_unused(tmp_path):
+    now = {"t": 0.0}
+
+    def clock():
+        return now["t"]
+
+    def hanging_cli(ctx):
+        ctx.note(
+            "dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
+            stage="dispatch",
+            source="coder CLI",
+            model_call=True,
+            deadline_s=7230,
+            done=0,
+            total=1,
+        )
+        now["t"] = STAGE_1_S + 5
+        ctx.note(
+            "kimi still running",
+            stage="dispatch",
+            source="coder CLI",
+            model_call=True,
+            deadline_s=7230,
+        )
+        from app.factory.build.roles_models import RoleResult
+
+        return RoleResult(ok=True, detail="cli still in-flight")
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.build.roles import ROLE_IMPLEMENTATIONS
+
+    root = Path(__file__).resolve().parents[3]
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = hanging_cli
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        tmp_path / "build",
+        roles=roles,
+        budget=BuildBudget(
+            max_rework=1, wall_clock_s=STAGE_1_S, phase_wall_clock_s=STAGE_1_S
+        ),
+        clock=clock,
+        auto_pilot=True,
+    )
+    outcome = runner.run()
+    inspects = [
+        e
+        for e in runner.ledger.events()
+        if (e.payload or {}).get("budget_inspect")
+    ]
+    assert inspects, "stage-1 inspect must run while CLI is in-flight"
+    snap = inspects[0].payload
+    assert snap["decision"] == "continue_stage_2"
+    assert snap.get("next_wall_s") == STAGE_2_S
+    assert "hard-stop" not in str(snap.get("reason") or "")
+    assert "not FACTORY_CODE_CLI_UNUSED" in str(snap.get("reason") or "")
+    assert runner.budget.wall_clock_s == STAGE_2_S
+    extends = [
+        e
+        for e in runner.ledger.events()
+        if (e.payload or {}).get("cli_wall_extended")
+    ]
+    assert extends, "Floor watchdog NOTE must follow the 30→45 bump"
+    assert extends[0].payload.get("model_call") is True
+    assert extends[0].payload.get("deadline_s")
+    # WRITER returned; later gates may fail. Do not SUCCESS a thin pilot.
+    assert runner.ledger.pilot_ready() is False
+    assert outcome.ok is False
+
+
+def test_cli_live_deadline_grows_with_inspect_bump_not_slash():
+    from app.factory.build.coder_session import _cli_live_deadline
+    from app.factory.build.roles_models import RoleContext
+
+    started = time.monotonic()
+    now = {"t": started}
+
+    def clock():
+        return now["t"]
+
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=None,  # type: ignore[arg-type]
+        blueprint=None,
+        plan=None,
+        deadline=started + 1800.0,
+        deadline_box={"at": started + 1800.0, "clock": clock},
+    )
+    first = _cli_live_deadline(ctx, 1785.0, started)
+    assert first == pytest.approx(started + 1785.0, abs=1.0)
+    ctx.deadline_box["at"] = started + 2700.0
+    now["t"] = started + 1805.0
+    bumped = _cli_live_deadline(ctx, 1785.0, started)
+    assert bumped > first
+    assert bumped == pytest.approx(now["t"] + (2700.0 - 1805.0) - 15.0, abs=1.0)

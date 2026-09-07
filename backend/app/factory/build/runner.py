@@ -328,6 +328,8 @@ class RoleRunner:
                 else min(deadline, phase_deadline)
             )
         self._deadline_box["at"] = deadline
+        self._deadline_box["clock"] = self.clock
+        self._deadline_box["inspect"] = self._maybe_stage_inspect
         ctx = RoleContext(
             role=role,
             workspace=ws,
@@ -549,10 +551,39 @@ class RoleRunner:
         new_wall = decided.get("next_wall_s")
         if new_wall:
             self._extend_wall(float(new_wall))
+            if decided.get("cli_in_flight"):
+                self._emit_cli_watchdog_extend(decided)
         elif decided.get("decision") == "hard_stop":
             self._stage_halt = decided
             self.state["stage_halt"] = decided
         return decided
+
+    def _emit_cli_watchdog_extend(self, decided: Mapping[str, Any]) -> None:
+        """Keep Floor Last:/watchdog aligned with the bumped CLI wall."""
+        boxed = self._deadline_box.get("at")
+        if boxed is None:
+            boxed = self._deadline
+        left = None
+        if boxed is not None:
+            left = float(boxed) - float(self.clock())
+        deadline_s = max(30.0, float(left) - 15.0) if left is not None else None
+        payload: Dict[str, Any] = {
+            "stage": "dispatch",
+            "source": "coder CLI",
+            "model_call": True,
+            "cli_wall_extended": True,
+        }
+        if deadline_s is not None:
+            payload["deadline_s"] = round(deadline_s, 1)
+        self.ledger.append(
+            EventKind.NOTE,
+            detail=(
+                "FACTORY_CODE_CLI still in-flight — staged wall extended "
+                f"to {decided.get('next_wall_s'):g}s; model call still "
+                "inside watchdog"
+            ),
+            payload=payload,
+        )
 
     def _grant_pilot_budget(self) -> None:
         """Keep rework room for the pilot cycle. Do not jump the wall to 2h.
@@ -670,6 +701,8 @@ class RoleRunner:
                     new_wall = snap.get("next_wall_s")
                     if new_wall:
                         self._extend_wall(float(new_wall))
+                        if snap.get("cli_in_flight"):
+                            self._emit_cli_watchdog_extend(snap)
                         deadline = self._deadline
                     else:
                         return self._finish(

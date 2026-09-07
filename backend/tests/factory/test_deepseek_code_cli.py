@@ -18,6 +18,7 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_CLI_FAILED,
     NAMED_BLOCKER_CLI_MODEL_DENIED,
+    NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
     NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
     NAMED_BLOCKER_CLI_UNUSED,
     brief_dispatch_enabled,
@@ -1081,3 +1082,62 @@ def test_thin_stub_blocked_after_stage_1_wall_when_cli_ready_zero_writes(
         elapsed_s=STAGE_1_S + 10.0,
         state={"brief_dispatch": {"via": "cli", "ok": True, "cli_authored_ids": []}},
     ) is not None
+
+
+def test_hung_killed_by_wall_is_not_unused_and_refuses_thin_success(
+    tmp_path, monkeypatch
+):
+    from app.factory.build.ledger import BuildLedger
+    from app.factory.build.runner import Outcome, RoleRunner
+    from app.factory.blueprint import load_blueprint
+
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    snap = {
+        "agent_written": 0,
+        "cli_or_llm_written": 0,
+        "templated": 4,
+        "stub_rate": 1.0,
+        "cli_attempted": True,
+        "cli_in_flight": False,
+        "cli_finished": True,
+    }
+    blocker = thin_stub_success_blocked(
+        snapshot=snap,
+        elapsed_s=2700.0,
+        state={
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": False,
+                "blocker": NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
+                "cli_authored_ids": [],
+            }
+        },
+    )
+    assert blocker
+    assert NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL in blocker
+    assert NAMED_BLOCKER_CLI_UNUSED not in blocker
+
+    out = tmp_path / "build"
+    out.mkdir(exist_ok=True)
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="vetcare-hub", inputs_hash="abc")
+    root = Path(__file__).resolve().parents[3]
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        out,
+        ledger=ledger,
+    )
+    runner._run_started = runner.clock()
+    runner.state["brief_dispatch"] = {
+        "via": "cli",
+        "ok": False,
+        "blocker": NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
+        "cli_authored_ids": [],
+    }
+    outcome = runner._finish(
+        Outcome.SUCCESS,
+        "CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+    )
+    assert outcome.ok is False
+    assert NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL in (outcome.detail or "")
+    assert "pilot_zip" not in (outcome.detail or "")

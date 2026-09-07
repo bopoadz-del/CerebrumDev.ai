@@ -1,9 +1,14 @@
 """Stop-and-inspect coder budget — staged walls, never a silent 2h burn.
 
-Default path: start a ~30 minute stage, hard-stop, inspect the ledger /
-workspace (which caps were written, contract misses, timeouts, stub rate,
-why ``pilot_ready`` is still false), and only then decide whether to
-continue with another gated brief at ~45 minutes.
+Default path: start a ~30 minute stage, inspect the ledger / workspace
+(which caps were written, contract misses, timeouts, stub rate, why
+``pilot_ready`` is still false), and only then decide whether to continue
+with another gated brief at ~45 minutes.
+
+An in-flight ``FACTORY_CODE_CLI`` model call that is still inside its
+watchdog is not ``FACTORY_CODE_CLI_UNUSED``. Stage-1 inspect bumps
+30→45 and waits; it must not kill the live CLI solely because
+wall≈1800s elapsed.
 
 A leftover ``FACTORY_BUILD_WALL_CLOCK_S=7200`` or an already-granted high
 wall is honoured (observe/log, do not slash). The default is not 2 hours.
@@ -161,6 +166,7 @@ def inspect_build(
     denom = authored + stubbed
     stub_rate = (stubbed / denom) if denom else 1.0 if not authored else 0.0
     cli_attempted = _cli_attempted(events, state)
+    flight = _cli_flight(events, state)
 
     pilot_ready = False
     try:
@@ -205,6 +211,10 @@ def inspect_build(
         "pilot_ready_blockers": blockers,
         "progressing": progressing,
         "cli_attempted": cli_attempted,
+        "cli_in_flight": flight["cli_in_flight"],
+        "cli_finished": flight["cli_finished"],
+        "model_call_deadline_s": flight["model_call_deadline_s"],
+        "cli_blocker": flight["cli_blocker"],
     }
     return snapshot
 
@@ -292,6 +302,31 @@ def inspect_decision(
     elif snapshot.get("pilot_ready"):
         decision = "already_pilot_ready"
         reason = f"inspect {stage}: pilot_ready already true"
+    elif snapshot.get("cli_in_flight"):
+        # sess_9d8e9a2dc01b40a1: UI still inside the CLI watchdog while
+        # stage_1 hard-stopped as FACTORY_CODE_CLI_UNUSED at ~1800s.
+        # Mid-run inspect may bump 30→45; it must not kill the live call.
+        watchdog = snapshot.get("model_call_deadline_s")
+        watchdog_bit = (
+            f"{watchdog:g}s watchdog" if watchdog else "watchdog still open"
+        )
+        if elapsed_s + 1 >= STAGE_1_S and current_wall_s <= STAGE_1_S + 1:
+            new_wall = STAGE_2_S
+            decision = "continue_stage_2"
+            reason = (
+                f"inspect {stage}: FACTORY_CODE_CLI in-flight "
+                f"({watchdog_bit}, written={snapshot.get('agent_written')}, "
+                f"stub_rate={snapshot.get('stub_rate')}) — bump wall "
+                f"{current_wall_s:g}s → {new_wall:g}s; not "
+                "FACTORY_CODE_CLI_UNUSED"
+            )
+        else:
+            decision = "await_cli"
+            reason = (
+                f"inspect {stage}: FACTORY_CODE_CLI in-flight "
+                f"({watchdog_bit}) — wait for the CLI to finish or fail; "
+                "not FACTORY_CODE_CLI_UNUSED"
+            )
     else:
         from app.factory.build.coder_session import thin_stub_success_blocked
 
@@ -302,7 +337,9 @@ def inspect_decision(
             ledger=None,
         )
         dispatch = dict((state or {}).get("brief_dispatch") or {})
-        cli_finished = str(dispatch.get("via") or "") == "cli"
+        cli_finished = bool(snapshot.get("cli_finished")) or (
+            str(dispatch.get("via") or "") == "cli"
+        )
         after_wall = float(elapsed_s) + 1.0 >= float(STAGE_1_S)
         if unused and not cli_finished and not after_wall:
             # Keep the staged wall alive — do not SUCCESS thin templates
@@ -360,6 +397,50 @@ def _cli_attempted(
         if source == "coder CLI":
             return True
     return False
+
+
+def _cli_flight(
+    events: Sequence[Any], state: Optional[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """Whether FACTORY_CODE_CLI is still inside its model-call watchdog.
+
+    ``brief_dispatch`` is written only after the session returns. A live
+    kimi/DeepSeek call therefore has the dispatch NOTE but no receipt.
+    """
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    dispatched = False
+    finished = False
+    deadline_s: Optional[float] = None
+    for event in events:
+        detail = str(getattr(event, "detail", "") or "")
+        payload = getattr(event, "payload", None) or {}
+        if "dispatching compiled brief via FACTORY_CODE_CLI" in detail:
+            dispatched = True
+        if "FACTORY_CODE_CLI session finished" in detail:
+            finished = True
+        if "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL" in detail:
+            finished = True
+        if "budget wall — stopping CLI session" in detail:
+            finished = True
+        if payload.get("model_call"):
+            raw = payload.get("deadline_s")
+            if raw is not None:
+                try:
+                    deadline_s = float(raw)
+                except (TypeError, ValueError):
+                    pass
+    via = str(dispatch.get("via") or "")
+    if via:
+        finished = True
+        if via == "cli":
+            dispatched = True
+    blocker = str(dispatch.get("blocker") or "") or None
+    return {
+        "cli_in_flight": bool(dispatched and not finished),
+        "cli_finished": bool(dispatched and finished),
+        "model_call_deadline_s": deadline_s,
+        "cli_blocker": blocker,
+    }
 
 
 def _provenance(workspace: Any) -> Dict[str, Any]:
