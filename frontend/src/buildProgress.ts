@@ -394,8 +394,15 @@ export function isBelowFullPilotAuthorshipFloor(
 
 function claimsStoreGreenPilot(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
+  if (
+    productSuiteFailed(build) ||
+    outcomeFailed(build) ||
+    build.state === 'failed' ||
+    build.state === 'stalled'
+  ) {
+    return false
+  }
   if (build.pilot_ready === true) return true
-  if (String(build.cycle || '').toLowerCase() === 'pilot') return true
   const product = String(build.level_grade?.three_gate?.PRODUCT || '')
   const store = String(build.level_grade?.three_gate?.STORE || '')
   return product === 'PASS' && store === 'PASS'
@@ -518,6 +525,23 @@ function refuseExportDetail(build: BuildStatus): string {
 export function withExportHonesty(build: BuildStatus | null): BuildStatus | null {
   if (!build) return build
   if (build.state === 'building' || build.state === 'not_started') return build
+  if (
+    build.state === 'succeeded' &&
+    isBelowFullPilotAuthorshipFloor(build) &&
+    claimsStoreGreenPilot(build)
+  ) {
+    return {
+      ...build,
+      pilot_ready: false,
+      level_grade: {
+        ...(build.level_grade ?? {}),
+        level: 'CODE_GREEN',
+        pilot_ready: false,
+        full_pilot: false,
+        founding_customer_ready: false,
+      },
+    }
+  }
   if (isAuthoritativePilotReady(build)) return build
   if (!shouldRefuseExport(build)) return build
   const grade = {
@@ -604,11 +628,14 @@ export function platformsLeadCopy(
   if (isUnreadableLedger(build)) {
     return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
+  if (
+    shouldRefuseExport(build) &&
+    !(isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build))
+  ) {
+    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+  }
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return 'Authorship is below the full-pilot floor. Download unavailable — a thin Store-green zip is refused.'
-  }
-  if (shouldRefuseExport(build)) {
-    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
   if (!build || build.state === 'building' || build.state === 'not_started' || build.state === 'unknown') {
     return 'The coding agent is writing this platform. Export stays closed until a pilot-ready run succeeds.'
@@ -702,6 +729,19 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   ghost: boolean
   title?: string
 } {
+  if (
+    isUnreadableLedger(build) ||
+    build?.state === 'failed' ||
+    productSuiteFailed(build) ||
+    outcomeFailed(build)
+  ) {
+    return {
+      label: 'Export (.zip) — pilot suite failed',
+      disabled: true,
+      ghost: true,
+      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+    }
+  }
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return {
       label: 'Export (.zip) — below full-pilot authorship floor',
@@ -711,7 +751,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
         'Need ≥5 agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused',
     }
   }
-  if (isUnreadableLedger(build) || build?.state === 'failed' || shouldRefuseExport(build)) {
+  if (shouldRefuseExport(build)) {
     return {
       label: 'Export (.zip) — pilot suite failed',
       disabled: true,
