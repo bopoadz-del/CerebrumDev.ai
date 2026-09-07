@@ -393,6 +393,7 @@ test('Floor ?session= deep-link selects that session — not list[0] Download', 
   })
 
   await page.goto(`/?session=${failedId}`)
+  await expect(page).toHaveURL(new RegExp(`/floor/${failedId}$`))
   await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
   await expect(page.getByText('session sess_d5789a9…')).toBeVisible()
   await expect(page.getByText('session sess_45729bb…')).toHaveCount(0)
@@ -400,6 +401,271 @@ test('Floor ?session= deep-link selects that session — not list[0] Download', 
   await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
   await expectNoGoldFinished(page)
   await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+})
+
+/** Live sess_cec9a1345b2049bb 1449 photograph — thin authorship, package 409. */
+const VETCARE_THIN_BUILD = {
+  state: 'succeeded',
+  outcome: 'SUCCESS',
+  cycle: 'pilot',
+  pilot_ready: false,
+  authorship: {
+    artifacts: 24,
+    agent_written: 6,
+    templated: 18,
+    action_py: 3,
+    agent_artifacts: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+    cli_authored_ids: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+  },
+  level_grade: {
+    level: 'CODE_GREEN',
+    founding_customer_ready: false,
+    pilot_ready: false,
+    full_pilot: false,
+    three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+  },
+}
+
+const PILOT_READY_BUILD = {
+  state: 'succeeded',
+  outcome: 'SUCCESS',
+  cycle: 'pilot',
+  pilot_ready: true,
+  authorship: {
+    artifacts: 24,
+    agent_written: 8,
+    templated: 16,
+    action_py: 8,
+    agent_artifacts: ['audit', 'workflow', 'team', 'document_engine', 'validation', 'notification', 'analytics', 'billing'],
+    cli_authored_ids: ['audit', 'workflow', 'team', 'document_engine', 'validation', 'notification', 'analytics', 'billing'],
+  },
+  level_grade: {
+    level: 'STORE_GREEN',
+    founding_customer_ready: false,
+    pilot_ready: true,
+    full_pilot: true,
+    three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+  },
+}
+
+test('legacy ?session= thin VetCare matches Floor honesty — no Finished+Download', async ({
+  page,
+}) => {
+  const thinId = 'sess_cec9a1345b2049bb'
+  const readyId = 'sess_45729bb0001'
+  await mockVerifiedFactory(page)
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        sessions: [{ session_id: readyId }, { session_id: thinId }],
+      }),
+    })
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route(`**/v1/sessions/${readyId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Steward Kit', vertical: 'steward' },
+        blueprint_approved: true,
+        generation: { product_id: 'steward', engine: 'runner', triggered_by: 'chat_llm' },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${readyId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, product_id: 'steward', build: PILOT_READY_BUILD }),
+    })
+  })
+  await page.route(`**/v1/sessions/${thinId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: {
+          product_name: 'VetCare Hub',
+          vertical: 'veterinary-care',
+          drafting_mode: 'architect_llm',
+        },
+        blueprint_approved: true,
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${thinId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: VETCARE_THIN_BUILD,
+      }),
+    })
+  })
+
+  await page.goto(`/?session=${thinId}`)
+  await expect(page).toHaveURL(new RegExp(`/floor/${thinId}$`))
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Code-cycle prototype ready' })).toBeVisible()
+  await expect(page.getByTestId('floor-prototype-pill')).toHaveText('Code-green (prototype)')
+  await expect(page.getByText('session sess_cec9a13…')).toBeVisible()
+  await expect(page.getByText('session sess_45729bb…')).toHaveCount(0)
+  await expect(page.getByText(/Code-cycle prototype — 6 artifacts; 18 templated/)).toBeVisible()
+  await expect(page.getByText(/Not yet pilot-ready/)).toBeVisible()
+  await expectNoGoldFinished(page)
+  await expect(page.getByText(/Store-green/)).toHaveCount(0)
+  await expect(page.getByText(/Founding-customer-ready/)).toHaveCount(0)
+  const refused = page.getByRole('button', {
+    name: 'Export (.zip) — below full-pilot authorship floor',
+  })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
+})
+
+test('legacy ?session= overclaim Store-green thin VetCare still refuses gold Download', async ({
+  page,
+}) => {
+  const thinId = 'sess_cec9a1345b2049bb'
+  const readyId = 'sess_45729bb0001'
+  await mockVerifiedFactory(page)
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        sessions: [{ session_id: readyId }, { session_id: thinId }],
+      }),
+    })
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route(`**/v1/sessions/${readyId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Steward Kit', vertical: 'steward' },
+        blueprint_approved: true,
+        generation: { product_id: 'steward', engine: 'runner', triggered_by: 'chat_llm' },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${readyId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, product_id: 'steward', build: PILOT_READY_BUILD }),
+    })
+  })
+  await page.route(`**/v1/sessions/${thinId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: {
+          product_name: 'VetCare Hub',
+          vertical: 'veterinary-care',
+          drafting_mode: 'architect_llm',
+        },
+        blueprint_approved: true,
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${thinId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          ...VETCARE_THIN_BUILD,
+          // Dishonest photograph: Finished / Store-green / Download enabled
+          // while package 409s. Authorship floor must still refuse.
+          pilot_ready: true,
+          level_grade: {
+            ...VETCARE_THIN_BUILD.level_grade,
+            level: 'STORE_GREEN',
+            pilot_ready: true,
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto(`/?session=${thinId}`)
+  await expect(page).toHaveURL(new RegExp(`/floor/${thinId}$`))
+  await expect(page.getByRole('heading', { name: 'Code-cycle prototype ready' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByTestId('floor-prototype-pill')).toHaveText('Code-green (prototype)')
+  await expectNoGoldFinished(page)
+  await expect(page.getByText(/Store-green/)).toHaveCount(0)
+  const refused = page.getByRole('button', {
+    name: 'Export (.zip) — below full-pilot authorship floor',
+  })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+})
+
+test('legacy ?session= pilot-ready kit still offers Download on the canonical Floor', async ({
+  page,
+}) => {
+  const readyId = 'sess_45729bb0001'
+  await mockVerifiedFactory(page)
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ sessions: [{ session_id: readyId }] }),
+    })
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route(`**/v1/sessions/${readyId}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'Steward Kit', vertical: 'steward' },
+        blueprint_approved: true,
+        generation: { product_id: 'steward', engine: 'runner', triggered_by: 'chat_llm' },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${readyId}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, product_id: 'steward', build: PILOT_READY_BUILD }),
+    })
+  })
+
+  await page.goto(`/?session=${readyId}`)
+  await expect(page).toHaveURL(new RegExp(`/floor/${readyId}$`))
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible()
+  await expect(page.getByTestId('floor-pilot-ready-pill')).toHaveText('Store-green')
+  const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
+  await expect(download).toBeVisible()
+  await expect(download).toBeEnabled()
 })
 
 test('WRITER session A bound → /floor/{B} hydrates finished B, not A', async ({ page }) => {

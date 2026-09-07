@@ -657,6 +657,55 @@ describe('build progress copy', () => {
     expect(isPilotZipReady(thinKeep)).toBe(false)
   })
 
+  it('sess_cec9a 1449 photograph: 6 written / 18 templated / action_py=3 refuses Store-green Download', () => {
+    // Live 2026-09-07: /floor/sess_cec9a1345b2049bb is honest (Code-green,
+    // export refused). Legacy ?session= painted Finished / Store-green /
+    // Download enabled from the same API truth (CODE_GREEN, pilot_ready=false,
+    // package 409 FACTORY_CODE_CLI_THIN_AUTHORSHIP).
+    const sessCec9aPhoto: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      cycle: 'pilot',
+      pilot_ready: false,
+      authorship: {
+        artifacts: 24,
+        agent_written: 6,
+        templated: 18,
+        action_py: 3,
+        agent_artifacts: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+        cli_authored_ids: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+      },
+      level_grade: {
+        level: 'CODE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: false,
+        full_pilot: false,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(fullPilotAuthorshipCount(sessCec9aPhoto)).toBe(3)
+    expect(isBelowFullPilotAuthorshipFloor(sessCec9aPhoto)).toBe(true)
+    expect(honestLevel(sessCec9aPhoto)).toBe('CODE_GREEN')
+    expect(isPilotZipReady(sessCec9aPhoto)).toBe(false)
+    expect(shouldRefuseExport(sessCec9aPhoto)).toBe(true)
+    expect(exportAffordance(sessCec9aPhoto)).toMatchObject({
+      label: 'Export (.zip) — below full-pilot authorship floor',
+      disabled: true,
+      ghost: true,
+    })
+    expect(
+      formatFinishedAuthorship(sessCec9aPhoto.authorship, {
+        pilotReady: isPilotZipReady(sessCec9aPhoto),
+        demoteFounding: shouldDemoteFounding(sessCec9aPhoto),
+      }),
+    ).toMatch(/Code-cycle prototype — 6 artifacts; 18 templated/)
+    expect(honestLevel({ ...sessCec9aPhoto, pilot_ready: true, level_grade: {
+      ...sessCec9aPhoto.level_grade,
+      level: 'STORE_GREEN',
+      pilot_ready: true,
+    }})).toBe('CODE_GREEN')
+  })
+
   it('VetCare action_py=3 is below the full-pilot floor', () => {
     const vetCare1206: BuildStatus = {
       state: 'succeeded',
