@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
+from app.factory.build.authorship import full_pilot_authorship_needles
 from app.factory.build.persist_accept import persist_accept_needles
 from app.factory.build.reuse_accept import reuse_accept_needles
 from app.factory.build.workflow_accept import (
@@ -83,6 +84,9 @@ EXECUTABLE_ACCEPTANCE = (
     ("pilot_ready", "ledger"),
     ("ledger records", "ledger"),
     ("harness", "harness"),
+    ("full-pilot authorship", "full_pilot_authorship"),
+    ("cli_authored_ids", "full_pilot_authorship"),
+    ("FACTORY_CODE_CLI_THIN_AUTHORSHIP", "full_pilot_authorship"),
 )
 
 #: C-BRIEF packaging contract. Dropping these lets Kimi rewrite
@@ -186,6 +190,9 @@ TEMPLATE_STATIC_NEEDLES = (
     "ledger records",
     "the harness",
     "thin success",
+    "full-pilot authorship",
+    "cli_authored_ids",
+    "factory_code_cli_thin_authorship",
     "decorative tests",
     "reserved-keyword",
     "unlisted blocks",
@@ -412,6 +419,18 @@ def lint_brief(
             "brief dropped PRODUCT one-record persist contract "
             "(alembic entity / store.save): "
             + ", ".join(missing_persist[:4])
+        )
+    floor_needles = full_pilot_authorship_needles()
+    missing_floor = [
+        needle
+        for needle in floor_needles
+        if needle.lower() not in text.lower()
+    ]
+    if missing_floor:
+        errors.append(
+            "brief dropped launching-ready full-pilot authorship floor "
+            "(≥N agent-written app/actions/*.py / cli_authored_ids): "
+            + ", ".join(missing_floor[:4])
         )
     reuse_needles = reuse_accept_needles()
     missing_reuse = [

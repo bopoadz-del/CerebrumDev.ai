@@ -13,14 +13,22 @@ from pathlib import Path
 from app.core.session_store import create_session, get_session, update_session
 from app.factory.build.authorship import (
     FULL_PILOT_MIN_AUTHORED_ACTIONS,
+    full_pilot_authorship_acceptance_line,
+    full_pilot_authorship_forbidden_lines,
     full_pilot_authorship_from,
+    full_pilot_authorship_needles,
+    full_pilot_authorship_rules_text,
     is_action_artifact_id,
     thin_store_green_export_blocker,
 )
+from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
+from app.factory.build.brief_compiler import compile_brief
+from app.factory.build.brief_lint import lint_brief
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.level_grade import Level, attach_level_grade
 from app.factory.build_jobs import _authorship, build_status
+from app.factory.product_architect import plan_blueprint
 from app.main import app
 from fastapi.testclient import TestClient
 from tests.factory.test_level_grade import _full_repo
@@ -41,6 +49,29 @@ def test_action_artifact_id_skips_models_routes_and_extras():
 def test_floor_constant_is_five():
     """Mutation: a silent drop to 0/1 would re-open thin Store-green."""
     assert FULL_PILOT_MIN_AUTHORED_ACTIONS == 5
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    assert f"≥{n}" in full_pilot_authorship_rules_text()
+    assert f"≥{n}" in full_pilot_authorship_acceptance_line()
+    assert f"<{n}" in full_pilot_authorship_forbidden_lines()
+    assert f"≥{n}" in full_pilot_authorship_needles()
+
+
+def test_compiled_cbrief_states_the_same_floor_constant():
+    """Coder brief must name the #387 refuse — not just thin SUCCESS prose."""
+    root = Path(__file__).resolve().parents[3]
+    compiled = compile_brief(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        plan_blueprint(load_blueprint(root / "blueprints/examples/runner_smoke.yaml")),
+    )
+    text = compiled.text
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    assert full_pilot_authorship_rules_text() in text
+    assert full_pilot_authorship_acceptance_line() in text
+    assert full_pilot_authorship_forbidden_lines() in text
+    for needle in full_pilot_authorship_needles():
+        assert needle in text
+    assert f"≥{n}" in text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
 def test_vetcare_three_actions_are_below_floor():

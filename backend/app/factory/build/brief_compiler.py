@@ -21,6 +21,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 import re
 
+from app.factory.build.authorship import (
+    full_pilot_authorship_acceptance_line,
+    full_pilot_authorship_forbidden_lines,
+    full_pilot_authorship_rules_text,
+)
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
@@ -544,7 +549,8 @@ def render_slot_bodies(
         "constructed block inputs, BLOCK_DEFAULT_ACTIONS, prepared "
         "event_bus steps). Do not leave deterministic templates. Do not "
         "skip the CLI because inventory_gaps is empty. Do not re-implement "
-        "a verified Store block from scratch — bind the registry-verified ids.",
+        "a verified Store block from scratch — bind the registry-verified ids. "
+        + full_pilot_authorship_rules_text(),
         "Every verified REUSE row must emit a loadable "
         "app/actions/{capability_id}.py (factory persist / event_bus "
         "envelope — the registry-verified handler source). A REUSE claim "
@@ -576,6 +582,8 @@ def render_slot_bodies(
         workflow_accept_rules_text(
             capability_ids=event_bus_workflow_capability_ids(inventory)
         ),
+        "",
+        full_pilot_authorship_rules_text(),
         "",
         "Three tests per block are already owned by the harness (TESTER is not an LLM role).",
         "Scope READS / WRITES / NEVER explicitly in each handler you author.",
@@ -647,9 +655,11 @@ def render_slot_bodies(
         f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:product_gate]",
         f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
         "- ledger records pilot_ready=true  [check:ledger]",
+        full_pilot_authorship_acceptance_line(),
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
-        "Do not treat thin SUCCESS / templates-only / stubbed capabilities as done.",
+        "Do not treat thin SUCCESS / templates-only / stubbed capabilities as done. "
+        + full_pilot_authorship_rules_text(),
         "",
         "Block-level acceptance (from block.json, report-only until flip):",
         "\n".join(
@@ -661,6 +671,7 @@ def render_slot_bodies(
 
     forbidden = _section_lines(
         "- thin SUCCESS (code-cycle green, pilot_ready=false)",
+        full_pilot_authorship_forbidden_lines(),
         "- decorative tests",
         "- reserved-keyword fields (action inside the payload dict, id as a domain field)",
         "- unlisted blocks (ids not in the Store registry / inventory)",
