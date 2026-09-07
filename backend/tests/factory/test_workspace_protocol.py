@@ -117,7 +117,7 @@ def test_emit_writer_artifacts_role_workspace(tmp_path):
     store = dest / "app" / "store.py"
     assert store.is_file()
     assert "customer_records" in store.read_text(encoding="utf-8")
-    assert "customer_records" in ws.written
+    assert "app/store.py" in ws.written
 
 
 def test_emit_writer_artifacts_path_root(tmp_path):
