@@ -17,6 +17,7 @@ from app.factory.build.coder_session import (
     DEFAULT_KIMI_CODE_MODEL,
     DEFAULT_KIMI_CODE_MODEL_ID,
     KEEP_PATH_FACTORY_GROUNDED_REUSE,
+    should_factory_grounded_generate_persist,
     should_factory_llm_generate_gaps,
     should_keep_factory_grounded_reuse,
     NAMED_BLOCKER_CLI,
@@ -49,6 +50,7 @@ from app.factory.build.coder_session import (
     dispatch_compiled_brief,
     ensure_code_cli_credentials,
     harvest_cli_artifacts,
+    harvest_unkeepable_event_bus_ids,
     http_oneshot_enabled,
     inventory_gap_ids,
     probe_code_cli,
@@ -630,6 +632,9 @@ def test_harvest_does_not_keep_unprepared_event_bus_forward(tmp_path):
     )
     assert kept == []
     assert specs == {}
+    assert harvest_unkeepable_event_bus_ids(
+        root, ["appointment_scheduling", "reminders_notifications"]
+    ) == ["appointment_scheduling", "reminders_notifications"]
 
 
 _FACTORY_WRAP_UNPREPARED = (
@@ -1607,6 +1612,9 @@ def test_should_factory_llm_generate_gaps_only_on_named_cli_miss(monkeypatch):
     assert inventory_gap_ids(empty) == []
     assert should_factory_llm_generate_gaps(empty, billing) is False
     assert should_keep_factory_grounded_reuse(empty, billing) is True
+    assert should_factory_grounded_generate_persist(compiled, ok) is True
+    assert should_factory_grounded_generate_persist(empty, ok) is False
+    assert should_factory_grounded_generate_persist(compiled, billing) is False
 
 
 def test_mutation_coder_session_never_writes_raw_ledger_jsonl():
