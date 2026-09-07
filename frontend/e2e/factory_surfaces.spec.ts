@@ -402,6 +402,116 @@ test('Floor ?session= deep-link selects that session — not list[0] Download', 
   await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
 })
 
+test('WRITER session A bound → /floor/{B} hydrates finished B, not A', async ({ page }) => {
+  const writerA = 'sess_d10dfc2890f7487b'
+  const finishedB = 'sess_cec9a1345b2049bb'
+  await mockVerifiedFactory(page)
+  await page.unroute(/\/v1\/sessions\/?$/)
+  await page.route(/\/v1\/sessions\/?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        sessions: [{ session_id: writerA }, { session_id: finishedB }],
+      }),
+    })
+  })
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route(`**/v1/sessions/${writerA}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: {
+          product_name: 'InsureDistribute Platform',
+          vertical: 'insurance-distribution',
+        },
+        blueprint_approved: true,
+        generation: {
+          product_id: 'insurance-distribution',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${writerA}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'insurance-distribution',
+        build: {
+          state: 'building',
+          current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+          phase_index: 3,
+          phase_total: 5,
+          last_event: 'wrote handler intake',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${finishedB}/product`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: {
+          product_name: 'VetCare',
+          vertical: 'veterinary-care',
+          drafting_mode: 'architect_llm',
+        },
+        blueprint_approved: true,
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          triggered_by: 'chat_llm',
+        },
+      }),
+    })
+  })
+  await page.route(`**/v1/sessions/${finishedB}/product/build-status`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'STORE_GREEN',
+            founding_customer_ready: false,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto(`/floor/${writerA}`)
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('session sess_d10dfc2…')).toBeVisible()
+  await expect(page.getByText(/WRITER 3\/5/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
+
+  await page.evaluate((id) => {
+    window.history.pushState(null, '', `/floor/${id}`)
+  }, finishedB)
+
+  await expect(page.getByText('session sess_cec9a13…')).toBeVisible()
+  await expect(page.getByText('session sess_d10dfc2…')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible()
+  await expect(page.getByTestId('floor-pilot-ready-pill')).toContainText('Store-green')
+  await expect(page.getByText(/WRITER 3\/5/)).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toHaveCount(0)
+})
+
 test('Floor finished state offers the zip download on the generate surface', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')
