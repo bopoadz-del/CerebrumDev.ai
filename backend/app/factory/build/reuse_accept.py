@@ -79,6 +79,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.persist_accept import persist_handler_rel, persist_workspace_root
 from app.factory.build.product_gate import GATE_SCOPES
+from app.factory.build.workspace import supports_relpath_io
 from app.factory.build.reuse_lookup import (
     load_local_block_json,
     local_block_json_candidates,
@@ -335,7 +336,10 @@ def harvest_block_default_action(
     if not bid:
         return None
     candidates = _harvest_candidate_ids(bid)
-    if workspace is not None and getattr(workspace, "exists", None):
+    # Path.has exists(), but exists(rel) is the RoleWorkspace protocol.
+    # getattr(..., "exists") treated Path as that duck-type and crashed
+    # (CEREBRUMDEV-BACKEND-W). Path roots fall through to _workspace_roots.
+    if supports_relpath_io(workspace):
         for cand in candidates:
             meta_rel = Path("vendor") / "blocks" / cand / "block.json"
             if workspace.exists(meta_rel):

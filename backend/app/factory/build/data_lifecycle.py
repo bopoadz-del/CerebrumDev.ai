@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from app.factory.build.workspace import write_workspace_text
+
 # anyio / Starlette default limiter for FastAPI sync def endpoints.
 FASTAPI_SYNC_THREADPOOL = 40
 SQLITE_BUSY_TIMEOUT_MS = 30_000
@@ -923,23 +925,37 @@ def test_retention_prunes_old_backups(isolated_db):
 
 
 def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> None:
-    """Write persistence, Alembic, backup, entrypoint, and the SPOF doc."""
-    workspace.write_text(Path("app") / "store.py", render_store(specs))
-    workspace.write_text(Path("app") / "migrations.py", render_migrations())
-    workspace.write_text(Path("app") / "backup.py", render_backup())
-    workspace.write_text("alembic.ini", render_alembic_ini())
-    workspace.write_text(Path("alembic") / "env.py", render_alembic_env())
-    workspace.write_text(Path("alembic") / "script.py.mako", render_script_mako())
-    workspace.write_text(
+    """Write persistence, Alembic, backup, entrypoint, and the SPOF doc.
+
+    Floor WRITER passes :class:`~app.factory.build.workspace.RoleWorkspace`
+    (``write_text(rel, content)``). Path roots and incomplete selfcheck
+    handles fall back through :func:`write_workspace_text`
+    (CEREBRUMDEV-BACKEND-V).
+    """
+    write_workspace_text(workspace, Path("app") / "store.py", render_store(specs))
+    write_workspace_text(workspace, Path("app") / "migrations.py", render_migrations())
+    write_workspace_text(workspace, Path("app") / "backup.py", render_backup())
+    write_workspace_text(workspace, "alembic.ini", render_alembic_ini())
+    write_workspace_text(workspace, Path("alembic") / "env.py", render_alembic_env())
+    write_workspace_text(
+        workspace, Path("alembic") / "script.py.mako", render_script_mako()
+    )
+    write_workspace_text(
+        workspace,
         Path("alembic") / "versions" / "0001_baseline.py",
         render_revision_0001(specs),
     )
-    workspace.write_text(
+    write_workspace_text(
+        workspace,
         Path("alembic") / "versions" / "0002_lifecycle_audit.py",
         render_revision_0002(),
     )
-    workspace.write_text(Path("docs") / "data_lifecycle.json", render_lifecycle_doc())
-    workspace.write_text(Path("scripts") / "entrypoint.sh", render_entrypoint())
+    write_workspace_text(
+        workspace, Path("docs") / "data_lifecycle.json", render_lifecycle_doc()
+    )
+    write_workspace_text(
+        workspace, Path("scripts") / "entrypoint.sh", render_entrypoint()
+    )
 
 
 def assert_no_connect_time_ddl(store_source: str) -> None:
