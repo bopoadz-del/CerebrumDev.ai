@@ -475,6 +475,14 @@ class RoleRunner:
                 and outcome is Outcome.SUCCESS,
             },
         )
+        if (
+            outcome is Outcome.SUCCESS
+            and getattr(self, "cycle", "code") == "pilot"
+        ):
+            try:
+                self._stage_inspect(reason="pilot_closed", stage="pilot_close")
+            except Exception:  # noqa: BLE001 — close inspect must not fail SUCCESS
+                logger.exception("factory closing inspect after Store-green SUCCESS failed")
         return BuildOutcome(
             outcome=outcome,
             detail=detail,

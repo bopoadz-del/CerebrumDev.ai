@@ -24,7 +24,9 @@ from app.factory.build.budget_inspect import (
     _is_real_timeout,
     inspect_build,
     inspect_decision,
+    reconcile_budget_inspect_after_success,
 )
+from app.factory.build_jobs import build_status
 from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
     DispatchResult,
@@ -334,3 +336,126 @@ def test_auto_pilot_refuses_code_cycle_success_lie(tmp_path):
     assert terminal is not None
     assert terminal.kind is EventKind.RUN_FAILED
     assert runner.ledger.pilot_ready() is False
+
+
+def test_pilot_open_never_hard_stops_even_on_thin_unused():
+    snap = {
+        "agent_written": 0,
+        "templated": 4,
+        "stub_rate": 1.0,
+        "timeouts": [],
+        "contract_misses": [],
+        "pilot_ready": False,
+        "pilot_ready_blockers": ["pilot_ready is false"],
+        "progressing": False,
+        "cli_in_flight": False,
+        "cli_finished": False,
+        "cli_attempted": False,
+    }
+    decided = inspect_decision(
+        elapsed_s=STAGE_1_S,
+        current_wall_s=STAGE_1_S,
+        snapshot=snap,
+        stage="pilot_open",
+    )
+    assert decided["decision"] != "hard_stop"
+    assert decided["decision"] == "observe_pilot_open"
+    assert "Not a halt" in decided["reason"]
+    assert decided.get("next_wall_s") is None
+
+
+def test_inspect_file_templated_is_not_capability_templated(tmp_path):
+    ledger = _ledger_with_written(tmp_path, timeouts_noise=False)
+    docs = tmp_path / "build" / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    sources = {cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS}
+    for i in range(29):
+        sources[f"template_{i}.py"] = "deterministic contract template"
+    (docs / "build_provenance.json").write_text(
+        json.dumps({"artifact_sources": sources}), encoding="utf-8"
+    )
+    snap = inspect_build(ledger, tmp_path / "build")
+    assert snap["agent_written"] == 7
+    assert snap["templated"] == 0
+    assert snap["templated_caps"] == 0
+    assert snap["authored_files"] == 7
+    assert snap["templated_files"] == 29
+    assert snap["artifact_files"] == 36
+
+
+def test_stale_hard_stop_inspect_does_not_poison_store_green_status(tmp_path):
+    ledger = _ledger_with_written(tmp_path)
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+        payload={"outcome": "SUCCESS", "cycle": "pilot", "pilot_ready": True},
+    )
+    assert ledger.pilot_ready() is True
+    stale = {
+        "decision": "hard_stop",
+        "pilot_ready": False,
+        "agent_written": 7,
+        "templated": 0,
+        "timeouts": ["noise"] * 7,
+        "reason": "inspect pilot_open: hard-stop — written=7, timeouts=7",
+    }
+    reconciled = reconcile_budget_inspect_after_success(
+        stale, pilot_ready=True
+    )
+    assert reconciled["pilot_ready"] is True
+    assert reconciled["decision"] == "superseded_by_pilot_success"
+    assert reconciled["mid_run_decision"] == "hard_stop"
+    assert reconciled["superseded_by"] == "RUN_SUCCEEDED"
+
+    status = build_status(tmp_path / "build")
+    assert status["state"] == "succeeded"
+    assert status["pilot_ready"] is True
+    inspect = status.get("budget_inspect") or {}
+    assert inspect.get("decision") != "hard_stop"
+    assert inspect.get("pilot_ready") is True
+    assert inspect.get("superseded_by") == "RUN_SUCCEEDED"
+
+
+def test_pilot_success_closing_inspect_matches_ledger(tmp_path):
+    runner = RoleRunner(
+        load_blueprint(SMOKE),
+        tmp_path / "build",
+        auto_pilot=False,
+    )
+    runner._run_started = runner.clock()
+    runner.cycle = "pilot"
+    runner.state["brief_dispatch"] = {
+        "via": "cli",
+        "ok": True,
+        "cli_authored_ids": list(INSURE_CAPS),
+    }
+    for cid in INSURE_CAPS:
+        runner.ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.WRITER,
+            detail=f"kept CLI handler {cid} (coder CLI (/usr/local/bin/kimi))",
+            payload={
+                "stage": "handlers",
+                "capability": cid,
+                "source": "coder CLI (/usr/local/bin/kimi)",
+            },
+        )
+    outcome = runner._finish(
+        Outcome.SUCCESS,
+        "CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+    )
+    assert outcome.ok is True
+    assert runner.ledger.pilot_ready() is True
+    inspects = [
+        e
+        for e in runner.ledger.events()
+        if (e.payload or {}).get("budget_inspect")
+    ]
+    assert inspects
+    last = inspects[-1].payload
+    assert last.get("stage") == "pilot_close"
+    assert last.get("pilot_ready") is True
+    assert last.get("decision") == "already_pilot_ready"
+    status = build_status(tmp_path / "build")
+    assert status["pilot_ready"] is True
+    assert status["budget_inspect"]["pilot_ready"] is True
