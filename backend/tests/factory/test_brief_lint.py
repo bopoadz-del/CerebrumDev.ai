@@ -335,6 +335,28 @@ def test_mutation_drops_workflow_result_key_needles():
     assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
 
 
+def test_mutation_drops_capture_reuse_accept_needles():
+    """sess_e8e4ab66e6dd4765: dropping capture harvest needle must lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+    from tests.factory.test_cbrief_reuse_schema_accept import (
+        STORE_IDS,
+        _VetCare,
+        _vetcare_reuse_plan,
+    )
+
+    compiled = compile_brief(
+        _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("capture", "ingest_block")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any(
+        "REUSE schema-sample accept contract" in e or "capture" in e
+        for e in result.errors
+    )
+
+
 def test_mutation_drops_vector_search_reuse_accept_needles():
     """sess_8259e197749b4441: dropping vector_search harvest needle must lint-fail."""
     from app.factory.build.brief_compiler import compile_brief

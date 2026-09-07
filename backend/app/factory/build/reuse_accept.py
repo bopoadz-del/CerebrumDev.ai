@@ -67,6 +67,20 @@ missed a Store-ctx target (``for name['result'] in …``). Store workflow
 reads stayed as ``['result']`` and wrapped KeyError as RuntimeError.
 Fail-closed must skip that write and still rewrite reads. prepare /
 keep-path emit must still attach input['result']. Do not claim pilot_zip.
+
+Live sess_e8e4ab66e6dd4765 (tip 3b9261b, estate-operations / Private
+Estate Steward Platform): WRITER stopped at [check:reuse_accept]:
+
+    maintenance_and_work_order_management: capture: reuse/accept miss —
+      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
+    security_and_access_logging: capture: reuse/accept miss —
+
+Registry-verified Cerebrum-Blocks ``capture/block.json`` has no
+``inputs[].name == action`` (Store ``CaptureBlock.process`` defaults
+``params.action`` to ``capture``). Factory vendor_blocks_mirror also
+lacked that harvest, and the documented Store map omitted the id.
+Same class as #348 ``formula_executor`` / #351 ``vector_search``.
+Do not claim pilot_zip.
 """
 
 from __future__ import annotations
@@ -137,9 +151,14 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
 #: ``vector_search`` is the sess_8259e197749b4441 miss: registry
 #: block.json has no action input; Store ``process()`` defaults
 #: ``params.operation`` to ``search``.
+#: ``capture`` is the sess_e8e4ab66e6dd4765 miss: registry block.json
+#: has no action input; Store ``CaptureBlock.process`` defaults
+#: ``params.action`` to ``capture``. Harvest aliases ``capture_v2``.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
     "audit": "log",
+    "capture": "capture",
+    "capture_v2": "capture",
     "dashboard": "render",
     "database": "query",
     "document_engine": "parse",
@@ -566,6 +585,8 @@ def reuse_accept_rules_text(
             "(and formula_executor_v2) must harvest a keyword action.",
             "vector_search must harvest a keyword action (Store operation",
             "default search) even when registry block.json has no action",
+            "input. capture must harvest a keyword action (Store process",
+            "default capture) even when registry block.json has no action",
             "input. Pass action= as a keyword — never inside the payload dict.",
             "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
             "",
@@ -577,6 +598,9 @@ def reuse_accept_rules_text(
             "formula_executor — a missing default is reuse/accept miss.",
             "patient_records_management binds vector_search — a missing",
             "default is the sess_8259e197749b4441 reuse/accept miss.",
+            "estate-operations maintenance_and_work_order_management /",
+            "security_and_access_logging bind capture — a missing default",
+            "is the sess_e8e4ab66e6dd4765 reuse/accept miss.",
             f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
             "three PRODUCT reworks on Unknown action.",
         ]
@@ -621,7 +645,7 @@ def reuse_accept_brief_contract() -> str:
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
         "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map (including formula_executor and vector_search) and pass action= "
+        "map (including formula_executor, vector_search, and capture) and pass action= "
         "as a keyword (action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
@@ -649,6 +673,7 @@ def reuse_accept_needles() -> Sequence[str]:
         LIVE_VETCARE_REUSE_ACCEPT_CAPS[0],
         "formula_executor",
         "vector_search",
+        "capture",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
         PRODUCT_ASSIGN_TO_CALL_HALT,
