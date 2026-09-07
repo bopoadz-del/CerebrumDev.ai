@@ -12,6 +12,8 @@ import {
   signOut,
 } from '../api/factory'
 import App, {
+  canonicalSessionLocation,
+  isSessionSurfacePath,
   pathFromView,
   pathSessionWins,
   requestedSessionFromLocation,
@@ -408,6 +410,8 @@ describe('App boot', () => {
     ])
     render(<App />)
     expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/floor/sess_d5789a91d53b4bae')
+    expect(window.location.search).toBe('')
     expect(screen.getByText(/session sess_d5789a9/)).toBeInTheDocument()
     expect(screen.queryByText(/session sess_45729bb/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
@@ -430,7 +434,97 @@ describe('App boot', () => {
     expect(await screen.findByRole('heading', { name: 'Your Platforms' })).toBeInTheDocument()
     expect(screen.getByText(/session sess_d5789a9/)).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
-    expect(window.location.pathname).toBe('/platforms')
+    expect(window.location.pathname).toBe('/platforms/sess_d5789a91d53b4bae')
+    expect(window.location.search).toBe('')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('?session= thin VetCare never claims Finished + Download — same honesty as /floor/{id}', async () => {
+    const thinId = 'sess_cec9a1345b2049bb'
+    const readyId = 'sess_45729bb0001'
+    window.history.pushState(null, '', `/?session=${thinId}`)
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: readyId }, { session_id: thinId }])
+    productGetMock.mockImplementation(async (sid: string) => {
+      if (sid === thinId) {
+        return {
+          blueprint: {
+            product_name: 'VetCare Hub',
+            vertical: 'veterinary-care',
+            drafting_mode: 'architect_llm',
+          },
+          blueprint_approved: true,
+          generation: {
+            engine: 'runner',
+            product_id: 'veterinary-care',
+            triggered_by: 'chat_llm',
+          },
+        }
+      }
+      return {
+        blueprint: { product_name: 'Pilot Ready Kit', vertical: 'steward' },
+        blueprint_approved: true,
+        generation: { engine: 'runner', product_id: 'steward' },
+      }
+    })
+    watchBuildMock.mockImplementation(async (sid: string, onProgress: (s: object) => void) => {
+      if (sid === thinId) {
+        onProgress({
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          cycle: 'pilot',
+          pilot_ready: false,
+          authorship: {
+            artifacts: 24,
+            agent_written: 6,
+            templated: 18,
+            action_py: 3,
+            agent_artifacts: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+            cli_authored_ids: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+          },
+          level_grade: {
+            level: 'CODE_GREEN',
+            pilot_ready: false,
+            founding_customer_ready: false,
+            full_pilot: false,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        })
+        return
+      }
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 24, agent_written: 8, templated: 16, action_py: 8 },
+        level_grade: {
+          level: 'STORE_GREEN',
+          founding_customer_ready: false,
+          pilot_ready: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe(`/floor/${thinId}`)
+    expect(window.location.search).toBe('')
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByText(/session sess_cec9a13/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_45729bb/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' }),
+    ).toBeDisabled()
     expect(createMock).not.toHaveBeenCalled()
   })
 
@@ -836,6 +930,40 @@ describe('pathSessionWins', () => {
     )
     expect(pathSessionWins(null, 'sess_d10dfc2890f7487b')).toBe('sess_d10dfc2890f7487b')
     expect(pathSessionWins('sess_cec9a1345b2049bb', null)).toBe('sess_cec9a1345b2049bb')
+  })
+})
+
+describe('canonicalSessionLocation', () => {
+  it('rewrites legacy ?session= onto /floor/{id} and /platforms/{id}', () => {
+    expect(canonicalSessionLocation('/', '?session=sess_cec9a1345b2049bb')).toBe(
+      '/floor/sess_cec9a1345b2049bb',
+    )
+    expect(canonicalSessionLocation('/floor', '?session=sess_cec9a1345b2049bb')).toBe(
+      '/floor/sess_cec9a1345b2049bb',
+    )
+    expect(canonicalSessionLocation('/platforms', '?session=sess_fe80bf177a8545e6')).toBe(
+      '/platforms/sess_fe80bf177a8545e6',
+    )
+    expect(canonicalSessionLocation('/', '?session=sess_cec9a1345b2049bb&token=x')).toBe(
+      '/floor/sess_cec9a1345b2049bb?token=x',
+    )
+  })
+
+  it('drops a stale ?session= when the path already names the occupant', () => {
+    expect(
+      canonicalSessionLocation(
+        '/floor/sess_fe80bf177a8545e6',
+        '?session=sess_cec9a13active1',
+      ),
+    ).toBe('/floor/sess_fe80bf177a8545e6')
+    expect(canonicalSessionLocation('/floor/sess_fe80bf177a8545e6', '')).toBeNull()
+    expect(canonicalSessionLocation('/', '')).toBeNull()
+  })
+
+  it('does not rewrite auth or account URLs', () => {
+    expect(isSessionSurfacePath('/login')).toBe(false)
+    expect(canonicalSessionLocation('/login', '?session=sess_cec9a1345b2049bb')).toBeNull()
+    expect(canonicalSessionLocation('/account', '?session=sess_cec9a1345b2049bb')).toBeNull()
   })
 })
 

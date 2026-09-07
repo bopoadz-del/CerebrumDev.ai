@@ -64,6 +64,56 @@ export function requestedSessionFromLocation(pathname: string, search: string): 
   return sessionIdFromPath(pathname) ?? sessionQueryParam(search)
 }
 
+/** Floor / Platforms surfaces that may carry a session occupant. */
+export function isSessionSurfacePath(pathname: string): boolean {
+  return (
+    pathname === '/' ||
+    pathname === '/floor' ||
+    pathname === '/platforms' ||
+    pathname.startsWith('/floor/') ||
+    pathname.startsWith('/platforms/')
+  )
+}
+
+/**
+ * Durable Floor / Platforms URLs are `/floor/{id}` and `/platforms/{id}`.
+ * Legacy `?session=` on `/` is a second surface that can diverge from
+ * canonical honesty — rewrite it before first paint.
+ * Returns null when the location is already canonical.
+ */
+export function canonicalSessionLocation(pathname: string, search: string): string | null {
+  if (!isSessionSurfacePath(pathname)) return null
+  const params = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search)
+  const queryId = sessionQueryParam(search)
+  const pathId = sessionIdFromPath(pathname)
+  if (pathId) {
+    if (!params.has('session')) return null
+    params.delete('session')
+    const q = params.toString()
+    const path = pathname.replace(/\/$/, '') || `/${viewFromPath(pathname)}/${encodeURIComponent(pathId)}`
+    return q ? `${path}?${q}` : path
+  }
+  if (!queryId) return null
+  const view = viewFromPath(pathname)
+  if (view !== 'floor' && view !== 'platforms') return null
+  params.delete('session')
+  const q = params.toString()
+  const path = `/${view}/${encodeURIComponent(queryId)}`
+  return q ? `${path}?${q}` : path
+}
+
+/** Rewrite `?session=` onto `/floor/{id}` (or `/platforms/{id}`). Idempotent. */
+export function ensureCanonicalSessionUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  const next = canonicalSessionLocation(window.location.pathname, window.location.search)
+  if (!next) return null
+  const dest = `${next}${window.location.hash}`
+  const cur = `${window.location.pathname}${window.location.search}${window.location.hash}`
+  if (cur === dest) return null
+  window.history.replaceState(null, '', dest)
+  return dest
+}
+
 /**
  * `/floor/{id}` (or `/platforms/{id}`) is the occupant the shell must paint.
  * A live WRITER bind / list[0] must not replace a path id.
@@ -133,9 +183,10 @@ const NAV_ITEMS: { view: View; label: string; shortLabel: string; icon: string }
 
 export default function App() {
   const [authed, setAuthed] = useState<boolean | null>(null)
-  const [view, setView] = useState<View>(() =>
-    typeof window === 'undefined' ? 'floor' : viewFromPath(window.location.pathname),
-  )
+  const [view, setView] = useState<View>(() => {
+    if (typeof window !== 'undefined') ensureCanonicalSessionUrl()
+    return typeof window === 'undefined' ? 'floor' : viewFromPath(window.location.pathname)
+  })
   const [sessionId, setSessionId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : sessionIdFromPath(window.location.pathname),
   )
@@ -318,6 +369,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authed) return
+    if (ensureCanonicalSessionUrl()) return
     const path = window.location.pathname
     setView(viewFromPath(path))
     const requested = requestedSessionFromLocation(path, window.location.search)

@@ -326,6 +326,55 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
   })
 
+  it('sess_cec9a 1449 photograph: thin VetCare never claims Finished / Store-green / Download', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        outcome: 'SUCCESS',
+        cycle: 'pilot',
+        pilot_ready: false,
+        authorship: {
+          artifacts: 24,
+          agent_written: 6,
+          templated: 18,
+          action_py: 3,
+          agent_artifacts: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+          cli_authored_ids: ['audit', 'vetcare_hub_veterinary_core', 'workflow'],
+        },
+        level_grade: {
+          level: 'CODE_GREEN',
+          founding_customer_ready: false,
+          pilot_ready: false,
+          full_pilot: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: {
+        product_name: 'VetCare Hub',
+        vertical: 'veterinary-care',
+        drafting_mode: 'architect_llm',
+      },
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_cec9a1345b2049bb" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByText(/Code-cycle prototype — 6 artifacts; 18 templated/)).toBeInTheDocument()
+    expect(screen.getByText(/Not yet pilot-ready/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' }),
+    ).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
+  })
+
   it('surfaces FOUNDING_CUSTOMER_READY and keeps the gold export enabled', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
