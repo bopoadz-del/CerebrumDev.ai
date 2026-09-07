@@ -14,6 +14,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.factory.build.authorship import (
+    exclusive_authorship_caps,
+    is_coding_agent_source,
+    promote_cli_keep_ids,
+    refuse_dual_listed_caps,
+)
+
 logger = logging.getLogger("cerebrumdev.factory.budget_inspect")
 
 #: First stage. Hard-stop here and inspect before any extra wall.
@@ -64,19 +71,19 @@ def inspect_build(
                     caps_written.append(cap)
                 if cap not in caps_factory_grounded:
                     caps_factory_grounded.append(cap)
-            elif (
-                source.startswith("coder LLM")
-                or source.startswith("coder CLI")
-                or source.startswith("FACTORY_CODE_CLI")
-            ):
+                if cap in caps_templated:
+                    caps_templated.remove(cap)
+            elif is_coding_agent_source(source):
                 if cap not in caps_written:
                     caps_written.append(cap)
                 if cap not in caps_cli_or_llm:
                     caps_cli_or_llm.append(cap)
+                if cap in caps_templated:
+                    caps_templated.remove(cap)
             elif source and (
                 "template" in source.lower() or "deterministic" in source.lower()
             ):
-                if cap not in caps_templated:
+                if cap not in caps_written and cap not in caps_templated:
                     caps_templated.append(cap)
 
         if payload.get("model_call"):
@@ -116,16 +123,38 @@ def inspect_build(
                 caps_written.append(str(cap))
             if cap not in caps_cli_or_llm:
                 caps_cli_or_llm.append(str(cap))
+            if cap in caps_templated:
+                caps_templated.remove(str(cap))
         for cap in provenance.get("factory_grounded_artifacts") or []:
             if cap not in caps_written:
                 caps_written.append(str(cap))
             if cap not in caps_factory_grounded:
                 caps_factory_grounded.append(str(cap))
+            if cap in caps_templated:
+                caps_templated.remove(str(cap))
         fail_map = provenance.get("coder_failures") or {}
         for key, reason in fail_map.items():
             text = str(reason)
             if "timed out" in text.lower() and text not in timeouts:
                 timeouts.append(f"{key}: {text[:200]}")
+
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    # Promote successful CLI keep-path ids. Do not credit unused/failed CLI
+    # (thin-stub #368) or factory-grounded fill after exit 0 with no harvest
+    # (explicit empty cli_authored_ids / FACTORY_CODE_CLI_NO_AUTHORSHIP).
+    if str(dispatch.get("via") or "") == "cli" and dispatch.get("ok") is True:
+        for cid in promote_cli_keep_ids(dispatch):
+            if cid not in caps_written:
+                caps_written.append(cid)
+            if cid not in caps_cli_or_llm:
+                caps_cli_or_llm.append(cid)
+            if cid in caps_templated:
+                caps_templated.remove(cid)
+
+    caps_written, caps_templated = exclusive_authorship_caps(
+        caps_written, caps_templated
+    )
+    refuse_dual_listed_caps(caps_written, caps_templated)
 
     authored = len(caps_written)
     stubbed = len(caps_templated)
@@ -352,9 +381,7 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     sources = prov.get("artifact_sources") or {}
-    from app.factory.build.coder_session import is_agent_written_source
-
-    agent = sorted(k for k, v in sources.items() if is_agent_written_source(str(v)))
+    agent = sorted(k for k, v in sources.items() if is_coding_agent_source(v))
     factory = sorted(
         k for k, v in sources.items() if "factory-grounded" in str(v).lower()
     )

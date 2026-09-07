@@ -430,18 +430,12 @@ def deepseek_cli_ready(command: Optional[str] = None) -> bool:
 def is_agent_written_source(source: str) -> bool:
     """True for real coder LLM / CLI authorship — not factory-grounded fill.
 
-    Floor provenance and the SUCCESS gate must agree. ``coder CLI`` is
-    agent-written; ``factory-grounded persist`` / event_bus is the billing
-    keep-path, not C-BRIEF authorship.
+    Delegates to ``authorship.is_coding_agent_source`` (#375) so Floor
+    counters and the SUCCESS gate stay on one definition.
     """
-    text = str(source or "")
-    if "factory-grounded" in text.lower():
-        return False
-    return (
-        text.startswith("coder LLM")
-        or text.startswith("coder CLI")
-        or text.startswith("FACTORY_CODE_CLI")
-    )
+    from app.factory.build.authorship import is_coding_agent_source
+
+    return is_coding_agent_source(source)
 
 
 def _handler_text_is_factory_grounded(text: str) -> bool:

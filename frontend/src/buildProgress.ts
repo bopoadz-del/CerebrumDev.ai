@@ -119,18 +119,35 @@ export function threeGateEntries(
   }))
 }
 
+/** CLI keep-path handlers that Floor must not paint as "coder idle". */
+export function cliKeptHandlerCount(
+  authorship: BuildAuthorship | null | undefined,
+): number {
+  const kept = authorship?.kept_handler_ids
+  return Array.isArray(kept) ? kept.filter(Boolean).length : 0
+}
+
 /** SUCCESS copy: never "22 of 28" — that reads as a hang.
  *  Code-cycle SUCCESS is a prototype, not "Finished / Download ready".
  *  Thin CLI-billing keep-path zips stay Pilot-ready, not Finished founding.
+ *  A CLI keep-path with agent_written>0 (or kept_handler_ids) is not
+ *  "coder idle / 0 artifacts".
  */
 export function formatFinishedAuthorship(
   authorship: BuildAuthorship | null | undefined,
   opts?: { pilotReady?: boolean | null; demoteFounding?: boolean | null },
 ): string | null {
   if (!authorship) return null
-  const written = authorship.agent_written
+  const kept = cliKeptHandlerCount(authorship)
+  const writtenRaw = authorship.agent_written
+  const written =
+    typeof writtenRaw === 'number' && writtenRaw > 0
+      ? writtenRaw
+      : kept > 0
+        ? kept
+        : writtenRaw
   const templated = authorship.templated
-  if (written === 0) {
+  if (written === 0 && kept === 0) {
     return 'Coding agent wrote 0 artifacts — this platform is templated (coder idle or no LLM key).'
   }
   const counts =

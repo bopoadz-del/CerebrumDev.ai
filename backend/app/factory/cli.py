@@ -207,12 +207,10 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
         cycle=getattr(args, "cycle", "code"),
     )
     outcome = runner.run()
-    sources = runner.state.get("artifact_sources", {})
-    from app.factory.build.coder_session import is_agent_written_source
+    from app.factory.build.authorship import coding_agent_artifact_ids
 
-    by_agent = sorted(
-        k for k, v in sources.items() if is_agent_written_source(str(v))
-    )
+    sources = runner.state.get("artifact_sources", {})
+    by_agent = coding_agent_artifact_ids(sources)
     print(
         json.dumps(
             {

@@ -30,6 +30,10 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
 )
+from app.factory.build.authorship import (
+    coding_agent_artifact_ids,
+    writer_contract_role_detail,
+)
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
     WRITER_REUSE_HANDLER_HALT,
@@ -3449,9 +3453,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     if converged.get("ok"):
         sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
-    from app.factory.build.coder_session import is_agent_written_source
-
-    by_coder = sum(1 for s in sources.values() if is_agent_written_source(s))
+    by_coder = len(coding_agent_artifact_ids(sources))
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(
@@ -3491,10 +3493,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
     except PostureError as exc:
         raise RoleError(str(exc)) from exc
-    detail = (
-        f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
-        f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
-    )
+    detail = writer_contract_role_detail(written, sources)
     if ctx.work_list:
         detail += f"; reworking {len(ctx.work_list)} finding(s)"
     return RoleResult(
