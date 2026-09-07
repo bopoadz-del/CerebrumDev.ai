@@ -73,8 +73,9 @@ NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 #: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
 NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
 #: CLI/LLM wrote some handlers, but below the launching-ready full-pilot
-#: floor (need ≥5 action handlers or cli_authored_ids). Distinct from
-#: written=0 / stub_rate=1.0 (``FACTORY_CODE_CLI_NO_AUTHORSHIP``).
+#: floor (need = min(5, max(1, n_required)); unknown n_required keeps
+#: need=5). Distinct from written=0 / stub_rate=1.0
+#: (``FACTORY_CODE_CLI_NO_AUTHORSHIP``).
 NAMED_BLOCKER_CLI_THIN_AUTHORSHIP = "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
 #: CLI wrote ``def handle(`` for a GENERATE gap but harvest dropped it
 #: only because event_bus keepability failed. Distinct from "never wrote".
@@ -525,9 +526,17 @@ def thin_stub_success_blocked(
         stub_rate = float(snapshot.get("stub_rate") or 0.0)
     except (TypeError, ValueError):
         stub_rate = 0.0
-    from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS
+    from app.factory.build.authorship import (
+        full_pilot_authorship_need,
+        n_required_capabilities_from,
+    )
 
-    if written >= FULL_PILOT_MIN_AUTHORED_ACTIONS:
+    n_required = n_required_capabilities_from(snapshot, state=state)
+    if n_required is None:
+        n_required = n_required_capabilities_from(state)
+    need = full_pilot_authorship_need(n_required)
+
+    if written >= need:
         return None
     attempted = bool(snapshot.get("cli_attempted")) or cli_dispatch_attempted(
         state, ledger
@@ -575,13 +584,14 @@ def thin_stub_success_blocked(
             "A CLI exit 0 is not C-BRIEF authorship — do not SUCCESS "
             "thin templates."
         )
-    if 0 < written < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+    if 0 < written < need:
         cli_n = len(list(dispatch.get("cli_authored_ids") or []))
+        n_req = f", n_required={n_required}" if n_required is not None else ""
         return (
             f"{NAMED_BLOCKER_CLI_THIN_AUTHORSHIP}: authorship is below "
             f"the full-pilot floor (written={written}, "
             f"cli_authored_ids={cli_n}, "
-            f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}). "
+            f"need ≥{need}{n_req}). "
             "Do not SUCCESS a Store-green pilot from thin authorship."
         )
     if not attempted:

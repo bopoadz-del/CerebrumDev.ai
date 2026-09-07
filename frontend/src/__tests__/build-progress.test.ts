@@ -13,6 +13,7 @@ import {
   formatPhaseHeadline,
   FULL_PILOT_MIN_AUTHORED_ACTIONS,
   fullPilotAuthorshipCount,
+  fullPilotAuthorshipNeed,
   honestLevel,
   isAuthoritativePilotReady,
   isBelowFullPilotAuthorshipFloor,
@@ -704,6 +705,62 @@ describe('build progress copy', () => {
       level: 'STORE_GREEN',
       pilot_ready: true,
     }})).toBe('CODE_GREEN')
+  })
+
+  it('4 of 4 required capabilities meets the scaled floor', () => {
+    const lettingsFour: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: {
+        artifacts: 27,
+        agent_written: 4,
+        templated: 23,
+        action_py: 4,
+        n_required: 4,
+        cli_authored_ids: [
+          'unit_registry_and_vacancy_tracking',
+          'viewing_management',
+          'maintenance_issue_tracking',
+          'tenancy_application_pipeline',
+        ],
+      },
+      level_grade: {
+        level: 'STORE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: true,
+        full_pilot: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(fullPilotAuthorshipNeed(lettingsFour)).toBe(4)
+    expect(fullPilotAuthorshipCount(lettingsFour)).toBe(4)
+    expect(isBelowFullPilotAuthorshipFloor(lettingsFour)).toBe(false)
+    expect(shouldRefuseExport(lettingsFour)).toBe(false)
+    expect(exportAffordance(lettingsFour)).toMatchObject({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+    })
+
+    const threeOfFour = {
+      ...lettingsFour,
+      authorship: {
+        ...lettingsFour.authorship,
+        agent_written: 3,
+        action_py: 3,
+        cli_authored_ids: lettingsFour.authorship!.cli_authored_ids!.slice(0, 3),
+      },
+      level_grade: {
+        ...lettingsFour.level_grade,
+        full_pilot: false,
+        level: 'CODE_GREEN',
+        pilot_ready: false,
+      },
+      pilot_ready: false,
+    }
+    expect(isBelowFullPilotAuthorshipFloor(threeOfFour)).toBe(true)
+    expect(exportAffordance(threeOfFour).title).toMatch(/Need ≥4/)
   })
 
   it('VetCare action_py=3 is below the full-pilot floor', () => {

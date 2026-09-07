@@ -338,6 +338,8 @@ export type BuildAuthorship = {
   agent_artifacts?: string[]
   cli_authored_ids?: string[]
   kept_handler_ids?: string[]
+  /** Required capability count from the brief/blueprint. Scales the floor. */
+  n_required?: number
   coder_failures?: Record<string, string>
 }
 

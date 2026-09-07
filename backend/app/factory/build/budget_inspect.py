@@ -250,6 +250,13 @@ def inspect_build(
         "templated_files": provenance.get("templated_files"),
         "artifact_files": provenance.get("artifact_files"),
     }
+    from app.factory.build.authorship import n_required_capabilities_from
+
+    n_required = n_required_capabilities_from(
+        snapshot, workspace, state=state
+    )
+    if n_required is not None:
+        snapshot["n_required"] = n_required
     return snapshot
 
 

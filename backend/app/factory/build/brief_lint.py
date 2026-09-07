@@ -420,7 +420,11 @@ def lint_brief(
             "(alembic entity / store.save): "
             + ", ".join(missing_persist[:4])
         )
-    floor_needles = full_pilot_authorship_needles()
+    n_required = None
+    caps = getattr(compiled, "capabilities", None) or []
+    if caps:
+        n_required = len([c for c in caps if str(c).strip()])
+    floor_needles = full_pilot_authorship_needles(n_required)
     missing_floor = [
         needle
         for needle in floor_needles

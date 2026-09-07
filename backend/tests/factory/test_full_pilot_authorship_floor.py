@@ -1,7 +1,8 @@
-"""Launching-ready full-pilot authorship floor (≥5 action handlers).
+"""Launching-ready full-pilot authorship floor.
 
-VetCare Hub sess_cec9a1345b2049bb (action_py=3) and residential-lettings
-(action_py=4) were STORE_GREEN + package 200. written=0 stays
+need = min(5, max(1, n_required)) when the brief/blueprint names required
+capabilities; unknown n_required keeps need=5. A 4-cap golden with 4
+authored handlers must package. written=0 stays
 FACTORY_CODE_CLI_NO_AUTHORSHIP. Kit/Steward-shaped ≥5 stays exportable.
 """
 
@@ -16,9 +17,11 @@ from app.factory.build.authorship import (
     full_pilot_authorship_acceptance_line,
     full_pilot_authorship_forbidden_lines,
     full_pilot_authorship_from,
+    full_pilot_authorship_need,
     full_pilot_authorship_needles,
     full_pilot_authorship_rules_text,
     is_action_artifact_id,
+    n_required_capabilities_from,
     thin_store_green_export_blocker,
 )
 from app.factory.blueprint import load_blueprint
@@ -36,6 +39,13 @@ from tests.factory.test_level_grade import _full_repo
 
 VETCARE_THIN = ("audit", "vetcare_hub_veterinary_core", "workflow")
 STEWARD_FIVE = ("audit", "workflow", "team", "document_engine", "validation")
+LETTINGS_FOUR = (
+    "unit_registry_and_vacancy_tracking",
+    "viewing_management",
+    "maintenance_issue_tracking",
+    "tenancy_application_pipeline",
+)
+SIX_REQUIRED = STEWARD_FIVE + ("notification",)
 
 
 def test_action_artifact_id_skips_models_routes_and_extras():
@@ -50,27 +60,40 @@ def test_floor_constant_is_five():
     """Mutation: a silent drop to 0/1 would re-open thin Store-green."""
     assert FULL_PILOT_MIN_AUTHORED_ACTIONS == 5
     n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    assert full_pilot_authorship_need(None) == 5
+    assert full_pilot_authorship_need(0) == 5
+    assert full_pilot_authorship_need(4) == 4
+    assert full_pilot_authorship_need(1) == 1
+    assert full_pilot_authorship_need(6) == 5
+    assert full_pilot_authorship_need(10) == 5
     assert f"≥{n}" in full_pilot_authorship_rules_text()
     assert f"≥{n}" in full_pilot_authorship_acceptance_line()
     assert f"<{n}" in full_pilot_authorship_forbidden_lines()
     assert f"≥{n}" in full_pilot_authorship_needles()
+    assert "dynamic floor" in full_pilot_authorship_rules_text(4)
+    assert "≥4" in full_pilot_authorship_rules_text(4)
+    assert "≥5" not in full_pilot_authorship_rules_text(4).split("dynamic floor")[0]
+    assert "dynamic floor" in full_pilot_authorship_needles(4)
+    assert "≥4" in full_pilot_authorship_needles(4)
 
 
 def test_compiled_cbrief_states_the_same_floor_constant():
-    """Coder brief must name the #387 refuse — not just thin SUCCESS prose."""
+    """Coder brief must name the scaled #387 refuse — not a lying fixed ≥5."""
     root = Path(__file__).resolve().parents[3]
-    compiled = compile_brief(
-        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
-        plan_blueprint(load_blueprint(root / "blueprints/examples/runner_smoke.yaml")),
-    )
+    bp = load_blueprint(root / "blueprints/examples/runner_smoke.yaml")
+    compiled = compile_brief(bp, plan_blueprint(bp))
     text = compiled.text
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
-    assert full_pilot_authorship_rules_text() in text
-    assert full_pilot_authorship_acceptance_line() in text
-    assert full_pilot_authorship_forbidden_lines() in text
-    for needle in full_pilot_authorship_needles():
+    n_required = n_required_capabilities_from(plan=plan_blueprint(bp), blueprint=bp)
+    assert n_required == 2
+    n = full_pilot_authorship_need(n_required)
+    assert n == 2
+    assert full_pilot_authorship_rules_text(n_required) in text
+    assert full_pilot_authorship_acceptance_line(n_required) in text
+    assert full_pilot_authorship_forbidden_lines(n_required) in text
+    for needle in full_pilot_authorship_needles(n_required):
         assert needle in text
     assert f"≥{n}" in text
+    assert "dynamic floor" in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
@@ -91,16 +114,91 @@ def test_vetcare_three_actions_are_below_floor():
     assert snap.below_floor is True
 
 
-def test_four_cli_ids_are_below_floor_five_meet():
+def test_four_cli_ids_are_below_floor_when_n_required_unknown():
+    """Unknown n_required keeps the absolute need=5 (Steward-shaped)."""
     four = full_pilot_authorship_from(
         {"authorship": {"cli_authored_ids": list(STEWARD_FIVE[:4])}}
     )
     five = full_pilot_authorship_from(
         {"authorship": {"cli_authored_ids": list(STEWARD_FIVE)}}
     )
+    assert four.need == 5
     assert four.below_floor is True
     assert five.meets_floor is True
     assert five.below_floor is False
+
+
+def test_four_of_four_required_meets_floor_three_still_refuses():
+    four = full_pilot_authorship_from(
+        {
+            "authorship": {
+                "cli_authored_ids": list(LETTINGS_FOUR),
+                "n_required": 4,
+            }
+        }
+    )
+    three = full_pilot_authorship_from(
+        {
+            "authorship": {
+                "cli_authored_ids": list(LETTINGS_FOUR[:3]),
+                "n_required": 4,
+            }
+        }
+    )
+    assert four.need == 4
+    assert four.meets_floor is True
+    assert four.below_floor is False
+    assert three.need == 4
+    assert three.below_floor is True
+    assert thin_store_green_export_blocker(
+        {
+            "cycle": "pilot",
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {
+                "agent_written": 4,
+                "cli_authored_ids": list(LETTINGS_FOUR),
+                "n_required": 4,
+            },
+        }
+    ) is None
+    blocked = thin_store_green_export_blocker(
+        {
+            "cycle": "pilot",
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {
+                "agent_written": 3,
+                "cli_authored_ids": list(LETTINGS_FOUR[:3]),
+                "n_required": 4,
+            },
+        }
+    )
+    assert blocked
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in blocked
+    assert "need ≥4" in blocked
+
+
+def test_six_required_five_authored_meets_absolute_floor():
+    """n_required≥5 still needs ≥5, not all six."""
+    five_of_six = full_pilot_authorship_from(
+        {
+            "authorship": {
+                "cli_authored_ids": list(SIX_REQUIRED[:5]),
+                "n_required": 6,
+            }
+        }
+    )
+    four_of_six = full_pilot_authorship_from(
+        {
+            "authorship": {
+                "cli_authored_ids": list(SIX_REQUIRED[:4]),
+                "n_required": 6,
+            }
+        }
+    )
+    assert five_of_six.need == 5
+    assert five_of_six.meets_floor is True
+    assert four_of_six.need == 5
+    assert four_of_six.below_floor is True
 
 
 def test_unmeasured_authorship_is_not_a_silent_pass_or_refuse():
@@ -224,6 +322,28 @@ def test_attach_level_grade_mutation_cannot_keep_store_green_when_thin(tmp_path)
     assert attached["level_grade"]["level"] != Level.STORE_GREEN.value
 
 
+def test_attach_level_grade_allows_four_of_four_required(tmp_path):
+    _full_repo(tmp_path)
+    status = {
+        "state": "succeeded",
+        "cycle": "pilot",
+        "pilot_ready": True,
+        "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+        "authorship": {
+            "agent_written": 4,
+            "cli_authored_ids": list(LETTINGS_FOUR),
+            "n_required": 4,
+        },
+    }
+    attached = attach_level_grade(status, tmp_path)
+    assert attached["pilot_ready"] is True
+    assert attached["level_grade"]["full_pilot"] is True
+    assert attached["level_grade"]["level"] in {
+        Level.STORE_GREEN.value,
+        Level.FOUNDING_CUSTOMER_READY.value,
+    }
+
+
 def test_product_package_refuses_thin_store_green_zip(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
@@ -276,3 +396,86 @@ def test_product_package_allows_steward_shaped_five(tmp_path, monkeypatch):
     pkg = client.get("/v1/sessions/sess_steward_floor/product/package")
     assert pkg.status_code == 200, pkg.text
     assert pkg.headers["content-type"].startswith("application/zip")
+
+
+def _write_required_blueprint(out: Path, cap_ids: tuple[str, ...]) -> None:
+    docs = out / "docs" / "blueprint"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "product_blueprint.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "product_blueprint.v1",
+                "product_id": "residential-lettings",
+                "product_name": "Residential Lettings Platform",
+                "vertical": "residential_lettings",
+                "summary": "test",
+                "capabilities": [
+                    {
+                        "id": cid,
+                        "description": cid.replace("_", " "),
+                        "block_ids": ["team"],
+                        "required": True,
+                    }
+                    for cid in cap_ids
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_product_package_allows_four_of_four_lettings(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_lettings_floor", "tester")
+    out = tmp_path / "residential-lettings"
+    _full_repo(out)
+    _succeeded_pilot(out, product_id="residential-lettings")
+    _write_provenance(out, LETTINGS_FOUR)
+    _write_required_blueprint(out, LETTINGS_FOUR)
+    state = get_session("sess_lettings_floor")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_lettings_floor", state)
+
+    pkg = client.get("/v1/sessions/sess_lettings_floor/product/package")
+    assert pkg.status_code == 200, pkg.text
+    assert pkg.headers["content-type"].startswith("application/zip")
+
+
+def test_product_package_refuses_three_of_four_lettings(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_lettings_thin", "tester")
+    out = tmp_path / "residential-lettings-thin"
+    _full_repo(out)
+    _succeeded_pilot(out, product_id="residential-lettings")
+    _write_provenance(out, LETTINGS_FOUR[:3])
+    _write_required_blueprint(out, LETTINGS_FOUR)
+    state = get_session("sess_lettings_thin")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_lettings_thin", state)
+
+    pkg = client.get("/v1/sessions/sess_lettings_thin/product/package")
+    assert pkg.status_code == 409, pkg.text
+    detail = pkg.json()["detail"]
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in detail
+    assert "need ≥4" in detail

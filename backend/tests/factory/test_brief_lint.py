@@ -536,7 +536,8 @@ def test_mutation_drops_full_pilot_authorship_floor():
     """#387 floor must stay in the compiled brief — dropping it is a lint fail."""
     compiled = _compiled()
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    n = str(FULL_PILOT_MIN_AUTHORED_ACTIONS)
+    n_required = len(list(compiled.capabilities or []))
+    n = str(min(FULL_PILOT_MIN_AUTHORED_ACTIONS, max(1, n_required)))
     compiled.text = compiled.text.replace(f"≥{n}", "≥0")
     compiled.text = compiled.text.replace(f"<{n}", "<0")
     compiled.text = compiled.text.replace("full-pilot authorship", "authorship-ish")
@@ -546,12 +547,13 @@ def test_mutation_drops_full_pilot_authorship_floor():
     )
     compiled.text = compiled.text.replace("[check:full_pilot_authorship]", "")
     compiled.text = compiled.text.replace("app/actions/*.py", "app/actions/other.py")
+    compiled.text = compiled.text.replace("dynamic floor", "scaled bar")
     result = lint_brief(compiled)
     assert result.ok is False
     assert any("full-pilot authorship floor" in e for e in result.errors)
     missing = [
         needle
-        for needle in full_pilot_authorship_needles()
+        for needle in full_pilot_authorship_needles(n_required)
         if needle.lower() not in compiled.text.lower()
     ]
     assert missing, "mutation must actually drop the floor needles"

@@ -204,6 +204,13 @@ class RoleRunner:
         self.clock = clock
         self.ledger = ledger or BuildLedger(self.workspace / LEDGER_FILENAME)
         self.state: Dict[str, Any] = {}
+        from app.factory.build.authorship import n_required_capabilities_from
+
+        n_required = n_required_capabilities_from(
+            plan=self.plan, blueprint=self.blueprint
+        )
+        if n_required is not None:
+            self.state["n_required"] = n_required
         self.manifest = authority_manifest()
         #: Set by run(); roles read it to stop starting coder calls
         #: that cannot finish inside the build's wall clock.

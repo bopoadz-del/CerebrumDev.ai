@@ -79,15 +79,19 @@ def test_compiled_brief_has_the_gated_shape():
     assert "dashboard_surface" in text
     assert "one handle()" in text.lower() or "not one handle()" in text.lower()
     assert "thin SUCCESS" in text
-    assert f"≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}" in text
+    n_required = len(plan.capabilities)
+    n = min(FULL_PILOT_MIN_AUTHORED_ACTIONS, max(1, n_required))
+    assert n == 2
+    assert f"≥{n}" in text
+    assert "dynamic floor" in text
     assert "full-pilot authorship" in text
     assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
     assert "cli_authored_ids" in text
     assert "app/actions/*.py" in text
-    assert full_pilot_authorship_rules_text() in text
-    assert full_pilot_authorship_acceptance_line() in text
-    assert full_pilot_authorship_forbidden_lines() in text
-    for needle in full_pilot_authorship_needles():
+    assert full_pilot_authorship_rules_text(n_required) in text
+    assert full_pilot_authorship_acceptance_line(n_required) in text
+    assert full_pilot_authorship_forbidden_lines(n_required) in text
+    for needle in full_pilot_authorship_needles(n_required):
         assert needle in text
     for vocab in ENVELOPE_STATUS_VALUES:
         assert vocab in text
@@ -209,8 +213,10 @@ def test_lettings_golden_is_unchanged_and_compiles():
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert compiled.intake["schema_version"] == "intake_blueprint.v1"
     assert compiled.template_revision == TEMPLATE_REVISION
-    assert full_pilot_authorship_rules_text() in compiled.text
-    assert f"≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}" in compiled.text
+    assert full_pilot_authorship_rules_text(4) in compiled.text
+    assert "≥4" in compiled.text
+    assert "dynamic floor" in compiled.text
+    assert "4 required capabilities" in compiled.text
 
 
 def test_compiled_brief_names_the_full_pilot_authorship_floor():
@@ -224,25 +230,49 @@ def test_compiled_brief_names_the_full_pilot_authorship_floor():
         store_ids={"event_bus"},
     )
     text = compiled.text
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
-    assert n == 5
+    n_required = 2
+    n = 2
     assert f"≥{n}" in text
     assert f"<{n}" in text
+    assert "dynamic floor" in text
     assert "full-pilot authorship" in text
     assert "app/actions/*.py" in text
     assert "cli_authored_ids" in text
     assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
     assert "[check:full_pilot_authorship]" in text
-    assert full_pilot_authorship_rules_text() in text
-    assert full_pilot_authorship_acceptance_line() in text
-    assert full_pilot_authorship_forbidden_lines() in text
+    assert full_pilot_authorship_rules_text(n_required) in text
+    assert full_pilot_authorship_acceptance_line(n_required) in text
+    assert full_pilot_authorship_forbidden_lines(n_required) in text
     build = text.split("CUT 3", 1)[1].split("ACCEPTANCE", 1)[0]
     acceptance = text.split("ACCEPTANCE (harness", 1)[1].split("FORBIDDEN", 1)[0]
     forbidden = text.split("\nFORBIDDEN\n", 1)[1]
     assert f"≥{n}" in build
     assert f"≥{n}" in acceptance
     assert f"<{n}" in forbidden
+    assert "dynamic floor" in forbidden
     assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in forbidden
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
+def test_six_cap_brief_keeps_absolute_floor_of_five():
+    """Products with ≥5 required caps still name need ≥5, not all six."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(
+            *[_Cap(cid, ["event_bus"], "REUSE") for cid in (
+                "audit",
+                "workflow",
+                "team",
+                "document_engine",
+                "validation",
+                "notification",
+            )],
+        ),
+        store_ids={"event_bus"},
+    )
+    assert "≥5" in compiled.text
+    assert "dynamic floor" not in compiled.text
+    assert full_pilot_authorship_rules_text(6) in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
