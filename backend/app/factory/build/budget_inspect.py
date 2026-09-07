@@ -19,6 +19,7 @@ wall is honoured (observe/log, do not slash). The default is not 2 hours.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.authorship import (
@@ -38,6 +39,31 @@ STAGE_2_S = 2700.0
 CEILING_S = 7200.0
 
 INSPECT_NOTE_KIND = "budget_inspect"
+
+#: Ledger noise that is not a coder timeout. ``timeout_s=7230`` on a
+#: C-BRIEF dispatch NOTE and ``timeouts=N`` inside a later inspect
+#: reason must not accumulate into a fake timeout ledger (sess_d10dfc28:
+#: 7 REUSE caps, written=7, timeouts=7, contract_misses=0).
+_TIMEOUT_NOISE_RE = re.compile(
+    r"timeout_s\s*=\s*\S+|timeouts\s*=\s*\S+",
+    re.IGNORECASE,
+)
+_REAL_TIMEOUT_HINTS = (
+    "timed out",
+    "hung_killed",
+    "hung killed",
+    "watchdog fired",
+    "coder llm timed out",
+)
+
+
+def _is_real_timeout(text: str) -> bool:
+    """True only for an actual coder/CLI timeout, not timeout_s= metadata."""
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    stripped = _TIMEOUT_NOISE_RE.sub(" ", lowered)
+    return any(hint in stripped for hint in _REAL_TIMEOUT_HINTS)
 
 
 def inspect_build(
@@ -100,8 +126,7 @@ def inspect_build(
         if isinstance(done, int) and isinstance(total, int) and total > 0:
             phase_done, phase_total = done, total
 
-        lowered = detail.lower()
-        if "timed out" in lowered or "timeout" in lowered:
+        if _is_real_timeout(detail):
             timeouts.append(detail[:240])
 
         if kind == "GATE_FAILED":
@@ -117,7 +142,7 @@ def inspect_build(
     failures = dict((state or {}).get("coder_failures") or {})
     for key, reason in failures.items():
         text = str(reason)
-        if "timed out" in text.lower() or "timeout" in text.lower():
+        if _is_real_timeout(text):
             timeouts.append(f"{key}: {text[:200]}")
         if "skipped" in text.lower() or "budget" in text.lower():
             if key not in caps_templated and key not in caps_written:
@@ -142,7 +167,7 @@ def inspect_build(
         fail_map = provenance.get("coder_failures") or {}
         for key, reason in fail_map.items():
             text = str(reason)
-            if "timed out" in text.lower() and text not in timeouts:
+            if _is_real_timeout(text) and text not in timeouts:
                 timeouts.append(f"{key}: {text[:200]}")
 
     dispatch = dict((state or {}).get("brief_dispatch") or {})
@@ -217,6 +242,13 @@ def inspect_build(
         "cli_finished": flight["cli_finished"],
         "model_call_deadline_s": flight["model_call_deadline_s"],
         "cli_blocker": flight["cli_blocker"],
+        # Capability counts (ledger). File counts come from provenance
+        # authorship — sess_d10dfc28 inspect said templated=0 while the
+        # Floor later showed 29 templated *files*. Different counters.
+        "templated_caps": stubbed,
+        "authored_files": provenance.get("authored_files"),
+        "templated_files": provenance.get("templated_files"),
+        "artifact_files": provenance.get("artifact_files"),
     }
     return snapshot
 
@@ -253,6 +285,28 @@ def should_continue_after_inspect(snapshot: Mapping[str, Any]) -> bool:
     if snapshot.get("pilot_ready"):
         return False
     return bool(snapshot.get("progressing"))
+
+
+def _written_contracts_pass(snapshot: Mapping[str, Any]) -> bool:
+    """True when inspect shows real writes and no contract misses.
+
+    Per-cap timeout ledger noise must not veto this. stub_rate=1.0 with
+    written=0 is a thin template run and stays fail-closed.
+    """
+    try:
+        written = int(snapshot.get("agent_written") or 0)
+    except (TypeError, ValueError):
+        written = 0
+    if written <= 0:
+        return False
+    misses = snapshot.get("contract_misses") or []
+    if misses:
+        return False
+    try:
+        stub_rate = float(snapshot.get("stub_rate") or 0.0)
+    except (TypeError, ValueError):
+        stub_rate = 0.0
+    return stub_rate < 1.0
 
 
 def _cli_progressing_for_ceiling_bump(snapshot: Mapping[str, Any]) -> bool:
@@ -302,7 +356,13 @@ def inspect_decision(
 ) -> Dict[str, Any]:
     """Attach a continue/stop decision to an inspect snapshot."""
     new_wall = next_stage_wall(elapsed_s, current_wall_s, snapshot)
-    if new_wall:
+    if snapshot.get("pilot_ready"):
+        # Store-green close outranks leftover-wall observe. A 7230s C-BRIEF
+        # wall must not hide already_pilot_ready on the closing inspect.
+        new_wall = None
+        decision = "already_pilot_ready"
+        reason = f"inspect {stage}: pilot_ready already true"
+    elif new_wall:
         decision = "continue_stage_2"
         reason = (
             f"inspect {stage}: progressing "
@@ -316,9 +376,6 @@ def inspect_decision(
             f"inspect {stage}: leftover wall {current_wall_s:g}s honoured "
             f"(no cut, no silent extra ceiling)"
         )
-    elif snapshot.get("pilot_ready"):
-        decision = "already_pilot_ready"
-        reason = f"inspect {stage}: pilot_ready already true"
     elif snapshot.get("cli_in_flight"):
         # sess_9d8e9a2dc01b40a1: UI still inside the CLI watchdog while
         # stage_1 hard-stopped as FACTORY_CODE_CLI_UNUSED at ~1800s.
@@ -386,6 +443,32 @@ def inspect_decision(
             reason = (
                 f"inspect {stage}: hard-stop — {unused}"
             )
+        elif _written_contracts_pass(snapshot):
+            # sess_d10dfc28: written=7, templated=0, contract_misses=0,
+            # timeouts=7 ledger noise, then hard-stop at pilot_open
+            # blocked RUN_SUCCEEDED. Written work + green contracts is
+            # not a halt — bump once so the pilot suite can run.
+            if (
+                elapsed_s + 1 >= STAGE_2_S
+                and current_wall_s <= STAGE_2_S + 1
+            ):
+                new_wall = CEILING_S
+                decision = "continue_ceiling"
+                reason = (
+                    f"inspect {stage}: written="
+                    f"{snapshot.get('agent_written')} contracts pass — "
+                    f"one inspect-gated bump {current_wall_s:g}s → "
+                    f"{new_wall:g}s so the pilot suite can run; timeout "
+                    "ledger is not a hard-stop"
+                )
+            else:
+                decision = "continue_pilot"
+                reason = (
+                    f"inspect {stage}: written="
+                    f"{snapshot.get('agent_written')} contracts pass — "
+                    "continue toward Store-green; timeout ledger "
+                    f"({len(snapshot.get('timeouts') or [])}) is not a halt"
+                )
         else:
             decision = "hard_stop"
             reason = (
@@ -398,6 +481,21 @@ def inspect_decision(
                 f"contract_misses={len(snapshot.get('contract_misses') or [])}, "
                 f"pilot_ready=false ({'; '.join(snapshot.get('pilot_ready_blockers') or ['unknown'])})"
             )
+    if str(stage) == "pilot_open" and decision == "hard_stop":
+        # _grant_pilot_budget treats this inspect as informational.
+        # sess_d10dfc28 logged hard-stop here (written=7, timeouts=7
+        # noise, pilot_ready=false) then still SUCCESS-ed Store-green.
+        # Mid-run pilot_ready=false is expected — no RUN_SUCCEEDED yet.
+        decision = "observe_pilot_open"
+        new_wall = None
+        reason = (
+            f"inspect {stage}: observe — mid-run pilot_ready=false is "
+            f"expected before RUN_SUCCEEDED; written="
+            f"{snapshot.get('agent_written')} templated_caps="
+            f"{snapshot.get('templated')} templated_files="
+            f"{snapshot.get('templated_files')} timeouts="
+            f"{len(snapshot.get('timeouts') or [])}. Not a halt."
+        )
     out = dict(snapshot)
     out.update(
         {
@@ -410,7 +508,60 @@ def inspect_decision(
             "reason": reason,
         }
     )
+    if str(stage) == "pilot_open" and decision == "hard_stop":
+        # _grant_pilot_budget treats this inspect as informational.
+        # sess_d10dfc28 logged hard-stop here (written=7, timeouts=7
+        # noise, pilot_ready=false) then still SUCCESS-ed Store-green.
+        # Mid-run pilot_ready=false is expected — no RUN_SUCCEEDED yet.
+        decision = "observe_pilot_open"
+        reason = (
+            f"inspect {stage}: observe — mid-run pilot_ready=false is "
+            f"expected before RUN_SUCCEEDED; written="
+            f"{snapshot.get('agent_written')} templated_caps="
+            f"{snapshot.get('templated')} templated_files="
+            f"{snapshot.get('templated_files')} timeouts="
+            f"{len(snapshot.get('timeouts') or [])}. Not a halt."
+        )
+        new_wall = None
+    out["next_wall_s"] = new_wall
+    out["continue"] = new_wall is not None
+    out["decision"] = decision
+    out["reason"] = reason
     logger.info("factory budget inspect: %s", reason)
+    return out
+
+
+def reconcile_budget_inspect_after_success(
+    last_inspect: Optional[Mapping[str, Any]],
+    *,
+    pilot_ready: bool,
+) -> Optional[Dict[str, Any]]:
+    """Stop a mid-run hard-stop inspect from reading as current truth.
+
+    sess_d10dfc28: last ledger inspect said hard-stop / pilot_ready=false
+    / templated=0, then RUN_SUCCEEDED Store-green. Floor status must not
+    keep that inspect as the live verdict.
+    """
+    if not last_inspect:
+        return None
+    out = dict(last_inspect)
+    if not pilot_ready:
+        return out
+    mid_ready = out.get("pilot_ready")
+    mid_decision = out.get("decision")
+    if mid_ready is True and mid_decision != "hard_stop":
+        return out
+    out["mid_run_pilot_ready"] = mid_ready
+    out["mid_run_decision"] = mid_decision
+    out["pilot_ready"] = True
+    out["superseded_by"] = "RUN_SUCCEEDED"
+    if mid_decision == "hard_stop":
+        out["decision"] = "superseded_by_pilot_success"
+        out["reason"] = (
+            "mid-run inspect hard-stop superseded by Store-green "
+            "RUN_SUCCEEDED — mid-run pilot_ready=false is expected "
+            "before the pilot cycle closes (sess_d10dfc28)"
+        )
     return out
 
 
@@ -498,10 +649,16 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     factory = sorted(
         k for k, v in sources.items() if "factory-grounded" in str(v).lower()
     )
+    from app.factory.build.authorship import writer_authorship_counts
+
+    counts = writer_authorship_counts(sources)
     return {
         "agent_artifacts": agent,
         "factory_grounded_artifacts": factory,
         "coder_failures": prov.get("coder_failures") or {},
+        "authored_files": counts["agent_written"],
+        "templated_files": counts["templated"],
+        "artifact_files": counts["artifacts"],
     }
 
 

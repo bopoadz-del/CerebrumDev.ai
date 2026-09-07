@@ -425,6 +425,16 @@ class RoleRunner:
         findings: Sequence[str] = (),
     ) -> BuildOutcome:
         if outcome is Outcome.SUCCESS:
+            if self.auto_pilot and getattr(self, "cycle", "code") != "pilot":
+                lie = (
+                    "auto-pilot run reached code-cycle SUCCESS without a "
+                    "Store-green pilot cycle — refuse SUCCESS+non-pilot lie"
+                )
+                logger.error("factory refuse code-cycle SUCCESS on auto-pilot: %s", lie)
+                outcome = Outcome.FAILED_ROLE_ERROR
+                detail = lie
+                findings = list(findings) + [lie]
+                phase = phase or BuildRole.TESTER
             blocked = self._thin_cli_success_blocker()
             if blocked:
                 logger.error("factory refuse thin SUCCESS: %s", blocked)
@@ -465,6 +475,14 @@ class RoleRunner:
                 and outcome is Outcome.SUCCESS,
             },
         )
+        if (
+            outcome is Outcome.SUCCESS
+            and getattr(self, "cycle", "code") == "pilot"
+        ):
+            try:
+                self._stage_inspect(reason="pilot_closed", stage="pilot_close")
+            except Exception:  # noqa: BLE001 — close inspect must not fail SUCCESS
+                logger.exception("factory closing inspect after Store-green SUCCESS failed")
         return BuildOutcome(
             outcome=outcome,
             detail=detail,
@@ -606,8 +624,28 @@ class RoleRunner:
             phase_wall_clock_s=self.budget.phase_wall_clock_s,
         )
         snap = self._stage_inspect(reason="pilot_opened", stage="pilot_open")
-        # Pilot-open inspect is informational. Stage-1/2 hard-stops own ramps.
-        if snap.get("decision") == "hard_stop" and not snap.get("progressing"):
+        new_wall = snap.get("next_wall_s")
+        if new_wall:
+            self._extend_wall(float(new_wall))
+        elif (
+            int(snap.get("agent_written") or 0) > 0
+            and not snap.get("contract_misses")
+        ):
+            from app.factory.build.auto_pilot import PILOT_SUITE_TAIL_S
+
+            elapsed = 0.0
+            if self._run_started is not None:
+                elapsed = float(self.clock()) - float(self._run_started)
+            remaining = float(self.budget.wall_clock_s or 0.0) - elapsed
+            # Only when the staged wall is essentially spent (long C-BRIEF).
+            # Do not nudge a healthy STAGE_2 leftover by 1s.
+            if remaining < 120.0:
+                needed = elapsed + float(PILOT_SUITE_TAIL_S)
+                if needed > float(self.budget.wall_clock_s or 0.0):
+                    self._extend_wall(needed)
+        # Pilot-open inspect is informational when nothing was written.
+        # Stage-1/2 hard-stops own ramps for thin/stub runs.
+        elif snap.get("decision") == "hard_stop" and not snap.get("progressing"):
             logger.info("pilot open inspect: no extra wall — %s", snap.get("reason"))
 
     def _open_auto_pilot(self) -> None:
@@ -710,6 +748,25 @@ class RoleRunner:
                         self._extend_wall(float(new_wall))
                         if snap.get("cli_in_flight"):
                             self._emit_cli_watchdog_extend(snap)
+                        deadline = self._deadline
+                    elif (
+                        snap.get("decision")
+                        in {
+                            "inspect_only_high_wall_honored",
+                            "continue_pilot",
+                            "continue_ceiling",
+                        }
+                        and int(snap.get("agent_written") or 0) > 0
+                        and not snap.get("contract_misses")
+                    ):
+                        from app.factory.build.auto_pilot import PILOT_SUITE_TAIL_S
+
+                        elapsed_now = 0.0
+                        if self._run_started is not None:
+                            elapsed_now = float(self.clock()) - float(
+                                self._run_started
+                            )
+                        self._extend_wall(elapsed_now + float(PILOT_SUITE_TAIL_S))
                         deadline = self._deadline
                     else:
                         return self._finish(

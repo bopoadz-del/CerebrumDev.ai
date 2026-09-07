@@ -518,7 +518,23 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         **session_status(Path(output_dir)),
     }
     if last_inspect:
-        progress["budget_inspect"] = last_inspect
+        from app.factory.build.budget_inspect import (
+            reconcile_budget_inspect_after_success,
+        )
+
+        ready_now = False
+        if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
+            try:
+                ready_now = bool(ledger.pilot_ready())
+            except Exception:  # noqa: BLE001
+                ready_now = False
+        progress["budget_inspect"] = (
+            reconcile_budget_inspect_after_success(
+                last_inspect, pilot_ready=True
+            )
+            if ready_now
+            else last_inspect
+        )
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
         payload = terminal.payload or {}

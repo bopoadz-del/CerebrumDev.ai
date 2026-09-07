@@ -123,6 +123,23 @@ def test_verified_reuse_is_not_a_gap():
     assert items[0].is_reuse
 
 
+def test_all_reuse_inventory_lists_cbrief_work_items():
+    """InsureDistribute-class all-REUSE must still name hole-fill work."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(
+            _Cap("workflow", ["workflow"], "REUSE"),
+            _Cap("validation", ["validation"], "REUSE"),
+        ),
+        store_ids={"workflow", "validation"},
+    )
+    assert all(not item.is_gap for item in compiled.inventory)
+    assert "WORK ITEMS" in compiled.text
+    assert "REUSE hole-fill" in compiled.text
+    assert "do not skip because inventory_gaps is empty" in compiled.text
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+
+
 def test_capability_without_blocks_is_a_named_gap():
     items = compile_inventory(_Plan(_Cap("custom_intake", [], "GENERATE")), {"analytics"})
     assert items[0].is_gap

@@ -107,6 +107,7 @@ TEMPLATE_STATIC_NEEDLES = (
     "store registry",
     "reuse (verified",
     "gaps (you author",
+    "work items",
     "missing claimed",
     "build only confirmed",
     "invocation contracts",
