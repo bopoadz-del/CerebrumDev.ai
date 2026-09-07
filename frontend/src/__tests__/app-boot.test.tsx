@@ -13,6 +13,7 @@ import {
 } from '../api/factory'
 import App, {
   pathFromView,
+  pathSessionWins,
   requestedSessionFromLocation,
   resolveBootSession,
   sessionIdFromPath,
@@ -682,6 +683,88 @@ describe('App boot', () => {
     expect(createMock).not.toHaveBeenCalled()
   })
 
+  it('active WRITER session A bound → navigate to /floor/{B} shows finished B, not A', async () => {
+    const writerA = 'sess_d10dfc2890f7487b'
+    const finishedB = 'sess_cec9a1345b2049bb'
+    window.history.pushState(null, '', `/floor/${writerA}`)
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: writerA }, { session_id: finishedB }])
+    productGetMock.mockImplementation(async (sid: string) => {
+      if (sid === finishedB) {
+        return {
+          blueprint: {
+            product_name: 'VetCare',
+            vertical: 'veterinary-care',
+            drafting_mode: 'architect_llm',
+          },
+          blueprint_approved: true,
+          generation: {
+            engine: 'runner',
+            product_id: 'veterinary-care',
+            triggered_by: 'chat_llm',
+          },
+        }
+      }
+      return {
+        blueprint: {
+          product_name: 'InsureDistribute Platform',
+          vertical: 'insurance-distribution',
+        },
+        blueprint_approved: true,
+        generation: {
+          engine: 'runner',
+          product_id: 'insurance-distribution',
+          triggered_by: 'chat_llm',
+        },
+      }
+    })
+    watchBuildMock.mockImplementation(async (sid: string, onProgress: (s: object) => void) => {
+      if (sid === finishedB) {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'STORE_GREEN',
+            founding_customer_ready: false,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        })
+        return
+      }
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        last_event: 'wrote handler intake',
+      })
+    })
+    render(<App />)
+    expect(await screen.findByText(/session sess_d10dfc2/)).toBeInTheDocument()
+    expect(await screen.findByText(/WRITER 3\/5/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
+
+    // Live deep-link writes the path without a PopStateEvent. The in-flight
+    // WRITER occupant must not keep the Floor.
+    window.history.pushState(null, '', `/floor/${finishedB}`)
+
+    expect(await screen.findByText(/session sess_cec9a13/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_d10dfc2/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.queryByText(/WRITER 3\/5/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith(finishedB)
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
   it('/floor/{sessionId} wins over a stale ?session= query', async () => {
     window.history.pushState(
       null,
@@ -743,6 +826,16 @@ describe('viewFromPath / pathFromView', () => {
       '/platforms/sess_fe80bf177a8545e6',
     )
     expect(pathFromView('account', 'sess_fe80bf177a8545e6')).toBe('/account')
+  })
+})
+
+describe('pathSessionWins', () => {
+  it('keeps the path id when a live WRITER / list[0] bind disagrees', () => {
+    expect(pathSessionWins('sess_cec9a1345b2049bb', 'sess_d10dfc2890f7487b')).toBe(
+      'sess_cec9a1345b2049bb',
+    )
+    expect(pathSessionWins(null, 'sess_d10dfc2890f7487b')).toBe('sess_d10dfc2890f7487b')
+    expect(pathSessionWins('sess_cec9a1345b2049bb', null)).toBe('sess_cec9a1345b2049bb')
   })
 })
 
