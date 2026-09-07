@@ -66,9 +66,17 @@ _DEEPSEEK_LEFTOVER_WALL_MAX_S = 600.0
 
 #: A build with no ledger event for this long has no process behind it.
 #: An in-flight model_call NOTE is NOT a dead process — skip this stall
-#: while the calling-NOTE is still inside its deadline (20–40 min writes
-#: are legitimate). Overdue calls use ``_model_call_overdue``.
+#: while a live WRITER / FACTORY_CODE_CLI worker is still inside its
+#: deadline (20–40 min writes are legitimate). A calling-NOTE with no
+#: live worker is an orphan (deploy / restart) and must not claim
+#: ``model_call_in_progress``. Overdue calls use ``_model_call_overdue``.
 _STALL_AFTER_S = 1800.0
+
+#: Honesty when a model_call NOTE outlived the worker that wrote it.
+#: sess_05914670d8f34533 (estate-management, tip d4a4029 / #382 deploy)
+#: sat Building / model_call_in_progress for the leftover 7230s wall
+#: after instance churn 7bxn4 → t5hm8 → 9lcrr killed the WRITER thread.
+FACTORY_CODE_CLI_ORPHANED = "FACTORY_CODE_CLI_ORPHANED"
 
 #: Quieter than a dead process: one coder call can sit in the model for
 #: ~2–3 min with no NOTE. Past this the UI says "quiet" so a customer can
@@ -178,10 +186,19 @@ def _open_model_call_note(activity_notes: Any) -> Any:
     return None
 
 
-def _model_call_fields(last_note: Any) -> Dict[str, Any]:
-    """Surface an in-flight coder call so the Floor can bound 'quiet' copy."""
+def _model_call_fields(
+    last_note: Any, *, worker_live: bool = True
+) -> Dict[str, Any]:
+    """Surface an in-flight coder call so the Floor can bound 'quiet' copy.
+
+    A ledger ``model_call`` NOTE is not a live worker. After a deploy the
+    NOTE remains and the thread is gone — claiming in-progress then is
+    the sess_05914670d8f34533 zombie (Building until the 7230s wall).
+    """
     payload = (getattr(last_note, "payload", None) or {}) if last_note else {}
     if not payload.get("model_call"):
+        return {}
+    if not worker_live:
         return {}
     try:
         from app.factory.llm_watchdog import attempt_wall_s
@@ -197,9 +214,20 @@ def _model_call_fields(last_note: Any) -> Dict[str, Any]:
     }
 
 
+def _orphaned_inflight_model_call(
+    calling_note: Any, product_id: str, *, worker_live: Optional[bool] = None
+) -> bool:
+    """True when a model_call NOTE has no live runner / CLI worker."""
+    payload = (getattr(calling_note, "payload", None) or {}) if calling_note else {}
+    if not payload.get("model_call"):
+        return False
+    live = _live_runner_thread(product_id) if worker_live is None else worker_live
+    return not live
+
+
 def _model_call_overdue(last_note: Any, idle_s: float) -> Optional[str]:
     """Concrete timeout detail when a calling-NOTE outlived its watchdog wall."""
-    fields = _model_call_fields(last_note)
+    fields = _model_call_fields(last_note, worker_live=True)
     if not fields:
         return None
     deadline = float(fields["model_call_deadline_s"])
@@ -473,6 +501,8 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     activity_notes = [e for e in notes if e not in inspects]
     last_note = activity_notes[-1] if activity_notes else None
     calling_note = _open_model_call_note(activity_notes)
+    product_id = _product_id_of(events, output_dir)
+    worker_live = _live_runner_thread(product_id)
     try:
         import time
 
@@ -492,7 +522,7 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
         "last_event_at": last_any.ts if last_any else None,
         "last_event_age_s": round(idle_s, 1),
         "stale": idle_s > _STALE_AFTER_S,
-        **_model_call_fields(calling_note or last_note),
+        **_model_call_fields(calling_note or last_note, worker_live=worker_live),
     }
     if last_note is not None:
         payload = last_note.payload or {}
@@ -593,6 +623,30 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
                 **progress,
                 **activity,
                 "stale": False,
+                "model_call_in_progress": False,
+            },
+            output_dir,
+        )
+
+    # Deploy / worker restart mid-WRITER leaves the model_call NOTE and
+    # the 7230s C-BRIEF wall, but no thread and no FACTORY_CODE_CLI.
+    # Do not wait for the deadline — that is the estate-management zombie.
+    if _orphaned_inflight_model_call(
+        calling_note or last_note, product_id, worker_live=worker_live
+    ):
+        return _with_level_grade(
+            {
+                "state": "stalled",
+                "detail": (
+                    f"{FACTORY_CODE_CLI_ORPHANED}: no live WRITER / "
+                    "FACTORY_CODE_CLI worker after process restart — "
+                    "model call is not in progress"
+                ),
+                "pilot_ready": False,
+                "honesty": FACTORY_CODE_CLI_ORPHANED,
+                **progress,
+                **activity,
+                "model_call_in_progress": False,
             },
             output_dir,
         )
@@ -603,7 +657,9 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
     # working on it, and saying so is the honest answer.
     # An in-flight coder call inside its deadline is work, not a dead
     # process — stalling at 30 min would abort a legitimate 40 min write.
-    in_flight_call = bool(_model_call_fields(calling_note or last_note))
+    in_flight_call = bool(
+        _model_call_fields(calling_note or last_note, worker_live=worker_live)
+    )
     if idle_s > _STALL_AFTER_S and not in_flight_call:
         return _with_level_grade(
             {
@@ -810,6 +866,15 @@ def start_runner_build(
                 "cycle": resolved,
                 "already_running": True,
             }
+        if (
+            status.get("state") == "stalled"
+            and status.get("honesty") == FACTORY_CODE_CLI_ORPHANED
+        ):
+            logger.info(
+                "resuming FACTORY_CODE_CLI_ORPHANED ledger at %s "
+                "(no live WRITER / FACTORY_CODE_CLI worker)",
+                out,
+            )
         if status.get("state") == "failed":
             # A terminal RUN_FAILED / rework-exhausted ledger is not a
             # resume source. Same-hash generate would otherwise attach to
