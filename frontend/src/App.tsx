@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   auth,
   billing,
@@ -64,6 +64,17 @@ export function requestedSessionFromLocation(pathname: string, search: string): 
   return sessionIdFromPath(pathname) ?? sessionQueryParam(search)
 }
 
+/**
+ * `/floor/{id}` (or `/platforms/{id}`) is the occupant the shell must paint.
+ * A live WRITER bind / list[0] must not replace a path id.
+ */
+export function pathSessionWins(
+  pathSessionId: string | null,
+  boundSessionId: string | null,
+): string | null {
+  return pathSessionId ?? boundSessionId
+}
+
 /** Public auth URLs must not become a full-page "Factory unreachable" on a race. */
 export function isPublicAuthPath(pathname: string): boolean {
   return (
@@ -125,7 +136,9 @@ export default function App() {
   const [view, setView] = useState<View>(() =>
     typeof window === 'undefined' ? 'floor' : viewFromPath(window.location.pathname),
   )
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : sessionIdFromPath(window.location.pathname),
+  )
   const [bootError, setBootError] = useState<string | null>(null)
   const [needsEmailVerify, setNeedsEmailVerify] = useState(false)
   const [pendingDevToken, setPendingDevToken] = useState<string | null>(null)
@@ -136,8 +149,20 @@ export default function App() {
   const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
   const [sessionLinkError, setSessionLinkError] = useState<string | null>(null)
   const [sessionList, setSessionList] = useState<SessionListItem[]>([])
+  const [locationEpoch, setLocationEpoch] = useState(0)
+  const sessionListRef = useRef<SessionListItem[]>([])
+  sessionListRef.current = sessionList
+
+  function rememberSession(id: string) {
+    const next = [{ session_id: id }, ...sessionListRef.current.filter((s) => s.session_id !== id)]
+    sessionListRef.current = next
+    setSessionList(next)
+  }
 
   function go(next: View, sid: string | null = sessionId) {
+    if ((next === 'floor' || next === 'platforms') && sid && sid !== sessionId) {
+      setSessionId(sid)
+    }
     setView(next)
     setAlreadySignedInNotice(false)
     const bound = next === 'floor' || next === 'platforms' ? sid : null
@@ -172,6 +197,7 @@ export default function App() {
           billing.status().catch(() => null),
         ])
         const arr = Array.isArray(list) ? list : list.sessions ?? []
+        const pathId = sessionIdFromPath(window.location.pathname)
         const choice = resolveBootSession(requestedSession, arr)
         if (choice.status === 'missing') {
           if (!cancelled) {
@@ -179,6 +205,7 @@ export default function App() {
             setAccessPaused(factoryAccessPaused(bill))
             setNeedsEmailVerify(false)
             setBootError(null)
+            sessionListRef.current = arr
             setSessionList(arr)
             setSessionLinkError(choice.requested)
             setSessionId(null)
@@ -188,6 +215,11 @@ export default function App() {
           return
         }
         let sid = choice.status === 'selected' ? choice.sessionId : undefined
+        // Path id stays the occupant even if list[0] is a live WRITER run.
+        if (pathId && sid && sid !== pathId) {
+          const pathChoice = resolveBootSession(pathId, arr)
+          if (pathChoice.status === 'selected') sid = pathChoice.sessionId
+        }
         let nextList = arr
         if (!sid) {
           const created = await sessions.create()
@@ -199,9 +231,10 @@ export default function App() {
           setAccessPaused(factoryAccessPaused(bill))
           setNeedsEmailVerify(false)
           setBootError(null)
+          sessionListRef.current = nextList
           setSessionList(nextList)
           setSessionLinkError(null)
-          setSessionId(sid ?? null)
+          setSessionId(pathSessionWins(pathId, sid ?? null))
           setAuthed(true)
           if (isSignedInAuthRedirectPath(window.location.pathname)) {
             window.history.replaceState(null, '', '/')
@@ -259,26 +292,45 @@ export default function App() {
     }
   }, [sessionId])
 
+  // pushState (in-app go / live deep-link tools) does not fire popstate.
+  // Rebind from the URL on every history write so a live WRITER occupant
+  // cannot keep the Floor after the path changes to another session.
+  useEffect(() => {
+    const bump = () => setLocationEpoch((n) => n + 1)
+    const hist = window.history
+    const origPush = hist.pushState.bind(hist)
+    const origReplace = hist.replaceState.bind(hist)
+    hist.pushState = ((...args: Parameters<History['pushState']>) => {
+      origPush(...args)
+      bump()
+    }) as History['pushState']
+    hist.replaceState = ((...args: Parameters<History['replaceState']>) => {
+      origReplace(...args)
+      bump()
+    }) as History['replaceState']
+    window.addEventListener('popstate', bump)
+    return () => {
+      hist.pushState = origPush
+      hist.replaceState = origReplace
+      window.removeEventListener('popstate', bump)
+    }
+  }, [])
+
   useEffect(() => {
     if (!authed) return
-    const onPopState = () => {
-      const path = window.location.pathname
-      setView(viewFromPath(path))
-      setAlreadySignedInNotice(false)
-      const requested = requestedSessionFromLocation(path, window.location.search)
-      if (!requested) return
-      const choice = resolveBootSession(requested, sessionList)
-      if (choice.status === 'selected') {
-        setSessionLinkError(null)
-        setSessionId(choice.sessionId)
-      } else if (choice.status === 'missing') {
-        setSessionLinkError(choice.requested)
-        setSessionId(null)
-      }
+    const path = window.location.pathname
+    setView(viewFromPath(path))
+    const requested = requestedSessionFromLocation(path, window.location.search)
+    if (!requested) return
+    const choice = resolveBootSession(requested, sessionListRef.current)
+    if (choice.status === 'selected') {
+      setSessionLinkError(null)
+      setSessionId(choice.sessionId)
+    } else if (choice.status === 'missing' && sessionListRef.current.length > 0) {
+      setSessionLinkError(choice.requested)
+      setSessionId(null)
     }
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [authed, sessionList])
+  }, [authed, locationEpoch, sessionList])
 
   if (authed === null)
     return (
@@ -414,10 +466,7 @@ export default function App() {
                 : async () => {
                     const created = await sessions.create()
                     const fresh = created.session_id
-                    setSessionList((prev) =>
-                      fresh ? [{ session_id: fresh }, ...prev] : prev,
-                    )
-                    setSessionId(fresh)
+                    if (fresh) rememberSession(fresh)
                     go('floor', fresh)
                   }
             }
