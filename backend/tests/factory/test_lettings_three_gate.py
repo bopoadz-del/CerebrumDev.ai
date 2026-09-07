@@ -2,10 +2,9 @@
 
 A lettings brief must draft the golden roster (not a GENERATE stub), the
 code cycle must emit a full 14-class repo, and a Store-green pilot is the
-only path to ``pilot_ready``. The golden roster has four capabilities —
-below the launching-ready full-pilot floor (≥5 authored actions) — so a
-no-CLI / thin-authorship walk must not claim Store-green. Fail-closed if
-the pilot cycle is red.
+only path to ``pilot_ready``. The golden roster has four capabilities, so the authorship floor is 4
+(not a fixed ≥5). A no-CLI / thin-authorship walk still must not claim
+Store-green. Fail-closed if the pilot cycle is red.
 """
 
 from __future__ import annotations

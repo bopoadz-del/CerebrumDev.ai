@@ -12,8 +12,9 @@ A CLI billing/auth miss (``FACTORY_CODE_CLI_FAILED`` /
 fallthrough, or template-majority / near-zero agent-written authorship
 cannot stamp founding-customer-ready. Keep-paths may still be
 Store-green when PRODUCT + STORE pass *and* authorship meets the
-launching-ready full-pilot floor (≥5 agent-written action handlers or
-``cli_authored_ids``). Below that floor the grade demotes
+launching-ready full-pilot floor (need = min(5, max(1, n_required))
+agent-written action handlers or ``cli_authored_ids``; unknown
+n_required keeps need=5). Below that floor the grade demotes
 ``pilot_ready`` and refuses Store-green — thin Download is a lie.
 """
 
@@ -24,10 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
-from app.factory.build.authorship import (
-    FULL_PILOT_MIN_AUTHORED_ACTIONS,
-    full_pilot_authorship_from,
-)
+from app.factory.build.authorship import full_pilot_authorship_from
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES, present_classes
 from app.factory.build.product_gate import GATE_SCOPES
 
@@ -238,11 +236,16 @@ def grade_workspace(
             "authorship is overwhelmingly templated (near-zero agent_written)"
         )
     if floor.below_floor:
+        n_req = (
+            f", n_required={floor.n_required}"
+            if floor.n_required is not None
+            else ""
+        )
         blockers.append(
             "authorship is below the full-pilot floor "
             f"(action_py={floor.action_py}, "
             f"cli_authored_ids={len(floor.cli_authored_ids)}, "
-            f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS})"
+            f"need ≥{floor.need}{n_req})"
         )
         # Honesty: a measured thin keep-path cannot stay Store-green.
         ready = False

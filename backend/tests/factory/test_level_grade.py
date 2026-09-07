@@ -120,8 +120,9 @@ def test_full_repo_with_pilot_ready_is_founding(tmp_path):
 def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
     """#338 keep-path: PRODUCT/STORE pass, but CLI billing is not founding.
 
-    Authorship must still meet the full-pilot floor (≥5). A 1-written
-    billing keep-path is thin and is demoted separately.
+    Authorship must still meet the full-pilot floor (need=5 when
+    n_required is unknown or ≥5). A 1-written billing keep-path is thin
+    and is demoted separately.
     """
     _full_repo(tmp_path)
     grade = grade_workspace(
@@ -152,7 +153,7 @@ def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
 
 
 def test_thin_authorship_cannot_claim_store_green(tmp_path):
-    """VetCare 1206: action_py=3 / lettings action_py=4 is not Store-green."""
+    """VetCare 1206: action_py=3 is not Store-green (unknown n_required → need=5)."""
     _full_repo(tmp_path)
     grade = grade_workspace(
         tmp_path,
@@ -194,7 +195,37 @@ def test_thin_authorship_cannot_claim_store_green(tmp_path):
     assert any("full-pilot floor" in b for b in grade["blockers"])
 
 
-def test_lettings_four_actions_is_below_full_pilot_floor(tmp_path):
+def test_lettings_four_of_four_meets_scaled_floor(tmp_path):
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {
+                "artifacts": 27,
+                "agent_written": 4,
+                "templated": 23,
+                "action_py": 4,
+                "n_required": 4,
+                "cli_authored_ids": [
+                    "unit_registry_and_vacancy_tracking",
+                    "viewing_management",
+                    "maintenance_issue_tracking",
+                    "tenancy_application_pipeline",
+                ],
+            },
+        },
+    )
+    assert grade["full_pilot"] is True
+    assert grade["pilot_ready"] is True
+    assert grade["level"] == Level.STORE_GREEN.value
+
+
+def test_lettings_four_actions_unknown_n_required_still_need_five(tmp_path):
+    """Without n_required the absolute floor of 5 still refuses 4 authored."""
     _full_repo(tmp_path)
     grade = grade_workspace(
         tmp_path,

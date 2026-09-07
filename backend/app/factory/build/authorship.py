@@ -11,6 +11,7 @@ the templated inventory for the same run.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -27,9 +28,11 @@ __all__ = (
     "full_pilot_authorship_acceptance_line",
     "full_pilot_authorship_forbidden_lines",
     "full_pilot_authorship_from",
+    "full_pilot_authorship_need",
     "full_pilot_authorship_needles",
     "full_pilot_authorship_rules_text",
     "is_action_artifact_id",
+    "n_required_capabilities_from",
     "thin_store_green_export_blocker",
     "is_coding_agent_source",
     "kept_handler_ids_from",
@@ -39,55 +42,236 @@ __all__ = (
     "writer_contract_role_detail",
 )
 
-#: Launching-ready full-pilot bar. STORE_GREEN / package zip is not honest
-#: below this many agent-written action handlers (or cli_authored_ids).
+#: Absolute launching-ready bar when n_required is unknown or ≥5.
+#: Products with fewer required capabilities use that smaller count
+#: (``need = min(5, max(1, n_required))``). STORE_GREEN / package zip is
+#: not honest below ``need`` agent-written action handlers (or
+#: ``cli_authored_ids``).
 FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
 FULL_PILOT_AUTHORSHIP_CHECK = "full_pilot_authorship"
 
+#: Workspace files that may list required / planned capability ids.
+_N_REQUIRED_WORKSPACE_FILES = (
+    Path("docs") / "blueprint" / "product_blueprint.json",
+    Path("docs") / "product_blueprint.json",
+    Path("factory_plan.json"),
+    Path("docs") / "provenance" / "provenance.json",
+)
 
-def full_pilot_authorship_rules_text() -> str:
+
+def full_pilot_authorship_need(n_required: Optional[int] = None) -> int:
+    """Authorship floor for package / Store-green SUCCESS.
+
+    Owner rule after #387/#388 vs 4-cap goldens: refuse thin scaffolds,
+    but do not demand 5 handlers when the brief only has 4 required
+    capabilities. ``need = min(5, max(1, n_required))`` when the required
+    count is known; unknown stays 5.
+    """
+    if n_required is None:
+        return FULL_PILOT_MIN_AUTHORED_ACTIONS
+    if isinstance(n_required, bool):
+        return FULL_PILOT_MIN_AUTHORED_ACTIONS
+    try:
+        n = int(n_required)
+    except (TypeError, ValueError):
+        return FULL_PILOT_MIN_AUTHORED_ACTIONS
+    if n <= 0:
+        return FULL_PILOT_MIN_AUTHORED_ACTIONS
+    return min(FULL_PILOT_MIN_AUTHORED_ACTIONS, max(1, n))
+
+
+def _capability_id(item: Any) -> str:
+    if isinstance(item, Mapping):
+        return str(item.get("id") or item.get("capability_id") or "").strip()
+    return str(
+        getattr(item, "id", None) or getattr(item, "capability_id", None) or ""
+    ).strip()
+
+
+def _capability_is_required(item: Any) -> bool:
+    if isinstance(item, Mapping):
+        if "required" not in item:
+            return True
+        return item.get("required") is not False
+    if hasattr(item, "required"):
+        return getattr(item, "required") is not False
+    return True
+
+
+def _count_required_capabilities(items: Any) -> Optional[int]:
+    if not items:
+        return None
+    if isinstance(items, int) and not isinstance(items, bool) and items > 0:
+        return items
+    if not isinstance(items, (list, tuple)):
+        return None
+    ids: List[str] = []
+    for item in items:
+        if not _capability_is_required(item):
+            continue
+        cid = _capability_id(item)
+        if cid and cid not in ids:
+            ids.append(cid)
+    return len(ids) if ids else None
+
+
+def n_required_capabilities_from(
+    status: Optional[Mapping[str, Any]] = None,
+    workspace: Optional[Path | str] = None,
+    *,
+    plan: Any = None,
+    blueprint: Any = None,
+    compiled: Any = None,
+    state: Optional[Mapping[str, Any]] = None,
+) -> Optional[int]:
+    """Required-capability count for the authorship floor.
+
+    Prefer an explicit ``n_required`` on status/authorship, then the
+    compiled brief / plan / blueprint required caps, then workspace
+    ``product_blueprint.json`` / ``factory_plan.json``. ``None`` means
+    unknown — callers keep need=5.
+    """
+    blobs: List[Any] = []
+    status_map = dict(status or {})
+    authorship = status_map.get("authorship")
+    if isinstance(authorship, Mapping):
+        blobs.append(authorship)
+    blobs.append(status_map)
+    if isinstance(state, Mapping):
+        blobs.append(state)
+        nested = state.get("brief_dispatch")
+        if isinstance(nested, Mapping):
+            blobs.append(nested)
+
+    for blob in blobs:
+        if not isinstance(blob, Mapping):
+            continue
+        for key in ("n_required", "n_required_capabilities"):
+            counted = _count_required_capabilities(blob.get(key))
+            if counted:
+                return counted
+        caps = blob.get("required_capabilities")
+        counted = _count_required_capabilities(caps)
+        if counted:
+            return counted
+
+    for source in (compiled, plan, blueprint):
+        if source is None:
+            continue
+        caps = getattr(source, "capabilities", None)
+        counted = _count_required_capabilities(caps)
+        if counted:
+            return counted
+        if isinstance(source, Mapping):
+            counted = _count_required_capabilities(source.get("capabilities"))
+            if counted:
+                return counted
+
+    if workspace is None:
+        return None
+    if hasattr(workspace, "workspace"):
+        root = Path(workspace.workspace)
+    else:
+        try:
+            root = Path(workspace)
+        except TypeError:
+            return None
+    if not root.exists():
+        return None
+    for rel in _N_REQUIRED_WORKSPACE_FILES:
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, Mapping):
+            continue
+        for key in ("n_required", "n_required_capabilities"):
+            counted = _count_required_capabilities(data.get(key))
+            if counted:
+                return counted
+        counted = _count_required_capabilities(data.get("capabilities"))
+        if counted:
+            return counted
+        plan_blob = data.get("plan")
+        if isinstance(plan_blob, Mapping):
+            counted = _count_required_capabilities(plan_blob.get("capabilities"))
+            if counted:
+                return counted
+    return None
+
+
+def full_pilot_authorship_rules_text(n_required: Optional[int] = None) -> str:
     """BUILD cut: coder must emit the launching-ready floor before done."""
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    n = full_pilot_authorship_need(n_required)
+    if n_required is not None and 0 < int(n_required) < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+        scale = (
+            f" This brief has {int(n_required)} required capabilities, so the "
+            f"floor is {n} (dynamic floor — not a fixed "
+            f"≥{FULL_PILOT_MIN_AUTHORED_ACTIONS})."
+        )
+    else:
+        scale = ""
     return (
         f"Launching-ready full-pilot authorship floor: emit ≥{n} keepable "
         "agent-written app/actions/*.py handlers (or equivalent "
-        f"cli_authored_ids). Fewer than {n} is FACTORY_CODE_CLI_THIN_AUTHORSHIP "
-        "— CODE_GREEN / pilot_ready=false, package 409. Do not treat the job "
-        "as done below this floor."
+        f"cli_authored_ids).{scale} Fewer than {n} is "
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP — CODE_GREEN / pilot_ready=false, "
+        "package 409. Do not treat the job as done below this floor."
     )
 
 
-def full_pilot_authorship_acceptance_line() -> str:
+def full_pilot_authorship_acceptance_line(
+    n_required: Optional[int] = None,
+) -> str:
     """ACCEPTANCE cut: harness check, not a coder decorative test."""
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    n = full_pilot_authorship_need(n_required)
+    extra = ""
+    if n_required is not None and 0 < int(n_required) < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+        extra = (
+            f" (dynamic floor: {int(n_required)} required capabilities → "
+            f"need ≥{n}, not a fixed ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS})"
+        )
     return (
         f"- launching-ready full-pilot authorship: ≥{n} keepable "
         "agent-written app/actions/*.py handlers (or equivalent "
-        f"cli_authored_ids)  [check:{FULL_PILOT_AUTHORSHIP_CHECK}]"
+        f"cli_authored_ids){extra}  [check:{FULL_PILOT_AUTHORSHIP_CHECK}]"
     )
 
 
-def full_pilot_authorship_forbidden_lines() -> str:
+def full_pilot_authorship_forbidden_lines(
+    n_required: Optional[int] = None,
+) -> str:
     """FORBIDDEN cut: the #387 thin-authorship refuse the coder must see."""
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    n = full_pilot_authorship_need(n_required)
+    extra = ""
+    if n_required is not None and 0 < int(n_required) < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+        extra = " (dynamic floor)"
     return (
         f"- authorship below the launching-ready full-pilot floor "
-        f"(<{n} agent-written app/actions/*.py / cli_authored_ids) — "
+        f"(<{n} agent-written app/actions/*.py / cli_authored_ids){extra} — "
         "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
     )
 
 
-def full_pilot_authorship_needles() -> Sequence[str]:
+def full_pilot_authorship_needles(
+    n_required: Optional[int] = None,
+) -> Sequence[str]:
     """Needles lint requires on every compiled brief."""
-    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
-    return (
+    n = full_pilot_authorship_need(n_required)
+    needles = [
         f"≥{n}",
         "full-pilot authorship",
         "app/actions/*.py",
         "cli_authored_ids",
         "FACTORY_CODE_CLI_THIN_AUTHORSHIP",
         f"[check:{FULL_PILOT_AUTHORSHIP_CHECK}]",
-    )
+    ]
+    if n_required is not None and 0 < int(n_required) < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+        needles.append("dynamic floor")
+    return tuple(needles)
 
 #: Writer extras that are not ``app/actions/*.py`` handlers.
 _NON_ACTION_ARTIFACT_IDS = frozenset(
@@ -301,6 +485,8 @@ class FullPilotAuthorship:
     action_py: int = 0
     measured: bool = False
     meets_floor: bool = False
+    n_required: Optional[int] = None
+    need: int = FULL_PILOT_MIN_AUTHORED_ACTIONS
 
     @property
     def below_floor(self) -> bool:
@@ -310,12 +496,17 @@ class FullPilotAuthorship:
 def full_pilot_authorship_from(
     status: Optional[Mapping[str, Any]] = None,
     workspace: Optional[Path | str] = None,
+    *,
+    n_required: Optional[int] = None,
+    plan: Any = None,
+    blueprint: Any = None,
 ) -> FullPilotAuthorship:
     """Count agent-written action handlers / ``cli_authored_ids``.
 
-    ``full_pilot`` needs ≥ ``FULL_PILOT_MIN_AUTHORED_ACTIONS`` of either.
-    Missing counts are not a pass. A present count below the floor is a
-    measured refuse (VetCare action_py=3, lettings action_py=4).
+    ``full_pilot`` needs ≥ ``full_pilot_authorship_need(n_required)`` of
+    either. Missing counts are not a pass. A present count below the
+    floor is a measured refuse (VetCare action_py=3). A 4-cap golden
+    with 4 authored ids meets the floor when ``n_required`` is 4.
     """
     status = dict(status or {})
     authorship = status.get("authorship")
@@ -324,6 +515,13 @@ def full_pilot_authorship_from(
     receipt = status.get("coder_receipt")
     if not isinstance(receipt, Mapping):
         receipt = {}
+
+    resolved = n_required
+    if resolved is None:
+        resolved = n_required_capabilities_from(
+            status, workspace, plan=plan, blueprint=blueprint
+        )
+    need = full_pilot_authorship_need(resolved)
 
     cli_ids: Optional[List[str]] = None
     for blob in (authorship, receipt, status.get("brief_dispatch")):
@@ -355,29 +553,32 @@ def full_pilot_authorship_from(
 
     cli_list = cli_ids if cli_ids is not None else []
     measured = measured_actions or cli_ids is not None
-    meets = (
-        action_py >= FULL_PILOT_MIN_AUTHORED_ACTIONS
-        or len(cli_list) >= FULL_PILOT_MIN_AUTHORED_ACTIONS
-    )
+    meets = action_py >= need or len(cli_list) >= need
     return FullPilotAuthorship(
         action_ids=list(action_ids),
         cli_authored_ids=list(cli_list),
         action_py=action_py,
         measured=measured,
         meets_floor=bool(measured and meets),
+        n_required=resolved,
+        need=need,
     )
 
 
 def thin_store_green_export_blocker(
     status: Optional[Mapping[str, Any]] = None,
     workspace: Optional[Path | str] = None,
+    *,
+    n_required: Optional[int] = None,
 ) -> Optional[str]:
     """Refuse a Store-green / full-pilot zip when authorship is below floor.
 
     Code-cycle prototypes (PRODUCT/STORE not run) are not this lie.
     """
     status = dict(status or {})
-    floor = full_pilot_authorship_from(status, workspace)
+    floor = full_pilot_authorship_from(
+        status, workspace, n_required=n_required
+    )
     if not floor.below_floor:
         return None
     grade = status.get("level_grade")
@@ -396,10 +597,13 @@ def thin_store_green_export_blocker(
     )
     if not claiming_store_green:
         return None
+    n_req = (
+        f", n_required={floor.n_required}" if floor.n_required is not None else ""
+    )
     return (
         "FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the "
         f"full-pilot floor (action_py={floor.action_py}, "
         f"cli_authored_ids={len(floor.cli_authored_ids)}, "
-        f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}) — will not ship a "
+        f"need ≥{floor.need}{n_req}) — will not ship a "
         "Store-green / full-pilot zip"
     )

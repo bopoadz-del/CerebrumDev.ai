@@ -382,6 +382,7 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
         coding_agent_artifact_ids,
         is_action_artifact_id,
         kept_handler_ids_from,
+        n_required_capabilities_from,
         writer_authorship_counts,
     )
 
@@ -392,18 +393,20 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     dispatch = prov.get("brief_dispatch") or {}
     cli_ids = cli_authored_ids_from(dispatch)
     failures = prov.get("coder_failures") or {}
-    return {
-        "authorship": {
-            **counts,
-            "agent_artifacts": agent,
-            "action_py": len(action_ids),
-            "cli_authored_ids": list(cli_ids or []),
-            "kept_handler_ids": kept_handler_ids_from(dispatch),
-            # Named, not counted: "3 stubs" tells the customer nothing about
-            # which parts of their platform are degraded.
-            "coder_failures": {k: str(v)[:300] for k, v in failures.items()},
-        }
+    n_required = n_required_capabilities_from(prov, output_dir, state=dispatch)
+    authorship = {
+        **counts,
+        "agent_artifacts": agent,
+        "action_py": len(action_ids),
+        "cli_authored_ids": list(cli_ids or []),
+        "kept_handler_ids": kept_handler_ids_from(dispatch),
+        # Named, not counted: "3 stubs" tells the customer nothing about
+        # which parts of their platform are degraded.
+        "coder_failures": {k: str(v)[:300] for k, v in failures.items()},
     }
+    if n_required is not None:
+        authorship["n_required"] = n_required
+    return {"authorship": authorship}
 
 
 def build_status(output_dir: Path | str) -> Dict[str, Any]:

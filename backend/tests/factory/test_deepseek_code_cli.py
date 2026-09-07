@@ -1146,7 +1146,7 @@ def test_hung_killed_by_wall_is_not_unused_and_refuses_thin_success(
 
 
 def test_partial_thin_authorship_refuses_success_when_cli_ready(tmp_path, monkeypatch):
-    """VetCare/lettings 1206: written=3 or 4 is not a Store-green SUCCESS."""
+    """Unknown n_required keeps need=5; 3 of 4 required still refuses."""
     from app.factory.build.ledger import BuildLedger
     from app.factory.build.runner import Outcome, RoleRunner
     from app.factory.blueprint import load_blueprint
@@ -1178,13 +1178,54 @@ def test_partial_thin_authorship_refuses_success_when_cli_ready(tmp_path, monkey
     assert NAMED_BLOCKER_CLI_THIN_AUTHORSHIP in blocker
     assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in blocker
 
+    lettings_ids = [
+        "unit_registry_and_vacancy_tracking",
+        "viewing_management",
+        "maintenance_issue_tracking",
+        "tenancy_application_pipeline",
+    ]
+    thin_four = thin_stub_success_blocked(
+        snapshot={**snap, "n_required": 4, "agent_written": 3, "cli_or_llm_written": 3},
+        elapsed_s=120.0,
+        state={
+            "n_required": 4,
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": lettings_ids[:3],
+            },
+        },
+    )
+    assert thin_four
+    assert "need ≥4" in thin_four
+    full_four = thin_stub_success_blocked(
+        snapshot={
+            "agent_written": 4,
+            "cli_or_llm_written": 4,
+            "templated": 10,
+            "stub_rate": 0.7,
+            "cli_attempted": True,
+            "n_required": 4,
+        },
+        elapsed_s=120.0,
+        state={
+            "n_required": 4,
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": lettings_ids,
+            },
+        },
+    )
+    assert full_four is None
+
     out = tmp_path / "build"
     out.mkdir(exist_ok=True)
     ledger = BuildLedger(out / "build_ledger.jsonl")
-    ledger.start_run(product_id="vetcare-hub", inputs_hash="abc")
+    ledger.start_run(product_id="residential-lettings", inputs_hash="abc")
     root = Path(__file__).resolve().parents[3]
     runner = RoleRunner(
-        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        load_blueprint(root / "blueprints/lettings/residential_lettings.v1.yaml"),
         out,
         ledger=ledger,
     )
@@ -1192,11 +1233,7 @@ def test_partial_thin_authorship_refuses_success_when_cli_ready(tmp_path, monkey
     runner.state["brief_dispatch"] = {
         "via": "cli",
         "ok": True,
-        "cli_authored_ids": [
-            "audit",
-            "vetcare_hub_veterinary_core",
-            "workflow",
-        ],
+        "cli_authored_ids": lettings_ids[:3],
     }
     outcome = runner._finish(
         Outcome.SUCCESS,
@@ -1205,6 +1242,7 @@ def test_partial_thin_authorship_refuses_success_when_cli_ready(tmp_path, monkey
     assert outcome.ok is False
     assert NAMED_BLOCKER_CLI_THIN_AUTHORSHIP in (outcome.detail or "")
     assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in (outcome.detail or "")
+    assert "need ≥4" in (outcome.detail or "")
     assert "pilot_zip" not in (outcome.detail or "")
 
 

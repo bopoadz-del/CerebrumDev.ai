@@ -38,8 +38,8 @@ const CLAIMED_LEVELS = new Set<string>([
  *
  * CLI billing/auth miss + template-majority authorship can stay
  * Store-green only when the launching-ready authorship floor holds
- * (≥5 agent-written action handlers or cli_authored_ids). Below that
- * floor the glass demotes Store-green and refuses gold Download.
+ * (need = min(5, max(1, n_required)); unknown n_required keeps need=5).
+ * Below that floor the glass demotes Store-green and refuses gold Download.
  * A Store-green claim is never upgraded to founding.
  */
 export const FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
@@ -384,12 +384,20 @@ export function fullPilotAuthorshipCount(
   return cliN
 }
 
+export function fullPilotAuthorshipNeed(
+  build: BuildStatus | null | undefined,
+): number {
+  const n = authorshipCount(build?.authorship?.n_required)
+  if (n == null || n <= 0) return FULL_PILOT_MIN_AUTHORED_ACTIONS
+  return Math.min(FULL_PILOT_MIN_AUTHORED_ACTIONS, Math.max(1, n))
+}
+
 export function isBelowFullPilotAuthorshipFloor(
   build: BuildStatus | null | undefined,
 ): boolean {
   if (build?.level_grade?.full_pilot === true) return false
   const count = fullPilotAuthorshipCount(build)
-  return count != null && count < FULL_PILOT_MIN_AUTHORED_ACTIONS
+  return count != null && count < fullPilotAuthorshipNeed(build)
 }
 
 function claimsStoreGreenPilot(build: BuildStatus | null | undefined): boolean {
@@ -748,7 +756,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       disabled: true,
       ghost: true,
       title:
-        'Need ≥5 agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused',
+        `Need ≥${fullPilotAuthorshipNeed(build)} agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused`,
     }
   }
   if (shouldRefuseExport(build)) {
