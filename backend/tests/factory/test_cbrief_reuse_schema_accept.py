@@ -243,6 +243,8 @@ def test_photographed_roster_and_factory_store_defaults():
     assert default_block_action("formula_executor") == "execute"
     assert default_block_action("formula_executor_v2") == "execute"
     assert default_block_action("vector_search") == "search"
+    assert default_block_action("capture") == "capture"
+    assert default_block_action("capture_v2") == "capture"
     planted = default_action_from_block_json(
         {"inputs": [{"name": "action", "default": "check", "options": ["check"]}]}
     )

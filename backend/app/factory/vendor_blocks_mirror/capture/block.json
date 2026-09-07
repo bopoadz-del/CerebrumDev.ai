@@ -13,6 +13,13 @@
   "id": "capture",
   "inputs": [
     {
+      "name": "action",
+      "type": "string",
+      "default": "capture",
+      "options": ["capture"],
+      "description": "Factory-known keep-path default (sess_e8e4ab66e6dd4765). Registry block.json has no action input; Store CaptureBlock.process defaults params.action to capture. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+    },
+    {
       "description": "Upload or push an image to capture and structure...",
       "name": "input",
       "required": false,
