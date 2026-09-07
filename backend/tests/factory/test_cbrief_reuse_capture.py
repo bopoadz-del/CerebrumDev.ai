@@ -8,12 +8,14 @@ at [check:reuse_accept]:
       no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
     security_and_access_logging: capture: reuse/accept miss —
 
-Registry-verified Cerebrum-Blocks capture/block.json has no
-inputs[].name == action (Store CaptureBlock.process defaults
-params.action to capture). Factory vendor mirror and the documented
-Store map both omitted that harvest. Same compiler class as
-#348 formula_executor / #351 vector_search — not a per-cap handle()
-micro-shot.
+Live InsureDistribute Store-green zip (sess_d10dfc28):
+app/actions/capture.py sets BLOCK_DEFAULT_ACTIONS = {'capture': 'extract'}.
+vendor/blocks/capture/block.json has id capture but inputs[] are OCR
+config only (no name==action / operation). Factory vendor block.py is
+an adapter (get_block + execute) with no action == dispatch, so
+harvest-from-source misses. Factory-known map fallback is capture →
+extract (capture_v2 alias). Same compiler class as #348 / #351 —
+not a per-cap handle() micro-shot.
 
 Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 """
@@ -21,6 +23,7 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -43,6 +46,8 @@ from app.factory.build.reuse_lookup import load_local_block_json
 from app.factory.build.workspace import RoleWorkspace
 
 LIVE_SESS = "sess_e8e4ab66e6dd4765"
+LIVE_INSURE_SESS = "sess_d10dfc28"
+LIVE_CAPTURE_KEYWORD = "extract"
 LIVE_CAPTURE_CAPS = (
     "maintenance_and_work_order_management",
     "security_and_access_logging",
@@ -51,6 +56,15 @@ LIVE_CAPTURE_MISS = (
     "maintenance_and_work_order_management: capture: reuse/accept miss — "
     "no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)"
 )
+_FACTORY_CAPTURE_PY = (
+    Path(__file__).resolve().parents[2]
+    / "app"
+    / "factory"
+    / "vendor_blocks_mirror"
+    / "capture"
+    / "block.py"
+)
+#: Live Store vendor / InsureDistribute zip: OCR config only, no action input.
 _REGISTRY_SHAPED_CAPTURE = {
     "id": "capture",
     "inputs": [
@@ -59,32 +73,39 @@ _REGISTRY_SHAPED_CAPTURE = {
             "name": "input",
             "required": False,
             "type": "file",
-        }
+        },
+        {
+            "default": "tesseract",
+            "name": "ocr_engine",
+            "required": False,
+            "type": "string",
+        },
     ],
 }
 
 
 def test_sess_e8e4ab66e6dd4765_photograph_and_vendor_harvest():
-    """Live miss string + factory vendor block.json harvest (no planted workspace)."""
+    """Live miss string + factory vendor / map harvest (no planted workspace)."""
     assert LIVE_SESS in __doc__
+    assert LIVE_INSURE_SESS in __doc__
     assert "capture" in STORE_BLOCK_DEFAULT_ACTIONS
-    assert STORE_BLOCK_DEFAULT_ACTIONS["capture"] == "capture"
-    assert STORE_BLOCK_DEFAULT_ACTIONS["capture_v2"] == "capture"
-    assert default_block_action("capture") == "capture"
-    assert default_block_action("capture_v2") == "capture"
+    assert STORE_BLOCK_DEFAULT_ACTIONS["capture"] == LIVE_CAPTURE_KEYWORD
+    assert STORE_BLOCK_DEFAULT_ACTIONS["capture_v2"] == LIVE_CAPTURE_KEYWORD
+    assert default_block_action("capture") == LIVE_CAPTURE_KEYWORD
+    assert default_block_action("capture_v2") == LIVE_CAPTURE_KEYWORD
 
     vendor = load_local_block_json("capture")
     assert vendor is not None
     assert vendor.get("id") == "capture"
     harvested_json = default_action_from_block_json(vendor)
-    assert harvested_json == "capture", vendor
+    assert harvested_json == LIVE_CAPTURE_KEYWORD, vendor
 
     harvested = harvest_block_default_actions(["capture", "capture_v2", "database"])
-    assert harvested["capture"] == "capture"
-    assert harvested["capture_v2"] == "capture"
+    assert harvested["capture"] == LIVE_CAPTURE_KEYWORD
+    assert harvested["capture_v2"] == LIVE_CAPTURE_KEYWORD
     assert harvested["database"] == "query"
-    assert harvest_block_default_action("capture") == "capture"
-    assert harvest_block_default_action("capture_v2") == "capture"
+    assert harvest_block_default_action("capture") == LIVE_CAPTURE_KEYWORD
+    assert harvest_block_default_action("capture_v2") == LIVE_CAPTURE_KEYWORD
     assert default_block_action("not_a_real_block") is None
     assert harvest_block_default_actions(["not_a_real_block"]) == {}
 
@@ -96,6 +117,32 @@ def test_sess_e8e4ab66e6dd4765_photograph_and_vendor_harvest():
     # Factory map still resolves capture — empty defaults are not
     # the live miss once the compiler harvests the Store default.
     assert ghost == []
+
+
+def test_insure_store_green_zip_registry_json_misses_then_map_extract():
+    """sess_d10dfc28: live vendor block.json has no action/operation input.
+
+    Harvest-from-block.json returns None. In-repo factory adapter
+    block.py has no action == dispatch. Map fallback is extract.
+    """
+    assert LIVE_INSURE_SESS in __doc__
+    assert default_action_from_block_json(_REGISTRY_SHAPED_CAPTURE) is None
+    adapter = _FACTORY_CAPTURE_PY.read_text(encoding="utf-8")
+    assert "get_block" in adapter
+    assert default_action_from_source(adapter) is None
+    assert "action ==" not in adapter
+    assert default_block_action("capture") == "extract"
+    assert default_block_action("capture", {}) == "extract"
+    assert reuse_accept_handler_errors(
+        "BLOCK_IDS = ['capture']\nBLOCK_DEFAULT_ACTIONS = {}\n",
+        ["capture"],
+        capability_id="capture",
+    ) == []
+    assert reuse_accept_handler_errors(
+        "BLOCK_IDS = ['capture']\nBLOCK_DEFAULT_ACTIONS = {'capture': 'extract'}\n",
+        ["capture"],
+        capability_id="capture",
+    ) == []
 
 
 def test_path_and_role_workspace_harvest_capture(tmp_path):
@@ -112,8 +159,8 @@ def test_path_and_role_workspace_harvest_capture(tmp_path):
                     {
                         "name": "action",
                         "type": "string",
-                        "default": "capture",
-                        "options": ["capture", "ocr"],
+                        "default": "extract",
+                        "options": ["extract", "ocr"],
                     }
                 ],
             }
@@ -121,20 +168,44 @@ def test_path_and_role_workspace_harvest_capture(tmp_path):
         encoding="utf-8",
     )
 
-    assert harvest_block_default_action("capture", dest) == "capture"
-    assert harvest_block_default_actions(["capture"], dest) == {"capture": "capture"}
+    assert harvest_block_default_action("capture", dest) == "extract"
+    assert harvest_block_default_actions(["capture"], dest) == {"capture": "extract"}
 
     ws = RoleWorkspace(BuildRole.WRITER, dest)
-    assert harvest_block_default_action("capture", workspace=ws) == "capture"
+    assert harvest_block_default_action("capture", workspace=ws) == "extract"
     assert harvest_block_default_actions(["capture"], workspace=ws) == {
-        "capture": "capture"
+        "capture": "extract"
     }
-    assert harvest_block_default_action("capture", workspace=tmp_path) == "capture"
+    assert harvest_block_default_action("capture", workspace=tmp_path) == "extract"
+
+
+def test_registry_shaped_workspace_falls_to_map_extract(monkeypatch, tmp_path):
+    """Live zip layout: workspace vendor json has no action; map fills extract."""
+    monkeypatch.setattr(
+        "app.factory.build.reuse_accept._harvest_from_factory_vendor",
+        lambda _bid: None,
+    )
+    dest = tmp_path / "vendor" / "blocks" / "capture"
+    dest.mkdir(parents=True)
+    (dest / "block.json").write_text(
+        json.dumps(_REGISTRY_SHAPED_CAPTURE),
+        encoding="utf-8",
+    )
+    (dest / "block.py").write_text(
+        _FACTORY_CAPTURE_PY.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    assert default_action_from_block_json(_REGISTRY_SHAPED_CAPTURE) is None
+    assert default_action_from_source((dest / "block.py").read_text()) is None
+    assert harvest_block_default_action("capture", tmp_path) == "extract"
+    assert harvest_block_default_actions(["capture"], tmp_path) == {
+        "capture": "extract"
+    }
 
 
 def test_mutation_drops_capture_harvest(monkeypatch, tmp_path):
     """sess_e8e4ab66e6dd4765: dropping harvest still fails as Unknown action: None."""
-    assert harvest_block_default_action("capture") == "capture"
+    assert harvest_block_default_action("capture") == "extract"
 
     monkeypatch.setattr(
         "app.factory.build.reuse_accept.STORE_BLOCK_DEFAULT_ACTIONS",
@@ -199,20 +270,13 @@ def test_mutation_drops_capture_harvest(monkeypatch, tmp_path):
 
 
 def test_registry_shaped_block_json_without_action_falls_to_factory_vendor():
-    """Cerebrum-Blocks capture/block.json has no action input.
+    """Live Store / registry capture/block.json has no action input.
 
-    Harvest must still fill capture from factory vendor / Store map rather
-    than inventing an unknown id.
+    Harvest-from-block.json misses. In-repo adapter source also misses.
+    Factory vendor / Store map must fill extract rather than inventing
+    an unknown id.
     """
     assert default_action_from_block_json(_REGISTRY_SHAPED_CAPTURE) is None
-    store_source = (
-        "async def process(self, input_data, params=None):\n"
-        "    params = params or {}\n"
-        '    action = params.get("action", "capture")\n'
-        '    if action == "capture":\n'
-        "        return await self._capture(input_data, params)\n"
-        "    return {'status': 'error', 'error': f'Unknown action: {action}'}\n"
-    )
-    assert default_action_from_source(store_source) == "capture"
-    assert harvest_block_default_action("capture") == "capture"
+    assert default_action_from_source(_FACTORY_CAPTURE_PY.read_text()) is None
+    assert harvest_block_default_action("capture") == "extract"
     assert harvest_block_default_action("not_a_real_block") is None
