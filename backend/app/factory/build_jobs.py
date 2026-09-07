@@ -378,7 +378,9 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     from app.factory.build.authorship import (
+        cli_authored_ids_from,
         coding_agent_artifact_ids,
+        is_action_artifact_id,
         kept_handler_ids_from,
         writer_authorship_counts,
     )
@@ -386,12 +388,17 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     sources = prov.get("artifact_sources") or {}
     counts = writer_authorship_counts(sources)
     agent = coding_agent_artifact_ids(sources)
+    action_ids = [cid for cid in agent if is_action_artifact_id(cid)]
+    dispatch = prov.get("brief_dispatch") or {}
+    cli_ids = cli_authored_ids_from(dispatch)
     failures = prov.get("coder_failures") or {}
     return {
         "authorship": {
             **counts,
             "agent_artifacts": agent,
-            "kept_handler_ids": kept_handler_ids_from(prov.get("brief_dispatch") or {}),
+            "action_py": len(action_ids),
+            "cli_authored_ids": list(cli_ids or []),
+            "kept_handler_ids": kept_handler_ids_from(dispatch),
             # Named, not counted: "3 stubs" tells the customer nothing about
             # which parts of their platform are degraded.
             "coder_failures": {k: str(v)[:300] for k, v in failures.items()},

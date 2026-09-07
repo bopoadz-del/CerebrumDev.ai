@@ -72,6 +72,10 @@ NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 #: Factory-grounded fill after that exit is not C-BRIEF authorship
 #: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
 NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
+#: CLI/LLM wrote some handlers, but below the launching-ready full-pilot
+#: floor (need ≥5 action handlers or cli_authored_ids). Distinct from
+#: written=0 / stub_rate=1.0 (``FACTORY_CODE_CLI_NO_AUTHORSHIP``).
+NAMED_BLOCKER_CLI_THIN_AUTHORSHIP = "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
 #: CLI wrote ``def handle(`` for a GENERATE gap but harvest dropped it
 #: only because event_bus keepability failed. Distinct from "never wrote".
 NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS = "FACTORY_CODE_CLI_UNKEEPABLE_EVENT_BUS"
@@ -521,7 +525,9 @@ def thin_stub_success_blocked(
         stub_rate = float(snapshot.get("stub_rate") or 0.0)
     except (TypeError, ValueError):
         stub_rate = 0.0
-    if written > 0:
+    from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS
+
+    if written >= FULL_PILOT_MIN_AUTHORED_ACTIONS:
         return None
     attempted = bool(snapshot.get("cli_attempted")) or cli_dispatch_attempted(
         state, ledger
@@ -568,6 +574,15 @@ def thin_stub_success_blocked(
             f"handlers (written={written}, stub_rate={stub_rate}). "
             "A CLI exit 0 is not C-BRIEF authorship — do not SUCCESS "
             "thin templates."
+        )
+    if 0 < written < FULL_PILOT_MIN_AUTHORED_ACTIONS:
+        cli_n = len(list(dispatch.get("cli_authored_ids") or []))
+        return (
+            f"{NAMED_BLOCKER_CLI_THIN_AUTHORSHIP}: authorship is below "
+            f"the full-pilot floor (written={written}, "
+            f"cli_authored_ids={cli_n}, "
+            f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}). "
+            "Do not SUCCESS a Store-green pilot from thin authorship."
         )
     if not attempted:
         return (

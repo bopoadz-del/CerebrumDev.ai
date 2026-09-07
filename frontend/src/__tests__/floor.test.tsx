@@ -385,14 +385,14 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
   })
 
-  it('keeps Floor Export when CLI-failed receipt sits on a pilot-ready SUCCESS', async () => {
+  it('refuses Floor Store-green Download when CLI-failed keep-path is below the authorship floor', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({
         state: 'succeeded',
         outcome: 'SUCCESS',
         pilot_ready: true,
         cycle: 'pilot',
-        authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+        authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
@@ -412,17 +412,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_c220986f67914681" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
-    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
-    expect(screen.getByTestId('floor-pilot-ready-pill')).not.toHaveTextContent(
-      'Founding-customer-ready',
-    )
-    expect(screen.getByText(/Pilot-ready — 1 artifacts; 23 templated/)).toBeInTheDocument()
-    expect(screen.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.queryByText(/Founding-customer-ready\. Download ready/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
-    expect(screen.queryByTestId('floor-failed-pill')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Export (.zip) — pilot suite failed' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' }),
+    ).toBeDisabled()
   })
 
   it('refuses Floor Download when CLI-failed card is not actually pilot-ready', async () => {

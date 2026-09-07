@@ -2,9 +2,10 @@
 
 A lettings brief must draft the golden roster (not a GENERATE stub), the
 code cycle must emit a full 14-class repo, and a Store-green pilot is the
-only path to ``pilot_ready``. Founding still requires a writer session —
-a no-CLI / thin-authorship walk stays Store-green. Fail-closed if the
-pilot cycle is red.
+only path to ``pilot_ready``. The golden roster has four capabilities —
+below the launching-ready full-pilot floor (≥5 authored actions) — so a
+no-CLI / thin-authorship walk must not claim Store-green. Fail-closed if
+the pilot cycle is red.
 """
 
 from __future__ import annotations
@@ -228,13 +229,13 @@ def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path):
 
 
 def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
-    """Code cycle then Store-green pilot. Founding needs a writer product.
+    """Code cycle then PRODUCT/STORE. Thin authorship is not Store-green.
 
     This walk disables the coder (no paid CLI). PRODUCT/STORE may pass on
-    factory-grounded emit, but ``FACTORY_CODE_CLI_UNAVAILABLE`` + near-zero
-    agent-written authorship must not stamp founding-customer-ready.
-    Vendor-mirror durability may still fail PRODUCT/STORE. That must stay a
-    red Level, never a thin SUCCESS with implied Finished.
+    factory-grounded emit, but four golden caps + ``FACTORY_CODE_CLI_UNAVAILABLE``
+    must not stamp Store-green or founding-customer-ready. Vendor-mirror
+    durability may still fail PRODUCT/STORE. That must stay a red Level,
+    never a thin SUCCESS with implied Finished.
     """
     out = tmp_path / "residential-lettings"
     code = RoleRunner(
@@ -261,13 +262,18 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
     assert "PRODUCT PASS" in (pilot.detail or "")
     assert "STORE PASS" in (pilot.detail or "")
     assert status["state"] == "succeeded"
-    assert status["pilot_ready"] is True
+    assert status["pilot_ready"] is False
     assert grade["three_gate"] == {"CODE": "PASS", "PRODUCT": "PASS", "STORE": "PASS"}
     assert grade["missing"] == []
-    assert grade["level"] == Level.STORE_GREEN.value
+    assert grade["level"] not in {
+        Level.STORE_GREEN.value,
+        Level.FOUNDING_CUSTOMER_READY.value,
+    }
+    assert grade["full_pilot"] is False
     assert grade["founding_customer_ready"] is False
     assert any(
-        "FACTORY_CODE_CLI_UNAVAILABLE" in b or "templated" in b for b in grade["blockers"]
+        "full-pilot floor" in b or "FACTORY_CODE_CLI_UNAVAILABLE" in b or "templated" in b
+        for b in grade["blockers"]
     )
 
 

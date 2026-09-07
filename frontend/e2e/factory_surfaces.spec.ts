@@ -838,7 +838,7 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(page.getByText(/Download the export and launch it anywhere/i)).toHaveCount(0)
 })
 
-test('Your Platforms keeps Export and demotes founding on a CLI-failed pilot-ready SUCCESS', async ({
+test('Your Platforms refuses gold Download when CLI-failed keep-path is below the authorship floor', async ({
   page,
 }) => {
   await mockVerifiedFactory(page)
@@ -870,7 +870,7 @@ test('Your Platforms keeps Export and demotes founding on a CLI-failed pilot-rea
           outcome: 'SUCCESS',
           pilot_ready: true,
           cycle: 'pilot',
-          authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+          authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
           level_grade: {
             level: 'FOUNDING_CUSTOMER_READY',
             founding_customer_ready: true,
@@ -888,20 +888,18 @@ test('Your Platforms keeps Export and demotes founding on a CLI-failed pilot-rea
   })
 
   await page.goto('/platforms')
-  await expect(page.getByTestId('platforms-pilot-ready-pill')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveText('Store-green')
+  await expect(page.getByTestId('platforms-prototype-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('platforms-prototype-pill')).toHaveText('Code-green (prototype)')
   await expect(page.getByText('Founding-customer-ready', { exact: true })).toHaveCount(0)
-  await expect(page.getByText(/Pilot-ready — 1 artifacts; 23 templated/)).toBeVisible()
-  await expect(page.getByText(/Store-green — not founding-customer-ready/)).toBeVisible()
-  const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
-  await expect(download).toBeVisible()
-  await expect(download).toBeEnabled()
-  await expect(page.getByTestId('platforms-failed-pill')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toHaveCount(0)
-  await expect(page.getByTestId('platforms-lead')).toContainText(/Download the export/)
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  const refused = page.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/full-pilot floor/)
+  await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
 })
 
-test('Floor keeps Export and demotes founding on a CLI-billing keep-path SUCCESS', async ({
+test('Floor refuses gold Download when CLI-billing keep-path is below the authorship floor', async ({
   page,
 }) => {
   await mockVerifiedFactory(page)
@@ -933,7 +931,7 @@ test('Floor keeps Export and demotes founding on a CLI-billing keep-path SUCCESS
           outcome: 'SUCCESS',
           pilot_ready: true,
           cycle: 'pilot',
-          authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+          authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
           level_grade: {
             level: 'FOUNDING_CUSTOMER_READY',
             founding_customer_ready: true,
@@ -952,17 +950,75 @@ test('Floor keeps Export and demotes founding on a CLI-billing keep-path SUCCESS
   })
 
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible({
+  await expect(page.getByRole('heading', { name: 'Code-cycle prototype ready' })).toBeVisible({
     timeout: 20_000,
   })
-  await expect(page.getByTestId('floor-pilot-ready-pill')).toHaveText('Store-green')
+  await expect(page.getByTestId('floor-prototype-pill')).toHaveText('Code-green (prototype)')
   await expect(page.getByText('Founding-customer-ready', { exact: true })).toHaveCount(0)
-  await expect(page.getByText(/Pilot-ready — 1 artifacts; 23 templated/)).toBeVisible()
-  await expect(page.getByText(/Store-green zip ready — not founding-customer-ready/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
+  const refused = page.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' })
+  await expect(refused).toBeVisible()
+  await expect(refused).toBeDisabled()
+})
+
+test('Your Platforms keeps Export on a CLI-failed keep-path that meets the authorship floor', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'VetCare Hub', vertical: 'veterinary-care' },
+        generation: {
+          product_id: 'veterinary-care',
+          engine: 'runner',
+          inputs_hash: 'vetcarehash',
+          output_dir: '/tmp/veterinary-care',
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'veterinary-care',
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 6, templated: 18, action_py: 6 },
+          level_grade: {
+            level: 'STORE_GREEN',
+            founding_customer_ready: false,
+            pilot_ready: true,
+            full_pilot: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+          coder_receipt: {
+            ok: false,
+            blocker: 'FACTORY_CODE_CLI_BILLING',
+            honesty_class: 'FACTORY_CODE_CLI_FAILED',
+            detail: 'FACTORY_CODE_CLI_BILLING: 429 — insufficient balance',
+          },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('platforms-pilot-ready-pill')).toHaveText('Store-green')
   const download = page.getByRole('button', { name: 'Download platform export (.zip)' })
   await expect(download).toBeVisible()
   await expect(download).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toHaveCount(0)
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Download the export/)
 })
 
 test('Your Platforms refuses Export when CLI-failed founding claim is not pilot-ready', async ({

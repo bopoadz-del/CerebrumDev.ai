@@ -10,9 +10,11 @@ absent payload-contract helpers also block founding.
 A CLI billing/auth miss (``FACTORY_CODE_CLI_FAILED`` /
 ``FACTORY_CODE_CLI_BILLING`` / equivalent), factory-LLM GENERATE
 fallthrough, or template-majority / near-zero agent-written authorship
-cannot stamp founding-customer-ready. Those keep-paths may still be
-Store-green when PRODUCT + STORE pass — Export stays allowed. Thin
-Store-green zips are Pilot-ready, never founding product.
+cannot stamp founding-customer-ready. Keep-paths may still be
+Store-green when PRODUCT + STORE pass *and* authorship meets the
+launching-ready full-pilot floor (≥5 agent-written action handlers or
+``cli_authored_ids``). Below that floor the grade demotes
+``pilot_ready`` and refuses Store-green — thin Download is a lie.
 """
 
 from __future__ import annotations
@@ -22,6 +24,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.factory.build.authorship import (
+    FULL_PILOT_MIN_AUTHORED_ACTIONS,
+    full_pilot_authorship_from,
+)
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES, present_classes
 from app.factory.build.product_gate import GATE_SCOPES
 
@@ -50,6 +56,7 @@ CLI_FOUNDING_HONESTY_MISS = frozenset(
         "FACTORY_CODE_CLI_MODEL_DENIED",
         "FACTORY_CODE_CLI_UNUSED",
         "FACTORY_CODE_CLI_NO_AUTHORSHIP",
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP",
         "FACTORY_CODE_CLI_UNKEEPABLE_EVENT_BUS",
         "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL",
     }
@@ -191,6 +198,7 @@ def grade_workspace(
     cycle = str(status.get("cycle") or "code")
     detail = str(status.get("detail") or "")
     gates = parse_three_gate_verdict(detail)
+    floor = full_pilot_authorship_from(status, workspace)
     missing = _missing_founding_files(workspace) if workspace.is_dir() else list(
         FOUNDING_EXTRA_FILES
     ) + list(FOURTEEN_ARTIFACT_CLASSES)
@@ -229,6 +237,15 @@ def grade_workspace(
         blockers.append(
             "authorship is overwhelmingly templated (near-zero agent_written)"
         )
+    if floor.below_floor:
+        blockers.append(
+            "authorship is below the full-pilot floor "
+            f"(action_py={floor.action_py}, "
+            f"cli_authored_ids={len(floor.cli_authored_ids)}, "
+            f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS})"
+        )
+        # Honesty: a measured thin keep-path cannot stay Store-green.
+        ready = False
 
     if ready and not blockers:
         level = Level.FOUNDING_CUSTOMER_READY
@@ -236,7 +253,6 @@ def grade_workspace(
         level = Level.STORE_GREEN
     elif (
         state == "succeeded"
-        and cycle == "code"
         and gates.get("CODE") == "PASS"
         and not ready
     ):
@@ -249,10 +265,18 @@ def grade_workspace(
         level = Level.CODE_GREEN if gates.get("CODE") == "PASS" else Level.SCAFFOLD
         blockers.append("honesty lock: pilot_ready false cannot grade Store-green")
 
+    full_pilot = (
+        level in {Level.STORE_GREEN, Level.FOUNDING_CUSTOMER_READY}
+        and ready
+        and floor.meets_floor
+    )
     return {
         "emitter": GRADE_EMITTER,
         "level": level.value,
         "pilot_ready": ready,
+        "full_pilot": full_pilot,
+        "action_py": floor.action_py,
+        "cli_authored_ids": list(floor.cli_authored_ids),
         "cycle": cycle,
         "state": state,
         "three_gate": gates,
@@ -266,13 +290,20 @@ def grade_workspace(
 def attach_level_grade(status: Dict[str, Any], root: Path | str) -> Dict[str, Any]:
     """Stamp ``level_grade`` onto a build_status dict. Fail-closed on error."""
     try:
-        status["level_grade"] = grade_workspace(root, status=status)
+        grade = grade_workspace(root, status=status)
+        status["level_grade"] = grade
+        # Floor / package read status.pilot_ready. A thin keep-path that
+        # demoted the grade must not keep a Store-green ledger bit.
+        if grade.get("pilot_ready") is False:
+            status["pilot_ready"] = False
     except Exception as exc:  # noqa: BLE001 — a grade fault must not 500 status
         status["level_grade"] = {
             "emitter": GRADE_EMITTER,
             "level": Level.SCAFFOLD.value,
             "pilot_ready": False,
+            "full_pilot": False,
             "founding_customer_ready": False,
             "blockers": [f"level grade could not run: {type(exc).__name__}: {exc}"],
         }
+        status["pilot_ready"] = False
     return status

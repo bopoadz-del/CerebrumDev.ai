@@ -334,7 +334,9 @@ export type BuildAuthorship = {
   artifacts?: number
   agent_written?: number
   templated?: number
+  action_py?: number
   agent_artifacts?: string[]
+  cli_authored_ids?: string[]
   kept_handler_ids?: string[]
   coder_failures?: Record<string, string>
 }
@@ -365,6 +367,7 @@ export type BuildStatus = {
   level_grade?: {
     level?: string
     pilot_ready?: boolean
+    full_pilot?: boolean
     founding_customer_ready?: boolean
     blockers?: string[]
     three_gate?: Record<string, string>
@@ -405,6 +408,7 @@ export type BuildStatus = {
     honesty_class?: string | null
     model?: string
     factory_llm_generate_fallthrough?: boolean
+    cli_authored_ids?: string[]
   }
   brief_dispatch?: string | null
   /**

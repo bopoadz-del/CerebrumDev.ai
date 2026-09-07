@@ -11,20 +11,52 @@ the templated inventory for the same run.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = (
     "DualListedAuthorshipError",
+    "FULL_PILOT_MIN_AUTHORED_ACTIONS",
+    "FullPilotAuthorship",
     "coding_agent_artifact_ids",
     "dual_listed_capability_ids",
     "exclusive_authorship_caps",
     "cli_authored_ids_from",
+    "full_pilot_authorship_from",
+    "is_action_artifact_id",
+    "thin_store_green_export_blocker",
     "is_coding_agent_source",
     "kept_handler_ids_from",
     "promote_cli_keep_ids",
     "refuse_dual_listed_caps",
     "writer_authorship_counts",
     "writer_contract_role_detail",
+)
+
+#: Launching-ready full-pilot bar. STORE_GREEN / package zip is not honest
+#: below this many agent-written action handlers (or cli_authored_ids).
+FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
+
+#: Writer extras that are not ``app/actions/*.py`` handlers.
+_NON_ACTION_ARTIFACT_IDS = frozenset(
+    {
+        "jobs",
+        "readme",
+        "entrypoint",
+        "requirements",
+        "release_gate",
+        "deploy_scaffold",
+        "network_posture",
+        "sbom",
+        "permissions",
+        "domain_pack",
+        "persistence",
+        "migrations",
+        "deploy_observe",
+        "domain_acceptance",
+        "emitter_parity",
+    }
 )
 
 
@@ -165,3 +197,158 @@ def refuse_dual_listed_caps(
             "capability id(s) listed as both agent-written and templated: "
             + ", ".join(overlap)
         )
+
+
+def is_action_artifact_id(artifact_id: str) -> bool:
+    """True for a capability action-handler id, not models/routes/extras."""
+    text = str(artifact_id or "").strip()
+    if not text or ":" in text or "/" in text:
+        return False
+    if text.endswith(".py") or text.endswith(".tsx") or text.endswith(".md"):
+        return False
+    if text in _NON_ACTION_ARTIFACT_IDS:
+        return False
+    if text.startswith("template_"):
+        return False
+    return True
+
+
+def _as_nonneg_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _unique_ids(values: Iterable[Any]) -> List[str]:
+    ids: List[str] = []
+    for item in values:
+        cid = str(item or "").strip()
+        if cid and cid not in ids:
+            ids.append(cid)
+    return ids
+
+
+def _cli_ids_from_mapping(blob: Any) -> Optional[List[str]]:
+    if not isinstance(blob, Mapping):
+        return None
+    if "cli_authored_ids" in blob:
+        return _unique_ids(blob.get("cli_authored_ids") or ())
+    nested = cli_authored_ids_from(blob)
+    return nested
+
+
+@dataclass(frozen=True)
+class FullPilotAuthorship:
+    """Measured action-handler authorship against the launching-ready floor."""
+
+    action_ids: List[str] = field(default_factory=list)
+    cli_authored_ids: List[str] = field(default_factory=list)
+    action_py: int = 0
+    measured: bool = False
+    meets_floor: bool = False
+
+    @property
+    def below_floor(self) -> bool:
+        return self.measured and not self.meets_floor
+
+
+def full_pilot_authorship_from(
+    status: Optional[Mapping[str, Any]] = None,
+    workspace: Optional[Path | str] = None,
+) -> FullPilotAuthorship:
+    """Count agent-written action handlers / ``cli_authored_ids``.
+
+    ``full_pilot`` needs ≥ ``FULL_PILOT_MIN_AUTHORED_ACTIONS`` of either.
+    Missing counts are not a pass. A present count below the floor is a
+    measured refuse (VetCare action_py=3, lettings action_py=4).
+    """
+    status = dict(status or {})
+    authorship = status.get("authorship")
+    if not isinstance(authorship, Mapping):
+        authorship = {}
+    receipt = status.get("coder_receipt")
+    if not isinstance(receipt, Mapping):
+        receipt = {}
+
+    cli_ids: Optional[List[str]] = None
+    for blob in (authorship, receipt, status.get("brief_dispatch")):
+        found = _cli_ids_from_mapping(blob)
+        if found is not None:
+            cli_ids = found
+            break
+
+    action_ids: List[str] = []
+    measured_actions = False
+    artifacts = authorship.get("agent_artifacts")
+    if isinstance(artifacts, list):
+        action_ids = [cid for cid in _unique_ids(artifacts) if is_action_artifact_id(cid)]
+        measured_actions = True
+    explicit_action_py = _as_nonneg_int(authorship.get("action_py"))
+    if explicit_action_py is not None and not measured_actions:
+        measured_actions = True
+        action_ids = action_ids or [f"action_{i}" for i in range(explicit_action_py)]
+
+    action_py = len(action_ids)
+    if measured_actions and explicit_action_py is not None and not artifacts:
+        action_py = explicit_action_py
+
+    if not measured_actions:
+        written = _as_nonneg_int(authorship.get("agent_written"))
+        if written is not None:
+            measured_actions = True
+            action_py = written
+
+    cli_list = cli_ids if cli_ids is not None else []
+    measured = measured_actions or cli_ids is not None
+    meets = (
+        action_py >= FULL_PILOT_MIN_AUTHORED_ACTIONS
+        or len(cli_list) >= FULL_PILOT_MIN_AUTHORED_ACTIONS
+    )
+    return FullPilotAuthorship(
+        action_ids=list(action_ids),
+        cli_authored_ids=list(cli_list),
+        action_py=action_py,
+        measured=measured,
+        meets_floor=bool(measured and meets),
+    )
+
+
+def thin_store_green_export_blocker(
+    status: Optional[Mapping[str, Any]] = None,
+    workspace: Optional[Path | str] = None,
+) -> Optional[str]:
+    """Refuse a Store-green / full-pilot zip when authorship is below floor.
+
+    Code-cycle prototypes (PRODUCT/STORE not run) are not this lie.
+    """
+    status = dict(status or {})
+    floor = full_pilot_authorship_from(status, workspace)
+    if not floor.below_floor:
+        return None
+    grade = status.get("level_grade")
+    gates = grade.get("three_gate") if isinstance(grade, Mapping) else None
+    if not isinstance(gates, Mapping):
+        from app.factory.build.level_grade import parse_three_gate_verdict
+
+        gates = parse_three_gate_verdict(str(status.get("detail") or ""))
+    cycle = str(status.get("cycle") or "").strip().lower()
+    claiming_store_green = (
+        cycle == "pilot"
+        or (
+            str(gates.get("PRODUCT") or "") == "PASS"
+            and str(gates.get("STORE") or "") == "PASS"
+        )
+    )
+    if not claiming_store_green:
+        return None
+    return (
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the "
+        f"full-pilot floor (action_py={floor.action_py}, "
+        f"cli_authored_ids={len(floor.cli_authored_ids)}, "
+        f"need ≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}) — will not ship a "
+        "Store-green / full-pilot zip"
+    )
