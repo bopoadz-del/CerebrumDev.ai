@@ -17,13 +17,57 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 from app.factory.build.authority import (
     AuthorityError,
     BuildRole,
     assert_write_allowed,
 )
+
+
+def supports_relpath_io(workspace: Any) -> bool:
+    """True for ``exists(rel)`` / ``read_text(rel)`` — not pathlib.Path.
+
+    ``pathlib.Path`` also has ``exists`` / ``read_text`` / ``write_text``, but
+    those operate on *self*. Treating a Path as this duck-type raises
+    ``TypeError: Path.exists() takes 1 positional argument but 2 were given``
+    (CEREBRUMDEV-BACKEND-W). Floor WRITER uses :class:`RoleWorkspace`.
+    """
+    if workspace is None or isinstance(workspace, Path):
+        return False
+    return callable(getattr(workspace, "exists", None)) and callable(
+        getattr(workspace, "read_text", None)
+    )
+
+
+def supports_relpath_write(workspace: Any) -> bool:
+    """True for ``write_text(rel, content)`` — :class:`RoleWorkspace`, not Path."""
+    if workspace is None or isinstance(workspace, Path):
+        return False
+    return callable(getattr(workspace, "write_text", None))
+
+
+def _fs_root(workspace: Any) -> Path:
+    """Filesystem root for a Path or RoleWorkspace-style handle."""
+    return Path(getattr(workspace, "workspace", workspace))
+
+
+def write_workspace_text(
+    workspace: Any, relpath: str | Path, content: str
+) -> Path:
+    """Write via RoleWorkspace ``write_text(rel, …)`` or a Path root.
+
+    Floor WRITER always receives :class:`RoleWorkspace`. Selfcheck / Path
+    roots (CEREBRUMDEV-BACKEND-V) fall back to ``(root / rel).write_text``.
+    """
+    if supports_relpath_write(workspace):
+        written = workspace.write_text(relpath, content)
+        return written if isinstance(written, Path) else _fs_root(workspace) / relpath
+    dest = _fs_root(workspace) / relpath
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(content, encoding="utf-8")
+    return dest
 
 
 class RoleWorkspace:
