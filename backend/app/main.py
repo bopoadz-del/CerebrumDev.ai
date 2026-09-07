@@ -155,6 +155,14 @@ async def _lifespan(app: FastAPI):
             "FACTORY_CODE_CLI credential wire failed (owner-gated)"
         )
     try:
+        from app.factory.build.orphan_recovery import recover_orphaned_model_calls
+
+        recover_orphaned_model_calls()
+    except Exception:  # noqa: BLE001 — boot must not die on orphan scan
+        logging.getLogger("cerebrumdev.factory.orphan_recovery").exception(
+            "orphaned FACTORY_CODE_CLI recovery failed"
+        )
+    try:
         yield
     finally:
         task = getattr(app.state, "backup_task", None)

@@ -164,6 +164,10 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "the web service does not arm the in-process backup scheduler in "
             f"lifespan; seen: {lifespan_src[:400]}"
         )
+        assert "recover_orphaned_model_calls" in lifespan_src, (
+            "lifespan must resume or fail-close WRITER model_call zombies "
+            f"left by a deploy restart; seen: {lifespan_src[:400]}"
+        )
         assert fastapi_app.router.lifespan_context is not None
 
         web = [s for s in render["services"] if s.get("name") == "cerebrumdev-backend"]

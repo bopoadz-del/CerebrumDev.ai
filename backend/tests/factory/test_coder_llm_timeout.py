@@ -18,6 +18,7 @@ import json
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
@@ -31,6 +32,21 @@ from app.factory.llm_watchdog import (
     WATCHDOG_OVERSHOOT_GRACE_S,
     post_with_deadline,
 )
+
+
+@contextmanager
+def _hold_build_thread(product_id: str):
+    """Keep ``build-{product_id}`` alive so status may claim a live model call."""
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=stop.wait, name=f"build-{product_id}", daemon=True
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        thread.join(timeout=2)
 
 
 def _kimi_cfg(**overrides):
@@ -473,7 +489,8 @@ def test_calling_note_does_not_claim_handler_progress(tmp_path):
         },
     )
 
-    status = build_status(out)
+    with _hold_build_thread("vet"):
+        status = build_status(out)
     assert status["state"] == "building"
     assert status["model_call_in_progress"] is True
     assert status["model_call_deadline_s"] == 390
@@ -671,7 +688,8 @@ def test_in_flight_call_at_510s_is_still_building(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    status = build_status(out)
+    with _hold_build_thread("makers"):
+        status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
     assert status["model_call_deadline_s"] == wd.DEFAULT_ATTEMPT_WALL_S
@@ -711,7 +729,8 @@ def test_in_flight_call_does_not_stall_before_the_watchdog_wall(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    status = build_status(out)
+    with _hold_build_thread("lettings"):
+        status = build_status(out)
     assert status["state"] == "building", status
     assert "timed out" not in str(status.get("detail") or "")
     assert status["pilot_ready"] is not True
@@ -749,7 +768,8 @@ def test_cli_dispatch_1896s_against_7230s_is_still_building(tmp_path):
         aged.append(json.dumps(payload, sort_keys=True))
     (out / "build_ledger.jsonl").write_text("\n".join(aged) + "\n", encoding="utf-8")
 
-    status = build_status(out)
+    with _hold_build_thread("insurehub"):
+        status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
     assert status["model_call_deadline_s"] == 7230.0
@@ -830,7 +850,8 @@ def test_cli_stdout_note_does_not_drop_7230s_watchdog(tmp_path):
         payload={"stage": "dispatch", "source": "coder CLI"},
     )
 
-    status = build_status(out)
+    with _hold_build_thread("insurehub"):
+        status = build_status(out)
     assert status["state"] == "building", status
     assert status["model_call_in_progress"] is True
     assert status["model_call_deadline_s"] == 7230.0
