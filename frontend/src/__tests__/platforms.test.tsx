@@ -386,13 +386,13 @@ describe('Your Platforms — coding-agent build', () => {
         state: 'succeeded',
         pilot_ready: true,
         cycle: 'pilot',
-        authorship: { artifacts: 3, agent_written: 3, templated: 0 },
+        authorship: { artifacts: 6, agent_written: 6, templated: 0, action_py: 6 },
       })
     })
     downloadMock.mockResolvedValue(undefined)
     render(<Platforms sessionId="sess_ui" />)
     // Wait for the succeeded snapshot — Download stays "Building…" until then.
-    expect(await screen.findByText('Finished — 3 artifacts; 0 templated')).toBeInTheDocument()
+    expect(await screen.findByText('Finished — 6 artifacts; 0 templated')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Download platform export (.zip)' }))
     await waitFor(() => expect(downloadMock).toHaveBeenCalledWith('sess_ui'))
   })
@@ -436,7 +436,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.queryByText(/Download the export and launch it anywhere/i)).not.toBeInTheDocument()
   })
 
-  it('keeps Export when a founding SUCCESS card still reports FACTORY_CODE_CLI_FAILED', async () => {
+  it('refuses Export when a founding SUCCESS card is below the authorship floor', async () => {
     getMock.mockResolvedValue({
       generation: {
         ...GENERATION,
@@ -450,7 +450,7 @@ describe('Your Platforms — coding-agent build', () => {
         outcome: 'SUCCESS',
         pilot_ready: true,
         cycle: 'pilot',
-        authorship: { artifacts: 24, agent_written: 1, templated: 23 },
+        authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
@@ -465,21 +465,15 @@ describe('Your Platforms — coding-agent build', () => {
       })
     })
     render(<Platforms sessionId="sess_c220986f67914681" />)
-    expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent(
-      'Store-green',
+    expect(await screen.findByTestId('platforms-prototype-pill')).toHaveTextContent(
+      'Code-green (prototype)',
     )
-    expect(screen.getByTestId('platforms-pilot-ready-pill')).not.toHaveTextContent(
-      'Founding-customer-ready',
-    )
-    expect(screen.getByText('Pilot-ready — 1 artifacts; 23 templated')).toBeInTheDocument()
-    expect(screen.getByText(/Store-green — not founding-customer-ready/)).toBeInTheDocument()
-    expect(screen.queryByText(/Founding-customer-ready — PRODUCT and STORE/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
-    expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Export (.zip) — pilot suite failed' }),
-    ).not.toBeInTheDocument()
-    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download the export/)
+      screen.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' }),
+    ).toBeDisabled()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/full-pilot floor/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/)
   })
 
   it('refuses Export when a CLI-failed founding claim is not actually pilot-ready', async () => {

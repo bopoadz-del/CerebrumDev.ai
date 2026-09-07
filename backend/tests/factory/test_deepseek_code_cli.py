@@ -20,6 +20,7 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI_MODEL_DENIED,
     NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
     NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+    NAMED_BLOCKER_CLI_THIN_AUTHORSHIP,
     NAMED_BLOCKER_CLI_UNUSED,
     brief_dispatch_enabled,
     brief_requires_cli,
@@ -1142,3 +1143,110 @@ def test_hung_killed_by_wall_is_not_unused_and_refuses_thin_success(
     assert outcome.ok is False
     assert NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL in (outcome.detail or "")
     assert "pilot_zip" not in (outcome.detail or "")
+
+
+def test_partial_thin_authorship_refuses_success_when_cli_ready(tmp_path, monkeypatch):
+    """VetCare/lettings 1206: written=3 or 4 is not a Store-green SUCCESS."""
+    from app.factory.build.ledger import BuildLedger
+    from app.factory.build.runner import Outcome, RoleRunner
+    from app.factory.blueprint import load_blueprint
+
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    snap = {
+        "agent_written": 3,
+        "cli_or_llm_written": 3,
+        "templated": 21,
+        "stub_rate": 0.875,
+        "cli_attempted": True,
+    }
+    blocker = thin_stub_success_blocked(
+        snapshot=snap,
+        elapsed_s=120.0,
+        state={
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": [
+                    "audit",
+                    "vetcare_hub_veterinary_core",
+                    "workflow",
+                ],
+            }
+        },
+    )
+    assert blocker
+    assert NAMED_BLOCKER_CLI_THIN_AUTHORSHIP in blocker
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in blocker
+
+    out = tmp_path / "build"
+    out.mkdir(exist_ok=True)
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="vetcare-hub", inputs_hash="abc")
+    root = Path(__file__).resolve().parents[3]
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        out,
+        ledger=ledger,
+    )
+    runner._run_started = runner.clock()
+    runner.state["brief_dispatch"] = {
+        "via": "cli",
+        "ok": True,
+        "cli_authored_ids": [
+            "audit",
+            "vetcare_hub_veterinary_core",
+            "workflow",
+        ],
+    }
+    outcome = runner._finish(
+        Outcome.SUCCESS,
+        "CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+    )
+    assert outcome.ok is False
+    assert NAMED_BLOCKER_CLI_THIN_AUTHORSHIP in (outcome.detail or "")
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in (outcome.detail or "")
+    assert "pilot_zip" not in (outcome.detail or "")
+
+
+def test_five_authored_actions_still_allow_success_when_cli_ready(tmp_path, monkeypatch):
+    """Mutation: changing the floor to ignore ≥5 must fail this test."""
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    ids = ["audit", "workflow", "team", "document_engine", "validation"]
+    blocker = thin_stub_success_blocked(
+        snapshot={
+            "agent_written": 5,
+            "cli_or_llm_written": 5,
+            "templated": 10,
+            "stub_rate": 0.667,
+            "cli_attempted": True,
+        },
+        elapsed_s=120.0,
+        state={
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": ids,
+                "handler_ids": ids,
+            }
+        },
+    )
+    assert blocker is None
+
+
+def test_zero_written_stays_no_authorship_not_thin_floor(tmp_path, monkeypatch):
+    """written=0 path must remain FACTORY_CODE_CLI_NO_AUTHORSHIP."""
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    blocker = thin_stub_success_blocked(
+        snapshot={
+            "agent_written": 0,
+            "cli_or_llm_written": 0,
+            "templated": 4,
+            "stub_rate": 1.0,
+            "cli_attempted": True,
+        },
+        elapsed_s=30.0,
+        state={"brief_dispatch": {"via": "cli", "ok": True, "cli_authored_ids": []}},
+    )
+    assert blocker
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in blocker
+    assert NAMED_BLOCKER_CLI_THIN_AUTHORSHIP not in blocker

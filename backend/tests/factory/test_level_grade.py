@@ -118,7 +118,11 @@ def test_full_repo_with_pilot_ready_is_founding(tmp_path):
 
 
 def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
-    """#338 keep-path: PRODUCT/STORE pass, but CLI billing is not founding."""
+    """#338 keep-path: PRODUCT/STORE pass, but CLI billing is not founding.
+
+    Authorship must still meet the full-pilot floor (≥5). A 1-written
+    billing keep-path is thin and is demoted separately.
+    """
     _full_repo(tmp_path)
     grade = grade_workspace(
         tmp_path,
@@ -131,7 +135,7 @@ def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
                 "PRODUCT PASS — round-trip; "
                 "STORE PASS — restart"
             ),
-            "authorship": {"artifacts": 24, "agent_written": 1, "templated": 23},
+            "authorship": {"artifacts": 24, "agent_written": 6, "templated": 18},
             "coder_receipt": {
                 "ok": False,
                 "blocker": "FACTORY_CODE_CLI_BILLING",
@@ -143,7 +147,106 @@ def test_cli_billing_keep_path_is_store_green_not_founding(tmp_path):
     assert grade["founding_customer_ready"] is False
     assert grade["level"] == Level.STORE_GREEN.value
     assert grade["pilot_ready"] is True
+    assert grade["full_pilot"] is True
     assert any("FACTORY_CODE_CLI_BILLING" in b or "templated" in b for b in grade["blockers"])
+
+
+def test_thin_authorship_cannot_claim_store_green(tmp_path):
+    """VetCare 1206: action_py=3 / lettings action_py=4 is not Store-green."""
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": (
+                "CODE PASS — the code-phase suite; "
+                "PRODUCT PASS — round-trip; "
+                "STORE PASS — restart"
+            ),
+            "authorship": {
+                "artifacts": 24,
+                "agent_written": 3,
+                "templated": 21,
+                "action_py": 3,
+                "agent_artifacts": [
+                    "audit",
+                    "vetcare_hub_veterinary_core",
+                    "workflow",
+                ],
+                "cli_authored_ids": [
+                    "audit",
+                    "vetcare_hub_veterinary_core",
+                    "workflow",
+                ],
+            },
+        },
+    )
+    assert grade["level"] not in {
+        Level.STORE_GREEN.value,
+        Level.FOUNDING_CUSTOMER_READY.value,
+    }
+    assert grade["founding_customer_ready"] is False
+    assert grade["pilot_ready"] is False
+    assert grade["full_pilot"] is False
+    assert grade["action_py"] == 3
+    assert any("full-pilot floor" in b for b in grade["blockers"])
+
+
+def test_lettings_four_actions_is_below_full_pilot_floor(tmp_path):
+    _full_repo(tmp_path)
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {
+                "artifacts": 27,
+                "agent_written": 4,
+                "templated": 23,
+                "action_py": 4,
+                "cli_authored_ids": [
+                    "unit_registry_and_vacancy_tracking",
+                    "viewing_management",
+                    "maintenance_issue_tracking",
+                    "tenancy_application_pipeline",
+                ],
+            },
+        },
+    )
+    assert grade["full_pilot"] is False
+    assert grade["pilot_ready"] is False
+    assert grade["level"] == Level.CODE_GREEN.value
+
+
+def test_five_cli_authored_ids_still_store_green(tmp_path):
+    """Mutation: floor of 5 must not refuse a kit/Steward-shaped keep-path."""
+    _full_repo(tmp_path)
+    ids = ["audit", "workflow", "team", "document_engine", "validation"]
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {
+                "artifacts": 20,
+                "agent_written": 5,
+                "templated": 15,
+                "action_py": 5,
+                "agent_artifacts": ids,
+                "cli_authored_ids": ids,
+            },
+        },
+    )
+    assert grade["level"] == Level.STORE_GREEN.value
+    assert grade["pilot_ready"] is True
+    assert grade["full_pilot"] is True
+    assert grade["action_py"] == 5
 
 
 def test_template_majority_authorship_is_store_green_not_founding(tmp_path):

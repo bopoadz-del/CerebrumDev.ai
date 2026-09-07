@@ -36,10 +36,14 @@ const CLAIMED_LEVELS = new Set<string>([
  * Store-green or founding-customer-ready, even if ``level_grade.level``
  * overclaims. Missing grade falls back to cycle + pilot_ready.
  *
- * CLI billing/auth miss + thin / template-majority authorship can stay
- * Store-green (Export allowed) but must not paint founding-customer-ready.
+ * CLI billing/auth miss + template-majority authorship can stay
+ * Store-green only when the launching-ready authorship floor holds
+ * (≥5 agent-written action handlers or cli_authored_ids). Below that
+ * floor the glass demotes Store-green and refuses gold Download.
  * A Store-green claim is never upgraded to founding.
  */
+export const FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
+
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
   const claimed = String(build.level_grade?.level || '').toUpperCase()
@@ -53,6 +57,9 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
     build.state === 'stalled'
   ) {
     return 'SCAFFOLD'
+  }
+  if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
   }
   if (!ready) {
     if (claimed === 'STORE_GREEN' || claimed === 'FOUNDING_CUSTOMER_READY') {
@@ -102,6 +109,7 @@ export function levelGradeLabel(level: LevelGradeName, sourced = true): string {
 export function isPilotZipReady(build: BuildStatus | null | undefined): boolean {
   if (!build || build.state !== 'succeeded' || build.pilot_ready !== true) return false
   if (productSuiteFailed(build) || outcomeFailed(build)) return false
+  if (isBelowFullPilotAuthorshipFloor(build)) return false
   const level = honestLevel(build)
   return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
 }
@@ -341,6 +349,58 @@ function authorshipCount(value: unknown): number | null {
   return null
 }
 
+function actionArtifactId(id: unknown): boolean {
+  const text = String(id || '').trim()
+  if (!text || text.includes(':') || text.includes('/')) return false
+  if (text.endsWith('.py') || text.endsWith('.tsx') || text.endsWith('.md')) return false
+  if (text.startsWith('template_')) return false
+  return true
+}
+
+/** Measured action-handler / cli_authored count, or null when unknown. */
+export function fullPilotAuthorshipCount(
+  build: BuildStatus | null | undefined,
+): number | null {
+  if (!build) return null
+  const authorship = build.authorship
+  const receiptIds = build.coder_receipt?.cli_authored_ids
+  const authoredIds = authorship?.cli_authored_ids
+  const cliN = Array.isArray(receiptIds)
+    ? receiptIds.filter(Boolean).length
+    : Array.isArray(authoredIds)
+      ? authoredIds.filter(Boolean).length
+      : null
+  const actionPy = authorshipCount(authorship?.action_py)
+  if (Array.isArray(authorship?.agent_artifacts)) {
+    const actions = authorship.agent_artifacts.filter(actionArtifactId).length
+    const best = Math.max(actions, cliN ?? 0, actionPy ?? 0)
+    return best
+  }
+  if (actionPy != null || cliN != null) {
+    return Math.max(actionPy ?? 0, cliN ?? 0)
+  }
+  const written = authorshipCount(authorship?.agent_written)
+  if (written != null) return Math.max(written, cliN ?? 0)
+  return cliN
+}
+
+export function isBelowFullPilotAuthorshipFloor(
+  build: BuildStatus | null | undefined,
+): boolean {
+  if (build?.level_grade?.full_pilot === true) return false
+  const count = fullPilotAuthorshipCount(build)
+  return count != null && count < FULL_PILOT_MIN_AUTHORED_ACTIONS
+}
+
+function claimsStoreGreenPilot(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  if (build.pilot_ready === true) return true
+  if (String(build.cycle || '').toLowerCase() === 'pilot') return true
+  const product = String(build.level_grade?.three_gate?.PRODUCT || '')
+  const store = String(build.level_grade?.three_gate?.STORE || '')
+  return product === 'PASS' && store === 'PASS'
+}
+
 /**
  * Near-zero or template-majority writer keep-path.
  * Live photographs: 1/23 after a CLI billing miss; sess_45729 0639 8/16
@@ -428,6 +488,9 @@ export function shouldRefuseExport(build: BuildStatus | null | undefined): boole
   if (build.state === 'failed') return true
   if (productSuiteFailed(build)) return true
   if (outcomeFailed(build)) return true
+  if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return true
+  }
   if (isAuthoritativePilotReady(build)) return false
   if (isCoderCliFailed(build)) return true
   if (isScaffoldClaim(build) && build.pilot_ready !== true) return true
@@ -541,6 +604,9 @@ export function platformsLeadCopy(
   if (isUnreadableLedger(build)) {
     return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
+  if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return 'Authorship is below the full-pilot floor. Download unavailable — a thin Store-green zip is refused.'
+  }
   if (shouldRefuseExport(build)) {
     return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
   }
@@ -636,6 +702,15 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   ghost: boolean
   title?: string
 } {
+  if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return {
+      label: 'Export (.zip) — below full-pilot authorship floor',
+      disabled: true,
+      ghost: true,
+      title:
+        'Need ≥5 agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused',
+    }
+  }
   if (isUnreadableLedger(build) || build?.state === 'failed' || shouldRefuseExport(build)) {
     return {
       label: 'Export (.zip) — pilot suite failed',

@@ -303,6 +303,12 @@ def download_product_package(
             ),
         )
 
+    from app.factory.build.authorship import thin_store_green_export_blocker
+
+    thin = thin_store_green_export_blocker(status, out)
+    if thin:
+        raise HTTPException(status_code=409, detail=thin)
+
     archive_base = out.parent / f"{out.name}-export"
     archive = zip_generated_product(out, archive_base)
     product_id = gen.get("product_id") or out.name
