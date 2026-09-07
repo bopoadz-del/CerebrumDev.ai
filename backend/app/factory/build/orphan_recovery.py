@@ -156,13 +156,12 @@ def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
         if ledger.terminal_event() is not None:
             return False
         notes = [e for e in events if e.kind is EventKind.NOTE]
-        inspects = {
+        activity = [
             e
             for e in notes
-            if (e.payload or {}).get("budget_inspect")
-            or (e.payload or {}).get("kind") == "budget_inspect"
-        }
-        activity = [e for e in notes if e not in inspects]
+            if not (e.payload or {}).get("budget_inspect")
+            and (e.payload or {}).get("kind") != "budget_inspect"
+        ]
         calling = _open_model_call_note(activity)
         if calling is None:
             return False
