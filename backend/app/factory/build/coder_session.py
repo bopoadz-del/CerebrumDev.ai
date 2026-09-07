@@ -1669,6 +1669,57 @@ def reuse_inventory_ids(compiled: Any) -> List[str]:
     return out
 
 
+def _reuse_needs_hole_fill(root: Optional[Path], capability_id: str) -> bool:
+    """True when a REUSE cap has no keepable on-disk handler yet."""
+    if root is None:
+        return True
+    name = str(capability_id).replace("-", "_")
+    path = Path(root) / "app" / "actions" / f"{name}.py"
+    if not path.is_file():
+        return True
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    return not _is_keepable_handler(text)
+
+
+def cbrief_work_ids(compiled: Any, root: Optional[Path] = None) -> List[str]:
+    """C-BRIEF work list: GENERATE gaps plus REUSE that still need hole-fill.
+
+    sess_d10dfc2890f7487b logged ``gaps=[]`` on an all-REUSE
+    insurance-distribution inventory (workflow/team/validation/…).
+    Store-complete REUSE still needs persist / event_bus bind. Empty
+    GENERATE ``inventory_gaps`` must not be claimed as "no work".
+    """
+    out: List[str] = []
+    seen: set = set()
+    for cid in inventory_gap_ids(compiled):
+        if cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    for cid in reuse_inventory_ids(compiled):
+        if cid in seen:
+            continue
+        if _reuse_needs_hole_fill(root, cid):
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
+def remaining_cbrief_work_ids(
+    compiled: Any, result: DispatchResult, root: Optional[Path] = None
+) -> List[str]:
+    """Work items still open after harvest / persist / keep-path."""
+    landed = (
+        set(result.cli_authored_ids or ())
+        | set(result.kept_handler_ids or ())
+        | set(getattr(result, "generate_persist_ids", None) or ())
+        | set(result.factory_llm_written_ids or ())
+    )
+    return [cid for cid in cbrief_work_ids(compiled, root) if cid not in landed]
+
+
 def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]:
     """Gaps still open after factory-LLM writes land. Fail-closed until then."""
     landed = set(result.factory_llm_written_ids or ()) | set(
@@ -2057,6 +2108,9 @@ def write_dispatch_receipt(
             if item.verified_present and not item.missing
         ],
         "inventory_gaps": remaining_inventory_gaps(compiled, result),
+        "inventory_work": remaining_cbrief_work_ids(
+            compiled, result, root=_workspace_root(ctx)
+        ),
         "harvested_spec_ids": sorted(result.specs),
         "kept_handler_ids": [
             cid
@@ -2322,9 +2376,10 @@ def _run_cli_session(
         session_env.update(deepseek_cli_environ())
     logger.info(
         "FACTORY_CODE_CLI C-BRIEF dispatch via=cli command=%s "
-        "gaps=%s reuse=%s timeout_s=%.0f",
+        "gaps=%s work=%s reuse=%s timeout_s=%.0f",
         cli,
         inventory_gap_ids(compiled),
+        cbrief_work_ids(compiled, root),
         reuse_inventory_ids(compiled),
         timeout_s,
     )
@@ -2738,9 +2793,10 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     if deepseek_cli_ready():
         logger.info(
             "FACTORY_CODE_CLI C-BRIEF dispatch starting command=%s "
-            "gaps=%s reuse=%s timeout_s=%.0f",
+            "gaps=%s work=%s reuse=%s timeout_s=%.0f",
             resolve_code_cli() or "",
             inventory_gap_ids(compiled),
+            cbrief_work_ids(compiled, root),
             reuse_inventory_ids(compiled),
             timeout_s,
         )
@@ -2781,9 +2837,12 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         )
     elif cli_available():
         result = _run_cli_session(ctx, compiled, timeout_s=timeout_s)
-        if result.ok:
+        hung = result.blocker == NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL
+        if result.ok or hung:
             # #318 keep-path: prefer on-disk workflow/event_bus steps over a
             # thin JSON body so the fallback envelope cannot overwrite them.
+            # Hung/timeout after a long C-BRIEF may still have keepable
+            # files on disk — harvest them (sess_d10dfc28 class).
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
             result.cli_authored_ids = [
                 cid
@@ -2811,6 +2870,7 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                 ]
             if (
                 deepseek_cli_ready()
+                and result.ok
                 and not result.cli_authored_ids
                 and not result.handlers
             ):

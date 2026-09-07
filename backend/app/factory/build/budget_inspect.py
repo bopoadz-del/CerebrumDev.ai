@@ -19,6 +19,7 @@ wall is honoured (observe/log, do not slash). The default is not 2 hours.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.authorship import (
@@ -38,6 +39,31 @@ STAGE_2_S = 2700.0
 CEILING_S = 7200.0
 
 INSPECT_NOTE_KIND = "budget_inspect"
+
+#: Ledger noise that is not a coder timeout. ``timeout_s=7230`` on a
+#: C-BRIEF dispatch NOTE and ``timeouts=N`` inside a later inspect
+#: reason must not accumulate into a fake timeout ledger (sess_d10dfc28:
+#: 7 REUSE caps, written=7, timeouts=7, contract_misses=0).
+_TIMEOUT_NOISE_RE = re.compile(
+    r"timeout_s\s*=\s*\S+|timeouts\s*=\s*\S+",
+    re.IGNORECASE,
+)
+_REAL_TIMEOUT_HINTS = (
+    "timed out",
+    "hung_killed",
+    "hung killed",
+    "watchdog fired",
+    "coder llm timed out",
+)
+
+
+def _is_real_timeout(text: str) -> bool:
+    """True only for an actual coder/CLI timeout, not timeout_s= metadata."""
+    lowered = str(text or "").lower()
+    if not lowered:
+        return False
+    stripped = _TIMEOUT_NOISE_RE.sub(" ", lowered)
+    return any(hint in stripped for hint in _REAL_TIMEOUT_HINTS)
 
 
 def inspect_build(
@@ -100,8 +126,7 @@ def inspect_build(
         if isinstance(done, int) and isinstance(total, int) and total > 0:
             phase_done, phase_total = done, total
 
-        lowered = detail.lower()
-        if "timed out" in lowered or "timeout" in lowered:
+        if _is_real_timeout(detail):
             timeouts.append(detail[:240])
 
         if kind == "GATE_FAILED":
@@ -117,7 +142,7 @@ def inspect_build(
     failures = dict((state or {}).get("coder_failures") or {})
     for key, reason in failures.items():
         text = str(reason)
-        if "timed out" in text.lower() or "timeout" in text.lower():
+        if _is_real_timeout(text):
             timeouts.append(f"{key}: {text[:200]}")
         if "skipped" in text.lower() or "budget" in text.lower():
             if key not in caps_templated and key not in caps_written:
@@ -142,7 +167,7 @@ def inspect_build(
         fail_map = provenance.get("coder_failures") or {}
         for key, reason in fail_map.items():
             text = str(reason)
-            if "timed out" in text.lower() and text not in timeouts:
+            if _is_real_timeout(text) and text not in timeouts:
                 timeouts.append(f"{key}: {text[:200]}")
 
     dispatch = dict((state or {}).get("brief_dispatch") or {})
@@ -253,6 +278,28 @@ def should_continue_after_inspect(snapshot: Mapping[str, Any]) -> bool:
     if snapshot.get("pilot_ready"):
         return False
     return bool(snapshot.get("progressing"))
+
+
+def _written_contracts_pass(snapshot: Mapping[str, Any]) -> bool:
+    """True when inspect shows real writes and no contract misses.
+
+    Per-cap timeout ledger noise must not veto this. stub_rate=1.0 with
+    written=0 is a thin template run and stays fail-closed.
+    """
+    try:
+        written = int(snapshot.get("agent_written") or 0)
+    except (TypeError, ValueError):
+        written = 0
+    if written <= 0:
+        return False
+    misses = snapshot.get("contract_misses") or []
+    if misses:
+        return False
+    try:
+        stub_rate = float(snapshot.get("stub_rate") or 0.0)
+    except (TypeError, ValueError):
+        stub_rate = 0.0
+    return stub_rate < 1.0
 
 
 def _cli_progressing_for_ceiling_bump(snapshot: Mapping[str, Any]) -> bool:
@@ -386,6 +433,32 @@ def inspect_decision(
             reason = (
                 f"inspect {stage}: hard-stop — {unused}"
             )
+        elif _written_contracts_pass(snapshot):
+            # sess_d10dfc28: written=7, templated=0, contract_misses=0,
+            # timeouts=7 ledger noise, then hard-stop at pilot_open
+            # blocked RUN_SUCCEEDED. Written work + green contracts is
+            # not a halt — bump once so the pilot suite can run.
+            if (
+                elapsed_s + 1 >= STAGE_2_S
+                and current_wall_s <= STAGE_2_S + 1
+            ):
+                new_wall = CEILING_S
+                decision = "continue_ceiling"
+                reason = (
+                    f"inspect {stage}: written="
+                    f"{snapshot.get('agent_written')} contracts pass — "
+                    f"one inspect-gated bump {current_wall_s:g}s → "
+                    f"{new_wall:g}s so the pilot suite can run; timeout "
+                    "ledger is not a hard-stop"
+                )
+            else:
+                decision = "continue_pilot"
+                reason = (
+                    f"inspect {stage}: written="
+                    f"{snapshot.get('agent_written')} contracts pass — "
+                    "continue toward Store-green; timeout ledger "
+                    f"({len(snapshot.get('timeouts') or [])}) is not a halt"
+                )
         else:
             decision = "hard_stop"
             reason = (

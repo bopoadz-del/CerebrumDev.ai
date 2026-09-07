@@ -29,6 +29,10 @@ AUTO_PILOT_MAX_REWORK = 3
 #: When a code cycle auto-opens pilot, do not jump remaining to 90 min.
 #: Stay on the current staged wall; inspect-and-ramp owns extra time.
 PILOT_MIN_REMAINING_S = 0.0
+#: After a long C-BRIEF that actually wrote handlers, leave enough wall
+#: for TESTER + STORE on the auto-opened pilot cycle. Not a silent 2h
+#: grant — inspect-gated, only when written>0 and contracts pass.
+PILOT_SUITE_TAIL_S = 900.0
 
 
 def _truthy(raw: str) -> bool:

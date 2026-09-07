@@ -452,6 +452,7 @@ def render_slot_bodies(
 
     reuse_lines = []
     gap_lines = []
+    work_lines = []
     missing_lines = []
     for item in inventory:
         if item.missing:
@@ -474,6 +475,15 @@ def render_slot_bodies(
             gap_lines.append(
                 f"- {item.capability_id}: GAP — author this logic "
                 f"({item.notes or item.strategy or 'no verified block'})"
+            )
+            work_lines.append(
+                f"- {item.capability_id}: GENERATE/GAP — author this logic"
+            )
+        elif item.verified_present:
+            work_lines.append(
+                f"- {item.capability_id}: REUSE hole-fill — bind persist / "
+                "event_bus / BLOCK_DEFAULT_ACTIONS; do not skip because "
+                "inventory_gaps is empty"
             )
 
     users = (packed_intake.get("users") or {}).get("value") or domain_pack.get("primary_users") or []
@@ -502,6 +512,9 @@ def render_slot_bodies(
         "",
         "GAPS (you author; do not invent a block id):",
         "\n".join(gap_lines) or "- (none)",
+        "",
+        "WORK ITEMS (C-BRIEF hole-fill; GENERATE gaps plus REUSE that still need handlers):",
+        "\n".join(work_lines) or "- (none)",
         "",
         "MISSING claimed REUSE (runner HALTS here if any):",
         "\n".join(missing_lines) or "- (none)",
