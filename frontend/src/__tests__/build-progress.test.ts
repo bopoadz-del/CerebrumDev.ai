@@ -6,6 +6,7 @@ import {
   exportAffordance,
   factoryCodeCliHonesty,
   factoryCodeCliStatusTitle,
+  cliKeptHandlerCount,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -234,6 +235,36 @@ describe('build progress copy', () => {
     const stalled = withClientStall(build, t0 + (CLIENT_STALL_AFTER_S + 60) * 1000)
     expect(stalled?.state).toBe('stalled')
     expect(stalled?.detail).toMatch(/no build activity/)
+  })
+
+  it('CLI keep-path authorship is not coder-idle / 0-artifact templated copy', () => {
+    const keepPath = {
+      artifacts: 27,
+      agent_written: 4,
+      templated: 23,
+      kept_handler_ids: [
+        'unit_registry_and_vacancy_tracking',
+        'viewing_management',
+        'maintenance_issue_tracking',
+        'tenancy_application_pipeline',
+      ],
+    }
+    expect(cliKeptHandlerCount(keepPath)).toBe(4)
+    expect(
+      formatFinishedAuthorship(keepPath, { pilotReady: true, demoteFounding: true }),
+    ).toBe('Pilot-ready — 4 artifacts; 23 templated')
+    expect(formatFinishedAuthorship(keepPath, { pilotReady: true })).not.toMatch(
+      /coder idle or no LLM key/,
+    )
+    expect(formatFinishedAuthorship(keepPath)).not.toMatch(/wrote 0 artifacts/)
+    // Residual backend 0 + kept_handler_ids still must not paint idle.
+    const residualZero = { artifacts: 27, agent_written: 0, templated: 27, kept_handler_ids: keepPath.kept_handler_ids }
+    expect(formatFinishedAuthorship(residualZero, { pilotReady: true })).not.toMatch(
+      /coder idle or no LLM key/,
+    )
+    expect(formatFinishedAuthorship(residualZero, { pilotReady: true })).toMatch(
+      /4 artifacts/,
+    )
   })
 
   it('SUCCESS copy is finished only when pilot-ready, not hang-looking 22 of 28', () => {

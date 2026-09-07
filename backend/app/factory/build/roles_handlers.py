@@ -30,6 +30,10 @@ from app.factory.build.block_inputs import (
     sample_channel_value,
     sanitize_python_identifier,
 )
+from app.factory.build.authorship import (
+    coding_agent_artifact_ids,
+    writer_contract_role_detail,
+)
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
     WRITER_REUSE_HANDLER_HALT,
@@ -2033,7 +2037,13 @@ def main() -> int:
     if manifest.is_file():
         prov = json.loads(manifest.read_text(encoding="utf-8"))
         sources = prov.get("artifact_sources", {{}})
-        agent = sorted(k for k, v in sources.items() if str(v).startswith("coder LLM"))
+        agent = sorted(
+            k
+            for k, v in sources.items()
+            if str(v).startswith("coder LLM")
+            or str(v).startswith("coder CLI")
+            or str(v).startswith("FACTORY_CODE_CLI")
+        )
         print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
     else:
         print("docs/build_provenance.json: MISSING")
@@ -3425,7 +3435,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     if converged.get("ok"):
         sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
-    by_coder = sum(1 for s in sources.values() if s.startswith("coder LLM"))
+    by_coder = len(coding_agent_artifact_ids(sources))
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(
@@ -3465,10 +3475,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
     except PostureError as exc:
         raise RoleError(str(exc)) from exc
-    detail = (
-        f"{len(written)} capability(ies); {len(sources)} artifact(s) — "
-        f"{by_coder} by the coding agent, {len(sources) - by_coder} templated"
-    )
+    detail = writer_contract_role_detail(written, sources)
     if ctx.work_list:
         detail += f"; reworking {len(ctx.work_list)} finding(s)"
     return RoleResult(

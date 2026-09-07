@@ -14,6 +14,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from app.factory.build.authorship import (
+    exclusive_authorship_caps,
+    is_coding_agent_source,
+    kept_handler_ids_from,
+    refuse_dual_listed_caps,
+)
+
 logger = logging.getLogger("cerebrumdev.factory.budget_inspect")
 
 #: First stage. Hard-stop here and inspect before any extra wall.
@@ -57,16 +64,15 @@ def inspect_build(
 
         if cap and stage in {"handlers", "routes", "models", "coder"}:
             current_capability = cap
-            if "factory-grounded" in source.lower():
+            if "factory-grounded" in source.lower() or is_coding_agent_source(source):
                 if cap not in caps_written:
                     caps_written.append(cap)
-            elif source.startswith("coder LLM") or source.startswith("coder CLI"):
-                if cap not in caps_written:
-                    caps_written.append(cap)
+                if cap in caps_templated:
+                    caps_templated.remove(cap)
             elif source and (
                 "template" in source.lower() or "deterministic" in source.lower()
             ):
-                if cap not in caps_templated:
+                if cap not in caps_written and cap not in caps_templated:
                     caps_templated.append(cap)
 
         if payload.get("model_call"):
@@ -104,11 +110,28 @@ def inspect_build(
         for cap in provenance.get("agent_artifacts") or []:
             if cap not in caps_written:
                 caps_written.append(str(cap))
+            if cap in caps_templated:
+                caps_templated.remove(str(cap))
         fail_map = provenance.get("coder_failures") or {}
         for key, reason in fail_map.items():
             text = str(reason)
             if "timed out" in text.lower() and text not in timeouts:
                 timeouts.append(f"{key}: {text[:200]}")
+
+    dispatch = dict((state or {}).get("brief_dispatch") or {})
+    # Promote successful CLI keep-path ids. Do not credit unused/failed CLI
+    # (thin-stub #368) or factory-grounded billing harvest.
+    if str(dispatch.get("via") or "") == "cli" and dispatch.get("ok") is True:
+        for cid in kept_handler_ids_from(dispatch):
+            if cid not in caps_written:
+                caps_written.append(cid)
+            if cid in caps_templated:
+                caps_templated.remove(cid)
+
+    caps_written, caps_templated = exclusive_authorship_caps(
+        caps_written, caps_templated
+    )
+    refuse_dual_listed_caps(caps_written, caps_templated)
 
     authored = len(caps_written)
     stubbed = len(caps_templated)
@@ -323,9 +346,7 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     agent = sorted(
         k
         for k, v in sources.items()
-        if str(v).startswith("coder LLM")
-        or str(v).startswith("coder CLI")
-        or "factory-grounded" in str(v).lower()
+        if is_coding_agent_source(v) or "factory-grounded" in str(v).lower()
     )
     return {
         "agent_artifacts": agent,
