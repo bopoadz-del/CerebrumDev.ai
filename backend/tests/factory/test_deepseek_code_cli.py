@@ -1087,7 +1087,7 @@ def test_thin_stub_blocked_after_stage_1_wall_when_cli_ready_zero_writes(
 def test_hung_killed_by_wall_is_not_unused_and_refuses_thin_success(
     tmp_path, monkeypatch
 ):
-    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.ledger import BuildLedger
     from app.factory.build.runner import Outcome, RoleRunner
     from app.factory.blueprint import load_blueprint
 
