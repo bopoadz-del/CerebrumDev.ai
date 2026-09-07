@@ -18,8 +18,10 @@ __all__ = (
     "coding_agent_artifact_ids",
     "dual_listed_capability_ids",
     "exclusive_authorship_caps",
+    "cli_authored_ids_from",
     "is_coding_agent_source",
     "kept_handler_ids_from",
+    "promote_cli_keep_ids",
     "refuse_dual_listed_caps",
     "writer_authorship_counts",
     "writer_contract_role_detail",
@@ -77,19 +79,53 @@ def writer_contract_role_detail(
     )
 
 
-def kept_handler_ids_from(state_or_dispatch: Optional[Mapping[str, Any]]) -> List[str]:
-    """``brief_dispatch.kept_handler_ids`` from state or the dispatch map itself."""
+def _dispatch_map(state_or_dispatch: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
     raw = dict(state_or_dispatch or {})
-    dispatch: Mapping[str, Any] = raw
     nested = raw.get("brief_dispatch")
     if isinstance(nested, Mapping):
-        dispatch = nested
+        return nested
+    return raw
+
+
+def kept_handler_ids_from(state_or_dispatch: Optional[Mapping[str, Any]]) -> List[str]:
+    """``brief_dispatch.kept_handler_ids`` from state or the dispatch map itself."""
+    dispatch = _dispatch_map(state_or_dispatch)
     ids: List[str] = []
     for item in dispatch.get("kept_handler_ids") or ():
         cid = str(item or "").strip()
         if cid and cid not in ids:
             ids.append(cid)
     return ids
+
+
+def cli_authored_ids_from(state_or_dispatch: Optional[Mapping[str, Any]]) -> Optional[List[str]]:
+    """Explicit CLI harvest ids, or None when the field was never recorded.
+
+    An empty list after kimi/DeepSeek exit 0 is not a keep-path credit
+    (``FACTORY_CODE_CLI_NO_AUTHORSHIP``). Missing key keeps #375
+    ``kept_handler_ids`` promotion for real CLI keep-path receipts.
+    """
+    dispatch = _dispatch_map(state_or_dispatch)
+    if "cli_authored_ids" not in dispatch:
+        return None
+    ids: List[str] = []
+    for item in dispatch.get("cli_authored_ids") or ():
+        cid = str(item or "").strip()
+        if cid and cid not in ids:
+            ids.append(cid)
+    return ids
+
+
+def promote_cli_keep_ids(state_or_dispatch: Optional[Mapping[str, Any]]) -> List[str]:
+    """Ids inspect may credit as CLI keep-path writes.
+
+    Prefer ``cli_authored_ids`` when present (including empty). Otherwise
+    fall back to ``kept_handler_ids`` for receipts that predate that field.
+    """
+    authored = cli_authored_ids_from(state_or_dispatch)
+    if authored is not None:
+        return authored
+    return kept_handler_ids_from(state_or_dispatch)
 
 
 def exclusive_authorship_caps(

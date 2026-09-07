@@ -21,6 +21,7 @@ from app.factory.build.authorship import (
     coding_agent_artifact_ids,
     exclusive_authorship_caps,
     is_coding_agent_source,
+    promote_cli_keep_ids,
     refuse_dual_listed_caps,
     writer_authorship_counts,
     writer_contract_role_detail,
@@ -192,6 +193,40 @@ def test_budget_inspect_cli_keep_is_not_also_templated(tmp_path):
     refuse_dual_listed_caps(snap["caps_written"], snap["caps_templated"])
 
 
+def test_budget_inspect_empty_cli_authored_does_not_credit_kept_fill(tmp_path):
+    """#374: via=cli ok=true + empty harvest must not promote factory-fill kept ids."""
+    ledger = _ledger(tmp_path)
+    for cap in LETTINGS_KEEP:
+        ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.WRITER,
+            detail=f"wrote handler {cap} (deterministic contract template)",
+            payload={
+                "stage": "handlers",
+                "capability": cap,
+                "source": "deterministic contract template",
+            },
+        )
+    snap = inspect_build(
+        ledger,
+        tmp_path / "build",
+        {
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": [],
+                "kept_handler_ids": list(LETTINGS_KEEP),
+            }
+        },
+    )
+    assert snap["agent_written"] == 0
+    assert snap["cli_or_llm_written"] == 0
+    assert snap["templated"] == 4
+    assert snap["stub_rate"] == 1.0
+    assert set(snap["caps_written"]) == set()
+    assert set(snap["caps_templated"]) == set(LETTINGS_KEEP)
+
+
 def test_budget_inspect_unused_cli_templates_still_thin(tmp_path):
     """#368 shape: CLI ready but unused — do not credit keep-path writes."""
     ledger = _ledger(tmp_path)
@@ -229,3 +264,19 @@ def test_mutation_inspect_refuses_dual_listed_caps():
     src = inspect.getsource(inspect_build)
     assert "exclusive_authorship_caps" in src
     assert "refuse_dual_listed_caps" in src
+    assert "promote_cli_keep_ids" in src
+
+
+def test_empty_cli_authored_ids_does_not_promote_kept_fill():
+    """#374: exit 0 + factory fill in kept_handler_ids is not CLI authorship."""
+    dispatch = {
+        "via": "cli",
+        "ok": True,
+        "cli_authored_ids": [],
+        "kept_handler_ids": list(LETTINGS_KEEP),
+    }
+    assert promote_cli_keep_ids(dispatch) == []
+    assert promote_cli_keep_ids({"brief_dispatch": dispatch}) == []
+    # #375 receipts without cli_authored_ids still promote kept ids.
+    legacy = {"via": "cli", "ok": True, "kept_handler_ids": list(LETTINGS_KEEP)}
+    assert promote_cli_keep_ids(legacy) == list(LETTINGS_KEEP)

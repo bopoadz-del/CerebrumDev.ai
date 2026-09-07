@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from app.factory.build.authorship import (
     exclusive_authorship_caps,
     is_coding_agent_source,
-    kept_handler_ids_from,
+    promote_cli_keep_ids,
     refuse_dual_listed_caps,
 )
 
@@ -45,6 +45,8 @@ def inspect_build(
     """
     events = list(getattr(ledger, "events", lambda: ())())
     caps_written: List[str] = []
+    caps_cli_or_llm: List[str] = []
+    caps_factory_grounded: List[str] = []
     caps_templated: List[str] = []
     timeouts: List[str] = []
     contract_misses: List[str] = []
@@ -64,9 +66,18 @@ def inspect_build(
 
         if cap and stage in {"handlers", "routes", "models", "coder"}:
             current_capability = cap
-            if "factory-grounded" in source.lower() or is_coding_agent_source(source):
+            if "factory-grounded" in source.lower():
                 if cap not in caps_written:
                     caps_written.append(cap)
+                if cap not in caps_factory_grounded:
+                    caps_factory_grounded.append(cap)
+                if cap in caps_templated:
+                    caps_templated.remove(cap)
+            elif is_coding_agent_source(source):
+                if cap not in caps_written:
+                    caps_written.append(cap)
+                if cap not in caps_cli_or_llm:
+                    caps_cli_or_llm.append(cap)
                 if cap in caps_templated:
                     caps_templated.remove(cap)
             elif source and (
@@ -110,6 +121,15 @@ def inspect_build(
         for cap in provenance.get("agent_artifacts") or []:
             if cap not in caps_written:
                 caps_written.append(str(cap))
+            if cap not in caps_cli_or_llm:
+                caps_cli_or_llm.append(str(cap))
+            if cap in caps_templated:
+                caps_templated.remove(str(cap))
+        for cap in provenance.get("factory_grounded_artifacts") or []:
+            if cap not in caps_written:
+                caps_written.append(str(cap))
+            if cap not in caps_factory_grounded:
+                caps_factory_grounded.append(str(cap))
             if cap in caps_templated:
                 caps_templated.remove(str(cap))
         fail_map = provenance.get("coder_failures") or {}
@@ -120,11 +140,14 @@ def inspect_build(
 
     dispatch = dict((state or {}).get("brief_dispatch") or {})
     # Promote successful CLI keep-path ids. Do not credit unused/failed CLI
-    # (thin-stub #368) or factory-grounded billing harvest.
+    # (thin-stub #368) or factory-grounded fill after exit 0 with no harvest
+    # (explicit empty cli_authored_ids / FACTORY_CODE_CLI_NO_AUTHORSHIP).
     if str(dispatch.get("via") or "") == "cli" and dispatch.get("ok") is True:
-        for cid in kept_handler_ids_from(dispatch):
+        for cid in promote_cli_keep_ids(dispatch):
             if cid not in caps_written:
                 caps_written.append(cid)
+            if cid not in caps_cli_or_llm:
+                caps_cli_or_llm.append(cid)
             if cid in caps_templated:
                 caps_templated.remove(cid)
 
@@ -164,6 +187,12 @@ def inspect_build(
         "caps_written": caps_written,
         "caps_templated": caps_templated,
         "agent_written": authored,
+        "cli_or_llm_written": len(caps_cli_or_llm),
+        "factory_grounded": len(caps_factory_grounded),
+        "cli_authored_ids": list(
+            dict((state or {}).get("brief_dispatch") or {}).get("cli_authored_ids")
+            or []
+        ),
         "templated": stubbed,
         "stub_rate": round(stub_rate, 3),
         "timeouts": timeouts[:12],
@@ -242,6 +271,7 @@ def inspect_decision(
     current_wall_s: float,
     snapshot: Mapping[str, Any],
     stage: str,
+    state: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Attach a continue/stop decision to an inspect snapshot."""
     new_wall = next_stage_wall(elapsed_s, current_wall_s, snapshot)
@@ -268,16 +298,24 @@ def inspect_decision(
         unused = thin_stub_success_blocked(
             snapshot=snapshot,
             elapsed_s=elapsed_s,
-            state=None,
+            state=state,
             ledger=None,
         )
-        if unused:
+        dispatch = dict((state or {}).get("brief_dispatch") or {})
+        cli_finished = str(dispatch.get("via") or "") == "cli"
+        after_wall = float(elapsed_s) + 1.0 >= float(STAGE_1_S)
+        if unused and not cli_finished and not after_wall:
             # Keep the staged wall alive — do not SUCCESS thin templates
             # and do not treat 8s stub_rate=1.0 as the only coding chance.
             decision = "await_cli"
             reason = (
                 f"inspect {stage}: await FACTORY_CODE_CLI stage-1 wall — "
                 f"{unused}"
+            )
+        elif unused:
+            decision = "hard_stop"
+            reason = (
+                f"inspect {stage}: hard-stop — {unused}"
             )
         else:
             decision = "hard_stop"
@@ -343,13 +381,13 @@ def _provenance(workspace: Any) -> Dict[str, Any]:
     except (OSError, ValueError):
         return {}
     sources = prov.get("artifact_sources") or {}
-    agent = sorted(
-        k
-        for k, v in sources.items()
-        if is_coding_agent_source(v) or "factory-grounded" in str(v).lower()
+    agent = sorted(k for k, v in sources.items() if is_coding_agent_source(v))
+    factory = sorted(
+        k for k, v in sources.items() if "factory-grounded" in str(v).lower()
     )
     return {
         "agent_artifacts": agent,
+        "factory_grounded_artifacts": factory,
         "coder_failures": prov.get("coder_failures") or {},
     }
 

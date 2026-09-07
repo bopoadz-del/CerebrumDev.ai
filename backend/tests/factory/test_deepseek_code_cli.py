@@ -18,6 +18,7 @@ from app.factory.build.coder_session import (
     NAMED_BLOCKER_CLI_CREDS,
     NAMED_BLOCKER_CLI_FAILED,
     NAMED_BLOCKER_CLI_MODEL_DENIED,
+    NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
     NAMED_BLOCKER_CLI_UNUSED,
     brief_dispatch_enabled,
     brief_requires_cli,
@@ -924,3 +925,159 @@ def test_budget_inspect_does_not_success_thin_stubs_before_cli_when_deepseek_rea
     assert terminal is not None
     assert terminal.kind is EventKind.RUN_FAILED
     assert "pilot_zip" not in (outcome.detail or "")
+
+
+def test_dispatch_exit_0_zero_harvest_is_not_cbrief_authorship(
+    tmp_path, monkeypatch
+):
+    """kimi exit 0 with no handlers is via=cli, not successful C-BRIEF authorship."""
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    monkeypatch.delenv("FACTORY_BRIEF_REQUIRE_CLI", raising=False)
+    oneshot = []
+    monkeypatch.setattr(
+        "app.factory.coder.generate_from_compiled_brief",
+        lambda **kw: oneshot.append(kw)
+        or {"specs": {}, "handlers": {}, "model": "minimax/minimax-m3:free"},
+    )
+    ctx = _ctx(tmp_path)
+    ctx.plan = _LettingsReusePlan()
+    compiled = compile_brief(
+        ctx.blueprint, ctx.plan, store_ids=LETTINGS_STORE
+    )
+    assert inventory_gap_ids(compiled) == []
+    ctx.workspace.write_text(Path("docs") / "coder_brief.md", compiled.text)
+    ctx.workspace.write_text(Path("docs") / "coder_session.log", "")
+    result = dispatch_compiled_brief(ctx, compiled)
+    assert result.via == "cli"
+    assert result.ok, result.detail
+    assert oneshot == []
+    assert list(result.cli_authored_ids) == []
+    assert result.blocker == NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in result.detail
+    receipt = json.loads(
+        (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert receipt["via"] == "cli"
+    assert receipt.get("cli_authored_ids") == []
+    assert "pilot_zip" not in json.dumps(receipt)
+
+
+def test_cli_exit_0_zero_harvest_does_not_finish_success_when_deepseek_ready(
+    tmp_path, monkeypatch
+):
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.budget_inspect import STAGE_1_S, inspect_build
+    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.runner import Outcome, RoleRunner
+    from app.factory.blueprint import load_blueprint
+
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    assert deepseek_cli_ready() is True
+    out = tmp_path / "build"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="residential-lettings", inputs_hash="abc")
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="dispatching compiled brief via FACTORY_CODE_CLI (kimi)",
+        payload={"stage": "dispatch", "source": "coder CLI", "done": 0, "total": 1},
+    )
+    for cap in (
+        "unit_registry_and_vacancy_tracking",
+        "viewing_management",
+        "maintenance_issue_tracking",
+        "tenancy_application_pipeline",
+    ):
+        ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.WRITER,
+            detail=f"wrote handler {cap} (factory-grounded persist)",
+            payload={
+                "stage": "handlers",
+                "capability": cap,
+                "source": "factory-grounded persist",
+            },
+        )
+    snap = inspect_build(ledger)
+    assert snap["agent_written"] >= 1
+    assert snap["cli_or_llm_written"] == 0
+    assert snap["cli_attempted"] is True
+    blocker = thin_stub_success_blocked(
+        snapshot=snap,
+        elapsed_s=STAGE_1_S + 30.0,
+        state={
+            "brief_dispatch": {
+                "via": "cli",
+                "ok": True,
+                "cli_authored_ids": [],
+                "handler_ids": [],
+            }
+        },
+        ledger=ledger,
+    )
+    assert blocker
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in blocker
+    assert "pilot_zip" not in blocker
+
+    root = Path(__file__).resolve().parents[3]
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/examples/runner_smoke.yaml"),
+        out,
+        ledger=ledger,
+    )
+    runner._run_started = runner.clock() - (STAGE_1_S + 30.0)
+    runner.state["brief_dispatch"] = {
+        "via": "cli",
+        "ok": True,
+        "cli_authored_ids": [],
+        "handler_ids": [],
+        "kept_handler_ids": [
+            "unit_registry_and_vacancy_tracking",
+            "viewing_management",
+        ],
+    }
+    outcome = runner._finish(
+        Outcome.SUCCESS,
+        "CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
+    )
+    assert outcome.ok is False
+    assert outcome.outcome.value == "FAILED_ROLE_ERROR"
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in (outcome.detail or "")
+    terminal = ledger.terminal_event()
+    assert terminal is not None
+    assert terminal.kind is EventKind.RUN_FAILED
+    assert "pilot_zip" not in (outcome.detail or "")
+
+
+def test_thin_stub_blocked_after_stage_1_wall_when_cli_ready_zero_writes(
+    tmp_path, monkeypatch
+):
+    """Mutation: after-wall thin stubs must not return None when CLI is ready."""
+    from app.factory.build.budget_inspect import STAGE_1_S
+
+    _arm_deepseek_cli(tmp_path, monkeypatch)
+    snap = {
+        "agent_written": 0,
+        "cli_or_llm_written": 0,
+        "templated": 4,
+        "stub_rate": 1.0,
+        "cli_attempted": True,
+    }
+    blocker = thin_stub_success_blocked(
+        snapshot=snap,
+        elapsed_s=STAGE_1_S + 10.0,
+        state={"brief_dispatch": {"via": "cli", "ok": True, "cli_authored_ids": []}},
+    )
+    assert blocker
+    assert (
+        NAMED_BLOCKER_CLI_NO_AUTHORSHIP in blocker
+        or NAMED_BLOCKER_CLI_UNUSED in blocker
+    )
+    assert thin_stub_success_blocked(
+        snapshot=snap,
+        elapsed_s=STAGE_1_S + 10.0,
+        state={"brief_dispatch": {"via": "cli", "ok": True, "cli_authored_ids": []}},
+    ) is not None
