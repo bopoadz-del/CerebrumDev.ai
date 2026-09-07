@@ -17,13 +17,18 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 __all__ = (
     "DualListedAuthorshipError",
+    "FULL_PILOT_AUTHORSHIP_CHECK",
     "FULL_PILOT_MIN_AUTHORED_ACTIONS",
     "FullPilotAuthorship",
     "coding_agent_artifact_ids",
     "dual_listed_capability_ids",
     "exclusive_authorship_caps",
     "cli_authored_ids_from",
+    "full_pilot_authorship_acceptance_line",
+    "full_pilot_authorship_forbidden_lines",
     "full_pilot_authorship_from",
+    "full_pilot_authorship_needles",
+    "full_pilot_authorship_rules_text",
     "is_action_artifact_id",
     "thin_store_green_export_blocker",
     "is_coding_agent_source",
@@ -37,6 +42,52 @@ __all__ = (
 #: Launching-ready full-pilot bar. STORE_GREEN / package zip is not honest
 #: below this many agent-written action handlers (or cli_authored_ids).
 FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
+FULL_PILOT_AUTHORSHIP_CHECK = "full_pilot_authorship"
+
+
+def full_pilot_authorship_rules_text() -> str:
+    """BUILD cut: coder must emit the launching-ready floor before done."""
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    return (
+        f"Launching-ready full-pilot authorship floor: emit ≥{n} keepable "
+        "agent-written app/actions/*.py handlers (or equivalent "
+        f"cli_authored_ids). Fewer than {n} is FACTORY_CODE_CLI_THIN_AUTHORSHIP "
+        "— CODE_GREEN / pilot_ready=false, package 409. Do not treat the job "
+        "as done below this floor."
+    )
+
+
+def full_pilot_authorship_acceptance_line() -> str:
+    """ACCEPTANCE cut: harness check, not a coder decorative test."""
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    return (
+        f"- launching-ready full-pilot authorship: ≥{n} keepable "
+        "agent-written app/actions/*.py handlers (or equivalent "
+        f"cli_authored_ids)  [check:{FULL_PILOT_AUTHORSHIP_CHECK}]"
+    )
+
+
+def full_pilot_authorship_forbidden_lines() -> str:
+    """FORBIDDEN cut: the #387 thin-authorship refuse the coder must see."""
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    return (
+        f"- authorship below the launching-ready full-pilot floor "
+        f"(<{n} agent-written app/actions/*.py / cli_authored_ids) — "
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
+    )
+
+
+def full_pilot_authorship_needles() -> Sequence[str]:
+    """Needles lint requires on every compiled brief."""
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    return (
+        f"≥{n}",
+        "full-pilot authorship",
+        "app/actions/*.py",
+        "cli_authored_ids",
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP",
+        f"[check:{FULL_PILOT_AUTHORSHIP_CHECK}]",
+    )
 
 #: Writer extras that are not ``app/actions/*.py`` handlers.
 _NON_ACTION_ARTIFACT_IDS = frozenset(

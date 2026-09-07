@@ -21,6 +21,11 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
 import re
 
+from app.factory.build.authorship import (
+    full_pilot_authorship_acceptance_line,
+    full_pilot_authorship_forbidden_lines,
+    full_pilot_authorship_rules_text,
+)
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
@@ -577,6 +582,8 @@ def render_slot_bodies(
             capability_ids=event_bus_workflow_capability_ids(inventory)
         ),
         "",
+        full_pilot_authorship_rules_text(),
+        "",
         "Three tests per block are already owned by the harness (TESTER is not an LLM role).",
         "Scope READS / WRITES / NEVER explicitly in each handler you author.",
         f"Budget wall: {int(budget_s)}s (FACTORY_CODER_BUDGET_S / staged wall).",
@@ -647,9 +654,11 @@ def render_slot_bodies(
         f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:product_gate]",
         f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
         "- ledger records pilot_ready=true  [check:ledger]",
+        full_pilot_authorship_acceptance_line(),
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
-        "Do not treat thin SUCCESS / templates-only / stubbed capabilities as done.",
+        "Do not treat thin SUCCESS / templates-only / stubbed capabilities / "
+        "authorship below the launching-ready full-pilot floor as done.",
         "",
         "Block-level acceptance (from block.json, report-only until flip):",
         "\n".join(
@@ -661,6 +670,7 @@ def render_slot_bodies(
 
     forbidden = _section_lines(
         "- thin SUCCESS (code-cycle green, pilot_ready=false)",
+        full_pilot_authorship_forbidden_lines(),
         "- decorative tests",
         "- reserved-keyword fields (action inside the payload dict, id as a domain field)",
         "- unlisted blocks (ids not in the Store registry / inventory)",

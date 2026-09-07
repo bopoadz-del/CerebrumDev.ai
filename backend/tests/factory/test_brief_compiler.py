@@ -7,6 +7,13 @@ from pathlib import Path
 import pytest
 
 from app.factory.blueprint import load_blueprint
+from app.factory.build.authorship import (
+    FULL_PILOT_MIN_AUTHORED_ACTIONS,
+    full_pilot_authorship_acceptance_line,
+    full_pilot_authorship_forbidden_lines,
+    full_pilot_authorship_needles,
+    full_pilot_authorship_rules_text,
+)
 from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 from app.factory.build.brief_compiler import (
     TEMPLATE_REVISION,
@@ -72,6 +79,16 @@ def test_compiled_brief_has_the_gated_shape():
     assert "dashboard_surface" in text
     assert "one handle()" in text.lower() or "not one handle()" in text.lower()
     assert "thin SUCCESS" in text
+    assert f"≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}" in text
+    assert "full-pilot authorship" in text
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
+    assert "cli_authored_ids" in text
+    assert "app/actions/*.py" in text
+    assert full_pilot_authorship_rules_text() in text
+    assert full_pilot_authorship_acceptance_line() in text
+    assert full_pilot_authorship_forbidden_lines() in text
+    for needle in full_pilot_authorship_needles():
+        assert needle in text
     for vocab in ENVELOPE_STATUS_VALUES:
         assert vocab in text
     assert compiled.missing_reuse == []
@@ -192,6 +209,41 @@ def test_lettings_golden_is_unchanged_and_compiles():
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert compiled.intake["schema_version"] == "intake_blueprint.v1"
     assert compiled.template_revision == TEMPLATE_REVISION
+    assert full_pilot_authorship_rules_text() in compiled.text
+    assert f"≥{FULL_PILOT_MIN_AUTHORED_ACTIONS}" in compiled.text
+
+
+def test_compiled_brief_names_the_full_pilot_authorship_floor():
+    """#387 package refuse is useless if C-BRIEF never tells the coder the floor."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(
+            _Cap("appointment_scheduling", ["event_bus"], "REUSE"),
+            _Cap("clinic_intake", [], "GENERATE"),
+        ),
+        store_ids={"event_bus"},
+    )
+    text = compiled.text
+    n = FULL_PILOT_MIN_AUTHORED_ACTIONS
+    assert n == 5
+    assert f"≥{n}" in text
+    assert f"<{n}" in text
+    assert "full-pilot authorship" in text
+    assert "app/actions/*.py" in text
+    assert "cli_authored_ids" in text
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
+    assert "[check:full_pilot_authorship]" in text
+    assert full_pilot_authorship_rules_text() in text
+    assert full_pilot_authorship_acceptance_line() in text
+    assert full_pilot_authorship_forbidden_lines() in text
+    build = text.split("CUT 3", 1)[1].split("ACCEPTANCE", 1)[0]
+    acceptance = text.split("ACCEPTANCE (harness", 1)[1].split("FORBIDDEN", 1)[0]
+    forbidden = text.split("\nFORBIDDEN\n", 1)[1]
+    assert f"≥{n}" in build
+    assert f"≥{n}" in acceptance
+    assert f"<{n}" in forbidden
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in forbidden
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
 def test_vetcare_fresh_session_compiles_on_the_new_path():

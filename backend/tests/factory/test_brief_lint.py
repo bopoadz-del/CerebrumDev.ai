@@ -5,6 +5,10 @@ from __future__ import annotations
 import pytest
 
 from app.factory.blueprint import load_blueprint
+from app.factory.build.authorship import (
+    FULL_PILOT_MIN_AUTHORED_ACTIONS,
+    full_pilot_authorship_needles,
+)
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.brief_lint import BriefLintError, lint_brief, lint_or_raise
 from app.factory.product_architect import plan_blueprint
@@ -526,6 +530,31 @@ def test_vetcare_dropped_readiness_engine_reuse_lints_clean(monkeypatch):
     planted = lint_brief(compiled)
     assert planted.ok is False
     assert any("unresolved block id" in e and "readiness_engine" in e for e in planted.errors)
+
+
+def test_mutation_drops_full_pilot_authorship_floor():
+    """#387 floor must stay in the compiled brief — dropping it is a lint fail."""
+    compiled = _compiled()
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    n = str(FULL_PILOT_MIN_AUTHORED_ACTIONS)
+    compiled.text = compiled.text.replace(f"≥{n}", "≥0")
+    compiled.text = compiled.text.replace(f"<{n}", "<0")
+    compiled.text = compiled.text.replace("full-pilot authorship", "authorship-ish")
+    compiled.text = compiled.text.replace("cli_authored_ids", "cli_other_ids")
+    compiled.text = compiled.text.replace(
+        "FACTORY_CODE_CLI_THIN_AUTHORSHIP", "FACTORY_CODE_CLI_OTHER"
+    )
+    compiled.text = compiled.text.replace("[check:full_pilot_authorship]", "")
+    compiled.text = compiled.text.replace("app/actions/*.py", "app/actions/other.py")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("full-pilot authorship floor" in e for e in result.errors)
+    missing = [
+        needle
+        for needle in full_pilot_authorship_needles()
+        if needle.lower() not in compiled.text.lower()
+    ]
+    assert missing, "mutation must actually drop the floor needles"
 
 
 def test_unfilled_template_slot_is_rejected():
