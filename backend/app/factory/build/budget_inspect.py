@@ -8,7 +8,9 @@ with another gated brief at ~45 minutes.
 An in-flight ``FACTORY_CODE_CLI`` model call that is still inside its
 watchdog is not ``FACTORY_CODE_CLI_UNUSED``. Stage-1 inspect bumps
 30→45 and waits; it must not kill the live CLI solely because
-wall≈1800s elapsed.
+wall≈1800s elapsed. The CLI wait / Floor ``deadline_s`` tracks
+``FACTORY_CODER_TIMEOUT_S`` (7200 → ~7230), not a frozen
+``STAGE_1_S - 15`` (1785).
 
 A leftover ``FACTORY_BUILD_WALL_CLOCK_S=7200`` or an already-granted high
 wall is honoured (observe/log, do not slash). The default is not 2 hours.

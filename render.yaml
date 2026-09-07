@@ -205,11 +205,21 @@ services:
       # live Blueprint — the dashboard is source of truth.
       - key: BILLING_ENFORCEMENT
         value: "false"
-      # Per-HTTP hang abort for the factory coder. Live Render is 160
+      # Per-HTTP hang abort for the factory coder. Live leftover is 160
       # (Floor copy "timed out after 510s" = 160 × 3 + 30). 120 / 150
       # are the same leftover. Code remaps 60–180 to 1200s so a dashboard
-      # pin cannot keep killing WRITER. 20 min is a hung-socket abort,
-      # not the 2-hour Store-green budget.
+      # pin cannot keep killing WRITER HTTP posts. 20 min is a hung-socket
+      # abort, not the 2-hour C-BRIEF coding budget.
+      # C-BRIEF FACTORY_CODE_CLI wait / Floor model-call deadline tracks
+      # FACTORY_CODER_TIMEOUT_S when that is a long coding wall
+      # (7200 → ~7230 with grace), else FACTORY_CODER_BUDGET_S / the
+      # 7200s DeepSeek ceiling. Do not pin TIMEOUT_S=1800 for the CLI —
+      # that froze sess_2fba31ab at 1785s (STAGE_1-15) while inspect
+      # still advertised a longer watchdog. Dashboard source of truth:
+      # set FACTORY_CODER_TIMEOUT_S=7200 for the C-BRIEF CLI wall, or
+      # keep 1200 here as HTTP hang and rely on BUDGET_S=7200 + DeepSeek
+      # ceiling. Never set TIMEOUT_S=7200 if you want HTTP posts to
+      # abort a hung socket in 20 min — CLI dispatch is a separate wall.
       # Required if the remap is ever removed: FACTORY_CODER_TIMEOUT_S=1200
       # and FACTORY_CODER_ATTEMPT_WALL_S=2400 (never 160).
       - key: FACTORY_CODER_TIMEOUT_S
@@ -220,6 +230,8 @@ services:
       # Template-generator loop across all GENERATE caps. Leftover 300
       # stubbed remaining capabilities (pilot_ready false). Remapped in
       # code; required override if remap is removed: 7200 (or 0 to disable).
+      # Also honoured as the C-BRIEF CLI / Floor watchdog when ≥1800
+      # (7200 + 30s grace = 7230).
       - key: FACTORY_CODER_BUDGET_S
         value: "7200"
       # Owner-gated FACTORY_CODE_CLI. This blueprint is not applied; the

@@ -560,13 +560,20 @@ class RoleRunner:
 
     def _emit_cli_watchdog_extend(self, decided: Mapping[str, Any]) -> None:
         """Keep Floor Last:/watchdog aligned with the bumped CLI wall."""
+        from app.factory.build.coder_session import cli_watchdog_remaining_s
+
         boxed = self._deadline_box.get("at")
         if boxed is None:
             boxed = self._deadline
         left = None
         if boxed is not None:
             left = float(boxed) - float(self.clock())
-        deadline_s = max(30.0, float(left) - 15.0) if left is not None else None
+        elapsed = 0.0
+        if self._run_started is not None:
+            elapsed = float(self.clock()) - float(self._run_started)
+        deadline_s = cli_watchdog_remaining_s(
+            leftover_s=left, elapsed_s=elapsed
+        )
         payload: Dict[str, Any] = {
             "stage": "dispatch",
             "source": "coder CLI",
