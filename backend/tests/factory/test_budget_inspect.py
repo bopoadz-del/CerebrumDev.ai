@@ -394,6 +394,47 @@ def test_inflight_cli_stage_2_inspect_waits_not_unused(tmp_path):
     assert "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
 
 
+def test_inflight_cli_stage_2_progressing_bumps_ceiling_once(tmp_path):
+    """Quiet 0-write kimi stays await_cli; WRITER 3/5 gets one ceiling bump."""
+    ledger = _inflight_cli_ledger(tmp_path)
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="wrote handler audit (coder LLM (kimi))",
+        payload={
+            "stage": "handlers",
+            "capability": "audit",
+            "source": "coder LLM (kimi)",
+            "done": 3,
+            "total": 5,
+        },
+    )
+    snap = inspect_build(ledger)
+    assert snap["cli_in_flight"] is True
+    assert snap["agent_written"] >= 1
+    decided = inspect_decision(
+        elapsed_s=STAGE_2_S,
+        current_wall_s=STAGE_2_S,
+        snapshot=snap,
+        stage="stage_2",
+    )
+    assert decided["decision"] == "continue_ceiling"
+    assert decided["next_wall_s"] == CEILING_S
+    assert decided["decision"] != "hard_stop"
+    assert "FACTORY_CODE_CLI_UNUSED" not in decided["reason"] or (
+        "not FACTORY_CODE_CLI_UNUSED" in decided["reason"]
+    )
+    assert "not a silent 2h grant" in decided["reason"]
+    already = inspect_decision(
+        elapsed_s=STAGE_2_S + 10.0,
+        current_wall_s=CEILING_S,
+        snapshot=snap,
+        stage="wall",
+    )
+    assert already["decision"] == "inspect_only_high_wall_honored"
+    assert already["next_wall_s"] is None
+
+
 def test_unused_cli_after_wall_still_hard_stops(tmp_path, monkeypatch):
     from app.factory.build.coder_session import NAMED_BLOCKER_CLI_UNUSED
 

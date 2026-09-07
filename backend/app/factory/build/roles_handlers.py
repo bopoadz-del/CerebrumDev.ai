@@ -2678,12 +2678,18 @@ def _dispatch_cli_keep_ids(dispatch: Any) -> Sequence[str]:
     Billing keep-path still uses ``kept_handler_ids`` when the no-authorship
     blocker is unset.
     """
-    from app.factory.build.coder_session import NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+    from app.factory.build.coder_session import (
+        NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS,
+    )
 
     authored = list(getattr(dispatch, "cli_authored_ids", None) or [])
     if authored:
         return authored
-    if getattr(dispatch, "blocker", None) == NAMED_BLOCKER_CLI_NO_AUTHORSHIP:
+    if getattr(dispatch, "blocker", None) in {
+        NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS,
+    }:
         return ()
     return list(getattr(dispatch, "kept_handler_ids", None) or [])
 
@@ -3000,13 +3006,13 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             authored = None
         else:
             authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
-        generate_ids = set(
-            getattr(dispatch, "factory_llm_generate_ids", None) or ()
+        written_ids = set(
+            getattr(dispatch, "factory_llm_written_ids", None) or ()
             if dispatch is not None
             else ()
         )
-        written_ids = set(
-            getattr(dispatch, "factory_llm_written_ids", None) or ()
+        persist_ids = set(
+            getattr(dispatch, "generate_persist_ids", None) or ()
             if dispatch is not None
             else ()
         )
@@ -3014,13 +3020,13 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             body, source = authored
         elif (
             dispatch is not None
-            and getattr(dispatch, "factory_llm_generate_fallthrough", False)
-            and cid in generate_ids
+            and cid in persist_ids
             and cid not in written_ids
+            and cid not in set(getattr(dispatch, "cli_authored_ids", None) or ())
             and (persist_root / handler_rel).is_file()
         ):
-            # Billing keep-path already persist-emitted this GENERATE gap
-            # (empty / alias factory-LLM). Stage it; do not skip.
+            # Persist-emitted GENERATE gap (billing fallthrough or empty
+            # DeepSeek CLI harvest). Stage it; do not skip or credit CLI.
             sources[cid] = factory_grounded_source_for(cid, usable)
             ctx.note(
                 f"kept factory-grounded GENERATE persist {cid}",
@@ -3037,9 +3043,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             if needs_grounded_event_bus_handler(cid, usable):
                 source = FACTORY_GROUNDED_EVENT_BUS_SOURCE
             elif reuse_keep_path or (
-                dispatch is not None
-                and getattr(dispatch, "factory_llm_generate_fallthrough", False)
-                and cid in generate_ids
+                dispatch is not None and cid in persist_ids
             ):
                 source = FACTORY_GROUNDED_PERSIST_SOURCE
             else:
@@ -3114,6 +3118,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     if dispatch is not None and (
         reuse_keep_path
         or getattr(dispatch, "factory_llm_generate_fallthrough", False)
+        or getattr(dispatch, "generate_persist_ids", None)
     ):
         refresh_receipt_harvest(ctx, compiled_brief, dispatch)
         ctx.state["brief_dispatch"] = dispatch.to_dict()

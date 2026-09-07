@@ -412,6 +412,7 @@ def emit_factory_grounded_generate_persist(
     handlers: Optional[Mapping[str, str]] = None,
     specs: Optional[Mapping[str, Any]] = None,
     source: str = "coder LLM (factory)",
+    force_ids: Optional[Sequence[str]] = None,
 ) -> List[str]:
     """Write persist-capable GENERATE handlers after factory-LLM fallthrough.
 
@@ -421,6 +422,9 @@ def emit_factory_grounded_generate_persist(
     envelope (factory-grounded persist) so WRITER ``[check:round_trip]``
     does not HALT for a missing handler — not a deterministic contract
     template and not a ≥2h CLI session.
+
+    ``force_ids`` overwrite an existing persist-capable file (event_bus
+    unkeepable harvest repair). Default still only fills holes.
     """
     from app.factory.build.roles_handlers import (
         _capability_handler_body,
@@ -444,6 +448,7 @@ def emit_factory_grounded_generate_persist(
     )
     actions = root / "app" / "actions"
     actions.mkdir(parents=True, exist_ok=True)
+    force = {str(x) for x in (force_ids or ()) if str(x).strip()}
     for item in getattr(compiled, "inventory", ()) or ():
         if not getattr(item, "is_gap", False):
             continue
@@ -475,7 +480,7 @@ def emit_factory_grounded_generate_persist(
             if isinstance(f, dict) and f.get("name")
         ]
         path = root / persist_handler_rel(cid)
-        if path.is_file():
+        if path.is_file() and cid not in force:
             try:
                 existing = path.read_text(encoding="utf-8")
             except OSError:

@@ -72,6 +72,9 @@ NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 #: Factory-grounded fill after that exit is not C-BRIEF authorship
 #: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
 NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
+#: CLI wrote ``def handle(`` for a GENERATE gap but harvest dropped it
+#: only because event_bus keepability failed. Distinct from "never wrote".
+NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS = "FACTORY_CODE_CLI_UNKEEPABLE_EVENT_BUS"
 #: In-flight FACTORY_CODE_CLI was terminated after the staged 30→45
 #: wall — not UNUSED (never started) and not a zero-harvest exit 0.
 NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL = "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL"
@@ -532,6 +535,23 @@ def thin_stub_success_blocked(
             f"open (written={written}, stub_rate={stub_rate}, "
             f"elapsed={float(elapsed_s):.0f}s). Not UNUSED — do not SUCCESS "
             "a Store-green pilot from pure templates."
+        )
+    unkeepable = list(dispatch.get("cli_unkeepable_event_bus_ids") or [])
+    if (
+        via_cli
+        and written == 0
+        and (
+            str(dispatch.get("blocker") or "")
+            == NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS
+            or unkeepable
+        )
+    ):
+        return (
+            f"{NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS}: FACTORY_CODE_CLI "
+            f"wrote handle() for {unkeepable or 'GENERATE gap(s)'} but "
+            "harvest failed only event_bus keepability "
+            f"(written={written}, stub_rate={stub_rate}). Not a never-wrote "
+            "miss — do not SUCCESS thin templates."
         )
     if (
         via_cli
@@ -1571,6 +1591,9 @@ class DispatchResult:
     factory_llm_written_ids: List[str] = field(default_factory=list)
     factory_llm_model: str = ""
     generate_persist_ids: List[str] = field(default_factory=list)
+    #: GENERATE/REUSE ids whose on-disk ``handle()`` failed only event_bus
+    #: keepability — not a never-wrote miss.
+    cli_unkeepable_event_bus_ids: List[str] = field(default_factory=list)
     receipt: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1586,6 +1609,7 @@ class DispatchResult:
             "factory_llm_written_ids": list(self.factory_llm_written_ids),
             "factory_llm_model": self.factory_llm_model,
             "generate_persist_ids": list(self.generate_persist_ids),
+            "cli_unkeepable_event_bus_ids": list(self.cli_unkeepable_event_bus_ids),
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
             "cli_authored_ids": sorted(self.cli_authored_ids),
@@ -1601,12 +1625,17 @@ class DispatchResult:
         """
         gap_ids = set(self.factory_llm_generate_ids or ())
         written = set(self.factory_llm_written_ids or ())
+        persist = set(self.generate_persist_ids or ())
         if cid in written or (cid in gap_ids and cid in (self.specs or {})):
             return (
                 f"coder LLM ({self.factory_llm_model})"
                 if self.factory_llm_model
                 else "coder LLM (factory)"
             )
+        if cid in persist:
+            from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
+
+            return FACTORY_GROUNDED_PERSIST_SOURCE
         if self.model:
             return f"coder LLM ({self.model})"
         return "compiled-brief oneshot"
@@ -1648,6 +1677,16 @@ def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]
     return [cid for cid in inventory_gap_ids(compiled) if cid not in landed]
 
 
+def remaining_unauthored_generate_gaps(compiled: Any, result: DispatchResult) -> List[str]:
+    """GENERATE ids the CLI did not author and persist has not landed."""
+    authored = set(result.cli_authored_ids or ())
+    return [
+        cid
+        for cid in remaining_inventory_gaps(compiled, result)
+        if cid not in authored
+    ]
+
+
 def cli_miss_allows_generate_llm(result: DispatchResult) -> bool:
     """Billing / credentials / unavailable honesty — factory LLM may write gaps."""
     if result.ok or result.via == "http_oneshot":
@@ -1679,6 +1718,34 @@ def should_factory_llm_generate_gaps(
     if not cli_miss_allows_generate_llm(result):
         return False
     return bool(inventory_gap_ids(compiled))
+
+
+def should_factory_grounded_generate_persist(
+    compiled: Any, result: DispatchResult
+) -> bool:
+    """CLI finished without authored GENERATE gaps → persist envelope.
+
+    DeepSeek-ready Floor must not reopen OpenRouter fallthrough. Persist
+    emit is not CLI authorship and does not credit factory-LLM bodies.
+    """
+    if result.factory_llm_generate_fallthrough:
+        return False
+    if result.via != "cli":
+        return False
+    if result.blocker in {
+        NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL,
+        NAMED_BLOCKER_STOPPED,
+        "CODER_SESSION_CRASHED",
+    }:
+        return False
+    if not remaining_unauthored_generate_gaps(compiled, result):
+        return False
+    if result.ok:
+        return True
+    return result.blocker in {
+        NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS,
+    }
 
 
 def should_keep_factory_grounded_reuse(compiled: Any, result: DispatchResult) -> bool:
@@ -1896,6 +1963,62 @@ def apply_factory_llm_generate_gaps(
     return result
 
 
+def apply_factory_grounded_generate_persist(
+    ctx: Any, compiled: Any, result: DispatchResult
+) -> DispatchResult:
+    """Persist-grounded GENERATE after CLI harvest without OpenRouter.
+
+    Same ``emit_factory_grounded_generate_persist`` envelope as billing
+    fallthrough. Does not call ``generate_from_compiled_brief``. Does not
+    add persist ids to ``cli_authored_ids`` or ``factory_llm_written_ids``.
+    """
+    if not should_factory_grounded_generate_persist(compiled, result):
+        return result
+    from app.factory.build.persist_accept import (
+        FACTORY_GROUNDED_PERSIST_SOURCE,
+        emit_factory_grounded_generate_persist,
+    )
+
+    root = _workspace_root(ctx)
+    authored = set(result.cli_authored_ids or ())
+    force = [
+        cid
+        for cid in (result.cli_unkeepable_event_bus_ids or ())
+        if cid not in authored
+    ]
+    gap_ids = remaining_unauthored_generate_gaps(compiled, result)
+    landed = emit_factory_grounded_generate_persist(
+        root,
+        compiled,
+        handlers={},
+        specs=result.specs,
+        source=FACTORY_GROUNDED_PERSIST_SOURCE,
+        force_ids=force,
+    )
+    landed = [cid for cid in landed if cid not in authored]
+    result.generate_persist_ids = list(
+        dict.fromkeys([*result.generate_persist_ids, *landed])
+    )
+    _append_log(
+        root / LOG_REL,
+        "[factory-persist] persist-grounded GENERATE emit after CLI "
+        f"harvest (no OpenRouter, no CLI authorship): {landed} "
+        f"unkeepable_event_bus={force}",
+    )
+    ctx.note(
+        (
+            "FACTORY_CODE_CLI harvest left "
+            f"{len(gap_ids)} GENERATE gap(s); persist emit {len(landed)}; "
+            "not CLI authorship and not a ≥2h CLI session"
+        ),
+        stage="dispatch",
+        source=FACTORY_GROUNDED_PERSIST_SOURCE,
+        done=1 if landed else 0,
+        total=1,
+    )
+    return result
+
+
 def write_dispatch_receipt(
     ctx: Any,
     compiled: Any,
@@ -1923,6 +2046,7 @@ def write_dispatch_receipt(
         "factory_llm_model": result.factory_llm_model,
         "generate_persist_ids": list(result.generate_persist_ids),
         "cli_authored_ids": sorted(result.cli_authored_ids),
+        "cli_unkeepable_event_bus_ids": list(result.cli_unkeepable_event_bus_ids),
         "model": result.model,
         "product_id": compiled.product_id,
         "vertical": compiled.vertical,
@@ -2449,6 +2573,20 @@ def _is_keepable_handler(text: str) -> bool:
     return handler_has_prepared_event_bus_step(blob) or _has_brief_workflow_steps(blob)
 
 
+def _is_event_bus_unkeepable_handler(text: str) -> bool:
+    """True when ``handle()`` exists but keepability fails only on event_bus."""
+    blob = text or ""
+    if "def handle(" not in blob:
+        return False
+    if _is_keepable_handler(blob):
+        return False
+    if "event_bus" not in blob and "workflow" not in blob:
+        return False
+    return not handler_satisfies_event_bus_contract(
+        blob, require_prepared_step=_has_brief_workflow_steps(blob)
+    )
+
+
 def _merge_workspace_harvest(
     result: DispatchResult,
     root: Path,
@@ -2567,6 +2705,27 @@ def harvest_cli_artifacts(
     return specs, kept
 
 
+def harvest_unkeepable_event_bus_ids(
+    root: Path,
+    capability_ids: Sequence[str],
+) -> List[str]:
+    """Gap/REUSE ids whose on-disk ``handle()`` failed only event_bus keepability."""
+    root = Path(root)
+    found: List[str] = []
+    for cid in capability_ids:
+        name = str(cid).replace("-", "_")
+        path = root / "app" / "actions" / f"{name}.py"
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _is_event_bus_unkeepable_handler(text):
+            found.append(str(cid))
+    return found
+
+
 def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     """Hand the compiled brief to the agentic coder. One session.
 
@@ -2631,6 +2790,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                 for cid in result.kept_handler_ids
                 if not _workspace_handler_is_factory_grounded(root, cid)
             ]
+            result.cli_unkeepable_event_bus_ids = harvest_unkeepable_event_bus_ids(
+                root, list(compiled.capabilities)
+            )
             # Partial CLI (live ~2/5) must not leave REUSE routes importing
             # missing app.actions modules. Fill holes only; do not credit
             # factory-grounded fill as CLI authorship (receipt stays CLI-ok
@@ -2642,18 +2804,38 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                 _merge_workspace_harvest(
                     result, root, list(compiled.capabilities)
                 )
+                result.cli_authored_ids = [
+                    cid
+                    for cid in result.kept_handler_ids
+                    if not _workspace_handler_is_factory_grounded(root, cid)
+                ]
             if (
                 deepseek_cli_ready()
                 and not result.cli_authored_ids
                 and not result.handlers
             ):
-                result.blocker = NAMED_BLOCKER_CLI_NO_AUTHORSHIP
-                result.detail = (
-                    f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
-                    f"kimi/deepseek exited 0 without harvested "
-                    "agent-written handlers. A CLI exit 0 is not C-BRIEF "
-                    "authorship — do not SUCCESS thin templates."
-                )
+                gap_unkeepable = [
+                    cid
+                    for cid in result.cli_unkeepable_event_bus_ids
+                    if cid in set(inventory_gap_ids(compiled))
+                ]
+                if gap_unkeepable:
+                    result.blocker = NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS
+                    result.detail = (
+                        f"{NAMED_BLOCKER_CLI_UNKEEPABLE_EVENT_BUS}: "
+                        "FACTORY_CODE_CLI wrote handle() for "
+                        f"{gap_unkeepable} but harvest failed only "
+                        "event_bus keepability. Not a never-wrote miss — "
+                        "do not SUCCESS thin templates."
+                    )
+                else:
+                    result.blocker = NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+                    result.detail = (
+                        f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
+                        f"kimi/deepseek exited 0 without harvested "
+                        "agent-written handlers. A CLI exit 0 is not C-BRIEF "
+                        "authorship — do not SUCCESS thin templates."
+                    )
                 ctx.note(
                     result.detail,
                     stage="dispatch",
@@ -2748,6 +2930,7 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         )
 
     apply_factory_llm_generate_gaps(ctx, compiled, result)
+    apply_factory_grounded_generate_persist(ctx, compiled, result)
     write_dispatch_receipt(ctx, compiled, result)
     ctx.state["brief_dispatch"] = result.to_dict()
     ctx.state["compiled_brief"] = {

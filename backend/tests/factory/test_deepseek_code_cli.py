@@ -673,6 +673,7 @@ def test_dispatch_deepseek_billing_does_not_openrouter_fallthrough(
     assert deepseek_cli_ready() is True
     assert should_factory_llm_generate_gaps(compiled, result) is False
     assert result.factory_llm_generate_fallthrough is False
+    assert result.generate_persist_ids == []
     assert oneshot == []
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
 

@@ -33,13 +33,35 @@ const VIEW_PATHS: Record<View, string> = {
 export function viewFromPath(pathname: string): View {
   if (pathname === '/account') return 'account'
   if (pathname === '/subscription') return 'subscription'
-  if (pathname === '/platforms') return 'platforms'
-  if (pathname === '/floor') return 'floor'
+  if (pathname === '/platforms' || pathname.startsWith('/platforms/')) return 'platforms'
+  if (pathname === '/floor' || pathname.startsWith('/floor/')) return 'floor'
   return 'floor'
 }
 
-export function pathFromView(view: View): string {
+export function pathFromView(view: View, sessionId?: string | null): string {
+  if (sessionId && (view === 'floor' || view === 'platforms')) {
+    return `/${view}/${encodeURIComponent(sessionId)}`
+  }
   return VIEW_PATHS[view]
+}
+
+const SESSION_PATH = /^\/(?:floor|platforms)\/([^/]+)\/?$/
+
+/** Session id from `/floor/{sessionId}` or `/platforms/{sessionId}`. */
+export function sessionIdFromPath(pathname: string): string | null {
+  const match = pathname.match(SESSION_PATH)
+  if (!match) return null
+  try {
+    const trimmed = decodeURIComponent(match[1]).trim()
+    return trimmed || null
+  } catch {
+    return null
+  }
+}
+
+/** Path param wins over `?session=` so a stale query cannot override the URL. */
+export function requestedSessionFromLocation(pathname: string, search: string): string | null {
+  return sessionIdFromPath(pathname) ?? sessionQueryParam(search)
 }
 
 /** Public auth URLs must not become a full-page "Factory unreachable" on a race. */
@@ -73,9 +95,9 @@ export type BootSessionResult =
   | { status: 'missing'; requested: string }
 
 /**
- * Pick the boot session from `?session=` + the account list.
- * A requested id that is not in the list is missing — never fall through
- * to list[0], which would paint another build's Download / Finished card.
+ * Pick the boot session from `/floor/{id}`, `/platforms/{id}`, or `?session=`
+ * plus the account list. A requested id that is not in the list is missing —
+ * never fall through to list[0], which would paint another build's Floor.
  */
 export function resolveBootSession(
   requested: string | null,
@@ -113,11 +135,13 @@ export default function App() {
   const [accessPaused, setAccessPaused] = useState(false)
   const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
   const [sessionLinkError, setSessionLinkError] = useState<string | null>(null)
+  const [sessionList, setSessionList] = useState<SessionListItem[]>([])
 
-  function go(next: View) {
+  function go(next: View, sid: string | null = sessionId) {
     setView(next)
     setAlreadySignedInNotice(false)
-    const path = pathFromView(next)
+    const bound = next === 'floor' || next === 'platforms' ? sid : null
+    const path = pathFromView(next, bound)
     if (typeof window !== 'undefined' && window.location.pathname !== path) {
       window.history.pushState(null, '', path)
     }
@@ -128,7 +152,10 @@ export default function App() {
     ;(async () => {
       const params = new URLSearchParams(window.location.search)
       const linkToken = params.get('token')
-      const requestedSession = sessionQueryParam(window.location.search)
+      const requestedSession = requestedSessionFromLocation(
+        window.location.pathname,
+        window.location.search,
+      )
       if (linkToken && window.location.pathname === '/verify-email') {
         window.history.replaceState(null, '', '/')
         try {
@@ -152,6 +179,7 @@ export default function App() {
             setAccessPaused(factoryAccessPaused(bill))
             setNeedsEmailVerify(false)
             setBootError(null)
+            setSessionList(arr)
             setSessionLinkError(choice.requested)
             setSessionId(null)
             setAuthed(true)
@@ -160,15 +188,18 @@ export default function App() {
           return
         }
         let sid = choice.status === 'selected' ? choice.sessionId : undefined
+        let nextList = arr
         if (!sid) {
           const created = await sessions.create()
           sid = created.session_id
+          if (sid) nextList = [{ session_id: sid }, ...arr]
         }
         if (!cancelled) {
           setAccountMe(me)
           setAccessPaused(factoryAccessPaused(bill))
           setNeedsEmailVerify(false)
           setBootError(null)
+          setSessionList(nextList)
           setSessionLinkError(null)
           setSessionId(sid ?? null)
           setAuthed(true)
@@ -229,14 +260,25 @@ export default function App() {
   }, [sessionId])
 
   useEffect(() => {
-    if (!authed || !sessionId) return
+    if (!authed) return
     const onPopState = () => {
-      setView(viewFromPath(window.location.pathname))
+      const path = window.location.pathname
+      setView(viewFromPath(path))
       setAlreadySignedInNotice(false)
+      const requested = requestedSessionFromLocation(path, window.location.search)
+      if (!requested) return
+      const choice = resolveBootSession(requested, sessionList)
+      if (choice.status === 'selected') {
+        setSessionLinkError(null)
+        setSessionId(choice.sessionId)
+      } else if (choice.status === 'missing') {
+        setSessionLinkError(choice.requested)
+        setSessionId(null)
+      }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [authed, sessionId])
+  }, [authed, sessionList])
 
   if (authed === null)
     return (
@@ -308,6 +350,7 @@ export default function App() {
               if (typeof window !== 'undefined') {
                 const url = new URL(window.location.href)
                 url.searchParams.delete('session')
+                if (sessionIdFromPath(url.pathname)) url.pathname = '/'
                 const next = `${url.pathname}${url.search}${url.hash}`
                 window.history.replaceState(null, '', next || '/')
               }
@@ -370,8 +413,12 @@ export default function App() {
                 ? undefined
                 : async () => {
                     const created = await sessions.create()
-                    setSessionId(created.session_id)
-                    go('floor')
+                    const fresh = created.session_id
+                    setSessionList((prev) =>
+                      fresh ? [{ session_id: fresh }, ...prev] : prev,
+                    )
+                    setSessionId(fresh)
+                    go('floor', fresh)
                   }
             }
           />
