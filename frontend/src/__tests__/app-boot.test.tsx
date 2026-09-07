@@ -13,7 +13,9 @@ import {
 } from '../api/factory'
 import App, {
   pathFromView,
+  requestedSessionFromLocation,
   resolveBootSession,
+  sessionIdFromPath,
   sessionQueryParam,
   viewFromPath,
 } from '../App'
@@ -28,6 +30,7 @@ const {
   productGetMock,
   billingStatusMock,
   getHealthMock,
+  watchBuildMock,
 } = vi.hoisted(() => ({
   meMock: vi.fn(),
   verifyEmailMock: vi.fn(),
@@ -38,6 +41,7 @@ const {
   productGetMock: vi.fn(),
   billingStatusMock: vi.fn(),
   getHealthMock: vi.fn(),
+  watchBuildMock: vi.fn(),
 }))
 
 vi.mock('../api/factory', async (importOriginal) => {
@@ -70,6 +74,7 @@ vi.mock('../api/factory', async (importOriginal) => {
       status: (...args: unknown[]) => billingStatusMock(...args),
     },
     getHealth: (...args: unknown[]) => getHealthMock(...args),
+    watchBuildStatus: (...args: unknown[]) => watchBuildMock(...args),
   }
 })
 
@@ -118,6 +123,8 @@ describe('App boot', () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: { available: true, credentials_file_present: true },
     })
+    watchBuildMock.mockReset()
+    watchBuildMock.mockImplementation(async () => {})
     ;(clearSession as ReturnType<typeof vi.fn>).mockClear()
     ;(signOut as ReturnType<typeof vi.fn>).mockClear()
   })
@@ -279,6 +286,8 @@ describe('App boot', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New session' }))
     await waitFor(() => expect(createMock).toHaveBeenCalled())
     expect(await screen.findByText(/session sess_fresh/)).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/floor/sess_fresh')
+    expect(createMock).toHaveBeenCalledTimes(1)
   })
 
   it('signed-in visit to /login stays on Floor with an already-signed-in notice', async () => {
@@ -447,6 +456,253 @@ describe('App boot', () => {
     expect(screen.queryByRole('heading', { name: 'Session not found' })).not.toBeInTheDocument()
   })
 
+  it('/floor/{sessionId} selects that session — not the bound list[0] run', async () => {
+    window.history.pushState(null, '', '/floor/sess_fe80bf177a8545e6')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_cec9a13active1' },
+      { session_id: 'sess_fe80bf177a8545e6' },
+      { session_id: 'sess_9d8e9a2dc01b40a1' },
+    ])
+    productGetMock.mockImplementation(async (sid: string) => {
+      if (sid === 'sess_fe80bf177a8545e6') {
+        return {
+          blueprint: {
+            product_name: 'Finished VetCare',
+            vertical: 'veterinary-care',
+            drafting_mode: 'architect_llm',
+          },
+          blueprint_approved: true,
+          generation: {
+            engine: 'runner',
+            product_id: 'veterinary-care',
+            triggered_by: 'chat_llm',
+          },
+        }
+      }
+      if (sid === 'sess_cec9a13active1') {
+        return {
+          blueprint: { product_name: 'Live VetCare', vertical: 'veterinary-care' },
+          blueprint_approved: true,
+          generation: { engine: 'runner', product_id: 'veterinary-care' },
+        }
+      }
+      return {}
+    })
+    watchBuildMock.mockImplementation(async (sid: string, onProgress: (s: object) => void) => {
+      if (sid === 'sess_fe80bf177a8545e6') {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'STORE_GREEN',
+            founding_customer_ready: false,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        })
+        return
+      }
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        last_event: 'wrote handler intake',
+      })
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_fe80bf1/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.queryByText(/WRITER 3\/5/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Live VetCare')).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith('sess_fe80bf177a8545e6')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('/floor/{sessionId} for a stopped run hydrates STOPPED — not a blank composer', async () => {
+    window.history.pushState(null, '', '/floor/sess_9d8e9a2dc01b40a1')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_cec9a13active1' },
+      { session_id: 'sess_9d8e9a2dc01b40a1' },
+    ])
+    productGetMock.mockResolvedValue({
+      blueprint: { product_name: 'Stopped VetCare', vertical: 'veterinary-care' },
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'pilot',
+        detail: 'rework budget of 3 exhausted; TESTER gate still failing',
+        pilot_ready: false,
+      })
+    })
+    render(<App />)
+    expect(await screen.findByText(/session sess_9d8e9a2/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('Pilot suite failed')
+    expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith('sess_9d8e9a2dc01b40a1')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('popstate from the live bound session to /floor/{finished} remounts that Floor', async () => {
+    window.history.pushState(null, '', '/floor/sess_cec9a13active1')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_cec9a13active1' },
+      { session_id: 'sess_fe80bf177a8545e6' },
+    ])
+    productGetMock.mockImplementation(async (sid: string) => {
+      if (sid === 'sess_fe80bf177a8545e6') {
+        return {
+          blueprint: { product_name: 'Finished VetCare', vertical: 'veterinary-care' },
+          blueprint_approved: true,
+          generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+        }
+      }
+      return {
+        blueprint: { product_name: 'Live VetCare', vertical: 'veterinary-care' },
+        blueprint_approved: true,
+        generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+      }
+    })
+    watchBuildMock.mockImplementation(async (sid: string, onProgress: (s: object) => void) => {
+      if (sid === 'sess_fe80bf177a8545e6') {
+        onProgress({
+          state: 'succeeded',
+          pilot_ready: true,
+          cycle: 'pilot',
+          authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+          level_grade: {
+            level: 'STORE_GREEN',
+            founding_customer_ready: false,
+            pilot_ready: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        })
+        return
+      }
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        last_event: 'wrote handler intake',
+      })
+    })
+    render(<App />)
+    expect(await screen.findByText(/session sess_cec9a13/)).toBeInTheDocument()
+    expect(await screen.findByText(/WRITER 3\/5/)).toBeInTheDocument()
+
+    window.history.pushState(null, '', '/floor/sess_fe80bf177a8545e6')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+
+    expect(await screen.findByText(/session sess_fe80bf1/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(screen.queryByText(/WRITER 3\/5/)).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith('sess_fe80bf177a8545e6')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('/floor/{missing} fails closed — does not create or paint list[0]', async () => {
+    window.history.pushState(null, '', '/floor/sess_not_in_list')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_cec9a13active1' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Session not found' })).toBeInTheDocument()
+    expect(screen.getByText(/sess_not_in_list/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
+    expect(createMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Factory Floor' }))
+    expect(await screen.findByRole('heading', { name: 'Factory Floor' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_cec9a13/)).toBeInTheDocument()
+    expect(window.location.pathname).not.toMatch(/sess_not_in_list/)
+  })
+
+  it('/platforms without a session id still binds list[0] — honesty for the active card', async () => {
+    window.history.pushState(null, '', '/platforms')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_cec9a13active1' },
+      { session_id: 'sess_fe80bf177a8545e6' },
+    ])
+    productGetMock.mockResolvedValue({
+      generation: {
+        engine: 'runner',
+        product_id: 'veterinary-care',
+      },
+      blueprint: { product_name: 'VetCare', vertical: 'veterinary-care' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+      })
+    })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Your Platforms' })).toBeInTheDocument()
+    expect(screen.getByText(/session sess_cec9a13/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_fe80bf1/)).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith('sess_cec9a13active1')
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('/floor/{sessionId} wins over a stale ?session= query', async () => {
+    window.history.pushState(
+      null,
+      '',
+      '/floor/sess_fe80bf177a8545e6?session=sess_cec9a13active1',
+    )
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([
+      { session_id: 'sess_cec9a13active1' },
+      { session_id: 'sess_fe80bf177a8545e6' },
+    ])
+    render(<App />)
+    expect(await screen.findByText(/session sess_fe80bf1/)).toBeInTheDocument()
+    expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
+    expect(productGetMock).toHaveBeenCalledWith('sess_fe80bf177a8545e6')
+  })
+
   it('rail nav buttons expose icons, labels, and accessible names', async () => {
     meMock.mockResolvedValue({
       email: 'new@factory.dev',
@@ -474,12 +730,44 @@ describe('viewFromPath / pathFromView', () => {
     expect(viewFromPath('/subscription')).toBe('subscription')
     expect(viewFromPath('/platforms')).toBe('platforms')
     expect(viewFromPath('/floor')).toBe('floor')
+    expect(viewFromPath('/floor/sess_fe80bf177a8545e6')).toBe('floor')
+    expect(viewFromPath('/platforms/sess_fe80bf177a8545e6')).toBe('platforms')
     expect(viewFromPath('/')).toBe('floor')
     expect(viewFromPath('/login')).toBe('floor')
     expect(pathFromView('account')).toBe('/account')
     expect(pathFromView('subscription')).toBe('/subscription')
     expect(pathFromView('platforms')).toBe('/platforms')
     expect(pathFromView('floor')).toBe('/')
+    expect(pathFromView('floor', 'sess_fe80bf177a8545e6')).toBe('/floor/sess_fe80bf177a8545e6')
+    expect(pathFromView('platforms', 'sess_fe80bf177a8545e6')).toBe(
+      '/platforms/sess_fe80bf177a8545e6',
+    )
+    expect(pathFromView('account', 'sess_fe80bf177a8545e6')).toBe('/account')
+  })
+})
+
+describe('sessionIdFromPath / requestedSessionFromLocation', () => {
+  it('reads /floor/{id} and /platforms/{id}', () => {
+    expect(sessionIdFromPath('/floor/sess_fe80bf177a8545e6')).toBe('sess_fe80bf177a8545e6')
+    expect(sessionIdFromPath('/platforms/sess_9d8e9a2dc01b40a1')).toBe('sess_9d8e9a2dc01b40a1')
+    expect(sessionIdFromPath('/floor/sess_fe80bf177a8545e6/')).toBe('sess_fe80bf177a8545e6')
+    expect(sessionIdFromPath('/floor')).toBeNull()
+    expect(sessionIdFromPath('/platforms')).toBeNull()
+    expect(sessionIdFromPath('/')).toBeNull()
+    expect(sessionIdFromPath('/account')).toBeNull()
+  })
+
+  it('path param wins over ?session=', () => {
+    expect(
+      requestedSessionFromLocation(
+        '/floor/sess_fe80bf177a8545e6',
+        '?session=sess_cec9a13active1',
+      ),
+    ).toBe('sess_fe80bf177a8545e6')
+    expect(requestedSessionFromLocation('/platforms', '?session=sess_cec9a13active1')).toBe(
+      'sess_cec9a13active1',
+    )
+    expect(requestedSessionFromLocation('/', '')).toBeNull()
   })
 })
 
