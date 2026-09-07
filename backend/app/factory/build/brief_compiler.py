@@ -549,8 +549,7 @@ def render_slot_bodies(
         "constructed block inputs, BLOCK_DEFAULT_ACTIONS, prepared "
         "event_bus steps). Do not leave deterministic templates. Do not "
         "skip the CLI because inventory_gaps is empty. Do not re-implement "
-        "a verified Store block from scratch — bind the registry-verified ids. "
-        + full_pilot_authorship_rules_text(),
+        "a verified Store block from scratch — bind the registry-verified ids.",
         "Every verified REUSE row must emit a loadable "
         "app/actions/{capability_id}.py (factory persist / event_bus "
         "envelope — the registry-verified handler source). A REUSE claim "
@@ -658,8 +657,8 @@ def render_slot_bodies(
         full_pilot_authorship_acceptance_line(),
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
-        "Do not treat thin SUCCESS / templates-only / stubbed capabilities as done. "
-        + full_pilot_authorship_rules_text(),
+        "Do not treat thin SUCCESS / templates-only / stubbed capabilities / "
+        "authorship below the launching-ready full-pilot floor as done.",
         "",
         "Block-level acceptance (from block.json, report-only until flip):",
         "\n".join(
