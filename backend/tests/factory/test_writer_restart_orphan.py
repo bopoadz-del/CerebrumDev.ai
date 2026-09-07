@@ -19,9 +19,11 @@ from pathlib import Path
 from app.factory.blueprint import CapabilitySpec, ProductBlueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
+from app.factory.build.coder_session import write_control
 from app.factory.build.orphan_recovery import (
     ORPHAN_FAIL_DETAIL,
     fail_orphaned_model_call,
+    is_boot_resumable_orphan,
     is_orphaned_inflight_workspace,
     recover_orphaned_model_calls,
     session_id_from_output,
@@ -296,3 +298,246 @@ def test_lifespan_recovers_orphaned_model_calls():
     src = inspect.getsource(_lifespan)
     assert "recover_orphaned_model_calls" in src
     assert "ensure_code_cli_credentials" in src
+
+
+def _plant_session_workspace(
+    tmp_path,
+    *,
+    session_id: str,
+    product_dir: str,
+    product_id: str,
+    blueprint: ProductBlueprint,
+    age_s: float,
+    terminal: EventKind | None = None,
+    control: str | None = None,
+) -> Path:
+    out = tmp_path / "factory_outputs" / "sessions" / session_id / product_dir
+    digest = blueprint_hash(blueprint)
+    _estate_zombie_ledger(
+        out, product_id=product_id, inputs_hash=digest, age_s=age_s
+    )
+    if terminal is not None:
+        BuildLedger(out / "build_ledger.jsonl").append(
+            terminal, detail="historical terminal"
+        )
+    if control is not None:
+        write_control(out, control)
+    state_dir = tmp_path / "storage" / "sessions" / session_id
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.joinpath("state.json").write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "session_id": session_id,
+                "user_id": "owner",
+                "product_design": {"blueprint": blueprint.model_dump(mode="json")},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return out
+
+
+def test_recover_ledger_permission_error_does_not_claim_resumed(tmp_path, monkeypatch):
+    """PermissionError on the resume NOTE must fail-closed, not start a runner."""
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.raise_if_cli_session_unready",
+        lambda: None,
+    )
+    bp = _estate_bp()
+    out = _plant_session_workspace(
+        tmp_path,
+        session_id="sess_05914670d8f34533",
+        product_dir="estate-management",
+        product_id="estate-management",
+        blueprint=bp,
+        age_s=2200,
+        control="run",
+    )
+
+    def _boom(self, *a, **k):
+        raise PermissionError("Permission denied: build_ledger.jsonl")
+
+    monkeypatch.setattr(BuildLedger, "append", _boom)
+    started = []
+
+    def _should_not_run(*_a, **_k):
+        started.append(1)
+        return {"output_dir": str(out), "already_running": False}
+
+    monkeypatch.setattr("app.factory.build_jobs.start_runner_build", _should_not_run)
+
+    results = recover_orphaned_model_calls(
+        outputs_root=tmp_path / "factory_outputs",
+        storage_root=tmp_path / "storage",
+    )
+    assert started == [], results
+    assert results, results
+    assert all(r.get("action") != "resumed" for r in results), results
+    assert results[0]["action"] in {"error", "failed"}
+    detail = str(results[0].get("detail") or "")
+    assert FACTORY_CODE_CLI_ORPHANED in detail
+    assert "writable" in detail.lower() or "permission" in detail.lower()
+
+
+def test_recover_does_not_mass_resume_stale_or_terminal_sessions(tmp_path, monkeypatch):
+    """#383 boot scan resumed every leftover model_call, including historical __run2."""
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.raise_if_cli_session_unready",
+        lambda: None,
+    )
+
+    live = _plant_session_workspace(
+        tmp_path,
+        session_id="sess_05914670d8f34533",
+        product_dir="estate-management",
+        product_id="estate-management",
+        blueprint=_estate_bp("estate-management"),
+        age_s=2200,
+        control="run",
+    )
+    stale_age = 3 * 24 * 3600
+    for session_id, product_id in (
+        ("sess_1bf03b57e1b64ff2", "veterinary-care"),
+        ("sess_2fba31ab1a194a73", "insurance-agency"),
+        ("sess_401e6619fd874f48", "residential-lettings"),
+        ("sess_97a1bc6525924e8b", "makerspace-management"),
+        ("sess_a48d2798e7304e21", "veterinary-care"),
+        ("sess_ab446de2bf9f42c0", "property-management"),
+    ):
+        _plant_session_workspace(
+            tmp_path,
+            session_id=session_id,
+            product_dir=f"{product_id}__run2",
+            product_id=product_id,
+            blueprint=_estate_bp(product_id),
+            age_s=stale_age,
+            control="run",
+        )
+    _plant_session_workspace(
+        tmp_path,
+        session_id="sess_finished",
+        product_dir="residential-lettings__run2",
+        product_id="residential-lettings",
+        blueprint=_estate_bp("residential-lettings"),
+        age_s=400,
+        terminal=EventKind.RUN_SUCCEEDED,
+        control="run",
+    )
+    _plant_session_workspace(
+        tmp_path,
+        session_id="sess_stopped",
+        product_dir="insurance-agency",
+        product_id="insurance-agency",
+        blueprint=_estate_bp("insurance-agency"),
+        age_s=400,
+        control="stop",
+    )
+    # Superseded first run + later __run2: only the latest sibling is eligible,
+    # then single-resume still prefers the live estate zombie (newer).
+    _plant_session_workspace(
+        tmp_path,
+        session_id="sess_superseded",
+        product_dir="property-management",
+        product_id="property-management",
+        blueprint=_estate_bp("property-management"),
+        age_s=4000,
+        control="run",
+    )
+    _plant_session_workspace(
+        tmp_path,
+        session_id="sess_superseded",
+        product_dir="property-management__run2",
+        product_id="property-management",
+        blueprint=_estate_bp("property-management"),
+        age_s=3900,
+        control="run",
+    )
+
+    stale_vet = (
+        tmp_path
+        / "factory_outputs"
+        / "sessions"
+        / "sess_1bf03b57e1b64ff2"
+        / "veterinary-care__run2"
+    )
+    assert is_boot_resumable_orphan(live) is True
+    assert is_orphaned_inflight_workspace(stale_vet) is True
+    assert is_boot_resumable_orphan(stale_vet) is False
+
+    held = threading.Event()
+    started = []
+
+    def _hold(blueprint, output_dir, *_a, **_k):
+        started.append(str(output_dir))
+        held.wait(timeout=5)
+
+    monkeypatch.setattr("app.factory.build_jobs._run", _hold)
+    try:
+        results = recover_orphaned_model_calls(
+            outputs_root=tmp_path / "factory_outputs",
+            storage_root=tmp_path / "storage",
+        )
+        resumed = [r for r in results if r.get("action") == "resumed"]
+        assert len(resumed) == 1, results
+        assert Path(resumed[0]["output_dir"]).resolve() == live.resolve()
+        assert started == [str(live)]
+    finally:
+        held.set()
+
+
+def test_recover_resumes_at_most_one_recent_orphan(tmp_path, monkeypatch):
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setattr(
+        "app.factory.build.coder_session.raise_if_cli_session_unready",
+        lambda: None,
+    )
+    older = _plant_session_workspace(
+        tmp_path,
+        session_id="sess_older",
+        product_dir="veterinary-care",
+        product_id="veterinary-care",
+        blueprint=_estate_bp("veterinary-care"),
+        age_s=900,
+        control="run",
+    )
+    newer = _plant_session_workspace(
+        tmp_path,
+        session_id="sess_05914670d8f34533",
+        product_dir="estate-management",
+        product_id="estate-management",
+        blueprint=_estate_bp("estate-management"),
+        age_s=200,
+        control="run",
+    )
+    held = threading.Event()
+    started = []
+
+    def _hold(blueprint, output_dir, *_a, **_k):
+        started.append(str(output_dir))
+        held.wait(timeout=5)
+
+    monkeypatch.setattr("app.factory.build_jobs._run", _hold)
+    try:
+        results = recover_orphaned_model_calls(
+            outputs_root=tmp_path / "factory_outputs",
+            storage_root=tmp_path / "storage",
+        )
+        resumed = [r for r in results if r.get("action") == "resumed"]
+        assert len(resumed) == 1, results
+        assert Path(resumed[0]["output_dir"]).resolve() == newer.resolve()
+        assert started == [str(newer)]
+        skipped = [r for r in results if r.get("action") == "skipped"]
+        assert any(
+            Path(r["output_dir"]).resolve() == older.resolve() for r in skipped
+        )
+    finally:
+        held.set()

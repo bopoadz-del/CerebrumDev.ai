@@ -324,17 +324,30 @@ class BuildLedger:
         # file is owner-readonly except for this locked window, so a CLI
         # subprocess cannot append raw JSONL (the CEREBRUMDEV-BACKEND-B path).
         with _exclusive_ledger(self.path):
-            if self._protect_depth:
-                self._chmod_writable()
+            # Always lift leftover 0444 from a killed protect() window
+            # (Render deploy mid-WRITER). protect() still re-applies
+            # owner-readonly in the finally below.
+            self._chmod_writable()
             try:
-                with self.path.open("a", encoding="utf-8") as fh:
-                    fh.write(line)
-                    fh.flush()
-                    os.fsync(fh.fileno())
+                self._write_line(line)
+            except PermissionError:
+                self._chmod_writable()
+                try:
+                    self._write_line(line)
+                except PermissionError as exc:
+                    raise LedgerError(
+                        f"ledger not writable at {self.path}: {exc}"
+                    ) from exc
             finally:
                 if self._protect_depth:
                     self._chmod_readonly()
         return event
+
+    def _write_line(self, line: str) -> None:
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+            fh.flush()
+            os.fsync(fh.fileno())
 
     def _chmod_readonly(self) -> None:
         if not self.path.is_file():

@@ -12,6 +12,11 @@ The ledger NOTE is not a live worker. On boot, resume the gated C-BRIEF
 (RoleRunner re-enters interrupted WRITER — one compiled brief, not a
 per-capability handle() loop) when a blueprint is available; otherwise
 fail closed with ``FACTORY_CODE_CLI_ORPHANED``.
+
+#383 then over-scanned: every leftover ``model_call`` on disk (including
+historical ``__run2`` / already-terminal / abandoned ledgers) was treated
+as a live zombie. Boot recovery must resume at most one *recent, active*
+WRITER orphan — never a resume storm.
 """
 
 from __future__ import annotations
@@ -19,8 +24,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("cerebrumdev.factory.orphan_recovery")
 
@@ -32,6 +38,12 @@ ORPHAN_RESUME_NOTE = (
     "resuming orphaned WRITER C-BRIEF after process restart "
     "(FACTORY_CODE_CLI_ORPHANED)"
 )
+ORPHAN_DISK_ERROR_DETAIL = (
+    "FACTORY_CODE_CLI_ORPHANED: ledger not writable after process restart "
+    "— coding agent stopped (not resumed)"
+)
+_RUN_SUFFIX_RE = re.compile(r"__run(\d+)$")
+_SKIP_NOT_ACTIVE = "not_the_active_orphan"
 
 
 def iter_session_build_dirs(outputs_root: Optional[Path] = None) -> List[Path]:
@@ -137,33 +149,116 @@ def _blueprint_from_state_path(path: Path) -> Optional[Any]:
         return None
 
 
-def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
-    """Non-terminal ledger with an open model_call and no live worker."""
+def _workspace_run_number(output_dir: Path | str) -> Tuple[str, int]:
+    name = Path(output_dir).name
+    match = _RUN_SUFFIX_RE.search(name)
+    if match:
+        return _RUN_SUFFIX_RE.sub("", name), int(match.group(1))
+    return name, 1
+
+
+def is_superseded_workspace(output_dir: Path | str) -> bool:
+    """True when a later ``{stem}__runN`` sibling already has a ledger."""
+    out = Path(output_dir)
+    parent = out.parent
+    if not parent.is_dir():
+        return False
+    stem, mine = _workspace_run_number(out)
+    for sibling in parent.iterdir():
+        if not sibling.is_dir() or sibling == out:
+            continue
+        sib_stem, sib_n = _workspace_run_number(sibling)
+        if sib_stem != stem:
+            continue
+        if not (sibling / "build_ledger.jsonl").is_file():
+            continue
+        if sib_n > mine:
+            return True
+    return False
+
+
+def _open_calling_note(output_dir: Path | str) -> Tuple[Any, Any, Any]:
+    """Return ``(ledger, events, calling_note)`` or ``(None, (), None)``."""
     from app.factory.build.ledger import BuildLedger, EventKind
-    from app.factory.build_jobs import (
-        _ledger_path,
-        _live_runner_thread,
-        _open_model_call_note,
-        _product_id_of,
-    )
+    from app.factory.build_jobs import _ledger_path, _open_model_call_note
 
     path = _ledger_path(output_dir)
     if not path.is_file():
-        return False
+        return None, (), None
+    ledger = BuildLedger(path)
+    events = ledger.events()
+    notes = [e for e in events if e.kind is EventKind.NOTE]
+    activity = [
+        e
+        for e in notes
+        if not (e.payload or {}).get("budget_inspect")
+        and (e.payload or {}).get("kind") != "budget_inspect"
+    ]
+    return ledger, events, _open_model_call_note(activity)
+
+
+def last_activity_age_s(output_dir: Path | str) -> float:
+    from app.factory.build_jobs import _event_age_s
+
+    _ledger, events, calling = _open_calling_note(output_dir)
+    ts = ""
+    if calling is not None:
+        ts = str(getattr(calling, "ts", "") or "")
+    if not ts and events:
+        ts = str(getattr(events[-1], "ts", "") or "")
+    return _event_age_s(ts, float("inf"))
+
+
+def _resume_deadline_s(calling: Any) -> float:
+    payload = (getattr(calling, "payload", None) or {}) if calling else {}
+    raw = payload.get("deadline_s")
     try:
-        ledger = BuildLedger(path)
-        events = ledger.events()
-        if ledger.terminal_event() is not None:
+        deadline = float(raw)
+    except (TypeError, ValueError):
+        deadline = 0.0
+    if deadline > 0:
+        return deadline
+    try:
+        from app.factory.llm_watchdog import attempt_wall_s
+
+        return float(attempt_wall_s())
+    except Exception:  # noqa: BLE001
+        return 2400.0
+
+
+def _coder_control_allows_resume(output_dir: Path | str) -> bool:
+    from app.factory.build.coder_session import (
+        CONTROL_PAUSE,
+        CONTROL_RUN,
+        CONTROL_STOP,
+        read_control,
+    )
+
+    action = read_control(Path(output_dir))
+    if action in {CONTROL_STOP, CONTROL_PAUSE}:
+        return False
+    return action == CONTROL_RUN
+
+
+def _writer_inflight(ledger: Any, calling: Any) -> bool:
+    from app.factory.build.authority import BuildRole
+
+    interrupted = getattr(ledger, "interrupted_role", lambda: None)()
+    if interrupted is BuildRole.WRITER:
+        return True
+    role = getattr(calling, "role", None)
+    return role is BuildRole.WRITER
+
+
+def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
+    """Non-terminal ledger with an open model_call and no live worker."""
+    from app.factory.build_jobs import _live_runner_thread, _product_id_of
+
+    try:
+        ledger, events, calling = _open_calling_note(output_dir)
+        if ledger is None or calling is None:
             return False
-        notes = [e for e in events if e.kind is EventKind.NOTE]
-        activity = [
-            e
-            for e in notes
-            if not (e.payload or {}).get("budget_inspect")
-            and (e.payload or {}).get("kind") != "budget_inspect"
-        ]
-        calling = _open_model_call_note(activity)
-        if calling is None:
+        if ledger.terminal_event() is not None:
             return False
         product_id = _product_id_of(events, output_dir)
         return not _live_runner_thread(product_id)
@@ -172,13 +267,46 @@ def is_orphaned_inflight_workspace(output_dir: Path | str) -> bool:
         return False
 
 
+def is_boot_resumable_orphan(output_dir: Path | str) -> bool:
+    """Recent, owner-still-running WRITER orphan — not a historical leftover.
+
+    Requires: open model_call, no live thread, not terminal SUCCESS/FAIL,
+    ``coder_control=run`` (missing file defaults to run), interrupted WRITER,
+    last activity still inside the calling-NOTE deadline, and not superseded
+    by a later ``__runN`` sibling.
+    """
+    if not is_orphaned_inflight_workspace(output_dir):
+        return False
+    if is_superseded_workspace(output_dir):
+        return False
+    if not _coder_control_allows_resume(output_dir):
+        return False
+    try:
+        ledger, _events, calling = _open_calling_note(output_dir)
+        if ledger is None or calling is None:
+            return False
+        if not _writer_inflight(ledger, calling):
+            return False
+        age = last_activity_age_s(output_dir)
+        if age > _resume_deadline_s(calling):
+            return False
+    except Exception:  # noqa: BLE001
+        logger.warning("could not score boot-resume at %s", output_dir, exc_info=True)
+        return False
+    return True
+
+
 def fail_orphaned_model_call(
     output_dir: Path | str, *, detail: Optional[str] = None
 ) -> Dict[str, Any]:
     """Write RUN_FAILED so Floor shows coder-stopped, not a 7230s zombie."""
     from app.factory.build.coder_session import NAMED_BLOCKER_CLI_ORPHANED
-    from app.factory.build.ledger import BuildLedger, EventKind
-    from app.factory.build_jobs import FACTORY_CODE_CLI_ORPHANED, _ledger_path
+    from app.factory.build.ledger import BuildLedger, EventKind, LedgerError
+    from app.factory.build_jobs import (
+        FACTORY_CODE_CLI_ORPHANED,
+        _ledger_path,
+        _write_crash_marker,
+    )
 
     text = (detail or ORPHAN_FAIL_DETAIL).strip()
     if NAMED_BLOCKER_CLI_ORPHANED not in text:
@@ -193,8 +321,13 @@ def fail_orphaned_model_call(
                 "orphan_recovery": True,
             },
         )
+    except (OSError, LedgerError):
+        logger.exception("could not fail-close orphaned model call at %s", output_dir)
+        _write_crash_marker(output_dir, text)
+        return {"action": "error", "output_dir": str(output_dir), "detail": text}
     except Exception:  # noqa: BLE001
         logger.exception("could not fail-close orphaned model call at %s", output_dir)
+        _write_crash_marker(output_dir, text)
         return {"action": "error", "output_dir": str(output_dir), "detail": text}
     logger.error("failed closed orphaned FACTORY_CODE_CLI at %s: %s", output_dir, text)
     return {
@@ -212,10 +345,11 @@ def resume_orphaned_model_call(
     cycle: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Re-enter RoleRunner at interrupted WRITER (gated C-BRIEF, not micro-fixer)."""
-    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.ledger import BuildLedger, EventKind, LedgerError
     from app.factory.build_jobs import (
         FACTORY_CODE_CLI_ORPHANED,
         _ledger_path,
+        _write_crash_marker,
         start_runner_build,
     )
 
@@ -230,8 +364,12 @@ def resume_orphaned_model_call(
                 "honesty": FACTORY_CODE_CLI_ORPHANED,
             },
         )
-    except Exception:  # noqa: BLE001 — resume must still start
+    except (OSError, LedgerError) as exc:
+        # Do not start a runner that will crash-loop on the same disk error.
+        text = f"{ORPHAN_DISK_ERROR_DETAIL}: {type(exc).__name__}: {exc}"
         logger.exception("could not note orphan resume at %s", out)
+        _write_crash_marker(out, text)
+        return fail_orphaned_model_call(out, detail=text)
     result = start_runner_build(blueprint, out, cycle=cycle)
     logger.info(
         "resumed orphaned WRITER at %s already_running=%s",
@@ -247,47 +385,70 @@ def resume_orphaned_model_call(
     }
 
 
+def _choose_active_orphan(candidates: List[Path]) -> Optional[Path]:
+    if not candidates:
+        return None
+    return min(candidates, key=last_activity_age_s)
+
+
 def recover_orphaned_model_calls(
     *,
     outputs_root: Optional[Path] = None,
     storage_root: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
-    """Boot hook: resume or fail-close every orphaned in-flight model_call."""
+    """Boot hook: resume at most one recent in-flight WRITER orphan."""
     from app.factory.build.coder_session import CodeCliUnavailable
 
     results: List[Dict[str, Any]] = []
-    for output_dir in iter_session_build_dirs(outputs_root):
-        if not is_orphaned_inflight_workspace(output_dir):
-            continue
-        blueprint = load_blueprint_for_workspace(
-            output_dir, storage_root=storage_root
-        )
-        if blueprint is None:
+    eligible = [
+        Path(output_dir)
+        for output_dir in iter_session_build_dirs(outputs_root)
+        if is_boot_resumable_orphan(output_dir)
+    ]
+    chosen = _choose_active_orphan(eligible)
+    for output_dir in eligible:
+        if chosen is None or output_dir != chosen:
             results.append(
-                fail_orphaned_model_call(
-                    output_dir,
-                    detail=(
-                        f"{ORPHAN_FAIL_DETAIL}; no product_blueprint to resume "
-                        f"C-BRIEF for {output_dir}"
-                    ),
-                )
+                {
+                    "action": "skipped",
+                    "output_dir": str(output_dir),
+                    "reason": _SKIP_NOT_ACTIVE,
+                }
             )
-            continue
+    if chosen is None:
+        if results:
+            logger.info(
+                "orphan model_call recovery: %s",
+                [(r.get("action"), r.get("output_dir")) for r in results],
+            )
+        return results
+
+    blueprint = load_blueprint_for_workspace(chosen, storage_root=storage_root)
+    if blueprint is None:
+        results.append(
+            fail_orphaned_model_call(
+                chosen,
+                detail=(
+                    f"{ORPHAN_FAIL_DETAIL}; no product_blueprint to resume "
+                    f"C-BRIEF for {chosen}"
+                ),
+            )
+        )
+    else:
         try:
-            results.append(resume_orphaned_model_call(output_dir, blueprint))
+            results.append(resume_orphaned_model_call(chosen, blueprint))
         except CodeCliUnavailable as exc:
-            results.append(fail_orphaned_model_call(output_dir, detail=str(exc)))
+            results.append(fail_orphaned_model_call(chosen, detail=str(exc)))
         except Exception as exc:  # noqa: BLE001 — boot must not die
-            logger.exception("orphan resume failed at %s", output_dir)
+            logger.exception("orphan resume failed at %s", chosen)
             results.append(
                 fail_orphaned_model_call(
-                    output_dir,
+                    chosen,
                     detail=f"{ORPHAN_FAIL_DETAIL}; resume raised {exc}",
                 )
             )
-    if results:
-        logger.info(
-            "orphan model_call recovery: %s",
-            [(r.get("action"), r.get("output_dir")) for r in results],
-        )
+    logger.info(
+        "orphan model_call recovery: %s",
+        [(r.get("action"), r.get("output_dir")) for r in results],
+    )
     return results
