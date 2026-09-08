@@ -672,6 +672,119 @@ describe('Your Platforms — coding-agent build', () => {
     expect(exportBtn).toBeDisabled()
   })
 
+  it('sess_4591d5cc sticky need≥5 card matches live 4/4 package SUCCESS', async () => {
+    const stickyNeedFive = {
+      state: 'failed',
+      outcome: 'FAILED_ROLE_ERROR',
+      cycle: 'pilot',
+      pilot_ready: false,
+      detail:
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5). Do not SUCCESS a Store-green pilot from thin authorship.',
+      findings: [
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5)',
+      ],
+      authorship: {
+        artifacts: 25,
+        agent_written: 4,
+        templated: 21,
+        action_py: 4,
+        cli_authored_ids: [
+          'unit_registry_and_vacancy_tracking',
+          'viewing_management',
+          'maintenance_issue_tracking',
+          'tenancy_application_pipeline',
+        ],
+      },
+    }
+    getMock.mockResolvedValue({
+      last_error:
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5). Do not SUCCESS a Store-green pilot from thin authorship.',
+      generation: {
+        product_id: 'residential-lettings',
+        engine: 'runner',
+        inputs_hash: 'd38710daf18675a65ce51f3d4a46ab54e0df4f06c2274c6219f88a804a09bc0a',
+        output_dir: '/app/storage/factory_outputs/sessions/sess_4591d5cc45d04fe1/residential-lettings',
+        build: stickyNeedFive,
+      },
+      blueprint: {
+        product_name: 'Residential Lettings Platform',
+        vertical: 'residential_lettings',
+        capabilities: [
+          { id: 'unit_registry_and_vacancy_tracking' },
+          { id: 'viewing_management' },
+          { id: 'maintenance_issue_tracking' },
+          { id: 'tenancy_application_pipeline' },
+        ],
+      },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress(stickyNeedFive)
+    })
+    render(<Platforms sessionId="sess_4591d5cc45d04fe1" />)
+    expect(await screen.findByText('residential-lettings')).toBeInTheDocument()
+    expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Store-green')
+    expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('platforms-failed-badge')).not.toBeInTheDocument()
+    expect(screen.queryByText(/need\s*≥\s*5/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Pilot suite failed/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download the export/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download unavailable/)
+  })
+
+  it('does not let sticky last_error hide a live SUCCESS generation.build', async () => {
+    getMock.mockResolvedValue({
+      last_error:
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5). Do not SUCCESS a Store-green pilot from thin authorship.',
+      generation: {
+        product_id: 'residential-lettings',
+        engine: 'runner',
+        inputs_hash: 'live-hash',
+        output_dir: '/tmp/residential-lettings',
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          cycle: 'pilot',
+          pilot_ready: true,
+          authorship: {
+            artifacts: 25,
+            agent_written: 4,
+            templated: 21,
+            action_py: 4,
+            n_required: 4,
+            cli_authored_ids: [
+              'unit_registry_and_vacancy_tracking',
+              'viewing_management',
+              'maintenance_issue_tracking',
+              'tenancy_application_pipeline',
+            ],
+          },
+          level_grade: {
+            level: 'STORE_GREEN',
+            pilot_ready: true,
+            full_pilot: true,
+            three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          },
+        },
+      },
+      blueprint: {
+        product_name: 'Residential Lettings Platform',
+        vertical: 'residential_lettings',
+        capabilities: [
+          { id: 'unit_registry_and_vacancy_tracking' },
+          { id: 'viewing_management' },
+          { id: 'maintenance_issue_tracking' },
+          { id: 'tenancy_application_pipeline' },
+        ],
+      },
+    })
+    watchBuildMock.mockImplementation(async () => {})
+    render(<Platforms sessionId="sess_4591d5cc45d04fe1" />)
+    expect(await screen.findByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
+    expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download the export/)
+  })
+
   it('does not download a failed coding-agent build', async () => {
     getMock.mockResolvedValue({ generation: GENERATION, blueprint: { product_name: 'Vineyard Platform' } })
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {

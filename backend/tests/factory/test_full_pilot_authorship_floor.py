@@ -635,6 +635,56 @@ def test_product_package_reevaluates_sticky_need_five_failure(tmp_path, monkeypa
     assert pkg.headers["content-type"].startswith("application/zip")
 
 
+def test_product_get_clears_sticky_need_five_for_platforms_card(tmp_path, monkeypatch):
+    """GET /product must not keep last_error / generation.build on need≥5."""
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_4591d5cc_platforms", "tester")
+    _park_lettings_blueprint("sess_4591d5cc_platforms")
+    out = tmp_path / "residential-lettings-platforms"
+    _full_repo(out)
+    _failed_thin_pilot(
+        out, product_id="residential-lettings", detail=_STICKY_NEED_FIVE
+    )
+    _write_provenance(out, LETTINGS_FOUR)
+    state = get_session("sess_4591d5cc_platforms")
+    assert state is not None
+    state.product_design.last_error = _STICKY_NEED_FIVE
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+        "build": {
+            "state": "failed",
+            "detail": _STICKY_NEED_FIVE,
+            "pilot_ready": False,
+        },
+    }
+    update_session("sess_4591d5cc_platforms", state)
+
+    product = client.get("/v1/sessions/sess_4591d5cc_platforms/product")
+    assert product.status_code == 200, product.text
+    assert product.headers.get("cache-control") == "no-store"
+    body = product.json()
+    assert body["last_error"] in (None, "")
+    gen = body["generation"]
+    assert gen["build"]["state"] == "succeeded"
+    assert gen["build"]["pilot_ready"] is True
+    assert gen["build"]["authorship"]["n_required"] == 4
+    assert "need ≥5" not in str(gen["build"].get("detail") or "")
+
+    parked = get_session("sess_4591d5cc_platforms")
+    assert parked is not None
+    assert parked.product_design.last_error in (None, "")
+    assert (parked.product_design.generation or {}).get("build", {}).get("state") == (
+        "succeeded"
+    )
+
+
 def test_product_package_sticky_three_of_four_uses_live_need_four(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")

@@ -96,6 +96,46 @@ describe('watchBuildStatus', () => {
     expect(seen.some((s) => s.state === 'building' && s.activity === 'pilot WRITER')).toBe(true)
   })
 
+  it('keeps polling sticky THIN_AUTHORSHIP so live n_required can unlock', async () => {
+    const seen: BuildStatus[] = []
+    const ac = new AbortController()
+    vi.spyOn(product, 'buildStatus')
+      .mockResolvedValueOnce({
+        ok: true,
+        build: {
+          state: 'failed',
+          detail:
+            'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5)',
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          pilot_ready: true,
+          authorship: { n_required: 4, action_py: 4, agent_written: 4 },
+        },
+      })
+      .mockImplementation(async () => {
+        ac.abort()
+        return {
+          ok: true,
+          build: {
+            state: 'succeeded',
+            outcome: 'SUCCESS',
+            pilot_ready: true,
+          },
+        }
+      })
+    await watchBuildStatus('sess_4591d5cc45d04fe1', (s) => seen.push(s), {
+      intervalMs: 1,
+      signal: ac.signal,
+    })
+    expect(seen.some((s) => s.state === 'failed')).toBe(true)
+    expect(seen.some((s) => s.state === 'succeeded')).toBe(true)
+  })
+
   it('stops on stalled', async () => {
     vi.spyOn(product, 'buildStatus').mockResolvedValue({
       ok: true,

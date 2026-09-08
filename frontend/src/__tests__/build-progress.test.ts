@@ -24,12 +24,16 @@ import {
   shouldDemoteFounding,
   levelGradeLabel,
   phaseBarFraction,
+  nRequiredFromProductInputs,
   platformsLeadCopy,
+  preferHonestBuild,
+  reevaluateStickyThinAuthorship,
   shouldRefuseExport,
   stampBuildObservation,
   threeGateEntries,
   withClientStall,
   withExportHonesty,
+  withResolvedNRequired,
 } from '../buildProgress'
 
 const cloner: BuildStatus = {
@@ -768,6 +772,95 @@ describe('build progress copy', () => {
     }
     expect(isBelowFullPilotAuthorshipFloor(threeOfFour)).toBe(true)
     expect(exportAffordance(threeOfFour).title).toMatch(/Need ≥4/)
+  })
+
+  it('sess_4591d5cc sticky need≥5 RUN_FAILED unlocks after live n_required=4', () => {
+    const sticky: BuildStatus = {
+      state: 'failed',
+      outcome: 'FAILED_ROLE_ERROR',
+      cycle: 'pilot',
+      pilot_ready: false,
+      detail:
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5). Do not SUCCESS a Store-green pilot from thin authorship.',
+      findings: [
+        'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5)',
+      ],
+      authorship: {
+        artifacts: 25,
+        agent_written: 4,
+        templated: 21,
+        action_py: 4,
+        cli_authored_ids: [
+          'unit_registry_and_vacancy_tracking',
+          'viewing_management',
+          'maintenance_issue_tracking',
+          'tenancy_application_pipeline',
+        ],
+      },
+    }
+    const lettingsBp = {
+      product_name: 'Residential Lettings Platform',
+      capabilities: [
+        { id: 'unit_registry_and_vacancy_tracking' },
+        { id: 'viewing_management' },
+        { id: 'maintenance_issue_tracking' },
+        { id: 'tenancy_application_pipeline' },
+      ],
+    }
+    expect(nRequiredFromProductInputs(lettingsBp)).toBe(4)
+    const resolved = withResolvedNRequired(sticky, nRequiredFromProductInputs(lettingsBp))
+    const unlocked = withClientStall(resolved)
+    expect(unlocked?.state).toBe('succeeded')
+    expect(unlocked?.pilot_ready).toBe(true)
+    expect(unlocked?.honesty).toBe('full_pilot_authorship_reevaluated')
+    expect(unlocked?.detail).not.toMatch(/need\s*≥\s*5/)
+    expect(isPilotZipReady(unlocked)).toBe(true)
+    expect(shouldRefuseExport(unlocked)).toBe(false)
+    expect(exportAffordance(unlocked)).toMatchObject({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+    })
+    expect(platformsLeadCopy(unlocked, true)).toMatch(/Download the export/)
+    expect(honestLevel(unlocked)).toBe('STORE_GREEN')
+
+    const stillUnknown = withClientStall(sticky)
+    expect(stillUnknown?.state).toBe('failed')
+    expect(shouldRefuseExport(stillUnknown)).toBe(true)
+    expect(exportAffordance(stillUnknown).label).toMatch(/pilot suite failed/)
+
+    const threeSticky = withResolvedNRequired(
+      {
+        ...sticky,
+        authorship: {
+          ...sticky.authorship,
+          agent_written: 3,
+          action_py: 3,
+          cli_authored_ids: sticky.authorship!.cli_authored_ids!.slice(0, 3),
+        },
+      },
+      4,
+    )
+    const threeHonest = withClientStall(threeSticky)
+    expect(threeHonest?.state).toBe('failed')
+    expect(shouldRefuseExport(threeHonest)).toBe(true)
+
+    const liveSuccess: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      cycle: 'pilot',
+      pilot_ready: true,
+      authorship: { ...sticky.authorship, n_required: 4 },
+      level_grade: {
+        level: 'STORE_GREEN',
+        pilot_ready: true,
+        full_pilot: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    const kept = preferHonestBuild(sticky, liveSuccess)
+    expect(kept.state).toBe('succeeded')
+    expect(isPilotZipReady(kept)).toBe(true)
+    expect(reevaluateStickyThinAuthorship(sticky)?.state).toBe('failed')
   })
 
   it('VetCare action_py=3 is below the full-pilot floor', () => {

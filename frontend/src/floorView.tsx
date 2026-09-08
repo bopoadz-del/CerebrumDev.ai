@@ -22,8 +22,11 @@ import {
   isPilotZipReady,
   shouldDemoteFounding,
   phaseBarFraction,
+  nRequiredFromProductInputs,
+  preferHonestBuild,
   stampBuildObservation,
   withClientStall,
+  withResolvedNRequired,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
 
@@ -379,6 +382,7 @@ export function Floor({
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [coderBuild, setCoderBuild] = useState<BuildStatus | null>(null)
+  const [productDesign, setProductDesign] = useState<ProductDesign | null>(null)
   const [coderActive, setCoderActive] = useState(false)
   const [watchEpoch, setWatchEpoch] = useState(0)
   const [downloading, setDownloading] = useState(false)
@@ -400,6 +404,7 @@ export function Floor({
       .get(sessionId)
       .then((design) => {
         if (cancelled || !design) return
+        setProductDesign(design)
         const hydrated = hydrateFromDesign(design)
         let applied = false
         setMsgs((current) => {
@@ -410,7 +415,11 @@ export function Floor({
         // Same turn as the hydrated generation card so the first watch
         // tick is not one effect behind takeover chrome (CI flake:
         // heading up, COLLECTOR 1/5 not yet painted).
-        if (applied && hydrated.coderActive) setCoderActive(true)
+        if (applied && hydrated.coderActive) {
+          setCoderActive(true)
+          const seeded = design.generation?.build
+          if (seeded) setCoderBuild((prev) => preferHonestBuild(seeded, prev))
+        }
       })
       .catch(() => {})
     return () => {
@@ -442,7 +451,7 @@ export function Floor({
       sessionId,
       (s) => {
         if (!ac.signal.aborted) {
-          setCoderBuild((prev) => stampBuildObservation(s, prev))
+          setCoderBuild((prev) => preferHonestBuild(s, prev))
         }
       },
       { signal: ac.signal },
@@ -450,7 +459,13 @@ export function Floor({
     return () => ac.abort()
   }, [coderActive, sessionId, watchEpoch])
 
-  const liveCoderBuild = withClientStall(coderBuild, nowMs)
+  const liveCoderBuild = withClientStall(
+    withResolvedNRequired(
+      coderBuild,
+      nRequiredFromProductInputs(productDesign?.blueprint ?? productDesign?.plan),
+    ),
+    nowMs,
+  )
   useEffect(() => {
     if (liveCoderBuild?.state !== 'building') return
     const id = window.setInterval(() => setNowMs(Date.now()), 5000)
@@ -630,7 +645,7 @@ export function Floor({
         liveCoderBuild?.state === 'succeeded'
           ? liveCoderBuild
           : await awaitBuild(sessionId, (s) =>
-              setCoderBuild((prev) => stampBuildObservation(s, prev)),
+              setCoderBuild((prev) => preferHonestBuild(s, prev)),
             )
       if (status.state === 'failed' || status.state === 'stalled') {
         setDownloadError(
