@@ -211,6 +211,15 @@ class RoleRunner:
         )
         if n_required is not None:
             self.state["n_required"] = n_required
+            self.state["n_required_capabilities"] = n_required
+        from app.factory.build.authorship import persist_required_capability_inputs
+
+        persist_required_capability_inputs(
+            self.workspace,
+            blueprint=self.blueprint,
+            plan=self.plan,
+            n_required=n_required,
+        )
         self.manifest = authority_manifest()
         #: Set by run(); roles read it to stop starting coder calls
         #: that cannot finish inside the build's wall clock.
@@ -254,8 +263,18 @@ class RoleRunner:
             self.state["gaps"] = tuple(result.gaps)
         if result.vendored_blocks:
             self.state["vendored_blocks"] = tuple(result.vendored_blocks)
+        kept_n = self.state.get("n_required")
+        kept_n_caps = self.state.get("n_required_capabilities")
         for key, value in (result.notes or {}).items():
             self.state[key] = value
+        # Roles may echo an inspect snapshot that omits n_required. Do not
+        # let that clobber the floor computed from the blueprint at start.
+        if kept_n not in (None, 0, "") and not self.state.get("n_required"):
+            self.state["n_required"] = kept_n
+        if kept_n_caps not in (None, 0, "") and not self.state.get(
+            "n_required_capabilities"
+        ):
+            self.state["n_required_capabilities"] = kept_n_caps
 
     def _restore_workspace_state(self) -> None:
         """Rehydrate CLONER notes after a worker restart / pilot reopen.
@@ -405,6 +424,9 @@ class RoleRunner:
             elapsed_s=elapsed,
             state=self.state,
             ledger=self.ledger,
+            workspace=self.workspace,
+            plan=self.plan,
+            blueprint=self.blueprint,
         )
 
     def _should_reopen_writer_for_cli(self) -> bool:
@@ -526,6 +548,7 @@ class RoleRunner:
             snapshot=snap,
             stage=stage,
             state=self.state,
+            workspace=self.workspace,
         )
         self._emit_inspect(decided, reason=reason)
         return decided

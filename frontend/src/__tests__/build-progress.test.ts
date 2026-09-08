@@ -735,6 +735,13 @@ describe('build progress copy', () => {
       },
     }
     expect(fullPilotAuthorshipNeed(lettingsFour)).toBe(4)
+    expect(
+      fullPilotAuthorshipNeed({
+        ...lettingsFour,
+        authorship: { ...lettingsFour.authorship, n_required: undefined },
+        n_required: 4,
+      }),
+    ).toBe(4)
     expect(fullPilotAuthorshipCount(lettingsFour)).toBe(4)
     expect(isBelowFullPilotAuthorshipFloor(lettingsFour)).toBe(false)
     expect(shouldRefuseExport(lettingsFour)).toBe(false)

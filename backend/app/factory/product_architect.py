@@ -46,6 +46,29 @@ def lettings_golden_path() -> Path:
     return _repo_root() / "blueprints" / "lettings" / "residential_lettings.v1.yaml"
 
 
+def session_domain_from_blueprint(blueprint: Any) -> str:
+    """Session ``config.domain`` for a product draft.
+
+    Kit sessions default to ``construction``. Product drafts must not keep
+    that default when the blueprint is residential-lettings (or any other
+    vertical). Prefer ``product_id`` (``residential-lettings``), then
+    ``vertical`` with underscores folded to hyphens.
+    """
+    if blueprint is None:
+        return "construction"
+    if isinstance(blueprint, dict):
+        product_id = str(blueprint.get("product_id") or "").strip()
+        vertical = str(blueprint.get("vertical") or "").strip()
+    else:
+        product_id = str(getattr(blueprint, "product_id", "") or "").strip()
+        vertical = str(getattr(blueprint, "vertical", "") or "").strip()
+    if product_id:
+        return product_id
+    if vertical:
+        return vertical.replace("_", "-")
+    return "construction"
+
+
 _LETTINGS_HINTS = frozenset({"residential_lettings", "lettings", "letting"})
 _LETTINGS_STEWARD_EXCLUSIONS = ("steward", "private estate", "property readiness")
 # One of these is enough. Branded Floor briefs say "Lettings Desk" / "lettings

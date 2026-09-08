@@ -396,6 +396,9 @@ export type BuildStatus = {
   activity_done?: number
   activity_total?: number
   authorship?: BuildAuthorship
+  /** Required-capability count when authorship is missing (failed re-eval). */
+  n_required?: number
+  honesty?: string
   /** Owner Pause / Stop / Resume for the live coder session. */
   coder_control?: 'run' | 'pause' | 'stop' | string
   /** Tail of docs/coder_session.log — the live coder session. */

@@ -387,7 +387,9 @@ export function fullPilotAuthorshipCount(
 export function fullPilotAuthorshipNeed(
   build: BuildStatus | null | undefined,
 ): number {
-  const n = authorshipCount(build?.authorship?.n_required)
+  const n =
+    authorshipCount(build?.authorship?.n_required) ??
+    authorshipCount(build?.n_required)
   if (n == null || n <= 0) return FULL_PILOT_MIN_AUTHORED_ACTIONS
   return Math.min(FULL_PILOT_MIN_AUTHORED_ACTIONS, Math.max(1, n))
 }

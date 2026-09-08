@@ -510,6 +510,9 @@ def thin_stub_success_blocked(
     elapsed_s: float,
     state: Optional[Mapping[str, Any]] = None,
     ledger: Any = None,
+    workspace: Any = None,
+    plan: Any = None,
+    blueprint: Any = None,
 ) -> Optional[str]:
     """Named blocker: DeepSeek CLI ready, no real CLI/LLM authorship.
 
@@ -531,9 +534,17 @@ def thin_stub_success_blocked(
         n_required_capabilities_from,
     )
 
-    n_required = n_required_capabilities_from(snapshot, state=state)
+    n_required = n_required_capabilities_from(
+        snapshot,
+        workspace,
+        state=state,
+        plan=plan,
+        blueprint=blueprint,
+    )
     if n_required is None:
-        n_required = n_required_capabilities_from(state)
+        n_required = n_required_capabilities_from(
+            state, workspace, plan=plan, blueprint=blueprint
+        )
     need = full_pilot_authorship_need(n_required)
 
     if written >= need:

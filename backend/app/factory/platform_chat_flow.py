@@ -49,6 +49,7 @@ from .product_architect import (
     draft_blueprint_from_brief,
     generate_product,
     plan_blueprint,
+    session_domain_from_blueprint,
 )
 from .build.coder_session import NAMED_BLOCKER_CLI, CodeCliUnavailable
 
@@ -358,6 +359,7 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
         bp.vertical = vertical
         bp.product_id = vertical
         pd.blueprint = bp.model_dump(mode="json")
+        state.config.domain = session_domain_from_blueprint(bp)
         return {
             "ok": True,
             "refined": True,
@@ -383,6 +385,7 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
     pd.blueprint = bp.model_dump(mode="json")
     pd.plan = None  # force re-plan after change
     pd.generation = None
+    state.config.domain = session_domain_from_blueprint(bp)
     yaml_text = blueprint_to_yaml(bp)
     return {
         "ok": True,
@@ -414,6 +417,7 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
     pd.generation = None
     pd.last_error = None
     pd.mode = "product"
+    state.config.domain = session_domain_from_blueprint(bp)
 
     from app.factory.build.intake_blueprint import (
         chat_turns_from_session,
