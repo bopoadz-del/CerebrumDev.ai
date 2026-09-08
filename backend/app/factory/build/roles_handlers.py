@@ -3471,6 +3471,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
                 "brief_dispatch": dict(ctx.state.get("brief_dispatch") or {}),
+                "n_required": ctx.state.get("n_required"),
+                "n_required_capabilities": ctx.state.get("n_required_capabilities"),
                 "kernel_agents": {
                     "COLLECTOR": {
                         "reviews": list(ctx.state.get("agent_binding_reviews") or []),

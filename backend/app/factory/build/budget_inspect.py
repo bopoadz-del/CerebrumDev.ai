@@ -360,6 +360,7 @@ def inspect_decision(
     snapshot: Mapping[str, Any],
     stage: str,
     state: Optional[Mapping[str, Any]] = None,
+    workspace: Any = None,
 ) -> Dict[str, Any]:
     """Attach a continue/stop decision to an inspect snapshot."""
     new_wall = next_stage_wall(elapsed_s, current_wall_s, snapshot)
@@ -431,6 +432,7 @@ def inspect_decision(
             elapsed_s=elapsed_s,
             state=state,
             ledger=None,
+            workspace=workspace,
         )
         dispatch = dict((state or {}).get("brief_dispatch") or {})
         cli_finished = bool(snapshot.get("cli_finished")) or (

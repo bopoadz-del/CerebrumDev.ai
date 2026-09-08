@@ -33,6 +33,7 @@ __all__ = (
     "full_pilot_authorship_rules_text",
     "is_action_artifact_id",
     "n_required_capabilities_from",
+    "persist_required_capability_inputs",
     "thin_store_green_export_blocker",
     "is_coding_agent_source",
     "kept_handler_ids_from",
@@ -81,6 +82,11 @@ def full_pilot_authorship_need(n_required: Optional[int] = None) -> int:
 
 
 def _capability_id(item: Any) -> str:
+    if isinstance(item, str):
+        text = item.strip()
+        if not text or " " in text or ":" in text or "/" in text:
+            return ""
+        return text
     if isinstance(item, Mapping):
         return str(item.get("id") or item.get("capability_id") or "").strip()
     return str(
@@ -115,6 +121,101 @@ def _count_required_capabilities(items: Any) -> Optional[int]:
     return len(ids) if ids else None
 
 
+def _n_required_from_blueprintish(source: Any) -> Optional[int]:
+    """Count required caps on a blueprint, plan, compiled brief, or dict."""
+    if source is None:
+        return None
+    caps = getattr(source, "capabilities", None)
+    counted = _count_required_capabilities(caps)
+    if counted:
+        return counted
+    if not isinstance(source, Mapping):
+        return None
+    counted = _count_required_capabilities(source.get("capabilities"))
+    if counted:
+        return counted
+    for nested_key in ("blueprint", "plan"):
+        nested = source.get(nested_key)
+        if nested is None or nested is source:
+            continue
+        counted = _n_required_from_blueprintish(nested)
+        if counted:
+            return counted
+    return None
+
+
+def persist_required_capability_inputs(
+    workspace: Path | str,
+    *,
+    blueprint: Any = None,
+    plan: Any = None,
+    n_required: Optional[int] = None,
+) -> None:
+    """Write blueprint / factory_plan so package can resolve need after exit.
+
+    RoleRunner does not call ``ProductGenerator.generate()``, so Approve→
+    GENERATE workspaces often lack ``docs/blueprint/product_blueprint.json``.
+    Without that file ``n_required`` stays unknown (need=5) on the next
+    process that only reads the tree.
+    """
+    root = Path(workspace)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    bp_payload: Optional[Mapping[str, Any]] = None
+    if blueprint is not None:
+        if isinstance(blueprint, Mapping):
+            bp_payload = blueprint
+        else:
+            try:
+                from app.factory.blueprint import blueprint_to_dict
+
+                bp_payload = blueprint_to_dict(blueprint)
+            except Exception:  # noqa: BLE001 — persist must not fail a run
+                dump = getattr(blueprint, "model_dump", None)
+                if callable(dump):
+                    try:
+                        bp_payload = dump(mode="json")
+                    except Exception:  # noqa: BLE001
+                        bp_payload = None
+    if isinstance(bp_payload, Mapping) and bp_payload.get("capabilities"):
+        dest = root / "docs" / "blueprint"
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            payload = dict(bp_payload)
+            if n_required is not None:
+                payload.setdefault("n_required", n_required)
+            (dest / "product_blueprint.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+    plan_payload: Optional[Mapping[str, Any]] = None
+    if plan is not None:
+        if isinstance(plan, Mapping):
+            plan_payload = plan
+        else:
+            to_dict = getattr(plan, "to_dict", None)
+            if callable(to_dict):
+                try:
+                    plan_payload = to_dict()
+                except Exception:  # noqa: BLE001
+                    plan_payload = None
+    if isinstance(plan_payload, Mapping) and plan_payload.get("capabilities"):
+        try:
+            payload = dict(plan_payload)
+            if n_required is not None:
+                payload.setdefault("n_required", n_required)
+            (root / "factory_plan.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+
 def n_required_capabilities_from(
     status: Optional[Mapping[str, Any]] = None,
     workspace: Optional[Path | str] = None,
@@ -127,8 +228,10 @@ def n_required_capabilities_from(
     """Required-capability count for the authorship floor.
 
     Prefer an explicit ``n_required`` on status/authorship, then the
-    compiled brief / plan / blueprint required caps, then workspace
-    ``product_blueprint.json`` / ``factory_plan.json``. ``None`` means
+    compiled brief / plan / blueprint required caps (including a session
+    ``product_design.blueprint``), then workspace
+    ``product_blueprint.json`` / ``factory_plan.json``, then the session
+    snapshot next to a ``sessions/{id}/{product}`` tree. ``None`` means
     unknown — callers keep need=5.
     """
     blobs: List[Any] = []
@@ -155,17 +258,19 @@ def n_required_capabilities_from(
         if counted:
             return counted
 
-    for source in (compiled, plan, blueprint):
-        if source is None:
+    for blob in blobs:
+        if not isinstance(blob, Mapping):
             continue
-        caps = getattr(source, "capabilities", None)
-        counted = _count_required_capabilities(caps)
-        if counted:
-            return counted
-        if isinstance(source, Mapping):
-            counted = _count_required_capabilities(source.get("capabilities"))
+        for nested_key in ("blueprint", "plan", "product_design"):
+            nested = blob.get(nested_key)
+            counted = _n_required_from_blueprintish(nested)
             if counted:
                 return counted
+
+    for source in (compiled, plan, blueprint):
+        counted = _n_required_from_blueprintish(source)
+        if counted:
+            return counted
 
     if workspace is None:
         return None
@@ -200,7 +305,13 @@ def n_required_capabilities_from(
             counted = _count_required_capabilities(plan_blob.get("capabilities"))
             if counted:
                 return counted
-    return None
+    try:
+        from app.factory.build.orphan_recovery import load_blueprint_for_workspace
+
+        parked = load_blueprint_for_workspace(root)
+    except Exception:  # noqa: BLE001 — session lookup must not fail the floor
+        parked = None
+    return _n_required_from_blueprintish(parked)
 
 
 def full_pilot_authorship_rules_text(n_required: Optional[int] = None) -> str:
@@ -570,6 +681,8 @@ def thin_store_green_export_blocker(
     workspace: Optional[Path | str] = None,
     *,
     n_required: Optional[int] = None,
+    plan: Any = None,
+    blueprint: Any = None,
 ) -> Optional[str]:
     """Refuse a Store-green / full-pilot zip when authorship is below floor.
 
@@ -577,7 +690,11 @@ def thin_store_green_export_blocker(
     """
     status = dict(status or {})
     floor = full_pilot_authorship_from(
-        status, workspace, n_required=n_required
+        status,
+        workspace,
+        n_required=n_required,
+        plan=plan,
+        blueprint=blueprint,
     )
     if not floor.below_floor:
         return None

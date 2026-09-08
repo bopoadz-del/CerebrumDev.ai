@@ -39,12 +39,32 @@ from app.factory.product_architect import (
     draft_blueprint_from_brief,
     generate_product,
     plan_blueprint,
+    session_domain_from_blueprint,
 )
 
 router = APIRouter()
 
 
-def generation_with_live_build(generation: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _session_product_inputs(state: Any) -> tuple[Any, Any]:
+    """Blueprint / plan parked on the session — used to resolve n_required."""
+    pd = getattr(state, "product_design", None)
+    raw_bp = getattr(pd, "blueprint", None) if pd is not None else None
+    plan = getattr(pd, "plan", None) if pd is not None else None
+    blueprint: Any = None
+    if isinstance(raw_bp, dict) and raw_bp:
+        try:
+            blueprint = ProductBlueprint.model_validate(raw_bp)
+        except Exception:  # noqa: BLE001 — dict still has capabilities
+            blueprint = raw_bp
+    return blueprint, plan
+
+
+def generation_with_live_build(
+    generation: Optional[Dict[str, Any]],
+    *,
+    blueprint: Any = None,
+    plan: Any = None,
+) -> Optional[Dict[str, Any]]:
     """Re-read the workspace ledger onto ``generation.build``.
 
     ``_record_generation`` snapshots ``build`` at session start
@@ -60,7 +80,7 @@ def generation_with_live_build(generation: Optional[Dict[str, Any]]) -> Optional
         return generation
     from app.factory.build_jobs import build_status
 
-    live = build_status(Path(out))
+    live = build_status(Path(out), blueprint=blueprint, plan=plan)
     attached = dict(generation)
     attached["build"] = live
     if isinstance(live, dict) and "phases_done" in live:
@@ -234,6 +254,7 @@ def get_product_design(
             yaml_text = blueprint_to_yaml(ProductBlueprint.model_validate(pd.blueprint))
         except Exception:  # noqa: BLE001
             yaml_text = None
+    blueprint, plan = _session_product_inputs(state)
     return {
         "session_id": session_id,
         "mode": pd.mode,
@@ -244,7 +265,9 @@ def get_product_design(
         "intake_blueprint": pd.intake_blueprint,
         "blueprint_approved": pd.blueprint_approved,
         "brief_lint": pd.brief_lint,
-        "generation": generation_with_live_build(pd.generation),
+        "generation": generation_with_live_build(
+            pd.generation, blueprint=blueprint, plan=plan
+        ),
         "last_error": pd.last_error,
     }
 
@@ -276,7 +299,8 @@ def download_product_package(
     # unaffected.
     from app.factory.build_jobs import build_status
 
-    status = build_status(out)
+    blueprint, plan = _session_product_inputs(state)
+    status = build_status(out, blueprint=blueprint, plan=plan)
     if status["state"] == "building":
         raise HTTPException(
             status_code=409,
@@ -305,7 +329,9 @@ def download_product_package(
 
     from app.factory.build.authorship import thin_store_green_export_blocker
 
-    thin = thin_store_green_export_blocker(status, out)
+    thin = thin_store_green_export_blocker(
+        status, out, plan=plan, blueprint=blueprint
+    )
     if thin:
         raise HTTPException(status_code=409, detail=thin)
 
@@ -340,10 +366,13 @@ def get_build_status(
     gen = state.product_design.generation
     if not gen or not gen.get("output_dir"):
         return {"ok": True, "build": {"state": "not_started"}}
+    blueprint, plan = _session_product_inputs(state)
     return {
         "ok": True,
         "product_id": gen.get("product_id"),
-        "build": build_status(Path(gen["output_dir"])),
+        "build": build_status(
+            Path(gen["output_dir"]), blueprint=blueprint, plan=plan
+        ),
     }
 
 
@@ -399,6 +428,7 @@ def draft_product(
         state.product_design.generation = None
         state.product_design.last_error = None
         state.product_design.mode = "product"
+        state.config.domain = session_domain_from_blueprint(bp)
         update_session(session_id, state)
         return {
             "ok": True,
@@ -451,6 +481,7 @@ def approve_blueprint(
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint to approve")
     state.product_design.blueprint_approved = bool(body.approve)
+    state.config.domain = session_domain_from_blueprint(state.product_design.blueprint)
     update_session(session_id, state)
     return {
         "ok": True,

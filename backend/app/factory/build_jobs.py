@@ -359,7 +359,12 @@ def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
     return {"cycle": cycle or "code", "pilot_ready": ready, "auto_pilot": auto}
 
 
-def _authorship(output_dir: Path | str) -> Dict[str, Any]:
+def _authorship(
+    output_dir: Path | str,
+    *,
+    blueprint: Any = None,
+    plan: Any = None,
+) -> Dict[str, Any]:
     """Who wrote the finished artifact, and what the agent could not write.
 
     The template path disclosed this in the chat message at generation time
@@ -393,7 +398,9 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     dispatch = prov.get("brief_dispatch") or {}
     cli_ids = cli_authored_ids_from(dispatch)
     failures = prov.get("coder_failures") or {}
-    n_required = n_required_capabilities_from(prov, output_dir, state=dispatch)
+    n_required = n_required_capabilities_from(
+        prov, output_dir, state=dispatch, blueprint=blueprint, plan=plan
+    )
     authorship = {
         **counts,
         "agent_artifacts": agent,
@@ -409,7 +416,83 @@ def _authorship(output_dir: Path | str) -> Dict[str, Any]:
     return {"authorship": authorship}
 
 
-def build_status(output_dir: Path | str) -> Dict[str, Any]:
+def _thin_authorship_detail(detail: Any) -> bool:
+    text = str(detail or "")
+    return "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in text
+
+
+def _three_gate_success_detail(cycle: str) -> str:
+    from app.factory.build.product_gate import GATE_SCOPES
+
+    code_line = "CODE PASS — %s" % GATE_SCOPES["CODE"]
+    if str(cycle or "").strip().lower() != "pilot":
+        return "; ".join(
+            (
+                code_line,
+                "PRODUCT NOT RUN — %s" % GATE_SCOPES["PRODUCT"],
+                "STORE NOT RUN — %s" % GATE_SCOPES["STORE"],
+            )
+        )
+    return "; ".join(
+        (
+            code_line,
+            "PRODUCT PASS — %s" % GATE_SCOPES["PRODUCT"],
+            "STORE PASS — %s" % GATE_SCOPES["STORE"],
+        )
+    )
+
+
+def _reevaluate_thin_authorship_failure(
+    status: Dict[str, Any],
+    output_dir: Path | str,
+    *,
+    blueprint: Any = None,
+    plan: Any = None,
+) -> Dict[str, Any]:
+    """Recompute the live floor on a sticky THIN_AUTHORSHIP RUN_FAILED.
+
+    ``_finish`` replaces the three-gate SUCCESS sentence with the refuse
+    string. After #391 a 4-cap golden with 4 authored ids must not stay
+    locked on a baked ``need ≥5`` detail when n_required is knowable.
+    """
+    if not _thin_authorship_detail(status.get("detail")):
+        return status
+    from app.factory.build.authorship import full_pilot_authorship_from
+
+    floor = full_pilot_authorship_from(
+        status, output_dir, plan=plan, blueprint=blueprint
+    )
+    if floor.meets_floor:
+        cycle = str(status.get("cycle") or "code").strip().lower() or "code"
+        status["state"] = "succeeded"
+        status["outcome"] = "SUCCESS"
+        status["cycle"] = cycle
+        status["pilot_ready"] = cycle == "pilot"
+        status["detail"] = _three_gate_success_detail(cycle)
+        status["honesty"] = "full_pilot_authorship_reevaluated"
+        return status
+    if floor.below_floor:
+        n_req = (
+            f", n_required={floor.n_required}"
+            if floor.n_required is not None
+            else ""
+        )
+        status["detail"] = (
+            "FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the "
+            f"full-pilot floor (action_py={floor.action_py}, "
+            f"cli_authored_ids={len(floor.cli_authored_ids)}, "
+            f"need ≥{floor.need}{n_req}) — will not ship a "
+            "Store-green / full-pilot zip"
+        )
+    return status
+
+
+def build_status(
+    output_dir: Path | str,
+    *,
+    blueprint: Any = None,
+    plan: Any = None,
+) -> Dict[str, Any]:
     """Read the build's state off disk.
 
     Deliberately reads the LEDGER rather than any in-process registry: the
@@ -588,26 +671,29 @@ def build_status(output_dir: Path | str) -> Dict[str, Any]:
                 # Code-phase success must not be presented as a finished pilot.
                 "pilot_ready": ledger.pilot_ready(),
                 **progress,
-                **_authorship(output_dir),
+                **_authorship(output_dir, blueprint=blueprint, plan=plan),
                 "stale": False,
             },
             output_dir,
         )
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         payload = terminal.payload or {}
-        return _with_level_grade(
-            {
-                "state": "failed",
-                "detail": terminal.detail,
-                "cycle": payload.get("cycle") or "code",
-                "outcome": payload.get("outcome"),
-                "pilot_ready": False,
-                "findings": list(payload.get("findings") or [])[:10],
-                **progress,
-                "stale": False,
-            },
-            output_dir,
-        )
+        failed = {
+            "state": "failed",
+            "detail": terminal.detail,
+            "cycle": payload.get("cycle") or "code",
+            "outcome": payload.get("outcome"),
+            "pilot_ready": False,
+            "findings": list(payload.get("findings") or [])[:10],
+            **progress,
+            **_authorship(output_dir, blueprint=blueprint, plan=plan),
+            "stale": False,
+        }
+        if _thin_authorship_detail(terminal.detail):
+            failed = _reevaluate_thin_authorship_failure(
+                failed, output_dir, blueprint=blueprint, plan=plan
+            )
+        return _with_level_grade(failed, output_dir)
     # Intra-phase activity. Without this a WRITER pass of ~16 agent calls
     # reports a frozen "2/5" for twenty minutes and a customer cannot tell
     # work from a hang.

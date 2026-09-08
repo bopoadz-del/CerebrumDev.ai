@@ -31,7 +31,7 @@ from app.factory.build.brief_lint import lint_brief
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.level_grade import Level, attach_level_grade
 from app.factory.build_jobs import _authorship, build_status
-from app.factory.product_architect import plan_blueprint
+from app.factory.product_architect import plan_blueprint, session_domain_from_blueprint
 from app.main import app
 from fastapi.testclient import TestClient
 from tests.factory.test_level_grade import _full_repo
@@ -479,3 +479,281 @@ def test_product_package_refuses_three_of_four_lettings(tmp_path, monkeypatch):
     detail = pkg.json()["detail"]
     assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in detail
     assert "need ≥4" in detail
+
+
+def test_role_runner_persists_blueprint_so_n_required_survives(tmp_path):
+    """Approve→GENERATE must leave a workspace file the next process can read."""
+    from app.factory.build.runner import RoleRunner
+
+    root = Path(__file__).resolve().parents[3]
+    out = tmp_path / "build"
+    out.mkdir()
+    runner = RoleRunner(
+        load_blueprint(root / "blueprints/lettings/residential_lettings.v1.yaml"),
+        out,
+    )
+    assert runner.state.get("n_required") == 4
+    assert n_required_capabilities_from(workspace=out) == 4
+    assert (out / "docs" / "blueprint" / "product_blueprint.json").is_file()
+    assert (out / "factory_plan.json").is_file()
+
+
+def test_n_required_from_compiled_string_capability_ids():
+    """C-BRIEF capabilities are a list of ids, not CapabilitySpec objects."""
+
+    class _Compiled:
+        capabilities = list(LETTINGS_FOUR)
+
+    assert n_required_capabilities_from(compiled=_Compiled()) == 4
+    assert n_required_capabilities_from(
+        state={"product_design": {"blueprint": {
+            "capabilities": [{"id": cid, "required": True} for cid in LETTINGS_FOUR]
+        }}}
+    ) == 4
+
+
+def test_n_required_from_workspace_session_blueprint(tmp_path, monkeypatch):
+    """Approve→GENERATE often lacks docs/blueprint; session snapshot still has it."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    create_session("sess_4591d5cc45d04fe1", "tester")
+    state = get_session("sess_4591d5cc45d04fe1")
+    assert state is not None
+    root = Path(__file__).resolve().parents[3]
+    state.product_design.blueprint = load_blueprint(
+        root / "blueprints/lettings/residential_lettings.v1.yaml"
+    ).model_dump(mode="json")
+    update_session("sess_4591d5cc45d04fe1", state)
+    out = tmp_path / "sessions" / "sess_4591d5cc45d04fe1" / "residential-lettings"
+    out.mkdir(parents=True)
+    assert n_required_capabilities_from(workspace=out) == 4
+    assert (out / "docs" / "blueprint" / "product_blueprint.json").is_file() is False
+
+
+def _failed_thin_pilot(out: Path, *, product_id: str, detail: str) -> None:
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id=product_id, inputs_hash="floor-hash")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.WRITER,
+        detail=detail,
+        payload={
+            "outcome": "FAILED_ROLE_ERROR",
+            "cycle": "pilot",
+            "pilot_ready": False,
+        },
+    )
+
+
+def _park_lettings_blueprint(session_id: str) -> None:
+    root = Path(__file__).resolve().parents[3]
+    state = get_session(session_id)
+    assert state is not None
+    state.product_design.blueprint = load_blueprint(
+        root / "blueprints/lettings/residential_lettings.v1.yaml"
+    ).model_dump(mode="json")
+    update_session(session_id, state)
+
+
+_STICKY_NEED_FIVE = (
+    "FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the "
+    "full-pilot floor (written=4, cli_authored_ids=4, need ≥5). "
+    "Do not SUCCESS a Store-green pilot from thin authorship."
+)
+
+
+def test_product_package_allows_four_of_four_from_session_blueprint_only(
+    tmp_path, monkeypatch
+):
+    """No workspace blueprint file — n_required comes from the session draft."""
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_lettings_session_bp", "tester")
+    _park_lettings_blueprint("sess_lettings_session_bp")
+    out = tmp_path / "residential-lettings-session-bp"
+    _full_repo(out)
+    _succeeded_pilot(out, product_id="residential-lettings")
+    _write_provenance(out, LETTINGS_FOUR)
+    state = get_session("sess_lettings_session_bp")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_lettings_session_bp", state)
+
+    pkg = client.get("/v1/sessions/sess_lettings_session_bp/product/package")
+    assert pkg.status_code == 200, pkg.text
+    assert pkg.headers["content-type"].startswith("application/zip")
+    status = client.get("/v1/sessions/sess_lettings_session_bp/product/build-status")
+    assert status.status_code == 200
+    auth = status.json()["build"]["authorship"]
+    assert auth["n_required"] == 4
+
+
+def test_product_package_reevaluates_sticky_need_five_failure(tmp_path, monkeypatch):
+    """Pre-#391 / unknown-n_required RUN_FAILED must not stay need≥5."""
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_4591d5cc_sticky", "tester")
+    _park_lettings_blueprint("sess_4591d5cc_sticky")
+    out = tmp_path / "residential-lettings-sticky"
+    _full_repo(out)
+    _failed_thin_pilot(
+        out, product_id="residential-lettings", detail=_STICKY_NEED_FIVE
+    )
+    _write_provenance(out, LETTINGS_FOUR)
+    state = get_session("sess_4591d5cc_sticky")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_4591d5cc_sticky", state)
+
+    status = client.get("/v1/sessions/sess_4591d5cc_sticky/product/build-status")
+    assert status.status_code == 200, status.text
+    build = status.json()["build"]
+    assert build["state"] == "succeeded"
+    assert build["pilot_ready"] is True
+    assert build.get("honesty") == "full_pilot_authorship_reevaluated"
+    assert build["authorship"]["n_required"] == 4
+    assert build["level_grade"]["full_pilot"] is True
+
+    pkg = client.get("/v1/sessions/sess_4591d5cc_sticky/product/package")
+    assert pkg.status_code == 200, pkg.text
+    assert pkg.headers["content-type"].startswith("application/zip")
+
+
+def test_product_package_sticky_three_of_four_uses_live_need_four(tmp_path, monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_lettings_sticky_thin", "tester")
+    _park_lettings_blueprint("sess_lettings_sticky_thin")
+    out = tmp_path / "residential-lettings-sticky-thin"
+    _full_repo(out)
+    _failed_thin_pilot(
+        out,
+        product_id="residential-lettings",
+        detail=(
+            "FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the "
+            "full-pilot floor (written=3, cli_authored_ids=3, need ≥5)"
+        ),
+    )
+    _write_provenance(out, LETTINGS_FOUR[:3])
+    state = get_session("sess_lettings_sticky_thin")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "residential-lettings",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_lettings_sticky_thin", state)
+
+    pkg = client.get("/v1/sessions/sess_lettings_sticky_thin/product/package")
+    assert pkg.status_code == 409, pkg.text
+    detail = pkg.json()["detail"]
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in detail
+    assert "need ≥4" in detail
+    assert "need ≥5" not in detail
+
+
+def test_sticky_four_authored_unknown_n_required_still_need_five(tmp_path, monkeypatch):
+    """No session/workspace blueprint → absolute floor stays 5."""
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_unknown_nreq", "tester")
+    out = tmp_path / "unknown-nreq"
+    _full_repo(out)
+    _failed_thin_pilot(out, product_id="mystery-product", detail=_STICKY_NEED_FIVE)
+    _write_provenance(out, LETTINGS_FOUR)
+    state = get_session("sess_unknown_nreq")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "mystery-product",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_unknown_nreq", state)
+
+    pkg = client.get("/v1/sessions/sess_unknown_nreq/product/package")
+    assert pkg.status_code == 409, pkg.text
+    detail = pkg.json()["detail"]
+    assert "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in detail
+    assert "need ≥5" in detail
+
+
+def test_session_domain_from_blueprint_prefers_product_id():
+    root = Path(__file__).resolve().parents[3]
+    bp = load_blueprint(root / "blueprints/lettings/residential_lettings.v1.yaml")
+    assert session_domain_from_blueprint(bp) == "residential-lettings"
+    assert session_domain_from_blueprint(bp.model_dump(mode="json")) == "residential-lettings"
+    assert session_domain_from_blueprint({"vertical": "residential_lettings"}) == (
+        "residential-lettings"
+    )
+    assert session_domain_from_blueprint(None) == "construction"
+
+
+def test_lettings_draft_writes_residential_lettings_domain(monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_lettings_domain", "tester")
+    state = get_session("sess_lettings_domain")
+    assert state is not None
+    assert state.config.domain == "construction"
+
+    drafted = client.post(
+        "/v1/sessions/sess_lettings_domain/product/draft",
+        json={"brief": "build a platform for residential lettings"},
+    )
+    assert drafted.status_code == 200, drafted.text
+    assert drafted.json()["blueprint"]["product_id"] == "residential-lettings"
+
+    state = get_session("sess_lettings_domain")
+    assert state is not None
+    assert state.config.domain == "residential-lettings"
+
+    listed = client.get("/v1/sessions/sess_lettings_domain")
+    assert listed.status_code == 200
+    assert listed.json()["config"]["domain"] == "residential-lettings"
+
+
+def test_steward_draft_writes_cerebrum_steward_domain(monkeypatch):
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_steward_domain", "tester")
+    drafted = client.post(
+        "/v1/sessions/sess_steward_domain/product/draft",
+        json={
+            "brief": "Generate Cerebrum-Steward private estate operations",
+            "vertical_hint": "estate",
+        },
+    )
+    assert drafted.status_code == 200, drafted.text
+    state = get_session("sess_steward_domain")
+    assert state is not None
+    assert state.config.domain == "cerebrum-steward"
