@@ -317,7 +317,13 @@ def attach_level_grade(status: Dict[str, Any], root: Path | str) -> Dict[str, An
             status["acceptance"] = grade["acceptance"]
         # Floor / package read status.pilot_ready. A thin keep-path that
         # demoted the grade must not keep a Store-green ledger bit.
-        if grade.get("pilot_ready") is False:
+        # Acceptance k/k is a separate Export / Store-green lock — do not
+        # rewrite the ledger bit just because the harness has not run.
+        blockers = [str(b) for b in (grade.get("blockers") or [])]
+        authorship_demote = any(
+            "full-pilot floor" in b or "overwhelmingly templated" in b for b in blockers
+        )
+        if grade.get("pilot_ready") is False and authorship_demote:
             status["pilot_ready"] = False
     except Exception as exc:  # noqa: BLE001 — a grade fault must not 500 status
         status["level_grade"] = {

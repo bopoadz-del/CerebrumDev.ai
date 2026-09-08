@@ -2082,11 +2082,7 @@ def _render_platform_env_example() -> str:
     """
     from app.factory.build.network_posture import P1_ENV_EXAMPLE
 
-    return (
-        P1_ENV_EXAMPLE
-        + "\n# Capability write routes require this bearer token (HTTP 401 without it).\n"
-        "PLATFORM_TOKEN=dev-local-token\n"
-    )
+    return P1_ENV_EXAMPLE
 
 
 def _render_render_yaml(product_id: str) -> str:

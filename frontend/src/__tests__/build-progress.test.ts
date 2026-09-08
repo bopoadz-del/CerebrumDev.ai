@@ -328,9 +328,12 @@ describe('build progress copy', () => {
     expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: false }, true)).not.toMatch(
       /Download the export/i,
     )
-    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).toMatch(
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).not.toMatch(
       /Download the export/,
     )
+    expect(
+      platformsLeadCopy({ state: 'succeeded', pilot_ready: true, acceptance: ACCEPTANCE_KK }, true),
+    ).toMatch(/Download the export/)
   })
 
   it('factoryCodeCliHonesty names Kimi Code CLI credentials, not a vague credentials string', () => {
@@ -474,6 +477,7 @@ describe('build progress copy', () => {
         cycle: 'pilot',
         pilot_ready: true,
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        acceptance: ACCEPTANCE_KK,
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
@@ -508,6 +512,7 @@ describe('build progress copy', () => {
         state: 'succeeded',
         pilot_ready: true,
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        acceptance: ACCEPTANCE_KK,
         level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
       }),
     ).toBe(true)
@@ -833,6 +838,7 @@ describe('build progress copy', () => {
           'tenancy_application_pipeline',
         ],
       },
+      acceptance: ACCEPTANCE_KK,
     }
     const lettingsBp = {
       product_name: 'Residential Lettings Platform',

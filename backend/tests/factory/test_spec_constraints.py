@@ -390,15 +390,15 @@ def test_the_route_actually_rejects_a_value_outside_the_vocabulary(tmp_path, mon
         "import os, sys\n"
         "sys.path.insert(0, r'%s')\n" % str(out).replace("\\", "\\\\")
         + "os.environ['STORAGE_PATH'] = r'%s'\n" % str(out / "d").replace("\\", "\\\\")
-        + "from fastapi.testclient import TestClient\n"
+        +         "from fastapi.testclient import TestClient\n"
         "from app.main import app\n"
         "c = TestClient(app)\n"
+        "headers = {'Authorization': 'Bearer ' + os.environ.get("
+        "'PLATFORM_TOKEN', 'dev-local-token')}\n"
         "r = c.post('/v1/site_inspection_log', json={'reference': 'x',"
-        " 'status': 'NOT_A_REAL_STATUS', 'quantity': 1})\n"
-        "b = r.json()\n"
-        "assert r.status_code == 200, r.text\n"
-        "assert b.get('ok') is False, b\n"
-        "assert 'must be one of' in b.get('error', ''), b\n"
+        " 'status': 'NOT_A_REAL_STATUS', 'quantity': 1}, headers=headers)\n"
+        "assert r.status_code == 422, r.text\n"
+        "assert 'must be one of' in r.text, r.text\n"
         "print('rejected as expected')\n",
         encoding="utf-8",
     )

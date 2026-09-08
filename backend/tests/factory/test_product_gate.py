@@ -378,6 +378,7 @@ def test_every_gate_name_carries_a_scope_sentence():
     assert "round-trip" in GATE_SCOPES["PRODUCT"]
     assert "pilot-marked" in GATE_SCOPES["PRODUCT"]
     assert "restart" in GATE_SCOPES["STORE"]
+    assert "acceptance" in GATE_SCOPES["STORE"]
 
 
 def test_the_runner_never_claims_all_phase_gates_passed_again():

@@ -137,9 +137,12 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "docs/domain_pack.json",
         "docs/coder_brief.md",
         "frontend/src/App.tsx",
+        "scripts/acceptance.py",
+        ".github/workflows/ci.yml",
+        "docs/openapi.json",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
-    for denied in ("docker-compose.yml", "Makefile", ".github/workflows/ci.yml", "setup.py"):
+    for denied in ("docker-compose.yml", "Makefile", "setup.py"):
         with pytest.raises(AuthorityError):
             assert_write_allowed(BuildRole.WRITER, ws / denied, workspace=ws)
 

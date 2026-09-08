@@ -732,6 +732,7 @@ describe('Your Platforms — coding-agent build', () => {
           'tenancy_application_pipeline',
         ],
       },
+      acceptance: { passed: 12, total: 12, ok: true },
     }
     getMock.mockResolvedValue({
       last_error:

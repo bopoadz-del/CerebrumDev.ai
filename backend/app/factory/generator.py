@@ -298,6 +298,9 @@ class ProductGenerator:
             "# (S6 declared leftover). Optional here; unset → DEPENDENCY_REQUIRED, not a fake success.",
             "# CEREBRUM_API_URL=https://cerebrum-blocks.onrender.com",
             "# CEREBRUM_API_KEY=",
+            "",
+            "# Capability write routes require this bearer token (HTTP 401 without it).",
+            "PLATFORM_TOKEN=dev-local-token",
         ]
         if self.blueprint.vertical == "estate":
             lines += [

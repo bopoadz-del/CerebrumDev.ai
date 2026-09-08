@@ -96,7 +96,7 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
   }
-  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
+  if (build.pilot_ready === true && !isAcceptanceKk(build)) {
     return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
   }
   if (!ready) {
@@ -691,7 +691,7 @@ export function shouldRefuseExport(build: BuildStatus | null | undefined): boole
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return true
   }
-  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
+  if (build.pilot_ready === true && !isAcceptanceKk(build)) {
     return true
   }
   if (isAuthoritativePilotReady(build)) return false
@@ -940,6 +940,9 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
     }
   }
+  if (!build || build.state === 'building' || build.state === 'not_started') {
+    return { label: 'Building…', disabled: true, ghost: true }
+  }
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return {
       label: 'Export (.zip) — below full-pilot authorship floor',
@@ -949,7 +952,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
         `Need ≥${fullPilotAuthorshipNeed(build)} agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused`,
     }
   }
-  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
+  if (build.pilot_ready === true && !isAcceptanceKk(build)) {
     const score = formatAcceptanceScore(build)
     return {
       label: `Export (.zip) — acceptance ${score}`,
@@ -965,9 +968,6 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       ghost: true,
       title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
     }
-  }
-  if (!build || build.state === 'building' || build.state === 'not_started') {
-    return { label: 'Building…', disabled: true, ghost: true }
   }
   if (build.state === 'stalled') {
     return {

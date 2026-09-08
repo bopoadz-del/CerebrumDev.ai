@@ -340,7 +340,7 @@ def reject_invalid_payload(capability_id: str, payload: Dict[str, Any] | None) -
 
 def render_github_ci() -> str:
     return (
-        "# Full suite — not pytest -m \"not pilot\". Store-green measures this file.\n"
+        "# Full suite — python -m pytest tests. Store-green measures this file.\n"
         "name: ci\n"
         "on:\n"
         "  push:\n"
@@ -763,18 +763,22 @@ def check_ci_present_and_full_suite() -> Tuple[str, str]:
     if not ci.is_file():
         return "FAIL", ".github/workflows/ci.yml missing"
     text = ci.read_text(encoding="utf-8")
-    if "pytest" not in text:
+    run_lines = [
+        line
+        for line in text.splitlines()
+        if "pytest" in line and not line.lstrip().startswith("#")
+    ]
+    if not run_lines:
         return "FAIL", "CI does not invoke pytest"
-    marker_only = "not pilot" in text and "python -m pytest tests" not in text.replace(
-        "not pilot", ""
+    has_full = any(
+        ("python -m pytest tests" in line or "pytest tests" in line)
+        and "not pilot" not in line
+        for line in run_lines
     )
-    full = "python -m pytest tests" in text or (
-        "pytest tests" in text and "not pilot" not in text
-    )
-    if marker_only and not full:
-        return "FAIL", "CI wires only pytest -m not-pilot — not the full suite"
-    if full:
+    if has_full:
         return "PASS", "CI runs pytest tests"
+    if any("not pilot" in line for line in run_lines):
+        return "FAIL", "CI wires only pytest -m not-pilot — not the full suite"
     return "FAIL", "CI pytest line is not a full suite"
 
 

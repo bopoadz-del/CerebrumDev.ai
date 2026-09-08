@@ -53,7 +53,8 @@ GATE_SCOPES = {
     ),
     "STORE": (
         "scripts/acceptance.py (≥12 measured checks) inside the Store-built "
-        "Docker image — k/k required; authorship floor is not acceptance"
+        "Docker image — k/k required; restart-survival of the booted store; "
+        "authorship floor is not acceptance"
     ),
 }
 
