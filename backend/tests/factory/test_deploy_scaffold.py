@@ -41,6 +41,11 @@ def built(tmp_path):
 def test_the_deploy_scaffold_is_present(built):
     for name in ("Dockerfile", ".dockerignore", "Procfile", ".env.example", "render.yaml"):
         assert (built / name).is_file(), f"missing {name}"
+    assert (built / "scripts" / "acceptance.py").is_file()
+    assert (built / ".github" / "workflows" / "ci.yml").is_file()
+    assert (built / "docs" / "openapi.json").is_file()
+    assert (built / "app" / "auth.py").is_file()
+    assert (built / "app" / "static" / "index.html").is_file()
 
 
 def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):

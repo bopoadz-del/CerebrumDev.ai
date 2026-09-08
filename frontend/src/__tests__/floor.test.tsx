@@ -249,6 +249,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
         pilot_ready: true,
         cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        acceptance: { passed: 12, total: 12, ok: true },
       })
     })
     getMock.mockResolvedValue({
@@ -380,11 +381,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           founding_customer_ready: true,
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           blockers: [],
@@ -411,11 +414,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
         level_grade: {
           level: 'STORE_GREEN',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           founding_customer_ready: false,
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           blockers: ['handlers call the store over HTTP: viewing_management.py'],
@@ -440,12 +445,14 @@ describe('Factory Floor — architect LLM then coding agent', () => {
         state: 'succeeded',
         outcome: 'SUCCESS',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
         coder_receipt: {
@@ -512,12 +519,14 @@ describe('Factory Floor — architect LLM then coding agent', () => {
         state: 'succeeded',
         outcome: 'SUCCESS',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 8, templated: 16 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
       })
@@ -618,6 +627,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 19, agent_written: 13, templated: 6 },
       })
@@ -1001,6 +1011,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 19, agent_written: 13, templated: 6 },
       })

@@ -481,6 +481,13 @@ if __name__ == "__main__":
 '''
         gate = gate.replace("__PRODUCT_NAME__", bp.product_name)
         (scripts_dir / "release_gate.py").write_text(gate, encoding="utf-8")
+        from app.factory.build.store_acceptance import stamp_acceptance_into_path
+
+        stamp_acceptance_into_path(
+            out,
+            product_name=bp.product_name,
+            cap_ids=list(cap_ids),
+        )
 
     # --- End clone-and-test standard ----------------------------------------
 
@@ -931,6 +938,9 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
                 "# F19: a red suite must not produce a deployable image.",
                 "RUN python3 scripts/release_gate.py",
                 "EXPOSE 8000",
+                "HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 "
+                "CMD python3 -c \"import urllib.request; "
+                "urllib.request.urlopen('http://127.0.0.1:8000/health')\"",
                 'CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]',
             ]
         )

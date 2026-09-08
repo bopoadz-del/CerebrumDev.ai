@@ -72,6 +72,7 @@ BEHAVIOUR_PROBE = r'''
 import json, os, sys, tempfile
 
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="writer-gate-")
+os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 sys.path.insert(0, os.getcwd())
 
 findings = []
@@ -359,6 +360,8 @@ for _name, _mod in list(sys.modules.items()):
     if _name.startswith("app.actions") and hasattr(_mod, "execute"):
         _mod.execute = _recording_execute
 
+AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
+
 try:
     client_cm = TestClient(app)
     client = client_cm.__enter__()
@@ -476,7 +479,7 @@ for cap_id, cls in MODELS.items():
     body = _payload(cls)
     _seen["cap"] = cap_id
     try:
-        resp = client.post("/v1/" + cap_id, json=body)
+        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
         schema_misses.append(
             "%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc)
@@ -583,7 +586,7 @@ for cap_id, cls in targets:
     body = _payload(cls)
     _calls["n"] = 0
     try:
-        resp = client.post("/v1/" + cap_id, json=body)
+        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
         findings.append("%s: POST raised under forced failure: %s" % (cap_id, exc))
         continue

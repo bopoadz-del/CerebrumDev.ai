@@ -375,12 +375,16 @@ def download_product_package(
         )
 
     from app.factory.build.authorship import thin_store_green_export_blocker
+    from app.factory.build.store_acceptance import acceptance_export_blocker
 
     thin = thin_store_green_export_blocker(
         status, out, plan=plan, blueprint=blueprint
     )
     if thin:
         raise HTTPException(status_code=409, detail=thin)
+    accept = acceptance_export_blocker(status, out)
+    if accept:
+        raise HTTPException(status_code=409, detail=accept)
 
     archive_base = out.parent / f"{out.name}-export"
     archive = zip_generated_product(out, archive_base)

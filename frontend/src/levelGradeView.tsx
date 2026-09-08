@@ -1,5 +1,6 @@
 import type { BuildStatus } from './api/factory'
 import {
+  formatAcceptanceScore,
   hasSourcedLevel,
   honestLevel,
   levelGradeLabel,
@@ -55,6 +56,9 @@ export function LevelGradeStrip({
           {levelGradeLabel(level, sourced)}
         </span>
       )}
+      <span className="mono" data-testid={`${testIdPrefix}-acceptance-score`}>
+        {formatAcceptanceScore(build)}
+      </span>
       {gates && (
         <span className="three-gate" data-testid={`${testIdPrefix}-three-gate`}>
           {gates.map((g) => (

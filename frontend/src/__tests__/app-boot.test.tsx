@@ -499,12 +499,14 @@ describe('App boot', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 8, templated: 16, action_py: 8 },
         level_grade: {
           level: 'STORE_GREEN',
           founding_customer_ready: false,
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
       })
@@ -593,12 +595,14 @@ describe('App boot', () => {
         onProgress({
           state: 'succeeded',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           cycle: 'pilot',
           authorship: { artifacts: 24, agent_written: 8, templated: 16 },
           level_grade: {
             level: 'STORE_GREEN',
             founding_customer_ready: false,
             pilot_ready: true,
+            acceptance: { passed: 12, total: 12, ok: true },
             three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           },
         })
@@ -688,12 +692,14 @@ describe('App boot', () => {
         onProgress({
           state: 'succeeded',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           cycle: 'pilot',
           authorship: { artifacts: 24, agent_written: 8, templated: 16 },
           level_grade: {
             level: 'STORE_GREEN',
             founding_customer_ready: false,
             pilot_ready: true,
+            acceptance: { passed: 12, total: 12, ok: true },
             three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           },
         })
@@ -821,12 +827,14 @@ describe('App boot', () => {
         onProgress({
           state: 'succeeded',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           cycle: 'pilot',
           authorship: { artifacts: 24, agent_written: 8, templated: 16 },
           level_grade: {
             level: 'STORE_GREEN',
             founding_customer_ready: false,
             pilot_ready: true,
+            acceptance: { passed: 12, total: 12, ok: true },
             three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           },
         })

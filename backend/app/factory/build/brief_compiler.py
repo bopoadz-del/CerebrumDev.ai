@@ -655,6 +655,7 @@ def render_slot_bodies(
         f"- envelope vocab {', '.join(ENVELOPE_STATUS_VALUES)} enforced by schema, not prose  [check:envelope_schema]",
         f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:product_gate]",
         f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
+        "- scripts/acceptance.py ≥12 measured checks k/k inside the Store-built image  [check:store_acceptance]",
         "- ledger records pilot_ready=true  [check:ledger]",
         full_pilot_authorship_acceptance_line(n_required),
         "",

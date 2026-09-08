@@ -330,6 +330,15 @@ export const product = {
     ),
 }
 
+export type AcceptanceScore = {
+  passed?: number
+  total?: number
+  ok?: boolean
+  missing?: boolean
+  score?: string
+  lines?: { name?: string; status?: string; detail?: string }[]
+}
+
 export type BuildAuthorship = {
   artifacts?: number
   agent_written?: number
@@ -373,7 +382,10 @@ export type BuildStatus = {
     founding_customer_ready?: boolean
     blockers?: string[]
     three_gate?: Record<string, string>
+    acceptance?: AcceptanceScore
   }
+  /** Store-green measured score. Authorship is not acceptance. */
+  acceptance?: AcceptanceScore
   phases?: string[]
   completed?: string[]
   phases_done?: number

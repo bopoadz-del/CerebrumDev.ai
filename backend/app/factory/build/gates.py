@@ -522,11 +522,31 @@ def gate_store_manager_contract(ctx: GateContext) -> GateResult:
     durable = gate_pilot_outcome_survives_restart(ctx)
     if not durable.ok:
         return durable
+    payload = dict(authorised.payload)
+    if (ctx.cycle or "code").strip().lower() == "pilot":
+        from app.factory.build.store_acceptance import gate_store_acceptance
+
+        accept = gate_store_acceptance(ctx)
+        payload["acceptance"] = dict(accept.payload)
+        if not accept.ok:
+            return GateResult(
+                ok=False,
+                gate="store_manager_contract",
+                detail=accept.detail,
+                findings=list(accept.findings),
+                payload=payload,
+            )
+        return GateResult(
+            ok=True,
+            gate="store_manager_contract",
+            detail=f"{authorised.detail}; {durable.detail}; {accept.detail}",
+            payload=payload,
+        )
     return GateResult(
         ok=True,
         gate="store_manager_contract",
         detail=f"{authorised.detail}; {durable.detail}",
-        payload=dict(authorised.payload),
+        payload=payload,
     )
 
 

@@ -43,6 +43,41 @@ const CLAIMED_LEVELS = new Set<string>([
  * A Store-green claim is never upgraded to founding.
  */
 export const FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
+/** Store-green measured lines. Authorship floor is not this count. */
+export const ACCEPTANCE_REQUIRED = 12
+export const ACCEPTANCE_KK = { passed: 12, total: 12, ok: true as const }
+
+export function acceptanceFrom(
+  build: BuildStatus | null | undefined,
+): NonNullable<BuildStatus['acceptance']> | null {
+  const raw = build?.acceptance ?? build?.level_grade?.acceptance
+  return raw && typeof raw === 'object' ? raw : null
+}
+
+export function acceptanceScore(build: BuildStatus | null | undefined): {
+  passed: number
+  total: number
+} {
+  const raw = acceptanceFrom(build)
+  const passed = Number(raw?.passed)
+  const total = Number(raw?.total)
+  return {
+    passed: Number.isFinite(passed) && passed >= 0 ? passed : 0,
+    total: Number.isFinite(total) && total >= ACCEPTANCE_REQUIRED ? total : ACCEPTANCE_REQUIRED,
+  }
+}
+
+export function isAcceptanceKk(build: BuildStatus | null | undefined): boolean {
+  const raw = acceptanceFrom(build)
+  if (!raw || raw.missing === true) return false
+  const { passed, total } = acceptanceScore(build)
+  return raw.ok === true && passed >= ACCEPTANCE_REQUIRED && passed === total
+}
+
+export function formatAcceptanceScore(build: BuildStatus | null | undefined): string {
+  const { passed, total } = acceptanceScore(build)
+  return `${passed}/${total}`
+}
 
 export function honestLevel(build: BuildStatus | null | undefined): LevelGradeName | null {
   if (!build) return null
@@ -59,6 +94,9 @@ export function honestLevel(build: BuildStatus | null | undefined): LevelGradeNa
     return 'SCAFFOLD'
   }
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
+  }
+  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
     return build.state === 'succeeded' ? 'CODE_GREEN' : 'SCAFFOLD'
   }
   if (!ready) {
@@ -110,6 +148,7 @@ export function isPilotZipReady(build: BuildStatus | null | undefined): boolean 
   if (!build || build.state !== 'succeeded' || build.pilot_ready !== true) return false
   if (productSuiteFailed(build) || outcomeFailed(build)) return false
   if (isBelowFullPilotAuthorshipFloor(build)) return false
+  if (!isAcceptanceKk(build)) return false
   const level = honestLevel(build)
   return level === 'STORE_GREEN' || level === 'FOUNDING_CUSTOMER_READY'
 }
@@ -652,6 +691,9 @@ export function shouldRefuseExport(build: BuildStatus | null | undefined): boole
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return true
   }
+  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
+    return true
+  }
   if (isAuthoritativePilotReady(build)) return false
   if (isCoderCliFailed(build)) return true
   if (isScaffoldClaim(build) && build.pilot_ready !== true) return true
@@ -905,6 +947,15 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       ghost: true,
       title:
         `Need ≥${fullPilotAuthorshipNeed(build)} agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused`,
+    }
+  }
+  if (claimsStoreGreenPilot(build) && !isAcceptanceKk(build)) {
+    const score = formatAcceptanceScore(build)
+    return {
+      label: `Export (.zip) — acceptance ${score}`,
+      disabled: true,
+      ghost: true,
+      title: `Store-green requires scripts/acceptance.py ${score === '12/12' ? 'k/k' : score} PASS inside the Store-built image — authorship is not acceptance`,
     }
   }
   if (shouldRefuseExport(build)) {
