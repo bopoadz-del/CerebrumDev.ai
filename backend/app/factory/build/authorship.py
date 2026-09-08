@@ -151,13 +151,16 @@ def persist_required_capability_inputs(
     plan: Any = None,
     n_required: Optional[int] = None,
 ) -> None:
-    """Write blueprint / factory_plan so package can resolve need after exit.
+    """Write ``docs/blueprint/product_blueprint.json`` so package can resolve need.
 
     RoleRunner does not call ``ProductGenerator.generate()``, so Approve→
-    GENERATE workspaces often lack ``docs/blueprint/product_blueprint.json``.
-    Without that file ``n_required`` stays unknown (need=5) on the next
-    process that only reads the tree.
+    GENERATE workspaces often lack that 14-class file. Without it
+    ``n_required`` stays unknown (need=5) on the next process that only
+    reads the tree. Does not write ``factory_plan.json`` — that stays a
+    ProductGenerator extra (emitter parity).
     """
+    if n_required is None:
+        n_required = _n_required_from_blueprintish(plan)
     root = Path(workspace)
     try:
         root.mkdir(parents=True, exist_ok=True)
@@ -187,28 +190,6 @@ def persist_required_capability_inputs(
             if n_required is not None:
                 payload.setdefault("n_required", n_required)
             (dest / "product_blueprint.json").write_text(
-                json.dumps(payload, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
-    plan_payload: Optional[Mapping[str, Any]] = None
-    if plan is not None:
-        if isinstance(plan, Mapping):
-            plan_payload = plan
-        else:
-            to_dict = getattr(plan, "to_dict", None)
-            if callable(to_dict):
-                try:
-                    plan_payload = to_dict()
-                except Exception:  # noqa: BLE001
-                    plan_payload = None
-    if isinstance(plan_payload, Mapping) and plan_payload.get("capabilities"):
-        try:
-            payload = dict(plan_payload)
-            if n_required is not None:
-                payload.setdefault("n_required", n_required)
-            (root / "factory_plan.json").write_text(
                 json.dumps(payload, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )

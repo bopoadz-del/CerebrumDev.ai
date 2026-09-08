@@ -495,7 +495,7 @@ def test_role_runner_persists_blueprint_so_n_required_survives(tmp_path):
     assert runner.state.get("n_required") == 4
     assert n_required_capabilities_from(workspace=out) == 4
     assert (out / "docs" / "blueprint" / "product_blueprint.json").is_file()
-    assert (out / "factory_plan.json").is_file()
+    assert not (out / "factory_plan.json").exists()
 
 
 def test_n_required_from_compiled_string_capability_ids():
