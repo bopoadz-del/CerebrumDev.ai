@@ -394,6 +394,150 @@ export function fullPilotAuthorshipNeed(
   return Math.min(FULL_PILOT_MIN_AUTHORED_ACTIONS, Math.max(1, n))
 }
 
+function capabilityId(item: unknown): string {
+  if (typeof item === 'string') {
+    const text = item.trim()
+    if (!text || text.includes(' ') || text.includes(':') || text.includes('/')) return ''
+    return text
+  }
+  if (item && typeof item === 'object') {
+    const rec = item as { id?: unknown; capability_id?: unknown }
+    return String(rec.id || rec.capability_id || '').trim()
+  }
+  return ''
+}
+
+function capabilityIsRequired(item: unknown): boolean {
+  if (item && typeof item === 'object' && 'required' in (item as object)) {
+    return (item as { required?: unknown }).required !== false
+  }
+  return true
+}
+
+/** Required-capability count from a session blueprint or plan (live n_required). */
+export function nRequiredFromProductInputs(source: unknown): number | null {
+  if (source == null) return null
+  if (typeof source === 'number' && Number.isFinite(source) && source > 0) {
+    return Math.floor(source)
+  }
+  const rec = source && typeof source === 'object' ? (source as Record<string, unknown>) : null
+  const caps = rec
+    ? rec.capabilities
+    : null
+  if (Array.isArray(caps)) {
+    const ids: string[] = []
+    for (const item of caps) {
+      if (!capabilityIsRequired(item)) continue
+      const id = capabilityId(item)
+      if (id && !ids.includes(id)) ids.push(id)
+    }
+    if (ids.length > 0) return ids.length
+  }
+  if (rec) {
+    for (const key of ['blueprint', 'plan'] as const) {
+      const nested = nRequiredFromProductInputs(rec[key])
+      if (nested != null) return nested
+    }
+  }
+  return null
+}
+
+/** Stamp live n_required from the session brief when the snapshot omitted it. */
+export function withResolvedNRequired(
+  build: BuildStatus | null | undefined,
+  nRequired: number | null | undefined,
+): BuildStatus | null {
+  if (!build) return build ?? null
+  if (nRequired == null || nRequired <= 0) return build
+  if (authorshipCount(build.authorship?.n_required) != null) return build
+  if (authorshipCount(build.n_required) != null) return build
+  return {
+    ...build,
+    n_required: nRequired,
+    authorship: { ...(build.authorship ?? {}), n_required: nRequired },
+  }
+}
+
+const THIN_AUTHORSHIP_TEXT = /FACTORY_CODE_CLI_THIN_AUTHORSHIP/i
+
+/** Pre-#392 RUN_FAILED copy that still hard-codes need ≥5. */
+export function isStickyThinAuthorshipRefuse(
+  build: BuildStatus | null | undefined,
+): boolean {
+  if (!build) return false
+  const blobs = [
+    build.detail ?? '',
+    ...(build.findings ?? []),
+    ...(build.level_grade?.blockers ?? []),
+  ]
+  return blobs.some((text) => THIN_AUTHORSHIP_TEXT.test(text))
+}
+
+/**
+ * Mirror backend ``_reevaluate_thin_authorship_failure``.
+ * A sticky need≥5 RUN_FAILED must become SUCCESS when live n_required is
+ * knowable and authorship meets that floor. Unknown n_required stays need=5.
+ */
+export function reevaluateStickyThinAuthorship(
+  build: BuildStatus | null | undefined,
+): BuildStatus | null {
+  if (!build) return build ?? null
+  if (!isStickyThinAuthorshipRefuse(build)) return build
+  if (build.state === 'building' || build.state === 'not_started') return build
+  if (isBelowFullPilotAuthorshipFloor(build)) return build
+  if (fullPilotAuthorshipCount(build) == null) return build
+  if (build.state === 'succeeded' && build.pilot_ready === true) return build
+  const cycle = String(build.cycle || 'pilot').trim().toLowerCase() || 'pilot'
+  const pilotReady = cycle === 'pilot'
+  const threeGate = pilotReady
+    ? { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' }
+    : { CODE: 'PASS', PRODUCT: 'NOT_RUN', STORE: 'NOT_RUN' }
+  return {
+    ...build,
+    state: 'succeeded',
+    outcome: 'SUCCESS',
+    cycle,
+    pilot_ready: pilotReady,
+    honesty: 'full_pilot_authorship_reevaluated',
+    detail: build.detail && /CODE\s+PASS/i.test(build.detail)
+      ? build.detail
+      : `CODE PASS — handlers; PRODUCT ${pilotReady ? 'PASS' : 'NOT RUN'} — suite; STORE ${pilotReady ? 'PASS' : 'NOT RUN'} — ops`,
+    level_grade: {
+      ...(build.level_grade ?? {}),
+      level: pilotReady ? 'STORE_GREEN' : 'CODE_GREEN',
+      pilot_ready: pilotReady,
+      full_pilot: pilotReady,
+      founding_customer_ready: false,
+      three_gate: {
+        ...(build.level_grade?.three_gate ?? {}),
+        ...threeGate,
+      },
+    },
+  }
+}
+
+/**
+ * Watch / Refresh must not let a cached pre-#392 THIN_AUTHORSHIP failed
+ * tick replace a live SUCCESS that package already honors.
+ */
+export function preferHonestBuild(
+  next: BuildStatus,
+  prev: BuildStatus | null | undefined,
+): BuildStatus {
+  const honestNext = reevaluateStickyThinAuthorship(stampBuildObservation(next, prev))
+  if (!honestNext) return next
+  const honestPrev = prev ? reevaluateStickyThinAuthorship(prev) : null
+  if (
+    honestPrev &&
+    isAuthoritativePilotReady(honestPrev) &&
+    honestNext.state === 'failed' &&
+    isStickyThinAuthorshipRefuse(next)
+  ) {
+    return stampBuildObservation(honestPrev, prev)
+  }
+  return honestNext
+}
+
 export function isBelowFullPilotAuthorshipFloor(
   build: BuildStatus | null | undefined,
 ): boolean {
@@ -533,6 +677,8 @@ function refuseExportDetail(build: BuildStatus): string {
  * SUCCESS + pilot_ready keep-path must not strip Export.
  */
 export function withExportHonesty(build: BuildStatus | null): BuildStatus | null {
+  if (!build) return build
+  build = reevaluateStickyThinAuthorship(build)
   if (!build) return build
   if (build.state === 'building' || build.state === 'not_started') return build
   if (

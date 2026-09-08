@@ -472,7 +472,11 @@ export async function watchBuildStatus(
     const { build } = await product.buildStatus(sid)
     if (signal?.aborted) return
     onProgress(build)
-    if (build.state === 'failed' || build.state === 'stalled') return
+    // Sticky pre-#392 THIN_AUTHORSHIP may still unlock after live
+    // n_required re-eval — keep polling so Platforms cannot freeze on
+    // a cached RUN_FAILED / need≥5 tick. Other terminal failures stop.
+    const stickyThin = /FACTORY_CODE_CLI_THIN_AUTHORSHIP/i.test(build.detail || '')
+    if ((build.state === 'failed' && !stickyThin) || build.state === 'stalled') return
     await new Promise<void>((resolve) => {
       const t = setTimeout(resolve, intervalMs)
       const onAbort = () => {

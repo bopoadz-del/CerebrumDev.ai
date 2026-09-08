@@ -783,7 +783,17 @@ def _generation_status(state: Any, output_root: Optional[Path] = None) -> Dict[s
     if out:
         from app.factory.build_jobs import build_status
 
-        st = build_status(out)
+        raw_bp = getattr(pd, "blueprint", None) if pd is not None else None
+        plan = getattr(pd, "plan", None) if pd is not None else None
+        blueprint: Any = raw_bp
+        if isinstance(raw_bp, dict) and raw_bp:
+            try:
+                from app.factory.blueprint import ProductBlueprint
+
+                blueprint = ProductBlueprint.model_validate(raw_bp)
+            except Exception:  # noqa: BLE001 — dict still has capabilities
+                blueprint = raw_bp
+        st = build_status(out, blueprint=blueprint, plan=plan)
         if st.get("state") != "unknown":
             return st
     persisted = gen.get("build")
@@ -918,7 +928,11 @@ def _record_generation(
     out = result.get("output_dir") or ""
     st = result.get("build") if isinstance(result.get("build"), dict) else None
     if out and (st is None or st.get("state") == "unknown"):
-        st = build_status(out)
+        st = build_status(
+            out,
+            blueprint=getattr(pd, "blueprint", None),
+            plan=getattr(pd, "plan", None),
+        )
     st = st or {}
     resume_point = None
     if out:

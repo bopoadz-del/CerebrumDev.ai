@@ -22,10 +22,12 @@ import {
   hasSourcedLevel,
   honestLevel,
   isPilotZipReady,
+  nRequiredFromProductInputs,
   platformsLeadCopy,
+  preferHonestBuild,
   shouldDemoteFounding,
-  stampBuildObservation,
   withClientStall,
+  withResolvedNRequired,
 } from './buildProgress'
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import { LevelGradeStrip } from './levelGradeView'
@@ -58,18 +60,22 @@ export function Platforms({
         .get(sessionId)
         .then(async (next) => {
           setDesign(next)
-          // product GET now re-reads the ledger onto generation.build, but
-          // Refresh still fetches build-status (including while building). Never
-          // POST generate from this button. Initial load skips build-status —
-          // the watchBuildStatus effect owns the live snapshot; a slow
-          // not_started reply must not clobber a succeeded/building tick.
+          // GET /product re-reads the ledger onto generation.build (live
+          // n_required re-eval after #392). Seed the card from that so a
+          // sticky last_error / pre-#392 RUN_FAILED snapshot cannot paint
+          // "need ≥5" while package/Floor already SUCCESS. Refresh still
+          // fetches build-status; a cached THIN_AUTHORSHIP failed tick
+          // must not clobber a live SUCCESS.
           if (!next.generation) {
             setBuild(null)
             return
           }
+          if (next.generation.build) {
+            setBuild((prev) => preferHonestBuild(next.generation!.build as BuildStatus, prev))
+          }
           if (opts?.initial) return
           const { build: nextBuild } = await product.buildStatus(sessionId)
-          setBuild((prev) => stampBuildObservation(nextBuild, prev))
+          setBuild((prev) => preferHonestBuild(nextBuild, prev))
         })
         .catch((e) => setError(e instanceof Error ? e.message : 'failed to load'))
         .finally(() => {
@@ -95,7 +101,7 @@ export function Platforms({
       sessionId,
       (s) => {
         if (!ac.signal.aborted) {
-          setBuild((prev) => stampBuildObservation(s, prev))
+          setBuild((prev) => preferHonestBuild(s, prev))
         }
       },
       { signal: ac.signal },
@@ -107,18 +113,22 @@ export function Platforms({
     return () => ac.abort()
   }, [watchingBuild, sessionId])
 
-  const liveBuild = withClientStall(build, nowMs)
-  useEffect(() => {
-    if (liveBuild?.state !== 'building') return
-    const id = window.setInterval(() => setNowMs(Date.now()), 5000)
-    return () => window.clearInterval(id)
-  }, [liveBuild?.state])
-
   const bp = design?.blueprint as
     | { product_name?: string; vertical?: string; capabilities?: unknown[] }
     | null
     | undefined
   const gen = design?.generation
+  const nRequired =
+    nRequiredFromProductInputs(bp) ?? nRequiredFromProductInputs(design?.plan)
+  const liveBuild = withClientStall(
+    withResolvedNRequired(build ?? gen?.build ?? null, nRequired),
+    nowMs,
+  )
+  useEffect(() => {
+    if (liveBuild?.state !== 'building') return
+    const id = window.setInterval(() => setNowMs(Date.now()), 5000)
+    return () => window.clearInterval(id)
+  }, [liveBuild?.state])
   const authorship = liveBuild?.authorship
   const stalled = liveBuild?.state === 'stalled'
   const failed = liveBuild?.state === 'failed'
@@ -175,7 +185,7 @@ export function Platforms({
         liveBuild?.state === 'succeeded'
           ? liveBuild
           : await awaitBuild(sessionId, (s) =>
-              setBuild((prev) => stampBuildObservation(s, prev)),
+              setBuild((prev) => preferHonestBuild(s, prev)),
             )
       if (!status || status.state === 'failed' || status.state === 'stalled') {
         setError(

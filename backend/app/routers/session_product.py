@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -86,6 +86,46 @@ def generation_with_live_build(
     if isinstance(live, dict) and "phases_done" in live:
         attached["phases_done"] = live.get("phases_done")
     return attached
+
+
+def _clear_sticky_thin_authorship_error(
+    session_id: str,
+    state: Any,
+    live_generation: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Drop a pre-#392 THIN_AUTHORSHIP last_error once live status is SUCCESS.
+
+    Platforms must not keep painting the baked ``need ≥5`` string after
+    package / build-status already re-evaluated n_required.
+    """
+    pd = getattr(state, "product_design", None)
+    if pd is None:
+        return None
+    last_error = getattr(pd, "last_error", None)
+    live_build = (live_generation or {}).get("build") if isinstance(live_generation, dict) else None
+    live_ok = isinstance(live_build, dict) and live_build.get("state") == "succeeded"
+    sticky = "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in str(last_error or "")
+    persisted = (getattr(pd, "generation", None) or {}).get("build")
+    persisted_failed = (
+        isinstance(persisted, dict)
+        and persisted.get("state") == "failed"
+        and "FACTORY_CODE_CLI_THIN_AUTHORSHIP" in str(persisted.get("detail") or "")
+    )
+    if not live_ok or not (sticky or persisted_failed):
+        return last_error
+    if sticky:
+        pd.last_error = None
+    if persisted_failed and isinstance(live_generation, dict):
+        gen = dict(pd.generation or {})
+        gen["build"] = live_generation.get("build")
+        if "phases_done" in live_generation:
+            gen["phases_done"] = live_generation.get("phases_done")
+        pd.generation = gen
+    try:
+        update_session(session_id, state)
+    except Exception:  # noqa: BLE001 — serving honesty must not 500
+        logger.exception("could not persist live SUCCESS over sticky thin-authorship")
+    return pd.last_error
 
 
 class DraftBody(BaseModel):
@@ -244,8 +284,11 @@ def _enforce_draft_quota(account_id: Optional[str]) -> None:
 
 @router.get("/{session_id}/product")
 def get_product_design(
-    session_id: str, principal: Principal = Depends(require_api_key)
+    session_id: str,
+    response: Response,
+    principal: Principal = Depends(require_api_key),
 ) -> Dict[str, Any]:
+    response.headers["Cache-Control"] = "no-store"
     state = _require_session(session_id, principal)
     pd = state.product_design
     yaml_text = None
@@ -255,6 +298,12 @@ def get_product_design(
         except Exception:  # noqa: BLE001
             yaml_text = None
     blueprint, plan = _session_product_inputs(state)
+    live_generation = generation_with_live_build(
+        pd.generation, blueprint=blueprint, plan=plan
+    )
+    last_error = _clear_sticky_thin_authorship_error(
+        session_id, state, live_generation
+    )
     return {
         "session_id": session_id,
         "mode": pd.mode,
@@ -265,10 +314,8 @@ def get_product_design(
         "intake_blueprint": pd.intake_blueprint,
         "blueprint_approved": pd.blueprint_approved,
         "brief_lint": pd.brief_lint,
-        "generation": generation_with_live_build(
-            pd.generation, blueprint=blueprint, plan=plan
-        ),
-        "last_error": pd.last_error,
+        "generation": live_generation,
+        "last_error": last_error,
     }
 
 
@@ -352,7 +399,9 @@ def download_product_package(
 
 @router.get("/{session_id}/product/build-status")
 def get_build_status(
-    session_id: str, principal: Principal = Depends(require_api_key)
+    session_id: str,
+    response: Response,
+    principal: Principal = Depends(require_api_key),
 ) -> Dict[str, Any]:
     """Progress of the background build. Read off the build ledger.
 
@@ -360,6 +409,7 @@ def get_build_status(
     writes the platform, and metering a progress read would charge the
     customer for waiting.
     """
+    response.headers["Cache-Control"] = "no-store"
     from app.factory.build_jobs import build_status
 
     state = _require_session(session_id, principal)
