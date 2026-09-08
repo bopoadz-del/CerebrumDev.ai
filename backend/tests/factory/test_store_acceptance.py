@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.gates import GateContext
 from app.factory.build.product_gate import GATE_SCOPES
@@ -15,7 +13,6 @@ from app.factory.build.store_acceptance import (
     AcceptanceReport,
     acceptance_export_blocker,
     acceptance_is_kk,
-    evaluate_acceptance,
     gate_store_acceptance,
     parse_acceptance_output,
     render_acceptance_script,
