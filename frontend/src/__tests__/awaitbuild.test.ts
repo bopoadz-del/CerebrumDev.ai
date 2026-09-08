@@ -108,6 +108,15 @@ describe('watchBuildStatus', () => {
             'FACTORY_CODE_CLI_THIN_AUTHORSHIP: authorship is below the full-pilot floor (written=4, cli_authored_ids=4, need ≥5)',
         },
       })
+      .mockResolvedValueOnce({
+        ok: true,
+        build: {
+          state: 'succeeded',
+          outcome: 'SUCCESS',
+          pilot_ready: true,
+          authorship: { n_required: 4, action_py: 4, agent_written: 4 },
+        },
+      })
       .mockImplementation(async () => {
         ac.abort()
         return {
@@ -116,7 +125,6 @@ describe('watchBuildStatus', () => {
             state: 'succeeded',
             outcome: 'SUCCESS',
             pilot_ready: true,
-            authorship: { n_required: 4, action_py: 4, agent_written: 4 },
           },
         }
       })
