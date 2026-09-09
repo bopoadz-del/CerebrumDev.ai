@@ -227,6 +227,15 @@ services:
       # One calling-NOTE wall (one generation + one alternate retry).
       - key: FACTORY_CODER_ATTEMPT_WALL_S
         value: "2400"
+      # How many per-capability coder shots the WRITER may have in flight.
+      # 1 is serial and is the default in code; the value only matters on the
+      # per-capability path (FACTORY_BRIEF_DISPATCH=0), since C-BRIEF answers
+      # for every capability in one dispatch. Raising it does not change what
+      # is emitted — writer_fanout keeps the bytes and the ledger identical at
+      # any fan-out — it changes how many requests land on the provider at
+      # once, and a 429 on a paid leg is deliberately not retried. Ceiling 8.
+      - key: FACTORY_CODER_FANOUT
+        value: "1"
       # Template-generator loop across all GENERATE caps. Leftover 300
       # stubbed remaining capabilities (pilot_ready false). Remapped in
       # code; required override if remap is removed: 7200 (or 0 to disable).
