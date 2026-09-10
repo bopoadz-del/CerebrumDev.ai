@@ -160,14 +160,12 @@ def read_acceptance_report(
     root: Optional[Path | str] = None,
     status: Optional[Mapping[str, Any]] = None,
 ) -> AcceptanceReport:
-    """Fail-closed: missing report is 0/12, not a pass."""
-    if status:
-        raw = status.get("acceptance")
-        if isinstance(raw, Mapping) and raw.get("missing") is not True:
-            return _report_from_mapping(raw)
-        grade = status.get("level_grade")
-        if isinstance(grade, Mapping) and isinstance(grade.get("acceptance"), Mapping):
-            return _report_from_mapping(grade["acceptance"])
+    """Fail-closed: missing report is 0/12, not a pass.
+
+    ``docs/store_acceptance.json`` is what the Store gate just wrote and is
+    authoritative. A stale status / level_grade blob — ``missing: true`` or a
+    measured 0/12 from an earlier miss — must not hide a later k/k file.
+    """
     if root:
         path = Path(root) / ACCEPTANCE_REPORT_REL
         if path.is_file():
@@ -175,6 +173,19 @@ def read_acceptance_report(
                 return _report_from_mapping(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 return missing_acceptance_report(detail="docs/store_acceptance.json is unreadable")
+    if status:
+        raw = status.get("acceptance")
+        if isinstance(raw, Mapping) and raw.get("missing") is not True:
+            mapped = _report_from_mapping(raw)
+            if not mapped.missing:
+                return mapped
+        grade = status.get("level_grade")
+        if isinstance(grade, Mapping) and isinstance(grade.get("acceptance"), Mapping):
+            raw_grade = grade["acceptance"]
+            if raw_grade.get("missing") is not True:
+                mapped = _report_from_mapping(raw_grade)
+                if not mapped.missing:
+                    return mapped
     return missing_acceptance_report()
 
 
@@ -194,6 +205,8 @@ def _report_from_mapping(raw: Mapping[str, Any]) -> AcceptanceReport:
             )
         )
     if not lines:
+        if raw.get("missing") is True:
+            return missing_acceptance_report(detail=str(raw.get("detail") or ""))
         return parse_acceptance_output(str(raw.get("detail") or ""))
     by_name = {line.name: line for line in lines}
     ordered = [
@@ -225,6 +238,42 @@ def acceptance_is_kk(report: Optional[AcceptanceReport]) -> bool:
         and report.total >= ACCEPTANCE_REQUIRED
         and report.passed == report.total
     )
+
+
+def workspace_acceptance_is_kk(
+    root: Optional[Path | str] = None,
+    status: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True only when the workspace (or status) has a measured k/k report."""
+    return acceptance_is_kk(read_acceptance_report(root, status))
+
+
+def acceptance_surface_incomplete(root: Path | str) -> bool:
+    """True when WRITER has not stamped the files STORE measures.
+
+    Pre-#395 workspaces can be ledger-pilot-ready and still lack the harness,
+    ``app/auth.py``, the UI stamp, or route token/422 wiring. STORE cannot
+    evaluate those — WRITER must run again.
+    """
+    dest = Path(root)
+    if not (dest / ACCEPTANCE_SCRIPT_REL).is_file():
+        return True
+    if not (dest / AUTH_REL).is_file():
+        return True
+    if not (dest / UI_INDEX_REL).is_file():
+        return True
+    if not (dest / OPENAPI_REL).is_file():
+        return True
+    if not (dest / GITHUB_CI_REL).is_file():
+        return True
+    routes = dest / "app" / "routes.py"
+    if not routes.is_file():
+        return True
+    try:
+        text = routes.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    return "require_platform_token" not in text or "reject_invalid_payload" not in text
 
 
 def acceptance_export_blocker(

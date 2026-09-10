@@ -710,22 +710,51 @@ class RoleRunner:
         elif snap.get("decision") == "hard_stop" and not snap.get("progressing"):
             logger.info("pilot open inspect: no extra wall — %s", snap.get("reason"))
 
-    def _open_auto_pilot(self) -> None:
-        """Reopen TESTER + STORE_MANAGER without writing a code SUCCESS."""
+    def _acceptance_regrade_needed(self) -> bool:
+        """Ledger-pilot SUCCESS is not Store-green until acceptance is k/k."""
+        from app.factory.build.store_acceptance import workspace_acceptance_is_kk
+
+        return not workspace_acceptance_is_kk(self.workspace)
+
+    def _acceptance_writer_needed(self) -> bool:
+        from app.factory.build.store_acceptance import acceptance_surface_incomplete
+
+        return acceptance_surface_incomplete(self.workspace)
+
+    def _open_pilot_for_acceptance(
+        self,
+        *,
+        reason: str,
+        auto_pilot: bool = False,
+    ) -> None:
+        """Reopen STORE measurement (and WRITER when the harness is missing)."""
+        reopen_writer = self._acceptance_writer_needed()
+        payload: Dict[str, Any] = {
+            "cycle": "pilot",
+            "reopen_writer": reopen_writer,
+        }
+        if auto_pilot:
+            payload["auto_pilot"] = True
         self.ledger.append(
             EventKind.NOTE,
-            detail=(
+            detail=reason,
+            payload=payload,
+        )
+        self.ledger.open_pilot_cycle(reason=reason, reopen_writer=reopen_writer)
+        self.cycle = "pilot"
+        self.state["build_cycle"] = "pilot"
+        if auto_pilot:
+            self._grant_pilot_budget()
+
+    def _open_auto_pilot(self) -> None:
+        """Reopen TESTER + STORE_MANAGER without writing a code SUCCESS."""
+        self._open_pilot_for_acceptance(
+            reason=(
                 "code-phase SUCCESS; auto-opening Store-green cycle "
                 "(factory LLM configured)"
             ),
-            payload={"cycle": "pilot", "auto_pilot": True},
+            auto_pilot=True,
         )
-        self.ledger.open_pilot_cycle(
-            reason="code-phase SUCCESS; auto-opening Store-green cycle"
-        )
-        self.cycle = "pilot"
-        self.state["build_cycle"] = "pilot"
-        self._grant_pilot_budget()
 
     # -- the run ---------------------------------------------------------
 
@@ -767,10 +796,19 @@ class RoleRunner:
             if (
                 self.ledger.exists()
                 and self.ledger.code_phase_succeeded()
-                and not self.ledger.pilot_ready()
                 and not self.ledger.pilot_cycle_open()
+                and (
+                    not self.ledger.pilot_ready()
+                    or self._acceptance_regrade_needed()
+                )
             ):
-                self.ledger.open_pilot_cycle()
+                self._open_pilot_for_acceptance(
+                    reason=(
+                        "acceptance not k/k; re-opening STORE measurement"
+                        if self.ledger.pilot_ready()
+                        else "code-phase SUCCESS; opening Store-green cycle"
+                    )
+                )
 
         done = self.ledger.completed_roles()
         rework_used = 0
@@ -984,19 +1022,20 @@ class RoleRunner:
                 rework_used = 0
                 work_list = ()
                 done = self.ledger.completed_roles()
-                if self._should_reopen_writer_for_cli():
-                    self._cli_writer_reopened = True
-                    done.discard(BuildRole.WRITER)
-                    self.ledger.append(
-                        EventKind.NOTE,
-                        role=BuildRole.WRITER,
-                        detail=(
-                            "reopening WRITER — DeepSeek FACTORY_CODE_CLI is "
-                            "ready but C-BRIEF was unused on a store-complete "
-                            "REUSE/COMPOSE inventory"
-                        ),
-                        payload={"cli_reopen": True, "stage": "dispatch"},
-                    )
+                if self._should_reopen_writer_for_cli() or BuildRole.WRITER not in done:
+                    if self._should_reopen_writer_for_cli():
+                        self._cli_writer_reopened = True
+                        done.discard(BuildRole.WRITER)
+                        self.ledger.append(
+                            EventKind.NOTE,
+                            role=BuildRole.WRITER,
+                            detail=(
+                                "reopening WRITER — DeepSeek FACTORY_CODE_CLI is "
+                                "ready but C-BRIEF was unused on a store-complete "
+                                "REUSE/COMPOSE inventory"
+                            ),
+                            payload={"cli_reopen": True, "stage": "dispatch"},
+                        )
                     index = BUILD_PHASES.index(BuildRole.WRITER)
                 else:
                     index = BUILD_PHASES.index(BuildRole.TESTER)

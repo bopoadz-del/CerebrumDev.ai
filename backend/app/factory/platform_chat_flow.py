@@ -976,14 +976,23 @@ def _resume_cycle(state: Any, output_root: Optional[Path] = None) -> str:
 
 
 def is_pilot_ready(state: Any, output_root: Optional[Path] = None) -> bool:
-    """True only after a SUCCESS that closed a Store-green / pilot cycle."""
+    """True only after a Store-green SUCCESS with acceptance k/k.
+
+    Ledger ``pilot_ready`` (pre-#395 authorship-green) is not enough.
+    Floor continue / Approve must be allowed to reopen Writer + Store so
+    a new cycle can stamp ``scripts/acceptance.py`` and measure k/12.
+    """
     out = _generation_output_dir(state, output_root)
     if not out:
         return False
     try:
-        return bool(_ledger_for(out).pilot_ready())
+        if not bool(_ledger_for(out).pilot_ready()):
+            return False
     except Exception:  # noqa: BLE001
         return False
+    from app.factory.build.store_acceptance import workspace_acceptance_is_kk
+
+    return workspace_acceptance_is_kk(out)
 
 
 def already_complete_reply(state: Any) -> Dict[str, Any]:
@@ -1002,8 +1011,8 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
     phase = f" ({done}/{total} phases)" if done is not None and total is not None else ""
     if is_pilot_ready(state):
         summary = (
-            f"{product} is already pilot-ready (Store-green){phase}. "
-            "I did not start a new coding run. Download it from Your Platforms."
+            f"{product} is already pilot-ready (Store-green, acceptance k/k)"
+            f"{phase}. I did not start a new coding run. Download it from Your Platforms."
         )
         return {
             "ok": True,

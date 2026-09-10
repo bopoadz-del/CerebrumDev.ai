@@ -262,6 +262,55 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByTestId('platforms-acceptance-score')).toHaveTextContent('5/12')
     expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 5/12' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Acceptance is 5\/12/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
+  })
+
+  it('live sess_4591d5cc 0/12 CODE-green card does not say build failed', async () => {
+    // launching-ready 1551 Platforms photograph: numeric 0/12, CODE/PRODUCT/STORE
+    // PASS, Export — acceptance 0/12, lead must not call that a failed build.
+    getMock.mockResolvedValue({
+      generation: {
+        ...GENERATION,
+        product_id: 'residential-lettings',
+        output_dir: '/app/storage/factory_outputs/sessions/sess_4591d5cc45d04fe1/residential-lettings',
+      },
+      blueprint: { product_name: 'Residential Lettings Platform', vertical: 'residential-lettings' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        outcome: 'SUCCESS',
+        cycle: 'pilot',
+        auto_pilot: true,
+        pilot_ready: true,
+        acceptance: { passed: 0, total: 12, ok: false, missing: true },
+        authorship: { artifacts: 27, agent_written: 6, templated: 21 },
+        level_grade: {
+          level: 'CODE_GREEN',
+          founding_customer_ready: false,
+          pilot_ready: false,
+          full_pilot: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_4591d5cc45d04fe1" />)
+    expect(await screen.findByTestId('platforms-prototype-pill')).toHaveTextContent(
+      'Code-green (prototype)',
+    )
+    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('0/12')
+    expect(screen.getByTestId('platforms-gate-code')).toHaveTextContent('CODE PASS')
+    expect(screen.getByTestId('platforms-gate-product')).toHaveTextContent('PRODUCT PASS')
+    expect(screen.getByTestId('platforms-gate-store')).toHaveTextContent('STORE PASS')
+    expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 0/12' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Acceptance is 0\/12/)
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/not a failed build/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
+    expect(screen.getByText(/Acceptance 0\/12 — not pilot-ready/)).toBeInTheDocument()
   })
 
   it('surfaces CODE_GREEN vs FOUNDING_CUSTOMER_READY vs failed on Platforms', async () => {

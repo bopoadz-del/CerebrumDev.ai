@@ -396,16 +396,19 @@ class BuildLedger:
         self,
         *,
         reason: str = "code-phase SUCCESS; opening Store-green cycle",
+        reopen_writer: bool = False,
     ) -> BuildEvent:
         """Reopen TESTER + STORE_MANAGER on an existing workspace.
 
-        Append-only: COLLECTOR/CLONER/WRITER verdicts stay. A later
+        Append-only: COLLECTOR/CLONER/WRITER verdicts stay unless
+        ``reopen_writer`` is set (acceptance harness / route auth never
+        stamped — STORE cannot measure k/12 without WRITER). A later
         ``RUN_SUCCEEDED`` with ``cycle=pilot`` is what ``pilot_ready`` reads.
         """
         return self.append(
             EventKind.PILOT_OPENED,
             detail=reason,
-            payload={"cycle": "pilot"},
+            payload={"cycle": "pilot", "reopen_writer": bool(reopen_writer)},
         )
 
     def record_clone(
@@ -457,9 +460,11 @@ class BuildLedger:
             if event.kind is EventKind.PILOT_OPENED:
                 # Code-phase TESTER used ``not pilot``; STORE_MANAGER applied
                 # no store op. Both must run again. WRITER stays complete
-                # until a failed pilot gate sends a rework.
+                # unless the harness / route-auth surface was never stamped.
                 state.pop(BuildRole.TESTER, None)
                 state.pop(BuildRole.STORE_MANAGER, None)
+                if (event.payload or {}).get("reopen_writer"):
+                    state.pop(BuildRole.WRITER, None)
                 continue
             if not event.role:
                 continue

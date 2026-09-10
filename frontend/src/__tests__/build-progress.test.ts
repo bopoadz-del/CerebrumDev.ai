@@ -14,6 +14,8 @@ import {
   ACCEPTANCE_KK,
   ACCEPTANCE_REQUIRED,
   formatAcceptanceScore,
+  isAcceptanceKk,
+  isAcceptancePendingPrototype,
   FULL_PILOT_MIN_AUTHORED_ACTIONS,
   fullPilotAuthorshipCount,
   fullPilotAuthorshipNeed,
@@ -331,6 +333,12 @@ describe('build progress copy', () => {
     expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).not.toMatch(
       /Download the export/,
     )
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).not.toMatch(
+      /build failed/,
+    )
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).toMatch(
+      /Acceptance is 0\/12/,
+    )
     expect(
       platformsLeadCopy({ state: 'succeeded', pilot_ready: true, acceptance: ACCEPTANCE_KK }, true),
     ).toMatch(/Download the export/)
@@ -647,6 +655,72 @@ describe('build progress copy', () => {
       disabled: true,
       ghost: true,
     })
+    expect(isAcceptancePendingPrototype(authoredOnly)).toBe(true)
+    expect(isAcceptanceKk(authoredOnly)).toBe(false)
+    expect(platformsLeadCopy(authoredOnly, true)).toMatch(/Acceptance is 5\/12/)
+    expect(platformsLeadCopy(authoredOnly, true)).not.toMatch(/build failed/)
+    expect(platformsLeadCopy(authoredOnly, true)).not.toMatch(/Download the export/)
+  })
+
+  it('live sess_4591d5cc photograph is acceptance-pending, not a failed build', () => {
+    const liveGolden: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      cycle: 'pilot',
+      auto_pilot: true,
+      pilot_ready: true,
+      acceptance: { passed: 0, total: 12, ok: false, missing: true },
+      authorship: { artifacts: 27, agent_written: 6, templated: 21 },
+      level_grade: {
+        level: 'CODE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: false,
+        full_pilot: false,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(formatAcceptanceScore(liveGolden)).toBe('0/12')
+    expect(isAcceptancePendingPrototype(liveGolden)).toBe(true)
+    expect(shouldRefuseExport(liveGolden)).toBe(true)
+    expect(isPilotZipReady(liveGolden)).toBe(false)
+    expect(platformsLeadCopy(liveGolden, true)).toMatch(/Acceptance is 0\/12/)
+    expect(platformsLeadCopy(liveGolden, true)).toMatch(/not a failed build/)
+    expect(platformsLeadCopy(liveGolden, true)).not.toMatch(/build failed/)
+    expect(exportAffordance(liveGolden)).toMatchObject({
+      label: 'Export (.zip) — acceptance 0/12',
+      disabled: true,
+      ghost: true,
+    })
+  })
+
+  it('enables Export once acceptance is k/k and the zip is pilot-ready', () => {
+    const ready: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 6, templated: 18, action_py: 6 },
+      acceptance: ACCEPTANCE_KK,
+      level_grade: {
+        level: 'STORE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: true,
+        full_pilot: true,
+        acceptance: ACCEPTANCE_KK,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(isAcceptancePendingPrototype(ready)).toBe(false)
+    expect(isAcceptanceKk(ready)).toBe(true)
+    expect(shouldRefuseExport(ready)).toBe(false)
+    expect(isPilotZipReady(ready)).toBe(true)
+    expect(exportAffordance(ready)).toEqual({
+      label: 'Download platform export (.zip)',
+      disabled: false,
+      ghost: false,
+    })
+    expect(platformsLeadCopy(ready, true)).toMatch(/Download the export/)
+    expect(platformsLeadCopy(ready, true)).not.toMatch(/build failed/)
   })
 
   it('FACTORY_CODE_CLI_BILLING honesty_class demotes founding and keeps Export when floor holds', () => {

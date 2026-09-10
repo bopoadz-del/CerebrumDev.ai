@@ -571,11 +571,67 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_lock" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Acceptance 0/12 — not pilot-ready' }),
+    ).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByText(/Acceptance is 0\/12/)).toBeInTheDocument()
+    expect(screen.getByText(/not a failed build/)).toBeInTheDocument()
     expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+  })
+
+  it('live sess_4591d5cc 1551 Floor photograph is acceptance-pending, not a failed build', async () => {
+    // launching-ready 1551 Floor golden: CODE-CYCLE PROTOTYPE READY heading,
+    // CODE/PRODUCT/STORE PASS, Export — acceptance 0/12. That is not a crash.
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        outcome: 'SUCCESS',
+        cycle: 'pilot',
+        auto_pilot: true,
+        pilot_ready: true,
+        acceptance: { passed: 0, total: 12, ok: false, missing: true },
+        authorship: { artifacts: 27, agent_written: 6, templated: 21 },
+        level_grade: {
+          level: 'CODE_GREEN',
+          founding_customer_ready: false,
+          pilot_ready: false,
+          full_pilot: false,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: {
+        product_name: 'Residential Lettings Platform',
+        vertical: 'residential-lettings',
+        drafting_mode: 'architect_llm',
+      },
+      blueprint_approved: true,
+      generation: {
+        engine: 'runner',
+        product_id: 'residential-lettings',
+        triggered_by: 'chat_llm',
+      },
+    })
+    render(<Floor sessionId="sess_4591d5cc45d04fe1" goPlatforms={() => {}} />)
+    expect(
+      await screen.findByRole('heading', { name: 'Acceptance 0/12 — not pilot-ready' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Code-cycle prototype ready' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByTestId('floor-gate-code')).toHaveTextContent('CODE PASS')
+    expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT PASS')
+    expect(screen.getByTestId('floor-gate-store')).toHaveTextContent('STORE PASS')
+    expect(screen.getByText(/Acceptance is 0\/12/)).toBeInTheDocument()
+    expect(screen.getByText(/not a failed build/)).toBeInTheDocument()
+    expect(screen.queryByText(/build failed/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 0/12' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
   })
 
   it('Continue to pilot sends continue when auto-pilot is blocked', async () => {

@@ -432,6 +432,37 @@ def test_pilot_cycle_reopens_tester_and_store_without_wiping_writer(ledger):
     assert BuildRole.STORE_MANAGER not in done
     assert ledger.resume_point() is BuildRole.TESTER
 
+
+def test_pilot_cycle_can_reopen_writer_when_acceptance_surface_is_missing(ledger):
+    ledger.start_run(product_id="used-cars", inputs_hash="h")
+    _pass(
+        ledger,
+        BuildRole.COLLECTOR,
+        BuildRole.CLONER,
+        BuildRole.WRITER,
+        BuildRole.TESTER,
+        BuildRole.STORE_MANAGER,
+    )
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="all phase gates passed",
+        payload={"cycle": "pilot", "pilot_ready": True},
+    )
+    assert ledger.pilot_ready() is True
+    assert ledger.resume_point() is None
+
+    ledger.open_pilot_cycle(
+        reason="acceptance not k/k; re-opening STORE measurement",
+        reopen_writer=True,
+    )
+    done = ledger.completed_roles()
+    assert BuildRole.WRITER not in done
+    assert BuildRole.TESTER not in done
+    assert BuildRole.STORE_MANAGER not in done
+    assert BuildRole.CLONER in done
+    assert ledger.resume_point() is BuildRole.WRITER
+    assert ledger.pilot_ready() is False
+
     _pass(ledger, BuildRole.TESTER, BuildRole.STORE_MANAGER)
     ledger.append(
         EventKind.RUN_SUCCEEDED,
