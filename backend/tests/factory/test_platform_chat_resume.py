@@ -401,20 +401,23 @@ def test_session_facts_allow_start_coder_for_pilot_after_code_phase(tmp_path):
     assert "forbidden" not in facts
 
 
+def test_session_facts_require_start_coder_when_ledger_pilot_lacks_acceptance(
+    tmp_path,
+):
+    state = _state_with_approved_run(tmp_path, succeeded=True)
+    out = Path(state.product_design.generation["output_dir"])
+    _close_pilot_ready(out)
+    facts = platform_chat_llm._session_facts(state)
+    assert "NOT pilot-ready" in facts
+    assert "start_coder" in facts
+    assert "forbidden" not in facts
+
+
 def test_session_facts_forbid_start_coder_after_pilot_ready(tmp_path):
     state = _state_with_approved_run(tmp_path, succeeded=True)
     out = Path(state.product_design.generation["output_dir"])
-    ledger = BuildLedger(out / "build_ledger.jsonl")
-    ledger.open_pilot_cycle()
-    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="T")
-    ledger.append(EventKind.GATE_PASSED, role=BuildRole.TESTER, detail="ok")
-    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.STORE_MANAGER, detail="S")
-    ledger.append(EventKind.GATE_PASSED, role=BuildRole.STORE_MANAGER, detail="ok")
-    ledger.append(
-        EventKind.RUN_SUCCEEDED,
-        detail="done",
-        payload={"cycle": "pilot", "pilot_ready": True},
-    )
+    _close_pilot_ready(out)
+    _write_acceptance_kk(out)
     facts = platform_chat_llm._session_facts(state)
     assert "pilot-ready" in facts
     assert "forbidden" in facts

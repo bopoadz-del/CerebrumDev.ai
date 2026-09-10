@@ -571,8 +571,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_lock" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Acceptance 0/12 — not pilot-ready' }),
+    ).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(screen.getByText(/Acceptance is 0\/12/)).toBeInTheDocument()
+    expect(screen.getByText(/not a failed build/)).toBeInTheDocument()
     expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()

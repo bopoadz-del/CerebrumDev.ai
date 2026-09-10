@@ -173,9 +173,11 @@ def read_acceptance_report(
                 return mapped
         grade = status.get("level_grade")
         if isinstance(grade, Mapping) and isinstance(grade.get("acceptance"), Mapping):
-            mapped = _report_from_mapping(grade["acceptance"])
-            if not mapped.missing:
-                return mapped
+            raw_grade = grade["acceptance"]
+            if raw_grade.get("missing") is not True:
+                mapped = _report_from_mapping(raw_grade)
+                if not mapped.missing:
+                    return mapped
     if root:
         path = Path(root) / ACCEPTANCE_REPORT_REL
         if path.is_file():
@@ -202,6 +204,8 @@ def _report_from_mapping(raw: Mapping[str, Any]) -> AcceptanceReport:
             )
         )
     if not lines:
+        if raw.get("missing") is True:
+            return missing_acceptance_report(detail=str(raw.get("detail") or ""))
         return parse_acceptance_output(str(raw.get("detail") or ""))
     by_name = {line.name: line for line in lines}
     ordered = [
