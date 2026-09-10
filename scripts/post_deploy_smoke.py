@@ -327,6 +327,64 @@ def verified_tokens():
     return None, None
 
 
+#: Headers a browser must receive from the API origin, and from the static
+#: frontend. Checked against the LIVE response, not against a file.
+#:
+#: Why this exists: the frontend's headers are declared in three places --
+#: ``frontend/public/_headers``, the ``headers:`` block of ``render.yaml``, and
+#: ``frontend/vite.config.ts`` preview -- and two tests assert those
+#: declarations. All three declarations and both tests were green on
+#: 2026-09-10 while ``curl -I https://www.cerebrum-dev.com/`` returned exactly
+#: one of them (``x-content-type-options``). ``render.yaml`` is documented as
+#: not applied, and ``_headers`` is a Netlify/Pages convention a Render static
+#: site does not read, so the declarations were true and the production
+#: response was not. A twin that reads the file can never catch that; this one
+#: reads the wire.
+API_REQUIRED_HEADERS = (
+    "content-security-policy",
+    "x-content-type-options",
+    "x-frame-options",
+    "referrer-policy",
+    "strict-transport-security",
+)
+FRONTEND_REQUIRED_HEADERS = API_REQUIRED_HEADERS
+DEFAULT_FRONTEND = "https://www.cerebrum-dev.com"
+
+
+def live_headers(url):
+    """Lowercased response headers for a GET, or None when unreachable."""
+    try:
+        rq = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(rq, timeout=60) as resp:
+            return {k.lower(): v for k, v in resp.headers.items()}
+    except urllib.error.HTTPError as exc:  # a 4xx still carries headers
+        return {k.lower(): v for k, v in exc.headers.items()}
+    except Exception as exc:  # noqa: BLE001 -- unreachable is a DEAD check
+        print(f"    header probe failed for {url}: {exc}")
+        return None
+
+
+def record_security_headers(api_base=None, frontend=None):
+    """LIVE/DEAD per origin for the headers a browser actually receives."""
+    api_base = (api_base or BASE).rstrip("/")
+    frontend = (frontend or os.environ.get("SMOKE_FRONTEND") or DEFAULT_FRONTEND).rstrip("/")
+
+    for label, url, required in (
+        ("api", api_base + "/health", API_REQUIRED_HEADERS),
+        ("frontend", frontend + "/", FRONTEND_REQUIRED_HEADERS),
+    ):
+        got = live_headers(url)
+        if got is None:
+            check(f"security headers ({label})", False, f"{url} unreachable")
+            continue
+        missing = [h for h in required if h not in got]
+        check(
+            f"security headers ({label})",
+            not missing,
+            f"{url} missing={missing}" if missing else f"{url} all {len(required)} present",
+        )
+
+
 def record_unauthenticated_surface(health=None, ready=None, version=None):
     """LIVE/DEAD lines for the public ops surface (no principal)."""
     if health is None:
@@ -362,6 +420,7 @@ def main():
         return finish()
 
     hs, h, _rs, _r, _vs, _v = record_unauthenticated_surface()
+    record_security_headers()
 
     if not has_gated_credentials():
         emit_gated_skip_annotation()
