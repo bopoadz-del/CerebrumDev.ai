@@ -171,9 +171,7 @@ def test_continue_after_success_opens_pilot_on_same_workspace(tmp_path, monkeypa
     assert "not a new product" in result["summary"].lower()
 
 
-def test_continue_after_pilot_ready_does_not_start_a_new_product(tmp_path, monkeypatch):
-    state = _state_with_approved_run(tmp_path, succeeded=True)
-    out = Path(state.product_design.generation["output_dir"])
+def _close_pilot_ready(out: Path) -> None:
     ledger = BuildLedger(out / "build_ledger.jsonl")
     ledger.open_pilot_cycle()
     ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
@@ -185,6 +183,64 @@ def test_continue_after_pilot_ready_does_not_start_a_new_product(tmp_path, monke
         detail="all phase gates passed",
         payload={"cycle": "pilot", "pilot_ready": True},
     )
+
+
+def _write_acceptance_kk(out: Path) -> None:
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_CHECK_NAMES,
+        AcceptanceLine,
+        AcceptanceReport,
+        write_acceptance_report,
+    )
+
+    write_acceptance_report(
+        out,
+        AcceptanceReport(
+            passed=12,
+            total=12,
+            ok=True,
+            lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
+        ),
+    )
+
+
+def test_continue_after_pilot_ready_without_acceptance_reopens_measurement(
+    tmp_path, monkeypatch
+):
+    """Pre-#395 Store-green is ledger-pilot only. Continue must re-run STORE."""
+    state = _state_with_approved_run(tmp_path, succeeded=True)
+    out = Path(state.product_design.generation["output_dir"])
+    _close_pilot_ready(out)
+    assert platform_chat_flow.is_pilot_ready(state) is False
+
+    captured = {}
+
+    def fake_generate(bp, output_dir, blocks_root=None, cycle=None, **_kwargs):
+        captured["cycle"] = cycle
+        captured["output_dir"] = str(output_dir)
+        return {
+            "engine": "runner",
+            "output_dir": str(output_dir),
+            "inputs_hash": state.product_design.generation["inputs_hash"],
+            "product_id": bp.product_id,
+            "cycle": cycle,
+            "build": {"state": "building", "phases_done": 5, "phases_total": 5},
+        }
+
+    monkeypatch.setattr(platform_chat_flow, "generate_product", fake_generate)
+    result = platform_chat_flow.start_or_resume_coder(state)
+    assert result.get("already_complete") is not True
+    assert captured["cycle"] == "pilot"
+    assert captured["output_dir"] == str(out)
+    assert result.get("cycle") == "pilot"
+
+
+def test_continue_after_pilot_ready_does_not_start_a_new_product(tmp_path, monkeypatch):
+    state = _state_with_approved_run(tmp_path, succeeded=True)
+    out = Path(state.product_design.generation["output_dir"])
+    _close_pilot_ready(out)
+    _write_acceptance_kk(out)
+    assert platform_chat_flow.is_pilot_ready(state) is True
 
     def boom(*a, **k):
         raise AssertionError("generate_product must not run after pilot-ready")

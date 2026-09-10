@@ -22,6 +22,7 @@ import {
   formatPhaseHeadline,
   hasSourcedLevel,
   honestLevel,
+  isAcceptancePendingPrototype,
   isPilotZipReady,
   nRequiredFromProductInputs,
   platformsLeadCopy,
@@ -156,6 +157,10 @@ export function Platforms({
       return 'Store-green — not founding-customer-ready.'
     }
     if (liveBuild.state === 'succeeded' && !pilotReady) {
+      if (isAcceptancePendingPrototype(liveBuild)) {
+        const score = formatAcceptanceScore(liveBuild)
+        return `Acceptance ${score} — not pilot-ready. Export stays closed until scripts/acceptance.py is k/k.`
+      }
       return liveBuild.auto_pilot
         ? 'Code-cycle prototype — not pilot-ready. The pilot cycle should open automatically.'
         : 'Code-cycle prototype — not pilot-ready. Continue to pilot on the Factory Floor.'

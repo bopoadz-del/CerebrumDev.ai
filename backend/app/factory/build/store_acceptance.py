@@ -160,14 +160,22 @@ def read_acceptance_report(
     root: Optional[Path | str] = None,
     status: Optional[Mapping[str, Any]] = None,
 ) -> AcceptanceReport:
-    """Fail-closed: missing report is 0/12, not a pass."""
+    """Fail-closed: missing report is 0/12, not a pass.
+
+    A stale ``missing: true`` blob on status / level_grade must not hide a
+    later ``docs/store_acceptance.json`` the Store gate just wrote.
+    """
     if status:
         raw = status.get("acceptance")
         if isinstance(raw, Mapping) and raw.get("missing") is not True:
-            return _report_from_mapping(raw)
+            mapped = _report_from_mapping(raw)
+            if not mapped.missing:
+                return mapped
         grade = status.get("level_grade")
         if isinstance(grade, Mapping) and isinstance(grade.get("acceptance"), Mapping):
-            return _report_from_mapping(grade["acceptance"])
+            mapped = _report_from_mapping(grade["acceptance"])
+            if not mapped.missing:
+                return mapped
     if root:
         path = Path(root) / ACCEPTANCE_REPORT_REL
         if path.is_file():
@@ -225,6 +233,42 @@ def acceptance_is_kk(report: Optional[AcceptanceReport]) -> bool:
         and report.total >= ACCEPTANCE_REQUIRED
         and report.passed == report.total
     )
+
+
+def workspace_acceptance_is_kk(
+    root: Optional[Path | str] = None,
+    status: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True only when the workspace (or status) has a measured k/k report."""
+    return acceptance_is_kk(read_acceptance_report(root, status))
+
+
+def acceptance_surface_incomplete(root: Path | str) -> bool:
+    """True when WRITER has not stamped the files STORE measures.
+
+    Pre-#395 workspaces can be ledger-pilot-ready and still lack the harness,
+    ``app/auth.py``, the UI stamp, or route token/422 wiring. STORE cannot
+    evaluate those — WRITER must run again.
+    """
+    dest = Path(root)
+    if not (dest / ACCEPTANCE_SCRIPT_REL).is_file():
+        return True
+    if not (dest / AUTH_REL).is_file():
+        return True
+    if not (dest / UI_INDEX_REL).is_file():
+        return True
+    if not (dest / OPENAPI_REL).is_file():
+        return True
+    if not (dest / GITHUB_CI_REL).is_file():
+        return True
+    routes = dest / "app" / "routes.py"
+    if not routes.is_file():
+        return True
+    try:
+        text = routes.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    return "require_platform_token" not in text or "reject_invalid_payload" not in text
 
 
 def acceptance_export_blocker(

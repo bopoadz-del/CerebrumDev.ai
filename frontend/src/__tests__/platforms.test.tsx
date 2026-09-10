@@ -262,6 +262,9 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByTestId('platforms-acceptance-score')).toHaveTextContent('5/12')
     expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 5/12' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Acceptance is 5\/12/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/build failed/)
+    expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
   it('surfaces CODE_GREEN vs FOUNDING_CUSTOMER_READY vs failed on Platforms', async () => {

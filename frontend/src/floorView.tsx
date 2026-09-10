@@ -17,8 +17,10 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  formatAcceptanceScore,
   hasSourcedLevel,
   honestLevel,
+  isAcceptancePendingPrototype,
   isPilotZipReady,
   shouldDemoteFounding,
   phaseBarFraction,
@@ -251,9 +253,11 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
 
 function coderTakeoverHeading(build: BuildStatus | null): string {
   if (build?.state === 'succeeded') {
-    return isPilotZipReady(build)
-      ? 'Coding agent finished'
-      : 'Code-cycle prototype ready'
+    if (isPilotZipReady(build)) return 'Coding agent finished'
+    if (isAcceptancePendingPrototype(build)) {
+      return `Acceptance ${formatAcceptanceScore(build)} — not pilot-ready`
+    }
+    return 'Code-cycle prototype ready'
   }
   return 'Coding agent has taken over'
 }
@@ -276,6 +280,13 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
       }
       if (finished?.startsWith('Finished')) return finished + '. Download ready.'
       return finished ?? 'Coding agent finished. Download it from Your Platforms.'
+    }
+    if (isAcceptancePendingPrototype(build)) {
+      const score = formatAcceptanceScore(build)
+      const pending =
+        `Acceptance is ${score} — not k/k. Export stays closed until scripts/acceptance.py ` +
+        'passes inside the Store-built image. This is a code-green prototype, not a failed build.'
+      return finished ? `${finished}. ${pending}` : pending
     }
     if (finished) {
       return (

@@ -602,6 +602,25 @@ function claimsStoreGreenPilot(build: BuildStatus | null | undefined): boolean {
 }
 
 /**
+ * Succeeded CODE/PRODUCT/STORE (or ledger-pilot) prototype whose Export
+ * refusal is acceptance not run / not k/k — not a crashed or red-gate build.
+ * A true code-cycle (PRODUCT/STORE not run) is not this shape.
+ */
+export function isAcceptancePendingPrototype(
+  build: BuildStatus | null | undefined,
+): boolean {
+  if (!build || build.state !== 'succeeded') return false
+  if (isUnreadableLedger(build) || productSuiteFailed(build) || outcomeFailed(build)) {
+    return false
+  }
+  if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
+    return false
+  }
+  if (isAcceptanceKk(build)) return false
+  return claimsStoreGreenPilot(build)
+}
+
+/**
  * Near-zero or template-majority writer keep-path.
  * Live photographs: 1/23 after a CLI billing miss; sess_45729 0639 8/16
  * factory-LLM thin zip that still painted Finished / founding.
@@ -825,6 +844,13 @@ export function platformsLeadCopy(
   }
   if (isUnreadableLedger(build)) {
     return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+  }
+  if (isAcceptancePendingPrototype(build)) {
+    const score = formatAcceptanceScore(build)
+    return (
+      `Acceptance is ${score} — not k/k. Download unavailable until scripts/acceptance.py ` +
+      'passes inside the Store-built image. This is a code-green prototype, not a failed build.'
+    )
   }
   if (
     shouldRefuseExport(build) &&
