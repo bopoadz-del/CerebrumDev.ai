@@ -132,9 +132,24 @@ class BuildBudget:
     max_rework: int = 3
     wall_clock_s: float = 1800.0
     phase_wall_clock_s: float = 1500.0
+    #: The wall may be RAMPED at an inspect, never past this. It is the same
+    #: number ``budget_inspect.CEILING_S`` proposes up to; it lives here as
+    #: well because ``_extend_wall`` is the only writer of the deadline and
+    #: two of its callers do not come from the inspector at all -- they pass
+    #: ``elapsed + PILOT_SUITE_TAIL_S``, which grows with the run and was
+    #: never compared to a ceiling. A bound enforced in the module that
+    #: PROPOSES values, and not in the one that APPLIES them, is a
+    #: convention. ``0`` disables it, matching ``wall_clock_s``.
+    hard_ceiling_s: float = 7200.0
 
     def deadline_from(self, started: float) -> Optional[float]:
         return (started + self.wall_clock_s) if self.wall_clock_s > 0 else None
+
+    def capped(self, wall: float) -> float:
+        """The largest wall this budget will honour."""
+        if self.hard_ceiling_s and self.hard_ceiling_s > 0:
+            return min(float(wall), float(self.hard_ceiling_s))
+        return float(wall)
 
 
 @dataclass
@@ -554,9 +569,24 @@ class RoleRunner:
         return decided
 
     def _extend_wall(self, new_wall: float) -> None:
-        """Lengthen the build wall and the live role deadline. Never shrink."""
+        """Lengthen the build wall and the live role deadline. Never shrink.
+
+        Clamped to ``budget.hard_ceiling_s`` HERE rather than at each caller:
+        this is the only writer of the deadline, and two of its callers pass
+        ``elapsed + PILOT_SUITE_TAIL_S`` without consulting the inspector, so
+        a cap applied only where values are proposed is not a cap.
+        """
         old_wall = float(self.budget.wall_clock_s or 0.0)
+        requested = float(new_wall)
+        new_wall = self.budget.capped(requested)
         if new_wall <= old_wall:
+            if requested > old_wall:
+                logger.info(
+                    "factory budget ramp REFUSED: %.0fs requested, wall already "
+                    "at the %.0fs ceiling",
+                    requested,
+                    float(self.budget.hard_ceiling_s),
+                )
             return
         add = new_wall - old_wall
         if self._deadline is not None:
@@ -572,11 +602,13 @@ class RoleRunner:
             max_rework=self.budget.max_rework,
             wall_clock_s=new_wall,
             phase_wall_clock_s=self.budget.phase_wall_clock_s,
+            hard_ceiling_s=self.budget.hard_ceiling_s,
         )
         logger.info(
-            "factory budget ramp: wall %.0fs → %.0fs (deadline live)",
+            "factory budget ramp: wall %.0fs → %.0fs (deadline live)%s",
             old_wall,
             new_wall,
+            f" [clamped from {requested:.0f}s]" if requested > new_wall else "",
         )
 
     def _maybe_stage_inspect(self) -> Optional[Dict[str, Any]]:
