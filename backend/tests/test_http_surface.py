@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import shutil
+
+import pytest
+
 import app.main as main
 
 
@@ -138,20 +142,18 @@ def test_frontend_security_header_declarations_match_the_serving_path():
         assert value in text
 
 
+@pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="node is required to exercise frontend/serve.mjs",
+)
 def test_serve_mjs_emits_all_five_security_headers_on_the_wire(tmp_path):
     """Lock the process Render would start, not a file the static runtime ignored."""
     import os
-    import shutil
     import socket
     import subprocess
     import time
     import urllib.error
     import urllib.request
-
-    if not shutil.which("node"):
-        import pytest
-
-        pytest.skip("node is required to exercise frontend/serve.mjs")
 
     _path, expected = _frontend_security_headers()
     root = _path.parent
