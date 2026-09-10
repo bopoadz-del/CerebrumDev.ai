@@ -129,9 +129,14 @@ def test_api_responses_carry_an_enforcing_csp(client):
 
 
 def test_error_responses_carry_the_csp_too(client):
-    """401 is the response an unauthenticated prober sees most."""
+    """A refusal is the response an unauthenticated prober sees most.
+
+    The exact code is 401 or 403 depending on how the environment resolves
+    a principal, and this test is not about which -- only that a refused
+    request is still a hardened response.
+    """
     res = client.get("/v1/billing/status")
-    assert res.status_code == 401
+    assert res.status_code in (401, 403), res.text
     assert "default-src 'none'" in res.headers["Content-Security-Policy"]
 
 

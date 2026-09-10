@@ -27,6 +27,12 @@ def smoke(monkeypatch):
     monkeypatch.delenv("GITHUB_SHA", raising=False)
     mod = _load_smoke()
     mod.FAILURES.clear()
+    # These tests drive main() with a stubbed req(). The security-header
+    # probe is the one check that does NOT go through req -- it reads raw
+    # response headers -- so it would reach the real internet from a unit
+    # test. Stub it healthy by default; the tests that are ABOUT it override
+    # this and assert the DEAD path.
+    mod.live_headers = lambda url: {h: "stub" for h in mod.API_REQUIRED_HEADERS}
     return mod
 
 
@@ -323,3 +329,44 @@ class TestResolveBaseAndWorkflow:
         assert "has_gated_credentials" in text
         assert "GITHUB_SHA" in text
         assert "git_sha_matches" in text
+
+
+class TestSecurityHeaderProbe:
+    """The live twin: headers a browser receives, not headers a file declares.
+
+    Three files declare the frontend's headers and two tests assert those
+    declarations. On 2026-09-10 all five were green while
+    ``curl -I https://www.cerebrum-dev.com/`` returned one of the five.
+    These tests are about the check that can tell the difference.
+    """
+
+    def test_a_complete_header_set_is_live(self, smoke, capsys):
+        smoke.FAILURES.clear()
+        smoke.live_headers = lambda url: {
+            h: "stub" for h in smoke.API_REQUIRED_HEADERS
+        }
+        smoke.record_security_headers("https://api.example.test", "https://www.example.test")
+        assert smoke.FAILURES == []
+        assert "[LIVE] security headers (api)" in capsys.readouterr().out
+
+    def test_a_missing_header_is_dead_and_names_it(self, smoke, capsys):
+        smoke.FAILURES.clear()
+
+        def partial(url):
+            got = {h: "stub" for h in smoke.API_REQUIRED_HEADERS}
+            if "www." in url:  # the frontend, as measured on 2026-09-10
+                return {"x-content-type-options": "nosniff"}
+            return got
+
+        smoke.live_headers = partial
+        smoke.record_security_headers("https://api.example.test", "https://www.example.test")
+        assert smoke.FAILURES == ["security headers (frontend)"]
+        out = capsys.readouterr().out
+        assert "[DEAD] security headers (frontend)" in out
+        assert "content-security-policy" in out, "a DEAD check must name what is missing"
+
+    def test_an_unreachable_origin_is_dead_not_silently_ok(self, smoke):
+        smoke.FAILURES.clear()
+        smoke.live_headers = lambda url: None
+        smoke.record_security_headers("https://api.example.test", "https://www.example.test")
+        assert len(smoke.FAILURES) == 2
