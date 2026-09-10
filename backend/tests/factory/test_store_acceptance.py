@@ -235,6 +235,54 @@ def test_read_report_prefers_workspace_file_over_stale_missing_status(tmp_path):
     assert acceptance_export_blocker(status, tmp_path) is None
 
 
+def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
+    """Live after a first Store miss: measured 0/12 (not missing) must not hide k/k."""
+    stale_lines = [
+        {"name": n, "status": "FAIL", "detail": "not measured"} for n in ACCEPTANCE_CHECK_NAMES
+    ]
+    stale = {
+        "acceptance": {
+            "missing": False,
+            "passed": 0,
+            "total": 12,
+            "ok": False,
+            "lines": stale_lines,
+        },
+        "level_grade": {
+            "acceptance": {
+                "missing": False,
+                "passed": 0,
+                "total": 12,
+                "ok": False,
+                "lines": stale_lines,
+            },
+        },
+    }
+    assert not workspace_acceptance_is_kk(tmp_path, stale)
+    write_acceptance_report(
+        tmp_path,
+        AcceptanceReport(
+            passed=12,
+            total=12,
+            ok=True,
+            lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
+        ),
+    )
+    report = read_acceptance_report(tmp_path, stale)
+    assert report.missing is False
+    assert report.passed == 12
+    assert workspace_acceptance_is_kk(tmp_path, stale)
+    assert acceptance_export_blocker(
+        {
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            **stale,
+        },
+        tmp_path,
+    ) is None
+
+
 def test_store_gate_replaces_live_0_of_12_missing_with_measured_kk(tmp_path):
     """Live sess_4591d5cc shape: missing 0/12, then Store eval persists 12/12."""
     from app.factory.build_jobs import build_status
@@ -266,6 +314,83 @@ def test_store_gate_replaces_live_0_of_12_missing_with_measured_kk(tmp_path):
     assert before["acceptance"]["passed"] == 0
     assert before["acceptance"]["total"] == 12
     assert acceptance_export_blocker(before, tmp_path) is not None
+
+    def runner(argv, *, cwd=None, timeout=None):
+        joined = " ".join(argv)
+        if "acceptance.py" in joined:
+            return _Proc(0, _kk_output())
+        if "-c" in argv:
+            return _Proc(0, "200\n")
+        return _Proc(0, "ok")
+
+    ctx = GateContext(
+        workspace=tmp_path,
+        role=BuildRole.STORE_MANAGER,
+        runner=runner,
+        cycle="pilot",
+    )
+    res = gate_store_acceptance(ctx)
+    assert res.ok, res.detail
+    after = attach_level_grade(dict(before), tmp_path)
+    assert after["acceptance"]["passed"] == 12
+    assert after["acceptance"]["ok"] is True
+    assert after["acceptance"]["missing"] is not True
+    assert acceptance_export_blocker(after, tmp_path) is None
+    reread = build_status(tmp_path)
+    assert reread["acceptance"]["passed"] == 12
+    assert acceptance_export_blocker(reread, tmp_path) is None
+
+
+def test_store_gate_persists_kk_over_stale_measured_zero_after_pilot(tmp_path):
+    """Pilot cycle wrote 12/12; a leftover measured 0/12 status must not stick."""
+    from app.factory.build_jobs import build_status
+    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.level_grade import attach_level_grade
+
+    stamp_acceptance_into_path(tmp_path, product_name="Lettings", cap_ids=["unit_registry"])
+    (tmp_path / "app" / "routes.py").write_text(
+        "from app.auth import require_platform_token, reject_invalid_payload\n",
+        encoding="utf-8",
+    )
+    ledger = BuildLedger(tmp_path / "build_ledger.jsonl")
+    ledger.start_run(product_id="residential-lettings", inputs_hash="abc123def456")
+    for role in (
+        BuildRole.COLLECTOR,
+        BuildRole.CLONER,
+        BuildRole.WRITER,
+        BuildRole.TESTER,
+        BuildRole.STORE_MANAGER,
+    ):
+        ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
+        ledger.append(EventKind.GATE_PASSED, role=role, detail="ok")
+    ledger.append(
+        EventKind.RUN_SUCCEEDED,
+        detail="CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+        payload={"cycle": "pilot", "pilot_ready": True, "outcome": "SUCCESS"},
+    )
+    stale_zero = {
+        "missing": False,
+        "passed": 0,
+        "total": 12,
+        "ok": False,
+        "lines": [
+            {"name": n, "status": "FAIL", "detail": "not measured"}
+            for n in ACCEPTANCE_CHECK_NAMES
+        ],
+    }
+    before = {
+        "state": "succeeded",
+        "cycle": "pilot",
+        "pilot_ready": True,
+        "outcome": "SUCCESS",
+        "acceptance": stale_zero,
+        "level_grade": {
+            "level": "CODE_GREEN",
+            "acceptance": stale_zero,
+            "three_gate": {"CODE": "PASS", "PRODUCT": "PASS", "STORE": "PASS"},
+        },
+    }
+    assert read_acceptance_report(tmp_path, before).passed == 0
 
     def runner(argv, *, cwd=None, timeout=None):
         joined = " ".join(argv)

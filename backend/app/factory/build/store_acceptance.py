@@ -162,9 +162,17 @@ def read_acceptance_report(
 ) -> AcceptanceReport:
     """Fail-closed: missing report is 0/12, not a pass.
 
-    A stale ``missing: true`` blob on status / level_grade must not hide a
-    later ``docs/store_acceptance.json`` the Store gate just wrote.
+    ``docs/store_acceptance.json`` is what the Store gate just wrote and is
+    authoritative. A stale status / level_grade blob — ``missing: true`` or a
+    measured 0/12 from an earlier miss — must not hide a later k/k file.
     """
+    if root:
+        path = Path(root) / ACCEPTANCE_REPORT_REL
+        if path.is_file():
+            try:
+                return _report_from_mapping(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                return missing_acceptance_report(detail="docs/store_acceptance.json is unreadable")
     if status:
         raw = status.get("acceptance")
         if isinstance(raw, Mapping) and raw.get("missing") is not True:
@@ -178,13 +186,6 @@ def read_acceptance_report(
                 mapped = _report_from_mapping(raw_grade)
                 if not mapped.missing:
                     return mapped
-    if root:
-        path = Path(root) / ACCEPTANCE_REPORT_REL
-        if path.is_file():
-            try:
-                return _report_from_mapping(json.loads(path.read_text(encoding="utf-8")))
-            except (OSError, ValueError):
-                return missing_acceptance_report(detail="docs/store_acceptance.json is unreadable")
     return missing_acceptance_report()
 
 
