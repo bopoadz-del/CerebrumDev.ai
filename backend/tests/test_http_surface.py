@@ -70,44 +70,173 @@ def test_stateless_factory_product_surface_is_gone(client):
     assert res.status_code == 404, res.text
 
 
-def test_render_yaml_declares_frontend_security_headers():
+def _frontend_security_headers():
+    import json
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[2] / "frontend" / "security-headers.json"
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return path, data
+
+
+def test_render_yaml_starts_the_header_capable_frontend_server():
+    """Blueprint must point at serve.mjs — a static headers: block never hit the wire."""
     import yaml
 
     from pathlib import Path
 
-    render = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "render.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
+    root = Path(__file__).resolve().parents[2]
+    render = yaml.safe_load((root / "render.yaml").read_text(encoding="utf-8"))
     frontend = [s for s in render["services"] if s.get("name") == "cerebrumdev-frontend"]
     assert frontend, "cerebrumdev-frontend missing from render.yaml"
-    names = {h["name"] for h in frontend[0].get("headers") or []}
-    assert "X-Content-Type-Options" in names
-    assert "X-Frame-Options" in names
-    assert "Strict-Transport-Security" in names
-    assert "Content-Security-Policy" in names
-    csp = next(
-        h["value"]
-        for h in frontend[0]["headers"]
-        if h["name"] == "Content-Security-Policy"
+    svc = frontend[0]
+    assert svc.get("type") == "web", svc.get("type")
+    assert svc.get("runtime") == "node", svc.get("runtime")
+    assert svc.get("rootDir") == "frontend"
+    assert svc.get("startCommand") == "node serve.mjs"
+    assert not svc.get("headers"), (
+        "web services emit headers from serve.mjs; a Blueprint headers: "
+        "block is the static-site path that production never applied"
     )
+    serve = (root / "frontend" / "serve.mjs").read_text(encoding="utf-8")
+    assert "security-headers.json" in serve
+    assert "0.0.0.0" in serve
+
+
+def test_frontend_security_header_declarations_match_the_serving_path():
+    """_headers / JSON / smoke names stay twins; serve.mjs is what is served."""
+    from pathlib import Path
+
+    _path, headers = _frontend_security_headers()
+    required = {
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Referrer-Policy",
+        "Content-Security-Policy",
+        "Strict-Transport-Security",
+    }
+    assert required <= set(headers)
+    csp = headers["Content-Security-Policy"]
     assert "default-src 'self'" in csp
     assert "frame-ancestors 'none'" in csp
-
-
-def test_frontend_public_headers_declare_csp_frame_ancestors_hsts():
-    """M14 twin: published _headers even when the Render blueprint is not synced."""
-    from pathlib import Path
+    assert "https://api.cerebrum-dev.com" in csp
+    assert "https://*.ingest.sentry.io" in csp
+    assert headers["X-Frame-Options"] == "DENY"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Strict-Transport-Security"] == (
+        "max-age=31536000; includeSubDomains"
+    )
 
     text = (
         Path(__file__).resolve().parents[2] / "frontend" / "public" / "_headers"
     ).read_text(encoding="utf-8")
-    assert "default-src 'self'" in text
-    assert "frame-ancestors 'none'" in text
-    assert "Strict-Transport-Security" in text
-    assert "X-Content-Type-Options" in text
-    assert "X-Frame-Options" in text
+    for name, value in headers.items():
+        assert name in text
+        assert value in text
+
+
+def test_serve_mjs_emits_all_five_security_headers_on_the_wire(tmp_path):
+    """Lock the process Render would start, not a file the static runtime ignored."""
+    import os
+    import shutil
+    import socket
+    import subprocess
+    import time
+    import urllib.error
+    import urllib.request
+
+    if not shutil.which("node"):
+        import pytest
+
+        pytest.skip("node is required to exercise frontend/serve.mjs")
+
+    _path, expected = _frontend_security_headers()
+    root = _path.parent
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><title>ok</title>", encoding="utf-8"
+    )
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+
+    env = {
+        **os.environ,
+        "HOST": "127.0.0.1",
+        "PORT": str(port),
+        "STATIC_ROOT": str(tmp_path),
+    }
+    proc = subprocess.Popen(
+        ["node", str(root / "serve.mjs")],
+        cwd=str(root),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = time.time() + 8
+        last_exc = None
+        while time.time() < deadline:
+            try:
+                urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"http://127.0.0.1:{port}/", method="HEAD"
+                    ),
+                    timeout=1,
+                )
+                break
+            except Exception as exc:  # noqa: BLE001 — wait for listen
+                last_exc = exc
+                if proc.poll() is not None:
+                    out, err = proc.communicate(timeout=2)
+                    raise AssertionError(
+                        f"serve.mjs exited {proc.returncode}: "
+                        f"{err.decode() or out.decode()}"
+                    ) from exc
+                time.sleep(0.05)
+        else:
+            raise AssertionError(f"serve.mjs did not listen: {last_exc}")
+
+        for method in ("HEAD", "GET"):
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{port}/", method=method
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                got = {k.lower(): v for k, v in resp.headers.items()}
+                assert resp.status == 200
+            for name, value in expected.items():
+                assert got[name.lower()] == value, (method, name, got)
+
+        spa = urllib.request.Request(
+            f"http://127.0.0.1:{port}/floor/session", method="GET"
+        )
+        with urllib.request.urlopen(spa, timeout=5) as resp:
+            spa_got = {k.lower(): v for k, v in resp.headers.items()}
+            assert resp.status == 200
+        assert "content-security-policy" in spa_got
+
+        missing = urllib.request.Request(
+            f"http://127.0.0.1:{port}/missing.js", method="GET"
+        )
+        try:
+            urllib.request.urlopen(missing, timeout=5)
+            raise AssertionError("missing.js should 404")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 404
+            err_got = {k.lower(): v for k, v in exc.headers.items()}
+            for name, value in expected.items():
+                assert err_got[name.lower()] == value, (name, err_got)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 # ── CSP on the API origin (2026-09-10) ────────────────────────────────────

@@ -88,18 +88,26 @@ backend_payload = {
 }
 
 frontend_payload = {
-    "type": "static_site",
+    "type": "web_service",
     "name": "cerebrumdev-frontend",
     "ownerId": OWNER_ID,
     "repo": REPO,
     "autoDeploy": "yes",
     "branch": "master",
+    "rootDir": "frontend",
     "serviceDetails": {
-        "buildCommand": "cd frontend && npm install && npm run build",
-        "publishPath": "frontend/dist",
-        "routes": [{"type": "rewrite", "source": "/*", "destination": "/index.html"}],
+        "env": "node",
+        "plan": "starter",
+        "region": "oregon",
+        "envSpecificDetails": {
+            "buildCommand": "npm install && npm run build",
+            "startCommand": "node serve.mjs",
+        },
+        "healthCheckPath": "/",
+        "numInstances": 1,
     },
     "envVars": [
+        {"key": "NODE_VERSION", "value": "20"},
         {"key": "VITE_API_URL", "value": "https://api.cerebrum-dev.com"},
         # Do not bake CEREBRUM_DEV_API_KEY into a VITE_* var — the SPA uses
         # cdt_ login tokens. Dashboard is source of truth for frontend env.

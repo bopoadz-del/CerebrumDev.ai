@@ -1,6 +1,7 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import securityHeaders from './security-headers.json' with { type: 'json' }
 
 export default defineConfig({
   plugins: [react()],
@@ -22,14 +23,7 @@ export default defineConfig({
     },
   },
   preview: {
-    headers: {
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-      'Referrer-Policy': 'no-referrer',
-      'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
-      'Content-Security-Policy':
-        "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; connect-src 'self' https://api.cerebrum-dev.com https://*.ingest.sentry.io; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
-    },
+    headers: securityHeaders,
   },
   test: {
     environment: 'jsdom',
