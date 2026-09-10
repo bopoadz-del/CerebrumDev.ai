@@ -18,5 +18,16 @@ export default tseslint.config(
   },
   {
     ignores: ['dist/', 'node_modules/', 'e2e/', 'playwright-report/', 'test-results/', 'playwright.config.ts'],
-  }
+  },
+  {
+    // Flat config ignores --ext .ts,.tsx. serve.mjs is a Node process
+    // (process.env / console); the SPA ruleset has no Node globals.
+    files: ['serve.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
+  },
 );

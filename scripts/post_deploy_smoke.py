@@ -327,19 +327,20 @@ def verified_tokens():
     return None, None
 
 
-#: Headers a browser must receive from the API origin, and from the static
+#: Headers a browser must receive from the API origin, and from the
 #: frontend. Checked against the LIVE response, not against a file.
 #:
-#: Why this exists: the frontend's headers are declared in three places --
-#: ``frontend/public/_headers``, the ``headers:`` block of ``render.yaml``, and
-#: ``frontend/vite.config.ts`` preview -- and two tests assert those
-#: declarations. All three declarations and both tests were green on
-#: 2026-09-10 while ``curl -I https://www.cerebrum-dev.com/`` returned exactly
-#: one of them (``x-content-type-options``). ``render.yaml`` is documented as
-#: not applied, and ``_headers`` is a Netlify/Pages convention a Render static
-#: site does not read, so the declarations were true and the production
-#: response was not. A twin that reads the file can never catch that; this one
-#: reads the wire.
+#: Why this exists: until the Node serving path (``frontend/serve.mjs``)
+#: the frontend's headers were declared in three places --
+#: ``frontend/public/_headers``, a ``headers:`` block on a Render static
+#: site in ``render.yaml``, and ``frontend/vite.config.ts`` preview -- and
+#: two tests asserted those declarations. All three declarations and both
+#: tests were green on 2026-09-10 while ``curl -I https://www.cerebrum-dev.com/``
+#: returned exactly one of them (``x-content-type-options``). ``render.yaml``
+#: is documented as not applied, and ``_headers`` is a Netlify/Pages
+#: convention a Render static site does not read, so the declarations were
+#: true and the production response was not. A twin that reads the file can
+#: never catch that; this one reads the wire. Do not weaken this check.
 API_REQUIRED_HEADERS = (
     "content-security-policy",
     "x-content-type-options",

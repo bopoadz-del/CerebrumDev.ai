@@ -217,6 +217,35 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Serve dist and assert security headers on the wire
+        run: |
+          set -euo pipefail
+          PORT=4173 HOST=127.0.0.1 node serve.mjs &
+          serve_pid=$!
+          trap 'kill "$serve_pid" 2>/dev/null || true' EXIT
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            if curl -sf -o /dev/null http://127.0.0.1:4173/; then
+              break
+            fi
+            sleep 0.2
+          done
+          curl -sI http://127.0.0.1:4173/ | tee /tmp/fe-security-headers.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path("/tmp/fe-security-headers.txt").read_text().lower()
+          need = (
+              "content-security-policy",
+              "x-content-type-options",
+              "x-frame-options",
+              "referrer-policy",
+              "strict-transport-security",
+          )
+          missing = [h for h in need if h not in text]
+          if missing:
+              raise SystemExit(f"missing security headers: {missing}")
+          print("ok: all five security headers on the wire")
+          PY
+
       - name: Lint
         run: npm run lint
 

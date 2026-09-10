@@ -53,8 +53,10 @@ Error tracking and performance are wired on both tiers and activate by DSN:
 - Backend: set `SENTRY_DSN` (Sentry project platform *python/fastapi*).
   Initialization lives in `app/core/observability.py`, runs at package import,
   and is inert without a DSN. Release is tagged from `RENDER_GIT_COMMIT`.
-- Frontend: set `VITE_SENTRY_DSN` (platform *javascript-react*) on the static
-  site. The bundle loads Sentry lazily — zero cost when unset.
+- Frontend: set `VITE_SENTRY_DSN` (platform *javascript-react*) on the
+  frontend web service (build-time). The bundle loads Sentry lazily — zero
+  cost when unset. Production serves `frontend/dist` via `node serve.mjs`,
+  which stamps the five smoke security headers.
 
 ## Platform status
 

@@ -9,6 +9,12 @@ One-page operations guide for CerebrumDev.ai factory and Automotive Safety Intel
 Do not sync this file as a Blueprint; it would change production security
 (email-verify, accounts DB wiring, and historically a frontend master key).
 
+Frontend security headers are stamped by `frontend/serve.mjs` (values in
+`frontend/security-headers.json`). A Render `static_site` does not read
+`frontend/public/_headers` and never applied the old Blueprint `headers:`
+block. The live service must be a Node web service with
+`startCommand: node serve.mjs` — not dashboard Custom Headers.
+
 1. Set secrets in the **Render dashboard** (never commit, never bake into Vite):
    - `CEREBRUM_DEV_API_KEY` — master/admin key, backend only
    - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key
