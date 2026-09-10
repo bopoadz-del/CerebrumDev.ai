@@ -53,6 +53,12 @@ from app.factory.build.workflow_accept import (
     handler_satisfies_event_bus_contract,
     needs_grounded_event_bus_handler,
 )
+from app.factory.build.writer_fanout import (
+    FanOut,
+    coder_fanout,
+    fan_out,
+    loop_budget_too_low,
+)
 from app.factory.build.block_obligations import (
     BlockObligationError,
     ENVELOPE_STATUS_VALUES,
@@ -2289,6 +2295,11 @@ def _budget_too_low(ctx: RoleContext, what: str) -> bool:
             halt.get("reason")
             or f"stage inspect hard-stop before {what}"
         )
+    # Still asked per call, on purpose. ``loop_budget_too_low`` decides once,
+    # before the loop, whether the agent is affordable at all; this stays as
+    # the wall a long loop can still hit mid-way. Suppressing it here would
+    # turn a loop that overruns from "the tail is templated, and the artifact
+    # says so" into "the phase blows its wall and the build fails".
     left = ctx.coder_time_left()
     if left is None:
         return False
@@ -2855,6 +2866,41 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     fallback_source = "deterministic contract template"
 
     # --- domain models FIRST: handlers and routes are written against them --
+    #
+    # The coder shots go out ahead of the walk so N capabilities cost
+    # ceil(N / fanout) round trips instead of N. Everything that touches
+    # shared state -- specs, sources, ctx.note -- stays in the walk below, in
+    # plan order, so the emitted bytes and the ledger do not depend on which
+    # model answered first. Fan-out defaults to 1, which runs these inline.
+    fanout = coder_fanout()
+    if fanout > 1:
+        # Tell the client what the WRITER is about to do. The bound is on
+        # concurrency, never on retry: a 429 on a paid leg stays unretried,
+        # and the way to keep that policy affordable is not to create the
+        # burst. Only imported when it is needed, so a template-only build
+        # still does not reach for the coder module.
+        from app.factory.coder import set_inflight_limit
+
+        set_inflight_limit(fanout)
+    spec_ids = [
+        cap.capability_id
+        for cap in ctx.plan.capabilities
+        if not use_brief_dispatch
+        and (cap.capability_id in failing or cap.capability_id not in previous_specs)
+    ]
+    caps_by_id = {cap.capability_id: cap for cap in ctx.plan.capabilities}
+    # An empty FanOut is how "the whole loop is templated" is expressed: the
+    # walk below finds no value for any capability and falls back for all of
+    # them, rather than funding the first and refusing the rest.
+    spec_shots = FanOut()
+    if not loop_budget_too_low(ctx, "model spec", count=len(spec_ids), workers=fanout):
+        spec_shots = fan_out(
+            ctx,
+            spec_ids,
+            lambda wctx, cid: _coder_model_spec(wctx, caps_by_id[cid]),
+            workers=fanout,
+        )
+
     specs: Dict[str, Dict[str, Any]] = {}
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
@@ -2882,7 +2928,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         if use_brief_dispatch:
             spec = _fallback_spec(cap)
         else:
-            spec = _coder_model_spec(ctx, cap) or _fallback_spec(cap)
+            # Replay here, where the serial call used to happen, so the ledger
+            # reads the same at any fan-out.
+            spec_shots.replay(ctx, cid)
+            spec = spec_shots.values.get(cid) or _fallback_spec(cap)
         # IF YOU ASSIGN IT, YOU FEED IT. A block whose precondition only the
         # caller can meet obligates this spec to carry a field for it; the
         # agent still owns the design, this only closes what it left open.
@@ -2896,6 +2945,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         specs[cid] = spec
         sources[f"model:{cid}"] = (
             f"coder LLM ({spec['model']})" if spec.get("model") else fallback_source
+        )
+    if spec_shots.unreplayed():
+        raise RoleError(
+            "model-spec shots were made but never recorded: "
+            + ", ".join(spec_shots.unreplayed())
         )
     ctx.note(
         f"designed {len(specs)} data model(s)",
@@ -2931,6 +2985,48 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
 
     # --- capability handlers ------------------------------------------------
+    #
+    # Same shape as the model loop: the shots go out ahead, the walk below
+    # decides, writes and notes in plan order. Only capabilities that would
+    # actually reach the coder are shot -- a ratcheted handler is kept, not
+    # regenerated, and the brief path already answered for all of them in one
+    # dispatch.
+    _persist_root = persist_workspace_root(ctx.workspace)
+    body_ids = [
+        cap.capability_id
+        for cap in ctx.plan.capabilities
+        if not use_brief_dispatch
+        and not (
+            cap.capability_id not in failing
+            and (_persist_root / persist_handler_rel(cap.capability_id)).is_file()
+        )
+    ]
+    # Reading the previous attempt is a workspace read, so it belongs on the
+    # calling thread; the coder needs it because eight live rounds proved that
+    # regenerating from the same prompt converges to the same wrong code.
+    _previous_attempts = {
+        cid: (
+            ctx.workspace.read_text(persist_handler_rel(cid))
+            if ctx.work_list and ctx.workspace.exists(persist_handler_rel(cid))
+            else None
+        )
+        for cid in body_ids
+    }
+    body_shots = FanOut()
+    if not loop_budget_too_low(ctx, "handler", count=len(body_ids), workers=fanout):
+        body_shots = fan_out(
+            ctx,
+            body_ids,
+            lambda wctx, cid: _coder_body(
+                wctx,
+                caps_by_id[cid],
+                [b for b in caps_by_id[cid].block_ids if b in vendored],
+                specs[cid],
+                _previous_attempts.get(cid),
+            ),
+            workers=fanout,
+        )
+
     action_names: List[str] = []
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
@@ -2950,14 +3046,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             continue
 
         usable = [b for b in cap.block_ids if b in vendored]
-        # On rework, hand the coder its own last attempt: eight live rounds
-        # proved that regenerating from the same prompt converges to the
-        # same wrong code, verbatim.
-        previous_attempt = (
-            ctx.workspace.read_text(handler_rel)
-            if ctx.work_list and ctx.workspace.exists(handler_rel)
-            else None
-        )
+        # The previous attempt was read before the shots went out; see
+        # _previous_attempts above for why the coder is given it at all.
         if use_brief_dispatch and dispatch and cid in (dispatch.handlers or {}):
             authored = (
                 dispatch.handlers[cid],
@@ -3012,7 +3102,8 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         elif use_brief_dispatch:
             authored = None
         else:
-            authored = _coder_body(ctx, cap, usable, specs[cid], previous_attempt)
+            body_shots.replay(ctx, cid)
+            authored = body_shots.values.get(cid)
         written_ids = set(
             getattr(dispatch, "factory_llm_written_ids", None) or ()
             if dispatch is not None
@@ -3092,6 +3183,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             source=source,
             done=len([k for k in sources if k in set(cap_ids)]),
             total=len(cap_ids),
+        )
+
+    if body_shots.unreplayed():
+        raise RoleError(
+            "handler shots were made but never recorded: "
+            + ", ".join(body_shots.unreplayed())
         )
 
     reuse_miss: List[str] = []
@@ -3191,6 +3288,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         emit_domain_artifacts(ctx.workspace, specs)
 
     # --- API surface -------------------------------------------------------
+    #
+    # Not fanned out, and not by oversight: ``_coder_route_body`` returns None
+    # unconditionally under U12 -- capability routes go through execute_action
+    # and an LLM-authored body would displace the kernel. There is no network
+    # call in this loop to overlap. If U12 is ever reversed, this loop takes
+    # the same prefetch-then-walk shape as the two above.
     entries: List[Dict[str, Any]] = []
     route_bodies: Dict[str, str] = {}
     for cap in ctx.plan.capabilities:

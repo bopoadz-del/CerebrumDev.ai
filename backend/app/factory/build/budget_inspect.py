@@ -36,6 +36,11 @@ STAGE_1_S = 1800.0
 #: Optional second stage — only after inspect says real work is progressing.
 STAGE_2_S = 2700.0
 #: Last-resort ceiling. Never the default; never granted silently.
+#:
+#: The same number lives on ``BuildBudget.hard_ceiling_s``, which is where it
+#: is ENFORCED -- this module only PROPOSES values, and two of the runner's
+#: extension paths never ask it. One literal, one place, so proposer and
+#: enforcer cannot drift; ``test_budget_ceiling`` asserts they are equal.
 CEILING_S = 7200.0
 
 INSPECT_NOTE_KIND = "budget_inspect"

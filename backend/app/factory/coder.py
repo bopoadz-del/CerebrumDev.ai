@@ -25,10 +25,12 @@ answers ``execution_error``, it does not crash the product.
 from __future__ import annotations
 
 import ast
+import contextlib
 import contextvars
 import json
 import logging
 import os
+import threading
 import time as _wall_time
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -75,6 +77,42 @@ from .llm_watchdog import (
 _attempt_deadline: contextvars.ContextVar[Optional[float]] = contextvars.ContextVar(
     "factory_coder_attempt_deadline", default=None
 )
+
+#: Ceiling on completions in flight against the provider at one time.
+#:
+#: The WRITER declares its fan-out here before opening a pool, so the number
+#: of simultaneous requests is bounded by the client and not only by whoever
+#: happens to be calling. This is a gate on *concurrency*, deliberately not on
+#: retry: a 429 is retried only on a zero-cost leg (see ``_attempt`` below,
+#: gated on ``leg["is_free"]``), and the way to keep that policy affordable is
+#: not to create the burst in the first place. ``None`` -- the default -- is
+#: unbounded, which is the same thing as serial for a single-threaded caller.
+_inflight: Optional[threading.BoundedSemaphore] = None
+_inflight_lock = threading.Lock()
+
+
+def set_inflight_limit(limit: Optional[int]) -> None:
+    """Bound concurrent completions. ``None`` removes the bound."""
+    global _inflight
+    with _inflight_lock:
+        _inflight = (
+            threading.BoundedSemaphore(limit) if limit and limit > 1 else None
+        )
+
+
+@contextlib.contextmanager
+def _inflight_slot():
+    """Hold a slot for one completion, if a limit is set."""
+    sem = _inflight
+    if sem is None:
+        yield
+        return
+    sem.acquire()
+    try:
+        yield
+    finally:
+        sem.release()
+
 
 logger = logging.getLogger("cerebrumdev.factory.coder")
 
@@ -327,7 +365,11 @@ def _llm_code_call(messages: List[Dict[str, str]]) -> tuple[str, str]:
     if _attempt_deadline.get() is None:
         token = _attempt_deadline.set(_wall_time.monotonic() + _attempt_wall_s())
     try:
-        return _llm_code_call_impl(messages)
+        # One slot per completion, held across the fallback legs and their
+        # 429 waits, so a capability that falls through two legs occupies one
+        # slot rather than two. Retry policy itself is untouched.
+        with _inflight_slot():
+            return _llm_code_call_impl(messages)
     finally:
         if token is not None:
             _attempt_deadline.reset(token)
