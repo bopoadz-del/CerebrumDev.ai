@@ -978,7 +978,7 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
         `Need ≥${fullPilotAuthorshipNeed(build)} agent-written action handlers or cli_authored_ids — a thin Store-green zip is refused`,
     }
   }
-  if (build.pilot_ready === true && !isAcceptanceKk(build)) {
+  if (isAcceptancePendingPrototype(build) || (build.pilot_ready === true && !isAcceptanceKk(build))) {
     const score = formatAcceptanceScore(build)
     return {
       label: `Export (.zip) — acceptance ${score}`,

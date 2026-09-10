@@ -662,6 +662,37 @@ describe('build progress copy', () => {
     expect(platformsLeadCopy(authoredOnly, true)).not.toMatch(/Download the export/)
   })
 
+  it('live sess_4591d5cc photograph is acceptance-pending, not a failed build', () => {
+    const liveGolden: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      cycle: 'pilot',
+      auto_pilot: true,
+      pilot_ready: true,
+      acceptance: { passed: 0, total: 12, ok: false, missing: true },
+      authorship: { artifacts: 27, agent_written: 6, templated: 21 },
+      level_grade: {
+        level: 'CODE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: false,
+        full_pilot: false,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(formatAcceptanceScore(liveGolden)).toBe('0/12')
+    expect(isAcceptancePendingPrototype(liveGolden)).toBe(true)
+    expect(shouldRefuseExport(liveGolden)).toBe(true)
+    expect(isPilotZipReady(liveGolden)).toBe(false)
+    expect(platformsLeadCopy(liveGolden, true)).toMatch(/Acceptance is 0\/12/)
+    expect(platformsLeadCopy(liveGolden, true)).toMatch(/not a failed build/)
+    expect(platformsLeadCopy(liveGolden, true)).not.toMatch(/build failed/)
+    expect(exportAffordance(liveGolden)).toMatchObject({
+      label: 'Export (.zip) — acceptance 0/12',
+      disabled: true,
+      ghost: true,
+    })
+  })
+
   it('enables Export once acceptance is k/k and the zip is pilot-ready', () => {
     const ready: BuildStatus = {
       state: 'succeeded',
