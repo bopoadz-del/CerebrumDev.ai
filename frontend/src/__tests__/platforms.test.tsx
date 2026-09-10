@@ -297,8 +297,10 @@ describe('Your Platforms — coding-agent build', () => {
       })
     })
     render(<Platforms sessionId="sess_4591d5cc45d04fe1" />)
-    expect(await screen.findByTestId('platforms-acceptance-score')).toHaveTextContent('0/12')
-    expect(screen.getByTestId('platforms-prototype-pill')).toHaveTextContent('Code-green (prototype)')
+    expect(await screen.findByTestId('platforms-prototype-pill')).toHaveTextContent(
+      'Code-green (prototype)',
+    )
+    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('0/12')
     expect(screen.getByTestId('platforms-gate-code')).toHaveTextContent('CODE PASS')
     expect(screen.getByTestId('platforms-gate-product')).toHaveTextContent('PRODUCT PASS')
     expect(screen.getByTestId('platforms-gate-store')).toHaveTextContent('STORE PASS')
