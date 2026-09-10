@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from app.factory.build.store_acceptance import ACCEPTANCE_CHECK_NAMES, ACCEPTANCE_REQUIRED
+
 from app.factory.blueprint import load_blueprint
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES
 from app.factory.build.level_grade import Level
@@ -227,6 +229,34 @@ def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def _docker_acceptance_kk_passthrough(argv, *, cwd=None, timeout=None):
+    """CI has no Store image. Intercept docker; pass every other subprocess through.
+
+    Authorship honesty is what this walk measures — not a host-side Store-green skip.
+    """
+    joined = " ".join(str(part) for part in argv)
+    if argv and str(argv[0]) == "docker":
+        stdout = "ok\n"
+        if "acceptance.py" in joined:
+            lines = [f"PASS {name} — ok" for name in ACCEPTANCE_CHECK_NAMES]
+            lines.append(f"ACCEPTANCE: {ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}")
+            stdout = "\n".join(lines) + "\n"
+        elif len(argv) > 1 and str(argv[1]) == "run":
+            stdout = "cid\n"
+        elif "-c" in argv:
+            stdout = "200\n"
+        return subprocess.CompletedProcess(argv, 0, stdout, "")
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    return subprocess.run(
+        argv,
+        cwd=str(cwd) if cwd else None,
+        timeout=timeout,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
     """Code cycle then PRODUCT/STORE. Thin authorship is not Store-green.
 
@@ -251,6 +281,7 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
         cycle="pilot",
         budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
         auto_pilot=False,
+        subprocess_runner=_docker_acceptance_kk_passthrough,
     ).run()
     status = build_status(out)
     grade = status["level_grade"]

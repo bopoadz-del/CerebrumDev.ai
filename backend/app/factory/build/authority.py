@@ -188,8 +188,12 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             # provenance it audits. Named, not a wildcard, for the same
             # reason as the files above.
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
+            (LaneRoot.WORKSPACE, "scripts/acceptance.py"),
             (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
             (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
+            (LaneRoot.WORKSPACE, ".github/workflows/ci.yml"),
+            (LaneRoot.WORKSPACE, "docs/openapi.json"),
+            (LaneRoot.WORKSPACE, "docs/store_acceptance.json"),
             (LaneRoot.WORKSPACE, "alembic.ini"),
             (LaneRoot.WORKSPACE, "alembic/**"),
             (LaneRoot.WORKSPACE, "docs/build_provenance.json"),

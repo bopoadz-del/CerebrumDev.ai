@@ -398,6 +398,54 @@ def test_product_package_allows_steward_shaped_five(tmp_path, monkeypatch):
     assert pkg.headers["content-type"].startswith("application/zip")
 
 
+def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypatch):
+    """Mutation: authorship floor green must not enable Export."""
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    client = TestClient(app)
+
+    create_session("sess_authored_only", "tester")
+    out = tmp_path / "cerebrum-steward"
+    _full_repo(out)
+    _succeeded_pilot(out, product_id="cerebrum-steward")
+    _write_provenance(out, STEWARD_FIVE)
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_CHECK_NAMES,
+        AcceptanceLine,
+        AcceptanceReport,
+        write_acceptance_report,
+    )
+
+    write_acceptance_report(
+        out,
+        AcceptanceReport(
+            passed=5,
+            total=12,
+            ok=False,
+            lines=[
+                AcceptanceLine(name=n, status="PASS" if i < 5 else "FAIL")
+                for i, n in enumerate(ACCEPTANCE_CHECK_NAMES)
+            ],
+        ),
+    )
+    state = get_session("sess_authored_only")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "cerebrum-steward",
+        "inputs_hash": "floor-hash",
+        "engine": "runner",
+    }
+    update_session("sess_authored_only", state)
+
+    pkg = client.get("/v1/sessions/sess_authored_only/product/package")
+    assert pkg.status_code == 409, pkg.text
+    detail = pkg.json()["detail"]
+    assert "STORE_ACCEPTANCE" in detail
+    assert "5/12" in detail
+
+
 def _write_required_blueprint(out: Path, cap_ids: tuple[str, ...]) -> None:
     docs = out / "docs" / "blueprint"
     docs.mkdir(parents=True, exist_ok=True)

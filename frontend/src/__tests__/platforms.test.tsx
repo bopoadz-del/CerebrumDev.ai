@@ -226,6 +226,7 @@ describe('Your Platforms — coding-agent build', () => {
         pilot_ready: true,
         cycle: 'pilot',
         authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+        acceptance: { passed: 12, total: 12, ok: true },
       })
     })
     render(<Platforms sessionId="sess_ui" />)
@@ -233,6 +234,34 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.queryByText(/6 of 10/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.getByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Pilot-ready')
+    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+  })
+
+  it('shows k/12 and refuses Export when authorship is green but acceptance is not k/k', async () => {
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform', vertical: 'winery' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+        acceptance: { passed: 5, total: 12, ok: false },
+        level_grade: {
+          level: 'STORE_GREEN',
+          founding_customer_ready: false,
+          pilot_ready: true,
+          full_pilot: true,
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+        },
+      })
+    })
+    render(<Platforms sessionId="sess_ui" />)
+    expect(await screen.findByTestId('platforms-acceptance-score')).toHaveTextContent('5/12')
+    expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 5/12' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
   })
 
   it('surfaces CODE_GREEN vs FOUNDING_CUSTOMER_READY vs failed on Platforms', async () => {
@@ -268,11 +297,13 @@ describe('Your Platforms — coding-agent build', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           founding_customer_ready: true,
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
@@ -319,6 +350,7 @@ describe('Your Platforms — coding-agent build', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: {
           artifacts: 8,
@@ -385,6 +417,7 @@ describe('Your Platforms — coding-agent build', () => {
       onProgress({
         state: 'succeeded',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 6, agent_written: 6, templated: 0, action_py: 6 },
       })
@@ -449,12 +482,14 @@ describe('Your Platforms — coding-agent build', () => {
         state: 'succeeded',
         outcome: 'SUCCESS',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 1, templated: 23, action_py: 1 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
         coder_receipt: {
@@ -531,12 +566,14 @@ describe('Your Platforms — coding-agent build', () => {
         state: 'succeeded',
         outcome: 'SUCCESS',
         pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
         cycle: 'pilot',
         authorship: { artifacts: 24, agent_written: 8, templated: 16 },
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
         },
       })
@@ -695,6 +732,7 @@ describe('Your Platforms — coding-agent build', () => {
           'tenancy_application_pipeline',
         ],
       },
+      acceptance: { passed: 12, total: 12, ok: true },
     }
     getMock.mockResolvedValue({
       last_error:
@@ -746,6 +784,7 @@ describe('Your Platforms — coding-agent build', () => {
           outcome: 'SUCCESS',
           cycle: 'pilot',
           pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
           authorship: {
             artifacts: 25,
             agent_written: 4,
@@ -762,6 +801,7 @@ describe('Your Platforms — coding-agent build', () => {
           level_grade: {
             level: 'STORE_GREEN',
             pilot_ready: true,
+            acceptance: { passed: 12, total: 12, ok: true },
             full_pilot: true,
             three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
           },

@@ -88,6 +88,9 @@ STORAGE_PATH=./data
 # P1: offline strict. Local/scripted OCR only. No LLM provider. No Ollama.
 # No store URL. No store key. Vendored blocks, in-process dispatch.
 # tests/conftest.py refuses non-loopback sockets. That blocker is unchanged.
+
+# Capability write routes require this bearer token (HTTP 401 without it).
+PLATFORM_TOKEN=dev-local-token
 """
 
 P1_CAPTURE_ADAPTER = '''"""P1 capture adapter. Factory CLONER emission.

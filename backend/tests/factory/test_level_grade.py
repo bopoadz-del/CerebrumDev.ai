@@ -95,6 +95,22 @@ def _full_repo(root: Path) -> None:
         dest = root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(body, encoding="utf-8")
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_CHECK_NAMES,
+        AcceptanceLine,
+        AcceptanceReport,
+        write_acceptance_report,
+    )
+
+    write_acceptance_report(
+        root,
+        AcceptanceReport(
+            passed=12,
+            total=12,
+            ok=True,
+            lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
+        ),
+    )
 
 
 def test_full_repo_with_pilot_ready_is_founding(tmp_path):
@@ -343,3 +359,47 @@ def test_http_store_callback_blocks_founding(tmp_path):
     assert grade["founding_customer_ready"] is False
     assert grade["level"] == Level.STORE_GREEN.value
     assert any("httpx" in b or "store" in b for b in grade["blockers"])
+
+
+def test_authorship_only_cannot_claim_store_green(tmp_path):
+    """Mutation: authorship floor is not acceptance. 5/12 refuses Store-green."""
+    _full_repo(tmp_path)
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_CHECK_NAMES,
+        AcceptanceLine,
+        AcceptanceReport,
+        write_acceptance_report,
+    )
+
+    write_acceptance_report(
+        tmp_path,
+        AcceptanceReport(
+            passed=5,
+            total=12,
+            ok=False,
+            lines=[
+                AcceptanceLine(
+                    name=n,
+                    status="PASS" if i < 5 else "FAIL",
+                    detail="authorship-only",
+                )
+                for i, n in enumerate(ACCEPTANCE_CHECK_NAMES)
+            ],
+        ),
+    )
+    grade = grade_workspace(
+        tmp_path,
+        status={
+            "state": "succeeded",
+            "cycle": "pilot",
+            "pilot_ready": True,
+            "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            "authorship": {"artifacts": 24, "agent_written": 6, "templated": 18, "action_py": 6},
+        },
+    )
+    assert grade["level"] not in {
+        Level.STORE_GREEN.value,
+        Level.FOUNDING_CUSTOMER_READY.value,
+    }
+    assert grade["pilot_ready"] is False
+    assert any("acceptance is 5/12" in b for b in grade["blockers"])

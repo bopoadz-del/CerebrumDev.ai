@@ -51,7 +51,11 @@ GATE_SCOPES = {
         "post-boot: the pilot-marked tests against the booted product, and a "
         "one-record round-trip per capability (POST creates, GET returns it)"
     ),
-    "STORE": "publish authorisation and outcome durability across a restart",
+    "STORE": (
+        "scripts/acceptance.py (≥12 measured checks) inside the Store-built "
+        "Docker image — k/k required; restart-survival of the booted store; "
+        "authorship floor is not acceptance"
+    ),
 }
 
 #: Boots the product and asks every capability to remember one record.
@@ -68,6 +72,7 @@ import os, sys, tempfile
 # rewrites 0001 — live Veterinary Care Platform then POSTed
 # OperationalError: no such table: audit / dashboard / veterinary_care_core.
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="product-gate-")
+os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 sys.path.insert(0, os.getcwd())
 
 try:
@@ -149,6 +154,7 @@ def _entity_map():
 
 
 ENTITIES = _entity_map()
+AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
 
 
 def _entity_of(cap_id, cls):
@@ -200,7 +206,7 @@ unjudged = []
 for cap_id, cls in MODELS.items():
     body = _payload(cls)
     try:
-        resp = client.post("/v1/" + cap_id, json=body)
+        resp = client.post("/v1/" + cap_id, json=body, headers=AUTH)
     except Exception as exc:
         misses.append("%s: POST raised %s: %s" % (cap_id, type(exc).__name__, exc))
         continue

@@ -55,3 +55,45 @@ Owner expected on **unfixed** stamps: **`200 / 200 / 404 / empty`** (RAG column 
 | sess_fe80bf177a8545e6 | launching_ready_1206_cycle/zips/fe80bf177a85-sess_fe80bf177a8.zip (439019) |
 | sess_4591d5cc45d04fe1 | API product/package download (622282) |
 | sess_1bb2f36be7004ff4 | lettings_regen_997c0d8/residential-lettings-sess_1bb2f36be7004ff4.zip (555916) |
+
+## AFTER — store gate = acceptance (this PR)
+
+- **Store-green** is now `scripts/acceptance.py` k/12 inside the Store-built Docker image.
+- Export / Download is enabled only on k/k PASS. Authorship floor is not acceptance.
+- `/platforms` shows a numeric `k/12` next to the pilot (not a colour).
+- Factory WRITER / ProductGenerator stamp `scripts/acceptance.py` plus the files the harness measures (`app/auth.py`, `.github/workflows/ci.yml`, `docs/openapi.json`, `app/static/index.html`).
+- Capability POST is HTTP 401 without a token and HTTP 422 on missing/enum validation.
+
+### Steward pre-fix fail table (`sess_5782f226` / cerebrum-steward founding zip)
+
+The founding zip is not on this cloud workspace (STEP 0 staged it under `/workspace/store_regrade_step0/`). The STEP 0 probes plus the new 12-line harness contract give this pre-fix table. Re-run `python scripts/acceptance.py` (or the factory evaluator) against the extracted zip after stamping a temp copy of the harness to confirm.
+
+| # | check | STEP 0 / pre-fix result | why |
+|---|---|---|---|
+| 1 | no_token_401 | **FAIL** | POST `/v1/estate_registry` `{}` → HTTP **200** `ok:false` Missing required field (not 401) |
+| 2 | missing_field_422 | **FAIL** | empty body → HTTP **200** (not 422) |
+| 3 | enum_422 | **FAIL** (expected) | same 200-ok:false validation path; no HTTP 422 |
+| 4 | ui_served_200 | **FAIL** | GET `/` → HTTP **404** (frontend in zip, not mounted) |
+| 5 | rag_roundtrip_hit | **FAIL** | Steward RAG surface present (`dual_rag_sop`, `dual_rag_estate_docs`); plant+query was **empty** |
+| 6 | single_persistence_root | unmeasured here | likely PASS (sqlite `STORAGE_PATH`) |
+| 7 | ci_present_and_full_suite | **FAIL** (expected) | pre-stamp zip has no `.github/workflows/ci.yml` |
+| 8 | handler_bodies_distinct | unmeasured here | — |
+| 9 | health_fail_closed | unmeasured here | S11 health exists on later stamps |
+| 10 | openapi_committed | **FAIL** (expected) | no committed `docs/openapi.json` |
+| 11 | docker_health_200 | **FAIL** | no Store-image health measurement / no HEALTHCHECK |
+| 12 | authorship_floor | likely PASS | founding pilot; last line, not first |
+
+**Pre-fix fail count ≥ 4** (measured on STEP 0 A/B/C/D: 401, 422, UI, RAG; plus CI/openapi/docker on the unstamped zip).
+
+### Floor regen (parent)
+
+This cloud agent cannot Floor-Approve `sess_5782f226`. After merge:
+
+1. Open Factory Floor for `sess_5782f226`.
+2. Approve the existing cerebrum-steward blueprint (do not invent a domain).
+3. Let GENERATE + pilot cycle stamp the new harness.
+4. Store gate must run `python scripts/acceptance.py` inside the built image.
+5. Target: **12/12**. Export stays disabled until then.
+6. `/platforms` must show `12/12` as text, not a green authorship pill.
+
+AFTER live re-probe of all nine pilots was **not** re-run in this environment (docker/zips unavailable). Stub only — parent can paste a new table here after regen.

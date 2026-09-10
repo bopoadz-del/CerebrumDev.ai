@@ -41,6 +41,11 @@ def built(tmp_path):
 def test_the_deploy_scaffold_is_present(built):
     for name in ("Dockerfile", ".dockerignore", "Procfile", ".env.example", "render.yaml"):
         assert (built / name).is_file(), f"missing {name}"
+    assert (built / "scripts" / "acceptance.py").is_file()
+    assert (built / ".github" / "workflows" / "ci.yml").is_file()
+    assert (built / "docs" / "openapi.json").is_file()
+    assert (built / "app" / "auth.py").is_file()
+    assert (built / "app" / "static" / "index.html").is_file()
 
 
 def test_the_dockerfile_starts_the_platform_and_provisions_storage(built):
@@ -132,9 +137,12 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "docs/domain_pack.json",
         "docs/coder_brief.md",
         "frontend/src/App.tsx",
+        "scripts/acceptance.py",
+        ".github/workflows/ci.yml",
+        "docs/openapi.json",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
-    for denied in ("docker-compose.yml", "Makefile", ".github/workflows/ci.yml", "setup.py"):
+    for denied in ("docker-compose.yml", "Makefile", "setup.py"):
         with pytest.raises(AuthorityError):
             assert_write_allowed(BuildRole.WRITER, ws / denied, workspace=ws)
 

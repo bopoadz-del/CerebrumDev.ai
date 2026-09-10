@@ -414,7 +414,10 @@ def render_main(product_name: str) -> str:
         "\n"
         "from contextlib import asynccontextmanager\n"
         "\n"
+        "from pathlib import Path\n"
+        "\n"
         "from fastapi import FastAPI\n"
+        "from fastapi.responses import FileResponse, HTMLResponse\n"
         "\n"
         "from app.health import health_response\n"
         "from app.observe import install_observability\n"
@@ -452,6 +455,15 @@ def render_main(product_name: str) -> str:
         f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
         "install_observability(app)\n"
         'app.include_router(router, prefix="/v1")\n'
+        "\n"
+        "\n"
+        '@app.get("/")\n'
+        "def ui_root():\n"
+        "    here = Path(__file__).resolve().parent\n"
+        "    for candidate in (here / 'static' / 'index.html', here.parent / 'frontend' / 'index.html'):\n"
+        "        if candidate.is_file():\n"
+        "            return FileResponse(candidate, media_type='text/html')\n"
+        f'    return HTMLResponse("<!doctype html><html><body><h1>{product_name}</h1></body></html>")\n'
         "\n"
         "\n"
         '@app.get("/health")\n'

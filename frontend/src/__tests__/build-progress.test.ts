@@ -11,6 +11,9 @@ import {
   formatHeartbeat,
   formatPhaseCounts,
   formatPhaseHeadline,
+  ACCEPTANCE_KK,
+  ACCEPTANCE_REQUIRED,
+  formatAcceptanceScore,
   FULL_PILOT_MIN_AUTHORED_ACTIONS,
   fullPilotAuthorshipCount,
   fullPilotAuthorshipNeed,
@@ -325,9 +328,12 @@ describe('build progress copy', () => {
     expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: false }, true)).not.toMatch(
       /Download the export/i,
     )
-    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).toMatch(
+    expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: true }, true)).not.toMatch(
       /Download the export/,
     )
+    expect(
+      platformsLeadCopy({ state: 'succeeded', pilot_ready: true, acceptance: ACCEPTANCE_KK }, true),
+    ).toMatch(/Download the export/)
   })
 
   it('factoryCodeCliHonesty names Kimi Code CLI credentials, not a vague credentials string', () => {
@@ -420,7 +426,9 @@ describe('build progress copy', () => {
       disabled: false,
       ghost: true,
     })
-    expect(exportAffordance({ state: 'succeeded', pilot_ready: true })).toEqual({
+    expect(
+      exportAffordance({ state: 'succeeded', pilot_ready: true, acceptance: ACCEPTANCE_KK }),
+    ).toEqual({
       label: 'Download platform export (.zip)',
       disabled: false,
       ghost: false,
@@ -469,6 +477,7 @@ describe('build progress copy', () => {
         cycle: 'pilot',
         pilot_ready: true,
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        acceptance: ACCEPTANCE_KK,
         level_grade: {
           level: 'FOUNDING_CUSTOMER_READY',
           founding_customer_ready: true,
@@ -503,6 +512,7 @@ describe('build progress copy', () => {
         state: 'succeeded',
         pilot_ready: true,
         authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+        acceptance: ACCEPTANCE_KK,
         level_grade: { level: 'FOUNDING_CUSTOMER_READY', founding_customer_ready: true },
       }),
     ).toBe(true)
@@ -583,6 +593,7 @@ describe('build progress copy', () => {
       pilot_ready: true,
       cycle: 'pilot',
       authorship: { artifacts: 24, agent_written: 6, templated: 18, action_py: 6 },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'STORE_GREEN',
         founding_customer_ready: false,
@@ -610,6 +621,34 @@ describe('build progress copy', () => {
     expect(levelGradeLabel('STORE_GREEN', false)).toBe('Pilot-ready')
   })
 
+  it('authorship-only Store-green does not enable Export', () => {
+    const authoredOnly: BuildStatus = {
+      state: 'succeeded',
+      outcome: 'SUCCESS',
+      pilot_ready: true,
+      cycle: 'pilot',
+      authorship: { artifacts: 24, agent_written: 6, templated: 18, action_py: 6 },
+      acceptance: { passed: 5, total: ACCEPTANCE_REQUIRED, ok: false },
+      level_grade: {
+        level: 'STORE_GREEN',
+        founding_customer_ready: false,
+        pilot_ready: true,
+        full_pilot: true,
+        three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+      },
+    }
+    expect(isBelowFullPilotAuthorshipFloor(authoredOnly)).toBe(false)
+    expect(shouldRefuseExport(authoredOnly)).toBe(true)
+    expect(isPilotZipReady(authoredOnly)).toBe(false)
+    expect(honestLevel(authoredOnly)).toBe('CODE_GREEN')
+    expect(formatAcceptanceScore(authoredOnly)).toBe('5/12')
+    expect(exportAffordance(authoredOnly)).toMatchObject({
+      label: 'Export (.zip) — acceptance 5/12',
+      disabled: true,
+      ghost: true,
+    })
+  })
+
   it('FACTORY_CODE_CLI_BILLING honesty_class demotes founding and keeps Export when floor holds', () => {
     const billingKeepPath: BuildStatus = {
       state: 'succeeded',
@@ -617,6 +656,7 @@ describe('build progress copy', () => {
       pilot_ready: true,
       cycle: 'pilot',
       authorship: { artifacts: 24, agent_written: 6, templated: 18, action_py: 6 },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'FOUNDING_CUSTOMER_READY',
         founding_customer_ready: true,
@@ -730,6 +770,7 @@ describe('build progress copy', () => {
           'tenancy_application_pipeline',
         ],
       },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'STORE_GREEN',
         founding_customer_ready: false,
@@ -797,6 +838,7 @@ describe('build progress copy', () => {
           'tenancy_application_pipeline',
         ],
       },
+      acceptance: ACCEPTANCE_KK,
     }
     const lettingsBp = {
       product_name: 'Residential Lettings Platform',
@@ -850,6 +892,7 @@ describe('build progress copy', () => {
       cycle: 'pilot',
       pilot_ready: true,
       authorship: { ...sticky.authorship, n_required: 4 },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'STORE_GREEN',
         pilot_ready: true,
@@ -902,6 +945,7 @@ describe('build progress copy', () => {
       pilot_ready: true,
       cycle: 'pilot',
       authorship: { artifacts: 24, agent_written: 8, templated: 16 },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'FOUNDING_CUSTOMER_READY',
         founding_customer_ready: true,
@@ -951,6 +995,7 @@ describe('build progress copy', () => {
     const unsourcedFounding: BuildStatus = {
       state: 'succeeded',
       pilot_ready: true,
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'FOUNDING_CUSTOMER_READY',
         founding_customer_ready: true,
@@ -968,6 +1013,7 @@ describe('build progress copy', () => {
       outcome: 'SUCCESS',
       pilot_ready: true,
       authorship: { artifacts: 28, agent_written: 22, templated: 6 },
+      acceptance: ACCEPTANCE_KK,
       level_grade: {
         level: 'FOUNDING_CUSTOMER_READY',
         founding_customer_ready: true,

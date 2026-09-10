@@ -250,6 +250,23 @@ def grade_workspace(
         # Honesty: a measured thin keep-path cannot stay Store-green.
         ready = False
 
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_REQUIRED,
+        acceptance_is_kk,
+        read_acceptance_report,
+    )
+
+    acceptance = read_acceptance_report(workspace, status)
+    if cycle == "pilot" or (
+        gates.get("PRODUCT") == "PASS" and gates.get("STORE") == "PASS"
+    ):
+        if not acceptance_is_kk(acceptance):
+            blockers.append(
+                f"acceptance is {acceptance.passed}/{acceptance.total}, not "
+                f"k/{ACCEPTANCE_REQUIRED} (authorship floor is not acceptance)"
+            )
+            ready = False
+
     if ready and not blockers:
         level = Level.FOUNDING_CUSTOMER_READY
     elif ready and gates.get("PRODUCT") == "PASS" and gates.get("STORE") == "PASS":
@@ -287,6 +304,7 @@ def grade_workspace(
         "missing": missing,
         "blockers": blockers,
         "founding_customer_ready": level is Level.FOUNDING_CUSTOMER_READY,
+        "acceptance": acceptance.to_json(),
     }
 
 
@@ -295,9 +313,17 @@ def attach_level_grade(status: Dict[str, Any], root: Path | str) -> Dict[str, An
     try:
         grade = grade_workspace(root, status=status)
         status["level_grade"] = grade
+        if isinstance(grade.get("acceptance"), dict):
+            status["acceptance"] = grade["acceptance"]
         # Floor / package read status.pilot_ready. A thin keep-path that
         # demoted the grade must not keep a Store-green ledger bit.
-        if grade.get("pilot_ready") is False:
+        # Acceptance k/k is a separate Export / Store-green lock — do not
+        # rewrite the ledger bit just because the harness has not run.
+        blockers = [str(b) for b in (grade.get("blockers") or [])]
+        authorship_demote = any(
+            "full-pilot floor" in b or "overwhelmingly templated" in b for b in blockers
+        )
+        if grade.get("pilot_ready") is False and authorship_demote:
             status["pilot_ready"] = False
     except Exception as exc:  # noqa: BLE001 — a grade fault must not 500 status
         status["level_grade"] = {

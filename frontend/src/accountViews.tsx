@@ -15,6 +15,7 @@ import {
 } from './api/factory'
 import {
   exportAffordance,
+  formatAcceptanceScore,
   formatFinishedAuthorship,
   formatHeartbeat,
   formatPhaseCounts,
@@ -244,7 +245,12 @@ export function Platforms({
         </div>
       ) : (
         <div className="panel">
-          <h3>{gen.product_id}</h3>
+          <h3>
+            {gen.product_id}{' '}
+            <span className="mono" data-testid="platforms-acceptance-score">
+              {formatAcceptanceScore(liveBuild)}
+            </span>
+          </h3>
           {stalled && (
             <span className="status-pill status-pill-failed" data-testid="platforms-stalled-pill">
               Build stalled

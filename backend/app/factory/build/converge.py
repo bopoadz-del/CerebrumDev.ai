@@ -70,6 +70,9 @@ DECLARED_RUNNER_EXTRAS: Tuple[str, ...] = (
     "docs/build_provenance.json",
     "docs/domain_acceptance.json",
     "docs/domain_pack.json",
+    "scripts/acceptance.py",
+    "docs/openapi.json",
+    ".github/workflows/ci.yml",
 )
 
 

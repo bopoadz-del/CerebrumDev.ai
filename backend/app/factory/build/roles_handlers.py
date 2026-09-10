@@ -1773,7 +1773,10 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             "",
             "",
             f'@router.post("/{name}")',
-            f"async def {name}_create(payload: Dict[str, Any]) -> Dict[str, Any]:",
+            f"async def {name}_create(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
+            "    from app.auth import reject_invalid_payload, require_platform_token",
+            "    require_platform_token(request)",
+            f'    reject_invalid_payload("{e["capability_id"]}", payload)',
             f'    CAPABILITY_ID = "{e["capability_id"]}"',
             f"    handle = _{name}_handle",
             f'    save = lambda record: store.save("{entity}", record)',
@@ -1944,6 +1947,10 @@ def _render_dockerfile() -> str:
         "RUN python3 scripts/release_gate.py\n"
         "\n"
         "EXPOSE 8000\n"
+        "HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 "
+        'CMD python3 -c "import urllib.request; urllib.request.urlopen('
+        "'http://127.0.0.1:8000/health')\"\n"
+        "\n"
         "# S10: migrate against the persistent disk, then serve. Failure refuses boot.\n"
         "# scripts/entrypoint.sh: alembic upgrade head && uvicorn app.main:app\n"
         'ENTRYPOINT ["sh", "/app/scripts/entrypoint.sh"]\n'
@@ -3523,6 +3530,17 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         Path("scripts") / "release_gate.py", _render_release_gate(product_name)
     )
     sources["release_gate"] = fallback_source
+    from app.factory.build.store_acceptance import stamp_acceptance_artifacts
+
+    stamp_acceptance_artifacts(
+        ctx.workspace,
+        product_name=product_name,
+        cap_ids=[
+            str(getattr(c, "capability_id", "") or getattr(c, "id", "") or "")
+            for c in (getattr(ctx.plan, "capabilities", None) or [])
+        ],
+    )
+    sources["acceptance"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
     ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
     from app.factory.build.network_posture import POSTURE_ID, declaration_json
@@ -3865,7 +3883,7 @@ def _constraints_of(spec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     for f in spec.get("fields", []):
         c = {
             k: f[k]
-            for k in ("allowed_values", "min", "max", "format")
+            for k in ("allowed_values", "min", "max", "format", "required")
             if f.get(k) is not None
         }
         if c:
@@ -4148,6 +4166,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "from app.main import app",
         "",
         "client = TestClient(app)",
+        "AUTH = {'Authorization': 'Bearer ' + __import__('os').environ.get('PLATFORM_TOKEN', 'dev-local-token')}",
         "",
         "",
         "def _listed(payload):",
@@ -4228,7 +4247,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             sample = _sample_payload(spec)
             route_lines += [
                 f"    payload = {sample!r}",
-                f'    resp = client.post("/v1/{name}", json=payload)',
+                f'    resp = client.post("/v1/{name}", json=payload, headers=AUTH)',
                 "    if resp.status_code != 200:",
                 f"        failures.append('{name}: HTTP ' + str(resp.status_code)"
                 " + ': ' + resp.text[:200])",
@@ -4265,7 +4284,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             sample = _sample_payload(spec)
             route_lines += [
                 f"    payload = {sample!r}",
-                f'    resp = client.post("/v1/{name}", json=payload)',
+                f'    resp = client.post("/v1/{name}", json=payload, headers=AUTH)',
                 "    if resp.status_code != 200:",
                 f"        failures.append('{name}: HTTP ' + str(resp.status_code)"
                 " + ': ' + resp.text[:200])",
@@ -4443,6 +4462,7 @@ def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
         "from app.main import app",
         "",
         "client = TestClient(app)",
+        "AUTH = {'Authorization': 'Bearer ' + __import__('os').environ.get('PLATFORM_TOKEN', 'dev-local-token')}",
         "",
         "",
         "def test_agent_domain_cases():",
@@ -4455,7 +4475,7 @@ def _render_agent_domain_tests(cases: List[Dict[str, Any]]) -> str:
         reason = (case.get("reason") or "").replace("\\", "\\\\").replace("'", "\\'")
         lines += [
             f"    payload_{i} = {payload!r}",
-            f'    resp_{i} = client.post("/v1/{name}", json=payload_{i})',
+            f'    resp_{i} = client.post("/v1/{name}", json=payload_{i}, headers=AUTH)',
         ]
         if expect == "reject":
             lines += [

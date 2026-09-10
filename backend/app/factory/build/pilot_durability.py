@@ -39,6 +39,7 @@ import json, os, subprocess, sys, tempfile
 
 STORAGE = tempfile.mkdtemp(prefix="pilot-durability-")
 os.environ["STORAGE_PATH"] = STORAGE
+os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 sys.path.insert(0, os.getcwd())
 
 findings = []
@@ -121,7 +122,11 @@ client_cm = TestClient(app)
 client = client_cm.__enter__()
 for cap_id, cls in MODELS.items():
     entity = ENTITIES.get(cap_id, cap_id)
-    resp = client.post("/v1/" + cap_id, json=_payload(cls))
+    resp = client.post(
+        "/v1/" + cap_id,
+        json=_payload(cls),
+        headers={"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")},
+    )
     data = resp.json() if resp.content else {}
     if resp.status_code != 200 or data.get("ok") is False:
         # Not this gate's finding: the writer gate judges acceptance.
