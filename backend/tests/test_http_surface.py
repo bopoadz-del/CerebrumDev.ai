@@ -108,3 +108,64 @@ def test_frontend_public_headers_declare_csp_frame_ancestors_hsts():
     assert "Strict-Transport-Security" in text
     assert "X-Content-Type-Options" in text
     assert "X-Frame-Options" in text
+
+
+# ── CSP on the API origin (2026-09-10) ────────────────────────────────────
+#
+# Measured against live api.cerebrum-dev.com: HSTS, X-Frame-Options,
+# Referrer-Policy and nosniff were present; Content-Security-Policy was not.
+# The frontend has carried a CSP in _headers/render.yaml for some time and
+# this origin never did.
+
+
+def test_api_responses_carry_an_enforcing_csp(client):
+    res = client.get("/health")
+    csp = res.headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "Content-Security-Policy-Report-Only" not in res.headers, (
+        "an API has no sources to discover; report-only would be theatre"
+    )
+
+
+def test_error_responses_carry_the_csp_too(client):
+    """401 is the response an unauthenticated prober sees most."""
+    res = client.get("/v1/billing/status")
+    assert res.status_code == 401
+    assert "default-src 'none'" in res.headers["Content-Security-Policy"]
+
+
+def test_docs_page_gets_a_policy_that_lets_swagger_load(client, monkeypatch):
+    """default-src 'none' would leave /docs a blank page.
+
+    The docs page pulls swagger-ui from a CDN. It is served only when
+    openapi_docs_enabled(), i.e. never in a production-like ENV, but when it
+    is served it has to work.
+    """
+    monkeypatch.setenv("ENV", "test")
+    res = client.get("/docs")
+    assert res.status_code == 200
+    csp = res.headers["Content-Security-Policy"]
+    assert "https://cdn.jsdelivr.net" in csp
+    assert "default-src 'none'" not in csp
+
+
+def test_the_smoke_twin_reads_the_wire_not_a_file():
+    """The frontend headers were declared in three files and served in none.
+
+    Both existing twins assert file contents; this one asserts the live
+    response, which is the only place the difference showed up.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    # Repo-root scripts/, not backend/scripts/ (which is the importable one).
+    script = Path(__file__).resolve().parents[2] / "scripts" / "post_deploy_smoke.py"
+    assert script.is_file(), script
+    spec = importlib.util.spec_from_file_location("_smoke_probe", script)
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+
+    assert "content-security-policy" in smoke.API_REQUIRED_HEADERS
+    assert "strict-transport-security" in smoke.FRONTEND_REQUIRED_HEADERS
+    assert callable(smoke.record_security_headers)

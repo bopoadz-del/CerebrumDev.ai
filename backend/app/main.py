@@ -112,12 +112,46 @@ def _is_openapi_path(path: str) -> bool:
     return path in _OPENAPI_PATHS or path.startswith("/docs/")
 
 
-def _apply_security_headers(response: Response) -> None:
+#: CSP for the API origin. The frontend has carried one in
+#: ``frontend/public/_headers`` and ``render.yaml`` for some time; this origin
+#: never has. Measured against live api.cerebrum-dev.com on 2026-09-10: HSTS,
+#: X-Frame-Options, Referrer-Policy and nosniff were present, CSP was not.
+#:
+#: ``default-src 'none'`` is the honest floor for an API: it serves JSON and
+#: needs no scripts, styles, images or fonts of its own. ``frame-ancestors``
+#: is the half a browser enforces regardless of X-Frame-Options, and the half
+#: that matters if this origin ever returns HTML.
+#:
+#: Enforcing rather than report-only, deliberately: unlike an SPA there is no
+#: set of sources here to discover first. The docs page is the one exception
+#: and gets its own policy below rather than weakening this one for every
+#: route.
+_API_CSP = (
+    "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
+
+#: Swagger UI loads its bundle and stylesheet from a CDN, so the docs page
+#: needs its own policy. It is served only when ``openapi_docs_enabled()`` --
+#: never in a production-like ENV, where those paths 404 above.
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+
+
+def _apply_security_headers(response: Response, path: str = "") -> None:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault(
         "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+    )
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        _DOCS_CSP if _is_openapi_path(path) else _API_CSP,
     )
     env = os.getenv("ENV", "").strip().lower()
     if env in {"production", "prod"}:
@@ -135,7 +169,7 @@ class ProductionHttpSurfaceMiddleware(BaseHTTPMiddleware):
             response = JSONResponse({"detail": "Not Found"}, status_code=404)
         else:
             response = await call_next(request)
-        _apply_security_headers(response)
+        _apply_security_headers(response, request.url.path)
         return response
 
 
