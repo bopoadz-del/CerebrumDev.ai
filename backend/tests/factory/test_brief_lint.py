@@ -635,3 +635,14 @@ def test_mutation_drops_frontend_rag_route_contract():
     result = lint_brief(compiled)
     assert result.ok is False
     assert any("one-WRITER three-phase contract" in e for e in result.errors)
+
+
+def test_mutation_drops_frontend_rag_hard_write():
+    """run6: contract prose without HARD WRITE app/rag_routes.py is a miss."""
+    compiled = _compiled()
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("HARD WRITE", "soft write")
+    compiled.text = compiled.text.replace("app/rag_routes.py", "app/search_routes.py")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("one-WRITER three-phase contract" in e for e in result.errors)

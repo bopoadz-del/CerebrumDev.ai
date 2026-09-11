@@ -21,6 +21,12 @@ from app.factory.build.runner import (
     RoleRunner,
     blueprint_hash,
 )
+from app.factory.build.coder_session import cbrief_work_ids
+from app.factory.build.rag_surface import (
+    FACTORY_GROUNDED_RAG_SOURCE,
+    RAG_ROUTES_REL,
+    emit_factory_grounded_rag_surface,
+)
 from app.factory.build.writer_phases import (
     CHECKPOINT_STAGE,
     RAG_INGEST_PATHS,
@@ -413,6 +419,93 @@ def test_phase_two_accepts_steward_canonical_routes_outside_routes_py(tmp_path):
     assert WRITER_PHASE_BACKEND in ctx.state["landed_writer_phases"]
     assert WRITER_PHASE_FRONTEND_RAG in ctx.state["landed_writer_phases"]
     assert pending_writer_phases(ctx) == [WRITER_PHASE_INTEGRATION]
+
+
+def test_phase_two_work_list_is_capability_ids_not_http_routes(tmp_path):
+    """run6 photograph: work=6 gaps_only never listed ingest/query as WRITES.
+
+    cbrief_work_ids is GENERATE gaps + REUSE hole-fill capability ids.
+    dual_rag_* are REUSE. The HTTP contract lived only in DO prose, so
+    kimi completed the six capability items without quoting /v1/rag/*.
+    """
+    compiled = _compiled_steward_dual_rag()
+    work = cbrief_work_ids(compiled, tmp_path)
+    assert "dual_rag_estate_docs" in work
+    assert "dual_rag_sop" in work
+    assert not any("ingest" in item or "query" in item for item in work)
+    assert not any("/v1/rag" in item for item in work)
+
+
+def test_phase_two_brief_hard_writes_rag_routes_file():
+    compiled = _compiled_steward_dual_rag()
+    phase = compile_phase_brief(compiled, WRITER_PHASE_FRONTEND_RAG)
+    assert "HARD WRITE" in phase.text
+    assert "app/rag_routes.py" in phase.text
+    assert "gaps_only" in phase.text
+    assert lint_brief(phase).ok, lint_brief(phase).errors
+
+
+def test_live_miss_sess_5782f226_run6_keep_path_plants_callable_routes(tmp_path):
+    """Photograph run6: CLI completed, routes still missing, then Factory plants.
+
+    Repair 2 of 2: do not rely on the coder seeing DO needles. Plant real
+    FastAPI ingest/query, then the checker must pass. Resume still skips
+    completed backend.
+    """
+    compiled = _compiled_steward_dual_rag()
+    ctx = _ctx(tmp_path, compiled)
+    root = ctx.workspace.workspace
+    _plant_backend(root, compiled)
+    accept_writer_phase(ctx, WRITER_PHASE_BACKEND, compiled)
+    checkpoint_landed_phase(ctx, WRITER_PHASE_BACKEND)
+    _plant_ui_module(root)
+    errors = phase_acceptance_errors(ctx, WRITER_PHASE_FRONTEND_RAG, compiled)
+    assert any("ingest route missing" in e for e in errors), errors
+    planted = emit_factory_grounded_rag_surface(root, compiled)
+    assert planted == ["rag_ingest", "rag_query"]
+    assert (root / RAG_ROUTES_REL).is_file()
+    body = (root / RAG_ROUTES_REL).read_text(encoding="utf-8")
+    assert FACTORY_GROUNDED_RAG_SOURCE in body
+    assert '"/v1/rag/ingest"' in body
+    assert '"/v1/rag/query"' in body
+    assert "def rag_ingest(" in body
+    assert "RagIngestRequest" in body
+    assert "hits" in body
+    assert rag_ingest_route_present(root)
+    assert rag_query_route_present(root)
+    accept_writer_phase(ctx, WRITER_PHASE_FRONTEND_RAG, compiled)
+    checkpoint_landed_phase(ctx, WRITER_PHASE_FRONTEND_RAG)
+    assert WRITER_PHASE_BACKEND in ctx.state["landed_writer_phases"]
+    assert WRITER_PHASE_FRONTEND_RAG in ctx.state["landed_writer_phases"]
+    ctx.work_list = ()
+    assert should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND) is False
+    assert pending_writer_phases(ctx) == [WRITER_PHASE_INTEGRATION]
+
+
+def test_rag_keep_path_does_not_plant_when_inventory_has_no_rag(tmp_path):
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("patient_records_management", ["vector_search", "database"], "REUSE")),
+        store_ids={"vector_search", "database"},
+    )
+    assert inventory_needs_rag(compiled) is False
+    planted = emit_factory_grounded_rag_surface(tmp_path, compiled)
+    assert planted == []
+    assert not (tmp_path / RAG_ROUTES_REL).exists()
+
+
+def test_rag_keep_path_does_not_overwrite_cli_steward_routes(tmp_path):
+    compiled = _compiled_steward_dual_rag()
+    ctx = _ctx(tmp_path, compiled, landed=[WRITER_PHASE_BACKEND])
+    _plant_ui_module(ctx.workspace.workspace)
+    steward = ctx.workspace.workspace / "app" / "steward" / "api.py"
+    _plant_quoted_routes(steward, "/v1/steward/rag/ingest", "/v1/steward/rag/query")
+    original = steward.read_text(encoding="utf-8")
+    planted = emit_factory_grounded_rag_surface(ctx.workspace.workspace, compiled)
+    assert planted == []
+    assert steward.read_text(encoding="utf-8") == original
+    assert not (ctx.workspace.workspace / RAG_ROUTES_REL).exists()
+    accept_writer_phase(ctx, WRITER_PHASE_FRONTEND_RAG, compiled)
 
 
 def test_phase_two_accepts_kit_v1_rag_routes_in_routes_py(tmp_path):
