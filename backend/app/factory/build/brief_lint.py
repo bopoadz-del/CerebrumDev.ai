@@ -13,13 +13,16 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
 from app.factory.build.authorship import full_pilot_authorship_needles
 from app.factory.build.persist_accept import persist_accept_needles
 from app.factory.build.reuse_accept import reuse_accept_needles
+from app.factory.build.writer_phases import writer_phase_needles
 from app.factory.build.workflow_accept import (
     declares_event_bus_workflow,
     workflow_accept_needles,
 )
 
 SLOT_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
-HEADING_RE = re.compile(r"^(=+|CUT \d|TARGET|STEP 0|DO\b|ACCEPTANCE|FORBIDDEN|# )")
+HEADING_RE = re.compile(
+    r"^(=+|CUT \d|TARGET|STEP 0|DO\b|ACCEPTANCE|FORBIDDEN|PHASE \d|# )"
+)
 BUDGET_RE = re.compile(r"\b(?:budget|wall)[^\n]{0,40}?(\d+)\s*s\b", re.I)
 
 #: Acceptance bullets the harness actually runs. A line without one of these
@@ -91,6 +94,14 @@ EXECUTABLE_ACCEPTANCE = (
     ("full-pilot authorship", "full_pilot_authorship"),
     ("cli_authored_ids", "full_pilot_authorship"),
     ("FACTORY_CODE_CLI_THIN_AUTHORSHIP", "full_pilot_authorship"),
+    ("PHASE 1 of 3", "writer_phase_backend"),
+    ("PHASE 2 of 3", "writer_phase_frontend_rag"),
+    ("PHASE 3 of 3", "writer_phase_integration"),
+    ("one-record POST/GET", "writer_phase_backend"),
+    ("RAG ingest/query", "writer_phase_frontend_rag"),
+    ("render-ready", "writer_phase_integration"),
+    ("fail-closed: phase N", "writer_phase_gate"),
+    ("landed writer phases", "writer_phase_resume"),
 )
 
 #: C-BRIEF packaging contract. Dropping these lets Kimi rewrite
@@ -243,6 +254,22 @@ TEMPLATE_STATIC_NEEDLES = (
     "report-only",
     "l2.2",
     "inventing reads/writes/never/acceptance",
+    "phase 1 of 3",
+    "phase 2 of 3",
+    "phase 3 of 3",
+    "one factory_code_cli writer",
+    "fail-closed: phase n acceptance before phase n+1",
+    "stop / checkpoint",
+    "render-ready",
+    "not live render",
+    "not store docker",
+    "rag ingest/query",
+    "one-record post/get",
+    "vector_search bind",
+    "/v1/rag",
+    "landed writer phase",
+    "frontend + rag",
+    "integration + render-ready",
 )
 
 
@@ -454,6 +481,18 @@ def lint_brief(
             "brief dropped REUSE schema-sample accept contract "
             "(Unknown action / BLOCK_DEFAULT_ACTIONS): "
             + ", ".join(missing_reuse[:4])
+        )
+    phase_needles = writer_phase_needles()
+    missing_phases = [
+        needle
+        for needle in phase_needles
+        if needle.lower() not in text.lower()
+    ]
+    if missing_phases:
+        errors.append(
+            "brief dropped one-WRITER three-phase contract "
+            "(backend → frontend+RAG → integration): "
+            + ", ".join(missing_phases[:4])
         )
 
     blob = text.lower()

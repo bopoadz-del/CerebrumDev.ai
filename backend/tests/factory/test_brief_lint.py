@@ -613,3 +613,14 @@ def test_unfilled_template_slot_is_rejected():
     result = lint_brief(compiled)
     assert result.ok is False
     assert any("unfilled template slot" in e for e in result.errors)
+
+
+def test_mutation_drops_writer_phase_needles():
+    """Three-phase WRITER cuts must stay in the compiled brief."""
+    compiled = _compiled()
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("PHASE 1 of 3", "STAGE 1 of 3")
+    compiled.text = compiled.text.replace("[check:writer_phase_backend]", "")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("one-WRITER three-phase contract" in e for e in result.errors)
