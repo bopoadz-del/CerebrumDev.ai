@@ -240,6 +240,18 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             assert (REPO_ROOT / rel).is_file(), rel
             assert rel.startswith("backend/app/") or rel == ".github/workflows/ci.yml", rel
 
+    def test_production_image_ships_factory_blocks_lock(self):
+        """S07 pin lives at repo root; factory_repo_root() in the image is /app.
+
+        Without this COPY, resolve_lock() returns None and CLONER fails every
+        store-sourced block as unlocked — live Steward Continue at
+        sess_5782f226 died at database with a hash the committed lock already
+        recorded.
+        """
+        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        assert "COPY blocks.lock.json /app/blocks.lock.json" in dockerfile
+        assert (REPO_ROOT / "blocks.lock.json").is_file()
+
     def test_every_scheduled_entry_point_is_actually_in_the_image(self):
         """Scheduled jobs must be able to import what they run.
 

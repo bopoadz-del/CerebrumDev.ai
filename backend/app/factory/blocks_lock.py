@@ -21,6 +21,10 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 SCHEMA = "factory.blocks.lock.v1"
 STORE_REPO = "https://github.com/bopoadz-del/Cerebrum-Blocks"
+LOCK_REGENERATE_HINT = (
+    'Regenerate with: python -m app.factory.cli update-lock '
+    '--blocks-root "$CEREBRUM_BLOCKS_ROOT"'
+)
 
 
 class BlocksLockError(Exception):
@@ -198,7 +202,7 @@ def assert_block_matches_lock(
     if not isinstance(entries, dict) or block_id not in entries:
         raise BlocksLockError(
             f"BLOCKS_LOCK: unlocked block {block_id!r} is not in the lock "
-            f"(computed hash {actual})"
+            f"(computed hash {actual}). {LOCK_REGENERATE_HINT}"
         )
     record = entries[block_id]
     recorded = ""
@@ -207,12 +211,12 @@ def assert_block_matches_lock(
     if not recorded:
         raise BlocksLockError(
             f"BLOCKS_LOCK: unlocked block {block_id!r} has no content_hash "
-            f"in the lock (computed hash {actual})"
+            f"in the lock (computed hash {actual}). {LOCK_REGENERATE_HINT}"
         )
     if recorded != actual:
         raise BlocksLockError(
             f"BLOCKS_LOCK: hash mismatch for block {block_id!r}: "
-            f"lock={recorded} store={actual}"
+            f"lock={recorded} store={actual}. {LOCK_REGENERATE_HINT}"
         )
     return actual
 
@@ -243,4 +247,10 @@ def enforce_store_lock(
         return
     if lock is None:
         lock = resolve_lock()
+    if lock is None:
+        raise BlocksLockError(
+            f"BLOCKS_LOCK: lock file missing at {default_lock_path()}. "
+            f"Cannot clone store-sourced block {block_id!r} without a pin. "
+            f"{LOCK_REGENERATE_HINT}"
+        )
     assert_block_matches_lock(block_id, source, lock)

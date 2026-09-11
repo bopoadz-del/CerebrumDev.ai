@@ -14,9 +14,11 @@ import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.blocks_lock import (
+    LOCK_REGENERATE_HINT,
     BlocksLockError,
     assert_block_matches_lock,
     block_content_hash,
+    enforce_store_lock,
     generate_lock,
 )
 from app.factory.build.authority import BuildRole
@@ -95,13 +97,15 @@ def test_assert_helper_names_block_and_both_hashes(tmp_path):
     assert "audit" in msg
     assert recorded in msg
     assert actual in msg
+    assert LOCK_REGENERATE_HINT in msg
 
 
 def test_unlocked_consumed_block_fails_hard(tmp_path):
     store = _store_with(tmp_path, "dashboard", "X = 1\n")
     lock = {"schema": "factory.blocks.lock.v1", "blocks": {}}
-    with pytest.raises((BlocksLockError, RoleError), match="dashboard"):
+    with pytest.raises((BlocksLockError, RoleError), match="dashboard") as exc:
         _clone(tmp_path, store, ("dashboard",), lock)
+    assert LOCK_REGENERATE_HINT in str(exc.value)
 
 
 def test_matching_lock_allows_the_build(tmp_path):
@@ -134,6 +138,13 @@ def test_generator_refuses_mismatched_store_hash(tmp_path):
     assert actual in msg
 
 
+# Live sess_5782f226 CLONER computed this hash from Store pin a372e76 and
+# then died because the production image had no lock file to read.
+STEWARD_DATABASE_STORE_HASH = (
+    "sha256:e6e7febab1244eb897e039dc2d5f8bc72d709ae2aa5c83e5c15ac099f7ba1e79"
+)
+
+
 def test_committed_lock_lists_every_consumed_block():
     from app.factory.blocks_lock import consumed_block_ids, default_lock_path, load_lock
 
@@ -149,6 +160,46 @@ def test_committed_lock_lists_every_consumed_block():
         assert rec["version"]
         assert rec["content_hash"].startswith("sha256:")
         assert len(rec["content_hash"]) == len("sha256:") + 64
+    assert "database" in lock["blocks"]
+    assert lock["blocks"]["database"]["content_hash"] == STEWARD_DATABASE_STORE_HASH
+    assert lock["blocks"]["database"]["source"] == "cerebrum-blocks"
+
+
+def test_committed_lock_covers_steward_blueprint_blocks():
+    """GATE1 Steward clone set must resolve through the committed pin."""
+    from app.factory.blocks_lock import default_lock_path, load_lock
+
+    bp = load_blueprint(ROOT / "blueprints/steward/steward.v1.yaml")
+    lock = load_lock(default_lock_path())
+    needed = sorted({bid for cap in bp.capabilities for bid in cap.block_ids})
+    assert "database" in needed
+    missing = [bid for bid in needed if bid not in lock["blocks"]]
+    assert not missing, f"Steward block(s) missing from lock: {missing}"
+
+
+def test_cloner_accepts_unlocked_database_when_lock_matches(tmp_path):
+    """The live failure mode: Steward clones database first among store blocks."""
+    store = _store_with(tmp_path, "database", "TABLE = 'registry'\n")
+    lock = generate_lock(store, consumed_ids=["database"])
+    ws, result = _clone(tmp_path, store, ("database",), lock)
+    assert result.ok, result.detail
+    assert (ws.destination / "vendor" / "blocks" / "database" / "block.py").is_file()
+
+
+def test_missing_lock_file_names_path_and_regenerate_command(tmp_path, monkeypatch):
+    """A missing pin must not look like 'database is not in the lock'."""
+    store = _store_with(tmp_path, "database", "TABLE = 'registry'\n")
+    source = store / "block_registry" / "database"
+    missing = tmp_path / "no-such-blocks.lock.json"
+    monkeypatch.setenv("FACTORY_BLOCKS_LOCK", str(missing))
+    with pytest.raises(BlocksLockError) as exc:
+        enforce_store_lock("database", source, store, None)
+    msg = str(exc.value)
+    assert "lock file missing" in msg
+    assert "database" in msg
+    assert str(missing) in msg
+    assert LOCK_REGENERATE_HINT in msg
+    assert "not in the lock" not in msg
 
 
 def test_update_lock_refresh_is_mechanical(tmp_path):
