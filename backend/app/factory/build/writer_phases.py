@@ -258,6 +258,20 @@ def pending_writer_phases(ctx: Any) -> List[str]:
     return [phase for phase in WRITER_PHASES if phase not in landed]
 
 
+def should_reopen_writer_phase(ctx: Any, phase_id: str) -> bool:
+    """Resume skips landed phases; TESTER rework reopens BACKEND.
+
+    A process-kill resume (empty ``work_list``) must not redo PHASE 1
+    from zero. A TESTER rework carries findings in ``work_list`` and
+    must compile + dispatch the backend brief again so the coder sees
+    them (``test_rework_findings_are_handed_to_the_coder``).
+    """
+    cid = str(phase_id or "").strip()
+    if getattr(ctx, "work_list", None):
+        return cid == WRITER_PHASE_BACKEND
+    return cid in pending_writer_phases(ctx)
+
+
 def checkpoint_landed_phase(ctx: Any, phase_id: str) -> None:
     """Persist one landed writer phase onto the #403 resume spine."""
     spec = writer_phase(phase_id)

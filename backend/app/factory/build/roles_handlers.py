@@ -2837,11 +2837,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         compile_phase_brief,
         pending_writer_phases,
         should_dispatch_writer_phase,
+        should_reopen_writer_phase,
     )
 
     if use_brief_dispatch:
-        pending_phases = pending_writer_phases(ctx)
-        if WRITER_PHASE_BACKEND in pending_phases:
+        if should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND):
             phase_brief = compile_phase_brief(
                 compiled_brief, WRITER_PHASE_BACKEND
             )

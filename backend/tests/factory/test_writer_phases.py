@@ -37,6 +37,7 @@ from app.factory.build.writer_phases import (
     phase_acceptance_errors,
     prior_writer_phase,
     should_dispatch_writer_phase,
+    should_reopen_writer_phase,
     writer_phase_needles,
 )
 from app.factory.product_architect import plan_blueprint
@@ -161,6 +162,20 @@ def test_phase_one_accept_requires_handler_route_schema(tmp_path):
     accept_writer_phase(ctx, WRITER_PHASE_BACKEND, compiled)
     checkpoint_landed_phase(ctx, WRITER_PHASE_BACKEND)
     assert WRITER_PHASE_BACKEND in ctx.state["landed_writer_phases"]
+
+
+def test_rework_reopens_backend_even_when_phase_landed(tmp_path):
+    """TESTER findings must reach the coder; resume skip does not apply."""
+    compiled = _compiled_smoke()
+    ctx = _ctx(tmp_path, compiled)
+    ctx.work_list = ()
+    _plant_backend(ctx.workspace.workspace, compiled)
+    accept_writer_phase(ctx, WRITER_PHASE_BACKEND, compiled)
+    checkpoint_landed_phase(ctx, WRITER_PHASE_BACKEND)
+    assert should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND) is False
+    ctx.work_list = ["tester produced no test files"]
+    assert should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND) is True
+    assert should_reopen_writer_phase(ctx, WRITER_PHASE_FRONTEND_RAG) is False
 
 
 def test_resume_skips_landed_earlier_phases(tmp_path):
