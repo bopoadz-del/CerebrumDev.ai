@@ -2747,8 +2747,9 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     A pilot cycle without a coder key must not replace agent-written
     handlers with the deterministic template. Adapter patches already ran.
 
-    C-BRIEF: compile ONE gated brief and dispatch it once via
-    FACTORY_CODE_CLI. A keyed Floor without that binary, or a Kimi
+    C-BRIEF: compile ONE gated brief and dispatch it via
+    FACTORY_CODE_CLI in three fail-closed phases (backend →
+    frontend+RAG → integration). A keyed Floor without that binary, or a Kimi
     binary without config.toml, fail-closes (FACTORY_CODE_CLI_UNAVAILABLE
     / FACTORY_CODE_CLI_CREDENTIALS_MISSING /
     FACTORY_CODE_CLI_NO_MODEL) before WRITER progress.
@@ -2828,37 +2829,62 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     dispatch = None
     use_brief_dispatch = brief_dispatch_enabled() or deepseek_cli_ready()
     reuse_keep_path = False
+    from app.factory.build.writer_phases import (
+        PhaseAcceptHalt,
+        WRITER_PHASE_BACKEND,
+        accept_writer_phase,
+        checkpoint_landed_phase,
+        compile_phase_brief,
+        pending_writer_phases,
+        should_dispatch_writer_phase,
+        should_reopen_writer_phase,
+    )
+
     if use_brief_dispatch:
-        dispatch = dispatch_compiled_brief(ctx, compiled_brief)
-        reuse_keep_path = bool(getattr(dispatch, "reuse_keep_path", False))
-        gaps = inventory_gap_ids(compiled_brief)
-        if dispatch.blocker in CLI_PREFLIGHT_BLOCKERS and brief_requires_cli():
-            # Verified REUSE + named billing/auth miss: continue emit.
-            # GENERATE-gap factory-LLM fallthrough: continue (honest receipt).
-            # Binary-missing without that second leg still halt.
-            fallthrough = bool(
-                getattr(dispatch, "factory_llm_generate_fallthrough", False)
+        if should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND):
+            phase_brief = compile_phase_brief(
+                compiled_brief, WRITER_PHASE_BACKEND
             )
-            reuse_ok = reuse_keep_path or (
-                not gaps and dispatch.blocker in CLI_AUTH_BILLING_BLOCKERS
+            lint_or_raise(phase_brief)
+            write_brief_artifacts(ctx, phase_brief)
+            dispatch = dispatch_compiled_brief(ctx, phase_brief)
+        else:
+            ctx.note(
+                "resume skips landed writer phase backend",
+                stage="checkpoint",
+                phase=WRITER_PHASE_BACKEND,
+                source="writer phases",
             )
-            if not fallthrough and not reuse_ok:
-                raise RoleError(dispatch.detail)
-        ctx.note(
-            f"brief dispatch via {dispatch.via}: {dispatch.detail}",
-            stage="dispatch",
-            source=f"coder {'CLI' if dispatch.via == 'cli' else 'LLM'} ({dispatch.model})"
-            if dispatch.ok
-            else "brief dispatch",
-            done=1 if dispatch.ok else 0,
-            total=1,
-        )
-        if deepseek_cli_ready() and dispatch.via != "cli":
-            raise RoleError(
-                f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is "
-                f"ready but C-BRIEF dispatched via={dispatch.via!r}, not cli. "
-                "Store-complete REUSE/COMPOSE (no GENERATE gaps) is not a skip."
+        if dispatch is not None:
+            reuse_keep_path = bool(getattr(dispatch, "reuse_keep_path", False))
+            gaps = inventory_gap_ids(compiled_brief)
+            if dispatch.blocker in CLI_PREFLIGHT_BLOCKERS and brief_requires_cli():
+                # Verified REUSE + named billing/auth miss: continue emit.
+                # GENERATE-gap factory-LLM fallthrough: continue (honest receipt).
+                # Binary-missing without that second leg still halt.
+                fallthrough = bool(
+                    getattr(dispatch, "factory_llm_generate_fallthrough", False)
+                )
+                reuse_ok = reuse_keep_path or (
+                    not gaps and dispatch.blocker in CLI_AUTH_BILLING_BLOCKERS
+                )
+                if not fallthrough and not reuse_ok:
+                    raise RoleError(dispatch.detail)
+            ctx.note(
+                f"brief dispatch via {dispatch.via}: {dispatch.detail}",
+                stage="dispatch",
+                source=f"coder {'CLI' if dispatch.via == 'cli' else 'LLM'} ({dispatch.model})"
+                if dispatch.ok
+                else "brief dispatch",
+                done=1 if dispatch.ok else 0,
+                total=1,
             )
+            if deepseek_cli_ready() and dispatch.via != "cli":
+                raise RoleError(
+                    f"{NAMED_BLOCKER_CLI_UNUSED}: DeepSeek FACTORY_CODE_CLI is "
+                    f"ready but C-BRIEF dispatched via={dispatch.via!r}, not cli. "
+                    "Store-complete REUSE/COMPOSE (no GENERATE gaps) is not a skip."
+                )
 
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     _vendor_product_kernel(ctx)
@@ -3510,6 +3536,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         assert_persist_round_trip_ready(persist_workspace_root(ctx.workspace), specs)
     except PersistRoundTripHalt as exc:
         raise RoleError(str(exc)) from exc
+    try:
+        accept_writer_phase(ctx, WRITER_PHASE_BACKEND, compiled_brief)
+    except PhaseAcceptHalt as exc:
+        raise RoleError(str(exc)) from exc
+    checkpoint_landed_phase(ctx, WRITER_PHASE_BACKEND)
 
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
@@ -3612,6 +3643,36 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     converged = converge_writer_emitters(ctx)
     if converged.get("ok"):
         sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
+
+    from app.factory.build.coder_session import BRIEF_REL
+    from app.factory.build.writer_phases import phase_acceptance_errors
+
+    for phase_id in pending_writer_phases(ctx):
+        owed = phase_acceptance_errors(ctx, phase_id, compiled_brief)
+        if owed and should_dispatch_writer_phase(phase_id, dispatch):
+            later_brief = compile_phase_brief(compiled_brief, phase_id)
+            lint_or_raise(later_brief)
+            later_text = later_brief.text
+            ctx.workspace.write_text(
+                BRIEF_REL,
+                later_text if later_text.endswith("\n") else later_text + "\n",
+            )
+            later = dispatch_compiled_brief(ctx, later_brief)
+            ctx.note(
+                f"brief dispatch phase {phase_id} via {later.via}: {later.detail}",
+                stage="dispatch",
+                phase=phase_id,
+                source="writer phases",
+                done=1 if later.ok else 0,
+                total=1,
+            )
+            if dispatch is not None:
+                ctx.state["brief_dispatch"] = dispatch.to_dict()
+        try:
+            accept_writer_phase(ctx, phase_id, compiled_brief)
+        except PhaseAcceptHalt as exc:
+            raise RoleError(str(exc)) from exc
+        checkpoint_landed_phase(ctx, phase_id)
 
     by_coder = len(coding_agent_artifact_ids(sources))
     ctx.workspace.write_text(

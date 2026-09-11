@@ -59,8 +59,11 @@ Contracts you must honour on every capability you write:
 
 This brief is the horizon. The user message is the compiled whole-job brief
 (TARGET / STEP 0 INVENTORY / DO / ACCEPTANCE) — not one handle(), one spec,
-or one route. A stage wall may hard-stop you so the factory can inspect
-what was achieved; that stop is not permission to ship a scaffold.
+or one route. One FACTORY_CODE_CLI writer; three gated phases (backend →
+frontend+RAG → integration) with STOP / checkpoint between them. Fail-closed:
+phase N acceptance before phase N+1. Resume skips landed writer phases.
+A stage wall may hard-stop you so the factory can inspect what was achieved;
+that stop is not permission to ship a scaffold.
 """.strip()
 
 

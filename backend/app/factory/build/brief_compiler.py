@@ -9,6 +9,7 @@ Staged cuts from the one compiled brief:
     CUT 1 INVENTORY — read-only REUSE / GAPS, then STOP
     CUT 2 VALIDATE  — runner checks claimed ids against the registry
     CUT 3 BUILD     — confirmed gaps, contracts, READS/WRITES/NEVER
+    PHASE 1–3 DO/ACCEPTANCE — backend → frontend+RAG → integration
     ACCEPTANCE      — harness, not the coder
 """
 
@@ -63,6 +64,7 @@ from app.factory.build.reuse_lookup import (
     resolve_store_presence,
 )
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
+from app.factory.build.writer_phases import writer_phase_slot_bodies
 from app.factory.coder import coder_budget_s
 from app.factory.delivery_standard import DOMAIN_PACK_FIELDS
 from app.factory.dual_registry import dual_registered_ids
@@ -590,6 +592,8 @@ def render_slot_bodies(
         "Scope READS / WRITES / NEVER explicitly in each handler you author.",
         f"Budget wall: {int(budget_s)}s (FACTORY_CODER_BUDGET_S / staged wall).",
         "",
+        writer_phase_slot_bodies()["BUILD"],
+        "",
         "Block scopes (from block.json; report-only until L2.2 flip — do not invent):",
     ]
     packed_reuse = {
@@ -658,6 +662,7 @@ def render_slot_bodies(
         "- scripts/acceptance.py ≥12 measured checks k/k inside the Store-built image  [check:store_acceptance]",
         "- ledger records pilot_ready=true  [check:ledger]",
         full_pilot_authorship_acceptance_line(n_required),
+        writer_phase_slot_bodies()["ACCEPTANCE"],
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
         "Do not treat thin SUCCESS / templates-only / stubbed capabilities / "
@@ -690,6 +695,7 @@ def render_slot_bodies(
         reuse_accept_forbidden_lines(),
         workflow_accept_forbidden_lines(),
         "- one handle() / one spec / one route at a time — this brief is the whole job",
+        writer_phase_slot_bodies()["FORBIDDEN"],
         "- weakening honesty or exporting when the pilot suite is red",
     )
 

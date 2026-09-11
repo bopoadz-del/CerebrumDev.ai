@@ -100,6 +100,13 @@ def test_compiled_brief_has_the_gated_shape():
     assert "CUT 1" in text
     assert "CUT 2" in text
     assert "CUT 3" in text
+    assert "PHASE 1 of 3" in text
+    assert "PHASE 2 of 3" in text
+    assert "PHASE 3 of 3" in text
+    assert "one FACTORY_CODE_CLI writer" in text
+    assert "[check:writer_phase_backend]" in text
+    assert "[check:writer_phase_frontend_rag]" in text
+    assert "[check:writer_phase_integration]" in text
     assert "Budget wall:" in text
     assert TEMPLATE_REVISION in text
     assert "READS" in text and "WRITES" in text and "NEVER" in text

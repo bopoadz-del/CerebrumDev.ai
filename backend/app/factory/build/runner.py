@@ -426,6 +426,18 @@ class RoleRunner:
                 if item
             ]
             self.state["landed_capabilities"] = list(dict.fromkeys([*prior, *landed]))
+        from app.factory.build.writer_phases import landed_phase_ids
+
+        phases = landed_phase_ids(self.ledger, digest)
+        if phases:
+            prior_phases = [
+                str(item)
+                for item in (self.state.get("landed_writer_phases") or [])
+                if item
+            ]
+            self.state["landed_writer_phases"] = list(
+                dict.fromkeys([*prior_phases, *phases])
+            )
 
     # -- one phase -------------------------------------------------------
 

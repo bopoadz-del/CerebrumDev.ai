@@ -35,6 +35,8 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
     assert "reminders_notifications" in brief
     assert "EVERY id in BLOCK_IDS" in brief
     assert "Finished" in brief or "finished product" in lowered
+    assert "one factory_code_cli writer" in lowered
+    assert "three gated phases" in lowered
 
 
 def test_handler_spec_and_route_share_the_same_brief():
