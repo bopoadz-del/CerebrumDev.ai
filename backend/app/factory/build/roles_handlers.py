@@ -1330,6 +1330,13 @@ def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
 '''
 
 
+def _checkpoint_writer_capability(ctx: RoleContext, capability_id: str) -> None:
+    """Persist one landed handler onto the resume spine. Lazy import: runner→roles."""
+    from app.factory.build.runner import checkpoint_landed_capability
+
+    checkpoint_landed_capability(ctx, capability_id)
+
+
 def _stage_handler_for_commit(ctx: RoleContext, handler_rel: Path) -> None:
     """Record a harvested/keep-path handler so staged WRITER commit copies it.
 
@@ -3037,6 +3044,11 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         )
 
     action_names: List[str] = []
+    landed = {
+        str(item)
+        for item in (ctx.state.get("landed_capabilities") or ())
+        if item
+    }
     for cap in ctx.plan.capabilities:
         cid = cap.capability_id
         name = cid.replace("-", "_")
@@ -3045,6 +3057,15 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         written.append(name)
 
         persist_root = persist_workspace_root(ctx.workspace)
+        if cid in landed and cid not in failing:
+            sources[cid] = previous_sources.get(
+                cid, "unchanged from previous round"
+            )
+            if ctx.workspace.exists(handler_rel):
+                ctx.workspace.write_text(
+                    handler_rel, ctx.workspace.read_text(handler_rel)
+                )
+            continue
         if cid not in failing and (persist_root / handler_rel).is_file():
             # Ratchet only when the persist-check tree has the file.
             # RoleWorkspace.exists also sees destination / store_root;
@@ -3052,6 +3073,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             # then fails [check:round_trip] with handler missing.
             sources[cid] = previous_sources.get(cid, "unchanged from previous round")
             _stage_handler_for_commit(ctx, handler_rel)
+            _checkpoint_writer_capability(ctx, cid)
             continue
 
         usable = [b for b in cap.block_ids if b in vendored]
@@ -3107,6 +3129,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                     total=len(cap_ids),
                 )
                 _stage_handler_for_commit(ctx, handler_rel)
+                _checkpoint_writer_capability(ctx, cid)
                 continue
         elif use_brief_dispatch:
             authored = None
@@ -3144,6 +3167,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 total=len(cap_ids),
             )
             _stage_handler_for_commit(ctx, handler_rel)
+            _checkpoint_writer_capability(ctx, cid)
             continue
         else:
             body = _capability_handler_body(cid, usable)
@@ -3193,6 +3217,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             done=len([k for k in sources if k in set(cap_ids)]),
             total=len(cap_ids),
         )
+        _checkpoint_writer_capability(ctx, cid)
 
     if body_shots.unreplayed():
         raise RoleError(
