@@ -934,6 +934,15 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         if source is None:
             missing.append(bid)
             continue
+        from app.factory.blocks_lock import BlocksLockError, enforce_store_lock, resolve_lock
+
+        factory_lock = (
+            ctx.blocks_lock if ctx.blocks_lock is not None else resolve_lock()
+        )
+        try:
+            enforce_store_lock(bid, source, ctx.blocks_root, factory_lock)
+        except BlocksLockError as exc:
+            raise RoleError(str(exc)) from exc
         needs_rt = _shim_needs_runtime(source)
         if needs_rt and ctx.blocks_root:
             if _resolve_store_def(bid, defs, Path(ctx.blocks_root)) is None:

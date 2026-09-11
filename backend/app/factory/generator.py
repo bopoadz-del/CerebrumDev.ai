@@ -42,6 +42,8 @@ class ProductGenerator:
         blocks_commit: str = "unknown",
         product_dna_version: str = "1.0.0",
         pin_versions: Optional[Dict[str, str]] = None,
+        blocks_lock: Optional[Dict[str, Any]] = None,
+        lock_path: Optional[Path] = None,
     ):
         self._coder_report: Dict[str, Any] = {"written": [], "stubbed": {}}
         self.blueprint = blueprint
@@ -52,6 +54,9 @@ class ProductGenerator:
         self.blocks_root = blocks_root
         self.product_dna_version = product_dna_version
         self.pin_versions = dict(pin_versions or {})
+        from app.factory.blocks_lock import resolve_lock
+
+        self.blocks_lock = resolve_lock(blocks_lock, lock_path=lock_path)
 
     def generate(self, output_dir: Path | str, *, clean: bool = True) -> Dict[str, Any]:
         out = Path(output_dir).resolve()
@@ -1419,9 +1424,12 @@ export default function {component}() {{
         dest.mkdir(parents=True, exist_ok=True)
         mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
         registry = Path(self.blocks_root) / "block_registry" if self.blocks_root else None
+        from app.factory.blocks_lock import enforce_store_lock
+
         for bid in self.plan.dual_registered_blocks:
             src = registry / bid if registry else None
             if src and src.exists():
+                enforce_store_lock(bid, src, self.blocks_root, self.blocks_lock)
                 shutil.copytree(src, dest / bid, dirs_exist_ok=True)
                 continue
             # Fall back to the vendor mirror when the external registry is unavailable
