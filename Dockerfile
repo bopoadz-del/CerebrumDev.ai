@@ -100,6 +100,12 @@ RUN set -eu \
 COPY backend/app /app/app
 # Golden product blueprints (Steward + examples) — required by ProductArchitect in prod
 COPY blueprints /app/blueprints
+# Factory store pin. factory_repo_root() is /app in this image, so
+# default_lock_path() is /app/blocks.lock.json. S07 wrote the lock at the
+# repo root but the image never copied it; CLONER then treated every
+# store-sourced block as unlocked (live Steward Continue sess_5782f226
+# died at database with the lock-hash that was already committed).
+COPY blocks.lock.json /app/blocks.lock.json
 # Alembic migration system for the accounts DB (runs at boot; see backend/alembic/)
 COPY backend/alembic.ini /app/alembic.ini
 COPY backend/alembic /app/alembic

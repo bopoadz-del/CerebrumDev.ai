@@ -18,12 +18,19 @@ The lock is generated from the store tree. Do not hand-write entries.
   `backend/app/factory/vendor_blocks_mirror` and recorded with
   `source: factory-vendor-mirror`
 
+The production image must COPY this file to `/app/blocks.lock.json`.
+`factory_repo_root()` is `/app` in that image; without the COPY, CLONER
+resolves no pin and every store-sourced clone fails as unlocked.
+
 ## Resolve at build time
 
 `python -m app.factory.cli generate` and `build` (and the role CLONER)
 resolve a store-sourced consumed block through the lock:
 
+- missing lock file → `BLOCKS_LOCK: lock file missing at <path> …`
+  plus the `update-lock` regeneration command
 - missing lock entry → `BLOCKS_LOCK: unlocked block '<id>' …`
+  plus the same regeneration command
 - hash mismatch → `BLOCKS_LOCK: hash mismatch for block '<id>': lock=… store=…`
 
 There is no warning path and no fall-through to latest.

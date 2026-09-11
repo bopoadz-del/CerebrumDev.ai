@@ -14,11 +14,14 @@ def test_factory_repo_root_finds_blueprints():
     assert lettings_golden_path().is_file()
 
 
-def test_factory_repo_root_docker_layout(tmp_path, monkeypatch):
+def test_factory_repo_root_docker_layout(tmp_path):
     app_pkg = tmp_path / "app" / "factory"
     app_pkg.mkdir(parents=True)
     (tmp_path / "blueprints" / "steward").mkdir(parents=True)
     (tmp_path / "blueprints" / "steward" / "steward.v1.yaml").write_text("x: 1\n")
+    (tmp_path / "blocks.lock.json").write_text("{}\n")
     anchor = app_pkg / "paths.py"
     anchor.write_text("# anchor\n")
     assert factory_repo_root(anchor) == tmp_path
+    # Production image copies the pin next to blueprints/ at /app.
+    assert (factory_repo_root(anchor) / "blocks.lock.json").is_file()
