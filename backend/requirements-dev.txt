@@ -12,3 +12,8 @@ ruff>=0.16.4
 
 # Incremental typecheck. Scope is backend/mypy.ini (not the whole tree).
 mypy>=2.3.1
+
+# Dependency audit (S03). The CI job and scripts/dep_audit.py consume this.
+# Adjudications live in docs/security/dependency-adjudications/ — never a
+# bare --ignore-vuln.
+pip-audit>=2.7
