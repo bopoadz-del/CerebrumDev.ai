@@ -361,6 +361,54 @@ def test_mutation_drops_capture_reuse_accept_needles():
     )
 
 
+def test_mutation_drops_storage_reuse_accept_needles():
+    """sess_5782f2264e0e4ff4 run3: dropping storage harvest needle must lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+    from tests.factory.test_cbrief_reuse_schema_accept import (
+        STORE_IDS,
+        _VetCare,
+        _vetcare_reuse_plan,
+    )
+
+    compiled = compile_brief(
+        _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace(
+        "Steward estate_registry binds storage",
+        "Steward estate_catalog binds object_store",
+    )
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any(
+        "REUSE schema-sample accept contract" in e
+        or "Steward estate_registry binds storage" in e
+        for e in result.errors
+    )
+
+
+def test_mutation_drops_estate_registry_reuse_accept_needles():
+    """sess_5782f2264e0e4ff4 run3: dropping estate_registry needle must lint-fail."""
+    from app.factory.build.brief_compiler import compile_brief
+    from tests.factory.test_cbrief_reuse_schema_accept import (
+        STORE_IDS,
+        _VetCare,
+        _vetcare_reuse_plan,
+    )
+
+    compiled = compile_brief(
+        _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
+    )
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("estate_registry", "estate_catalog")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any(
+        "REUSE schema-sample accept contract" in e or "estate_registry" in e
+        for e in result.errors
+    )
+
+
 def test_mutation_drops_vector_search_reuse_accept_needles():
     """sess_8259e197749b4441: dropping vector_search harvest needle must lint-fail."""
     from app.factory.build.brief_compiler import compile_brief

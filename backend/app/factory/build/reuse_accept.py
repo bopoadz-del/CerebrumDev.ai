@@ -83,6 +83,29 @@ from block.json alone misses. InsureDistribute Store-green zip
 'extract'}``. Factory-known map fallback is ``capture`` → ``extract``.
 Same class as #348 ``formula_executor`` / #351 ``vector_search``.
 Do not claim pilot_zip.
+
+Live sess_5782f2264e0e4ff4 Continue run3 (tip 4120a07 / #404 CLONER OK,
+#403 property_onboarding / spec_analyzer CLEARED): WRITER stopped at
+[check:reuse_accept]:
+
+    estate_registry: storage: reuse/accept miss —
+      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
+
+Outcome FAILED_ROLE_ERROR. TESTER not reached. Steward
+``estate_registry`` binds estate_registry + database + storage +
+validation. #403 harvested spec_analyzer / recommendation_template /
+readiness_engine; ``storage`` (and the other Steward kit adapters
+without an action input) were still missing from the factory-known
+map. Same class — not a per-cap handle() micro-shot.
+
+``factory budget ramp`` is independent of this check. Ramp fires
+during the in-flight C-BRIEF CLI wait (``_maybe_cli_phase_ramp``)
+when leftover phase-box time is inside
+``CLI_PHASE_RAMP_HEADROOM_S``. reuse_accept runs only after the CLI
+returns and keep-path emit lands handlers. A miss here cannot
+suppress a ramp that should already have logged; a Continue that
+never approached the 1500s phase box also logs no ramp. Do not
+claim pilot_zip.
 """
 
 from __future__ import annotations
@@ -145,6 +168,15 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
     "client_communication_portal": ["team"],
 }
 
+#: Photographed Steward Continue run3 (sess_5782f2264e0e4ff4, tip 4120a07).
+LIVE_STEWARD_ESTATE_REGISTRY_CAP = "estate_registry"
+LIVE_STEWARD_ESTATE_REGISTRY_BLOCKS: List[str] = [
+    "estate_registry",
+    "database",
+    "storage",
+    "validation",
+]
+
 #: Factory-known Store defaults already documented in this repo
 #: (LIVE_CONTRACTS, workflow_accept, writer_behaviour / contract probes).
 #: Harvest from vendored block.json / source wins when present.
@@ -163,6 +195,14 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
 #: are the sess_5782f2264e0e4ff4 miss on Steward ``property_onboarding``
 #: (Unknown action: None). reuse_accept failed independently of the
 #: ~1490s phase wall — the CLI had already returned at ~1488s.
+#: ``storage`` is the sess_5782f2264e0e4ff4 run3 miss on Steward
+#: ``estate_registry`` (tip 4120a07). RESOURCE_OBLIGATIONS.ensure is
+#: ``store``; retrieve/exists/delete are follow-on actions. Factory
+#: vendor ``storage/block.json`` has no action input (adapter run()
+#: only). Sibling Steward adapters without an action input get the
+#: same map so the next Continue cannot whack-a-mole:
+#: estate_registry / estate_maintenance / evidence_verifier /
+#: portfolio_rollup / knowledge.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
     "audit": "log",
@@ -186,6 +226,16 @@ STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "spec_analyzer": "analyze",
     "recommendation_template": "apply_template",
     "readiness_engine": "score",
+    #: sess_5782f2264e0e4ff4 run3: Steward estate_registry binds storage.
+    #: Factory vendor mirrors have no inputs[].name == action (adapter
+    #: run() only). Same class as formula_executor / vector_search /
+    #: capture / spec_analyzer.
+    "storage": "store",
+    "estate_registry": "register",
+    "estate_maintenance": "plan_work",
+    "evidence_verifier": "verify",
+    "portfolio_rollup": "aggregate",
+    "knowledge": "search",
 }
 
 _BLOCK_DEFAULTS_ASSIGN = re.compile(
@@ -623,6 +673,9 @@ def reuse_accept_rules_text(
             "recommendation_template / readiness_engine — a missing",
             "default is the sess_5782f2264e0e4ff4 reuse/accept miss",
             "(independent of the ~1490s phase wall).",
+            "Steward estate_registry binds storage — a missing default",
+            "is the sess_5782f2264e0e4ff4 run3 reuse/accept miss",
+            "(tip 4120a07; independent of factory budget ramp).",
             f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
             "three PRODUCT reworks on Unknown action.",
         ]
@@ -667,8 +720,8 @@ def reuse_accept_brief_contract() -> str:
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
         "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map (including formula_executor, vector_search, capture, and "
-        "spec_analyzer) and pass action= "
+        "map (including formula_executor, vector_search, capture, "
+        "spec_analyzer, storage, and estate_registry) and pass action= "
         "as a keyword (action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
@@ -697,6 +750,8 @@ def reuse_accept_needles() -> Sequence[str]:
         "formula_executor",
         "vector_search",
         "capture",
+        "Steward estate_registry binds storage",
+        "estate_registry",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
         PRODUCT_ASSIGN_TO_CALL_HALT,

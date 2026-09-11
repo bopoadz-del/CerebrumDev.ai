@@ -6,5 +6,14 @@
   "source": "factory-vendor-mirror",
   "upstream": "cerebrum-blocks/block_registry/storage",
   "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "tags": ["platform", "factory-mirror", "steward-kit"],
+  "inputs": [
+    {
+      "name": "action",
+      "type": "string",
+      "default": "store",
+      "options": ["store", "retrieve", "exists", "delete"],
+      "description": "Factory-known keep-path default (sess_5782f2264e0e4ff4 run3). RESOURCE_OBLIGATIONS.ensure is store; retrieve/exists/delete are follow-on. Registry / factory adapter has no action input (run() only). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+    }
+  ]
 }
