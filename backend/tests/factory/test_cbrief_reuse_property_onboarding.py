@@ -25,8 +25,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.reuse_accept import (
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
     REUSE_ACCEPT_MISS,
