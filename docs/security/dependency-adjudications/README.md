@@ -2,7 +2,10 @@
 
 Dated notes for advisories that remain after the Linux resolve. Each
 remaining finding has a registry row, a dated note, and a test twin in
-`backend/tests/test_dep_audit.py`. CI runs `scripts/dep_audit.py`.
+`backend/tests/test_dep_audit.py`. CI runs `scripts/dep_audit.py`, which
+audits `backend/requirements.txt` (the factory pin set). A local-env
+scan on GitHub Actions also reports the runner's `setuptools`; that is
+not a factory pin and is not adjudicated with `--ignore-vuln`.
 
 A scanner summary is not evidence. Read the package's declared
 `Requires-Dist` (and, for a pin we keep, `pip-audit`'s `fix_versions`)

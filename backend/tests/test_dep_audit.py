@@ -358,10 +358,26 @@ def test_ci_has_fail_closed_python_and_npm_audit_jobs():
             assert step.get("continue-on-error") in (None, False)
 
 
+def test_wrapper_audits_requirements_txt_not_the_runner_env(audit):
+    """GHA's setuptools (PYSEC-2026-3447) is not a factory pin.
+
+    Mutation killed: dropping ``-r requirements.txt`` and scanning the
+    local env, then papering over the extra finding with --ignore-vuln.
+    """
+    argv = audit.pip_audit_argv(REPO_ROOT / "backend" / "requirements.txt")
+    joined = " ".join(argv)
+    assert "-r" in argv
+    assert str(REPO_ROOT / "backend" / "requirements.txt") in argv
+    assert "--ignore-vuln" not in joined
+    req = REQ.read_text(encoding="utf-8").lower()
+    assert "setuptools" not in req
+
+
 def test_ci_python_job_runs_pip_audit_via_the_wrapper():
     runs = _job_runs(_ci_jobs()["backend-dep-audit"])
     assert "--python" in runs
-    assert "pip-audit" not in runs or "dep_audit.py" in runs
+    assert "dep_audit.py" in runs
+    assert "--ignore-vuln" not in runs
 
 
 def test_ci_npm_job_runs_npm_audit_via_the_wrapper():

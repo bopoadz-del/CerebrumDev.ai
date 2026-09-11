@@ -201,18 +201,33 @@ def evaluate(
     return errors
 
 
+def pip_audit_argv(requirements: Path) -> list[str]:
+    """Audit the factory pin file, not the runner's site-packages.
+
+    A local-env scan on GitHub Actions reports PYSEC-2026-3447 in the
+    toolchain's ``setuptools`` (79.0.1 on the 3.11 image). That package is
+    not in ``requirements.txt``. ``-r`` is the Linux resolve this job
+    adjudicates. Do not replace it with a bare ``--ignore-vuln``.
+    """
+    return [
+        sys.executable,
+        "-m",
+        "pip_audit",
+        "-r",
+        str(requirements),
+        "--format",
+        "json",
+        "--progress-spinner",
+        "off",
+    ]
+
+
 def run_pip_audit(cwd: Path | None = None) -> dict[str, Any]:
+    backend = cwd or REPO_ROOT / "backend"
+    requirements = backend / "requirements.txt"
     proc = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pip_audit",
-            "--format",
-            "json",
-            "--progress-spinner",
-            "off",
-        ],
-        cwd=cwd or REPO_ROOT / "backend",
+        pip_audit_argv(requirements),
+        cwd=backend,
         capture_output=True,
         text=True,
         check=False,

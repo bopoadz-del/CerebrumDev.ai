@@ -182,6 +182,9 @@ jobs:
 
       - name: pip-audit + dated adjudications
         working-directory: .
+        # Wrapper audits backend/requirements.txt (factory pin set), not the
+        # runner site-packages. A local-env scan flags GHA setuptools
+        # (PYSEC-2026-3447) which is not a factory pin. No --ignore-vuln.
         run: python3 scripts/dep_audit.py --python
 
   # F26 / windows_cp1252_parity. Linux agents cannot certify this.
