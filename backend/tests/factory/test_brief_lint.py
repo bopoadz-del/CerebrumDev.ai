@@ -624,3 +624,14 @@ def test_mutation_drops_writer_phase_needles():
     result = lint_brief(compiled)
     assert result.ok is False
     assert any("one-WRITER three-phase contract" in e for e in result.errors)
+
+
+def test_mutation_drops_frontend_rag_route_contract():
+    """sess_5782f226 run5: brief must keep the exact RAG HTTP paths."""
+    compiled = _compiled()
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    compiled.text = compiled.text.replace("/v1/rag/ingest", "/v1/search/ingest")
+    compiled.text = compiled.text.replace("/v1/steward/rag/ingest", "/v1/steward/search/ingest")
+    result = lint_brief(compiled)
+    assert result.ok is False
+    assert any("one-WRITER three-phase contract" in e for e in result.errors)

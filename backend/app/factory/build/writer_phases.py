@@ -34,8 +34,15 @@ WRITER_PHASES: Tuple[str, ...] = (
 
 #: A Store ``vector_search`` bind is reuse_accept (BLOCK_DEFAULT_ACTIONS),
 #: not a product RAG ingest/query surface. Only an explicit rag* id owes
-#: /v1/rag/ingest + /v1/rag/query.
+#: dedicated ingest + query HTTP routes. Phase-1 persist POST/GET on
+#: ``/v1/dual_rag_estate_docs`` is not that surface.
 RAG_SURFACE_IDS = frozenset({"rag", "dual_rag"})
+
+#: One honest HTTP contract shared by PHASE 2 DO, ACCEPTANCE, and the
+#: checker. Kit / legacy dual-RAG and Steward canonical both count.
+#: Capability persist routes and docs/rag/*.json stamps do not.
+RAG_INGEST_PATHS = ("/v1/rag/ingest", "/v1/steward/rag/ingest")
+RAG_QUERY_PATHS = ("/v1/rag/query", "/v1/steward/rag/query")
 
 PHASE_TITLES = {
     WRITER_PHASE_BACKEND: "BACKEND",
@@ -105,6 +112,10 @@ def writer_phase_needles() -> Sequence[str]:
         "not Store Docker",
         "RAG ingest/query",
         "one-record POST/GET",
+        "/v1/rag/ingest",
+        "/v1/rag/query",
+        "/v1/steward/rag/ingest",
+        "/v1/steward/rag/query",
     )
 
 
@@ -139,8 +150,17 @@ def phase_do_text(phase_id: str) -> str:
             "UI on the working backend (frontend modules call the live POST/GET "
             "routes). Do not invent a second API.\n"
             "RAG ingest/query where the inventory names a rag / dual_rag "
-            "surface — otherwise do not invent a RAG surface. A vector_search "
-            "bind is reuse_accept, not /v1/rag/*.\n"
+            "surface (capability id contains rag, or block id rag / dual_rag / "
+            "rag_*) — otherwise do not invent a RAG surface.\n"
+            "When RAG is owed, ship these HTTP routes as quoted paths in "
+            "app/**/*.py (not docs/rag JSON, not phase-1 persist POST/GET): "
+            "ingest POST /v1/rag/ingest or POST /v1/steward/rag/ingest; "
+            "query GET or POST /v1/rag/query or GET or POST "
+            "/v1/steward/rag/query.\n"
+            "A vector_search bind is reuse_accept — do not invent a second "
+            "vector store. It is not a substitute for those ingest/query "
+            "routes. dual_rag_estate_docs / dual_rag_sop one-record POST/GET "
+            "is persist, not ingest/query.\n"
             "STOP / checkpoint after PHASE 2 acceptance. "
             "Do not start PHASE 3."
         )
@@ -164,7 +184,10 @@ def phase_acceptance_lines() -> str:
             "one-record POST/GET per required capability  "
             "[check:writer_phase_backend]",
             "- PHASE 2 of 3 FRONTEND + RAG accepted: UI on working backend; "
-            "RAG ingest/query where needed  [check:writer_phase_frontend_rag]",
+            "RAG ingest/query where needed — POST /v1/rag/ingest or POST "
+            "/v1/steward/rag/ingest plus GET|POST /v1/rag/query or GET|POST "
+            "/v1/steward/rag/query in app/**/*.py  "
+            "[check:writer_phase_frontend_rag]",
             "- PHASE 3 of 3 INTEGRATION accepted: package/boot/render-ready "
             "(not live Render; not Store Docker)  "
             "[check:writer_phase_integration]",
@@ -297,8 +320,9 @@ def inventory_needs_rag(compiled: Any) -> bool:
     """True when STEP 0 names a RAG ingest/query surface.
 
     ``vector_search`` / ``knowledge`` binds are registry REUSE, not a
-    claimed ``/v1/rag/*`` product. Estate dual-RAG capabilities include
-    ``rag`` in the id or block id.
+    claimed ingest/query product. Estate dual-RAG capabilities
+    (``dual_rag_estate_docs``, ``dual_rag_sop``) still owe the HTTP
+    contract below even when their Store binds are vector_search.
     """
     for item in getattr(compiled, "inventory", ()) or ():
         cid = str(getattr(item, "capability_id", "") or "").lower()
@@ -333,6 +357,32 @@ def _read_if(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _quoted_path_present(blob: str, path: str) -> bool:
+    """True when *path* is a quoted HTTP route, not a docs/prose mention."""
+    return f'"{path}"' in blob or f"'{path}'" in blob
+
+
+def _app_python_sources(root: Path) -> str:
+    """Concatenated ``app/**/*.py``. Docs JSON stamps are not routes."""
+    app = root / "app"
+    if not app.is_dir():
+        return ""
+    parts: List[str] = []
+    for path in sorted(app.rglob("*.py")):
+        parts.append(_read_if(path))
+    return "\n".join(parts)
+
+
+def rag_ingest_route_present(root: Path) -> bool:
+    blob = _app_python_sources(root)
+    return any(_quoted_path_present(blob, path) for path in RAG_INGEST_PATHS)
+
+
+def rag_query_route_present(root: Path) -> bool:
+    blob = _app_python_sources(root)
+    return any(_quoted_path_present(blob, path) for path in RAG_QUERY_PATHS)
 
 
 def phase_acceptance_errors(
@@ -379,15 +429,18 @@ def phase_acceptance_errors(
                                 f"{module}: emitted as a {len(body.strip())}-char placeholder"
                             )
         if inventory_needs_rag(compiled):
-            blob = (
-                _read_if(root / "app" / "routes.py")
-                + _read_if(root / "app" / "main.py")
-                + _read_if(root / "docs" / "rag" / "dual_rag.json")
-            ).lower()
-            if "rag/ingest" not in blob and "/v1/rag/ingest" not in blob:
-                errors.append("RAG ingest/query where needed — ingest route missing")
-            if "rag/query" not in blob and "/v1/rag/query" not in blob:
-                errors.append("RAG ingest/query where needed — query route missing")
+            if not rag_ingest_route_present(root):
+                errors.append(
+                    "RAG ingest/query where needed — ingest route missing "
+                    "(need POST /v1/rag/ingest or POST /v1/steward/rag/ingest "
+                    "quoted in app/**/*.py)"
+                )
+            if not rag_query_route_present(root):
+                errors.append(
+                    "RAG ingest/query where needed — query route missing "
+                    "(need GET|POST /v1/rag/query or GET|POST "
+                    "/v1/steward/rag/query quoted in app/**/*.py)"
+                )
     else:
         for rel in RENDER_READY_RELS:
             if not (root / rel).is_file():

@@ -107,6 +107,10 @@ def test_compiled_brief_has_the_gated_shape():
     assert "[check:writer_phase_backend]" in text
     assert "[check:writer_phase_frontend_rag]" in text
     assert "[check:writer_phase_integration]" in text
+    assert "/v1/rag/ingest" in text
+    assert "/v1/rag/query" in text
+    assert "/v1/steward/rag/ingest" in text
+    assert "/v1/steward/rag/query" in text
     assert "Budget wall:" in text
     assert TEMPLATE_REVISION in text
     assert "READS" in text and "WRITES" in text and "NEVER" in text
