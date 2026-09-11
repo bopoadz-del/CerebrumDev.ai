@@ -12,6 +12,13 @@
   ],
   "inputs": [
     {
+      "name": "action",
+      "type": "string",
+      "default": "verify",
+      "options": ["verify"],
+      "description": "Factory-known keep-path default. Steward hat workflow role is verify. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+    },
+    {
       "name": "input",
       "type": "json",
       "required": false,

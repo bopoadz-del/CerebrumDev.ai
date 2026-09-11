@@ -10,6 +10,12 @@ old_wall) and the 1500s phase box never lifts.
 Ramp + salvage: while the CLI is alive and approaching
 ``phase_wall_clock_s``, call ``_extend_wall`` so the 7200s ceiling is
 actually used. Do not "fix" by raising the initial phase wall.
+
+reuse_accept is post-CLI keep-path (sess_5782f2264e0e4ff4 run3
+estate_registry / storage miss). It cannot suppress this ramp. A
+Continue with no ``factory budget ramp`` line either never approached
+the phase box while CLI was in-flight, or ``_cli_in_flight`` was
+false — that is not a reuse_accept defect.
 """
 
 from __future__ import annotations
