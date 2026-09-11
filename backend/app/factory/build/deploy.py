@@ -455,6 +455,12 @@ def render_main(product_name: str) -> str:
         f'app = FastAPI(title="{product_name}", lifespan=lifespan)\n'
         "install_observability(app)\n"
         'app.include_router(router, prefix="/v1")\n'
+        "try:\n"
+        "    from app.rag_routes import router as rag_router\n"
+        "\n"
+        "    app.include_router(rag_router)\n"
+        "except ImportError:\n"
+        "    pass\n"
         "\n"
         "\n"
         '@app.get("/")\n'

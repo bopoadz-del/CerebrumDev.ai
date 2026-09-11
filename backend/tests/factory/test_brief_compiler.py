@@ -111,6 +111,8 @@ def test_compiled_brief_has_the_gated_shape():
     assert "/v1/rag/query" in text
     assert "/v1/steward/rag/ingest" in text
     assert "/v1/steward/rag/query" in text
+    assert "HARD WRITE" in text
+    assert "app/rag_routes.py" in text
     assert "Budget wall:" in text
     assert TEMPLATE_REVISION in text
     assert "READS" in text and "WRITES" in text and "NEVER" in text

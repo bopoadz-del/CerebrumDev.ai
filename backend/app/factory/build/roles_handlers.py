@@ -2832,6 +2832,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.writer_phases import (
         PhaseAcceptHalt,
         WRITER_PHASE_BACKEND,
+        WRITER_PHASE_FRONTEND_RAG,
         accept_writer_phase,
         checkpoint_landed_phase,
         compile_phase_brief,
@@ -3668,6 +3669,25 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             )
             if dispatch is not None:
                 ctx.state["brief_dispatch"] = dispatch.to_dict()
+        if phase_id == WRITER_PHASE_FRONTEND_RAG:
+            from app.factory.build.rag_surface import (
+                FACTORY_GROUNDED_RAG_SOURCE,
+                emit_factory_grounded_rag_surface,
+            )
+
+            ws = Path(getattr(ctx.workspace, "workspace", ctx.workspace))
+            planted = emit_factory_grounded_rag_surface(ws, compiled_brief)
+            if planted:
+                sources["rag_surface"] = FACTORY_GROUNDED_RAG_SOURCE
+                ctx.note(
+                    "factory-grounded RAG ingest/query keep-path "
+                    + ",".join(planted),
+                    stage="dispatch",
+                    phase=phase_id,
+                    source=FACTORY_GROUNDED_RAG_SOURCE,
+                    done=1,
+                    total=1,
+                )
         try:
             accept_writer_phase(ctx, phase_id, compiled_brief)
         except PhaseAcceptHalt as exc:

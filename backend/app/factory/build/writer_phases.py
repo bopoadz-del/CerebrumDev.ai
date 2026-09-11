@@ -116,14 +116,30 @@ def writer_phase_needles() -> Sequence[str]:
         "/v1/rag/query",
         "/v1/steward/rag/ingest",
         "/v1/steward/rag/query",
+        "HARD WRITE",
+        "app/rag_routes.py",
     )
 
 
-def phase_step0_line() -> str:
-    return (
+def phase_step0_line(phase_id: Optional[str] = None) -> str:
+    """STEP 0 cut. PHASE 2 must not hide RAG HTTP behind 'named GAPS only'.
+
+    sess_5782f226 run6: ``Author only named GAPS`` plus ``work=6`` capability
+    hole-fill let kimi complete PHASE 2 without quoting ingest/query.
+    """
+    shared = (
         "STEP 0 INVENTORY + registry REUSE (this phase): use CUT 1 "
         "verified-present ids. Bind them. Author only named GAPS. "
         "Do not invent a block id."
+    )
+    if str(phase_id or "").strip() != WRITER_PHASE_FRONTEND_RAG:
+        return shared
+    return (
+        "STEP 0 INVENTORY + registry REUSE (this phase): use CUT 1 "
+        "verified-present ids. Bind them. Author named GAPS. "
+        "When inventory names rag / dual_rag, HARD WRITE "
+        "app/rag_routes.py ingest/query HTTP — those routes are not named "
+        "GAPS and not persist POST/GET. Do not invent a block id."
     )
 
 
@@ -132,7 +148,7 @@ def phase_do_text(phase_id: str) -> str:
     spec = writer_phase(phase_id)
     shared = (
         f"# PHASE {spec.index} of 3 — {spec.title} (DO)\n"
-        f"{phase_step0_line()}\n"
+        f"{phase_step0_line(spec.phase_id)}\n"
         "One FACTORY_CODE_CLI writer. No extra coder roles."
     )
     if spec.phase_id == WRITER_PHASE_BACKEND:
@@ -157,6 +173,11 @@ def phase_do_text(phase_id: str) -> str:
             "ingest POST /v1/rag/ingest or POST /v1/steward/rag/ingest; "
             "query GET or POST /v1/rag/query or GET or POST "
             "/v1/steward/rag/query.\n"
+            "HARD WRITE app/rag_routes.py (Factory keep-path plants this "
+            "file when the CLI miss-scopes work items to capability "
+            "gaps_only): quoted POST /v1/rag/ingest and GET|POST "
+            "/v1/rag/query — or the /v1/steward/rag/* twins. Acceptance "
+            "cannot pass without those quoted paths in app/**/*.py.\n"
             "A vector_search bind is reuse_accept — do not invent a second "
             "vector store. It is not a substitute for those ingest/query "
             "routes. dual_rag_estate_docs / dual_rag_sop one-record POST/GET "
@@ -222,7 +243,7 @@ def compile_phase_brief(compiled: Any, phase_id: str) -> Any:
             "One FACTORY_CODE_CLI writer. Do only this phase.",
             "STOP after this phase's acceptance. Do not start the next phase.",
             "Resume must not redo a landed earlier phase from zero.",
-            phase_step0_line(),
+            phase_step0_line(spec.phase_id),
             "",
             phase_do_text(phase_id),
         ]
