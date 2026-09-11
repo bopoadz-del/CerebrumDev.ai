@@ -259,7 +259,9 @@ describe('Your Platforms — coding-agent build', () => {
       })
     })
     render(<Platforms sessionId="sess_ui" />)
-    expect(await screen.findByTestId('platforms-acceptance-score')).toHaveTextContent('5/12')
+    await waitFor(() => {
+      expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('5/12')
+    })
     expect(screen.getByRole('button', { name: 'Export (.zip) — acceptance 5/12' })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Acceptance is 5\/12/)
