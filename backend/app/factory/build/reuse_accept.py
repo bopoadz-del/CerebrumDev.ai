@@ -159,6 +159,10 @@ LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
 #: action dispatch. InsureDistribute Store-green zip (sess_d10dfc28)
 #: emitted ``BLOCK_DEFAULT_ACTIONS = {'capture': 'extract'}``. Harvest
 #: aliases ``capture_v2``.
+#: ``spec_analyzer`` / ``recommendation_template`` / ``readiness_engine``
+#: are the sess_5782f2264e0e4ff4 miss on Steward ``property_onboarding``
+#: (Unknown action: None). reuse_accept failed independently of the
+#: ~1490s phase wall — the CLI had already returned at ~1488s.
 STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "analytics": "track_event",
     "audit": "log",
@@ -176,6 +180,12 @@ STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     "validation": "validate",
     "vector_search": "search",
     "workflow": "run",
+    #: sess_5782f2264e0e4ff4: Steward property_onboarding binds these three.
+    #: Factory vendor mirrors have no inputs[].name == action (adapter
+    #: run() only). Same class as formula_executor / vector_search / capture.
+    "spec_analyzer": "analyze",
+    "recommendation_template": "apply_template",
+    "readiness_engine": "score",
 }
 
 _BLOCK_DEFAULTS_ASSIGN = re.compile(
@@ -609,6 +619,10 @@ def reuse_accept_rules_text(
             "estate-operations maintenance_and_work_order_management /",
             "security_and_access_logging bind capture — a missing default",
             "is the sess_e8e4ab66e6dd4765 reuse/accept miss.",
+            "Steward property_onboarding binds spec_analyzer /",
+            "recommendation_template / readiness_engine — a missing",
+            "default is the sess_5782f2264e0e4ff4 reuse/accept miss",
+            "(independent of the ~1490s phase wall).",
             f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
             "three PRODUCT reworks on Unknown action.",
         ]
@@ -653,7 +667,8 @@ def reuse_accept_brief_contract() -> str:
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
         "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map (including formula_executor, vector_search, and capture) and pass action= "
+        "map (including formula_executor, vector_search, capture, and "
+        "spec_analyzer) and pass action= "
         "as a keyword (action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "

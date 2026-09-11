@@ -12,6 +12,13 @@
   ],
   "inputs": [
     {
+      "name": "action",
+      "type": "string",
+      "default": "score",
+      "options": ["score"],
+      "description": "Factory-known keep-path default (sess_5782f2264e0e4ff4). Steward property_onboarding binds readiness_engine. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+    },
+    {
       "name": "input",
       "type": "json",
       "required": false,

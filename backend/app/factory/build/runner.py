@@ -79,6 +79,99 @@ def runner_enabled() -> bool:
     return os.getenv(RUNNER_FLAG_ENV, "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+#: Ledger NOTE ``stage`` for a capability that has landed on disk.
+#: ``resume_point()`` still names the role; this is the intra-WRITER spine.
+CHECKPOINT_STAGE = "checkpoint"
+
+#: When an in-flight C-BRIEF CLI has this much (or less) of the phase
+#: wall left, ``_extend_wall`` may lift the live deadline to the 7200s
+#: ceiling. Not a bigger initial wall — ramp + salvage.
+CLI_PHASE_RAMP_HEADROOM_S = 120.0
+
+
+def landed_capability_ids(ledger: Any, inputs_hash: str) -> list:
+    """Capabilities already checkpointed for this ``blueprint_hash``.
+
+    Resume keys on the blueprint, not the output tree. A NOTE whose
+    ``inputs_hash`` does not match is a different run and is ignored.
+    """
+    digest = str(inputs_hash or "")
+    out: list = []
+    seen: set = set()
+    events = ledger.events() if hasattr(ledger, "events") else ()
+    for event in events:
+        payload = getattr(event, "payload", None) or {}
+        if str(payload.get("stage") or "") != CHECKPOINT_STAGE:
+            continue
+        if str(payload.get("inputs_hash") or "") != digest:
+            continue
+        cid = str(payload.get("capability") or "").strip()
+        if cid and cid not in seen:
+            seen.add(cid)
+            out.append(cid)
+    return out
+
+
+def pending_capability_ids(ctx: Any) -> list:
+    """Plan order minus capabilities already on the resume spine."""
+    plan = getattr(ctx, "plan", None)
+    caps = [
+        str(getattr(cap, "capability_id", "") or "")
+        for cap in getattr(plan, "capabilities", ()) or ()
+    ]
+    landed = {
+        str(item)
+        for item in (getattr(ctx, "state", {}) or {}).get("landed_capabilities") or ()
+        if item
+    }
+    return [cid for cid in caps if cid and cid not in landed]
+
+
+def checkpoint_landed_capability(ctx: Any, capability_id: str) -> None:
+    """Persist one landed capability into destination + ledger resume spine."""
+    from app.factory.build.persist_accept import persist_handler_rel
+
+    cid = str(capability_id or "").strip()
+    if not cid:
+        return
+    state = getattr(ctx, "state", None)
+    if not isinstance(state, dict):
+        return
+    rel = persist_handler_rel(cid)
+    ws = getattr(ctx, "workspace", None)
+    text = ""
+    if ws is not None:
+        try:
+            if hasattr(ws, "exists") and ws.exists(rel):
+                text = ws.read_text(rel)
+        except (OSError, TypeError, ValueError):
+            text = ""
+        dest = getattr(ws, "destination", None)
+        if dest is not None and text:
+            path = Path(dest) / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+    digest = str(state.get("inputs_hash") or "")
+    if not digest and getattr(ctx, "blueprint", None) is not None:
+        try:
+            digest = blueprint_hash(ctx.blueprint)
+            state["inputs_hash"] = digest
+        except Exception:  # noqa: BLE001 — checkpoint must not fail WRITER
+            digest = ""
+    landed = [str(item) for item in (state.get("landed_capabilities") or []) if item]
+    if cid not in landed:
+        landed.append(cid)
+        state["landed_capabilities"] = landed
+    note = getattr(ctx, "note", None)
+    if callable(note):
+        note(
+            f"landed capability {cid}",
+            stage=CHECKPOINT_STAGE,
+            capability=cid,
+            inputs_hash=digest,
+        )
+
+
 def blueprint_hash(blueprint: Any) -> str:
     """Stable hash of the build's *inputs*.
 
@@ -321,6 +414,18 @@ class RoleRunner:
                 )
             except (OSError, ValueError):
                 pass
+        digest = str(self.state.get("inputs_hash") or "") or blueprint_hash(
+            self.blueprint
+        )
+        self.state["inputs_hash"] = digest
+        landed = landed_capability_ids(self.ledger, digest)
+        if landed:
+            prior = [
+                str(item)
+                for item in (self.state.get("landed_capabilities") or [])
+                if item
+            ]
+            self.state["landed_capabilities"] = list(dict.fromkeys([*prior, *landed]))
 
     # -- one phase -------------------------------------------------------
 
@@ -580,11 +685,49 @@ class RoleRunner:
         this is the only writer of the deadline, and two of its callers pass
         ``elapsed + PILOT_SUITE_TAIL_S`` without consulting the inspector, so
         a cap applied only where values are proposed is not a cap.
+
+        The CLI default ``wall_clock_s`` is already the 7200s ceiling, so a
+        grow-only writer would no-op while the 1500s *phase* box still
+        kills C-BRIEF. Lifting the live deadline to ``run_started +
+        capped(new_wall)`` is what actually uses the ceiling.
         """
         old_wall = float(self.budget.wall_clock_s or 0.0)
         requested = float(new_wall)
         new_wall = self.budget.capped(requested)
-        if new_wall <= old_wall:
+        target = None
+        if self._run_started is not None and new_wall > 0:
+            target = float(self._run_started) + float(new_wall)
+
+        lifted = False
+        if target is not None:
+            if self._deadline is None or float(self._deadline) + 1e-9 < target:
+                self._deadline = target
+                lifted = True
+            boxed = self._deadline_box.get("at")
+            if boxed is None or float(boxed) + 1e-9 < target:
+                self._deadline_box["at"] = target
+                lifted = True
+
+        grew = new_wall > old_wall
+        if grew:
+            if target is None:
+                add = new_wall - old_wall
+                if self._deadline is not None:
+                    self._deadline += add
+                elif self._run_started is not None:
+                    self._deadline = self._run_started + new_wall
+                boxed = self._deadline_box.get("at")
+                if boxed is not None:
+                    self._deadline_box["at"] = boxed + add
+                elif self._deadline is not None:
+                    self._deadline_box["at"] = self._deadline
+            self.budget = BuildBudget(
+                max_rework=self.budget.max_rework,
+                wall_clock_s=new_wall,
+                phase_wall_clock_s=self.budget.phase_wall_clock_s,
+                hard_ceiling_s=self.budget.hard_ceiling_s,
+            )
+        elif not lifted:
             if requested > old_wall:
                 logger.info(
                     "factory budget ramp REFUSED: %.0fs requested, wall already "
@@ -593,28 +736,60 @@ class RoleRunner:
                     float(self.budget.hard_ceiling_s),
                 )
             return
-        add = new_wall - old_wall
-        if self._deadline is not None:
-            self._deadline += add
-        elif self._run_started is not None:
-            self._deadline = self._run_started + new_wall
-        boxed = self._deadline_box.get("at")
-        if boxed is not None:
-            self._deadline_box["at"] = boxed + add
-        elif self._deadline is not None:
-            self._deadline_box["at"] = self._deadline
-        self.budget = BuildBudget(
-            max_rework=self.budget.max_rework,
-            wall_clock_s=new_wall,
-            phase_wall_clock_s=self.budget.phase_wall_clock_s,
-            hard_ceiling_s=self.budget.hard_ceiling_s,
-        )
+
+        extra = ""
+        if requested > new_wall:
+            extra = f" [clamped from {requested:.0f}s]"
+        elif lifted and not grew:
+            extra = " [phase box lifted to ceiling]"
         logger.info(
             "factory budget ramp: wall %.0fs → %.0fs (deadline live)%s",
             old_wall,
             new_wall,
-            f" [clamped from {requested:.0f}s]" if requested > new_wall else "",
+            extra,
         )
+
+    def _cli_in_flight(self) -> bool:
+        from app.factory.build.budget_inspect import _cli_flight
+
+        flight = _cli_flight(list(self.ledger.events()), self.state)
+        return bool(flight.get("cli_in_flight"))
+
+    def _cli_approaching_phase_wall(self) -> bool:
+        phase_cap = float(self.budget.phase_wall_clock_s or 0.0)
+        if phase_cap <= 0:
+            return False
+        boxed = self._deadline_box.get("at")
+        now = float(self.clock())
+        if boxed is not None:
+            leftover = float(boxed) - now
+        elif self._run_started is not None:
+            leftover = phase_cap - (now - float(self._run_started))
+        else:
+            return False
+        headroom = max(
+            min(phase_cap * 0.2, CLI_PHASE_RAMP_HEADROOM_S),
+            0.05,
+        )
+        return leftover <= headroom
+
+    def _maybe_cli_phase_ramp(self) -> None:
+        """Lift the phase-capped box to the wall already granted.
+
+        CLI production ``wall_clock_s`` is already the 7200s ceiling;
+        the 1500s phase box is what kills C-BRIEF. Do not jump a staged
+        1800s wall to 7200 here — stage inspect still owns 30→45.
+        """
+        if self._run_started is None:
+            return
+        if not self._cli_in_flight():
+            return
+        if not self._cli_approaching_phase_wall():
+            return
+        granted = float(self.budget.wall_clock_s or 0.0)
+        if granted <= 0:
+            return
+        self._extend_wall(granted)
 
     def _maybe_stage_inspect(self) -> Optional[Dict[str, Any]]:
         """Hard-stop inspect at ~30 min and ~45 min. No silent 2h bump."""
@@ -622,6 +797,7 @@ class RoleRunner:
 
         if self._run_started is None:
             return None
+        self._maybe_cli_phase_ramp()
         elapsed = self.clock() - self._run_started
         stage = None
         mark = None
@@ -770,6 +946,7 @@ class RoleRunner:
         self._deadline = deadline
         self._deadline_box["at"] = deadline
         inputs_hash = blueprint_hash(self.blueprint)
+        self.state["inputs_hash"] = inputs_hash
 
         # Refuse to continue a run whose blueprint changed underneath it.
         self.ledger.assert_resumable(inputs_hash=inputs_hash)
