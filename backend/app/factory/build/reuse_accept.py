@@ -750,7 +750,7 @@ def reuse_accept_needles() -> Sequence[str]:
         "formula_executor",
         "vector_search",
         "capture",
-        "storage",
+        "Steward estate_registry binds storage",
         "estate_registry",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",

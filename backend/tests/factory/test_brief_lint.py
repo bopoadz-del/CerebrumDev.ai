@@ -374,11 +374,15 @@ def test_mutation_drops_storage_reuse_accept_needles():
         _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
     )
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("storage", "object_store")
+    compiled.text = compiled.text.replace(
+        "Steward estate_registry binds storage",
+        "Steward estate_catalog binds object_store",
+    )
     result = lint_brief(compiled)
     assert result.ok is False
     assert any(
-        "REUSE schema-sample accept contract" in e or "storage" in e
+        "REUSE schema-sample accept contract" in e
+        or "Steward estate_registry binds storage" in e
         for e in result.errors
     )
 
