@@ -55,7 +55,15 @@ def test_generator_vendors_real_code_when_registry_present(tmp_path):
 
     store = _synthetic_blocks_root(tmp_path, block_ids)
     out = tmp_path / "product"
-    ProductGenerator(bp, blocks_root=store, factory_commit="t", blocks_commit="t").generate(out)
+    from app.factory.blocks_lock import generate_lock
+
+    ProductGenerator(
+        bp,
+        blocks_root=store,
+        blocks_lock=generate_lock(store, consumed_ids=block_ids),
+        factory_commit="t",
+        blocks_commit="t",
+    ).generate(out)
 
     for bid in block_ids:
         vp = out / "vendor" / "blocks" / bid / "block.py"

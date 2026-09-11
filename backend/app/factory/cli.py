@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from app.factory.blueprint import load_blueprint
+from app.factory.blocks_lock import BlocksLockError
 from app.factory.dual_registry import DualRegistryError
 from app.factory.generator import ProductGenerator, git_head
 from app.factory.planner import CapabilityPlanner
@@ -93,6 +94,37 @@ def main(argv: list[str] | None = None) -> int:
         help="code-phase 5/5 (default) or Store-green pytest -m pilot cycle",
     )
 
+    p_lock = sub.add_parser(
+        "update-lock",
+        help="Regenerate blocks.lock.json from a Cerebrum-Blocks checkout",
+    )
+    p_lock.add_argument(
+        "--blocks-root",
+        default=None,
+        help="Store checkout to hash (default: CEREBRUM_BLOCKS_ROOT)",
+    )
+    p_lock.add_argument(
+        "--output",
+        default=None,
+        help="Lock path (default: <factory-repo>/blocks.lock.json)",
+    )
+    p_lock.add_argument(
+        "--update-lock",
+        action="store_true",
+        help="Accepted for the documented refresh path; this command always writes the lock",
+    )
+
+    p_gen.add_argument(
+        "--update-lock",
+        action="store_true",
+        help="Regenerate blocks.lock.json from --blocks-root before generating",
+    )
+    p_build.add_argument(
+        "--update-lock",
+        action="store_true",
+        help="Regenerate blocks.lock.json from --blocks-root before building",
+    )
+
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
     p_registry = store_sub.add_parser(
@@ -147,9 +179,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "store":
         return _store_cmd(args)
+    if args.cmd == "update-lock":
+        return _update_lock_cmd(args)
 
     bp = load_blueprint(args.blueprint)
     blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
+
+    if getattr(args, "update_lock", False):
+        rc = _write_blocks_lock(blocks_root)
+        if rc != 0:
+            return rc
 
     if args.cmd == "build":
         return _build_cmd(args, bp, blocks_root)
@@ -180,9 +219,48 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
-    except DualRegistryError as exc:
+    except (DualRegistryError, BlocksLockError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}))
         return 2
+
+
+def _write_blocks_lock(blocks_root: Path | None, output: Path | None = None) -> int:
+    from app.factory.blocks_lock import (
+        BlocksLockError,
+        default_lock_path,
+        generate_lock,
+        write_lock,
+    )
+
+    if blocks_root is None:
+        print(json.dumps({"ok": False, "error": "update-lock requires --blocks-root or CEREBRUM_BLOCKS_ROOT"}))
+        return 2
+    try:
+        lock = generate_lock(blocks_root)
+    except BlocksLockError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}))
+        return 2
+    dest = Path(output) if output else default_lock_path()
+    write_lock(dest, lock)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "lock": str(dest),
+                "store_sha": (lock.get("store") or {}).get("sha"),
+                "blocks": len(lock.get("blocks") or {}),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def _update_lock_cmd(args: argparse.Namespace) -> int:
+    blocks_root = _resolve_blocks_root(getattr(args, "blocks_root", None))
+    output = Path(args.output).resolve() if getattr(args, "output", None) else None
+    return _write_blocks_lock(blocks_root, output)
 
 
 def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:

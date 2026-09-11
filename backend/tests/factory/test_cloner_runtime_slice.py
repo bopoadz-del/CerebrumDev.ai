@@ -106,6 +106,8 @@ def _faux_store(root: Path) -> Path:
 
 
 def _clone(tmp_path: Path, store: Path, block_ids=("greeting",)):
+    from app.factory.blocks_lock import generate_lock
+
     ws = RoleWorkspace(BuildRole.CLONER, tmp_path / "build")
     ctx = RoleContext(
         role=BuildRole.CLONER,
@@ -113,6 +115,7 @@ def _clone(tmp_path: Path, store: Path, block_ids=("greeting",)):
         blueprint=None,
         plan=None,
         blocks_root=store,
+        blocks_lock=generate_lock(store, consumed_ids=block_ids),
         state={"resolved_blocks": tuple(block_ids)},
     )
     return ws, run_cloner(ctx)

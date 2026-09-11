@@ -23,6 +23,10 @@ class RoleContext:
     blueprint: Any
     plan: Any
     blocks_root: Optional[Path] = None
+    #: Factory store pin. When set (or loaded from blocks.lock.json), a
+    #: store-sourced consumed block that is unlocked or hash-mismatched
+    #: is a hard failure. Tests with synthetic stores pass a generated lock.
+    blocks_lock: Optional[Dict[str, Any]] = None
     #: Findings from the gate that sent this role back round. The WRITER's
     #: work list on a rework pass; empty on a first pass.
     work_list: Sequence[str] = ()

@@ -242,6 +242,19 @@ contains `block_registry/`. With no checkout the factory's
 so some blocks resolve from the mirror even when a real Store is present (see
 `KNOWN_INCOMPLETE.md`).
 
+**Store pin (`blocks.lock.json`).** Factory builds resolve consumed store
+blocks through the repo-root lockfile. An unlocked or hash-mismatched block
+is a hard failure naming the block and both hashes — never a warning, never
+fall-through to latest. Refresh the pin only on purpose:
+
+```bash
+cd backend
+PYTHONPATH=. python3 -m app.factory.cli update-lock \
+  --blocks-root "$CEREBRUM_BLOCKS_ROOT"
+```
+
+See [`docs/factory/BLOCKS_LOCK.md`](docs/factory/BLOCKS_LOCK.md).
+
 **Dev dependencies are not optional.** `requirements-dev.txt` pins
 `pgvector`, which the Steward kit's SQLAlchemy models import at module scope.
 A venv built from `requirements.txt` alone fails ~7 tests with

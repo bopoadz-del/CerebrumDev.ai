@@ -198,6 +198,7 @@ class RoleRunner:
         clock: Callable[[], float] = time.monotonic,
         cycle: str = "code",
         auto_pilot: bool = False,
+        blocks_lock: Optional[Dict[str, Any]] = None,
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -251,6 +252,9 @@ class RoleRunner:
         #: Direct RoleRunner callers (tests, CLI helpers) stay code-only
         #: unless they opt in — a keyed CI stub must not open Store-green.
         self.auto_pilot = bool(auto_pilot)
+        from app.factory.blocks_lock import resolve_lock
+
+        self.blocks_lock = resolve_lock(blocks_lock)
 
     # -- gate plumbing ---------------------------------------------------
 
@@ -377,6 +381,7 @@ class RoleRunner:
             blueprint=self.blueprint,
             plan=self.plan,
             blocks_root=self.blocks_root,
+            blocks_lock=self.blocks_lock,
             work_list=tuple(work_list),
             state=self.state,
             progress=_progress,
