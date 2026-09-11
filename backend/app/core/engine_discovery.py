@@ -28,7 +28,8 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
 )
 
 # Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
-DEFAULT_CEREBRUM_BLOCKS_REF = "c5a5ba187190242249bf6fe8d915b03bae44cf08"
+# Must stay aligned with blocks.lock.json store.sha (Factory S07 pin).
+DEFAULT_CEREBRUM_BLOCKS_REF = "a372e769e05e47dc4dbc274f7d83eebf29a836f1"
 
 
 class EngineDiscoveryError(Exception):
@@ -38,10 +39,23 @@ class EngineDiscoveryError(Exception):
 def _effective_ref() -> str:
     """Return the engine ref to use when fetching.
 
-    Prefers ``CEREBRUM_BLOCKS_REF``; falls back to the pinned default so
-    packaging does not fail simply because the env var is unset.
+    Prefers ``CEREBRUM_BLOCKS_REF``; then the Factory ``blocks.lock.json``
+    store SHA so a fetch cannot silently land on a different pin; then the
+    module default.
     """
-    return os.getenv("CEREBRUM_BLOCKS_REF") or DEFAULT_CEREBRUM_BLOCKS_REF
+    explicit = os.getenv("CEREBRUM_BLOCKS_REF")
+    if explicit:
+        return explicit
+    try:
+        from app.factory.blocks_lock import load_lock_if_present
+
+        lock = load_lock_if_present()
+        sha = ((lock or {}).get("store") or {}).get("sha")
+        if isinstance(sha, str) and sha and sha != "unknown":
+            return sha
+    except Exception:  # noqa: BLE001 — discovery must still have a default
+        pass
+    return DEFAULT_CEREBRUM_BLOCKS_REF
 
 
 def _cache_dir() -> Path:

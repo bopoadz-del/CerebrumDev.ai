@@ -31,6 +31,10 @@ There is no warning path and no fall-through to latest.
 Vendor-mirror fallback (no Store checkout) is not a store pin; it is the
 in-repo stub. The lock applies when the source is a Store checkout.
 
+When the Factory clones the store (`CEREBRUM_BLOCKS_REF` unset),
+`engine_discovery` fetches `blocks.lock.json` `store.sha` so the checkout
+cannot silently land on a different pin.
+
 ## Refresh the pin
 
 Move the pin only on purpose, after reviewing the store delta:
