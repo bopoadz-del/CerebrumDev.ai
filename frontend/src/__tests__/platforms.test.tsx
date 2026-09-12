@@ -281,7 +281,7 @@ describe('Your Platforms — coding-agent build', () => {
     render(<Platforms sessionId="sess_slug" />)
     const title = await screen.findByTestId('platforms-product-title')
     expect(title).toHaveTextContent('Product')
-    expect(title).toHaveTextContent('12/12')
+    expect(title.textContent).not.toMatch(/\bproduct\b/)
   })
 
   it('shows k/12 and refuses Export when authorship is green but acceptance is not k/k', async () => {
