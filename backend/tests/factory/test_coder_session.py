@@ -261,14 +261,19 @@ def test_cli_unavailable_detail_names_env():
 
 
 def test_probe_code_cli_reports_unavailable(monkeypatch):
+    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+
     monkeypatch.setenv("FACTORY_CODE_CLI", "/no/such/coder")
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
     probe = probe_code_cli()
     assert probe["available"] is False
     assert probe["blocker"] == NAMED_BLOCKER_CLI
     assert probe["requires_cli"] is True
+    assert probe["cursor_ba_available"] is False
 
 
 def test_resolve_code_cli_finds_home_local_bin(tmp_path, monkeypatch):
@@ -1179,8 +1184,41 @@ def test_probe_code_cli_reports_credentials_missing(tmp_path, monkeypatch):
     assert probe["credentials_file_present"] is False
     assert probe["requires_cli"] is True
     assert probe["requires_kimi_credentials"] is True
+    assert probe["cursor_ba_available"] is False
     assert probe["blocker"] == NAMED_BLOCKER_CLI_CREDS
     assert NAMED_BLOCKER_CLI_CREDS in probe["error"]
+
+
+def test_probe_code_cli_cursor_ba_skips_kimi_credentials_blocker(tmp_path, monkeypatch):
+    """CURSOR_API_KEY present → Kimi unused; health must not block Floor."""
+    script = _fake_kimi(tmp_path)
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "empty-kimi-home"))
+    monkeypatch.delenv("KIMI_CODE_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_CODE_KEY", raising=False)
+    monkeypatch.setenv("CURSOR_API_KEY", "cursor-test-key")
+    probe = probe_code_cli()
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is False
+    assert probe["requires_cli"] is False
+    assert probe["requires_kimi_credentials"] is False
+    assert probe["requires_deepseek_credentials"] is False
+    assert probe["cursor_ba_available"] is True
+    assert "blocker" not in probe
+    assert "error" not in probe
+
+
+def test_probe_code_cli_cursor_ba_skips_unavailable_blocker(tmp_path, monkeypatch):
+    _require_cli(monkeypatch)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(tmp_path / "no-such-kimi"))
+    monkeypatch.setenv("CURSOR_API_KEY", "cursor-test-key")
+    probe = probe_code_cli()
+    assert probe["available"] is False
+    assert probe["cursor_ba_available"] is True
+    assert probe["requires_cli"] is False
+    assert probe["requires_kimi_credentials"] is False
+    assert "blocker" not in probe
 
 
 def test_probe_code_cli_credentials_ok_when_config_present(tmp_path, monkeypatch):

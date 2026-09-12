@@ -1077,7 +1077,15 @@ def cli_available(command: Optional[str] = None) -> bool:
 
 
 def probe_code_cli() -> Dict[str, Any]:
-    """Health / operator view of FACTORY_CODE_CLI (binary, not workbench flag)."""
+    """Health / operator view of FACTORY_CODE_CLI (binary, not workbench flag).
+
+    When Cursor executor keys are present (same predicate as
+    ``writer_uses_cli_pivot`` / #418), Generate/Continue uses Cursor BA —
+    Kimi/DeepSeek CLI credentials are unused. Do not emit
+    ``FACTORY_CODE_CLI_CREDENTIALS_MISSING`` (or UNAVAILABLE / NO_MODEL)
+    as a Floor blocker in that case.
+    """
+    from app.factory.build.cli_pivot import writer_uses_cli_pivot
     from app.factory.coder import (
         code_cli_command,
         deepseek_api_key,
@@ -1088,8 +1096,9 @@ def probe_code_cli() -> Dict[str, Any]:
     command = code_cli_command()
     resolved = resolve_code_cli(command)
     provider = factory_code_provider()
-    wants_deepseek = cli_requires_deepseek_credentials(command)
-    wants_kimi = cli_requires_kimi_credentials(command)
+    cursor_ba = writer_uses_cli_pivot()
+    wants_deepseek = False if cursor_ba else cli_requires_deepseek_credentials(command)
+    wants_kimi = False if cursor_ba else cli_requires_kimi_credentials(command)
     kimi_file = credentials_file_present()
     config_text = read_kimi_config_text() if kimi_file else ""
     kimi_alias = config_default_model(config_text) if kimi_file else ""
@@ -1113,7 +1122,10 @@ def probe_code_cli() -> Dict[str, Any]:
         "requires_cli": brief_requires_cli(),
         "requires_kimi_credentials": wants_kimi,
         "requires_deepseek_credentials": wants_deepseek,
+        "cursor_ba_available": cursor_ba,
     }
+    if cursor_ba:
+        return probe
     if not resolved:
         probe["blocker"] = NAMED_BLOCKER_CLI
         probe["error"] = cli_unavailable_detail(command)

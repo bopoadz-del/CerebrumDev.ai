@@ -23,6 +23,16 @@ A keyed Factory Floor dispatches **one** compiled brief through `FACTORY_CODE_CL
 (`./Dockerfile`) installs the official Kimi Code CLI so `kimi` is on `PATH`.
 Official Claude Code may still be planted as leftover unused binary —
 it is not the DeepSeek vehicle.
+When Cursor executor keys are present (`CURSOR_API_KEY` /
+`CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY` — same predicate as
+`writer_uses_cli_pivot` / #418), Generate/Continue uses Cursor BA.
+Kimi Code CLI credentials are unused: `/health` `factory_code_cli` must
+not emit `FACTORY_CODE_CLI_CREDENTIALS_MISSING` as a Floor blocker, and
+Floor/Platforms must not map a missing `~/.kimi-code/config.toml` into
+that banner. Do **not** re-add `KIMI_CODE_API_KEY` to Render for this
+path. If those Cursor keys are absent, the fail-closed Kimi/DeepSeek
+rules below still apply.
+
 If the coder is on and the executable is still missing, dispatch fail-closes
 as `FACTORY_CODE_CLI_UNAVAILABLE`. If `kimi` is on `PATH` but
 `~/.kimi-code/config.toml` is absent (`credentials_file_present=false`),

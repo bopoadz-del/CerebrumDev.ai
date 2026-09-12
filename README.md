@@ -174,7 +174,10 @@ The production `Dockerfile` installs official Kimi Code at `/usr/local/bin/kimi`
 `/usr/local/bin/claude` as leftover unused binary. A keyed Floor without the
 selected binary fail-closes as `FACTORY_CODE_CLI_UNAVAILABLE`. A Moonshot
 Kimi binary without `~/.kimi-code/config.toml` fail-closes as
-`FACTORY_CODE_CLI_CREDENTIALS_MISSING`. DeepSeek selected without
+`FACTORY_CODE_CLI_CREDENTIALS_MISSING` when Cursor executor keys are
+absent. When `CURSOR_API_KEY` (or sibling Cursor BA keys) is present,
+Generate/Continue uses Cursor BA — Kimi CLI credentials are unused and
+`/health` must not surface that class as a Floor blocker. DeepSeek selected without
 `DEEPSEEK_API_KEY` is the same named class. A credentials file without a usable `default_model` / `[models]` entry
 fail-closes as `FACTORY_CODE_CLI_NO_MODEL` before WRITER takeover (still
 `FACTORY_CODE_CLI_FAILED` honesty — no HTTP oneshot, no fake WRITER

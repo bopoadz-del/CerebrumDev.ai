@@ -902,11 +902,18 @@ const MISSING_KIMI_CLI_MODEL =
  * explicitly not required (DeepSeek uses DEEPSEEK_API_KEY). A credentials
  * file without default_model is FACTORY_CODE_CLI_NO_MODEL, not a successful
  * probe.
+ *
+ * When Cursor BA is the Generate/Continue executor (`cursor_ba_available`
+ * or `requires_cli === false`), Kimi/DeepSeek CLI is unused — do not
+ * surface FACTORY_CODE_CLI_CREDENTIALS_MISSING as a Floor blocker.
  */
 export function factoryCodeCliHonesty(
   probe: FactoryCodeCliProbe | null | undefined,
 ): string | null {
   if (!probe) return null
+  if (probe.cursor_ba_available === true || probe.requires_cli === false) {
+    return null
+  }
   if (probe.blocker === FACTORY_CODE_CLI_NO_MODEL) {
     return MISSING_KIMI_CLI_MODEL
   }

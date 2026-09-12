@@ -2120,6 +2120,43 @@ test('Floor and Platforms name FACTORY_CODE_CLI_CREDENTIALS_MISSING from /health
   await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
 })
 
+test('Floor and Platforms hide Kimi CLI credentials when Cursor BA is the executor', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/health')
+  await page.route('**/health', async (route) => {
+    if (new URL(route.request().url()).pathname !== '/health') {
+      await route.fallback()
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        status: 'ok',
+        factory_code_cli: {
+          available: true,
+          credentials_file_present: false,
+          requires_kimi_credentials: false,
+          requires_cli: false,
+          cursor_ba_available: true,
+        },
+      }),
+    })
+  })
+
+  await page.goto('/')
+  await expect(page.getByTestId('floor-factory-cli-status')).toHaveCount(0)
+  await expect(page.getByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).toHaveCount(0)
+  await expect(page.getByText(/Kimi Code CLI credentials missing/)).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
+  await expect(page.getByTestId('platforms-factory-cli-status')).toHaveCount(0)
+  await expect(page.getByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).toHaveCount(0)
+})
+
 test('Floor and Platforms name FACTORY_CODE_CLI_NO_MODEL from /health', async ({
   page,
 }) => {

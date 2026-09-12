@@ -670,6 +670,30 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
+  it('does not name Kimi CLI credentials on Platforms when Cursor BA is the executor', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: false,
+        requires_cli: false,
+        cursor_ba_available: true,
+      },
+    })
+    getMock.mockResolvedValue({
+      generation: GENERATION,
+      blueprint: { product_name: 'Vineyard Platform' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({ state: 'succeeded', pilot_ready: true })
+    })
+    render(<Platforms sessionId="sess_cursor_ba" />)
+    await waitFor(() => expect(getHealthMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('platforms-factory-cli-status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Kimi Code CLI credentials missing/)).not.toBeInTheDocument()
+  })
+
   it('names missing Kimi Code CLI default_model from /health on Platforms', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {

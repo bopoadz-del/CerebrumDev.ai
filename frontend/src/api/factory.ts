@@ -692,6 +692,7 @@ export type FactoryCodeCliProbe = {
   requires_cli?: boolean
   requires_kimi_credentials?: boolean
   requires_deepseek_credentials?: boolean
+  cursor_ba_available?: boolean
   blocker?: string | null
   error?: string
 }
