@@ -305,6 +305,23 @@ def test_later_phase_dispatch_only_on_cli_path():
     ) is True
 
 
+def test_later_phase_skips_cli_when_remaining_work_empty():
+    """sess_5782f226 run7: do not re-dispatch the same 6 landed gaps."""
+    cli = SimpleNamespace(via="cli")
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_FRONTEND_RAG, cli, remaining_work=[]
+    ) is False
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_INTEGRATION, cli, remaining_work=[]
+    ) is False
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_FRONTEND_RAG, cli, remaining_work=["estate_maintenance"]
+    ) is True
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_BACKEND, cli, remaining_work=[]
+    ) is True
+
+
 def test_phase_two_rag_required_when_inventory_names_rag_surface():
     compiled = compile_brief(
         _Blueprint(),

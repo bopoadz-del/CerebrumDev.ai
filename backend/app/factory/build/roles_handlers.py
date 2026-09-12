@@ -2805,10 +2805,18 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         brief_requires_cli,
         deepseek_cli_ready,
         dispatch_compiled_brief,
+        dispatch_from_state,
+        emit_factory_grounded_reuse_keep_path,
         factory_grounded_source_for,
         inventory_gap_ids,
+        merge_writer_phase_dispatch,
+        phase_authorship_miss,
+        record_unauthored_cli_work,
         refresh_receipt_harvest,
+        remaining_phase_cli_work,
         write_brief_artifacts,
+        write_dispatch_receipt,
+        _workspace_root,
     )
 
     try:
@@ -2842,14 +2850,39 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     )
 
     if use_brief_dispatch:
+        root = _workspace_root(ctx)
+        phase_work = remaining_phase_cli_work(
+            compiled_brief, root, ctx.state
+        )
         if should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND):
-            phase_brief = compile_phase_brief(
-                compiled_brief, WRITER_PHASE_BACKEND
-            )
-            lint_or_raise(phase_brief)
-            write_brief_artifacts(ctx, phase_brief)
-            dispatch = dispatch_compiled_brief(ctx, phase_brief)
+            if phase_work:
+                phase_brief = compile_phase_brief(
+                    compiled_brief, WRITER_PHASE_BACKEND
+                )
+                lint_or_raise(phase_brief)
+                write_brief_artifacts(ctx, phase_brief)
+                dispatch = dispatch_compiled_brief(ctx, phase_brief)
+                record_unauthored_cli_work(ctx.state, phase_work, dispatch)
+                miss = phase_authorship_miss(
+                    compiled_brief, dispatch, root, phase_work
+                )
+                if miss:
+                    raise RoleError(miss)
+            else:
+                emit_factory_grounded_reuse_keep_path(
+                    root, compiled_brief, only_missing=True
+                )
+                dispatch = dispatch_from_state(ctx.state)
+                ctx.note(
+                    "skip backend C-BRIEF — no remaining phase CLI work "
+                    "(keepable handlers already landed or prior empty CLI "
+                    "already recorded these gaps)",
+                    stage="checkpoint",
+                    phase=WRITER_PHASE_BACKEND,
+                    source="writer phases",
+                )
         else:
+            dispatch = dispatch_from_state(ctx.state)
             ctx.note(
                 "resume skips landed writer phase backend",
                 stage="checkpoint",
@@ -3650,7 +3683,12 @@ def run_writer(ctx: RoleContext) -> RoleResult:
 
     for phase_id in pending_writer_phases(ctx):
         owed = phase_acceptance_errors(ctx, phase_id, compiled_brief)
-        if owed and should_dispatch_writer_phase(phase_id, dispatch):
+        later_work = remaining_phase_cli_work(
+            compiled_brief, _workspace_root(ctx), ctx.state
+        )
+        if owed and should_dispatch_writer_phase(
+            phase_id, dispatch, remaining_work=later_work
+        ):
             later_brief = compile_phase_brief(compiled_brief, phase_id)
             lint_or_raise(later_brief)
             later_text = later_brief.text
@@ -3659,6 +3697,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 later_text if later_text.endswith("\n") else later_text + "\n",
             )
             later = dispatch_compiled_brief(ctx, later_brief)
+            record_unauthored_cli_work(ctx.state, later_work, later)
+            miss = phase_authorship_miss(
+                compiled_brief,
+                later,
+                _workspace_root(ctx),
+                later_work,
+            )
+            dispatch = merge_writer_phase_dispatch(dispatch, later)
+            write_dispatch_receipt(ctx, compiled_brief, dispatch)
+            ctx.state["brief_dispatch"] = dispatch.to_dict()
             ctx.note(
                 f"brief dispatch phase {phase_id} via {later.via}: {later.detail}",
                 stage="dispatch",
@@ -3667,8 +3715,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 done=1 if later.ok else 0,
                 total=1,
             )
-            if dispatch is not None:
-                ctx.state["brief_dispatch"] = dispatch.to_dict()
+            if miss:
+                raise RoleError(miss)
+        elif owed and not later_work:
+            ctx.note(
+                f"skip {phase_id} C-BRIEF — same gaps already landed or "
+                "a prior empty CLI recorded them; plant/reuse keep-path only",
+                stage="checkpoint",
+                phase=phase_id,
+                source="writer phases",
+            )
         if phase_id == WRITER_PHASE_FRONTEND_RAG:
             from app.factory.build.rag_surface import (
                 FACTORY_GROUNDED_RAG_SOURCE,

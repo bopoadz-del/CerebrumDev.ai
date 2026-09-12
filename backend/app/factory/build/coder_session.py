@@ -467,20 +467,111 @@ def _workspace_handler_is_factory_grounded(root: Path, capability_id: str) -> bo
         return False
 
 
+def _unique_ids(*groups: Any) -> List[str]:
+    out: List[str] = []
+    seen: set = set()
+    for group in groups:
+        for item in group or ():
+            cid = str(item or "").strip()
+            if cid and cid not in seen:
+                seen.add(cid)
+                out.append(cid)
+    return out
+
+
+def harvest_factory_planted_ids(
+    root: Optional[Path],
+    compiled: Any = None,
+    dispatch: Optional[Mapping[str, Any]] = None,
+) -> List[str]:
+    """Keepable factory-grounded REUSE plants already on disk.
+
+    GENERATE persist envelopes stay out (``generate_persist_ids`` /
+    remaining ``inventory_gaps``). Those are still not C-BRIEF
+    authorship — counting them would reopen the #374 thin SUCCESS path.
+    """
+    if root is None:
+        return []
+    root = Path(getattr(root, "workspace", root))
+    exclude = set()
+    if dispatch is not None:
+        exclude.update(
+            str(x).strip()
+            for x in (dispatch.get("generate_persist_ids") or ())
+            if str(x).strip()
+        )
+        exclude.update(
+            str(x).strip()
+            for x in (dispatch.get("inventory_gaps") or ())
+            if str(x).strip()
+        )
+    candidates: List[str] = []
+    if compiled is not None:
+        exclude.update(inventory_gap_ids(compiled))
+        candidates.extend(reuse_inventory_ids(compiled))
+    if dispatch is not None:
+        candidates.extend(
+            str(x).strip()
+            for x in (dispatch.get("factory_planted_ids") or ())
+            if str(x).strip()
+        )
+        candidates.extend(
+            str(x).strip()
+            for x in (dispatch.get("kept_handler_ids") or ())
+            if str(x).strip()
+        )
+    if not candidates:
+        actions = root / "app" / "actions"
+        if actions.is_dir():
+            for path in sorted(actions.glob("*.py")):
+                candidates.append(path.stem)
+    out: List[str] = []
+    seen: set = set()
+    for cid in candidates:
+        cid = str(cid or "").strip()
+        if not cid or cid in seen or cid in exclude:
+            continue
+        if not _workspace_handler_is_factory_grounded(root, cid):
+            continue
+        if _reuse_needs_hole_fill(root, cid):
+            continue
+        seen.add(cid)
+        out.append(cid)
+    return out
+
+
 def _real_agent_written(
     snapshot: Mapping[str, Any],
     state: Optional[Mapping[str, Any]] = None,
+    workspace: Any = None,
 ) -> int:
-    """Count CLI/LLM harvest only. Factory-grounded fill is not authorship."""
+    """Count CLI/LLM harvest plus keepable Factory-planted REUSE handlers.
+
+    Factory-grounded GENERATE persist envelopes stay excluded. An empty
+    ``cli_authored_ids`` after exit 0 is still not CLI authorship — but
+    a later phase shot must not hide keepable plants already on disk
+    (sess_5782f226 run7: written=0 / stub_rate=0.0 after PHASE 2/3).
+    """
     dispatch = dict((state or {}).get("brief_dispatch") or {})
+    planted = list(dispatch.get("factory_planted_ids") or [])
+    if workspace is not None and not planted:
+        planted = harvest_factory_planted_ids(
+            Path(getattr(workspace, "workspace", workspace)),
+            dispatch=dispatch,
+        )
     if "cli_authored_ids" in dispatch:
-        return (
-            len(list(dispatch.get("cli_authored_ids") or []))
-            + len(list(dispatch.get("factory_llm_written_ids") or []))
-            + len(list(dispatch.get("handler_ids") or []))
+        return len(
+            _unique_ids(
+                dispatch.get("cli_authored_ids"),
+                dispatch.get("factory_llm_written_ids"),
+                dispatch.get("handler_ids"),
+                planted,
+            )
         )
     if snapshot.get("cli_or_llm_written") is not None:
-        return int(snapshot.get("cli_or_llm_written") or 0)
+        return int(snapshot.get("cli_or_llm_written") or 0) + len(
+            _unique_ids(planted)
+        )
     return int(snapshot.get("agent_written") or 0)
 
 
@@ -524,7 +615,7 @@ def thin_stub_success_blocked(
     """
     if not deepseek_cli_ready():
         return None
-    written = _real_agent_written(snapshot, state)
+    written = _real_agent_written(snapshot, state, workspace=workspace)
     try:
         stub_rate = float(snapshot.get("stub_rate") or 0.0)
     except (TypeError, ValueError):
@@ -1622,6 +1713,9 @@ class DispatchResult:
     kept_handler_ids: List[str] = field(default_factory=list)
     #: Handlers the CLI actually wrote — not factory-grounded hole-fill.
     cli_authored_ids: List[str] = field(default_factory=list)
+    #: Keepable REUSE keep-path plants (persist / event_bus). Not CLI
+    #: authorship and not GENERATE persist envelopes.
+    factory_planted_ids: List[str] = field(default_factory=list)
     model: str = ""
     blocker: Optional[str] = None
     reuse_keep_path: bool = False
@@ -1652,6 +1746,7 @@ class DispatchResult:
             "handler_ids": sorted(self.handlers),
             "kept_handler_ids": sorted(self.kept_handler_ids),
             "cli_authored_ids": sorted(self.cli_authored_ids),
+            "factory_planted_ids": sorted(self.factory_planted_ids),
             "spec_ids": sorted(self.specs),
             "receipt": dict(self.receipt),
         }
@@ -1734,9 +1829,15 @@ def cbrief_work_ids(compiled: Any, root: Optional[Path] = None) -> List[str]:
     out: List[str] = []
     seen: set = set()
     for cid in inventory_gap_ids(compiled):
-        if cid not in seen:
-            seen.add(cid)
-            out.append(cid)
+        if cid in seen:
+            continue
+        # Keepable on-disk handlers (CLI or Factory plant) are landed work.
+        # sess_5782f226 run7 re-dispatched the same 6 gaps every later
+        # phase because GENERATE ids never dropped after the plant.
+        if root is not None and not _reuse_needs_hole_fill(root, cid):
+            continue
+        seen.add(cid)
+        out.append(cid)
     for cid in reuse_inventory_ids(compiled):
         if cid in seen:
             continue
@@ -1755,8 +1856,162 @@ def remaining_cbrief_work_ids(
         | set(result.kept_handler_ids or ())
         | set(getattr(result, "generate_persist_ids", None) or ())
         | set(result.factory_llm_written_ids or ())
+        | set(getattr(result, "factory_planted_ids", None) or ())
     )
     return [cid for cid in cbrief_work_ids(compiled, root) if cid not in landed]
+
+
+EMPTY_CLI_WORK_STATE_KEY = "cbrief_empty_cli_work"
+
+
+def record_unauthored_cli_work(
+    state: Optional[Mapping[str, Any]],
+    work_ids: Sequence[str],
+    result: DispatchResult,
+) -> List[str]:
+    """Remember work a CLI shot already exited 0 without writing.
+
+    Later phases / TESTER rework must not re-dispatch the same gaps
+    until the 2700s wall burns (sess_5782f226 run7).
+    """
+    if not isinstance(state, dict):
+        return []
+    authored = set(result.cli_authored_ids or ()) | set(result.handlers or ())
+    prev = [
+        str(x).strip()
+        for x in (state.get(EMPTY_CLI_WORK_STATE_KEY) or ())
+        if str(x).strip()
+    ]
+    for cid in work_ids:
+        name = str(cid or "").strip()
+        if name and name not in authored and name not in prev:
+            prev.append(name)
+    state[EMPTY_CLI_WORK_STATE_KEY] = prev
+    return list(prev)
+
+
+def remaining_phase_cli_work(
+    compiled: Any,
+    root: Optional[Path],
+    state: Optional[Mapping[str, Any]] = None,
+) -> List[str]:
+    """C-BRIEF work still owed and not already proven empty by a prior shot."""
+    empty = {
+        str(x).strip()
+        for x in ((state or {}).get(EMPTY_CLI_WORK_STATE_KEY) or ())
+        if str(x).strip()
+    }
+    return [
+        cid for cid in cbrief_work_ids(compiled, root) if cid not in empty
+    ]
+
+
+def phase_authorship_miss(
+    compiled: Any,
+    result: DispatchResult,
+    root: Optional[Path],
+    work_at_start: Sequence[str],
+) -> Optional[str]:
+    """Phase-level miss when a needed CLI shot left work still open.
+
+    An empty later-phase shot (plant/reuse, no remaining work) is not a
+    miss. A needed shot that still has open work after harvest + plant
+    fails immediately — do not burn the stage-2 wall re-dispatching.
+    """
+    if not work_at_start:
+        return None
+    if str(getattr(result, "via", "") or "") != "cli":
+        return None
+    if result.blocker and result.blocker != NAMED_BLOCKER_CLI_NO_AUTHORSHIP:
+        return None
+    if result.cli_authored_ids or result.factory_llm_written_ids or result.handlers:
+        return None
+    remaining = remaining_cbrief_work_ids(compiled, result, root)
+    if not remaining:
+        return None
+    return (
+        f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: WRITER phase C-BRIEF "
+        f"exited without harvested handlers for {list(remaining)} "
+        f"(written={len(result.cli_authored_ids or [])}, "
+        f"planted={len(result.factory_planted_ids or [])}). "
+        "Fail closed at this phase — do not re-dispatch the same gaps "
+        "until the wall burns. A CLI exit 0 is not C-BRIEF authorship."
+    )
+
+
+def merge_writer_phase_dispatch(
+    prior: Optional[DispatchResult], later: DispatchResult
+) -> DispatchResult:
+    """Union harvest across three-phase WRITER shots.
+
+    A later plant/reuse CLI that harvests written=0 must not replace
+    backend cli_authored_ids / factory_planted_ids.
+    """
+    if prior is None:
+        return later
+    later.cli_authored_ids = _unique_ids(
+        prior.cli_authored_ids, later.cli_authored_ids
+    )
+    later.factory_planted_ids = _unique_ids(
+        prior.factory_planted_ids, later.factory_planted_ids
+    )
+    later.factory_llm_written_ids = _unique_ids(
+        prior.factory_llm_written_ids, later.factory_llm_written_ids
+    )
+    later.generate_persist_ids = _unique_ids(
+        prior.generate_persist_ids, later.generate_persist_ids
+    )
+    later.kept_handler_ids = _unique_ids(
+        prior.kept_handler_ids, later.kept_handler_ids
+    )
+    later.cli_unkeepable_event_bus_ids = _unique_ids(
+        prior.cli_unkeepable_event_bus_ids, later.cli_unkeepable_event_bus_ids
+    )
+    if prior.handlers or later.handlers:
+        later.handlers = {**dict(prior.handlers or {}), **dict(later.handlers or {})}
+    if prior.specs or later.specs:
+        later.specs = {**dict(prior.specs or {}), **dict(later.specs or {})}
+    if later.blocker == NAMED_BLOCKER_CLI_NO_AUTHORSHIP and (
+        later.cli_authored_ids
+        or later.factory_planted_ids
+        or later.factory_llm_written_ids
+        or later.handlers
+    ):
+        later.blocker = (
+            prior.blocker
+            if prior.blocker != NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+            else None
+        )
+        later.detail = prior.detail or later.detail
+    if not later.via:
+        later.via = prior.via
+    if later.model == "" and prior.model:
+        later.model = prior.model
+    return later
+
+
+def dispatch_from_state(state: Optional[Mapping[str, Any]]) -> Optional[DispatchResult]:
+    """Rehydrate a prior brief_dispatch so later phases can merge into it."""
+    raw = dict((state or {}).get("brief_dispatch") or {})
+    if not raw:
+        return None
+    return DispatchResult(
+        via=str(raw.get("via") or ""),
+        ok=bool(raw.get("ok")),
+        detail=str(raw.get("detail") or ""),
+        blocker=raw.get("blocker"),
+        model=str(raw.get("model") or ""),
+        handlers={str(k): "" for k in (raw.get("handler_ids") or [])},
+        kept_handler_ids=list(raw.get("kept_handler_ids") or []),
+        cli_authored_ids=list(raw.get("cli_authored_ids") or []),
+        factory_planted_ids=list(raw.get("factory_planted_ids") or []),
+        factory_llm_written_ids=list(raw.get("factory_llm_written_ids") or []),
+        generate_persist_ids=list(raw.get("generate_persist_ids") or []),
+        cli_unkeepable_event_bus_ids=list(
+            raw.get("cli_unkeepable_event_bus_ids") or []
+        ),
+        reuse_keep_path=bool(raw.get("reuse_keep_path")),
+    )
 
 
 def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]:
@@ -2136,6 +2391,7 @@ def write_dispatch_receipt(
         "factory_llm_model": result.factory_llm_model,
         "generate_persist_ids": list(result.generate_persist_ids),
         "cli_authored_ids": sorted(result.cli_authored_ids),
+        "factory_planted_ids": sorted(result.factory_planted_ids),
         "cli_unkeepable_event_bus_ids": list(result.cli_unkeepable_event_bus_ids),
         "model": result.model,
         "product_id": compiled.product_id,
@@ -2898,7 +3154,10 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             filled = emit_factory_grounded_reuse_keep_path(
                 root, compiled, only_missing=True
             )
-            if filled and result.cli_authored_ids:
+            if filled:
+                # Always re-harvest after a plant. Gating this on a
+                # non-empty cli_authored_ids left kept_handler_ids stale
+                # so later phases still saw the same 6 gaps.
                 _merge_workspace_harvest(
                     result, root, list(compiled.capabilities)
                 )
@@ -2907,6 +3166,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                     for cid in result.kept_handler_ids
                     if not _workspace_handler_is_factory_grounded(root, cid)
                 ]
+            result.factory_planted_ids = harvest_factory_planted_ids(
+                root, compiled=compiled, dispatch=result.to_dict()
+            )
             if (
                 deepseek_cli_ready()
                 and result.ok
@@ -2950,6 +3212,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             emitted = emit_factory_grounded_reuse_keep_path(root, compiled)
             result.reuse_keep_path = bool(emitted)
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
+            result.factory_planted_ids = harvest_factory_planted_ids(
+                root, compiled=compiled, dispatch=result.to_dict()
+            )
             _append_log(
                 root / LOG_REL,
                 "[harvest] factory-grounded REUSE keep-path after "
@@ -3030,6 +3295,10 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
 
     apply_factory_llm_generate_gaps(ctx, compiled, result)
     apply_factory_grounded_generate_persist(ctx, compiled, result)
+    if not result.factory_planted_ids:
+        result.factory_planted_ids = harvest_factory_planted_ids(
+            root, compiled=compiled, dispatch=result.to_dict()
+        )
     write_dispatch_receipt(ctx, compiled, result)
     ctx.state["brief_dispatch"] = result.to_dict()
     ctx.state["compiled_brief"] = {
