@@ -29,6 +29,22 @@ G-floor names above are canonical (`ci_present_full_suite`,
 still uses the pre-G aliases (`ci_present_and_full_suite`,
 `authorship_floor`); that self-grade is not rewritten in this PR.
 
+## N1a — live Cursor Background Agent
+
+When `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`)
+**and** `CEREBRUM_BUILDS_GITHUB_TOKEN` are set, `launch_executor` pushes the
+Factory workspace to a `build/<session>-<id>` branch on private
+`cerebrum-builds` (override with `CEREBRUM_BUILDS_REPO`) and launches a Cursor
+Background Agent against that branch. The launch prompt is fixed; the model is
+the Cursor account default (not hardcoded in Factory). After `FINISHED`,
+Factory collects `receipt.json` plus the branch diff and hands them to N1b.
+
+Keys, builds token/repo, Cursor API, never-started, hung-past-wall, and
+push-failed misses stay `EXECUTOR_UNAVAILABLE`. Receipt/path misses stay N1b.
+
+**The N3 store gate is still not green** until that workflow is live on
+cerebrum-builds. A finished agent + clean receipt is only `HANDOFF_TO_N3`.
+
 ## CHADi 2026-09-12 — Option C Hybrid (two jails)
 
 Cerebrum-builds / cli-pivot BA (`cli_receipt.ba_allowed_globs`) **may write

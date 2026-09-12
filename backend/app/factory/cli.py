@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_pivot = sub.add_parser(
         "cli-pivot",
-        help="N1 keyless seam: compose C-BRIEF, fail-closed executor, receipt jail",
+        help="N1 seam: compose C-BRIEF, Cursor BA when keyed, receipt jail",
     )
     p_pivot.add_argument("--blueprint", required=True)
     p_pivot.add_argument("--out", required=True)
