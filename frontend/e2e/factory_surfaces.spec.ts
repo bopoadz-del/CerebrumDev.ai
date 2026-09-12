@@ -957,7 +957,7 @@ test('Your Platforms shows a loading skeleton — never empty-state — while pr
   await expect(page.getByTestId('loading-skeleton')).toBeVisible()
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
   releaseProduct?.()
-  await expect(page.getByRole('heading', { name: 'vineyard' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Vineyard Platform' })).toBeVisible()
   await expect(page.getByTestId('loading-skeleton')).toHaveCount(0)
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
 })
@@ -1002,7 +1002,7 @@ test('Your Platforms shows coder authorship and a zip download', async ({ page }
   await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
   await page.getByRole('button', { name: 'Your Platforms' }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'vineyard' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Vineyard Platform' })).toBeVisible()
   await expect(page.getByText('runner', { exact: true })).toBeVisible()
   await expect(page.getByText('Finished — 13 artifacts; 6 templated')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
@@ -1049,7 +1049,7 @@ test('Your Platforms code-cycle SUCCESS is a prototype — never Finished', asyn
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible({
     timeout: 20_000,
   })
-  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Cerebrum Residential Lettings Hub' })).toBeVisible()
   await expect(
     page.getByText('Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready'),
   ).toBeVisible()
@@ -1853,7 +1853,7 @@ test('Your Platforms stays Building after golden lettings Approve — never a go
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   await expect(page.getByTestId('platforms-empty-state')).toHaveCount(0)
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Residential Lettings Platform' })).toBeVisible()
   const building = page.getByRole('button', { name: 'Building…' })
   await expect(building).toBeVisible()
   await expect(building).toBeDisabled()
