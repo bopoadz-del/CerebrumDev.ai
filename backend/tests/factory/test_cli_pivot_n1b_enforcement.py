@@ -26,6 +26,7 @@ from app.factory.build.cli_receipt import (
     handler_relpath,
     load_receipt,
     parse_changed_paths,
+    writer_allowed_globs,
 )
 from app.factory.build.ledger import BuildLedger
 from app.factory.product_architect import plan_blueprint
@@ -85,6 +86,15 @@ def test_missing_and_extra_ids_are_no_partial_credit():
                 "app/actions/gamma.py",
             ],
         )
+    with pytest.raises(ReceiptInvalid, match="missing=beta"):
+        enforce_receipt(
+            blueprint=bp,
+            receipt={"cli_authored_ids": ["alpha"]},
+            changed_paths=[
+                "app/actions/alpha.py",
+                "tests/test_alpha.py",
+            ],
+        )
 
 
 def test_claimed_id_must_appear_as_a_real_diff_file():
@@ -127,6 +137,37 @@ diff --git a/app/actions/alpha.py b/app/actions/alpha.py
     assert verdict.green is False
 
 
+def test_writer_allowed_globs_include_tests_not_sealed():
+    """CHADi Option A: BA jail allows tests/**; sealed trees stay out."""
+    allowed = writer_allowed_globs()
+    assert "tests/**" in allowed
+    assert "app/**" in allowed
+    for sealed in (
+        "vendor/**",
+        "vendor_blocks/**",
+        "blocks.lock.json",
+        "build_ledger.jsonl",
+        ".git/**",
+    ):
+        assert sealed not in allowed
+
+
+def test_writing_under_tests_is_handoff_not_paths_violated():
+    """BA may land tests/** next to handlers (CHADi 2026-09-12 Option A)."""
+    verdict = enforce_receipt(
+        blueprint=_blueprint("alpha"),
+        receipt={"cli_authored_ids": ["alpha"]},
+        changed_paths=[
+            handler_relpath("alpha"),
+            "tests/test_alpha.py",
+            "tests/factory/test_alpha_roundtrip.py",
+        ],
+    )
+    assert verdict.honesty == HANDOFF_TO_N3
+    assert verdict.green is False
+    assert verdict.next == "n3_gate"
+
+
 def test_vendored_and_outside_paths_are_paths_violated():
     bp = _blueprint("alpha")
     receipt = {"cli_authored_ids": ["alpha"]}
@@ -148,13 +189,25 @@ def test_vendored_and_outside_paths_are_paths_violated():
                 "vendor_blocks_mirror/estate_registry/block.py",
             ],
         )
+    for sealed in (
+        "blocks.lock.json",
+        "build_ledger.jsonl",
+        ".git/config",
+        "vendor_blocks/estate_registry/block.py",
+    ):
+        with pytest.raises(PathsViolated, match="read-only"):
+            enforce_receipt(
+                blueprint=bp,
+                receipt=receipt,
+                changed_paths=[handler_relpath("alpha"), sealed],
+            )
     with pytest.raises(PathsViolated, match="outside allowed paths"):
         enforce_receipt(
             blueprint=bp,
             receipt=receipt,
             changed_paths=[
                 handler_relpath("alpha"),
-                "tests/test_alpha.py",
+                "secrets/token.txt",
             ],
         )
 

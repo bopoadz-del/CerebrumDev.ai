@@ -24,6 +24,17 @@ On `workflow_dispatch` or push to `build/**` / `builds/**` / `artifact/**`:
 k/12 of those named lines is the only green. A clean Factory receipt+diff is
 **not** this gate — N1b only hands off here.
 
+G-floor names above are canonical (`ci_present_full_suite`,
+`authorship==receipt`). Factory `store_acceptance.ACCEPTANCE_CHECK_NAMES`
+still uses the pre-G aliases (`ci_present_and_full_suite`,
+`authorship_floor`); that self-grade is not rewritten in this PR.
+
+## CHADi 2026-09-12 — Option A (BA path jail)
+
+BA/WRITER enforce (`cli_receipt.writer_allowed_globs`) **may write `tests/**`**.
+12/12 remains cheat-resistance. Still never expand to `vendor/**`,
+`blocks.lock.json`, the ledger, or `.git`.
+
 ## Forbidden
 
 **Do not run this gate on a Render worker.** Render web/worker services have no

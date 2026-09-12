@@ -79,3 +79,29 @@ Evidence (tip `2fc962d`, 2026-09-12):
 - Return at `brief_compiler.py:702-709` is `{"TARGET", "INVENTORY", "VALIDATE", "BUILD", "ACCEPTANCE", "FORBIDDEN"}` — markdown/prose sections for `BRIEF_TEMPLATE.md`, not `def handle(` Python.
 - Callers `render_gated_brief` (`:778` / `:783`) and `compile_brief` (`:850`) pass those slots to `fill_template(load_brief_template(), slots)` (`:796`, `:863`). The BUILD slot *instructs* the coder to author `app/actions/{capability_id}.py`; it does not write those files.
 - Executable handler-body emission lives at `backend/app/factory/build/roles_handlers.py:1377` (`_templated_body`) — that is the DELETE-leg already named in table C for `roles_handlers.py`.
+
+## CHADi 2026-09-12 — Option A (BA path jail)
+
+**Chose A — expand the BA/WRITER path jail to allow `tests/**`.**
+
+`cli_receipt.writer_allowed_globs` (cerebrum-builds / cli-pivot BA enforce) now
+includes `tests/**` so a Background Agent may land the product test suite
+alongside handlers. **12/12 remains cheat-resistance**: a clean receipt+diff is
+still `HANDOFF_TO_N3`, never green. The N3 store gate (`scripts/acceptance.py`
+in Docker, k/12 of the named floor) is the only green.
+
+Still never expand the jail to:
+
+- `vendor/**` / `vendor_blocks/**` / `vendor_blocks_mirror/**`
+- `blocks.lock.json`
+- `build_ledger.jsonl` (ledger)
+- `.git/**`
+
+Factory WRITER role lanes in `authority.py` stay as they are (TESTER still owns
+`tests/**` on the internal-author path). This Option A change is the BA enforce
+path only.
+
+N3 / G floor names stay: `ci_present_full_suite`, `authorship==receipt`. Factory
+`store_acceptance.ACCEPTANCE_CHECK_NAMES` still uses the pre-G aliases
+(`ci_present_and_full_suite`, `authorship_floor`); that is the old self-grade
+and is not rewritten here.

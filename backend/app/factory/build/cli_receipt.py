@@ -73,9 +73,15 @@ def handler_relpath(capability_id: str) -> str:
 
 
 def writer_allowed_globs() -> tuple[str, ...]:
-    """WRITER lanes plus the N1 receipt files. Tests/ and vendor/ stay out."""
+    """WRITER lanes plus BA ``tests/**`` and the N1 receipt files.
+
+    CHADi 2026-09-12 Option A: the cerebrum-builds / cli-pivot BA jail
+    allows ``tests/**``. Vendor trees, ``blocks.lock.json``, the ledger,
+    and ``.git`` stay sealed. Factory WRITER role lanes in
+    :mod:`authority` are unchanged (TESTER still owns tests there).
+    """
     lanes = [glob for _root, glob in ROLE_CONTRACTS[BuildRole.WRITER].write_lanes]
-    extra = ["receipt.json", "docs/receipt.json"]
+    extra = ["tests/**", "receipt.json", "docs/receipt.json"]
     seen: List[str] = []
     for glob in lanes + extra:
         if glob not in seen:
