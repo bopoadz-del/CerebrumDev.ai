@@ -3,6 +3,8 @@
 > Living handoff for CerebrumDev Factory. Update this file whenever roles or open work change.
 > Owner agent: **MR. FINANCE** (Grok Bot). Authoritative UI: Factory Floor (`https://www.cerebrum-dev.com/floor`).
 > Last written: 2026-09-12 (Asia/Dubai).
+>
+> **Lives on `master` at repo root. Never open a PR for this file — commit and push directly to `master`.**
 
 ---
 
@@ -37,6 +39,7 @@ AI Product Delivery Engineer is **retired** for this lane.
 | HotelOps bar | Every platform must pass HotelOps A–H + Store 12/12 |
 | Domain handoff | GitHub `domain:*` + `handoff` and/or `DOMAIN_HANDOFF_WEBHOOK_URL` — expand beyond finance to car_dealership/automotive |
 | BA path-lane | Option C Hybrid: pivot/cerebrum-builds BA may write `tests/**`; in-process Factory WRITER sealed off `tests/**` until N2 |
+| This file | Direct push to `master` only — never a PR |
 
 Canonical grounding: `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (PR #430 may still be open).
 
@@ -66,7 +69,7 @@ Canonical grounding: `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (PR #430 
 ## Routines (MR. FINANCE)
 
 | Routine | Folder | Trigger | Intent |
-| --- | --- | --- | --- |
+| --- | --- |
 | Factory domain handoff webhook | `factory-domain-handoff-webhook` | webhook | Take over after Collector+Cloner |
 | Floor UI live + chat reachable | `floor-ui-live-chat-reachable` | `40 8-19 * * 1-5` (Dubai weekday hours) | Keep Floor healthy; quiet when green |
 
@@ -94,6 +97,7 @@ Canonical grounding: `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (PR #430 
 
 ### Standing
 - Keep Floor live; merge green PRs; never replace:true Render env; never restore Kimi/DeepSeek
+- Update this file by direct push to `master` (never a new PR)
 
 ---
 
@@ -103,7 +107,7 @@ Canonical grounding: `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (PR #430 
 2. GET /health + /ready — fix chat without Kimi/DeepSeek
 3. Check open PRs on CerebrumDev.ai and cerebrum-builds; merge when green
 4. Drive Floor via Floor automation / GitHub `domain:*`+`handoff` — not Grok SendToAgent as handoff trigger
-5. Update this file before ending a long session
+5. Update this file on `master` (direct push, no PR) before ending a long session
 
 ---
 
@@ -115,3 +119,4 @@ Canonical grounding: `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (PR #430 
 - Claim market-ready / billing-ready without CHADi gate
 - Widen path-jail or delete N2 without CHADi sign-off
 - Loop repairs past 2 attempts
+- Open a PR for `ROLESANDTASKS.md` — push it to `master`
