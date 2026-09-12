@@ -41,6 +41,7 @@ from app.factory.build.writer_phases import (
     compile_phase_brief,
     inventory_needs_rag,
     landed_phase_ids,
+    later_writer_phases,
     pending_writer_phases,
     phase_acceptance_errors,
     prior_writer_phase,
@@ -195,6 +196,10 @@ def test_phase_order_is_backend_then_ui_rag_then_integration():
     assert prior_writer_phase(WRITER_PHASE_BACKEND) is None
     assert prior_writer_phase(WRITER_PHASE_FRONTEND_RAG) == WRITER_PHASE_BACKEND
     assert prior_writer_phase(WRITER_PHASE_INTEGRATION) == WRITER_PHASE_FRONTEND_RAG
+    assert later_writer_phases() == (
+        WRITER_PHASE_FRONTEND_RAG,
+        WRITER_PHASE_INTEGRATION,
+    )
 
 
 def test_fail_closed_phase_two_before_phase_one_accepted(tmp_path):

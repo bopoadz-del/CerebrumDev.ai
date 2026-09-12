@@ -467,6 +467,33 @@ def _workspace_handler_is_factory_grounded(root: Path, capability_id: str) -> bo
         return False
 
 
+def _handler_roots(root: Any) -> List[Path]:
+    """Staging first, then destination — same order as RoleWorkspace reads.
+
+    A rework WRITER starts with an empty staging tree. Work-id / harvest
+    / receipt union must still see keepable handlers and the prior
+    coder_receipt already committed to destination (sess_5782f226 run8:
+    empty staging re-listed the same gaps and overwrote a 10-id receipt).
+    persist_accept stays staging-only — leftover dest GENERATE must not
+    look present while staging is empty.
+    """
+    if root is None:
+        return []
+    staging = Path(getattr(root, "workspace", root))
+    out = [staging]
+    dest = getattr(root, "destination", None)
+    if dest is None:
+        return out
+    dest_p = Path(dest)
+    try:
+        if dest_p.resolve() != staging.resolve():
+            out.append(dest_p)
+    except OSError:
+        if dest_p != staging:
+            out.append(dest_p)
+    return out
+
+
 def _unique_ids(*groups: Any) -> List[str]:
     out: List[str] = []
     seen: set = set()
@@ -490,9 +517,9 @@ def harvest_factory_planted_ids(
     remaining ``inventory_gaps``). Those are still not C-BRIEF
     authorship — counting them would reopen the #374 thin SUCCESS path.
     """
-    if root is None:
+    roots = _handler_roots(root)
+    if not roots:
         return []
-    root = Path(getattr(root, "workspace", root))
     exclude = set()
     if dispatch is not None:
         exclude.update(
@@ -521,17 +548,21 @@ def harvest_factory_planted_ids(
             if str(x).strip()
         )
     if not candidates:
-        actions = root / "app" / "actions"
-        if actions.is_dir():
-            for path in sorted(actions.glob("*.py")):
-                candidates.append(path.stem)
+        for base in roots:
+            actions = base / "app" / "actions"
+            if actions.is_dir():
+                for path in sorted(actions.glob("*.py")):
+                    if path.stem != "__init__":
+                        candidates.append(path.stem)
     out: List[str] = []
     seen: set = set()
     for cid in candidates:
         cid = str(cid or "").strip()
         if not cid or cid in seen or cid in exclude:
             continue
-        if not _workspace_handler_is_factory_grounded(root, cid):
+        if not any(
+            _workspace_handler_is_factory_grounded(base, cid) for base in roots
+        ):
             continue
         if _reuse_needs_hole_fill(root, cid):
             continue
@@ -556,7 +587,7 @@ def _real_agent_written(
     planted = list(dispatch.get("factory_planted_ids") or [])
     if workspace is not None and not planted:
         planted = harvest_factory_planted_ids(
-            Path(getattr(workspace, "workspace", workspace)),
+            workspace,
             dispatch=dispatch,
         )
     if "cli_authored_ids" in dispatch:
@@ -1728,6 +1759,9 @@ class DispatchResult:
     #: keepability — not a never-wrote miss.
     cli_unkeepable_event_bus_ids: List[str] = field(default_factory=list)
     receipt: Dict[str, Any] = field(default_factory=dict)
+    #: This shot's harvest before receipt union. A later empty CLI must
+    #: not hide a needed miss just because prior ids were merged on.
+    shot_cli_authored_ids: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -1805,17 +1839,21 @@ def reuse_inventory_ids(compiled: Any) -> List[str]:
 
 def _reuse_needs_hole_fill(root: Optional[Path], capability_id: str) -> bool:
     """True when a REUSE cap has no keepable on-disk handler yet."""
-    if root is None:
+    roots = _handler_roots(root)
+    if not roots:
         return True
     name = str(capability_id).replace("-", "_")
-    path = Path(root) / "app" / "actions" / f"{name}.py"
-    if not path.is_file():
-        return True
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return True
-    return not _is_keepable_handler(text)
+    for base in roots:
+        path = base / "app" / "actions" / f"{name}.py"
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _is_keepable_handler(text):
+            return False
+    return True
 
 
 def cbrief_work_ids(compiled: Any, root: Optional[Path] = None) -> List[str]:
@@ -1924,7 +1962,10 @@ def phase_authorship_miss(
         return None
     if result.blocker and result.blocker != NAMED_BLOCKER_CLI_NO_AUTHORSHIP:
         return None
-    if result.cli_authored_ids or result.factory_llm_written_ids or result.handlers:
+    shot = getattr(result, "shot_cli_authored_ids", None)
+    if shot is None:
+        shot = result.cli_authored_ids
+    if shot or result.factory_llm_written_ids or result.handlers:
         return None
     remaining = remaining_cbrief_work_ids(compiled, result, root)
     if not remaining:
@@ -1973,10 +2014,11 @@ def merge_writer_phase_dispatch(
         later.specs = {**dict(prior.specs or {}), **dict(later.specs or {})}
     if later.blocker == NAMED_BLOCKER_CLI_NO_AUTHORSHIP and (
         later.cli_authored_ids
-        or later.factory_planted_ids
         or later.factory_llm_written_ids
         or later.handlers
     ):
+        # Plants-only must not clear the named miss — that is still not
+        # C-BRIEF authorship (#374). Prior CLI authored ids do.
         later.blocker = (
             prior.blocker
             if prior.blocker != NAMED_BLOCKER_CLI_NO_AUTHORSHIP
@@ -1992,26 +2034,55 @@ def merge_writer_phase_dispatch(
 
 def dispatch_from_state(state: Optional[Mapping[str, Any]]) -> Optional[DispatchResult]:
     """Rehydrate a prior brief_dispatch so later phases can merge into it."""
-    raw = dict((state or {}).get("brief_dispatch") or {})
-    if not raw:
+    return dispatch_from_receipt(dict((state or {}).get("brief_dispatch") or {}))
+
+
+def dispatch_from_receipt(raw: Optional[Mapping[str, Any]]) -> Optional[DispatchResult]:
+    """Rehydrate harvest ids from coder_receipt.json / brief_dispatch."""
+    blob = dict(raw or {})
+    if not blob:
+        return None
+    if not any(
+        blob.get(key)
+        for key in (
+            "via",
+            "cli_authored_ids",
+            "factory_planted_ids",
+            "factory_llm_written_ids",
+            "kept_handler_ids",
+            "handler_ids",
+            "blocker",
+        )
+    ):
         return None
     return DispatchResult(
-        via=str(raw.get("via") or ""),
-        ok=bool(raw.get("ok")),
-        detail=str(raw.get("detail") or ""),
-        blocker=raw.get("blocker"),
-        model=str(raw.get("model") or ""),
-        handlers={str(k): "" for k in (raw.get("handler_ids") or [])},
-        kept_handler_ids=list(raw.get("kept_handler_ids") or []),
-        cli_authored_ids=list(raw.get("cli_authored_ids") or []),
-        factory_planted_ids=list(raw.get("factory_planted_ids") or []),
-        factory_llm_written_ids=list(raw.get("factory_llm_written_ids") or []),
-        generate_persist_ids=list(raw.get("generate_persist_ids") or []),
+        via=str(blob.get("via") or ""),
+        ok=bool(blob.get("ok")),
+        detail=str(blob.get("detail") or ""),
+        blocker=blob.get("blocker"),
+        model=str(blob.get("model") or ""),
+        handlers={str(k): "" for k in (blob.get("handler_ids") or [])},
+        kept_handler_ids=list(blob.get("kept_handler_ids") or []),
+        cli_authored_ids=list(blob.get("cli_authored_ids") or []),
+        factory_planted_ids=list(blob.get("factory_planted_ids") or []),
+        factory_llm_written_ids=list(blob.get("factory_llm_written_ids") or []),
+        generate_persist_ids=list(blob.get("generate_persist_ids") or []),
         cli_unkeepable_event_bus_ids=list(
-            raw.get("cli_unkeepable_event_bus_ids") or []
+            blob.get("cli_unkeepable_event_bus_ids") or []
         ),
-        reuse_keep_path=bool(raw.get("reuse_keep_path")),
+        reuse_keep_path=bool(blob.get("reuse_keep_path")),
     )
+
+
+def prior_dispatch_for_receipt(ctx: Any) -> Optional[DispatchResult]:
+    """Union in-memory brief_dispatch with on-disk receipts (dest + staging)."""
+    prior = dispatch_from_state(getattr(ctx, "state", None))
+    for base in _handler_roots(getattr(ctx, "workspace", None)):
+        disk = dispatch_from_receipt(read_receipt(base))
+        if disk is None:
+            continue
+        prior = merge_writer_phase_dispatch(prior, disk) if prior else disk
+    return prior
 
 
 def remaining_inventory_gaps(compiled: Any, result: DispatchResult) -> List[str]:
@@ -2369,7 +2440,19 @@ def write_dispatch_receipt(
     compiled: Any,
     result: DispatchResult,
 ) -> Dict[str, Any]:
-    """Persist coder_receipt.json. Honesty fields stay even on keep-path."""
+    """Persist coder_receipt.json. Honesty fields stay even on keep-path.
+
+    A later empty CLI must not replace a prior good harvest. Union planted
+    + authored ids from state and dest/staging receipts; never write an
+    empty ``cli_authored_ids`` over a non-empty prior (sess_5782f226 run8).
+    Shot-level emptiness stays on ``shot_cli_authored_ids`` so a needed
+    miss can still fail-closed.
+    """
+    if result.shot_cli_authored_ids is None:
+        result.shot_cli_authored_ids = list(result.cli_authored_ids or [])
+    prior = prior_dispatch_for_receipt(ctx)
+    if prior is not None:
+        merge_writer_phase_dispatch(prior, result)
     receipt = {
         "via": result.via,
         "ok": result.ok,
@@ -3167,7 +3250,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                     if not _workspace_handler_is_factory_grounded(root, cid)
                 ]
             result.factory_planted_ids = harvest_factory_planted_ids(
-                root, compiled=compiled, dispatch=result.to_dict()
+                getattr(ctx, "workspace", root),
+                compiled=compiled,
+                dispatch=result.to_dict(),
             )
             if (
                 deepseek_cli_ready()
@@ -3213,7 +3298,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
             result.reuse_keep_path = bool(emitted)
             _merge_workspace_harvest(result, root, list(compiled.capabilities))
             result.factory_planted_ids = harvest_factory_planted_ids(
-                root, compiled=compiled, dispatch=result.to_dict()
+                getattr(ctx, "workspace", root),
+                compiled=compiled,
+                dispatch=result.to_dict(),
             )
             _append_log(
                 root / LOG_REL,
@@ -3297,7 +3384,9 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
     apply_factory_grounded_generate_persist(ctx, compiled, result)
     if not result.factory_planted_ids:
         result.factory_planted_ids = harvest_factory_planted_ids(
-            root, compiled=compiled, dispatch=result.to_dict()
+            getattr(ctx, "workspace", root),
+            compiled=compiled,
+            dispatch=result.to_dict(),
         )
     write_dispatch_receipt(ctx, compiled, result)
     ctx.state["brief_dispatch"] = result.to_dict()
