@@ -30,6 +30,7 @@ PIVOT_PY = ROOT / "backend/app/factory/build/cli_pivot.py"
 RECEIPT_PY = ROOT / "backend/app/factory/build/cli_receipt.py"
 CURSOR_BA_PY = ROOT / "backend/app/factory/build/cursor_ba.py"
 BUILDS_PUSH_PY = ROOT / "backend/app/factory/build/builds_push.py"
+N3_PY = ROOT / "backend/app/factory/build/n3_store_gate.py"
 GATE_YML = ROOT / "docs/pivot/cerebrum-builds-store-gate.yml"
 N3_FLOOR = (
     "no_token_401",
@@ -98,15 +99,21 @@ def test_store_gate_scaffold_is_docker_not_render():
     assert "N1a" in readme
     assert "CEREBRUM_BUILDS_GITHUB_TOKEN" in readme
     assert "still not green" in readme
+    assert "Continue after `HANDOFF_TO_N3` is **ingest**" in readme
+    assert "sess_02af51453b364e3f" in readme
 
 
 def test_new_path_source_has_no_author_fallback():
-    for path in (PIVOT_PY, RECEIPT_PY, CURSOR_BA_PY, BUILDS_PUSH_PY):
+    for path in (PIVOT_PY, RECEIPT_PY, CURSOR_BA_PY, BUILDS_PUSH_PY, N3_PY):
         src = path.read_text(encoding="utf-8")
         assert "_templated_body(" not in src
         assert "dispatch_compiled_brief(" not in src
         assert "generate_from_compiled_brief(" not in src
         assert "_extend_wall(" not in src
+    n3 = N3_PY.read_text(encoding="utf-8")
+    assert "run_cli_pivot(" not in n3
+    assert "run_background_agent(" not in n3
+    assert "run_writer(" not in n3
 
 
 def test_decide_budget_before_dispatch_clamps_to_s07():

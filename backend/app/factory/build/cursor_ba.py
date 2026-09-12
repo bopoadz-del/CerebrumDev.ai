@@ -66,6 +66,9 @@ class BackgroundAgentResult:
     unified_diff: str = ""
     agent_id: str = ""
     branch: str = ""
+    head_sha: str = ""
+    owner: str = ""
+    repo: str = ""
 
 
 def cursor_api_key(env: Mapping[str, str]) -> str:
@@ -280,6 +283,21 @@ def run_background_agent(
     hung = bool(polled.get("_hung"))
     started = bool(polled.get("_started", True))
     work_branch = agent_branch_name(polled, ref.branch)
+    head_sha = ""
+    try:
+        from app.factory.build.builds_push import builds_token, fetch_commit_sha
+
+        token = builds_token(env)
+        if token:
+            head_sha = fetch_commit_sha(
+                ref.owner,
+                ref.repo,
+                work_branch,
+                token=token,
+                opener=opener,
+            )
+    except Exception:  # noqa: BLE001 — N3 can discover the tip later
+        head_sha = ""
     if hung or not started:
         return BackgroundAgentResult(
             started=started,
@@ -288,6 +306,9 @@ def run_background_agent(
             spent_usd=extract_spent_usd(polled),
             agent_id=agent_id,
             branch=work_branch,
+            head_sha=head_sha,
+            owner=ref.owner,
+            repo=ref.repo,
         )
     receipt, paths, diff = collector(
         ref, env=env, branch=work_branch, opener=opener
@@ -302,4 +323,7 @@ def run_background_agent(
         unified_diff=diff,
         agent_id=agent_id,
         branch=work_branch,
+        head_sha=head_sha,
+        owner=ref.owner,
+        repo=ref.repo,
     )

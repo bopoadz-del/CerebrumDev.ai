@@ -295,6 +295,55 @@ def _decode_receipt(payload: Any) -> Any:
     return payload
 
 
+def fetch_commit_sha(
+    owner: str,
+    repo: str,
+    ref: str,
+    *,
+    token: str,
+    opener: Callable[..., Any] = urlopen,
+) -> str:
+    """Resolve a branch or SHA to a commit SHA via the GitHub commits API."""
+    path = f"/repos/{owner}/{repo}/commits/{quote(ref, safe='')}"
+    status, body = github_request("GET", path, token=token, opener=opener)
+    if status >= 400 or not isinstance(body, Mapping):
+        raise BuildsPushError(f"GitHub API down: commit {ref} HTTP {status}")
+    sha = str(body.get("sha") or "").strip()
+    if not sha:
+        raise BuildsPushError(f"GitHub API: empty sha for {ref}")
+    return sha
+
+
+def list_session_build_refs(
+    owner: str,
+    repo: str,
+    session_id: str,
+    *,
+    token: str,
+    opener: Callable[..., Any] = urlopen,
+) -> List[Tuple[str, str]]:
+    """``(branch, sha)`` pairs for ``build/<session>-*`` on cerebrum-builds."""
+    sid = sanitize_session_id(session_id)
+    prefix = f"heads/build/{sid}"
+    path = f"/repos/{owner}/{repo}/git/matching-refs/{quote(prefix, safe='/')}"
+    status, body = github_request("GET", path, token=token, opener=opener)
+    if status == 404:
+        return []
+    if status >= 400 or not isinstance(body, list):
+        raise BuildsPushError(f"GitHub API down: matching-refs HTTP {status}")
+    found: List[Tuple[str, str]] = []
+    for item in body:
+        if not isinstance(item, Mapping):
+            continue
+        ref = str(item.get("ref") or "").strip()
+        obj = item.get("object") if isinstance(item.get("object"), Mapping) else {}
+        sha = str(obj.get("sha") or "").strip()
+        branch = ref.removeprefix("refs/heads/")
+        if branch.startswith(f"build/{sid}") and sha:
+            found.append((branch, sha))
+    return found
+
+
 def fetch_receipt(
     ref: BuildsRef,
     *,

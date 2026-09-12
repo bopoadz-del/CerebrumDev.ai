@@ -24,7 +24,10 @@ Routing contract (this is law, the smoke tests enforce it):
      on the same workspace (pytest -m pilot + STORE ops), not a new product.
      A RUN_FAILED / rework-exhausted ledger is terminal: same-hash continue
      or a new brief must start a fresh workspace (reset rework budget),
-     never a no-op resume of the dead run.
+     never a no-op resume of the dead run. ``HANDOFF_TO_N3`` is not that
+     terminal: continue / start_coder ingests the cerebrum-builds
+     ``store-gate`` 12/12 status and must not re-enter WRITER or launch
+     another Background Agent.
     5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
     6. Anything else falls through to the normal kit-configurator chat.
@@ -847,6 +850,21 @@ def is_generation_complete(state: Any) -> bool:
         return False
 
 
+def is_handoff_awaiting_n3(
+    state: Any, output_root: Optional[Path] = None
+) -> bool:
+    """True when cli-pivot handed off and N3 store-gate is not yet ingested."""
+    out = _generation_output_dir(state, output_root)
+    if not out:
+        return False
+    try:
+        from app.factory.build.n3_store_gate import handoff_awaiting_n3
+
+        return bool(handoff_awaiting_n3(out))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_generation_terminal_failure(
     state: Any, output_root: Optional[Path] = None
 ) -> bool:
@@ -855,7 +873,12 @@ def is_generation_terminal_failure(
     A terminal failure is not an interrupted run. Resume would attach to a
     dead ledger (TESTER still red, rework spent) and the Floor would stay
     CODING AGENT STOPPED. Callers must start a fresh workspace instead.
+
+    ``HANDOFF_TO_N3`` is a ledger note, not this terminal — Continue must
+    ingest store-gate, not start a fresh WRITER / BA.
     """
+    if is_handoff_awaiting_n3(state, output_root):
+        return False
     st = _generation_status(state, output_root)
     if st.get("state") == "failed":
         return True
@@ -1041,6 +1064,80 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
     }
 
 
+def ingest_n3_store_gate_reply(
+    state: Any,
+    output_root: Optional[Path] = None,
+    triggered_by: str = "regex_n3",
+) -> Dict[str, Any]:
+    """Continue-as-ingest: poll/fetch store-gate. Never re-enters WRITER."""
+    from app.factory.build.n3_store_gate import (
+        ingest_n3_store_gate,
+        n3_ingest_live,
+        start_n3_ingest_job,
+    )
+    from app.factory.build_jobs import build_status
+
+    pd = state.product_design
+    out = _generation_output_dir(state, output_root)
+    if out is None:
+        return {
+            "ok": False,
+            "sse": "info",
+            "summary": (
+                "HANDOFF_TO_N3 is recorded but there is no workspace to "
+                "ingest store-gate into."
+            ),
+            "stream_delta": True,
+        }
+    result = ingest_n3_store_gate(out, wait=False)
+    if result.pending and not n3_ingest_live(out):
+        start_n3_ingest_job(out)
+    st = build_status(
+        out,
+        blueprint=getattr(pd, "blueprint", None),
+        plan=getattr(pd, "plan", None),
+    )
+    if out:
+        fake = {
+            "output_dir": str(out),
+            "inputs_hash": (pd.generation or {}).get("inputs_hash"),
+            "product_id": (pd.generation or {}).get("product_id"),
+            "engine": (pd.generation or {}).get("engine") or "runner",
+            "build": st,
+        }
+        _record_generation(pd, fake, triggered_by=triggered_by, resumed=True)
+    if result.ok:
+        summary = (
+            "Ingested cerebrum-builds store-gate 12/12. Store-green is on "
+            "the ledger and package ship can unlock. I did not start "
+            "another coding agent or Background Agent."
+        )
+    elif result.pending:
+        summary = (
+            "HANDOFF_TO_N3: polling cerebrum-builds store-gate (commit "
+            "status context store-gate) for 12/12. I did not re-enter "
+            "WRITER or launch another Background Agent."
+        )
+    else:
+        summary = (
+            "Store-gate ingest failed closed "
+            f"({result.honesty}: {result.detail}). I did not start another "
+            "coding agent."
+        )
+    return {
+        "ok": result.ok or result.pending,
+        "sse": "generation" if result.ok or result.pending else "info",
+        "summary": summary,
+        "stream_delta": False,
+        "n3_ingest": True,
+        "n3": result.to_dict(),
+        "generation": pd.generation,
+        "build": st,
+        "triggered_by": triggered_by,
+        "resumed": True,
+    }
+
+
 def start_fresh_generation(
     state: Any,
     output_root: Optional[Path] = None,
@@ -1057,6 +1154,10 @@ def start_fresh_generation(
         raise ValueError("no blueprint drafted — describe the platform first")
     if is_pilot_ready(state, output_root):
         return already_complete_reply(state)
+    if is_handoff_awaiting_n3(state, output_root):
+        return ingest_n3_store_gate_reply(
+            state, output_root=output_root, triggered_by=triggered_by
+        )
     if has_running_build(state):
         reply = running_build_reply(state)
         reply["already_running"] = True
@@ -1157,6 +1258,10 @@ def resume_generation(
         raise ValueError("no blueprint drafted — describe the platform first")
     if is_generation_complete(state):
         return already_complete_reply(state)
+    if is_handoff_awaiting_n3(state, output_root):
+        return ingest_n3_store_gate_reply(
+            state, output_root=output_root, triggered_by=triggered_by
+        )
     if is_generation_terminal_failure(state, output_root):
         resume_by = (
             "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
@@ -1359,6 +1464,10 @@ def start_or_resume_coder(
     A RUN_FAILED / rework-exhausted ledger is terminal: continue or
     start_coder starts a fresh workspace with a reset rework budget.
     """
+    if is_handoff_awaiting_n3(state, output_root):
+        return ingest_n3_store_gate_reply(
+            state, output_root=output_root, triggered_by=triggered_by
+        )
     if has_pending_blueprint(state):
         return approve_and_generate(
             state, output_root=output_root, triggered_by=triggered_by
