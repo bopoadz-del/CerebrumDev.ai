@@ -21,6 +21,7 @@ from app.factory.build.cli_receipt import (
     RECEIPT_INVALID,
     PathsViolated,
     ReceiptInvalid,
+    _posix,
     blueprint_capability_set,
     enforce_receipt,
     handler_relpath,
@@ -137,6 +138,13 @@ diff --git a/app/actions/alpha.py b/app/actions/alpha.py
     assert verdict.green is False
 
 
+def test_posix_keeps_dot_git_and_dot_env():
+    assert _posix(".git/config") == ".git/config"
+    assert _posix("./.git/config") == ".git/config"
+    assert _posix("./app/actions/alpha.py") == "app/actions/alpha.py"
+    assert _posix(".env.example") == ".env.example"
+
+
 def test_writer_allowed_globs_include_tests_not_sealed():
     """CHADi Option A: BA jail allows tests/**; sealed trees stay out."""
     allowed = writer_allowed_globs()
@@ -161,6 +169,7 @@ def test_writing_under_tests_is_handoff_not_paths_violated():
             handler_relpath("alpha"),
             "tests/test_alpha.py",
             "tests/factory/test_alpha_roundtrip.py",
+            ".env.example",
         ],
     )
     assert verdict.honesty == HANDOFF_TO_N3

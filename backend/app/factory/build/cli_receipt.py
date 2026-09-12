@@ -102,7 +102,10 @@ def sealed_globs() -> tuple[str, ...]:
 
 
 def _posix(path: str | Path) -> str:
-    text = str(path).replace("\\", "/").lstrip("./")
+    """Normalize slashes and a ``./`` prefix. Do not strip ``.git`` / ``.env``."""
+    text = str(path).replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
     return text
 
 
