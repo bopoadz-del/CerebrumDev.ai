@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -179,6 +180,31 @@ def _load_mirror_module(path: Path, module_name: str):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_mirror_hashed_files_are_not_gitignored() -> None:
+    """CI checkout must see every byte ``block_content_hash`` hashes.
+
+    A bare ``storage/`` gitignore hid ``vendor_blocks_mirror/storage/Dockerfile``
+    so local parity was 25/25 and CI was 24/25.
+    """
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    ignored: list[str] = []
+    for block_id in sorted(lock.get("blocks") or {}):
+        root = MIRROR / block_id
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or "__pycache__" in path.parts:
+                continue
+            proc = subprocess.run(
+                ["git", "check-ignore", "-q", str(path)],
+                cwd=ROOT,
+                check=False,
+            )
+            if proc.returncode == 0:
+                ignored.append(str(path.relative_to(ROOT)))
+    assert ignored == [], "lock-hashed mirror files are gitignored: " + ", ".join(ignored)
 
 
 def test_document_engine_block_imports_from_mirror_path() -> None:

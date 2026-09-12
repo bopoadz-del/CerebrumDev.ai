@@ -9,7 +9,10 @@ __pycache__
 *.key
 *.log
 .DS_Store
-storage/
+# Runtime data at repo root only. Do not ignore vendor_blocks_mirror/storage/
+# (that directory is a lock-pinned Factory block; a bare `storage/` hid its
+# Dockerfile from CI and broke CD-PARITY-1).
+/storage/
 .venv
 backend/venv/
 venv/
