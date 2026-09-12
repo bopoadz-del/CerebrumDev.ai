@@ -5,6 +5,10 @@ WRITER listed complete / TESTER reached, then stage_2 hard-stop
 FACTORY_CODE_CLI_NO_AUTHORSHIP (written=0, stub_rate=0.0) after four
 C-BRIEF shots of the same six Steward gaps.
 
+run8 (tip 2389ade): merge helper existed but write_dispatch_receipt still
+replaced a 10-id receipt with an empty later CLI; empty staging on
+TESTER rework re-listed dest-landed gaps; last_event stuck on backend.
+
 Root cause: later-phase CLI (plant/reuse) harvested written=0 and
 replaced the run receipt; GENERATE ids never dropped from
 cbrief_work_ids after a keepable plant; inspect used only last-shot
@@ -13,9 +17,13 @@ cli_authored_ids. Thin-template SUCCESS ban stays.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.budget_inspect import STAGE_2_S, inspect_decision
 from app.factory.build.coder_session import (
@@ -30,9 +38,17 @@ from app.factory.build.coder_session import (
     record_unauthored_cli_work,
     remaining_phase_cli_work,
     thin_stub_success_blocked,
+    write_dispatch_receipt,
 )
+from app.factory.build.roles import RoleContext
+from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.writer_phases import (
+    WRITER_PHASE_BACKEND,
     WRITER_PHASE_FRONTEND_RAG,
+    WRITER_PHASE_INTEGRATION,
+    PhaseAcceptHalt,
+    accept_writer_phase,
+    later_writer_phases,
     should_dispatch_writer_phase,
 )
 from tests.factory.test_deepseek_code_cli import _arm_deepseek_cli
@@ -303,3 +319,159 @@ def test_inspect_stage_2_planted_handlers_do_not_hard_stop_no_authorship(
     )
     assert decided["decision"] != "hard_stop"
     assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP not in decided["reason"]
+
+
+def _receipt_ctx(tmp_path: Path, *, dest=None, staging=None, state=None):
+    dest = Path(dest or (tmp_path / "dest"))
+    dest.mkdir(parents=True, exist_ok=True)
+    kwargs = {}
+    if staging is not None:
+        kwargs["staging"] = Path(staging)
+    ws = RoleWorkspace(BuildRole.WRITER, dest, **kwargs)
+    return RoleContext(
+        role=BuildRole.WRITER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(*[_Cap(cid) for cid in STEWARD_GAPS]),
+        state=state if state is not None else {},
+    )
+
+
+def _compiled_receipt():
+    compiled = _compiled_steward_gaps()
+    return compiled
+
+
+def test_write_receipt_empty_shot_keeps_prior_union(tmp_path):
+    """Good harvest then empty CLI must keep union ids on disk."""
+    compiled = _compiled_receipt()
+    ctx = _receipt_ctx(tmp_path)
+    good = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="backend planted",
+        cli_authored_ids=["estate_maintenance"],
+        factory_planted_ids=list(STEWARD_GAPS[1:]),
+        kept_handler_ids=list(STEWARD_GAPS),
+    )
+    write_dispatch_receipt(ctx, compiled, good)
+    ctx.state["brief_dispatch"] = good.to_dict()
+    empty = DispatchResult(
+        via="cli",
+        ok=True,
+        detail=f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: empty later shot",
+        blocker=NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        cli_authored_ids=[],
+        factory_planted_ids=[],
+        shot_cli_authored_ids=[],
+    )
+    receipt = write_dispatch_receipt(ctx, compiled, empty)
+    assert "estate_maintenance" in receipt["cli_authored_ids"]
+    assert set(receipt["factory_planted_ids"]) == set(STEWARD_GAPS[1:])
+    assert receipt.get("blocker") != NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+    disk = json.loads(
+        (ctx.workspace.workspace / "docs" / "coder_receipt.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "estate_maintenance" in disk["cli_authored_ids"]
+    assert disk.get("cli_authored_ids") != []
+
+
+def test_write_receipt_empty_shot_reads_destination_not_empty_staging(tmp_path):
+    """Rework staging is empty; dest receipt must still union."""
+    compiled = _compiled_receipt()
+    dest = tmp_path / "dest"
+    staging = tmp_path / "staging"
+    first = _receipt_ctx(tmp_path, dest=dest)
+    good = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="committed harvest",
+        cli_authored_ids=["estate_maintenance", "evidence_verifier"],
+        factory_planted_ids=list(STEWARD_GAPS[2:]),
+    )
+    write_dispatch_receipt(first, compiled, good)
+    rework = _receipt_ctx(tmp_path, dest=dest, staging=staging, state={})
+    empty = DispatchResult(
+        via="cli",
+        ok=True,
+        detail=f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: empty rework shot",
+        blocker=NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        cli_authored_ids=[],
+        shot_cli_authored_ids=[],
+    )
+    receipt = write_dispatch_receipt(rework, compiled, empty)
+    assert "estate_maintenance" in receipt["cli_authored_ids"]
+    assert "evidence_verifier" in receipt["cli_authored_ids"]
+    assert receipt.get("blocker") != NAMED_BLOCKER_CLI_NO_AUTHORSHIP
+
+
+def test_cbrief_work_ids_see_destination_keepable(tmp_path):
+    compiled = _compiled_steward_gaps()
+    dest = tmp_path / "dest"
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _plant_keepable(dest, STEWARD_GAPS)
+    ws = RoleWorkspace(BuildRole.WRITER, dest, staging=staging)
+    assert set(STEWARD_GAPS) <= set(cbrief_work_ids(compiled, staging))
+    assert cbrief_work_ids(compiled, ws) == []
+    assert remaining_phase_cli_work(compiled, ws, {}) == []
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_FRONTEND_RAG,
+        SimpleNamespace(via="cli"),
+        remaining_work=remaining_phase_cli_work(compiled, ws, {}),
+    ) is False
+
+
+def test_phase_gate_requires_prior_land_before_later_phases(tmp_path):
+    compiled = _compiled_steward_gaps()
+    ctx = _receipt_ctx(tmp_path)
+    assert later_writer_phases() == (
+        WRITER_PHASE_FRONTEND_RAG,
+        WRITER_PHASE_INTEGRATION,
+    )
+    with pytest.raises(PhaseAcceptHalt, match="writer_phase_gate"):
+        accept_writer_phase(ctx, WRITER_PHASE_FRONTEND_RAG, compiled)
+    ctx.state["landed_writer_phases"] = [WRITER_PHASE_BACKEND]
+    with pytest.raises(PhaseAcceptHalt, match="writer_phase_gate"):
+        accept_writer_phase(ctx, WRITER_PHASE_INTEGRATION, compiled)
+
+
+def test_empty_needed_shot_fails_closed_without_wall(tmp_path):
+    """Needed empty CLI is a phase miss; empty memory skips later dispatch."""
+    compiled = _compiled_steward_gaps()
+    state = {}
+    result = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="exit 0",
+        blocker=NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
+        cli_authored_ids=[],
+        factory_planted_ids=[],
+        shot_cli_authored_ids=[],
+    )
+    miss = phase_authorship_miss(compiled, result, tmp_path, STEWARD_GAPS)
+    assert miss
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in miss
+    record_unauthored_cli_work(state, STEWARD_GAPS, result)
+    leftover = remaining_phase_cli_work(compiled, tmp_path, state)
+    assert leftover == []
+    assert should_dispatch_writer_phase(
+        WRITER_PHASE_FRONTEND_RAG,
+        SimpleNamespace(via="cli"),
+        remaining_work=leftover,
+    ) is False
+    merged_prior = DispatchResult(
+        via="cli",
+        ok=True,
+        detail="union after empty shot",
+        cli_authored_ids=["estate_maintenance"],
+        factory_planted_ids=[],
+        shot_cli_authored_ids=[],
+    )
+    still_miss = phase_authorship_miss(
+        compiled, merged_prior, tmp_path, STEWARD_GAPS
+    )
+    assert still_miss
+    assert NAMED_BLOCKER_CLI_NO_AUTHORSHIP in still_miss

@@ -2844,7 +2844,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
         accept_writer_phase,
         checkpoint_landed_phase,
         compile_phase_brief,
-        pending_writer_phases,
+        later_writer_phases,
         should_dispatch_writer_phase,
         should_reopen_writer_phase,
     )
@@ -2852,10 +2852,16 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     if use_brief_dispatch:
         root = _workspace_root(ctx)
         phase_work = remaining_phase_cli_work(
-            compiled_brief, root, ctx.state
+            compiled_brief, ctx.workspace, ctx.state
         )
         if should_reopen_writer_phase(ctx, WRITER_PHASE_BACKEND):
-            if phase_work:
+            # TESTER findings must reach a non-CLI brief (oneshot CI). A
+            # dest-complete CLI with no remaining work must not re-open a
+            # 2700s empty shot (sess_5782f226 run8).
+            reopen_dispatch = bool(phase_work) or (
+                bool(ctx.work_list) and not deepseek_cli_ready()
+            )
+            if reopen_dispatch:
                 phase_brief = compile_phase_brief(
                     compiled_brief, WRITER_PHASE_BACKEND
                 )
@@ -2864,7 +2870,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
                 dispatch = dispatch_compiled_brief(ctx, phase_brief)
                 record_unauthored_cli_work(ctx.state, phase_work, dispatch)
                 miss = phase_authorship_miss(
-                    compiled_brief, dispatch, root, phase_work
+                    compiled_brief, dispatch, ctx.workspace, phase_work
                 )
                 if miss:
                     raise RoleError(miss)
@@ -3681,10 +3687,10 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     from app.factory.build.coder_session import BRIEF_REL
     from app.factory.build.writer_phases import phase_acceptance_errors
 
-    for phase_id in pending_writer_phases(ctx):
+    for phase_id in later_writer_phases():
         owed = phase_acceptance_errors(ctx, phase_id, compiled_brief)
         later_work = remaining_phase_cli_work(
-            compiled_brief, _workspace_root(ctx), ctx.state
+            compiled_brief, ctx.workspace, ctx.state
         )
         if owed and should_dispatch_writer_phase(
             phase_id, dispatch, remaining_work=later_work
@@ -3701,7 +3707,7 @@ def run_writer(ctx: RoleContext) -> RoleResult:
             miss = phase_authorship_miss(
                 compiled_brief,
                 later,
-                _workspace_root(ctx),
+                ctx.workspace,
                 later_work,
             )
             dispatch = merge_writer_phase_dispatch(dispatch, later)

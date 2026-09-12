@@ -304,6 +304,18 @@ def landed_phase_ids(ledger: Any, inputs_hash: str) -> List[str]:
     return out
 
 
+def later_writer_phases() -> Tuple[str, ...]:
+    """PHASE 2–3 this WRITER invocation, even if already on the resume spine.
+
+    sess_5782f226 run8: TESTER rework reopened BACKEND, last_event stuck
+    on ``landed writer phase backend``, and frontend_rag / integration
+    never re-stamped before outer WRITER returned. Resume still skips
+    re-dispatch of landed PHASE 1; land stamps for 2–3 must happen
+    before this pass completes.
+    """
+    return (WRITER_PHASE_FRONTEND_RAG, WRITER_PHASE_INTEGRATION)
+
+
 def pending_writer_phases(ctx: Any) -> List[str]:
     """Phase order minus phases already on the resume spine."""
     landed = {
