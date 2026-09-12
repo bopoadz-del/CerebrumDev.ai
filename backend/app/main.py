@@ -48,6 +48,7 @@ from .core.metrics import HttpMetricsMiddleware, metrics_response
 from .core.billing import require_entitled
 from .routers import (
     accounts,
+    accounts_restore,
     billing,
     sessions,
     config,
@@ -239,6 +240,8 @@ app.add_middleware(HttpMetricsMiddleware)
 # enforce their own account principal).
 app.include_router(accounts.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(resend_verification.router, prefix="/v1/auth", tags=["auth"])
+# Master-key one-shot SQLite → Postgres accounts restore. Not user-callable.
+app.include_router(accounts_restore.router)
 # Billing status self-enforces an account credential; checkout/webhook join here.
 app.include_router(billing.router, prefix="/v1/billing", tags=["billing"])
 app.include_router(sessions.router, prefix="/v1/sessions", tags=["sessions"], dependencies=[Depends(require_api_key)])
