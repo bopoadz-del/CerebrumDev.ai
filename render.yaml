@@ -40,35 +40,32 @@ services:
         value: "true"
       - key: ARCHITECT_LLM_DRAFTING_ENABLED
         value: "true"
-      # Factory architect is Kimi-only (get_factory_llm_config refuses
-      # Ollama/Qwen). The key comes from KIMI_API_KEY or
-      # CEREBRUM_LLM_API_KEY below — no Ollama anywhere.
+      # Factory coding uses Cursor Background Agents (cli-pivot).
+      # LLM_PROVIDER=cursor is valid. HTTP Floor chat / architect draft
+      # stay on OpenRouter (OPENROUTER_API_KEY below) — Cursor keys are
+      # not chat-completions credentials.
+      #
+      # Cursor key names (any one arms BA; first present wins):
+      #   CURSOR_API_KEY
+      #   CURSOR_AGENT_API_KEY
+      #   FACTORY_CURSOR_API_KEY
+      # Do not declare KIMI_* / DEEPSEEK_* here — Dashboard/Blueprint
+      # sync would resurrect those keys.
       - key: LLM_PROVIDER
-        value: kimi
+        value: cursor
+      - key: CURSOR_API_KEY
+        sync: false
+      - key: CURSOR_AGENT_API_KEY
+        sync: false
+      - key: FACTORY_CURSOR_API_KEY
+        sync: false
       - key: CEREBRUM_LLM_API_KEY
         sync: false
-      # International console (platform.moonshot.ai) — verified against
-      # the owner's key. The .cn endpoint rejects it.
-      - key: CEREBRUM_LLM_BASE_URL
-        value: https://api.moonshot.ai/v1
-      # Shared fallback model. Per-path overrides below take precedence.
-      - key: CEREBRUM_LLM_MODEL
-        value: kimi-k2.7-code
-      # Chat / chain_generator path (operational chat). Facilitator only —
-      # grounding, commands, and answers; no deep product reasoning needed.
-      - key: CEREBRUM_CHAT_LLM_MODEL
-        value: moonshot-v1-8k
-      # Factory Product Architect / platform CLI path.
-      - key: CEREBRUM_FACTORY_LLM_MODEL
-        value: kimi-k2.7-code
-      # Cross-provider fallback leg for the factory coder
-      # (llm_config.get_factory_fallback_leg). Setting the key is the explicit
-      # act that arms it: with no key the leg returns None, and Kimi has had no
-      # fallback in production since #199 merged. The blueprint never declared
-      # the variable, so it was not merely unset -- it was invisible.
-      #
-      # sync: false declares the variable without committing the secret, which
-      # also means a blueprint sync cannot prune a dashboard-set value.
+      # Cross-provider HTTP fallback / Floor chat leg
+      # (llm_config.get_factory_fallback_leg). Setting the key is the
+      # explicit act that arms it. sync: false declares the variable
+      # without committing the secret, which also means a blueprint
+      # sync cannot prune a dashboard-set value.
       - key: OPENROUTER_API_KEY
         sync: false
       # Declared rather than defaulted, so the leg's provider is greppable here
@@ -215,15 +212,15 @@ services:
       # are the same leftover. Code remaps 60–180 to 1200s so a dashboard
       # pin cannot keep killing WRITER HTTP posts. 20 min is a hung-socket
       # abort, not the 2-hour C-BRIEF coding budget.
-      # C-BRIEF FACTORY_CODE_CLI wait / Floor model-call deadline tracks
+      # C-BRIEF CLI wait / Floor model-call deadline tracks
       # FACTORY_CODER_TIMEOUT_S when that is a long coding wall
       # (7200 → ~7230 with grace), else FACTORY_CODER_BUDGET_S / the
-      # 7200s DeepSeek ceiling. Do not pin TIMEOUT_S=1800 for the CLI —
+      # 7200s coding ceiling. Do not pin TIMEOUT_S=1800 for the CLI —
       # that froze sess_2fba31ab at 1785s (STAGE_1-15) while inspect
       # still advertised a longer watchdog. Dashboard source of truth:
       # set FACTORY_CODER_TIMEOUT_S=7200 for the C-BRIEF CLI wall, or
-      # keep 1200 here as HTTP hang and rely on BUDGET_S=7200 + DeepSeek
-      # ceiling. Never set TIMEOUT_S=7200 if you want HTTP posts to
+      # keep 1200 here as HTTP hang and rely on BUDGET_S=7200 + the
+      # coding ceiling. Never set TIMEOUT_S=7200 if you want HTTP posts to
       # abort a hung socket in 20 min — CLI dispatch is a separate wall.
       # Required if the remap is ever removed: FACTORY_CODER_TIMEOUT_S=1200
       # and FACTORY_CODER_ATTEMPT_WALL_S=2400 (never 160).
@@ -248,14 +245,10 @@ services:
       # (7200 + 30s grace = 7230).
       - key: FACTORY_CODER_BUDGET_S
         value: "7200"
-      # Owner-gated FACTORY_CODE_CLI. This blueprint is not applied; the
-      # dashboard is source of truth. The production image installs official
-      # `kimi` at /usr/local/bin/kimi. DeepSeek V4 Pro is the default coding
-      # path when DEEPSEEK_API_KEY is set (FACTORY_CODE_CLI=kimi,
-      # OpenAI-compat https://api.deepseek.com, model deepseek-v4-pro).
-      # Historical Moonshot stays via FACTORY_CODE_PROVIDER=kimi +
-      # KIMI_CODE_API_KEY. Leftover FACTORY_CODE_CLI=claude remaps to kimi.
-      # Claude Code is not the DeepSeek vehicle.
+      # Owner-gated leftover FACTORY_CODE_CLI. This blueprint is not
+      # applied; the dashboard is source of truth. Factory coding uses
+      # Cursor BA when any Cursor key above is set (cli-pivot). Do not
+      # re-add KIMI_* / DEEPSEEK_* keys here.
       # A keyed Floor without the selected executable still fail-closes
       # FACTORY_CODE_CLI_UNAVAILABLE (no HTTP oneshot takeover).
       # Do not set ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY process-wide —
@@ -264,14 +257,6 @@ services:
         sync: false
       - key: FACTORY_CODE_PROVIDER
         sync: false
-      - key: DEEPSEEK_API_KEY
-        sync: false
-      - key: DEEPSEEK_CODE_MODEL
-        sync: false
-      - key: KIMI_CODE_API_KEY
-        sync: false
-      - key: KIMI_CODE_HOME
-        value: /app/.kimi-code
       # Factory post-CLONER domain handoff → Cursor automation webhook.
       # Dashboard-only: this file is not a live Blueprint; never commit the
       # URL secret or the Bearer token (crsr_…). post_webhook attaches

@@ -28,6 +28,11 @@ def _clear_env():
         "FACTORY_LLM_FALLBACK_API_KEY",
         "DEEPSEEK_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+        "OPENROUTER_MODEL",
+        "FACTORY_LLM_FALLBACK_MODEL",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_MODEL",
@@ -76,7 +81,7 @@ def test_factory_llm_rejects_an_unsupported_provider():
     assert cfg["provider"] == ""
     error = cfg.get("error", "")
     assert "qwen" in error
-    assert "kimi" in error and "claude" in error
+    assert "cursor" in error and "kimi" in error and "claude" in error
 
 
 def test_factory_llm_mock():
@@ -207,6 +212,41 @@ def test_openrouter_base_uses_factory_fallback_api_key_when_openrouter_unset():
 
     assert chat_cfg["api_key"] == "sk-or-fallback"
     assert factory_cfg["api_key"] == "sk-or-fallback"
+
+
+def test_llm_provider_cursor_uses_openrouter_http_not_moonshot():
+    """LLM_PROVIDER=cursor is accepted; HTTP talk is OpenRouter, not Moonshot."""
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-cursor-http"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-must-not-win"
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "cursor"
+    assert factory_cfg["provider"] == "cursor"
+    assert chat_cfg["api_key"] == "sk-or-cursor-http"
+    assert factory_cfg["api_key"] == "sk-or-cursor-http"
+    assert "openrouter.ai" in chat_cfg["base_url"]
+    assert "openrouter.ai" in factory_cfg["base_url"]
+    assert "moonshot" not in chat_cfg["base_url"]
+    assert "moonshot" not in factory_cfg["base_url"]
+    assert "error" not in chat_cfg
+    assert "error" not in factory_cfg
+
+
+def test_llm_provider_cursor_without_openrouter_errors_and_names_cursor_keys():
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CURSOR_API_KEY"] = "cursor-ba-key-not-for-http"
+    cfg = get_factory_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == ""
+    error = cfg.get("error", "")
+    assert "OPENROUTER_API_KEY" in error
+    assert "CURSOR_API_KEY" in error
+    assert "CURSOR_AGENT_API_KEY" in error
+    assert "FACTORY_CURSOR_API_KEY" in error
 
 
 def test_deepseek_key_does_not_arm_chat_or_factory_llm():

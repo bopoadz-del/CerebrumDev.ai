@@ -4,22 +4,29 @@ Two paths are configured independently:
 
 * Chat / chain_generator path: ``get_llm_config()``
   - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: ``KIMI_*`` / ``ANTHROPIC_*`` or ``CEREBRUM_LLM_*``
+  - Fallback: ``OPENROUTER_*`` / ``ANTHROPIC_*`` / leftover ``KIMI_*`` or
+    ``CEREBRUM_LLM_*``
 
 * Factory Product Architect / platform CLI path: ``get_factory_llm_config()``
   - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: ``CEREBRUM_LLM_*`` then ``KIMI_*`` / ``ANTHROPIC_*``
+  - Fallback: ``CEREBRUM_LLM_*`` then ``OPENROUTER_*`` / leftover ``KIMI_*`` /
+    ``ANTHROPIC_*``
 
-**Kimi and Claude are both supported. Kimi is the DEFAULT.**
+**Cursor is an accepted ``LLM_PROVIDER``. It is not the HTTP chat default.**
 
-Claude is an addition, not a replacement: it exists so the factory keeps
-running when Kimi credits are out, and so the two can be compared on one
-blueprint. Selection is deliberate, never accidental --
-:func:`_detect_provider` resolves to Kimi whenever Kimi credentials are
-present, *even if Claude credentials are also present*, so nobody's bill
-changes by having a second key in the environment. Claude is used only when
-``LLM_PROVIDER=claude`` is set explicitly, or when Kimi has no credentials and
-Claude does.
+``LLM_PROVIDER=cursor`` is valid (render.yaml pins it). Cursor keys
+(``CURSOR_API_KEY`` / ``CURSOR_AGENT_API_KEY`` / ``FACTORY_CURSOR_API_KEY``)
+arm Background Agents (cli-pivot). HTTP Floor chat / architect draft stay
+on OpenRouter — those Cursor keys are not chat-completions credentials.
+
+Claude remains an opt-in HTTP provider. Leftover Kimi/Moonshot credentials
+still resolve when ``LLM_PROVIDER`` is unset or ``kimi``/``moonshot``.
+Selection is deliberate, never accidental -- :func:`_detect_provider`
+resolves to Kimi whenever leftover Kimi credentials are present, *even if
+Claude credentials are also present*, so nobody's bill changes by having a
+second key in the environment. Claude is used only when
+``LLM_PROVIDER=claude`` is set explicitly, or when Kimi has no credentials
+and Claude does.
 
 Selecting a provider whose key is missing is a loud error. It never falls
 through to the other provider -- a silent switch is a cost surprise, which is
@@ -31,14 +38,22 @@ only, runs only after the primary has already failed, and is pinned to a
 zero-priced model so it cannot create the cost surprise the rule exists to
 prevent.
 
-``LLM_PROVIDER`` accepts ``kimi``/``moonshot`` (aliased to kimi) and
-``claude``/``anthropic`` (aliased to claude).
+``LLM_PROVIDER`` accepts ``cursor``, ``kimi``/``moonshot`` (aliased to kimi)
+and ``claude``/``anthropic`` (aliased to claude).
 """
 
 from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
+
+#: Cursor BA key names. Any one arms cli-pivot; first present wins.
+#: These are not /chat/completions credentials.
+CURSOR_KEY_ENVS = (
+    "CURSOR_API_KEY",
+    "CURSOR_AGENT_API_KEY",
+    "FACTORY_CURSOR_API_KEY",
+)
 
 
 def _truthy(name: str) -> bool:
@@ -225,7 +240,7 @@ def normalise_provider(name: str) -> str:
     return name
 
 
-SUPPORTED_PROVIDERS = ("kimi", "claude")
+SUPPORTED_PROVIDERS = ("cursor", "kimi", "claude")
 
 
 def _has_kimi_credentials() -> bool:
@@ -279,7 +294,19 @@ def get_llm_config() -> Dict[str, Any]:
     """Return resolved LLM config for the chat/chain_generator path."""
     provider = normalise_provider(os.getenv("LLM_PROVIDER", "")) or _detect_provider()
 
-    if provider in SUPPORTED_PROVIDERS:
+    if provider == "cursor":
+        cfg = _cursor_http_config("CEREBRUM_CHAT")
+        if cfg["mock"] and not cfg["api_key"]:
+            return {
+                "provider": "",
+                "api_key": "",
+                "base_url": "",
+                "model": "",
+                "mock": True,
+            }
+        return cfg
+
+    if provider in ("kimi", "claude"):
         cfg = (
             _kimi_config("CEREBRUM_CHAT")
             if provider == "kimi"
@@ -308,7 +335,10 @@ def get_llm_config() -> Dict[str, Any]:
 
 
 def get_factory_llm_config() -> Dict[str, Any]:
-    """Factory Product Architect — Kimi (default) or Claude, + mock for tests.
+    """Factory Product Architect — cursor, leftover Kimi, or Claude.
+
+    ``LLM_PROVIDER=cursor`` is accepted. HTTP draft uses OpenRouter.
+    Cursor keys arm Background Agents, not this HTTP path.
 
     Fails closed per provider: asking for a provider whose key is absent is an
     error carrying that provider's name. It never silently borrows the other
@@ -324,13 +354,16 @@ def get_factory_llm_config() -> Dict[str, Any]:
             "model": "",
             "mock": False,
             "error": (
-                f"Factory architect supports {' and '.join(SUPPORTED_PROVIDERS)} "
-                f"(kimi is the default); LLM_PROVIDER={raw} is not allowed for "
+                f"Factory architect supports {' / '.join(SUPPORTED_PROVIDERS)} "
+                f"(cursor is accepted); LLM_PROVIDER={raw} is not allowed for "
                 "product architecture"
             ),
         }
 
     provider = explicit or _detect_provider() or "kimi"
+
+    if provider == "cursor":
+        return _cursor_http_config("CEREBRUM_FACTORY")
 
     if provider == "claude":
         cfg = _factory_claude_config("CEREBRUM_FACTORY")
@@ -400,6 +433,51 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
 SUPPORTED_FALLBACK_PROVIDERS = ("openrouter",)
+
+
+def _cursor_http_config(*prefixes: str) -> Dict[str, Any]:
+    """HTTP talk for ``LLM_PROVIDER=cursor`` uses OpenRouter, not Moonshot.
+
+    Cursor keys (``CURSOR_API_KEY`` / ``CURSOR_AGENT_API_KEY`` /
+    ``FACTORY_CURSOR_API_KEY``) arm Background Agents (cli-pivot). They are
+    not ``/chat/completions`` credentials.
+    """
+    api_key = _openrouter_key(*prefixes)
+    if not api_key:
+        prefixed = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
+        api_key = _env_first(*prefixed, "CEREBRUM_LLM_API_KEY")
+    base_url = _env_first(
+        *(f"{prefix}_LLM_BASE_URL" for prefix in prefixes),
+        "OPENROUTER_BASE_URL",
+        default=OPENROUTER_BASE_URL,
+    )
+    if "moonshot" in base_url.lower():
+        base_url = OPENROUTER_BASE_URL
+        api_key = _openrouter_key(*prefixes) or api_key
+    model = _env_first(
+        *(f"{prefix}_LLM_MODEL" for prefix in prefixes),
+        "FACTORY_LLM_FALLBACK_MODEL",
+        "OPENROUTER_MODEL",
+        default=DEFAULT_OPENROUTER_FALLBACK_MODEL,
+    )
+    cfg: Dict[str, Any] = {
+        "provider": "cursor",
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model,
+        "fallback_model": "",
+        "mock": _truthy("CEREBRUM_LLM_MOCK"),
+        "temperature": _llm_temperature(),
+    }
+    if not api_key:
+        cfg["error"] = (
+            "LLM_PROVIDER=cursor: HTTP Floor chat / architect uses OpenRouter. "
+            "Set OPENROUTER_API_KEY (or CEREBRUM_CHAT_LLM_API_KEY / "
+            "CEREBRUM_FACTORY_LLM_API_KEY). Cursor keys "
+            "(CURSOR_API_KEY / CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY) "
+            "arm Background Agents, not chat completions."
+        )
+    return cfg
 
 
 def _is_free_slug(model: str) -> bool:

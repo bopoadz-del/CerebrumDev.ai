@@ -423,7 +423,13 @@ def _llm_code_call_impl(messages: List[Dict[str, str]]) -> tuple[str, str]:
         )
 
     provider = cfg.get("provider")
-    if primary_usable and provider not in ("moonshot", "kimi", "claude"):
+    if primary_usable and provider not in (
+        "moonshot",
+        "kimi",
+        "claude",
+        "cursor",
+        "openrouter",
+    ):
         raise CoderError(f"unsupported coder provider: {provider!r}")
 
     #: A leg is a whole endpoint -- provider, base_url, key -- not just a
