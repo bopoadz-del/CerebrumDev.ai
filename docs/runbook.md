@@ -169,6 +169,26 @@ curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY" \
 returns sqlite counts, postgres counts before/after, and emails migrated —
 never password hashes. Re-running inserts nothing already present.
 
+Disk SQLite is often probe-era only. Historical owner rows
+(`acct_c38ae401…`) live in nightly archives under `STORAGE_PATH/backups`:
+
+```bash
+# List archives and whether accounts.dump / .sql / .db is present
+curl -sS -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY" \
+  https://api.cerebrum-dev.com/v1/ops/accounts-restore/backups
+
+# Merge the named dump (or omit archive= for the latest with a dump)
+curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY" \
+  "https://api.cerebrum-dev.com/v1/ops/accounts-restore/from-backup?archive=cerebrumdev-backup-20260912T030000Z.tar.gz"
+```
+
+`from-backup` defaults to `force=true` and `prefer_source=true`: insert
+missing ids, park a conflicting live email
+(`displaced+<id>@invalid.cerebrum-dev.restore`) so the backup id can reclaim
+the real address, and never wipe smoke rows. Missing `session_owners` keys
+are advisory (sessions may live outside the dump) and do not fail the
+request.
+
 Do **not** change Render env to perform this restore. Keep
 `ACCOUNTS_DATABASE_URL` set.
 
