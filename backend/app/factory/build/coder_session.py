@@ -276,10 +276,17 @@ def brief_requires_cli() -> bool:
     is already ready (kimi on PATH + ``DEEPSEEK_API_KEY``). Production
     (``ENV=production``) and keyed non-test hosts fail-closed.
 
+    Cursor executor keys (``writer_uses_cli_pivot``) take Generate off
+    FACTORY_CODE_CLI — do not demand Kimi/DeepSeek credentials then.
+
     Leftover ``FACTORY_BRIEF_REQUIRE_CLI=0`` must not treat a ready
     DeepSeek+kimi session as optional — that is how sess_b9fbae7
     coded via in-process OpenRouter while health showed a ready CLI.
     """
+    from app.factory.build.cli_pivot import writer_uses_cli_pivot
+
+    if writer_uses_cli_pivot():
+        return False
     if http_oneshot_enabled():
         return False
     from app.factory.coder import coder_enabled
@@ -842,7 +849,15 @@ def cli_credentials_missing_detail(command: Optional[str] = None) -> str:
 
 
 def raise_if_cli_session_unready() -> None:
-    """Fail-closed before generate-start claims the coding agent took over."""
+    """Fail-closed before generate-start claims the coding agent took over.
+
+    Cursor-keyed Generate uses ``run_cli_pivot`` (not FACTORY_CODE_CLI).
+    Skip Kimi/DeepSeek credential preflight when those keys are present.
+    """
+    from app.factory.build.cli_pivot import writer_uses_cli_pivot
+
+    if writer_uses_cli_pivot():
+        return
     if not brief_requires_cli():
         return
     if not cli_available():
