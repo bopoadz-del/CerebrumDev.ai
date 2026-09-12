@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,10 @@ BUILDS_TOKEN_ENV = "CEREBRUM_BUILDS_GITHUB_TOKEN"
 BUILDS_REPO_ENV = "CEREBRUM_BUILDS_REPO"
 DEFAULT_BUILDS_REPO = "bopoadz-del/cerebrum-builds"
 GITHUB_API = "https://api.github.com"
+# Compare 404 is usually missing head/seed after BA rename or GitHub ref lag —
+# not an API outage. Retry briefly, then fail closed with a clear diagnosis.
+COMPARE_404_RETRIES = 5
+COMPARE_404_SLEEP_S = 2.0
 GIT_NAME = "cerebrum-factory"
 GIT_EMAIL = "factory@cerebrum.dev"
 
@@ -401,24 +406,124 @@ def _unified_diff(files: Sequence[Mapping[str, Any]]) -> str:
     return "\n".join(chunks)
 
 
+
+def session_id_from_build_branch(branch: str) -> str:
+    """``build/<session>-<8hex>`` → session id (best-effort)."""
+    name = str(branch or "").strip().removeprefix("refs/heads/").removeprefix("build/")
+    if not name:
+        return ""
+    head, sep, tail = name.rpartition("-")
+    if sep and len(tail) == 8 and all(c in "0123456789abcdef" for c in tail.lower()):
+        return head
+    return name
+
+
+def _ref_resolves(
+    owner: str,
+    repo: str,
+    ref: str,
+    *,
+    token: str,
+    opener: Callable[..., Any] = urlopen,
+) -> bool:
+    """True when GitHub commits API can resolve ``ref`` (branch or SHA)."""
+    if not ref:
+        return False
+    path = f"/repos/{owner}/{repo}/commits/{quote(ref, safe='')}"
+    status, body = github_request("GET", path, token=token, opener=opener)
+    return status < 400 and isinstance(body, Mapping) and bool(str(body.get("sha") or "").strip())
+
+
+def _compare_seed_head(
+    ref: BuildsRef,
+    head: str,
+    *,
+    token: str,
+    opener: Callable[..., Any] = urlopen,
+) -> Tuple[int, Any]:
+    compare_path = (
+        f"/repos/{ref.owner}/{ref.repo}/compare/"
+        f"{quote(ref.seed_sha, safe='')}...{quote(head, safe='')}"
+    )
+    return github_request("GET", compare_path, token=token, opener=opener)
+
+
 def collect_branch(
     ref: BuildsRef,
     *,
     env: Mapping[str, str],
     branch: Optional[str] = None,
     opener: Callable[..., Any] = urlopen,
+    sleep: Callable[[float], None] = time.sleep,
+    retries: int = COMPARE_404_RETRIES,
+    retry_sleep_s: float = COMPARE_404_SLEEP_S,
 ) -> Tuple[Any, List[str], str]:
-    """Receipt + changed paths + unified diff vs the pre-agent seed commit."""
+    """Receipt + changed paths + unified diff vs the pre-agent seed commit.
+
+    Compare HTTP 404 means a missing seed and/or head (BA never pushed, branch
+    deleted, head renamed, or GitHub ref lag) — not a GitHub outage. Retry,
+    rediscover ``build/<session>-*`` tips, fall back to the seed branch name,
+    then fail closed with a clear retryable-infra diagnosis.
+    """
     token = builds_token(env)
     if not token:
         raise BuildsPushError(f"{BUILDS_TOKEN_ENV} missing")
     head = branch or ref.branch
-    compare_path = (
-        f"/repos/{ref.owner}/{ref.repo}/compare/"
-        f"{quote(ref.seed_sha, safe='')}...{quote(head, safe='')}"
-    )
-    status, body = github_request("GET", compare_path, token=token, opener=opener)
+    status, body = _compare_seed_head(ref, head, token=token, opener=opener)
+
+    if status == 404:
+        attempts = max(0, int(retries))
+        for _ in range(attempts):
+            sleep(float(retry_sleep_s))
+            status, body = _compare_seed_head(ref, head, token=token, opener=opener)
+            if status != 404:
+                break
+
+    if status == 404:
+        seed_ok = _ref_resolves(
+            ref.owner, ref.repo, ref.seed_sha, token=token, opener=opener
+        )
+        head_ok = _ref_resolves(ref.owner, ref.repo, head, token=token, opener=opener)
+
+        # Head renamed / deleted tip: try other build/<session>-* refs, then seed branch.
+        candidates: List[str] = []
+        if ref.branch and ref.branch != head:
+            candidates.append(ref.branch)
+        sid = session_id_from_build_branch(head) or session_id_from_build_branch(
+            ref.branch
+        )
+        if sid:
+            try:
+                alts = list_session_build_refs(
+                    ref.owner, ref.repo, sid, token=token, opener=opener
+                )
+            except BuildsPushError:
+                alts = []
+            for alt_branch, _sha in sorted(alts, key=lambda row: row[0]):
+                if alt_branch not in candidates and alt_branch != head:
+                    candidates.append(alt_branch)
+
+        for alt in candidates:
+            status, body = _compare_seed_head(ref, alt, token=token, opener=opener)
+            if status == 404:
+                continue
+            if status < 400 and isinstance(body, Mapping):
+                head = alt
+                head_ok = True
+                break
+
+        if status == 404:
+            seed_label = "present" if seed_ok else "missing"
+            head_label = "present" if head_ok else "missing"
+            seed_short = (ref.seed_sha or "")[:12] or "?"
+            raise BuildsPushError(
+                f"compare HTTP 404: seed={seed_label} head={head_label} "
+                f"(seed={seed_short} head={head}) — retryable infra "
+                f"(branch missing after BA, renamed, or not yet visible)"
+            )
+
     if status >= 400 or not isinstance(body, Mapping):
+        # Non-404 transport/API failures stay "API down".
         raise BuildsPushError(f"GitHub API down: compare HTTP {status}")
     files = [f for f in (body.get("files") or []) if isinstance(f, Mapping)]
     receipt = fetch_receipt(ref, env=env, branch=head, opener=opener)
