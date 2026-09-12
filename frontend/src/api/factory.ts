@@ -8,6 +8,8 @@ const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
 
 const EMAIL_KEY = 'cerebrum.factory.email'
+/** Owner-requested convenience remember-me. Client-only; never cookies or logs. */
+const PASSWORD_KEY = 'cerebrum.factory.password'
 const LEGACY_TOKEN_KEY = 'cerebrum.factory.token'
 
 export class ApiError extends Error {
@@ -83,14 +85,48 @@ const RETRY_DELAYS_MS = import.meta.env.MODE === 'test' ? [0, 0] : [200, 600]
 export function getEmail(): string | null {
   return localStorage.getItem(EMAIL_KEY)
 }
-/** Persist the display email only. The ``cdt_`` login token lives in an HttpOnly cookie. */
-export function setSession(email: string): void {
-  localStorage.removeItem(LEGACY_TOKEN_KEY)
+export function getRememberedPassword(): string | null {
+  return localStorage.getItem(PASSWORD_KEY)
+}
+export function getLoginToken(): string | null {
+  const raw = localStorage.getItem(LEGACY_TOKEN_KEY)
+  return raw && raw.startsWith('cdt_') ? raw : null
+}
+
+/**
+ * Persist display email and optional ``cdt_`` login token.
+ * Cookie (SameSite=None; Secure) is primary; storing the token lets fetch
+ * send ``Authorization: Bearer`` when the cookie is absent. Pass the token
+ * from login/register; omit it on boot ``me()`` so a Bearer backup remains.
+ */
+export function setSession(email: string, loginToken?: string): void {
   localStorage.setItem(EMAIL_KEY, email)
+  if (typeof loginToken === 'string') {
+    if (loginToken.startsWith('cdt_')) {
+      localStorage.setItem(LEGACY_TOKEN_KEY, loginToken)
+    } else {
+      localStorage.removeItem(LEGACY_TOKEN_KEY)
+    }
+  }
+}
+/** Save email+password after a remembered login. Password stays in localStorage only. */
+export function rememberLogin(email: string, password: string): void {
+  localStorage.setItem(EMAIL_KEY, email)
+  localStorage.setItem(PASSWORD_KEY, password)
+}
+/** Forget saved login fields. Does not touch the HttpOnly session cookie. */
+export function forgetRememberedLogin(): void {
+  localStorage.removeItem(EMAIL_KEY)
+  localStorage.removeItem(PASSWORD_KEY)
+}
+export function clearRememberedPassword(): void {
+  localStorage.removeItem(PASSWORD_KEY)
 }
 export function clearSession(): void {
   localStorage.removeItem(LEGACY_TOKEN_KEY)
-  localStorage.removeItem(EMAIL_KEY)
+  if (!localStorage.getItem(PASSWORD_KEY)) {
+    localStorage.removeItem(EMAIL_KEY)
+  }
 }
 
 /** Drop the display email and ask the API to clear the HttpOnly cookie. */
@@ -103,8 +139,16 @@ export async function signOut(): Promise<void> {
   }
 }
 
+function authHeaders(contentTypeJson = true): Record<string, string> {
+  const headers: Record<string, string> = {}
+  if (contentTypeJson) headers['Content-Type'] = 'application/json'
+  const token = getLoginToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
+
 async function reqOnce<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const headers = authHeaders()
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers,
@@ -224,9 +268,7 @@ export async function chatStream(
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/v1/sessions/${sessionId}/chat`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: authHeaders(),
     credentials: 'include',
     body: JSON.stringify({ message }),
   })
@@ -509,6 +551,7 @@ export async function watchBuildStatus(
 export async function downloadProductPackage(sid: string): Promise<void> {
   const res = await fetch(`${API_BASE}/v1/sessions/${sid}/product/package`, {
     credentials: 'include',
+    headers: authHeaders(false),
   })
   if (!res.ok) {
     const txt = await res.text().catch(() => '')

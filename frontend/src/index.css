@@ -329,6 +329,26 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   margin-top: 0.75rem;
 }
 
+.remember-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 4px;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+.remember-me input[type='checkbox'] {
+  accent-color: var(--gold);
+  width: 18px;
+  height: 18px;
+  flex: none;
+  cursor: pointer;
+}
+
 .notice-box {
   background: rgba(46, 160, 67, 0.12);
   border: 1px solid rgba(46, 160, 67, 0.45);

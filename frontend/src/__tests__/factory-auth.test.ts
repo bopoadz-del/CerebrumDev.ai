@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearRememberedPassword,
   clearSession,
   factoryAccessPaused,
+  forgetRememberedLogin,
   getEmail,
+  getRememberedPassword,
   ApiError,
   isTransientBootError,
   isTransientNetworkError,
+  rememberLogin,
   setSession,
   subscriptionDisplay,
 } from '../api/factory'
@@ -15,22 +19,55 @@ describe('factory auth storage', () => {
     localStorage.clear()
   })
 
-  it('never writes a login token to localStorage', () => {
+  it('stores a cdt_ login token when provided (Bearer backup)', () => {
+    setSession('owner@factory.dev', 'cdt_login_token')
+    expect(localStorage.getItem('cerebrum.factory.token')).toBe('cdt_login_token')
+    expect(getEmail()).toBe('owner@factory.dev')
+  })
+
+  it('setSession without token leaves an existing Bearer backup in place', () => {
     localStorage.setItem('cerebrum.factory.token', 'cdt_leftover')
     setSession('owner@factory.dev')
-    expect(localStorage.getItem('cerebrum.factory.token')).toBeNull()
+    expect(localStorage.getItem('cerebrum.factory.token')).toBe('cdt_leftover')
     expect(getEmail()).toBe('owner@factory.dev')
   })
 
   it('clearSession drops leftover tokens and the email hint', () => {
     localStorage.setItem('cerebrum.factory.token', 'cdt_leftover')
-    setSession('owner@factory.dev')
+    setSession('owner@factory.dev', 'cdt_leftover')
     clearSession()
     expect(localStorage.getItem('cerebrum.factory.token')).toBeNull()
     expect(getEmail()).toBeNull()
   })
 
-  it('sends credentials: include and no Authorization header', async () => {
+  it('rememberLogin stores email and password under cerebrum.factory.*', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    expect(getEmail()).toBe('owner@factory.dev')
+    expect(getRememberedPassword()).toBe('supersecret1')
+    expect(localStorage.getItem('cerebrum.factory.email')).toBe('owner@factory.dev')
+    expect(localStorage.getItem('cerebrum.factory.password')).toBe('supersecret1')
+    expect(document.cookie).not.toContain('supersecret1')
+  })
+
+  it('forgetRememberedLogin and clearRememberedPassword drop saved fields', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    clearRememberedPassword()
+    expect(getRememberedPassword()).toBeNull()
+    expect(getEmail()).toBe('owner@factory.dev')
+    forgetRememberedLogin()
+    expect(getEmail()).toBeNull()
+    expect(getRememberedPassword()).toBeNull()
+  })
+
+  it('clearSession keeps remembered email+password for the next visit', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    clearSession()
+    expect(getEmail()).toBe('owner@factory.dev')
+    expect(getRememberedPassword()).toBe('supersecret1')
+  })
+
+  it('sends credentials: include and Authorization Bearer when token present', async () => {
+    localStorage.setItem('cerebrum.factory.token', 'cdt_backup')
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -40,6 +77,22 @@ describe('factory auth storage', () => {
     const { auth } = await import('../api/factory')
     await auth.me()
     expect(fetchMock).toHaveBeenCalled()
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(init.credentials).toBe('include')
+    const headers = init.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer cdt_backup')
+    vi.unstubAllGlobals()
+  })
+
+  it('omits Authorization when no token is stored (cookie-only path)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ email: 'owner@factory.dev' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { auth } = await import('../api/factory')
+    await auth.me()
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(init.credentials).toBe('include')
     const headers = init.headers as Record<string, string>
