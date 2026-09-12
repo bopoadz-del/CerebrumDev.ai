@@ -1061,11 +1061,33 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
         )
 
+    # FinanceOps: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
+    # Best-effort — never fail the CLONER role. No SendToAgent.
+    handoff_notes: dict = {}
+    try:
+        from app.factory.build.domain_handoff import handoff_after_cloner
+
+        hr = handoff_after_cloner(ctx)
+        if hr.fired or hr.already or (hr.domain == "finance" and not hr.skipped):
+            handoff_notes["domain_handoff"] = hr.to_dict()
+            note = getattr(ctx, "note", None)
+            if callable(note):
+                note(
+                    f"domain handoff: {hr.reason or ('fired' if hr.fired else 'skipped')}",
+                    stage="domain_handoff",
+                    issue_url=hr.issue_url or "",
+                    fired=hr.fired,
+                )
+    except Exception:  # noqa: BLE001
+        pass
+
+    notes = {"lock": lock}
+    notes.update(handoff_notes)
     return RoleResult(
         ok=True,
         detail=f"vendored {len(vendored)} block(s), {len(kit_lock)} kit(s)",
         vendored_blocks=tuple(vendored),
-        notes={"lock": lock},
+        notes=notes,
     )
 
 
