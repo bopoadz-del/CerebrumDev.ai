@@ -339,3 +339,159 @@ async def test_ready_counts_openrouter_key_when_chat_host_is_openrouter(
     resp = await main.ready()
     body = json.loads(resp.body)
     assert body["checks"]["llm_configured"] is True
+
+
+_LLM_PRESENCE_BOOLS = (
+    "cerebrum_chat_llm_api_key_present",
+    "cerebrum_llm_api_key_present",
+    "kimi_api_key_present",
+    "openrouter_api_key_present",
+    "cursor_api_key_present",
+    "chat_http_api_key_present",
+)
+
+
+def _clear_llm_keys(monkeypatch) -> None:
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+        "LLM_PROVIDER",
+        "CEREBRUM_CHAT_LLM_BASE_URL",
+        "CEREBRUM_LLM_BASE_URL",
+        "KIMI_MOCK",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    _clear_cursor_keys(monkeypatch)
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_details_all_absent_when_no_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+
+    resp = await main.ready()
+    llm = json.loads(resp.body)["details"]["llm"]
+    for name in _LLM_PRESENCE_BOOLS:
+        assert llm[name] is False, name
+    assert llm["llm_provider"] == ""
+    assert llm["chat_http_base_url_host"] == ""
+    assert llm["chat_http_error"] == ""
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_details_see_cerebrum_chat_key(tmp_path, monkeypatch):
+    """Process-visible CEREBRUM_CHAT_LLM_API_KEY must show as present, not leaked."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+    secret = "sk-or-chat-ready-must-not-leak"
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_API_KEY", secret)
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    llm = body["details"]["llm"]
+    assert llm["cerebrum_chat_llm_api_key_present"] is True
+    assert llm["chat_http_api_key_present"] is True
+    assert llm["cursor_api_key_present"] is False
+    assert llm["llm_provider"] == "cursor"
+    assert llm["chat_http_base_url_host"] == "openrouter.ai"
+    assert llm["chat_http_error"] == ""
+    dumped = json.dumps(body)
+    assert secret not in dumped
+    assert "openrouter.ai/api/v1" not in dumped
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_details_prove_chat_key_missing_under_cursor(
+    tmp_path, monkeypatch
+):
+    """Live-bug shape: dashboard may show the chat key; this process does not."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+    ba = "crsr-ba-ready-must-not-leak"
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CURSOR_API_KEY", ba)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    llm = body["details"]["llm"]
+    assert llm["cerebrum_chat_llm_api_key_present"] is False
+    assert llm["cursor_api_key_present"] is True
+    assert llm["chat_http_api_key_present"] is False
+    assert llm["llm_provider"] == "cursor"
+    assert "CEREBRUM_CHAT_LLM_API_KEY" in llm["chat_http_error"]
+    dumped = json.dumps(body)
+    assert ba not in dumped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "env_name,flag",
+    [
+        ("CEREBRUM_CHAT_LLM_API_KEY", "cerebrum_chat_llm_api_key_present"),
+        ("CEREBRUM_LLM_API_KEY", "cerebrum_llm_api_key_present"),
+        ("KIMI_API_KEY", "kimi_api_key_present"),
+        ("OPENROUTER_API_KEY", "openrouter_api_key_present"),
+        ("CURSOR_API_KEY", "cursor_api_key_present"),
+    ],
+)
+async def test_ready_llm_details_presence_flags_are_booleans(
+    tmp_path, monkeypatch, env_name, flag
+):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+    secret = f"sk-ready-{env_name}-not-real"
+    monkeypatch.setenv(env_name, secret)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    llm = body["details"]["llm"]
+    for name in _LLM_PRESENCE_BOOLS:
+        assert isinstance(llm[name], bool), name
+    assert llm[flag] is True
+    assert secret not in json.dumps(body)
+
+    monkeypatch.setenv(env_name, "   ")
+    resp = await main.ready()
+    llm = json.loads(resp.body)["details"]["llm"]
+    assert llm[flag] is False
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_details_provider_is_raw_not_normalised(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+    monkeypatch.setenv("LLM_PROVIDER", "moonshot")
+    monkeypatch.setenv("KIMI_API_KEY", "sk-kimi-ready-not-real")
+
+    resp = await main.ready()
+    llm = json.loads(resp.body)["details"]["llm"]
+    assert llm["llm_provider"] == "moonshot"
+    assert llm["kimi_api_key_present"] is True
+    assert llm["chat_http_api_key_present"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_llm_details_host_strips_userinfo(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    _clear_llm_keys(monkeypatch)
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_API_KEY", "sk-chat-ready-not-real")
+    monkeypatch.setenv(
+        "CEREBRUM_CHAT_LLM_BASE_URL", "https://user:s3cret-pass@chat.example.test/v1"
+    )
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    llm = body["details"]["llm"]
+    assert llm["chat_http_base_url_host"] == "chat.example.test"
+    dumped = json.dumps(body)
+    assert "s3cret-pass" not in dumped
+    assert "user:s3cret-pass" not in dumped

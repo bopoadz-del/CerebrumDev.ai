@@ -63,6 +63,8 @@ services:
         sync: false
       # Floor HTTP chat (OpenAI-compatible). Dashboard-filled values are
       # authoritative. sync: false so a blueprint sync cannot prune them.
+      # Dashboard "filled" is not evidence the process received the key —
+      # GET /ready details.llm cerebrum_chat_llm_api_key_present is.
       # LLM_PROVIDER=cursor still reads these — never api.cursor.com.
       - key: CEREBRUM_CHAT_LLM_API_KEY
         sync: false

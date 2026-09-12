@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
+from urllib.parse import urlparse
 
 #: Cursor BA key names (Factory coding / cli-pivot). Not /chat/completions
 #: credentials — Cursor has no public OpenAI-compatible chat API.
@@ -66,6 +67,90 @@ DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
 def _truthy(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def env_key_present(name: str) -> bool:
+    """True when this process sees a non-empty value for ``name``.
+
+    Whitespace-only counts as absent. Used by ``/ready`` so a dashboard
+    "filled" secret can be distinguished from a key the runtime actually
+    received — without echoing the secret.
+    """
+    return bool(os.getenv(name, "").strip())
+
+
+#: Env vars whose values must never appear in unauthenticated ``/ready``.
+_READY_SECRET_ENVS = (
+    "CEREBRUM_CHAT_LLM_API_KEY",
+    "CEREBRUM_LLM_API_KEY",
+    "CEREBRUM_FACTORY_LLM_API_KEY",
+    "KIMI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "FACTORY_LLM_FALLBACK_API_KEY",
+    "CURSOR_API_KEY",
+    "CURSOR_AGENT_API_KEY",
+    "FACTORY_CURSOR_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_API_KEY",
+    "DEEPSEEK_API_KEY",
+)
+
+
+def _redact_ready_secrets(text: str, *extra: str) -> str:
+    """Replace known secret values in an error string. Names of env vars stay."""
+    if not text:
+        return ""
+    secrets = [value for value in extra if value]
+    for name in _READY_SECRET_ENVS:
+        value = os.getenv(name, "").strip()
+        if value:
+            secrets.append(value)
+    out = text
+    for secret in sorted(set(secrets), key=len, reverse=True):
+        if secret:
+            out = out.replace(secret, "[redacted]")
+    return out
+
+
+def _chat_http_host(base_url: str) -> str:
+    """Hostname only of a resolved chat ``base_url``. Empty when unset/invalid."""
+    raw = (base_url or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    return (parsed.hostname or "").rstrip(".")
+
+
+def llm_ready_details() -> Dict[str, Any]:
+    """Unauthenticated ``/ready`` LLM facts. Booleans, host, error — no secrets.
+
+    Proves whether this process sees Floor chat HTTP keys. A Render
+    dashboard "filled" ``CEREBRUM_CHAT_LLM_API_KEY`` is not evidence the
+    runtime received it; these flags are.
+    """
+    api_key = ""
+    host = ""
+    error = ""
+    try:
+        cfg = get_llm_config()
+        api_key = str(cfg.get("api_key") or "")
+        host = _chat_http_host(str(cfg.get("base_url") or ""))
+        error = str(cfg.get("error") or "")
+    except Exception as exc:  # noqa: BLE001 — /ready must not raise
+        error = str(exc)
+    return {
+        "cerebrum_chat_llm_api_key_present": env_key_present(
+            "CEREBRUM_CHAT_LLM_API_KEY"
+        ),
+        "cerebrum_llm_api_key_present": env_key_present("CEREBRUM_LLM_API_KEY"),
+        "kimi_api_key_present": env_key_present("KIMI_API_KEY"),
+        "openrouter_api_key_present": env_key_present("OPENROUTER_API_KEY"),
+        "cursor_api_key_present": env_key_present("CURSOR_API_KEY"),
+        "llm_provider": os.getenv("LLM_PROVIDER") or "",
+        "chat_http_base_url_host": host,
+        "chat_http_api_key_present": bool(api_key.strip()),
+        "chat_http_error": _redact_ready_secrets(error, api_key.strip()),
+    }
 
 
 def _env_first(*names: str, default: str = "") -> str:
