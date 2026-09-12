@@ -72,15 +72,26 @@ def handler_relpath(capability_id: str) -> str:
     return f"app/actions/{str(capability_id).replace('-', '_')}.py"
 
 
-def writer_allowed_globs() -> tuple[str, ...]:
-    """WRITER lanes plus the N1 receipt files. Tests/ and vendor/ stay out."""
+def ba_allowed_globs() -> tuple[str, ...]:
+    """Cerebrum-builds / cli-pivot BA jail (Option C Hybrid).
+
+    May write ``tests/**``. This is **not** the in-process Factory WRITER
+    jail — :mod:`authority` WRITER lanes stay sealed off ``tests/**``
+    until N2. Vendor trees, ``blocks.lock.json``, the ledger, and
+    ``.git`` stay sealed on both paths. 12/12 remains cheat-resistance.
+    """
     lanes = [glob for _root, glob in ROLE_CONTRACTS[BuildRole.WRITER].write_lanes]
-    extra = ["receipt.json", "docs/receipt.json"]
+    extra = ["tests/**", "receipt.json", "docs/receipt.json"]
     seen: List[str] = []
     for glob in lanes + extra:
         if glob not in seen:
             seen.append(glob)
     return tuple(seen)
+
+
+# Back-compat name for the BA jail only. Do not use this to expand
+# in-process Factory WRITER lanes.
+writer_allowed_globs = ba_allowed_globs
 
 
 def sealed_globs() -> tuple[str, ...]:
@@ -96,7 +107,10 @@ def sealed_globs() -> tuple[str, ...]:
 
 
 def _posix(path: str | Path) -> str:
-    text = str(path).replace("\\", "/").lstrip("./")
+    """Normalize slashes and a ``./`` prefix. Do not strip ``.git`` / ``.env``."""
+    text = str(path).replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
     return text
 
 
@@ -237,7 +251,7 @@ def assert_ids_in_diff(
 
 def assert_path_jail(changed_paths: Sequence[str]) -> None:
     """No edits outside allowed WRITER lanes; vendored trees stay read-only."""
-    allowed = writer_allowed_globs()
+    allowed = ba_allowed_globs()
     sealed = sealed_globs()
     sealed_hits: List[str] = []
     outside: List[str] = []

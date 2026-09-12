@@ -15,17 +15,21 @@ from app.factory.build.cli_pivot import (
     ExecutorLaunch,
     run_cli_pivot,
 )
+from app.factory.build.authority import AuthorityError, BuildRole, assert_write_allowed
 from app.factory.build.cli_receipt import (
     HANDOFF_TO_N3,
     PATHS_VIOLATED,
     RECEIPT_INVALID,
     PathsViolated,
     ReceiptInvalid,
+    _posix,
+    ba_allowed_globs,
     blueprint_capability_set,
     enforce_receipt,
     handler_relpath,
     load_receipt,
     parse_changed_paths,
+    writer_allowed_globs,
 )
 from app.factory.build.ledger import BuildLedger
 from app.factory.product_architect import plan_blueprint
@@ -85,6 +89,15 @@ def test_missing_and_extra_ids_are_no_partial_credit():
                 "app/actions/gamma.py",
             ],
         )
+    with pytest.raises(ReceiptInvalid, match="missing=beta"):
+        enforce_receipt(
+            blueprint=bp,
+            receipt={"cli_authored_ids": ["alpha"]},
+            changed_paths=[
+                "app/actions/alpha.py",
+                "tests/test_alpha.py",
+            ],
+        )
 
 
 def test_claimed_id_must_appear_as_a_real_diff_file():
@@ -127,6 +140,65 @@ diff --git a/app/actions/alpha.py b/app/actions/alpha.py
     assert verdict.green is False
 
 
+def test_posix_keeps_dot_git_and_dot_env():
+    assert _posix(".git/config") == ".git/config"
+    assert _posix("./.git/config") == ".git/config"
+    assert _posix("./app/actions/alpha.py") == "app/actions/alpha.py"
+    assert _posix(".env.example") == ".env.example"
+
+
+def test_ba_allowed_globs_include_tests_not_sealed():
+    """Option C Hybrid: BA jail allows tests/**; sealed trees stay out."""
+    allowed = ba_allowed_globs()
+    assert allowed == writer_allowed_globs()
+    assert "tests/**" in allowed
+    assert "app/**" in allowed
+    for sealed in (
+        "vendor/**",
+        "vendor_blocks/**",
+        "blocks.lock.json",
+        "build_ledger.jsonl",
+        ".git/**",
+    ):
+        assert sealed not in allowed
+
+
+def test_in_process_writer_jail_stays_sealed_off_tests(tmp_path):
+    """Option C Hybrid: Factory WRITER lanes do not gain tests/** until N2."""
+    from app.factory.build.authority import ROLE_CONTRACTS
+
+    lanes = [glob for _root, glob in ROLE_CONTRACTS[BuildRole.WRITER].write_lanes]
+    assert "tests/**" not in lanes
+    (tmp_path / "app" / "actions").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "app" / "actions" / "alpha.py").write_text("# ok\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_alpha.py").write_text("# no\n", encoding="utf-8")
+    assert assert_write_allowed(
+        BuildRole.WRITER, tmp_path / "app" / "actions" / "alpha.py", workspace=tmp_path
+    )
+    with pytest.raises(AuthorityError, match="may not write"):
+        assert_write_allowed(
+            BuildRole.WRITER, tmp_path / "tests" / "test_alpha.py", workspace=tmp_path
+        )
+
+
+def test_writing_under_tests_is_handoff_not_paths_violated():
+    """cli-pivot BA may land tests/** next to handlers (Option C Hybrid)."""
+    verdict = enforce_receipt(
+        blueprint=_blueprint("alpha"),
+        receipt={"cli_authored_ids": ["alpha"]},
+        changed_paths=[
+            handler_relpath("alpha"),
+            "tests/test_alpha.py",
+            "tests/factory/test_alpha_roundtrip.py",
+            ".env.example",
+        ],
+    )
+    assert verdict.honesty == HANDOFF_TO_N3
+    assert verdict.green is False
+    assert verdict.next == "n3_gate"
+
+
 def test_vendored_and_outside_paths_are_paths_violated():
     bp = _blueprint("alpha")
     receipt = {"cli_authored_ids": ["alpha"]}
@@ -148,13 +220,25 @@ def test_vendored_and_outside_paths_are_paths_violated():
                 "vendor_blocks_mirror/estate_registry/block.py",
             ],
         )
+    for sealed in (
+        "blocks.lock.json",
+        "build_ledger.jsonl",
+        ".git/config",
+        "vendor_blocks/estate_registry/block.py",
+    ):
+        with pytest.raises(PathsViolated, match="read-only"):
+            enforce_receipt(
+                blueprint=bp,
+                receipt=receipt,
+                changed_paths=[handler_relpath("alpha"), sealed],
+            )
     with pytest.raises(PathsViolated, match="outside allowed paths"):
         enforce_receipt(
             blueprint=bp,
             receipt=receipt,
             changed_paths=[
                 handler_relpath("alpha"),
-                "tests/test_alpha.py",
+                "secrets/token.txt",
             ],
         )
 

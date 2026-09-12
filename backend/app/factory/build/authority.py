@@ -223,6 +223,10 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
         # judge it has no gate at all. Also not vendor/** or blocks.lock.json:
         # rewriting the vendored source would let the writer make its own
         # handlers pass by changing the blocks underneath them.
+        # CHADi Option C Hybrid: this in-process Factory WRITER jail stays
+        # sealed off tests/** until N2. The cli-pivot BA jail
+        # (cli_receipt.ba_allowed_globs) may allow tests/**. Do not
+        # blanket-expand these lanes.
         gate="workspace imports and type-checks clean",
     ),
     BuildRole.TESTER: RoleContract(

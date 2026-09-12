@@ -64,6 +64,13 @@ def test_audit_baseline_keeps_render_slot_bodies():
     assert "brief_compiler.py:422" in text
     assert "roles_handlers.py:1377" in text
     assert "_templated_body" in text
+    assert "Option C Hybrid" in text
+    assert "tests/**" in text
+    assert "12/12 remains cheat-resistance" in text
+    assert "blocks.lock.json" in text
+    assert "build_ledger.jsonl" in text
+    assert "sealed" in text
+    assert "until N2" in text
 
 
 def test_store_gate_scaffold_is_docker_not_render():
@@ -80,6 +87,10 @@ def test_store_gate_scaffold_is_docker_not_render():
     assert "Render worker" in text
     assert "no Docker daemon" in text
     assert "runs-on: render" not in text.lower()
+    assert "Option C Hybrid" in readme
+    assert "tests/**" in readme
+    assert "12/12 remains cheat-resistance" in readme
+    assert "until N2" in readme
 
 
 def test_new_path_source_has_no_author_fallback():
