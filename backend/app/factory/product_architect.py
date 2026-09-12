@@ -24,7 +24,12 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from app.core.llm_config import get_factory_llm_config
+from app.core.llm_config import (
+    get_factory_llm_config,
+    get_llm_config,
+    _is_cursor_chat_host,
+    _is_openrouter_base,
+)
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
 from app.factory.generator import ProductGenerator, git_head
@@ -291,22 +296,38 @@ def _extract_json(text: str) -> Dict[str, Any]:
     return parsed
 
 
-def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+def _llm_json_call(
+    messages: List[Dict[str, str]],
+    *,
+    use_chat_config: bool = False,
+) -> Dict[str, Any]:
     """Synchronous JSON call against the configured LLM provider.
 
     Mirrors core.chain_generator's async callers but stays sync so the
     architect's call sites (routers, chat flow, pipeline) are untouched.
     Raises on any failure — the caller falls back to keyword drafting.
+
+    Floor chat (``use_chat_config=True``) uses ``CEREBRUM_CHAT_LLM_*``.
+    Architect draft uses the factory config. Neither may POST to
+    ``api.cursor.com/v1/chat/completions``.
     """
-    cfg = get_factory_llm_config()
+    cfg = get_llm_config() if use_chat_config else get_factory_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode — no network call")
     if cfg.get("error"):
         raise RuntimeError(cfg["error"])
+    if _is_cursor_chat_host(str(cfg.get("base_url", ""))):
+        raise RuntimeError(
+            "Refusing api.cursor.com/v1/chat/completions — Cursor has no "
+            "public chat-completions API. Floor chat uses CEREBRUM_CHAT_LLM_*."
+        )
     provider = cfg.get("provider")
     headers = {"Content-Type": "application/json"}
     if cfg.get("api_key"):
         headers["Authorization"] = f"Bearer {cfg['api_key']}"
+    if _is_openrouter_base(str(cfg.get("base_url", ""))):
+        headers["HTTP-Referer"] = "https://cerebrumdev.ai"
+        headers["X-Title"] = "CerebrumDev Floor"
 
     if provider in ("moonshot", "kimi", "cursor", "openrouter"):
         url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
@@ -315,12 +336,13 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             payload = {
                 "model": m,
                 "messages": messages,
-                "response_format": {"type": "json_object"},
                 # Hard ceiling on the completion. Without it a single draft
                 # can bill the model's full context window, and this call
                 # retries once against the fallback model.
                 "max_tokens": llm_max_tokens(),
             }
+            if not _is_openrouter_base(str(cfg.get("base_url", ""))):
+                payload["response_format"] = {"type": "json_object"}
             # Omit temperature unless explicitly configured: reasoning models
             # (kimi-k2.x) reject any explicit temperature other than 1.
             if cfg.get("temperature") is not None:

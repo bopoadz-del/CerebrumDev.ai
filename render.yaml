@@ -41,9 +41,9 @@ services:
       - key: ARCHITECT_LLM_DRAFTING_ENABLED
         value: "true"
       # Factory coding uses Cursor Background Agents (cli-pivot).
-      # LLM_PROVIDER=cursor is valid. HTTP Floor chat / architect draft
-      # stay on OpenRouter (OPENROUTER_API_KEY below) — Cursor keys are
-      # not chat-completions credentials.
+      # LLM_PROVIDER=cursor is valid (Factory coding / Cursor BA).
+      # HTTP Floor chat / architect draft use CEREBRUM_CHAT_LLM_* —
+      # Cursor has no public /v1/chat/completions.
       #
       # Cursor key names (any one arms BA; first present wins):
       #   CURSOR_API_KEY

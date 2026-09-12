@@ -156,27 +156,34 @@ async def test_openrouter_only_401_is_soft_failure(monkeypatch):
 def cursor_provider(monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "cursor")
     monkeypatch.setenv("CURSOR_API_KEY", "crsr-test-not-real")
-    monkeypatch.delenv("CEREBRUM_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_API_KEY", "chat-key-live")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_BASE_URL", "https://chat.example.test/v1")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_MODEL", "chat-model-live")
+    monkeypatch.setenv("KIMI_API_KEY", "sk-moonshot-leftover")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_MOCK", raising=False)
     monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
     monkeypatch.delenv("CURSOR_MOCK", raising=False)
 
 
-def test_cursor_provider_is_not_empty(cursor_provider):
+def test_cursor_provider_uses_cerebrum_chat_not_cursor_host(cursor_provider):
     cfg = get_llm_config()
     assert cfg["provider"] == "cursor"
-    assert cfg["api_key"] == "crsr-test-not-real"
-    assert "api.cursor.com" in cfg["base_url"]
+    assert cfg["api_key"] == "chat-key-live"
+    assert cfg["base_url"] == "https://chat.example.test/v1"
+    assert "api.cursor.com" not in cfg["base_url"]
     assert cfg.get("mock") is False
 
 
 @pytest.mark.anyio
-async def test_cursor_key_does_not_emit_starter_chain_mock(cursor_provider):
+async def test_cursor_provider_never_posts_to_cursor_completions(cursor_provider):
+    posts: list[str] = []
+
     async def fake_post(self, url, *, json=None, headers=None):
-        assert "api.cursor.com" in url
-        assert "openrouter" not in url
-        return _ok_json({"message": "from-cursor", "chain": None, "rules": []})
+        posts.append(url)
+        assert "api.cursor.com" not in url
+        assert "chat.example.test" in url
+        return _ok_json({"message": "from-cerebrum-chat", "chain": None, "rules": []})
 
     with patch.object(httpx.AsyncClient, "post", fake_post), patch(
         "app.core.chain_generator.fetch_block_registry",
@@ -189,27 +196,31 @@ async def test_cursor_key_does_not_emit_starter_chain_mock(cursor_provider):
             docs_summary="",
         )
 
-    assert result["message"] == "from-cursor"
+    assert result["message"] == "from-cerebrum-chat"
     assert "starter chain" not in result["message"]
+    assert posts
+    assert all("api.cursor.com" not in u for u in posts)
+    assert all("/v1/chat/completions" not in u or "api.cursor.com" not in u for u in posts)
 
 
 @pytest.mark.anyio
-async def test_cursor_primary_then_openrouter_fallback(cursor_provider, monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-fallback-ok")
+async def test_refuses_cursor_completions_host_and_does_not_post():
+    """Belt: even a mis-set cursor.com base must not POST there."""
+    from app.core.chain_generator import _call_openai_compatible
+
     posts: list[str] = []
 
     async def fake_post(self, url, *, json=None, headers=None):
         posts.append(url)
-        if "api.cursor.com" in url:
-            raise _http_error(404, url)
-        if "openrouter" in url:
-            return _ok_json({"message": "from-openrouter", "chain": None, "rules": []})
-        raise _http_error(500, url)
+        return _ok_json({"message": "should-not-run", "chain": None, "rules": []})
 
     with patch.object(httpx.AsyncClient, "post", fake_post):
-        result = await _call_llm([{"role": "user", "content": "hi"}])
+        with pytest.raises(RuntimeError, match="CEREBRUM_CHAT_LLM"):
+            await _call_openai_compatible(
+                "https://api.cursor.com/v1",
+                "crsr-test-not-real",
+                "auto",
+                [{"role": "user", "content": "hi"}],
+            )
 
-    assert result["message"] == "from-openrouter"
-    assert any("api.cursor.com" in u for u in posts)
-    assert any("openrouter.ai" in u for u in posts)
-    assert "api.cursor.com" in posts[0]
+    assert posts == []

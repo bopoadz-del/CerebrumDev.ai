@@ -8,6 +8,7 @@ from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
 from .llm_config import (
     get_factory_fallback_leg,
     get_llm_config,
+    _is_cursor_chat_host,
     _is_openrouter_base,
 )
 from .source_pack_loader import get_source_pack
@@ -157,6 +158,12 @@ async def _call_openai_compatible(
     If *fallback_model* is provided and the primary call fails, retry once
     with the fallback model before giving up.
     """
+    if _is_cursor_chat_host(base_url):
+        raise RuntimeError(
+            "Refusing api.cursor.com/v1/chat/completions — Cursor has no "
+            "public chat-completions API (Cloud Agents /v0/agents only). "
+            "Floor chat uses CEREBRUM_CHAT_LLM_*."
+        )
     url = f"{base_url.rstrip('/')}/chat/completions"
     headers = {"Content-Type": "application/json"}
     if api_key:
@@ -170,11 +177,9 @@ async def _call_openai_compatible(
             "model": m,
             "messages": messages,
         }
-        # Cursor Cloud Agents is not a chat-completions API; OpenRouter free
-        # models often reject json_object. Only pin the format on Moonshot.
-        if not _is_openrouter_base(base_url) and "api.cursor.com" not in (
-            base_url or ""
-        ).lower():
+        # OpenRouter free models often reject json_object. Only pin the
+        # format on native Moonshot-style hosts.
+        if not _is_openrouter_base(base_url):
             payload["response_format"] = {"type": "json_object"}
         # Omit temperature unless explicitly configured: reasoning models
         # (kimi-k2.x) reject any explicit temperature other than 1.
@@ -225,8 +230,8 @@ async def _call_openrouter_fallback(
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the primary configured LLM, then the OpenRouter fallback.
 
-    Primary is Kimi/Moonshot (or whatever ``get_llm_config()`` resolved).
-    OpenRouter is never the first hop when a native key owns the host.
+    Primary is ``CEREBRUM_CHAT_LLM_*`` (or leftover Moonshot). Cursor is
+    never a chat-completions host. OpenRouter is fallback only when armed.
     """
     cfg = get_llm_config()
     if cfg.get("mock"):
@@ -234,7 +239,11 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     provider = cfg.get("provider")
     primary_exc: Exception | None = None
 
-    if provider in ("moonshot", "kimi", "cursor", "openrouter"):
+    if _is_cursor_chat_host(str(cfg.get("base_url", ""))):
+        primary_exc = RuntimeError(
+            "Refusing api.cursor.com/v1/chat/completions — use CEREBRUM_CHAT_LLM_*"
+        )
+    elif provider in ("moonshot", "kimi", "cursor", "openrouter"):
         try:
             return await _call_openai_compatible(
                 cfg["base_url"],
