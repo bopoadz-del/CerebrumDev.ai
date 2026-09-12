@@ -112,12 +112,14 @@ Cerebrum-builds / cli-pivot BA (`cli_receipt.ba_allowed_globs`) **may write
 `tests/**` until N2**. Do not blanket-expand that jail. 12/12 remains cheat-resistance.
 Still never expand either jail to `vendor/**`, `blocks.lock.json`, the ledger, or `.git`.
 
-## Domain handoff (FinanceOps → MR.FINANCE)
+## Domain handoff (supported verticals → MR.FINANCE)
 
-After COLLECTOR+CLONER on `finance_ops` / `finance-ops`, Factory opens (or
-updates) a GitHub issue labeled `domain:finance` + `handoff` with the frozen
-C-BRIEF (`docs/coder_brief.md`), session id, workspace pointer, and Floor URL.
-Optional `DOMAIN_HANDOFF_WEBHOOK_URL` POST. Idempotent. No SendToAgent.
+After COLLECTOR+CLONER on finance (`finance_ops` / `finance-ops`) or
+automotive / car dealership (`car_dealership`, `automotive`, …), Factory
+opens (or updates) a GitHub issue labeled `domain:<finance|automotive>` +
+`handoff` with the frozen C-BRIEF (`docs/coder_brief.md`), session id,
+workspace pointer, and Floor URL. Optional `DOMAIN_HANDOFF_WEBHOOK_URL`
+POST. Idempotent. No SendToAgent.
 See [`docs/factory/DOMAIN_HANDOFF.md`](../factory/DOMAIN_HANDOFF.md).
 
 
