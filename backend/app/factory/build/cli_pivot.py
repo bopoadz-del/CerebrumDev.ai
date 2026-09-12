@@ -1,12 +1,19 @@
-"""N1 keyless seam — compose C-BRIEF → executor interface → N1b → N3 later.
+"""N1 seam — compose C-BRIEF → Cursor Background Agent → N1b → N3 later.
 
 Deterministic fill from blueprint + registry + kit. No LLM writes brief text.
-No handler-body writes inside Factory. No live Cursor / xAI calls.
+No handler-body writes inside Factory.
 
-Until Cursor executor keys exist, launch fail-closes as
-``EXECUTOR_UNAVAILABLE`` (infra). The NEW path must not fall back to
-on-box kimi / FACTORY_CODE_CLI authorship or ``_templated_body``. The old
-path may remain until N2; this module does not call it.
+When Cursor executor keys are absent, launch fail-closes as
+``EXECUTOR_UNAVAILABLE`` (infra). When keys **and**
+``CEREBRUM_BUILDS_GITHUB_TOKEN`` are present, N1a pushes the workspace to
+a ``build/**`` scratch branch on private cerebrum-builds and launches a
+Cursor Background Agent against that branch. Infra misses (API down,
+never started, hung past wall, push failed) stay
+``EXECUTOR_UNAVAILABLE``. Content misses stay N1b.
+
+The NEW path must not fall back to on-box kimi / FACTORY_CODE_CLI
+authorship or ``_templated_body``. The old path may remain until N2;
+this module does not call it.
 
 Budget (wall + spend) is decided **before** dispatch. Breach ledgers
 ``BUDGET_EXCEEDED``. This seam never calls ``_extend_wall`` (S07).
@@ -22,6 +29,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import CompiledBrief, compile_brief
 from app.factory.build.budget_inspect import CEILING_S
+from app.factory.build.builds_push import BuildsPushError
 from app.factory.build.cli_receipt import (
     HANDOFF_TO_N3,
     PATHS_VIOLATED,
@@ -31,6 +39,7 @@ from app.factory.build.cli_receipt import (
     blueprint_capability_set,
     enforce_receipt,
 )
+from app.factory.build.cursor_ba import CursorBAError, run_background_agent
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.product_architect import plan_blueprint
 
@@ -151,10 +160,7 @@ def compose_cbrief(
 
 @dataclass(frozen=True)
 class ExecutorLaunch:
-    """What a later live Cursor Background Agent would return.
-
-    Keyless prefix never performs that HTTP. Tests inject a stub.
-    """
+    """What the live Cursor Background Agent (or an injected stub) returns."""
 
     started: bool
     hung: bool = False
@@ -163,6 +169,21 @@ class ExecutorLaunch:
     receipt: Any = None
     changed_paths: List[str] = field(default_factory=list)
     unified_diff: str = ""
+
+
+def _session_id(
+    brief: CompiledBrief,
+    workspace: Path,
+    env: Mapping[str, str],
+) -> str:
+    for name in ("FACTORY_CLI_PIVOT_SESSION_ID", "FACTORY_SESSION_ID"):
+        value = str(env.get(name) or "").strip()
+        if value:
+            return value
+    product = str(getattr(brief, "product_id", "") or "").strip()
+    if product:
+        return product
+    return Path(workspace).name or "session"
 
 
 def launch_executor(
@@ -174,20 +195,32 @@ def launch_executor(
     launch: Optional[Callable[..., ExecutorLaunch]] = None,
 ) -> ExecutorLaunch:
     """Fail-closed infra launch. No kimi / FACTORY_CODE_CLI / template fallback."""
-    del brief, workspace  # reserved for the live N2+ launch
     if launch is not None:
         return launch(budget=budget)
-    if not cursor_keys_present(env):
+    env_map: Mapping[str, str] = env if env is not None else os.environ
+    if not cursor_keys_present(env_map):
         raise ExecutorUnavailable(
             f"{EXECUTOR_UNAVAILABLE}: Cursor executor keys absent "
             f"({', '.join(CURSOR_KEY_ENVS)}) — fail-closed; no FACTORY_CODE_CLI "
             "/ kimi / template-body fallback"
         )
-    # Keys may exist in the operator environment. This prefix still must not
-    # place a live Cursor Background Agent or xAI call.
-    raise ExecutorUnavailable(
-        f"{EXECUTOR_UNAVAILABLE}: live Cursor Background Agent launch is not "
-        "enabled in the keyless prefix"
+    try:
+        result = run_background_agent(
+            workspace=Path(workspace),
+            wall_s=budget.wall_s,
+            env=env_map,
+            session_id=_session_id(brief, Path(workspace), env_map),
+        )
+    except (BuildsPushError, CursorBAError) as exc:
+        raise ExecutorUnavailable(f"{EXECUTOR_UNAVAILABLE}: {exc}") from exc
+    return ExecutorLaunch(
+        started=result.started,
+        hung=result.hung,
+        elapsed_s=result.elapsed_s,
+        spent_usd=result.spent_usd,
+        receipt=result.receipt,
+        changed_paths=list(result.changed_paths),
+        unified_diff=result.unified_diff,
     )
 
 

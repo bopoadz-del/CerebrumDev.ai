@@ -28,6 +28,8 @@ ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 PIVOT_PY = ROOT / "backend/app/factory/build/cli_pivot.py"
 RECEIPT_PY = ROOT / "backend/app/factory/build/cli_receipt.py"
+CURSOR_BA_PY = ROOT / "backend/app/factory/build/cursor_ba.py"
+BUILDS_PUSH_PY = ROOT / "backend/app/factory/build/builds_push.py"
 GATE_YML = ROOT / "docs/pivot/cerebrum-builds-store-gate.yml"
 N3_FLOOR = (
     "no_token_401",
@@ -91,10 +93,13 @@ def test_store_gate_scaffold_is_docker_not_render():
     assert "tests/**" in readme
     assert "12/12 remains cheat-resistance" in readme
     assert "until N2" in readme
+    assert "N1a" in readme
+    assert "CEREBRUM_BUILDS_GITHUB_TOKEN" in readme
+    assert "still not green" in readme
 
 
 def test_new_path_source_has_no_author_fallback():
-    for path in (PIVOT_PY, RECEIPT_PY):
+    for path in (PIVOT_PY, RECEIPT_PY, CURSOR_BA_PY, BUILDS_PUSH_PY):
         src = path.read_text(encoding="utf-8")
         assert "_templated_body(" not in src
         assert "dispatch_compiled_brief(" not in src
@@ -140,12 +145,15 @@ def test_keyless_launch_is_executor_unavailable(tmp_path):
 
 
 def test_keys_present_still_no_live_call(tmp_path):
+    """Keys present without a builds token is still infra — not the keyless prefix."""
     bp = _bp()
     env = {name: "not-a-live-key" for name in CURSOR_KEY_ENVS}
     assert cursor_keys_present(env) is True
     result = run_cli_pivot(bp, tmp_path / "w", plan=plan_blueprint(bp), env=env)
     assert result.honesty == EXECUTOR_UNAVAILABLE
-    assert "keyless prefix" in result.detail
+    assert result.failure_class == CLASS_INFRA
+    assert "keyless prefix" not in result.detail
+    assert "CEREBRUM_BUILDS_GITHUB_TOKEN" in result.detail
 
 
 def test_hung_or_never_started_is_infra(tmp_path):
@@ -226,6 +234,28 @@ def test_cli_pivot_command_fail_closes_keyless(tmp_path, monkeypatch):
     assert rc == 1
     payload = json.loads((out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert payload["payload"]["honesty"] == EXECUTOR_UNAVAILABLE
+
+
+def test_keys_present_stub_launch_unchanged(tmp_path):
+    """Injected launch= still short-circuits even when live keys + token exist."""
+    bp = _bp()
+    ids = ["analytics_surface", "dashboard_surface"]
+    env = {name: "not-a-live-key" for name in CURSOR_KEY_ENVS}
+    env["CEREBRUM_BUILDS_GITHUB_TOKEN"] = "also-not-live"
+    result = run_cli_pivot(
+        bp,
+        tmp_path / "stub",
+        plan=plan_blueprint(bp),
+        env=env,
+        launch=lambda **_k: ExecutorLaunch(
+            started=True,
+            receipt={"schema": "cli_receipt.v1", "cli_authored_ids": ids},
+            changed_paths=[f"app/actions/{cid}.py" for cid in ids],
+        ),
+    )
+    assert result.honesty == HANDOFF_TO_N3
+    assert result.green is False
+    assert result.next == "n3_gate"
 
 
 def test_happy_path_stub_hands_to_n3_not_green(tmp_path):
