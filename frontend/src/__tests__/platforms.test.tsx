@@ -257,9 +257,12 @@ describe('Your Platforms — coding-agent build', () => {
     render(<Platforms sessionId="sess_finance" />)
     const title = await screen.findByTestId('platforms-product-title')
     expect(title).toHaveTextContent('FinanceOps')
-    expect(title).toHaveTextContent('12/12')
     expect(title.textContent).not.toMatch(/\bproduct\b/i)
-    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    await waitFor(() => {
+      expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    })
+    expect(title).toHaveTextContent('FinanceOps')
+    expect(title).toHaveTextContent('12/12')
   })
 
   it('card title humanizes product_id when product_name is missing', async () => {
