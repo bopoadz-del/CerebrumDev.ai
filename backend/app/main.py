@@ -100,8 +100,9 @@ def llm_key_configured() -> bool:
     report ``llm_configured: true`` on a keyless box. ``KIMI_MOCK`` is a
     mock and is reported separately as ``llm_mock``.
 
-    Cursor-family keys count whenever present. An OpenRouter key also
-    counts — it arms the chat fallback after the Cursor primary fails.
+    Cursor-family keys count whenever present (Factory coding / BA).
+    ``CEREBRUM_CHAT_LLM_API_KEY`` and ``OPENROUTER_API_KEY`` count for
+    HTTP Floor chat. Cursor keys are not chat-completions credentials.
     """
     return bool(
         os.getenv("KIMI_API_KEY", "").strip()

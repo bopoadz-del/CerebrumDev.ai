@@ -162,16 +162,18 @@ def test_openrouter_base_does_not_steal_primary_when_moonshot_key_exists():
     assert "error" not in factory_cfg
 
 
-def test_openrouter_chat_base_loses_to_native_moonshot_key():
-    """CEREBRUM_CHAT_LLM_BASE_URL=OpenRouter still yields to KIMI_API_KEY."""
+def test_cerebrum_chat_scoped_key_wins_over_leftover_kimi():
+    """CEREBRUM_CHAT_LLM_* is Floor chat even when leftover KIMI_* remains."""
     os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://OpenRouter.AI/api/v1"
     os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-or-chat-override"
-    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+    os.environ["CEREBRUM_CHAT_LLM_MODEL"] = "minimax/minimax-m3:free"
     os.environ["KIMI_API_KEY"] = "sk-moonshot-kimi"
 
     chat_cfg = get_llm_config()
-    assert chat_cfg["api_key"] == "sk-moonshot-kimi"
-    assert chat_cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert chat_cfg["api_key"] == "sk-or-chat-override"
+    assert chat_cfg["base_url"] == "https://OpenRouter.AI/api/v1"
+    assert chat_cfg["model"] == "minimax/minimax-m3:free"
+    assert "api.cursor.com" not in chat_cfg["base_url"]
 
 
 def test_moonshot_base_still_uses_kimi_keys_when_openrouter_key_present():
@@ -259,22 +261,25 @@ def test_claude_primary_skips_openrouter_base_when_anthropic_key_exists():
     assert chat_cfg["base_url"] == "https://api.anthropic.com/v1"
 
 
-def test_explicit_cursor_uses_cursor_family_key():
-    """LLM_PROVIDER=cursor must resolve — not empty-provider mock."""
+def test_explicit_cursor_uses_cerebrum_chat_not_cursor_host():
+    """LLM_PROVIDER=cursor names BA; HTTP chat uses CEREBRUM_CHAT_LLM_*."""
     os.environ["LLM_PROVIDER"] = "cursor"
     os.environ["CURSOR_API_KEY"] = "crsr-test-not-real"
-    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
-    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "chat-key-live"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://chat.example.test/v1"
+    os.environ["CEREBRUM_CHAT_LLM_MODEL"] = "chat-model-live"
 
     chat_cfg = get_llm_config()
     factory_cfg = get_factory_llm_config()
 
     assert chat_cfg["provider"] == "cursor"
     assert factory_cfg["provider"] == "cursor"
-    assert chat_cfg["api_key"] == "crsr-test-not-real"
-    assert factory_cfg["api_key"] == "crsr-test-not-real"
-    assert "openrouter" not in chat_cfg["base_url"]
-    assert chat_cfg["base_url"].startswith("https://api.cursor.com")
+    assert chat_cfg["api_key"] == "chat-key-live"
+    assert factory_cfg["api_key"] == "chat-key-live"
+    assert chat_cfg["base_url"] == "https://chat.example.test/v1"
+    assert chat_cfg["model"] == "chat-model-live"
+    assert "api.cursor.com" not in chat_cfg["base_url"]
+    assert "api.cursor.com" not in factory_cfg["base_url"]
     assert "error" not in factory_cfg
 
 
@@ -285,48 +290,65 @@ def test_cursor_key_envs_match_background_agent_tuple():
     assert _cursor_key_envs() == CURSOR_KEY_ENVS
 
 
-def test_cursor_agent_api_key_alias_counts():
+def test_cursor_agent_api_key_is_not_a_chat_credential():
     os.environ["LLM_PROVIDER"] = "cursor"
     os.environ["CURSOR_AGENT_API_KEY"] = "crsr-agent-alias"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "chat-key-live"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://chat.example.test/v1"
 
     cfg = get_llm_config()
     assert cfg["provider"] == "cursor"
-    assert cfg["api_key"] == "crsr-agent-alias"
+    assert cfg["api_key"] == "chat-key-live"
+    assert "api.cursor.com" not in cfg["base_url"]
 
 
-def test_llm_provider_cursor_uses_cursor_http_not_moonshot():
-    """LLM_PROVIDER=cursor uses Cursor keys on api.cursor.com, not Moonshot."""
+def test_llm_provider_cursor_prefers_cerebrum_chat_over_leftover_kimi():
+    """Live Render shape: cursor BA + leftover Kimi + CEREBRUM_CHAT_*."""
     os.environ["LLM_PROVIDER"] = "cursor"
     os.environ["CURSOR_API_KEY"] = "crsr-cursor-http"
-    os.environ["OPENROUTER_API_KEY"] = "sk-or-must-not-be-primary"
-    os.environ["KIMI_API_KEY"] = "sk-moonshot-must-not-win"
-    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-leftover"
+    os.environ["CEREBRUM_LLM_API_KEY"] = "sk-moonshot-shared"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "chat-key-live"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://chat.example.test/v1"
+    os.environ["CEREBRUM_CHAT_LLM_MODEL"] = "chat-model-live"
 
     chat_cfg = get_llm_config()
     factory_cfg = get_factory_llm_config()
 
     assert chat_cfg["provider"] == "cursor"
     assert factory_cfg["provider"] == "cursor"
-    assert chat_cfg["api_key"] == "crsr-cursor-http"
-    assert factory_cfg["api_key"] == "crsr-cursor-http"
-    assert chat_cfg["base_url"].startswith("https://api.cursor.com")
-    assert factory_cfg["base_url"].startswith("https://api.cursor.com")
-    assert "moonshot" not in chat_cfg["base_url"]
-    assert "openrouter" not in chat_cfg["base_url"]
+    assert chat_cfg["api_key"] == "chat-key-live"
+    assert factory_cfg["api_key"] == "chat-key-live"
+    assert chat_cfg["base_url"] == "https://chat.example.test/v1"
+    assert chat_cfg["model"] == "chat-model-live"
+    assert "api.cursor.com" not in chat_cfg["base_url"]
+    assert "api.cursor.com" not in factory_cfg["base_url"]
     assert "error" not in chat_cfg
     assert "error" not in factory_cfg
 
 
-def test_llm_provider_cursor_without_cursor_key_errors_and_names_cursor_keys():
+def test_llm_provider_cursor_without_chat_key_falls_back_to_leftover_moonshot():
+    """No CEREBRUM_CHAT_* — leftover Moonshot, never invent Cursor completions."""
     os.environ["LLM_PROVIDER"] = "cursor"
-    os.environ["OPENROUTER_API_KEY"] = "sk-or-not-the-cursor-family"
+    os.environ["CURSOR_API_KEY"] = "crsr-ba-only"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-leftover"
+
+    chat_cfg = get_llm_config()
+    assert chat_cfg["provider"] == "cursor"
+    assert chat_cfg["api_key"] == "sk-moonshot-leftover"
+    assert "api.cursor.com" not in chat_cfg["base_url"]
+    assert "moonshot" in chat_cfg["base_url"]
+
+
+def test_llm_provider_cursor_without_http_key_errors_and_names_chat_keys():
+    os.environ["LLM_PROVIDER"] = "cursor"
     cfg = get_factory_llm_config()
     assert cfg["provider"] == "cursor"
     assert cfg["api_key"] == ""
     error = cfg.get("error", "")
+    assert "CEREBRUM_CHAT_LLM_API_KEY" in error
     assert "CURSOR_API_KEY" in error
-    assert "CURSOR_AGENT_API_KEY" in error
-    assert "FACTORY_CURSOR_API_KEY" in error
+    assert "api.cursor.com" not in (cfg.get("base_url") or "")
 
 
 def test_deepseek_key_does_not_arm_chat_or_factory_llm():

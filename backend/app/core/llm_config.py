@@ -2,30 +2,30 @@
 
 Two paths are configured independently:
 
-* Chat / chain_generator path: ``get_llm_config()``
-  - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: leftover ``KIMI_*`` / ``ANTHROPIC_*`` or ``CEREBRUM_LLM_*``
-  - OpenRouter is never the primary host when a native Moonshot, Claude,
-    or Cursor key is present. A leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai``
-    plus a dead ``OPENROUTER_API_KEY`` used to hijack Floor suggestions and
-    401 while ``CEREBRUM_LLM_API_KEY`` was healthy.
+* Chat / chain_generator / platform_chat_llm path: ``get_llm_config()``
+  - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL`` (authoritative)
+  - Fallback: leftover ``CEREBRUM_LLM_*`` / ``KIMI_*`` / ``ANTHROPIC_*``
+  - Cursor keys never select a chat-completions host. Cursor has no public
+    ``/v1/chat/completions`` (Cloud Agents is ``/v0/agents`` only).
+  - Do not invent OpenRouter as the chat host when ``OPENROUTER_API_KEY``
+    is absent. A leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai`` plus a
+    dead OpenRouter key must not steal a healthy leftover Moonshot primary
+    when ``CEREBRUM_CHAT_*`` is unset.
 
 * Factory Product Architect / platform CLI path: ``get_factory_llm_config()``
   - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: ``CEREBRUM_LLM_*`` then leftover ``KIMI_*`` / ``ANTHROPIC_*``
-  - Same OpenRouter-is-fallback-only rule as chat. The coder's optional
-    cross-provider leg remains ``get_factory_fallback_leg()``.
+  - Fallback: ``CEREBRUM_CHAT_*`` then ``CEREBRUM_LLM_*`` / leftover ``KIMI_*``
+  - ``LLM_PROVIDER=cursor`` HTTP draft uses ``CEREBRUM_CHAT_*``, not Cursor.
+  - Factory coding / Cursor BA stays on ``CURSOR_*``
+    (``FACTORY_CODE_PROVIDER=cursor`` / cli-pivot).
 
 ``LLM_PROVIDER`` accepts ``cursor``, ``kimi``/``moonshot`` (aliased to kimi)
 and ``claude``/``anthropic`` (aliased to claude).
 
-``LLM_PROVIDER=cursor`` is intentional (render.yaml pins it). Cursor keys
-(``CURSOR_API_KEY`` / ``CURSOR_AGENT_API_KEY`` / ``FACTORY_CURSOR_API_KEY``,
-the tuple in ``cursor_ba.CURSOR_KEY_ENVS``) are the matching credential
-family: they arm Background Agents (cli-pivot) and Floor HTTP chat. Chat
-posts OpenAI-shaped ``/chat/completions`` to ``https://api.cursor.com/v1``.
-It must not fall through to an empty provider or the Floor starter-chain
-mock. OpenRouter is fallback only after that primary fails.
+``LLM_PROVIDER=cursor`` names the Factory coding family (Cursor BA keys).
+It is valid and render.yaml may pin it. HTTP Floor chat uses
+``CEREBRUM_CHAT_LLM_*`` — those Cursor keys are not chat-completions
+credentials.
 
 Claude remains an opt-in HTTP provider. Leftover Kimi/Moonshot credentials
 still resolve when ``LLM_PROVIDER`` is unset or ``kimi``/``moonshot``.
@@ -52,13 +52,16 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List
 
-#: Cursor BA + Floor chat key names. Any one arms cli-pivot and HTTP chat;
-#: first present wins.
+#: Cursor BA key names (Factory coding / cli-pivot). Not /chat/completions
+#: credentials — Cursor has no public OpenAI-compatible chat API.
 CURSOR_KEY_ENVS = (
     "CURSOR_API_KEY",
     "CURSOR_AGENT_API_KEY",
     "FACTORY_CURSOR_API_KEY",
 )
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
 
 def _truthy(name: str) -> bool:
@@ -84,6 +87,15 @@ def _kimi_key(*prefixes: str) -> str:
 
 def _is_openrouter_base(base_url: str) -> bool:
     return "openrouter.ai" in (base_url or "").lower()
+
+
+def _is_cursor_chat_host(base_url: str) -> bool:
+    """True for the dead Cursor ``/v1/chat/completions`` host.
+
+    Cursor Cloud Agents live at ``api.cursor.com/v0/agents``. There is no
+    public OpenAI-compatible chat-completions API on that host.
+    """
+    return "api.cursor.com" in (base_url or "").lower()
 
 
 def _looks_like_openrouter_key(key: str) -> bool:
@@ -183,15 +195,58 @@ def _kimi_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = F
     return _env_first_skipping(*candidates, default=default, reject=reject)
 
 
-def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
-    """Pick the Kimi primary endpoint.
+def _non_cursor_base(value: str, default: str = "https://api.moonshot.ai/v1") -> str:
+    if value and not _is_cursor_chat_host(value):
+        return value
+    return default
 
-    A native Moonshot key always owns the host and model. Pointing
-    ``CEREBRUM_LLM_BASE_URL`` at OpenRouter used to send Floor chat through
-    ``OPENROUTER_API_KEY`` and 401 while the Moonshot key sat unused.
-    OpenRouter-only deployments (no Moonshot key) still resolve to
-    OpenRouter via ``_resolve_kimi_api_key``.
+
+def _scoped_path_endpoint(*prefixes: str) -> Dict[str, str] | None:
+    """Use the first path-scoped ``*_LLM_API_KEY`` as an authoritative triple.
+
+    ``CEREBRUM_CHAT_LLM_*`` is Floor chat. Leftover ``KIMI_*`` / ``CURSOR_*``
+    must not replace a present scoped key. ``api.cursor.com`` is never a
+    chat host — Cursor has no public ``/v1/chat/completions``.
     """
+    for prefix in prefixes:
+        key = os.getenv(f"{prefix}_LLM_API_KEY", "").strip()
+        if not key:
+            continue
+        base = _non_cursor_base(os.getenv(f"{prefix}_LLM_BASE_URL", "").strip(), default="")
+        if not base:
+            shared = _env_first("CEREBRUM_LLM_BASE_URL", "KIMI_BASE_URL")
+            base = _non_cursor_base(shared)
+        model = os.getenv(f"{prefix}_LLM_MODEL", "").strip() or _env_first(
+            "CEREBRUM_LLM_MODEL", "KIMI_MODEL", default="kimi-k2.7-code"
+        )
+        fallback = os.getenv(f"{prefix}_LLM_FALLBACK_MODEL", "").strip() or _env_first(
+            "CEREBRUM_LLM_FALLBACK_MODEL",
+            "KIMI_FALLBACK_MODEL",
+            default="moonshot-v1-8k",
+        )
+        return {
+            "api_key": key,
+            "base_url": base,
+            "model": model,
+            "fallback_model": fallback,
+        }
+    return None
+
+
+def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
+    """Pick the HTTP chat/architect endpoint.
+
+    A present path-scoped key (``CEREBRUM_CHAT_LLM_API_KEY``) owns host and
+    model, including an operator-set OpenRouter base. Leftover ``KIMI_*``
+    must not steal that triple.
+
+    When the scoped key is absent, a leftover Moonshot key owns the host so
+    a leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai`` cannot 401 through a
+    missing ``OPENROUTER_API_KEY``.
+    """
+    scoped = _scoped_path_endpoint(*prefixes)
+    if scoped:
+        return scoped
     native = _native_moonshot_key(*prefixes)
     if native:
         return {
@@ -202,7 +257,7 @@ def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
                 *prefixes, default="moonshot-v1-8k", skip_openrouter=True
             ),
         }
-    base_url = _kimi_base_url(*prefixes)
+    base_url = _non_cursor_base(_kimi_base_url(*prefixes))
     return {
         "base_url": base_url,
         "api_key": _resolve_kimi_api_key(base_url, *prefixes),
@@ -343,68 +398,45 @@ def _cursor_key_envs() -> tuple[str, ...]:
     return CURSOR_KEY_ENVS
 
 
-def _cursor_api_base() -> str:
-    from app.factory.build.cursor_ba import CURSOR_API_BASE
+def _cursor_http_config(*prefixes: str) -> Dict[str, Any]:
+    """HTTP talk for ``LLM_PROVIDER=cursor`` uses ``CEREBRUM_CHAT_LLM_*``.
 
-    return CURSOR_API_BASE.rstrip("/")
-
-
-def _cursor_key(*prefixes: str) -> str:
-    """Resolve a Cursor-family API key. Same naming rule as Kimi / Claude."""
-    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
-    candidates.extend(_cursor_key_envs())
-    return _env_first(*candidates)
-
-
-def _cursor_base_url(*prefixes: str) -> str:
-    """OpenAI-compatible path on the documented Cursor API host.
-
-    Cloud Agents (``/v0/agents``, ``/v1/agents``) is not a chat-completions
-    API. Floor still posts OpenAI-shaped ``/chat/completions`` to
-    ``https://api.cursor.com/v1`` with the Cursor-family Bearer key — the
-    documented public host + the key family ``LLM_PROVIDER=cursor`` names.
-    OpenRouter must not steal this primary. Override via ``CURSOR_BASE_URL``
-    / path-prefixed ``*_LLM_BASE_URL`` when those are not OpenRouter.
+    Cursor has no public ``/v1/chat/completions`` (Cloud Agents is
+    ``/v0/agents``). ``CURSOR_*`` keys arm Background Agents
+    (``FACTORY_CODE_PROVIDER=cursor`` / cli-pivot). Floor chat uses the
+    OpenAI-compatible ``CEREBRUM_CHAT_LLM_*`` triple already on Render,
+    then leftover ``CEREBRUM_LLM_*`` / Moonshot. Never invent OpenRouter
+    when ``OPENROUTER_API_KEY`` is absent.
     """
-    candidates: List[str] = [f"{prefix}_LLM_BASE_URL" for prefix in prefixes]
-    candidates.extend(["CURSOR_BASE_URL", "CURSOR_LLM_BASE_URL"])
-    override = _env_first_skipping(
-        *candidates, default="", reject=_is_openrouter_base
+    endpoint = _scoped_path_endpoint("CEREBRUM_CHAT", *prefixes) or _resolve_kimi_primary(
+        "CEREBRUM_CHAT", *prefixes
     )
-    if override:
-        return override
-    return f"{_cursor_api_base()}/v1"
+    if _is_cursor_chat_host(str(endpoint.get("base_url", ""))):
+        endpoint = {
+            **endpoint,
+            "base_url": _non_cursor_base(
+                _env_first("CEREBRUM_LLM_BASE_URL", "KIMI_BASE_URL")
+            ),
+        }
 
-
-def _looks_like_moonshot_model(model: str) -> bool:
-    slug = (model or "").strip().lower()
-    return slug.startswith("kimi-") or slug.startswith("moonshot-")
-
-
-def _cursor_model(*prefixes: str) -> str:
-    candidates: List[str] = [f"{prefix}_LLM_MODEL" for prefix in prefixes]
-    candidates.extend(["CURSOR_MODEL", "CURSOR_LLM_MODEL"])
-
-    def _reject(value: str) -> bool:
-        return _looks_like_openrouter_model(value) or _looks_like_moonshot_model(value)
-
-    return _env_first_skipping(*candidates, default="auto", reject=_reject)
-
-
-def _cursor_config(*prefixes: str) -> Dict[str, Any]:
-    return {
+    cfg: Dict[str, Any] = {
         "provider": "cursor",
-        "api_key": _cursor_key(*prefixes),
-        "base_url": _cursor_base_url(*prefixes),
-        "model": _cursor_model(*prefixes),
-        "fallback_model": "",
+        "api_key": endpoint.get("api_key", ""),
+        "base_url": endpoint.get("base_url", ""),
+        "model": endpoint.get("model", ""),
+        "fallback_model": endpoint.get("fallback_model", ""),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("CURSOR_MOCK"),
         "temperature": _llm_temperature(),
     }
-
-
-def _has_cursor_credentials() -> bool:
-    return bool(_cursor_key())
+    if not cfg["api_key"]:
+        cfg["error"] = (
+            "LLM_PROVIDER=cursor: HTTP Floor chat uses CEREBRUM_CHAT_LLM_API_KEY "
+            "(or CEREBRUM_LLM_API_KEY / leftover Moonshot). "
+            "CURSOR_API_KEY / CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY "
+            "arm Background Agents (FACTORY_CODE_PROVIDER=cursor), not chat "
+            "completions. Cursor has no public /v1/chat/completions."
+        )
+    return cfg
 
 
 def _has_kimi_credentials() -> bool:
@@ -431,28 +463,25 @@ def _has_claude_credentials() -> bool:
 
 
 def _detect_provider() -> str:
-    """Auto-detect provider from configured credentials.
+    """Auto-detect HTTP chat provider from configured credentials.
 
-    Kimi wins whenever Kimi credentials are present, even if Claude
-    credentials are also present. Adding an ANTHROPIC_API_KEY to an existing
-    deployment must not move that deployment's traffic -- or its bill -- onto
-    a different provider. Claude is auto-selected only when it is the only
-    provider configured; otherwise it must be asked for by name.
+    Cursor BA keys never select a chat-completions host. ``CURSOR_*`` arms
+    Factory coding only. ``CEREBRUM_CHAT_*`` / leftover Kimi credentials
+    win chat.
 
-    Prefers the chat-scoped key so a factory-only key does not accidentally
-    turn on chat LLM calls. An OpenRouter key counts only when the resolved
-    chat base_url is actually OpenRouter (Moonshot keys stay Moonshot).
+    Kimi wins whenever those credentials are present, even if Claude
+    credentials are also present. Claude is auto-selected only when it is
+    the only HTTP provider configured.
     """
     chat_base = _kimi_base_url("CEREBRUM_CHAT")
     if (
-        _resolve_kimi_api_key(chat_base, "CEREBRUM_CHAT")
+        _scoped_path_endpoint("CEREBRUM_CHAT")
+        or _resolve_kimi_api_key(chat_base, "CEREBRUM_CHAT")
         or _has_kimi_credentials()
     ):
         return "kimi"
     if _has_claude_credentials():
         return "claude"
-    if _has_cursor_credentials():
-        return "cursor"
     return ""
 
 
@@ -462,7 +491,7 @@ def _config_for_provider(provider: str, *prefixes: str) -> Dict[str, Any]:
     if provider == "claude":
         return _claude_config(*prefixes)
     if provider == "cursor":
-        return _cursor_config(*prefixes)
+        return _cursor_http_config(*prefixes)
     raise RuntimeError(f"unsupported LLM provider: {provider!r}")
 
 
@@ -495,14 +524,14 @@ def get_llm_config() -> Dict[str, Any]:
 
 
 def get_factory_llm_config() -> Dict[str, Any]:
-    """Factory Product Architect — cursor, leftover Kimi, or Claude.
+    """Factory Product Architect HTTP draft — CEREBRUM_CHAT when cursor, leftover Kimi, or Claude.
 
-    ``LLM_PROVIDER=cursor`` uses Cursor-family keys for HTTP draft
-    (same host as Floor chat). Cursor BA / cli-pivot stays the generate path.
+    ``LLM_PROVIDER=cursor`` names the coding family (Cursor BA / cli-pivot).
+    HTTP architect draft uses ``CEREBRUM_CHAT_*`` / leftover Moonshot.
+    Cursor keys never go to ``api.cursor.com/v1/chat/completions``.
 
-    Fails closed per provider: asking for a provider whose key is absent is an
-    error carrying that provider's name. It never silently borrows the other
-    provider's credentials.
+    Fails closed per provider: asking for a provider whose HTTP key is absent
+    is an error carrying that provider's name.
     """
     raw = os.getenv("LLM_PROVIDER", "").strip().lower()
     explicit = normalise_provider(raw)
@@ -523,15 +552,16 @@ def get_factory_llm_config() -> Dict[str, Any]:
     provider = explicit or _detect_provider() or "kimi"
 
     if provider == "cursor":
-        cfg = _cursor_config("CEREBRUM_FACTORY")
+        cfg = _cursor_http_config("CEREBRUM_FACTORY")
         if cfg["mock"]:
             return cfg
         if not cfg["api_key"]:
             cfg["error"] = (
-                "Factory architect was asked for Cursor but CURSOR_API_KEY "
-                "(or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY) is not set; "
-                "refusing to fall back to another provider — set the key or "
-                "unset LLM_PROVIDER"
+                "LLM_PROVIDER=cursor: HTTP architect draft uses "
+                "CEREBRUM_CHAT_LLM_API_KEY (or CEREBRUM_FACTORY_LLM_API_KEY / "
+                "leftover Moonshot). CURSOR_API_KEY / CURSOR_AGENT_API_KEY / "
+                "FACTORY_CURSOR_API_KEY arm Background Agents, not chat "
+                "completions. Cursor has no public /v1/chat/completions."
             )
         return cfg
 
@@ -581,26 +611,10 @@ def get_factory_llm_config() -> Dict[str, Any]:
 # unless FACTORY_LLM_FALLBACK_ALLOW_PAID=1 says otherwise. Setting
 # OPENROUTER_API_KEY is the explicit act that arms the leg -- there is no
 # path where it turns on by itself.
-
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-
-#: Verified against OpenRouter's live catalogue on 2026-08-27: prompt and
-#: completion both price 0, 1M context. The ``:free`` suffix is
-#: load-bearing -- plain ``minimax/minimax-m3`` is the paid tier at
-#: $0.30/$1.20 per Mtok, so dropping five characters silently starts a bill.
-#:
-#: This was ``z-ai/glm-5.2:free`` until measured availability decided it.
-#: Four consecutive calls per model on 2026-08-27, same key:
-#:
-#:     z-ai/glm-5.2:free        1 of 4   (upstream_provider_shared_pool 429)
-#:     minimax/minimax-m3:free  3 of 4
-#:
-#: A fallback leg that fails three times in four is not a fallback -- it is a
-#: second way for the request to die. GLM 5.2's free tier is also 256K
-#: context against minimax-m3's 1M, so the swap costs nothing on capability.
-#: The 429 retry stays regardless: a shared free pool will rate-limit
-#: whichever slug sits in it.
-DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
+#
+# OPENROUTER_BASE_URL / DEFAULT_OPENROUTER_FALLBACK_MODEL are defined at
+# module top so chat config can reuse them. The ``:free`` suffix is
+# load-bearing -- plain ``minimax/minimax-m3`` is the paid tier.
 
 SUPPORTED_FALLBACK_PROVIDERS = ("openrouter",)
 
