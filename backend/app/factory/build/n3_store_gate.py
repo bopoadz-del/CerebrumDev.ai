@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import quote
 from urllib.request import urlopen
 
@@ -299,7 +299,7 @@ def resolve_builds_target(
     )
 
 
-def _parse_score(text: str) -> tuple[Optional[int], Optional[int]]:
+def _parse_score(text: str) -> Tuple[Optional[int], Optional[int]]:
     match = SCORE_RE.search(text or "")
     if not match:
         return None, None
