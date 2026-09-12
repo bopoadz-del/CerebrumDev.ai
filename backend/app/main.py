@@ -453,6 +453,8 @@ async def health():
     from app.factory.build.coder_session import probe_code_cli
 
     factory_cli = probe_code_cli()
+    from app.core.mailer import frontend_url_is_public
+
     return {
         "status": "ok" if storage.get("ok") else "degraded",
         "storage": storage,
@@ -465,6 +467,9 @@ async def health():
         "kimi_workbench": kimi,
         "factory_code_cli": factory_cli,
         "sentry": _probe_sentry(),
+        # Boolean only — never echo FRONTEND_URL. False means reset/verify
+        # mail still falls back to localhost.
+        "frontend_url_public": frontend_url_is_public(),
     }
 
 

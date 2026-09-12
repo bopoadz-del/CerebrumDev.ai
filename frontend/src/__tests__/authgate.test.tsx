@@ -15,6 +15,10 @@ vi.mock('../api/factory', async (importOriginal) => {
     auth: {
       ...actual.auth,
       login: vi.fn().mockResolvedValue({ login_token: 'cdt_test' }),
+      resetPassword: vi.fn().mockResolvedValue({
+        ok: true,
+        message: 'Password updated — sign in again (all previous sessions were closed).',
+      }),
       register: vi.fn().mockResolvedValue({
         login_token: 'cdt_test',
         account_id: 'acct_test',
@@ -158,7 +162,7 @@ describe('email deep links', () => {
         screen.getByText('Email verified. Sign in to enter the factory.'),
       ).toBeInTheDocument(),
     )
-    expect(window.location.pathname).toBe('/')
+    expect(window.location.pathname).toBe('/login')
   })
 
   it('prefills the reset form when opened from the reset link', async () => {
@@ -171,6 +175,36 @@ describe('email deep links', () => {
         screen.getByText('Choose a new password to finish the reset.'),
       ).toBeInTheDocument(),
     )
-    expect(window.location.pathname).toBe('/')
+    expect(screen.getByPlaceholderText('reset token')).toHaveValue('rst_from_email')
+    expect(window.location.pathname).toBe('/reset-password')
+    expect(window.location.search).toBe('')
+  })
+
+  it('reset submit lands on sign-in with a success notice', async () => {
+    const { auth } = await import('../api/factory')
+    ;(auth.resetPassword as ReturnType<typeof vi.fn>) = vi.fn().mockResolvedValue({
+      ok: true,
+      message: 'Password updated — sign in again (all previous sessions were closed).',
+    })
+    window.history.pushState(null, '', '/reset-password?token=rst_from_email')
+
+    render(<AuthGate onAuthed={() => {}} />)
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText('reset token')).toHaveValue('rst_from_email'),
+    )
+    fireEvent.change(screen.getByPlaceholderText('new password (8+ characters)'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Update password' }))
+    await waitFor(() =>
+      expect(auth.resetPassword).toHaveBeenCalledWith('rst_from_email', 'new-pass-456'),
+    )
+    expect(
+      await screen.findByText(
+        'Password updated — sign in again (all previous sessions were closed).',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/login')
   })
 })

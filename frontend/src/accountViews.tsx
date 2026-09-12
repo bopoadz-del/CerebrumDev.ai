@@ -5,7 +5,9 @@ import {
   billing,
   downloadProductPackage,
   getEmail,
+  getRememberedPassword,
   product,
+  rememberLogin,
   subscriptionDisplay,
   watchBuildStatus,
   type AccountInfo,
@@ -527,6 +529,10 @@ export function Account({
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [resetBusy, setResetBusy] = useState(false)
+  const [changeBusy, setChangeBusy] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const accountEmail = me?.email ? String(me.email) : getEmail()
 
   useEffect(() => {
@@ -592,6 +598,31 @@ export function Account({
     }
   }
 
+  async function changePassword(e: FormEvent) {
+    e.preventDefault()
+    setNote(null)
+    setError(null)
+    if (newPassword !== confirmPassword) {
+      setError('New password and confirmation do not match.')
+      return
+    }
+    setChangeBusy(true)
+    try {
+      const res = await auth.changePassword(currentPassword, newPassword)
+      setNote(res.message ?? 'Password updated. Other sessions were signed out.')
+      if (accountEmail && getRememberedPassword()) {
+        rememberLogin(accountEmail, newPassword)
+      }
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'password change failed')
+    } finally {
+      setChangeBusy(false)
+    }
+  }
+
   async function sendPasswordReset() {
     const email = accountEmail?.trim()
     if (!email) {
@@ -652,6 +683,38 @@ export function Account({
             </button>
           </>
         )}
+        <form className="change-password-form" onSubmit={changePassword}>
+          <h3>Change password</h3>
+          <input
+            type="password"
+            required
+            autoComplete="current-password"
+            placeholder="current password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
+          <input
+            type="password"
+            required
+            minLength={8}
+            autoComplete="new-password"
+            placeholder="new password (8+ characters)"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+          <input
+            type="password"
+            required
+            minLength={8}
+            autoComplete="new-password"
+            placeholder="confirm new password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+          />
+          <button type="submit" disabled={changeBusy}>
+            {changeBusy ? 'Working…' : 'Change password'}
+          </button>
+        </form>
         {note && <p className="dim note">{note}</p>}
         {error && <div className="error-box">{error}</div>}
         <div className="account-actions">

@@ -60,6 +60,7 @@ AUTH_FAIL_CLOSED_BUCKETS = frozenset(
         "verify-email",
         "forgot-password",
         "reset-password",
+        "change-password",
         "delete-account",
         "resend-verification",
     }

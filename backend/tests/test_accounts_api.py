@@ -215,6 +215,83 @@ def test_forgot_password_unknown_email_no_token(client):
     assert "dev_reset_token" not in res.json()
 
 
+def test_change_password_happy_path_keeps_current_session(client):
+    body = _register(client, "change@example.com", "old-pass-123")
+    current = body["login_token"]
+    other = client.post(
+        "/v1/auth/login",
+        json={"email": "change@example.com", "password": "old-pass-123"},
+    ).json()["login_token"]
+    assert other != current
+
+    res = client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "old-pass-123", "new_password": "new-pass-456"},
+        headers={"Authorization": f"Bearer {current}"},
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["ok"] is True
+    assert payload["account_id"] == body["account_id"]
+    assert "Other sessions" in payload["message"]
+
+    assert (
+        client.get("/v1/auth/me", headers={"Authorization": f"Bearer {current}"}).status_code
+        == 200
+    )
+    assert (
+        client.get("/v1/auth/me", headers={"Authorization": f"Bearer {other}"}).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/v1/auth/login",
+            json={"email": "change@example.com", "password": "old-pass-123"},
+        ).status_code
+        == 401
+    )
+    ok = client.post(
+        "/v1/auth/login",
+        json={"email": "change@example.com", "password": "new-pass-456"},
+    )
+    assert ok.status_code == 200
+
+
+def test_change_password_wrong_current_is_403(client):
+    body = _register(client, "wrongpw@example.com", "old-pass-123")
+    token = body["login_token"]
+    res = client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "not-the-password", "new_password": "new-pass-456"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert res.status_code == 403
+    assert res.json()["detail"] == "Current password is incorrect"
+    still = client.post(
+        "/v1/auth/login",
+        json={"email": "wrongpw@example.com", "password": "old-pass-123"},
+    )
+    assert still.status_code == 200
+    assert (
+        client.get("/v1/auth/me", headers={"Authorization": f"Bearer {token}"}).status_code
+        == 200
+    )
+
+
+def test_change_password_requires_account_and_length(client):
+    assert client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "old-pass-123", "new_password": "new-pass-456"},
+    ).status_code == 401
+    body = _register(client, "shortpw@example.com", "old-pass-123")
+    res = client.post(
+        "/v1/auth/change-password",
+        json={"current_password": "old-pass-123", "new_password": "short"},
+        headers={"Authorization": f"Bearer {body['login_token']}"},
+    )
+    assert res.status_code == 422
+
+
 def test_verified_email_enforcement(client, monkeypatch):
     body = _register(client)
     monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "1")

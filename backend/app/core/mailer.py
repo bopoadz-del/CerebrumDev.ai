@@ -10,11 +10,15 @@ No external dependencies beyond stdlib + httpx (already a project dep).
 
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
 from email.message import EmailMessage
+from urllib.parse import urlparse
 
 import httpx
+
+_log = logging.getLogger(__name__)
 
 
 def _sender() -> str:
@@ -28,6 +32,25 @@ def _sender() -> str:
 
 def _frontend_url() -> str:
     return os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+
+def frontend_url_is_public() -> bool:
+    """True when FRONTEND_URL is set to a non-localhost origin.
+
+    Used by ``/health`` so operators can confirm reset/verify mail will not
+    link to localhost. Never returns the URL itself.
+    """
+    raw = (os.getenv("FRONTEND_URL") or "").strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    parsed = urlparse(lowered if "://" in lowered else f"https://{lowered}")
+    host = (parsed.hostname or "").rstrip(".")
+    if not host:
+        return False
+    return host not in {"localhost", "127.0.0.1", "::1"} and not host.endswith(
+        ".localhost"
+    )
 
 
 def _resend_configured() -> bool:
@@ -65,7 +88,14 @@ def _send_resend(to: str, subject: str, text: str) -> bool:
             )
             resp.raise_for_status()
             return True
+    except httpx.HTTPStatusError as exc:
+        # Status only — response bodies can include recipient addresses.
+        # A 422 is typically an unverified sender domain or test-mode
+        # recipient restriction, not a bad reset token.
+        _log.warning("resend_email_failed status=%s", exc.response.status_code)
+        return False
     except Exception:
+        _log.warning("resend_email_failed")
         return False
 
 

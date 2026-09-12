@@ -11,6 +11,7 @@ const meMock = vi.fn()
 const resendMock = vi.fn()
 const forgotPasswordMock = vi.fn()
 const resetPasswordMock = vi.fn()
+const changePasswordMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -23,6 +24,7 @@ vi.mock('../api/factory', async (importOriginal) => {
       resendVerification: (...args: unknown[]) => resendMock(...args),
       forgotPassword: (...args: unknown[]) => forgotPasswordMock(...args),
       resetPassword: (...args: unknown[]) => resetPasswordMock(...args),
+      changePassword: (...args: unknown[]) => changePasswordMock(...args),
     },
   }
 })
@@ -33,6 +35,7 @@ describe('Account verified settling', () => {
     resendMock.mockReset()
     forgotPasswordMock.mockReset()
     resetPasswordMock.mockReset()
+    changePasswordMock.mockReset()
   })
 
   it('does not render Yes or No until /me settles, and keeps the Account row', async () => {
@@ -121,6 +124,7 @@ describe('Account password reset', () => {
     meMock.mockReset()
     forgotPasswordMock.mockReset()
     resetPasswordMock.mockReset()
+    changePasswordMock.mockReset()
     meMock.mockResolvedValue({
       email: 'owner@factory.dev',
       email_verified: true,
@@ -156,5 +160,84 @@ describe('Account password reset', () => {
     expect(await screen.findByText('rate limited')).toBeInTheDocument()
     expect(resetPasswordMock).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+  })
+})
+
+describe('Account change password', () => {
+  beforeEach(() => {
+    meMock.mockReset()
+    changePasswordMock.mockReset()
+    forgotPasswordMock.mockReset()
+    resetPasswordMock.mockReset()
+    meMock.mockResolvedValue({
+      email: 'owner@factory.dev',
+      email_verified: true,
+      account_id: 'acct_settled',
+    })
+  })
+
+  it('posts current and new password and keeps Send password reset', async () => {
+    changePasswordMock.mockResolvedValue({
+      ok: true,
+      message: 'Password updated. Other sessions were signed out.',
+    })
+    render(<Account onLogout={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Change password' })).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('current password'), {
+      target: { value: 'old-pass-123' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('new password (8+ characters)'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('confirm new password'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    await waitFor(() =>
+      expect(changePasswordMock).toHaveBeenCalledWith('old-pass-123', 'new-pass-456'),
+    )
+    expect(
+      screen.getByText('Password updated. Other sessions were signed out.'),
+    ).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('current password')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Send password reset' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    expect(resetPasswordMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a confirmation mismatch without calling the API', async () => {
+    render(<Account onLogout={() => {}} />)
+    await screen.findByRole('heading', { name: 'Change password' })
+    fireEvent.change(screen.getByPlaceholderText('current password'), {
+      target: { value: 'old-pass-123' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('new password (8+ characters)'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('confirm new password'), {
+      target: { value: 'mismatch-789' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    expect(await screen.findByText('New password and confirmation do not match.')).toBeInTheDocument()
+    expect(changePasswordMock).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a wrong-password API error without signing out', async () => {
+    changePasswordMock.mockRejectedValue(new Error('Current password is incorrect'))
+    render(<Account onLogout={() => {}} />)
+    await screen.findByRole('heading', { name: 'Change password' })
+    fireEvent.change(screen.getByPlaceholderText('current password'), {
+      target: { value: 'wrong-old' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('new password (8+ characters)'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.change(screen.getByPlaceholderText('confirm new password'), {
+      target: { value: 'new-pass-456' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Change password' }))
+    expect(await screen.findByText('Current password is incorrect')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument()
+    expect(screen.getByText('owner@factory.dev')).toBeInTheDocument()
   })
 })

@@ -12,6 +12,21 @@ def test_health_reports_storage(client, tmp_path, monkeypatch):
     assert "storage" in body
 
 
+def test_health_frontend_url_public_is_bool_never_echoes_url(client, monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://www.cerebrum-dev.com")
+    body = client.get("/health").json()
+    assert body["frontend_url_public"] is True
+    dumped = str(body)
+    assert "www.cerebrum-dev.com" not in dumped
+    assert "FRONTEND_URL" not in dumped
+
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    assert client.get("/health").json()["frontend_url_public"] is False
+
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    assert client.get("/health").json()["frontend_url_public"] is False
+
+
 def test_ready_endpoint(client, tmp_path, monkeypatch):
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
     monkeypatch.setenv("ENV", "test")
