@@ -1,0 +1,146 @@
+# DROP-IN for the private cerebrum-builds store (owner creates that repo).
+# Copy to .github/workflows/store-gate.yml there. Not live on CerebrumDev.ai.
+#
+# FORBIDDEN: do not run this gate on a Render worker (no Docker daemon).
+# This job needs `docker build` + `docker run` on a host that already has Docker
+# (GitHub-hosted ubuntu-latest, or an equivalent self-hosted builder).
+#
+# N3 12-line floor (exact names). k/12 is the only green.
+#   no_token_401
+#   missing_field_422
+#   enum_422
+#   ui_served_200
+#   rag_roundtrip_hit
+#   single_persistence_root
+#   ci_present_full_suite
+#   handler_bodies_distinct
+#   health_fail_closed
+#   openapi_committed
+#   docker_health_200
+#   authorship==receipt
+
+name: Store acceptance gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "build/**"
+      - "builds/**"
+      - "artifact/**"
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  store-gate:
+    name: acceptance.py in Docker (k/12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build artifact image
+        run: docker build -t cerebrum-artifact:${{ github.sha }} .
+
+      - name: Run scripts/acceptance.py inside the image
+        run: |
+          set -euo pipefail
+          docker run --rm cerebrum-artifact:${{ github.sha }} \
+            python scripts/acceptance.py | tee acceptance.out
+
+      - name: Parse k/12 and write result
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          FLOOR = (
+              "no_token_401",
+              "missing_field_422",
+              "enum_422",
+              "ui_served_200",
+              "rag_roundtrip_hit",
+              "single_persistence_root",
+              "ci_present_full_suite",
+              "handler_bodies_distinct",
+              "health_fail_closed",
+              "openapi_committed",
+              "docker_health_200",
+              "authorship==receipt",
+          )
+          LINE = re.compile(
+              r"^(PASS|FAIL|SKIP)\s+(\S+)\s*(?:—|-|:)?\s*(.*)$",
+              re.IGNORECASE,
+          )
+          text = Path("acceptance.out").read_text(encoding="utf-8")
+          seen = {}
+          for raw in text.splitlines():
+              m = LINE.match(raw.strip())
+              if not m:
+                  continue
+              status, name, detail = m.group(1).upper(), m.group(2), m.group(3).strip()
+              if name in FLOOR and name not in seen:
+                  seen[name] = {"name": name, "status": status, "detail": detail}
+          lines = [
+              seen.get(
+                  name,
+                  {"name": name, "status": "FAIL", "detail": "harness omitted this line"},
+              )
+              for name in FLOOR
+          ]
+          satisfied = sum(1 for line in lines if line["status"] in {"PASS", "SKIP"})
+          total = len(FLOOR)
+          ok = satisfied == total and all(line["status"] in {"PASS", "SKIP"} for line in lines)
+          report = {
+              "schema": "store_gate.v1",
+              "passed": satisfied,
+              "total": total,
+              "ok": ok,
+              "score": f"{satisfied}/{total}",
+              "lines": lines,
+              "checks": list(FLOOR),
+              "sha": os.environ.get("GITHUB_SHA", ""),
+              "via": "scripts/acceptance.py-in-docker",
+          }
+          Path("store_gate.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(f"STORE_GATE {satisfied}/{total} ok={ok}")
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Upload k/12 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: store-gate-${{ github.sha }}
+          path: |
+            store_gate.json
+            acceptance.out
+          if-no-files-found: warn
+
+      - name: Write commit status
+        if: always() && github.event_name != 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ -f store_gate.json ]; then
+            score=$(python3 -c "import json; print(json.load(open('store_gate.json'))['score'])")
+            ok=$(python3 -c "import json; print('true' if json.load(open('store_gate.json'))['ok'] else 'false')")
+          else
+            score="0/12"
+            ok="false"
+          fi
+          if [ "$ok" = "true" ]; then state=success; else state=failure; fi
+          gh api --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state="$state" \
+            -f context="store-gate" \
+            -f description="acceptance.py in Docker ${score}"
