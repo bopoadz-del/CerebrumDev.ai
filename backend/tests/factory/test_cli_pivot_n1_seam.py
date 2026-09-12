@@ -93,6 +93,8 @@ def test_store_gate_scaffold_is_docker_not_render():
     assert "tests/**" in readme
     assert "12/12 remains cheat-resistance" in readme
     assert "until N2" in readme
+    assert "Generate and Continue call `run_cli_pivot`" in readme
+    assert "Keys-present is the gate" in readme
     assert "N1a" in readme
     assert "CEREBRUM_BUILDS_GITHUB_TOKEN" in readme
     assert "still not green" in readme

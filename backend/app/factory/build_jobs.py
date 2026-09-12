@@ -860,6 +860,15 @@ def _run(
     from app.factory.build.runner import BuildBudget, RoleRunner
 
     auto = cycle == "code" and factory_auto_pilot_enabled()
+    if not (
+        str(os.getenv("FACTORY_SESSION_ID") or "").strip()
+        or str(os.getenv("FACTORY_CLI_PIVOT_SESSION_ID") or "").strip()
+    ):
+        from app.factory.build.orphan_recovery import session_id_from_output
+
+        sid = session_id_from_output(output_dir) or ""
+        if sid:
+            os.environ["FACTORY_SESSION_ID"] = sid
     try:
         runner = RoleRunner(
             blueprint,
@@ -882,6 +891,13 @@ def _run(
             outcome.outcome.value if hasattr(outcome.outcome, "value") else outcome.outcome,
             outcome.rework_used,
         )
+        from app.factory.build.runner import Outcome as RunnerOutcome
+
+        if outcome.outcome is RunnerOutcome.HANDOFF_TO_N3:
+            # Receipt accepted; N3 store-gate is next. Keep the generation
+            # charge (not a fail) and do not clone a non-green Steward tree.
+            _clear_quota_marker(output_dir)
+            return
     except Exception:  # noqa: BLE001
         # The thread must never die silently: without this the ledger's last
         # event stays PHASE_STARTED and status reads "building" forever.

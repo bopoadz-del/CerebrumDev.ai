@@ -29,6 +29,15 @@ G-floor names above are canonical (`ci_present_full_suite`,
 still uses the pre-G aliases (`ci_present_and_full_suite`,
 `authorship_floor`); that self-grade is not rewritten in this PR.
 
+## Generate / Continue
+
+Live Floor Generate and Continue call `run_cli_pivot` on the COLLECTOR+CLONER
+workspace when Cursor executor keys are present (`CURSOR_API_KEY` /
+`CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`). Keys-present is the gate
+(no extra `FACTORY_CLI_PIVOT` flag). Absent keys keep the in-process WRITER
+path until N2. A `HANDOFF_TO_N3` receipt is a ledger note, not product green —
+k/12 remains the only green.
+
 ## N1a — live Cursor Background Agent
 
 When `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`)

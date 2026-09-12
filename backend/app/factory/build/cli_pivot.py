@@ -137,6 +137,97 @@ def cursor_keys_present(env: Optional[Mapping[str, str]] = None) -> bool:
     return any(str(blob.get(name) or "").strip() for name in CURSOR_KEY_ENVS)
 
 
+def writer_uses_cli_pivot(env: Optional[Mapping[str, str]] = None) -> bool:
+    """Generate/Continue takes this seam when Cursor executor keys exist.
+
+    Keys-present is the gate (no extra ``FACTORY_CLI_PIVOT`` flag). Missing
+    keys keep today's in-process WRITER until N2. An extra env that
+    operators forget would leave live Generate on the old path; an extra
+    env without keys would skip WRITER into ``EXECUTOR_UNAVAILABLE``.
+    """
+    return cursor_keys_present(env)
+
+
+def resolve_pivot_session_env(
+    workspace: Path,
+    env: Optional[Mapping[str, str]] = None,
+    *,
+    session_id: Optional[str] = None,
+) -> Dict[str, str]:
+    """Copy env and pin ``FACTORY_SESSION_ID`` so ``build/<session>-*`` is stable."""
+    blob = dict(os.environ if env is None else env)
+    if any(str(blob.get(name) or "").strip() for name in (
+        "FACTORY_CLI_PIVOT_SESSION_ID",
+        "FACTORY_SESSION_ID",
+    )):
+        return blob
+    sid = str(session_id or "").strip()
+    if not sid:
+        from app.factory.build.orphan_recovery import session_id_from_output
+
+        sid = session_id_from_output(workspace) or ""
+    if sid:
+        blob["FACTORY_SESSION_ID"] = sid
+    return blob
+
+
+def run_writer_via_cli_pivot(
+    ctx: Any,
+    *,
+    launch: Optional[Callable[..., ExecutorLaunch]] = None,
+    env: Optional[Mapping[str, str]] = None,
+) -> Any:
+    """Skip in-process WRITER authorship; run ``run_cli_pivot`` on the clone."""
+    from app.factory.build.roles_models import RoleError, RoleResult
+
+    dest = getattr(getattr(ctx, "workspace", None), "destination", None)
+    if dest is None:
+        dest = Path(getattr(ctx.workspace, "workspace", ctx.workspace))
+    dest = Path(dest)
+    state = getattr(ctx, "state", None)
+    if not isinstance(state, dict):
+        state = {}
+    if launch is None:
+        launch = state.get("cli_pivot_launch")
+    env_map = resolve_pivot_session_env(
+        dest,
+        env,
+        session_id=str(state.get("session_id") or ""),
+    )
+    ledger_path = dest / LEDGER_REL
+    ledger = BuildLedger(ledger_path) if ledger_path.is_file() else None
+    seam = run_cli_pivot(
+        ctx.blueprint,
+        dest,
+        plan=getattr(ctx, "plan", None),
+        blocks_root=getattr(ctx, "blocks_root", None),
+        ledger=ledger,
+        env=env_map,
+        launch=launch,
+    )
+    payload = seam.to_dict()
+    state["cli_pivot"] = payload
+    note = getattr(ctx, "note", None)
+    if callable(note):
+        note(
+            f"cli-pivot {seam.honesty}: {seam.detail}",
+            stage="cli_pivot",
+            honesty=seam.honesty,
+            next=seam.next,
+            green=False,
+        )
+    if seam.honesty == HANDOFF_TO_N3:
+        return RoleResult(
+            ok=True,
+            detail=seam.detail,
+            notes={
+                "cli_pivot": payload,
+                "next": seam.next or "n3_gate",
+            },
+        )
+    raise RoleError(seam.detail)
+
+
 def compose_cbrief(
     blueprint: Any,
     *,

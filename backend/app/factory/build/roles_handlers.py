@@ -2728,8 +2728,17 @@ def _dispatch_cli_keep_ids(dispatch: Any) -> Sequence[str]:
     return list(getattr(dispatch, "kept_handler_ids", None) or [])
 
 
-def run_writer(ctx: RoleContext) -> RoleResult:
+def run_writer(
+    ctx: RoleContext,
+    *,
+    launch: Any = None,
+    env: Any = None,
+) -> RoleResult:
     """Platform manufacturer: dispatch runtime plus one handler per capability.
+
+    When Cursor executor keys are present, authorship is ``run_cli_pivot``
+    on the already-cloned tree (no ``dispatch_compiled_brief`` / kimi /
+    ``_templated_body``). Absent keys keep this in-process path until N2.
 
     The coding agent writes each body when one is configured; otherwise the
     body is composed from the block contract deterministically. Which path ran
@@ -2772,6 +2781,13 @@ def run_writer(ctx: RoleContext) -> RoleResult:
     Inventory is checked against the Store registry before any handler
     is written.
     """
+    from app.factory.build.cli_pivot import (
+        run_writer_via_cli_pivot,
+        writer_uses_cli_pivot,
+    )
+
+    if writer_uses_cli_pivot(env):
+        return run_writer_via_cli_pivot(ctx, launch=launch, env=env)
     writer_roster = _writer_block_roster(ctx.state)
     if (
         str(ctx.state.get("build_cycle") or "") == "pilot"
