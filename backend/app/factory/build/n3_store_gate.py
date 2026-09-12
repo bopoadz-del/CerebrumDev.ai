@@ -828,3 +828,146 @@ def start_n3_ingest_job(
         _N3_THREADS[key] = thread
         thread.start()
         return True
+
+
+class HandoffReseedError(ValueError):
+    """Refuse an unsafe or incomplete HANDOFF reseed request."""
+
+
+def reseed_handoff_ledger(
+    output_dir: Path | str,
+    *,
+    builds_sha: str,
+    builds_branch: str,
+    cli_authored_ids: Sequence[str],
+    builds_owner: str = "bopoadz-del",
+    builds_repo: str = "cerebrum-builds",
+    product_id: Optional[str] = None,
+    inputs_hash: str = "n3_handoff_reseed",
+) -> Dict[str, Any]:
+    """Stamp a minimal HANDOFF_TO_N3 ledger for one-time N3 ingest.
+
+    Mirrors the test helper ``_handoff_ledger``: COLLECTOR/CLONER seed
+    phases, a WRITER ``NOTE`` with builds fields + ``cli_authored_ids``,
+    and ``RUN_FAILED`` honesty ``HANDOFF_TO_N3``. Never launches WRITER,
+    Background Agent, or ``generate_product``.
+
+    Safe rules:
+    - Already awaiting N3 → leave ledger alone (``stamped=False``).
+    - Already N3 green / pilot_ready → refuse.
+    - Missing/empty ledger → create the minimal HANDOFF stamp.
+    - Existing non-handoff ledger → append HANDOFF NOTE + RUN_FAILED only
+      when builds fields are complete (caller must pass them).
+    """
+    root = Path(output_dir)
+    sha = str(builds_sha or "").strip()
+    branch = str(builds_branch or "").strip()
+    owner = str(builds_owner or "").strip() or "bopoadz-del"
+    repo = str(builds_repo or "").strip() or "cerebrum-builds"
+    ids = [str(item).strip() for item in (cli_authored_ids or []) if str(item).strip()]
+    if not sha or not branch:
+        raise HandoffReseedError(
+            "n3_reseed requires builds_sha and builds_branch"
+        )
+    if not ids:
+        raise HandoffReseedError(
+            "n3_reseed requires non-empty cli_authored_ids"
+        )
+
+    root.mkdir(parents=True, exist_ok=True)
+    ledger = _ledger(root)
+
+    if handoff_awaiting_n3(root):
+        return {
+            "stamped": False,
+            "already_awaiting": True,
+            "output_dir": str(root),
+            "builds_sha": sha,
+            "builds_branch": branch,
+            "cli_authored_ids": ids,
+        }
+
+    if ledger.exists():
+        try:
+            if ledger.succeeded() and ledger.pilot_ready():
+                raise HandoffReseedError(
+                    "N3 store-gate already ingested (pilot_ready) — refuse reseed"
+                )
+            for event in ledger.events():
+                if _event_honesty(event) == N3_STORE_GATE_GREEN:
+                    raise HandoffReseedError(
+                        "N3_STORE_GATE_GREEN already on ledger — refuse reseed"
+                    )
+        except HandoffReseedError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+
+    pid = str(product_id or root.name or "product").strip() or "product"
+    from app.factory.build.authority import BuildRole
+
+    if not ledger.exists():
+        ledger.start_run(product_id=pid, inputs_hash=inputs_hash)
+        for role in (BuildRole.COLLECTOR, BuildRole.CLONER):
+            ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
+            ledger.append(
+                EventKind.GATE_PASSED,
+                role=role,
+                detail="ok",
+                payload={"gate": "seed", "via": "n3_handoff_reseed"},
+            )
+
+    payload = {
+        "honesty": HANDOFF_TO_N3,
+        "seam": "cli_pivot",
+        "next": "n3_gate",
+        "green": False,
+        "cli_authored_ids": list(ids),
+        "builds_sha": sha,
+        "builds_branch": branch,
+        "builds_owner": owner,
+        "builds_repo": repo,
+        "via": "n3_handoff_reseed",
+    }
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="HANDOFF_TO_N3: store-gate next",
+        payload=payload,
+    )
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.WRITER,
+        detail="HANDOFF_TO_N3: store-gate next",
+        payload={
+            "outcome": HANDOFF_TO_N3,
+            "honesty": HANDOFF_TO_N3,
+            "next": "n3_gate",
+            "green": False,
+            "cycle": "code",
+            "pilot_ready": False,
+            "cli_authored_ids": list(ids),
+            "builds_sha": sha,
+            "builds_branch": branch,
+            "builds_owner": owner,
+            "builds_repo": repo,
+            "via": "n3_handoff_reseed",
+        },
+    )
+    _persist_cli_authorship(root, ids)
+    if not handoff_awaiting_n3(root):
+        raise HandoffReseedError(
+            "reseed stamped but handoff_awaiting_n3 is still false — refuse"
+        )
+    return {
+        "stamped": True,
+        "already_awaiting": False,
+        "output_dir": str(root),
+        "builds_sha": sha,
+        "builds_branch": branch,
+        "builds_owner": owner,
+        "builds_repo": repo,
+        "cli_authored_ids": ids,
+        "product_id": pid,
+        "inputs_hash": inputs_hash,
+    }
