@@ -61,6 +61,15 @@ services:
         sync: false
       - key: CEREBRUM_LLM_API_KEY
         sync: false
+      # Floor HTTP chat (OpenAI-compatible). Dashboard-filled values are
+      # authoritative. sync: false so a blueprint sync cannot prune them.
+      # LLM_PROVIDER=cursor still reads these — never api.cursor.com.
+      - key: CEREBRUM_CHAT_LLM_API_KEY
+        sync: false
+      - key: CEREBRUM_CHAT_LLM_BASE_URL
+        sync: false
+      - key: CEREBRUM_CHAT_LLM_MODEL
+        sync: false
       # Cross-provider HTTP fallback / Floor chat leg
       # (llm_config.get_factory_fallback_leg). Setting the key is the
       # explicit act that arms it. sync: false declares the variable

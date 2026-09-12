@@ -329,7 +329,12 @@ def _llm_json_call(
         headers["HTTP-Referer"] = "https://cerebrumdev.ai"
         headers["X-Title"] = "CerebrumDev Floor"
 
-    if provider in ("moonshot", "kimi", "cursor", "openrouter"):
+    if provider in ("moonshot", "kimi", "cursor", "openrouter") or (
+        not provider
+        and cfg.get("api_key")
+        and cfg.get("base_url")
+        and not _is_cursor_chat_host(str(cfg.get("base_url", "")))
+    ):
         url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
 
         def _try(m: str) -> Dict[str, Any]:

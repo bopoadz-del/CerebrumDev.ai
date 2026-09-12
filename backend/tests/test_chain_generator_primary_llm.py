@@ -203,6 +203,83 @@ async def test_cursor_provider_never_posts_to_cursor_completions(cursor_provider
     assert all("/v1/chat/completions" not in u or "api.cursor.com" not in u for u in posts)
 
 
+@pytest.fixture
+def cursor_moonshot_chat(monkeypatch):
+    """Exact live reproduction: LLM_PROVIDER=cursor + CEREBRUM_CHAT on Moonshot."""
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_BASE_URL", "https://api.moonshot.ai/v1")
+    monkeypatch.delenv("CURSOR_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("CEREBRUM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_MOCK", raising=False)
+    monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
+    monkeypatch.delenv("CURSOR_MOCK", raising=False)
+
+
+def test_cursor_moonshot_config_has_provider_and_key(cursor_moonshot_chat):
+    cfg = get_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == "sk-test"
+    assert cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert cfg.get("mock") is False
+    assert "api.cursor.com" not in cfg["base_url"]
+
+
+@pytest.mark.anyio
+async def test_call_llm_cursor_provider_hits_moonshot_not_cursor_host(
+    cursor_moonshot_chat,
+):
+    posts: list[str] = []
+
+    async def fake_post(self, url, *, json=None, headers=None):
+        posts.append(url)
+        assert "api.cursor.com" not in url
+        assert "api.moonshot.ai" in url
+        assert headers.get("Authorization") == "Bearer sk-test"
+        return _ok_json({"message": "from-moonshot-chat", "chain": None, "rules": []})
+
+    with patch.object(httpx.AsyncClient, "post", fake_post):
+        result = await _call_llm([{"role": "user", "content": "hi"}])
+
+    assert result["message"] == "from-moonshot-chat"
+    assert posts
+    assert all("api.cursor.com" not in u for u in posts)
+    assert all("api.moonshot.ai" in u for u in posts)
+    assert all(u.rstrip("/").endswith("/chat/completions") for u in posts)
+
+
+@pytest.mark.anyio
+async def test_generate_suggestion_cursor_moonshot_calls_openai_compat(
+    cursor_moonshot_chat,
+):
+    posts: list[str] = []
+
+    async def fake_post(self, url, *, json=None, headers=None):
+        posts.append(url)
+        assert "api.cursor.com" not in url
+        return _ok_json({"message": "from-moonshot-chat", "chain": None, "rules": []})
+
+    with patch.object(httpx.AsyncClient, "post", fake_post), patch(
+        "app.core.chain_generator.fetch_block_registry",
+        new=AsyncMock(return_value={}),
+    ):
+        result = await generate_chain_suggestion(
+            domain="construction",
+            user_message="hello",
+            chat_history=[],
+            docs_summary="",
+        )
+
+    assert result["message"] == "from-moonshot-chat"
+    assert "starter chain" not in result["message"]
+    assert "couldn't reach" not in result["message"]
+    assert posts
+    assert all("api.cursor.com" not in u for u in posts)
+    assert all("api.moonshot.ai" in u for u in posts)
+
+
 @pytest.mark.anyio
 async def test_refuses_cursor_completions_host_and_does_not_post():
     """Belt: even a mis-set cursor.com base must not POST there."""

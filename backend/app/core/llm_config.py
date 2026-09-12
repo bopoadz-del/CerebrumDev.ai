@@ -408,9 +408,23 @@ def _cursor_http_config(*prefixes: str) -> Dict[str, Any]:
     then leftover ``CEREBRUM_LLM_*`` / Moonshot. Never invent OpenRouter
     when ``OPENROUTER_API_KEY`` is absent.
     """
+    # CEREBRUM_CHAT_LLM_API_KEY is authoritative for Floor HTTP even when
+    # LLM_PROVIDER=cursor (coding-family name). Read it first; leftover
+    # Kimi / CEREBRUM_LLM_* only fill gaps. Never use CURSOR_* here.
     endpoint = _scoped_path_endpoint("CEREBRUM_CHAT", *prefixes) or _resolve_kimi_primary(
         "CEREBRUM_CHAT", *prefixes
     )
+    if not endpoint.get("api_key"):
+        direct = os.getenv("CEREBRUM_CHAT_LLM_API_KEY", "").strip()
+        if direct:
+            endpoint = {
+                **endpoint,
+                "api_key": direct,
+                "base_url": endpoint.get("base_url")
+                or _non_cursor_base(
+                    os.getenv("CEREBRUM_CHAT_LLM_BASE_URL", "").strip()
+                ),
+            }
     if _is_cursor_chat_host(str(endpoint.get("base_url", ""))):
         endpoint = {
             **endpoint,
@@ -495,15 +509,46 @@ def _config_for_provider(provider: str, *prefixes: str) -> Dict[str, Any]:
     raise RuntimeError(f"unsupported LLM provider: {provider!r}")
 
 
+def _openai_compatible_chat_cfg(
+    *,
+    provider: str,
+    api_key: str,
+    base_url: str,
+    model: str = "",
+    fallback_model: str = "",
+    mock: bool = False,
+) -> Dict[str, Any] | None:
+    """Usable OpenAI-compatible Floor chat config, or None.
+
+    ``api.cursor.com`` is never a chat-completions host. A present
+    ``CEREBRUM_CHAT_LLM_API_KEY`` plus Moonshot / OpenRouter / other
+    OpenAI-compatible base must not collapse to ``provider=""``.
+    """
+    if not api_key or not base_url or _is_cursor_chat_host(base_url):
+        return None
+    return {
+        "provider": provider,
+        "api_key": api_key,
+        "base_url": base_url,
+        "model": model or "kimi-k2.7-code",
+        "fallback_model": fallback_model or "moonshot-v1-8k",
+        "mock": mock,
+        "temperature": _llm_temperature(),
+    }
+
+
 def get_llm_config() -> Dict[str, Any]:
     """Return resolved LLM config for the chat/chain_generator path."""
-    provider = normalise_provider(os.getenv("LLM_PROVIDER", "")) or _detect_provider()
+    explicit = normalise_provider(os.getenv("LLM_PROVIDER", ""))
+    provider = explicit or _detect_provider()
 
     if provider in SUPPORTED_PROVIDERS:
         cfg = _config_for_provider(provider, "CEREBRUM_CHAT")
-        # Explicit provider with only the mock flag and no key → inactive for
-        # kit chat (stay offline). Factory path uses get_factory_llm_config.
-        if cfg["mock"] and not cfg["api_key"]:
+        # Mock+no-key wipe is only for *auto-detected* kit chat (stay offline).
+        # An explicit ``LLM_PROVIDER=cursor`` must keep provider="cursor".
+        # Wiping it to "" made Floor chat log "No LLM provider configured"
+        # while /ready still counted CURSOR_* as llm_configured.
+        if cfg["mock"] and not cfg["api_key"] and not explicit:
             return {
                 "provider": "",
                 "api_key": "",
@@ -512,6 +557,22 @@ def get_llm_config() -> Dict[str, Any]:
                 "mock": True,
             }
         return cfg
+
+    # Last resort: CEREBRUM_CHAT_LLM_* is a live OpenAI-compatible triple
+    # even when LLM_PROVIDER is missing or an unknown alias. Empty provider
+    # here is what _call_llm logs as "No LLM provider configured".
+    scoped = _scoped_path_endpoint("CEREBRUM_CHAT")
+    if scoped:
+        rescued = _openai_compatible_chat_cfg(
+            provider="kimi",
+            api_key=scoped.get("api_key", ""),
+            base_url=scoped.get("base_url", ""),
+            model=scoped.get("model", ""),
+            fallback_model=scoped.get("fallback_model", ""),
+            mock=_truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
+        )
+        if rescued:
+            return rescued
 
     return {
         "provider": "",
