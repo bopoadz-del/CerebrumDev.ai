@@ -48,11 +48,13 @@ def test_socket_blocker_markers_unchanged():
 
 
 def test_vendor_mirror_capture_json_defaults_are_p1():
+    """Lock pins Store capture bytes; P1 is a CLONER rewrite, not the pin."""
     data = json.loads(MIRROR_CAPTURE_JSON.read_text(encoding="utf-8"))
     assert data["permissions"]["network"] is False
+    rewritten = apply_p1_capture_manifest(data)
     providers = {
         item["name"]: item.get("default")
-        for item in data["inputs"]
+        for item in rewritten["inputs"]
         if isinstance(item, dict)
     }
     assert providers["llm_provider"] == "none"

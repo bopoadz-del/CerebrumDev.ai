@@ -1,19 +1,142 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Execute construction formulas in sandbox with unit validation",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "cbfbb1b1df92c4d2f1d5dcd0afdcfdb2ed6d03d160b35e74321d6a477fa81321",
+    "block.py": "da6245c71ee9e1d878a70a46ae5b3462ef2666daeb09ce915e718e445aa89565"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/formula_executor:latest",
+    "type": "docker"
+  },
   "id": "formula_executor",
-  "name": "formula_executor",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'formula_executor' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/formula_executor",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
-      "default": "execute",
-      "options": ["execute"],
-      "description": "Factory-known keep-path default (sess_bb870f4fb29042f2). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+      "description": "{\"formula_key\": \"concrete_volume_slab\", \"input_values\": {\"length_m\": 10, \"width_m\": 8, \"thickness_m\": 0.2}}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": 50,
+      "description": "Configuration parameter: max_code_lines",
+      "name": "max_code_lines",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 10,
+      "description": "Configuration parameter: timeout_seconds",
+      "name": "timeout_seconds",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: allow_sympy",
+      "name": "allow_sympy",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: allow_numpy",
+      "name": "allow_numpy",
+      "required": false,
+      "type": "boolean"
     }
-  ]
+  ],
+  "layer": 3,
+  "name": "Formula Executor",
+  "outputs": [
+    {
+      "description": "Generated Code",
+      "name": "generated_code",
+      "type": "code"
+    },
+    {
+      "description": "Result",
+      "name": "execution_result",
+      "type": "text"
+    },
+    {
+      "description": "Unit Output",
+      "name": "unit_validated_output",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "signature": "OHYAYX637NJbmKV6vQHNZv1yoCTKrXWZXuCcMAb2VaDIaGR6JMlragTciV5FCyAepR5omN3K9Lv3EgPWm5nOAw==",
+  "tags": [
+    "domain",
+    "construction",
+    "formula",
+    "math",
+    "code",
+    "units",
+    "sandbox"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "{\"formula_key\": \"concrete_volume_slab\", \"input_values\": {\"length_m\": 10, \"width_m\": 8, \"thickness_m\": 0.2}}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Max Code Lines",
+      "name": "max_code_lines",
+      "widget": "number"
+    },
+    {
+      "label": "Timeout Seconds",
+      "name": "timeout_seconds",
+      "widget": "number"
+    },
+    {
+      "label": "Allow Sympy",
+      "name": "allow_sympy",
+      "widget": "toggle"
+    },
+    {
+      "label": "Allow Numpy",
+      "name": "allow_numpy",
+      "widget": "toggle"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "network",
+      "scope": "http.outbound"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": []
 }

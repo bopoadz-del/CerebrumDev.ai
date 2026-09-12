@@ -1,10 +1,211 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "0c92fa20630846c1cc283dc31e54f3ff10cdd31cba6289ebfadcc01fb824560b",
+    "block.py": "f06ad42e2d9dc04a0de160c8faa54086eabdbcd21f6a2dc5a5cf1328528e032d"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/team:latest",
+    "type": "docker"
+  },
   "id": "team",
-  "name": "team",
+  "inputs": [
+    {
+      "description": "JSON payload for the selected action",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "create_team",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "create_team",
+        "delete_team",
+        "invite_member",
+        "accept_invitation",
+        "remove_member",
+        "set_role",
+        "get_team",
+        "list_teams",
+        "get_members",
+        "get_team_context",
+        "switch_team",
+        "check_permission"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 50,
+      "description": "Configuration parameter: max_members_per_team",
+      "name": "max_members_per_team",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 10,
+      "description": "Configuration parameter: max_teams_per_org",
+      "name": "max_teams_per_org",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "member",
+      "description": "Configuration parameter: default_role",
+      "name": "default_role",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 48,
+      "description": "Configuration parameter: invitation_expiry_hours",
+      "name": "invitation_expiry_hours",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": false,
+      "description": "Configuration parameter: enable_sso",
+      "name": "enable_sso",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: require_2fa_for_admins",
+      "name": "require_2fa_for_admins",
+      "required": false,
+      "type": "boolean"
+    }
+  ],
+  "layer": 3,
+  "name": "Team",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "auth",
+    "database",
+    "billing"
+  ],
+  "signature": "7JSVRcl8oIlzUfABGeUULNF0RrtZDbE8p5mZ2ttZ5W/D2J8ZUJlnPJRL7wmOlXJZqlbaJ7wKVWatQxaIH8iOBg==",
+  "tags": [
+    "platform",
+    "multi-tenant",
+    "enterprise",
+    "collaboration"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "create_team",
+        "delete_team",
+        "invite_member",
+        "accept_invitation",
+        "remove_member",
+        "set_role",
+        "get_team",
+        "list_teams",
+        "get_members",
+        "get_team_context",
+        "switch_team",
+        "check_permission"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Max Members Per Team",
+      "name": "max_members_per_team",
+      "widget": "number"
+    },
+    {
+      "label": "Max Teams Per Org",
+      "name": "max_teams_per_org",
+      "widget": "number"
+    },
+    {
+      "label": "Default Role",
+      "name": "default_role",
+      "widget": "text"
+    },
+    {
+      "label": "Invitation Expiry Hours",
+      "name": "invitation_expiry_hours",
+      "widget": "number"
+    },
+    {
+      "label": "Enable Sso",
+      "name": "enable_sso",
+      "widget": "toggle"
+    },
+    {
+      "label": "Require 2Fa For Admins",
+      "name": "require_2fa_for_admins",
+      "widget": "toggle"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'team' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/team",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "team",
+      "scope": "state"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "file",
+      "scope": "local.write"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

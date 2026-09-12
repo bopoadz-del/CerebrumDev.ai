@@ -106,6 +106,10 @@ jobs:
       # Repo-wide gates (run from repo root, not backend/): every hollow
       # function must be implemented or registered in KNOWN_INCOMPLETE.md,
       # and no secret-shaped literal may ship on a non-test path.
+      - name: Vendor mirror lock parity
+        working-directory: .
+        run: python3 scripts/verify_vendor_parity.py
+
       - name: Stub audit (implement or register)
         working-directory: .
         run: python scripts/audit_stubs.py

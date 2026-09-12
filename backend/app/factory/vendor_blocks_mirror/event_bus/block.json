@@ -1,10 +1,146 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Event bus for synchronous and asynchronous block communication",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "cea54c8bffc0ae29094da3fa6906afe88152460b82f219aa8fa0d4f38bd51596",
+    "block.py": "03c69b640fbd3ea92422766add606c5267ebbbdab65e7f7b8a34202d0472620f"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/event_bus:latest",
+    "type": "docker"
+  },
   "id": "event_bus",
-  "name": "event_bus",
+  "inputs": [
+    {
+      "description": "{\"topic\": \"chat.response\", \"payload\": {}}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "publish",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "publish",
+        "subscribe",
+        "request",
+        "respond",
+        "get_topology"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 30,
+      "description": "Default Timeout",
+      "name": "default_timeout",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 1000,
+      "description": "Max Pending",
+      "name": "max_pending",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 5,
+  "name": "Event Bus",
+  "outputs": [
+    {
+      "description": "Status",
+      "name": "status",
+      "type": "text"
+    },
+    {
+      "description": "Topic",
+      "name": "topic",
+      "type": "text"
+    },
+    {
+      "description": "Correlation ID",
+      "name": "correlation_id",
+      "type": "text"
+    },
+    {
+      "description": "Delivered",
+      "name": "delivered",
+      "type": "number"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "memory"
+  ],
+  "signature": "5SBTrvfcaJEQ/2Q97Xatn7VHckpOZkoB7sqZyRtDPy7TIgLCQJqLZLEr2HTxVuf+I+dwOPwWu2R8mmd7PaEPDA==",
+  "tags": [
+    "interface",
+    "messaging",
+    "events",
+    "core"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "{\"topic\": \"chat.response\", \"payload\": {}}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "publish",
+        "subscribe",
+        "request",
+        "respond",
+        "get_topology"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Default Timeout",
+      "name": "default_timeout",
+      "widget": "number"
+    },
+    {
+      "label": "Max Pending",
+      "name": "max_pending",
+      "widget": "number"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'event_bus' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/event_bus",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

@@ -1,0 +1,112 @@
+{
+  "author": "Cerebrum Team",
+  "description": "SHA256/MD5 hashing and metadata extraction for files",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "9a44860e234df898f3719a3bd6984138a6a011eee044a155efde5248b9574a3d",
+    "block.py": "5eaf59ba17e4b9b71041b8b9b8e6be0c444fd5c53d317f96880a647af639f86f"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/file_hasher:latest",
+    "type": "docker"
+  },
+  "id": "file_hasher",
+  "inputs": [
+    {
+      "description": "/path/to/file.pdf",
+      "name": "input",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "sha256",
+      "description": "Configuration parameter: default_algorithm",
+      "name": "default_algorithm",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 8192,
+      "description": "Configuration parameter: chunk_size",
+      "name": "chunk_size",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 0,
+  "name": "File Hasher",
+  "outputs": [
+    {
+      "description": "SHA256",
+      "name": "sha256",
+      "type": "text"
+    },
+    {
+      "description": "MD5",
+      "name": "md5",
+      "type": "text"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "signature": "hwfC8rOBt8vLJacmY0BDYjkt1ioiodwENB2DL/iZ5ZHNaFlS+ahL85GC5OdANNe+n35NljpW6jVv0GcsVsVEBg==",
+  "tags": [
+    "infrastructure",
+    "security",
+    "hash",
+    "metadata"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "/path/to/file.pdf",
+      "name": "input",
+      "widget": "text"
+    },
+    {
+      "label": "Default Algorithm",
+      "name": "default_algorithm",
+      "widget": "text"
+    },
+    {
+      "label": "Chunk Size",
+      "name": "chunk_size",
+      "widget": "number"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
+}

@@ -50,23 +50,28 @@ def test_cloner_stocks_kit_packs_next_to_vendored_blocks(tmp_path):
         blueprint=None,
         plan=None,
         blocks_root=None,
-        state={"resolved_blocks": ("analytics", "dashboard")},
+        state={"resolved_blocks": ("estate_registry", "estate_maintenance")},
     )
     result = run_cloner(ctx)
     assert result.ok, result.detail
 
     dest = ws.destination
-    assert (dest / "vendor" / "blocks" / "analytics" / "block.py").is_file()
-    manifest = dest / "kits" / "platform" / "manifest.json"
-    assert manifest.is_file(), "CLONER did not stock kits/platform"
+    assert (dest / "vendor" / "blocks" / "estate_registry" / "block.py").is_file()
+    manifest = dest / "kits" / "private_estate_operations" / "manifest.json"
+    assert manifest.is_file(), "CLONER did not stock kits/private_estate_operations"
     body = json.loads(manifest.read_text(encoding="utf-8"))
-    assert body["id"] == "platform"
-    assert "analytics" in body["product_blocks"]
-    assert body["vendored_blocks"]["analytics"] == "vendor/blocks/analytics"
+    assert body["id"] == "private_estate_operations"
+    assert "estate_registry" in body["product_blocks"]
+    assert (
+        body["vendored_blocks"]["estate_registry"]
+        == "vendor/blocks/estate_registry"
+    )
 
     lock = json.loads((dest / "blocks.lock.json").read_text(encoding="utf-8"))
     assert "kits" in lock
-    assert lock["kits"]["platform"]["path"] == "kits/platform"
+    assert lock["kits"]["private_estate_operations"]["path"] == (
+        "kits/private_estate_operations"
+    )
 
 
 def test_generator_copies_kits_and_export_zip_lists_them(tmp_path):

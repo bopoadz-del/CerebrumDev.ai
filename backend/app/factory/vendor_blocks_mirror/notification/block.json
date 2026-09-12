@@ -1,10 +1,228 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Send notifications via Email, Webhook, Slack, or MCP",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "ffc09eb2019c89be5901bc548a19164425ff03258b45a0ba5d23f90146df9e52",
+    "block.py": "54b89f6527312074e29a1c5504bd0a6cc437dabd7f78b437c38baf4896c4fd4e"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/notification:latest",
+    "type": "docker"
+  },
   "id": "notification",
-  "name": "notification",
+  "inputs": [
+    {
+      "description": "{\"channel\": \"email\", \"to\": \"ops@example.com\", \"message\": \"Hello\"}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "send",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "send",
+        "broadcast",
+        "health"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: sendgrid_api_key",
+      "name": "sendgrid_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: smtp_host",
+      "name": "smtp_host",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 587,
+      "description": "Configuration parameter: smtp_port",
+      "name": "smtp_port",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: smtp_user",
+      "name": "smtp_user",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: smtp_pass",
+      "name": "smtp_pass",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: slack_webhook_url",
+      "name": "slack_webhook_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "cerebrum@localhost",
+      "description": "Configuration parameter: default_from_email",
+      "name": "default_from_email",
+      "required": false,
+      "type": "string"
+    }
+  ],
+  "layer": 2,
+  "name": "Notification",
+  "outputs": [
+    {
+      "description": "Channel",
+      "name": "channel",
+      "type": "text"
+    },
+    {
+      "description": "Sent",
+      "name": "sent",
+      "type": "boolean"
+    },
+    {
+      "description": "Message ID",
+      "name": "message_id",
+      "type": "text"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "signature": "S98VInJDoKrLn+iaXhENRfwrbKSVNg9MzM1LORS/HmR/dAUHpDUMgWCwhhZ/bwg4DIeDd3X8nE+ZLIlJlZ7MBA==",
+  "tags": [
+    "notification",
+    "messaging",
+    "integration",
+    "core"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "{\"channel\": \"email\", \"to\": \"ops@example.com\", \"message\": \"Hello\"}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "send",
+        "broadcast",
+        "health"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Sendgrid Api Key",
+      "name": "sendgrid_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Smtp Host",
+      "name": "smtp_host",
+      "widget": "text"
+    },
+    {
+      "label": "Smtp Port",
+      "name": "smtp_port",
+      "widget": "number"
+    },
+    {
+      "label": "Smtp User",
+      "name": "smtp_user",
+      "widget": "text"
+    },
+    {
+      "label": "Smtp Pass",
+      "name": "smtp_pass",
+      "widget": "text"
+    },
+    {
+      "label": "Slack Webhook Url",
+      "name": "slack_webhook_url",
+      "widget": "text"
+    },
+    {
+      "label": "Default From Email",
+      "name": "default_from_email",
+      "widget": "text"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'notification' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/notification",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "network",
+      "scope": "http.outbound"
+    },
+    {
+      "kind": "credential",
+      "scope": "env"
+    },
+    {
+      "kind": "block",
+      "scope": "peer"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "network",
+      "scope": "smtp.outbound"
+    },
+    {
+      "kind": "email",
+      "scope": "outbound"
+    },
+    {
+      "kind": "notification",
+      "scope": "outbound"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    },
+    {
+      "id": "missing_credential",
+      "check": "fails loud when a required credential or key is absent",
+      "status": "failed"
+    }
+  ]
 }

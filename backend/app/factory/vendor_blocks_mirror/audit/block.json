@@ -3,7 +3,7 @@
   "description": "",
   "digests": {
     "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
-    "block.json": "c351001167c063f33319383beb268b78e4cb14feb73cff1b5e8b1ef5eeeaed61",
+    "block.json": "b1f2a4ec2ad7f04b2faba8f74606225fc81976e54ded253d91115c8a40093b38",
     "block.py": "aad94861d5f61fcdf76281da62d8eccadcc6d0e2617e2587c9e1abfa79c2353a"
   },
   "execution": {
@@ -94,13 +94,14 @@
     "database",
     "auth"
   ],
-  "signature": "7sCAZEM4IqXoUfu/BF0EOsf59RDZOPUBQW7GHKsLOjvIXu6Hjk06XtPBilcCjI0HTDKZypQuxwV+8uvcSDlbDA==",
+  "signature": "cl2OpQerFeCM6lRqpMDYPfamm5IYuKArcPwDnS8u9Q82U9sJR+EcGkzTRmVYabgzUN1yBdG97n+bUmQxO0NqBQ==",
   "tags": [
     "security",
     "compliance",
     "audit",
     "enterprise"
   ],
+  "trust_tier": "platform",
   "ui_schema": [
     {
       "label": "JSON payload for the selected action",
@@ -146,5 +147,37 @@
       "widget": "json"
     }
   ],
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "database",
+      "scope": "sql"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "database",
+      "scope": "sql"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

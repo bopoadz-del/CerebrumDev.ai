@@ -1,10 +1,189 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Parse \u2192 Reason \u2192 Map pipeline for technical document intelligence",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "6ff2f9d92d673561dcfffe1527bc00a8e43f98133fe194c92c8878eb44601c28",
+    "block.py": "cd38b29fc7f53f8eac94f33d9367098ccadb15a3dc93a3bd9a2ed6884ea91b91"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/document_engine:latest",
+    "type": "docker"
+  },
   "id": "document_engine",
-  "name": "document_engine",
+  "inputs": [
+    {
+      "description": "Upload BOD, RFP, or spec documents...",
+      "name": "input",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: extract_tables",
+      "name": "extract_tables",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: extract_glossary",
+      "name": "extract_glossary",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": "yaml",
+      "description": "Configuration parameter: output_format",
+      "name": "output_format",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: use_platform_pdf",
+      "name": "use_platform_pdf",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: use_platform_ocr",
+      "name": "use_platform_ocr",
+      "required": false,
+      "type": "boolean"
+    }
+  ],
+  "layer": 3,
+  "name": "Document Engine",
+  "outputs": [
+    {
+      "description": "Glossary Terms",
+      "name": "glossary",
+      "type": "list"
+    },
+    {
+      "description": "Requirements",
+      "name": "requirements",
+      "type": "list"
+    },
+    {
+      "description": "Constraints",
+      "name": "constraints",
+      "type": "list"
+    },
+    {
+      "description": "Schedule Targets",
+      "name": "schedule_targets",
+      "type": "list"
+    },
+    {
+      "description": "Equipment Specs",
+      "name": "equipment_specs",
+      "type": "list"
+    },
+    {
+      "description": "Risks",
+      "name": "risks",
+      "type": "list"
+    },
+    {
+      "description": "Downstream Feed",
+      "name": "downstream",
+      "type": "object"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "pdf",
+    "ocr"
+  ],
+  "signature": "Kr6VELahiM+S+eoZr/Qv8J67ozNoTVpsFul8LdmDXE1UR9+37+gnba2eRKFJVLdTKGIO3N7UVVwsh48Ie1xgCA==",
+  "tags": [
+    "domain",
+    "construction",
+    "documents",
+    "reasoning",
+    "scheduling"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Upload BOD, RFP, or spec documents...",
+      "name": "input",
+      "widget": "text"
+    },
+    {
+      "label": "Extract Tables",
+      "name": "extract_tables",
+      "widget": "toggle"
+    },
+    {
+      "label": "Extract Glossary",
+      "name": "extract_glossary",
+      "widget": "toggle"
+    },
+    {
+      "label": "Output Format",
+      "name": "output_format",
+      "widget": "text"
+    },
+    {
+      "label": "Use Platform Pdf",
+      "name": "use_platform_pdf",
+      "widget": "toggle"
+    },
+    {
+      "label": "Use Platform Ocr",
+      "name": "use_platform_ocr",
+      "widget": "toggle"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'document_engine' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/document_engine",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "file",
+      "scope": "input_document"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "file",
+      "scope": "local.write"
+    },
+    {
+      "kind": "file",
+      "scope": "temp"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "missing_required_input",
+      "check": "refuses or errors when a required input is absent",
+      "status": "refused"
+    }
+  ]
 }

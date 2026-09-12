@@ -1,19 +1,132 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "2911de6d516cd8153c978d6c0c50b3b3e8f3905475fdeec2e83dc4f6922dcde2",
+    "block.py": "c1c629e04d0806e0b80fa7e4d586b7c52a67c24776b14d89e2935bfe98559e56"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/storage:latest",
+    "type": "docker"
+  },
   "id": "storage",
-  "name": "storage",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'storage' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/storage",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
+      "description": "JSON payload for the selected action",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
       "default": "store",
-      "options": ["store", "retrieve", "exists", "delete"],
-      "description": "Factory-known keep-path default (sess_5782f2264e0e4ff4 run3). RESOURCE_OBLIGATIONS.ensure is store; retrieve/exists/delete are follow-on. Registry / factory adapter has no action input (run() only). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "store",
+        "retrieve",
+        "delete",
+        "exists",
+        "list"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "local",
+      "description": "Configuration parameter: backend",
+      "name": "backend",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "./data/storage",
+      "description": "Configuration parameter: data_dir",
+      "name": "data_dir",
+      "required": false,
+      "type": "string"
     }
-  ]
+  ],
+  "layer": 2,
+  "name": "Storage",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "config"
+  ],
+  "signature": "/ywoykFcAJoRtKnB62og2L15pU57drUvClMqle2Wj7Mw6CzLok4Z+Bx8BELT8w/ivJ/QBKcoK0+TPhOEv2pSAQ==",
+  "tags": [
+    "storage",
+    "files",
+    "core"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "store",
+        "retrieve",
+        "delete",
+        "exists",
+        "list"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Backend",
+      "name": "backend",
+      "widget": "text"
+    },
+    {
+      "label": "Data Dir",
+      "name": "data_dir",
+      "widget": "text"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "file",
+      "scope": "local.write"
+    }
+  ],
+  "never": [],
+  "acceptance": []
 }

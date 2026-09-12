@@ -1,19 +1,132 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Extract grade requirements, material specs, and compliance flags from specification PDFs",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "a5f3bd96bfb9905b848f4f73602c01c1e4cfe575965c9654fad3f6e3f971bc96",
+    "block.py": "a22f9a90d487eea7f697d15ca2917f212b5990db027aceb9b0856f0bc776a947"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/spec_analyzer:latest",
+    "type": "docker"
+  },
   "id": "spec_analyzer",
-  "name": "spec_analyzer",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'spec_analyzer' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/spec_analyzer",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
-      "default": "analyze",
-      "options": ["analyze"],
-      "description": "Factory-known keep-path default (sess_5782f2264e0e4ff4). Registry / factory adapter has no action input (run() only). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+      "description": "Upload project specification PDF...",
+      "name": "input",
+      "required": false,
+      "type": "file"
+    },
+    {
+      "default": 100,
+      "description": "Configuration parameter: max_pages",
+      "name": "max_pages",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": [
+        "astm",
+        "aci",
+        "aisc",
+        "iso",
+        "bs",
+        "en",
+        "saso"
+      ],
+      "description": "Configuration parameter: compliance_standards",
+      "name": "compliance_standards",
+      "required": false,
+      "type": "array"
     }
-  ]
+  ],
+  "layer": 3,
+  "name": "Spec Analyzer",
+  "outputs": [
+    {
+      "description": "Grade Requirements",
+      "name": "grade_requirements",
+      "type": "list"
+    },
+    {
+      "description": "Material Specs",
+      "name": "material_specs",
+      "type": "list"
+    },
+    {
+      "description": "Compliance Flags",
+      "name": "compliance_flags",
+      "type": "list"
+    },
+    {
+      "description": "Sections",
+      "name": "sections_found",
+      "type": "number"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "pdf"
+  ],
+  "signature": "5usmHkNQuN7PRrjwgwdTTIZCTpaQomYnH1V3c8s993RjJ/f1enV4KU4CT1QPxA5cFctfoE8Qym1DKyp+swpfAQ==",
+  "tags": [
+    "domain",
+    "construction",
+    "specs",
+    "pdf",
+    "compliance",
+    "materials"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Upload project specification PDF...",
+      "name": "input",
+      "widget": "file"
+    },
+    {
+      "label": "Max Pages",
+      "name": "max_pages",
+      "widget": "number"
+    },
+    {
+      "label": "Compliance Standards",
+      "name": "compliance_standards",
+      "widget": "json"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "file",
+      "scope": "input_document"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": []
 }

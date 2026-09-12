@@ -143,7 +143,10 @@ def test_the_registrar_reads_a_real_build(tmp_path):
     assert RoleRunner(load_blueprint(SMOKE), out).run().ok
 
     inv = read_inventory(tmp_path / "platforms")
-    assert {r.block_id for r in inv.records} == {"analytics", "dashboard"}
+    assert {r.block_id for r in inv.records} == {
+        "estate_registry",
+        "estate_maintenance",
+    }
     assert all(r.product_id == "runner-smoke" for r in inv.records)
     # 1f: nothing is unpinned any more, and the mirror pins by content.
     assert all(r.revision and r.revision != "unpinned" for r in inv.records)

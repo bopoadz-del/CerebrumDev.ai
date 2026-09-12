@@ -1,9 +1,9 @@
 {
   "author": "Cerebrum Team",
-  "description": "P1_OFFLINE_STRICT: local/scripted OCR and scripted structure. Cloud LLM keys and Ollama are unused. Receive images from any client, OCR extract, AI structure, vector store",
+  "description": "Receive images from any client, OCR extract, AI structure, vector store",
   "digests": {
     "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
-    "block.json": "c9c02cee1f2fa7e677f7a48081bd207dc48682a41da8f2212e11850dcd1193a1",
+    "block.json": "afce729bcaf510bea5165ad9732a7d4fe338f0732bf7ac894f91a41317e578ce",
     "block.py": "d92c96a63046ec7dd62667eeb4291dcce52c17ca9c2af71d9514acef71a093f1"
   },
   "execution": {
@@ -12,13 +12,6 @@
   },
   "id": "capture",
   "inputs": [
-    {
-      "name": "action",
-      "type": "string",
-      "default": "extract",
-      "options": ["extract"],
-      "description": "Factory-known keep-path default (sess_e8e4ab66e6dd4765 / sess_d10dfc28). Live Store vendor block.json has OCR-config inputs only; InsureDistribute Store-green zip emitted action=extract. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
-    },
     {
       "description": "Upload or push an image to capture and structure...",
       "name": "input",
@@ -40,21 +33,21 @@
       "type": "string"
     },
     {
-      "default": "none",
+      "default": "deepseek",
       "description": "Configuration parameter: llm_provider",
       "name": "llm_provider",
       "required": false,
       "type": "string"
     },
     {
-      "default": "",
+      "default": "http://localhost:11434",
       "description": "Configuration parameter: ollama_base_url",
       "name": "ollama_base_url",
       "required": false,
       "type": "string"
     },
     {
-      "default": "",
+      "default": "llama3.2:3b",
       "description": "Configuration parameter: ollama_model",
       "name": "ollama_model",
       "required": false,
@@ -75,14 +68,14 @@
       "type": "string"
     },
     {
-      "default": "",
+      "default": "deepseek-chat",
       "description": "Configuration parameter: deepseek_model",
       "name": "deepseek_model",
       "required": false,
       "type": "string"
     },
     {
-      "default": "",
+      "default": "anthropic/claude-3.5-sonnet",
       "description": "Configuration parameter: openrouter_model",
       "name": "openrouter_model",
       "required": false,
@@ -96,21 +89,21 @@
       "type": "string"
     },
     {
-      "default": "",
+      "default": "claude-3-5-sonnet-20241022",
       "description": "Configuration parameter: anthropic_model",
       "name": "anthropic_model",
       "required": false,
       "type": "string"
     },
     {
-      "default": "",
+      "default": "http://localhost:8001",
       "description": "Configuration parameter: vector_db_url",
       "name": "vector_db_url",
       "required": false,
       "type": "string"
     },
     {
-      "default": false,
+      "default": true,
       "description": "Configuration parameter: store_captures",
       "name": "store_captures",
       "required": false,
@@ -168,7 +161,7 @@
   "requires": [
     "vector_search"
   ],
-  "signature": "Q8S2TXmTmQt3QhzfOm5iCJi6Ik/SNc3amXeQAr5jK2dvxLNgNiJz0VgzHySEVzC2Veysh6QY/cimNLFqCTVjBw==",
+  "signature": "vzl0iw/ohsbwYxBYvqrGGPPoXc0JKhlisO/H4cMNU6qW2erc4C23qaPbY9KT/0HcN1m4TprNQGD/nL6Jn3fxAg==",
   "tags": [
     "capture",
     "ocr",
@@ -177,6 +170,7 @@
     "multimodal",
     "knowledge"
   ],
+  "trust_tier": "platform",
   "ui_schema": [
     {
       "label": "Upload or push an image to capture and structure...",
@@ -254,5 +248,62 @@
       "widget": "text"
     }
   ],
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "file",
+      "scope": "input_image"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "network",
+      "scope": "http.outbound"
+    },
+    {
+      "kind": "llm",
+      "scope": "provider"
+    },
+    {
+      "kind": "credential",
+      "scope": "env"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "file",
+      "scope": "local.write"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    },
+    {
+      "id": "missing_credential",
+      "check": "fails loud when a required credential or key is absent",
+      "status": "failed"
+    }
+  ]
 }

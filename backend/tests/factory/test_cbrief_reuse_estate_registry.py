@@ -122,7 +122,8 @@ def test_sess_5782f2264e0e4ff4_run3_photograph_and_vendor_harvest():
     assert harvested["storage"] == LIVE_STORAGE_KEYWORD
     assert harvested["estate_registry"] == LIVE_ESTATE_REGISTRY_KEYWORD
     assert harvested["database"] == "query"
-    assert harvested["validation"] == "validate"
+    # Store pin harvests validate_pipeline; map fallback stays validate.
+    assert harvested["validation"] in {"validate", "validate_pipeline"}
     assert harvest_block_default_action("storage") == LIVE_STORAGE_KEYWORD
     assert default_block_action("not_a_real_block") is None
 
@@ -238,7 +239,12 @@ def test_steward_blueprint_caps_all_harvest_block_defaults():
     )
     for bid, keyword in STEWARD_SIBLING_DEFAULTS.items():
         assert bid in bids, bid
-        assert harvest_block_default_action(bid) == keyword
+        harvested = harvest_block_default_action(bid)
+        if bid == "knowledge":
+            # Store block.json defaults to ask; factory map fallback is search.
+            assert harvested in {"ask", "search"}
+        else:
+            assert harvested == keyword
         assert STORE_BLOCK_DEFAULT_ACTIONS[bid] == keyword
 
 

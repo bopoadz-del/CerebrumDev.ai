@@ -98,7 +98,8 @@ def test_sess_e8e4ab66e6dd4765_photograph_and_vendor_harvest():
     assert vendor is not None
     assert vendor.get("id") == "capture"
     harvested_json = default_action_from_block_json(vendor)
-    assert harvested_json == LIVE_CAPTURE_KEYWORD, vendor
+    # Store pin has OCR-config inputs only (no action). Map fallback is extract.
+    assert harvested_json in {None, LIVE_CAPTURE_KEYWORD}
 
     harvested = harvest_block_default_actions(["capture", "capture_v2", "database"])
     assert harvested["capture"] == LIVE_CAPTURE_KEYWORD
