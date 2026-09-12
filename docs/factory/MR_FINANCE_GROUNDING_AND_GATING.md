@@ -194,3 +194,26 @@ Finance vertical after COLLECTOR+CLONER: GitHub issue `domain:finance`+`handoff`
 4. After each production: update `IMPROVE_LOG.md` and raise next FORBIDDEN/ACCEPTANCE.  
 
 **Canonical copies:** `docs/factory/MR_FINANCE_GROUNDING_AND_GATING.md` (this file) + operator memory.
+
+---
+
+## 9. Absorbed from deep Factory extract (2026-09-12)
+
+### Budget / keys (do not touch without CHADi)
+- S07 ceiling **`CEILING_S=7200`** — FORBIDDEN to touch (`budget_inspect.py` / ORDER).
+- `cli_pivot`: budget frozen pre-dispatch; never `_extend_wall`; default wall 1800s; `DEFAULT_SPEND_USD=0.0`; breach → `BUDGET_EXCEEDED`.
+- New pivot path must **not** fall back to on-box Kimi / `FACTORY_CODE_CLI` authorship.
+- Floor chat stays on OpenRouter; do not point chat at DeepSeek; do not send WRITER through in-process OpenRouter.
+- Keys / Render env: owner-gated; agents must **not** full-replace Render env.
+- Floor chat 401 on `openrouter.ai/.../chat/completions` = refresh `OPENROUTER_API_KEY` (and/or chat LLM vars) on Render — CHADi with me.
+
+### Continue / N3 (critical)
+- After clean receipt → `HANDOFF_TO_N3` (`green=false`).
+- **Continue after HANDOFF = N3 ingest / `n3-reseed`, NOT another WRITER pass.**
+- Floor: `POST .../product/approve` required before generate; `GET .../product/package` export blocked unless acceptance k/k + authorship blockers.
+
+### Content repair policy
+- Content miss (`RECEIPT_INVALID` / `PATHS_VIOLATED`): one re-dispatch with FORBIDDEN echo; second → `BUILD_FAILED` / park (aligns with max 2 repairs).
+
+### DOMAIN_HANDOFF note
+- Code today auto-fires for **finance** verticals only after CLONER (`domain_handoff.py`). Optional webhook. Does not authorize spend or path-jail widen.
