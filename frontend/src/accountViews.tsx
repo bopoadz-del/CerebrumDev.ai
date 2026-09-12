@@ -36,6 +36,7 @@ import {
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import { LevelGradeStrip } from './levelGradeView'
 import { LoadingSkeleton } from './LoadingSkeleton'
+import { displayProductName } from './productDisplay'
 
 /* -------------------------------- Platforms -------------------------------- */
 
@@ -118,10 +119,15 @@ export function Platforms({
   }, [watchingBuild, sessionId])
 
   const bp = design?.blueprint as
-    | { product_name?: string; vertical?: string; capabilities?: unknown[] }
+    | { product_name?: string; name?: string; vertical?: string; capabilities?: unknown[] }
     | null
     | undefined
   const gen = design?.generation
+  const productTitle = displayProductName({
+    productName: bp?.product_name,
+    altName: bp?.name,
+    productId: gen?.product_id,
+  })
   const nRequired =
     nRequiredFromProductInputs(bp) ?? nRequiredFromProductInputs(design?.plan)
   const liveBuild = withClientStall(
@@ -253,7 +259,7 @@ export function Platforms({
       ) : (
         <div className="panel">
           <h3>
-            {gen.product_id}{' '}
+            <span data-testid="platforms-product-title">{productTitle}</span>{' '}
             <span className="mono" data-testid="platforms-acceptance-score">
               {formatAcceptanceScore(liveBuild)}
             </span>

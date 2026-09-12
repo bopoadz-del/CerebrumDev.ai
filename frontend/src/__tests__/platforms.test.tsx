@@ -123,7 +123,9 @@ describe('Your Platforms — coding-agent build', () => {
       onProgress(building)
     })
     render(<Platforms sessionId="sess_ui" />)
-    expect(await screen.findByText('vineyard')).toBeInTheDocument()
+    expect(await screen.findByTestId('platforms-product-title')).toHaveTextContent(
+      'Vineyard Platform',
+    )
     expect(screen.getByText('runner')).toBeInTheDocument()
     expect(await screen.findByText(/Coding agent at work — WRITER 3\/5/)).toBeInTheDocument()
     expect(screen.getByText(/2\/4 handlers/)).toBeInTheDocument()
@@ -235,6 +237,34 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.getByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Pilot-ready')
     expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    expect(screen.getByTestId('platforms-product-title')).toHaveTextContent('Vineyard Platform')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Vineyard Platform')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('12/12')
+    expect(screen.getByRole('heading', { level: 3 })).not.toHaveTextContent(/^product\b/i)
+  })
+
+  it('titles the finished card with blueprint.product_name, not a generic product_id slug', async () => {
+    getMock.mockResolvedValue({
+      generation: { ...GENERATION, product_id: 'product' },
+      blueprint: { product_name: 'FinanceOps', vertical: 'finance' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+        acceptance: { passed: 12, total: 12, ok: true },
+      })
+    })
+    render(<Platforms sessionId="sess_48a72e0d1cac44ae" />)
+    expect(await screen.findByTestId('platforms-product-title')).toHaveTextContent('FinanceOps')
+    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    const title = screen.getByRole('heading', { level: 3 })
+    expect(title).toHaveTextContent('FinanceOps')
+    expect(title).toHaveTextContent('12/12')
+    expect(title).not.toHaveTextContent(/^product\s+12\/12$/i)
+    expect(screen.queryByText('product 12/12')).not.toBeInTheDocument()
   })
 
   it('shows k/12 and refuses Export when authorship is green but acceptance is not k/k', async () => {
