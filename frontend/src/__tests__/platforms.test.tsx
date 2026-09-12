@@ -259,7 +259,9 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_48a72e0d1cac44ae" />)
     expect(await screen.findByTestId('platforms-product-title')).toHaveTextContent('FinanceOps')
-    expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    await waitFor(() => {
+      expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    })
     const title = screen.getByRole('heading', { level: 3 })
     expect(title).toHaveTextContent('FinanceOps')
     expect(title).toHaveTextContent('12/12')
@@ -864,7 +866,9 @@ describe('Your Platforms — coding-agent build', () => {
       onProgress(stickyNeedFive)
     })
     render(<Platforms sessionId="sess_4591d5cc45d04fe1" />)
-    expect(await screen.findByText('residential-lettings')).toBeInTheDocument()
+    expect(await screen.findByTestId('platforms-product-title')).toHaveTextContent(
+      'Residential Lettings Platform',
+    )
     expect(await screen.findByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Store-green')
     expect(screen.queryByTestId('platforms-failed-pill')).not.toBeInTheDocument()
     expect(screen.queryByTestId('platforms-failed-badge')).not.toBeInTheDocument()
