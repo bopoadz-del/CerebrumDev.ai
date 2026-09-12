@@ -4,6 +4,7 @@ POST /v1/sessions/{id}/product/draft
 POST /v1/sessions/{id}/product/plan
 POST /v1/sessions/{id}/product/approve
 POST /v1/sessions/{id}/product/generate
+POST /v1/sessions/{id}/product/n3-reseed
 POST /v1/sessions/{id}/product/coder-control
 POST /v1/sessions/{id}/product/pilot
 GET  /v1/sessions/{id}/product
@@ -142,6 +143,24 @@ class GenerateBody(BaseModel):
     output_dir: Optional[str] = None
     #: ``pilot`` reopens TESTER/STORE on the existing workspace (same hash).
     cycle: Optional[Literal["code", "pilot"]] = None
+    #: One-time HANDOFF_TO_N3 reseed + store-gate ingest. Never launches WRITER/BA.
+    n3_reseed: bool = False
+    builds_sha: Optional[str] = None
+    builds_branch: Optional[str] = None
+    builds_owner: Optional[str] = None
+    builds_repo: Optional[str] = None
+    cli_authored_ids: Optional[list[str]] = None
+
+
+class N3ReseedBody(BaseModel):
+    """Dedicated body for ``POST .../product/n3-reseed`` (same as generate flag)."""
+
+    builds_sha: str = Field(..., min_length=7)
+    builds_branch: str = Field(..., min_length=1)
+    cli_authored_ids: list[str] = Field(..., min_length=1)
+    builds_owner: Optional[str] = None
+    builds_repo: Optional[str] = None
+    output_dir: Optional[str] = None
 
 
 class ModeBody(BaseModel):
@@ -578,6 +597,97 @@ def run_pilot_cycle(
         _raise_product_error(session_id, state, exc)
 
 
+
+def _run_n3_reseed(
+    session_id: str,
+    state,
+    *,
+    builds_sha: str,
+    builds_branch: str,
+    cli_authored_ids: list[str],
+    builds_owner: Optional[str] = None,
+    builds_repo: Optional[str] = None,
+    output_dir: Optional[str] = None,
+    principal: Principal,
+) -> Dict[str, Any]:
+    """Stamp HANDOFF then ingest store-gate. Never calls generate_product."""
+    from app.factory.build.n3_store_gate import HandoffReseedError
+    from app.factory.platform_chat_flow import has_running_build, reseed_and_ingest_n3
+
+    if has_running_build(state):
+        raise HTTPException(
+            status_code=409,
+            detail="a build is already in progress — poll /product/build-status",
+        )
+    if not state.product_design.blueprint:
+        raise HTTPException(status_code=400, detail="no blueprint")
+    if not state.product_design.blueprint_approved:
+        raise HTTPException(
+            status_code=400, detail="approve blueprint before n3_reseed"
+        )
+    if output_dir:
+        bp = ProductBlueprint.model_validate(state.product_design.blueprint)
+        out = safe_output_dir(output_dir, bp.product_id)
+        gen = dict(state.product_design.generation or {})
+        gen["output_dir"] = str(out)
+        gen.setdefault("product_id", bp.product_id)
+        gen.setdefault("engine", "runner")
+        state.product_design.generation = gen
+    try:
+        result = reseed_and_ingest_n3(
+            state,
+            builds_sha=builds_sha,
+            builds_branch=builds_branch,
+            cli_authored_ids=cli_authored_ids,
+            builds_owner=builds_owner or "bopoadz-del",
+            builds_repo=builds_repo or "cerebrum-builds",
+            triggered_by="product_n3_reseed",
+        )
+    except HandoffReseedError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    state.product_design.last_error = None
+    if not result.get("ok"):
+        state.product_design.last_error = result.get("summary")
+    update_session(session_id, state)
+    return {
+        "ok": bool(result.get("ok")),
+        "n3_reseed": True,
+        "n3_ingest": True,
+        "summary": result.get("summary"),
+        "reseed": result.get("reseed"),
+        "n3": result.get("n3"),
+        "generation": state.product_design.generation,
+        "build": result.get("build"),
+    }
+
+
+
+@router.post("/{session_id}/product/n3-reseed")
+def n3_reseed_product(
+    session_id: str,
+    body: N3ReseedBody,
+    principal: Principal = Depends(require_entitled),
+) -> Dict[str, Any]:
+    """Safe HANDOFF reseed + store-gate ingest. Does not launch WRITER/BA."""
+    state = _require_session(session_id, principal)
+    try:
+        return _run_n3_reseed(
+            session_id,
+            state,
+            builds_sha=body.builds_sha,
+            builds_branch=body.builds_branch,
+            cli_authored_ids=list(body.cli_authored_ids),
+            builds_owner=body.builds_owner,
+            builds_repo=body.builds_repo,
+            output_dir=body.output_dir,
+            principal=principal,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_product_error(session_id, state, exc)
+
+
 @router.post("/{session_id}/product/generate")
 def generate_approved_product(
     session_id: str,
@@ -585,9 +695,32 @@ def generate_approved_product(
     principal: Principal = Depends(require_entitled),
 ) -> Dict[str, Any]:
     state = _require_session(session_id, principal)
+    body = body or GenerateBody()
+    if body.n3_reseed:
+        if not body.builds_sha or not body.builds_branch or not body.cli_authored_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "n3_reseed requires builds_sha, builds_branch, "
+                    "and cli_authored_ids"
+                ),
+            )
+        try:
+            return _run_n3_reseed(
+                session_id,
+                state,
+                builds_sha=body.builds_sha,
+                builds_branch=body.builds_branch,
+                cli_authored_ids=list(body.cli_authored_ids),
+                builds_owner=body.builds_owner,
+                builds_repo=body.builds_repo,
+                output_dir=body.output_dir,
+                principal=principal,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _raise_product_error(session_id, state, exc)
     require_remaining(principal.account_id, "generation")
     require_llm_rate(principal, "generate")
-    body = body or GenerateBody()
     if not state.product_design.blueprint_approved:
         raise HTTPException(status_code=400, detail="approve blueprint before generate")
     if not state.product_design.blueprint:

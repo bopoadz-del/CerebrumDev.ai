@@ -465,3 +465,168 @@ def test_report_maps_n3_floor_aliases():
     assert "authorship_floor" in names
     assert report.ok is True
     assert acceptance_is_kk(report) is True
+
+
+def test_reseed_handoff_ledger_stamps_like_helper(tmp_path):
+    from app.factory.build.n3_store_gate import reseed_handoff_ledger
+
+    out = tmp_path / "sessions" / "sess_02af51453b364e3f" / "finance-ops"
+    stamped = reseed_handoff_ledger(
+        out,
+        builds_sha=SHA,
+        builds_branch=BRANCH,
+        cli_authored_ids=IDS,
+    )
+    assert stamped["stamped"] is True
+    assert handoff_awaiting_n3(out) is True
+    status = build_status(out)
+    assert status["honesty"] == HANDOFF_TO_N3
+    assert status["n3_waiting"] is True
+    again = reseed_handoff_ledger(
+        out,
+        builds_sha=SHA,
+        builds_branch=BRANCH,
+        cli_authored_ids=IDS,
+    )
+    assert again["stamped"] is False
+    assert again["already_awaiting"] is True
+
+
+def test_reseed_and_ingest_does_not_call_generate_product(tmp_path, monkeypatch):
+    from app.factory import platform_chat_flow
+    from app.factory.build.n3_store_gate import ingest_n3_store_gate as real_ingest
+
+    out = tmp_path / "sessions" / "sess_02af51453b364e3f" / "finance-ops"
+    # Wiped ledger — generation points at empty workspace.
+    out.mkdir(parents=True)
+    state = _session_for(out)
+    # Clear the pre-stamped ledger from helper: wipe to simulate #426 loss.
+    for child in out.iterdir():
+        if child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            import shutil
+
+            shutil.rmtree(child)
+    assert not (out / "build_ledger.jsonl").exists()
+    called = []
+
+    def boom(*_a, **_k):
+        called.append("generate")
+        raise AssertionError("generate_product must not run on n3_reseed")
+
+    def ingest_live(output_dir, wait=False, **kwargs):
+        called.append("ingest")
+        assert wait is False
+        return real_ingest(
+            output_dir, wait=False, env=ENV, opener=StatusOpener()
+        )
+
+    monkeypatch.setattr(platform_chat_flow, "generate_product", boom)
+    monkeypatch.setattr(
+        "app.factory.build.n3_store_gate.ingest_n3_store_gate", ingest_live
+    )
+    result = platform_chat_flow.reseed_and_ingest_n3(
+        state,
+        builds_sha=SHA,
+        builds_branch=BRANCH,
+        cli_authored_ids=IDS,
+    )
+    assert called == ["ingest"]
+    assert result.get("n3_reseed") is True
+    assert result.get("n3_ingest") is True
+    assert result["n3"]["ok"] is True
+    assert handoff_awaiting_n3(out) is False
+    status = build_status(out)
+    assert status["state"] == "succeeded"
+    assert status["honesty"] == N3_STORE_GATE_GREEN
+    assert "STORE PASS" in status["detail"]
+    assert not any(item == "generate" for item in called)
+
+
+def test_generate_n3_reseed_flag_skips_generate_product(tmp_path, monkeypatch):
+    """POST /product/generate {n3_reseed:true} must not call generate_product."""
+    from fastapi.testclient import TestClient
+
+    from app.core.session_store import create_session, get_session, update_session
+    from app.main import app
+    from app.factory.build.n3_store_gate import ingest_n3_store_gate as real_ingest
+
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_OUTPUTS_ROOT", str(tmp_path / "factory_outputs"))
+    monkeypatch.setenv("BILLING_ENFORCEMENT", "0")
+    monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
+    monkeypatch.setenv("CEREBRUM_BUILDS_GITHUB_TOKEN", "builds-test-token")
+    monkeypatch.setenv("CEREBRUM_BUILDS_REPO", "bopoadz-del/cerebrum-builds")
+    monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+
+    sid = "sess_n3_reseed_api"
+    create_session(sid, "tester")
+    state = get_session(sid)
+    assert state is not None
+    out = tmp_path / "factory_outputs" / "sessions" / sid / "finance-ops"
+    out.mkdir(parents=True)
+    seeded = _session_for(out)
+    state.product_design = seeded.product_design
+    # Wipe ledger — only generation pointer remains.
+    for path in out.rglob("*"):
+        if path.is_file():
+            path.unlink()
+    update_session(sid, state)
+
+    called = []
+
+    def boom(*_a, **_k):
+        called.append("generate")
+        raise AssertionError("generate_product must not run on n3_reseed")
+
+    def ingest_live(output_dir, wait=False, **kwargs):
+        called.append("ingest")
+        return real_ingest(
+            output_dir, wait=False, env=ENV, opener=StatusOpener()
+        )
+
+    monkeypatch.setattr(
+        "app.routers.session_product.generate_product", boom
+    )
+    monkeypatch.setattr(
+        "app.factory.product_architect.generate_product", boom
+    )
+    monkeypatch.setattr(
+        "app.factory.platform_chat_flow.generate_product", boom
+    )
+    monkeypatch.setattr(
+        "app.factory.build.n3_store_gate.ingest_n3_store_gate", ingest_live
+    )
+
+    client = TestClient(app)
+    r = client.post(
+        f"/v1/sessions/{sid}/product/generate",
+        json={
+            "n3_reseed": True,
+            "builds_sha": SHA,
+            "builds_branch": BRANCH,
+            "cli_authored_ids": IDS,
+            "builds_owner": "bopoadz-del",
+            "builds_repo": "cerebrum-builds",
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body.get("n3_reseed") is True
+    assert body.get("n3_ingest") is True
+    assert body["n3"]["ok"] is True
+    assert called == ["ingest"]
+    assert "generate" not in called
+
+    r2 = client.post(
+        f"/v1/sessions/{sid}/product/n3-reseed",
+        json={
+            "builds_sha": SHA,
+            "builds_branch": BRANCH,
+            "cli_authored_ids": IDS,
+        },
+    )
+    # Already green after first ingest — reseed refuses or already awaiting
+    # path. Either 400 (refuse green) or 200 with already.
+    assert r2.status_code in (200, 400), r2.text

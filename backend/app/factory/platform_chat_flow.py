@@ -39,7 +39,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -1130,6 +1130,108 @@ def ingest_n3_store_gate_reply(
         "summary": summary,
         "stream_delta": False,
         "n3_ingest": True,
+        "n3": result.to_dict(),
+        "generation": pd.generation,
+        "build": st,
+        "triggered_by": triggered_by,
+        "resumed": True,
+    }
+
+
+def reseed_and_ingest_n3(
+    state: Any,
+    *,
+    builds_sha: str,
+    builds_branch: str,
+    cli_authored_ids: Sequence[str],
+    builds_owner: str = "bopoadz-del",
+    builds_repo: str = "cerebrum-builds",
+    output_root: Optional[Path] = None,
+    triggered_by: str = "n3_reseed",
+) -> Dict[str, Any]:
+    """One-time HANDOFF reseed then store-gate ingest. Never calls generate_product.
+
+    For workspaces whose ledger was wiped before factory_outputs persistence
+    (#426). Stamps HANDOFF_TO_N3 like the N3 test helper, then
+    ``ingest_n3_store_gate(wait=False)`` / starts the waiter. Fail-closed when
+    store-gate is not 12/12 success.
+    """
+    from app.factory.build.n3_store_gate import (
+        HandoffReseedError,
+        ingest_n3_store_gate,
+        n3_ingest_live,
+        reseed_handoff_ledger,
+        start_n3_ingest_job,
+    )
+    from app.factory.build_jobs import build_status
+
+    pd = getattr(state, "product_design", None)
+    if pd is None or not getattr(pd, "blueprint", None):
+        raise ValueError("no blueprint — draft and approve before n3_reseed")
+
+    bp = ProductBlueprint.model_validate(pd.blueprint)
+    out = _generation_output_dir(state, output_root)
+    if out is None:
+        out = _session_output(state.session_id, bp.product_id, output_root)
+    inputs_hash = str((pd.generation or {}).get("inputs_hash") or "n3_handoff_reseed")
+
+    try:
+        stamped = reseed_handoff_ledger(
+            out,
+            builds_sha=builds_sha,
+            builds_branch=builds_branch,
+            cli_authored_ids=cli_authored_ids,
+            builds_owner=builds_owner,
+            builds_repo=builds_repo,
+            product_id=bp.product_id,
+            inputs_hash=inputs_hash,
+        )
+    except HandoffReseedError:
+        raise
+
+    result = ingest_n3_store_gate(out, wait=False, session_id=state.session_id)
+    if result.pending and not n3_ingest_live(out):
+        start_n3_ingest_job(out, session_id=state.session_id)
+
+    st = build_status(
+        out,
+        blueprint=getattr(pd, "blueprint", None),
+        plan=getattr(pd, "plan", None),
+    )
+    fake = {
+        "output_dir": str(out),
+        "inputs_hash": inputs_hash,
+        "product_id": bp.product_id,
+        "engine": (pd.generation or {}).get("engine") or "runner",
+        "build": st,
+    }
+    _record_generation(pd, fake, triggered_by=triggered_by, resumed=True)
+
+    if result.ok:
+        summary = (
+            "Reseeded HANDOFF_TO_N3 and ingested cerebrum-builds store-gate "
+            "12/12. Store-green is on the ledger. I did not start WRITER or "
+            "a Background Agent."
+        )
+    elif result.pending:
+        summary = (
+            "Reseeded HANDOFF_TO_N3; polling cerebrum-builds store-gate for "
+            "12/12. I did not re-enter WRITER or launch another Background Agent."
+        )
+    else:
+        summary = (
+            "HANDOFF reseed stamped but store-gate ingest failed closed "
+            f"({result.honesty}: {result.detail}). I did not start another "
+            "coding agent."
+        )
+    return {
+        "ok": result.ok or result.pending,
+        "sse": "generation" if result.ok or result.pending else "info",
+        "summary": summary,
+        "stream_delta": False,
+        "n3_reseed": True,
+        "n3_ingest": True,
+        "reseed": stamped,
         "n3": result.to_dict(),
         "generation": pd.generation,
         "build": st,

@@ -76,7 +76,12 @@ also `mkdir`s that directory and symlinks `/app/factory_outputs` → the disk
 path so session-baked absolute paths and HANDOFF ledgers survive deploys.
 After merge+deploy, Continue on HANDOFF sessions can ingest without WRITER.
 If a ledger was already wiped before this fix, one-time HANDOFF reseed from
-the known builds branch may still be required.
+the known builds branch may still be required via
+``POST /v1/sessions/{id}/product/n3-reseed`` (or
+``POST .../product/generate`` with ``{"n3_reseed":true, "builds_sha",
+"builds_branch", "cli_authored_ids"}``). That path stamps HANDOFF_TO_N3 then
+calls ``ingest_n3_store_gate`` — it never launches WRITER / BA /
+``generate_product``.
 
 
 ## N1a — live Cursor Background Agent
