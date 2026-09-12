@@ -29,11 +29,12 @@ G-floor names above are canonical (`ci_present_full_suite`,
 still uses the pre-G aliases (`ci_present_and_full_suite`,
 `authorship_floor`); that self-grade is not rewritten in this PR.
 
-## CHADi 2026-09-12 — Option A (BA path jail)
+## CHADi 2026-09-12 — Option C Hybrid (two jails)
 
-BA/WRITER enforce (`cli_receipt.writer_allowed_globs`) **may write `tests/**`**.
-12/12 remains cheat-resistance. Still never expand to `vendor/**`,
-`blocks.lock.json`, the ledger, or `.git`.
+Cerebrum-builds / cli-pivot BA (`cli_receipt.ba_allowed_globs`) **may write
+`tests/**`**. In-process Factory WRITER (`authority.py`) stays **sealed off
+`tests/**` until N2**. Do not blanket-expand that jail. 12/12 remains cheat-resistance.
+Still never expand either jail to `vendor/**`, `blocks.lock.json`, the ledger, or `.git`.
 
 ## Forbidden
 

@@ -15,6 +15,7 @@ from app.factory.build.cli_pivot import (
     ExecutorLaunch,
     run_cli_pivot,
 )
+from app.factory.build.authority import AuthorityError, BuildRole, assert_write_allowed
 from app.factory.build.cli_receipt import (
     HANDOFF_TO_N3,
     PATHS_VIOLATED,
@@ -22,6 +23,7 @@ from app.factory.build.cli_receipt import (
     PathsViolated,
     ReceiptInvalid,
     _posix,
+    ba_allowed_globs,
     blueprint_capability_set,
     enforce_receipt,
     handler_relpath,
@@ -145,9 +147,10 @@ def test_posix_keeps_dot_git_and_dot_env():
     assert _posix(".env.example") == ".env.example"
 
 
-def test_writer_allowed_globs_include_tests_not_sealed():
-    """CHADi Option A: BA jail allows tests/**; sealed trees stay out."""
-    allowed = writer_allowed_globs()
+def test_ba_allowed_globs_include_tests_not_sealed():
+    """Option C Hybrid: BA jail allows tests/**; sealed trees stay out."""
+    allowed = ba_allowed_globs()
+    assert allowed == writer_allowed_globs()
     assert "tests/**" in allowed
     assert "app/**" in allowed
     for sealed in (
@@ -160,8 +163,27 @@ def test_writer_allowed_globs_include_tests_not_sealed():
         assert sealed not in allowed
 
 
+def test_in_process_writer_jail_stays_sealed_off_tests(tmp_path):
+    """Option C Hybrid: Factory WRITER lanes do not gain tests/** until N2."""
+    from app.factory.build.authority import ROLE_CONTRACTS
+
+    lanes = [glob for _root, glob in ROLE_CONTRACTS[BuildRole.WRITER].write_lanes]
+    assert "tests/**" not in lanes
+    (tmp_path / "app" / "actions").mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "app" / "actions" / "alpha.py").write_text("# ok\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_alpha.py").write_text("# no\n", encoding="utf-8")
+    assert assert_write_allowed(
+        BuildRole.WRITER, tmp_path / "app" / "actions" / "alpha.py", workspace=tmp_path
+    )
+    with pytest.raises(AuthorityError, match="may not write"):
+        assert_write_allowed(
+            BuildRole.WRITER, tmp_path / "tests" / "test_alpha.py", workspace=tmp_path
+        )
+
+
 def test_writing_under_tests_is_handoff_not_paths_violated():
-    """BA may land tests/** next to handlers (CHADi 2026-09-12 Option A)."""
+    """cli-pivot BA may land tests/** next to handlers (Option C Hybrid)."""
     verdict = enforce_receipt(
         blueprint=_blueprint("alpha"),
         receipt={"cli_authored_ids": ["alpha"]},
