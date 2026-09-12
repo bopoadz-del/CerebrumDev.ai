@@ -1,10 +1,166 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "965c3fac1047841f796664fdd37aa261f2e59d6dc65f71aa8b0b519fce214e2d",
+    "block.py": "0ce849faca61cb5c9bb12fa1a3250f73ce0ccc19c53a2fe67f0e54ec27784349"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/dashboard:latest",
+    "type": "docker"
+  },
   "id": "dashboard",
-  "name": "dashboard",
+  "inputs": [
+    {
+      "description": "JSON payload for the selected action",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "render",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "render",
+        "add_widget",
+        "remove_widget",
+        "update_widget",
+        "get_metrics",
+        "list_widgets",
+        "save_layout",
+        "get_layout",
+        "subscribe_stream",
+        "get_snapshot"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "grid",
+      "description": "Configuration parameter: default_layout",
+      "name": "default_layout",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 30,
+      "description": "Configuration parameter: refresh_interval",
+      "name": "refresh_interval",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 20,
+      "description": "Configuration parameter: max_widgets",
+      "name": "max_widgets",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "light",
+      "description": "Configuration parameter: theme",
+      "name": "theme",
+      "required": false,
+      "type": "string"
+    }
+  ],
+  "layer": 3,
+  "name": "Dashboard",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "auth",
+    "monitoring"
+  ],
+  "signature": "7pZIhMpaiK46A3MLZo8UI5ZlwBrMi6+/0yoQ2B7XL39Tk14duUN+6PGJVaWY1N40BhUF2s9n8HU5Mo0EndQUDA==",
+  "tags": [
+    "ui",
+    "platform",
+    "dashboard",
+    "domain"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "render",
+        "add_widget",
+        "remove_widget",
+        "update_widget",
+        "get_metrics",
+        "list_widgets",
+        "save_layout",
+        "get_layout",
+        "subscribe_stream",
+        "get_snapshot"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Default Layout",
+      "name": "default_layout",
+      "widget": "text"
+    },
+    {
+      "label": "Refresh Interval",
+      "name": "refresh_interval",
+      "widget": "number"
+    },
+    {
+      "label": "Max Widgets",
+      "name": "max_widgets",
+      "widget": "number"
+    },
+    {
+      "label": "Theme",
+      "name": "theme",
+      "widget": "text"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'dashboard' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/dashboard",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

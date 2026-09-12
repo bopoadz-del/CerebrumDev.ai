@@ -1,0 +1,154 @@
+{
+  "author": "Cerebrum Team",
+  "description": "High-speed TTL/LRU cache \u2014 session storage and Redis alternative for edge deployments",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "025ace101ce6095f9e8fe6c55365474f0e453cd00a70e85e5c61a45d7609fca6",
+    "block.py": "f388a7e4103d8cb4bd3250f15fe4f76201215b178fc7dafcb7513d4e24a7925c"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/memory:latest",
+    "type": "docker"
+  },
+  "id": "memory",
+  "inputs": [
+    {
+      "description": "Cache key/value payload, e.g. {\"key\": \"session\", \"value\": {...}}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "get",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "get",
+        "set",
+        "delete",
+        "exists",
+        "flush",
+        "stats",
+        "keys"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 10000,
+      "description": "Max Size",
+      "name": "max_size",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 3600,
+      "description": "Default Ttl",
+      "name": "default_ttl",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 300,
+      "description": "Cleanup Interval",
+      "name": "cleanup_interval",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 1,
+  "name": "Memory",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "config"
+  ],
+  "signature": "RdhFviDhfYiJBgk+V2Kqymj/dR/hELPE+AFkh79RtkYhfzJw2O/B87pKV+sKEi/oKiqf5lwdkIss/VN8IHSzAw==",
+  "tags": [
+    "security",
+    "cache",
+    "infrastructure"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Cache key/value payload, e.g. {\"key\": \"session\", \"value\": {...}}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "get",
+        "set",
+        "delete",
+        "exists",
+        "flush",
+        "stats",
+        "keys"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Max Size",
+      "name": "max_size",
+      "widget": "number"
+    },
+    {
+      "label": "Default Ttl",
+      "name": "default_ttl",
+      "widget": "number"
+    },
+    {
+      "label": "Cleanup Interval",
+      "name": "cleanup_interval",
+      "widget": "number"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "memory",
+      "scope": "cache"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "memory",
+      "scope": "cache"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
+}

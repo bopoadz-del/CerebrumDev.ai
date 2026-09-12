@@ -1,19 +1,275 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Ask questions across stored captures and swarm runs using RAG",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "b3c2795999fa2e6e9aa3f872aa9e092a2f19819dd7864c456ed7def5390a597a",
+    "block.py": "d1dea88780e5c8a02184b6d4c55fa88fb63fed4d3656466bb76e31b66bc7192c"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/knowledge:latest",
+    "type": "docker"
+  },
   "id": "knowledge",
-  "name": "knowledge",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'knowledge' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/knowledge",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
+      "description": "Ask a question about your knowledge base...",
+      "name": "input",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "ask",
+      "description": "Action",
       "name": "action",
-      "type": "string",
-      "default": "search",
-      "options": ["search"],
-      "description": "Factory-known keep-path default. Dual-registered app.blocks._knowledge exposes search_knowledge. Registry / factory adapter has no action input (run() only). Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+      "options": [
+        "ask",
+        "search",
+        "summarize"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "description": "Top K",
+      "name": "top_k",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": "deepseek",
+      "description": "Configuration parameter: llm_provider",
+      "name": "llm_provider",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "http://localhost:11434",
+      "description": "Configuration parameter: ollama_base_url",
+      "name": "ollama_base_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "llama3.2:3b",
+      "description": "Configuration parameter: ollama_model",
+      "name": "ollama_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: deepseek_api_key",
+      "name": "deepseek_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "deepseek-chat",
+      "description": "Configuration parameter: deepseek_model",
+      "name": "deepseek_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "",
+      "description": "Configuration parameter: openrouter_api_key",
+      "name": "openrouter_api_key",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "anthropic/claude-3.5-sonnet",
+      "description": "Configuration parameter: openrouter_model",
+      "name": "openrouter_model",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "http://localhost:8001",
+      "description": "Configuration parameter: vector_db_url",
+      "name": "vector_db_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 5,
+      "description": "Configuration parameter: default_top_k",
+      "name": "default_top_k",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": [
+        "cerebrum_captures",
+        "cerebrum_swarm"
+      ],
+      "description": "Configuration parameter: default_collections",
+      "name": "default_collections",
+      "required": false,
+      "type": "array"
+    }
+  ],
+  "layer": 3,
+  "name": "Knowledge",
+  "outputs": [
+    {
+      "description": "Answer",
+      "name": "answer",
+      "type": "text"
+    },
+    {
+      "description": "Sources",
+      "name": "sources",
+      "type": "json"
+    },
+    {
+      "description": "Confidence",
+      "name": "confidence",
+      "type": "percentage"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "vector_search"
+  ],
+  "signature": "HutT8m1UTqOXYY+2GtY0hEJlCqyoOwqrlqalNmnjpPDY+zO1nCn5/lSkMK1uU84lQrlJTHMjctx0FJjVECY+Ag==",
+  "tags": [
+    "knowledge",
+    "rag",
+    "retrieval",
+    "qa",
+    "memory",
+    "ai"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Ask a question about your knowledge base...",
+      "name": "input",
+      "widget": "text"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "ask",
+        "search",
+        "summarize"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Top K",
+      "name": "top_k",
+      "widget": "number"
+    },
+    {
+      "label": "Llm Provider",
+      "name": "llm_provider",
+      "widget": "text"
+    },
+    {
+      "label": "Ollama Base Url",
+      "name": "ollama_base_url",
+      "widget": "text"
+    },
+    {
+      "label": "Ollama Model",
+      "name": "ollama_model",
+      "widget": "text"
+    },
+    {
+      "label": "Deepseek Api Key",
+      "name": "deepseek_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Deepseek Model",
+      "name": "deepseek_model",
+      "widget": "text"
+    },
+    {
+      "label": "Openrouter Api Key",
+      "name": "openrouter_api_key",
+      "widget": "text"
+    },
+    {
+      "label": "Openrouter Model",
+      "name": "openrouter_model",
+      "widget": "text"
+    },
+    {
+      "label": "Vector Db Url",
+      "name": "vector_db_url",
+      "widget": "text"
+    },
+    {
+      "label": "Default Top K",
+      "name": "default_top_k",
+      "widget": "number"
+    },
+    {
+      "label": "Default Collections",
+      "name": "default_collections",
+      "widget": "json"
+    }
+  ],
+  "version": "2.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "network",
+      "scope": "http.outbound"
+    },
+    {
+      "kind": "database",
+      "scope": "vector"
+    },
+    {
+      "kind": "llm",
+      "scope": "provider"
+    },
+    {
+      "kind": "credential",
+      "scope": "env"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    },
+    {
+      "id": "missing_credential",
+      "check": "fails loud when a required credential or key is absent",
+      "status": "failed"
     }
   ]
 }

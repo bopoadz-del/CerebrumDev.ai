@@ -1,10 +1,144 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "182e57cc74fa992f9069d49ae4aaa6ba3f19085c7f6372ffcfa23783bcfab7aa",
+    "block.py": "d16a3e3f63e46aa761577d96b9cc23bf7485a3c951d16a796f16881119dc66d6"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/database:latest",
+    "type": "docker"
+  },
   "id": "database",
-  "name": "database",
+  "inputs": [
+    {
+      "description": "JSON payload for the selected action",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "query",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "query",
+        "insert",
+        "update",
+        "delete",
+        "create_table",
+        "list_tables"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "sqlite",
+      "description": "Configuration parameter: backend",
+      "name": "backend",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Configuration parameter: connection_string",
+      "name": "connection_string",
+      "required": false,
+      "type": "string"
+    }
+  ],
+  "layer": 0,
+  "name": "Database",
+  "outputs": [
+    {
+      "description": "Rows",
+      "name": "rows",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "config"
+  ],
+  "signature": "Vf4bZiQq/mPvnIwvdk03rOTPVk3cZBMwRXfbOIaDEsWxvhorvLMei2fvb+OY7x2Hboh/szRZLl9t+cVMjFKVBQ==",
+  "tags": [
+    "infrastructure",
+    "database",
+    "storage"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "query",
+        "insert",
+        "update",
+        "delete",
+        "create_table",
+        "list_tables"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Backend",
+      "name": "backend",
+      "widget": "text"
+    },
+    {
+      "label": "Connection String",
+      "name": "connection_string",
+      "widget": "text"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'database' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/database",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "database",
+      "scope": "sql"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "database",
+      "scope": "sql"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

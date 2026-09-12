@@ -127,9 +127,9 @@ def test_generated_platform_makes_no_store_callback(blueprint, tmp_path):
     assert not offenders, offenders
 
     assert (out / "app" / "dispatch.py").is_file()
-    assert (out / "vendor" / "blocks" / "analytics" / "block.py").is_file()
+    assert (out / "vendor" / "blocks" / "estate_registry" / "block.py").is_file()
     lock = json.loads((out / "blocks.lock.json").read_text(encoding="utf-8"))
-    assert set(lock["blocks"]) == {"analytics", "dashboard"}
+    assert set(lock["blocks"]) == {"estate_registry", "estate_maintenance"}
 
 
 def test_the_generated_platform_suite_really_runs_in_a_subprocess(blueprint, tmp_path):

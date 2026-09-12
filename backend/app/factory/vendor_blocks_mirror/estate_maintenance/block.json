@@ -12,13 +12,6 @@
   ],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
-      "default": "plan_work",
-      "options": ["plan_work"],
-      "description": "Factory-known keep-path default. Steward hat workflow role is plan_work. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
-    },
-    {
       "name": "input",
       "type": "json",
       "required": false,

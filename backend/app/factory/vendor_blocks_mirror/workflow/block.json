@@ -1,19 +1,167 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Chain blocks into pipelines with variable interpolation and scheduling",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "0016962fefa8918931fd2945665abcf1f700eeca86731142cbf492e777b2df44",
+    "block.py": "e988d40c86822c769b033d8ed299e4fe63dfe278324169510dc36ad7f8cec26e"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/workflow:latest",
+    "type": "docker"
+  },
   "id": "workflow",
-  "name": "workflow",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'workflow' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/workflow",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
+      "description": "{\"pipeline_id\": \"daily-report\", \"steps\": [...]}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
       "default": "run",
-      "options": ["run"],
-      "description": "Factory-known keep-path default (sess_07dff0eaf8f64186). Harvest prefers this over STORE_BLOCK_DEFAULT_ACTIONS. Do not declare steps/result here — those close dispatch known-fields and refuse schema-sample domain keys."
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "run",
+        "schedule",
+        "unschedule",
+        "list",
+        "get",
+        "history",
+        "status",
+        "health"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 20,
+      "description": "Max Pipeline Steps",
+      "name": "max_pipeline_steps",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": true,
+      "description": "Enable Scheduler",
+      "name": "enable_scheduler",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": 60,
+      "description": "Default Timeout",
+      "name": "default_timeout",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 2,
+  "name": "Workflow",
+  "outputs": [
+    {
+      "description": "Pipeline ID",
+      "name": "pipeline_id",
+      "type": "text"
+    },
+    {
+      "description": "Status",
+      "name": "status",
+      "type": "text"
+    },
+    {
+      "description": "Step Results",
+      "name": "results",
+      "type": "json"
+    },
+    {
+      "description": "Time (ms)",
+      "name": "execution_time_ms",
+      "type": "number"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "signature": "iR9D5k0Y8hbmNKl0KmtHhtWB21lbkkSQZEEbb/CGkjzZu+/WoRLyoRnQ2KkoQY+QERyxcbNUL/JjISabmcopBw==",
+  "tags": [
+    "workflow",
+    "pipeline",
+    "orchestration",
+    "automation",
+    "core"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "{\"pipeline_id\": \"daily-report\", \"steps\": [...]}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "run",
+        "schedule",
+        "unschedule",
+        "list",
+        "get",
+        "history",
+        "status",
+        "health"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Max Pipeline Steps",
+      "name": "max_pipeline_steps",
+      "widget": "number"
+    },
+    {
+      "label": "Enable Scheduler",
+      "name": "enable_scheduler",
+      "widget": "toggle"
+    },
+    {
+      "label": "Default Timeout",
+      "name": "default_timeout",
+      "widget": "number"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
     }
   ]
 }

@@ -423,16 +423,21 @@ def test_reuse_http_l2_fields_appear_in_brief_when_declared(monkeypatch):
 
 
 def test_preflip_block_json_says_scopes_not_declared():
-    """Vendor-mirror block.json has no L2.2 keys — brief must say so, not invent."""
+    """Estate lock-era pins have no L2.2 keys — brief must say so, not invent.
+
+    Store-sourced pins (notification, event_bus, …) now harvest reads/writes
+    from the lock-matching block.json. Pre-flip honesty is proven on an
+    estate stub that still has no L2 keys.
+    """
     compiled = compile_brief(
         _Blueprint(),
-        _Plan(_Cap("automated_reminders", ["notification"], "REUSE")),
-        store_ids={"notification"},
+        _Plan(_Cap("estate_roll", ["estate_registry"], "REUSE")),
+        store_ids={"estate_registry"},
     )
     verify_inventory(compiled)
-    assert compiled.reuse_records["notification"]["present"] is True
-    assert compiled.reuse_records["notification"]["scope_declared"] is False
-    assert compiled.reuse_records["notification"]["reads"] == []
+    assert compiled.reuse_records["estate_registry"]["present"] is True
+    assert compiled.reuse_records["estate_registry"]["scope_declared"] is False
+    assert compiled.reuse_records["estate_registry"]["reads"] == []
     assert "not declared on block.json (pre-flip)" in compiled.text
     assert "do not invent scopes" in compiled.text
     # Must not invent a clinic/reminder scope the mirror never declared.
@@ -456,12 +461,12 @@ def test_compiler_does_not_invent_scopes_when_http_omits_l2(monkeypatch):
 
     compiled = compile_brief(
         _Blueprint(),
-        _Plan(_Cap("automated_reminders", ["notification"], "REUSE")),
-        store_ids={"notification"},
+        _Plan(_Cap("estate_roll", ["estate_registry"], "REUSE")),
+        store_ids={"estate_registry"},
         reuse_http_get=fake_get,
     )
     assert "not declared on block.json (pre-flip)" in compiled.text
-    rec = compiled.reuse_records["notification"]
+    rec = compiled.reuse_records["estate_registry"]
     assert rec["reads"] == []
     assert rec["writes"] == []
     assert rec["never"] == []

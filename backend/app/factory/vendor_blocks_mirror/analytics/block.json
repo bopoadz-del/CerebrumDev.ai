@@ -1,10 +1,190 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "abd78d8253b8a5bb71d0f746ebf30d2d61c86decd04cb8194877fcff605e0dd1",
+    "block.py": "a1fd5700d68af75cf5c938f071a0daa5e772259a8f28199652ab2d50be4dca46"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/analytics:latest",
+    "type": "docker"
+  },
   "id": "analytics",
-  "name": "analytics",
+  "inputs": [
+    {
+      "description": "JSON payload for the selected action",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "track_event",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "track_event",
+        "leaderboard",
+        "usage_report",
+        "predict_failure",
+        "cost_analysis",
+        "get_metrics",
+        "compare_providers"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 100,
+      "description": "Window Size",
+      "name": "window_size",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 0.3,
+      "description": "Prediction Threshold",
+      "name": "prediction_threshold",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 168,
+      "description": "Configuration parameter: retention_hours",
+      "name": "retention_hours",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 300,
+      "description": "Configuration parameter: aggregation_interval",
+      "name": "aggregation_interval",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 10,
+      "description": "Configuration parameter: prediction_window",
+      "name": "prediction_window",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": {
+        "deepseek": 0.14
+      },
+      "description": "Configuration parameter: cost_per_1k_requests",
+      "name": "cost_per_1k_requests",
+      "required": false,
+      "type": "json"
+    }
+  ],
+  "layer": 2,
+  "name": "Analytics",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "database",
+    "monitoring"
+  ],
+  "signature": "TAW+xqyArbJBSwJfrz7sl6dmeIX3qWAkGFF4rFsK2Pqs3Er134p4JP9LhonFEA11MpX4m4xVHjwpnlbCWry9CA==",
+  "tags": [
+    "metrics",
+    "reporting",
+    "analytics",
+    "platform"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "JSON payload for the selected action",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "track_event",
+        "leaderboard",
+        "usage_report",
+        "predict_failure",
+        "cost_analysis",
+        "get_metrics",
+        "compare_providers"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Window Size",
+      "name": "window_size",
+      "widget": "number"
+    },
+    {
+      "label": "Prediction Threshold",
+      "name": "prediction_threshold",
+      "widget": "number"
+    },
+    {
+      "label": "Retention Hours",
+      "name": "retention_hours",
+      "widget": "number"
+    },
+    {
+      "label": "Aggregation Interval",
+      "name": "aggregation_interval",
+      "widget": "number"
+    },
+    {
+      "label": "Prediction Window",
+      "name": "prediction_window",
+      "widget": "number"
+    },
+    {
+      "label": "Cost Per 1K Requests",
+      "name": "cost_per_1k_requests",
+      "widget": "json"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'analytics' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/analytics",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "llm",
+      "scope": "provider"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

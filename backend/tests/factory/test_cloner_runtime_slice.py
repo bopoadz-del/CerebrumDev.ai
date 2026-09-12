@@ -466,9 +466,9 @@ def test_cloner_aliases_kit_id_to_store_v2_registry(tmp_path):
     assert json.loads(proc.stdout.strip()) == {"value": 42}
 
 
-def test_unregistered_store_shim_falls_back_to_factory_mirror(tmp_path):
+def test_unregistered_store_shim_falls_back_to_factory_mirror(tmp_path, monkeypatch):
     """If the Store has a kit-shelf shim, no registry entry, and no ``_v2``
-    module, CLONER must vendor the factory stub instead of dying."""
+    module, CLONER must vendor an offline factory stub instead of dying."""
     store = _faux_store(tmp_path)
     reg = store / "block_registry" / "formula_executor"
     reg.mkdir(parents=True)
@@ -476,6 +476,23 @@ def test_unregistered_store_shim_falls_back_to_factory_mirror(tmp_path):
         json.dumps({"id": "formula_executor"}), encoding="utf-8"
     )
     (reg / "block.py").write_text(_FORMULA_SHIM, encoding="utf-8")
+
+    stub = tmp_path / "offline_mirror" / "formula_executor"
+    stub.mkdir(parents=True)
+    (stub / "block.json").write_text(
+        json.dumps({"id": "formula_executor"}), encoding="utf-8"
+    )
+    (stub / "block.py").write_text(
+        '"""factory-vendor-mirror stub"""\n'
+        "def run(**kwargs):\n"
+        "    return kwargs.get('input', kwargs)\n",
+        encoding="utf-8",
+    )
+    import app.factory.build.roles as roles_mod
+    import app.factory.build.roles_handlers as handlers_mod
+
+    monkeypatch.setattr(roles_mod, "_vendor_mirror_dir", lambda bid: stub)
+    monkeypatch.setattr(handlers_mod, "_vendor_mirror_dir", lambda bid: stub)
 
     ws, result = _clone(tmp_path, store, block_ids=("formula_executor",))
     assert result.ok, result.detail

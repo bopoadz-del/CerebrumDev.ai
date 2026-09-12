@@ -1,10 +1,204 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Block store certification and 5-stage item validation pipeline. Virgin boot alias: validation_pipeline (see docs/validation_block_mapping.md).",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "5989c385a478c57c329512c1c7e6a3639d4edf4b9b4ce08d146aef85ec2eefcb",
+    "block.py": "629d9f19c525017a296e82ed1a891935bdcda9e961450774f26954fd4cce84cb"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/validation:latest",
+    "type": "docker"
+  },
   "id": "validation",
-  "name": "validation",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'validation' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/validation",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "inputs": [
+    {
+      "description": "Pipeline definition to validate",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "validate_pipeline",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "validate_pipeline"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": [
+        "network",
+        "filesystem",
+        "memory",
+        "imports"
+      ],
+      "description": "Configuration parameter: security_checks",
+      "name": "security_checks",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "default": 500,
+      "description": "Configuration parameter: performance_threshold_ms",
+      "name": "performance_threshold_ms",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": [
+        "unit",
+        "integration"
+      ],
+      "description": "Configuration parameter: required_tests",
+      "name": "required_tests",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "default": 70,
+      "description": "Configuration parameter: min_test_coverage",
+      "name": "min_test_coverage",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": 15,
+      "description": "Configuration parameter: max_complexity",
+      "name": "max_complexity",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": [
+        "os.system",
+        "subprocess",
+        "eval",
+        "exec"
+      ],
+      "description": "Configuration parameter: forbidden_imports",
+      "name": "forbidden_imports",
+      "required": false,
+      "type": "array"
+    },
+    {
+      "default": 0.9,
+      "description": "Configuration parameter: auto_certify_threshold",
+      "name": "auto_certify_threshold",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 3,
+  "name": "Validation",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "sandbox",
+    "database"
+  ],
+  "signature": "AQSAMACpIIL7Hn/SzW9eLMWrHNFa7apSO0/UeUWJzOPyZar5RSmdZZHr9scy1GFgbCLMe+PYn4nE0CcaLqGBCg==",
+  "tags": [
+    "store",
+    "security",
+    "quality",
+    "ci",
+    "testing",
+    "pipeline"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Pipeline definition to validate",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "validate_pipeline"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Security Checks",
+      "name": "security_checks",
+      "widget": "json"
+    },
+    {
+      "label": "Performance Threshold Ms",
+      "name": "performance_threshold_ms",
+      "widget": "number"
+    },
+    {
+      "label": "Required Tests",
+      "name": "required_tests",
+      "widget": "json"
+    },
+    {
+      "label": "Min Test Coverage",
+      "name": "min_test_coverage",
+      "widget": "number"
+    },
+    {
+      "label": "Max Complexity",
+      "name": "max_complexity",
+      "widget": "number"
+    },
+    {
+      "label": "Forbidden Imports",
+      "name": "forbidden_imports",
+      "widget": "json"
+    },
+    {
+      "label": "Auto Certify Threshold",
+      "name": "auto_certify_threshold",
+      "widget": "number"
+    }
+  ],
+  "version": "1.1.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "missing_required_input",
+      "check": "refuses or errors when a required input is absent",
+      "status": "refused"
+    },
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

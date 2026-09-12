@@ -1,19 +1,128 @@
 {
+  "author": "Cerebrum Team",
+  "description": "Data-driven construction recommendation engine: variance data \u2192 severity-ranked recommendations + action items",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "5bbd0fbf9ee0629f059f513bf3e8b08430aec872fdb657b3053f1d8b70013b67",
+    "block.py": "f586e5038eb689fa47dd995add27cd2bc26c6fb8e155754762a7292fc1ac73ef"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/recommendation_template:latest",
+    "type": "docker"
+  },
   "id": "recommendation_template",
-  "name": "recommendation_template",
-  "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'recommendation_template' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/recommendation_template",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"],
   "inputs": [
     {
-      "name": "action",
-      "type": "string",
-      "default": "apply_template",
-      "options": ["apply_template"],
-      "description": "Factory-known keep-path default (sess_5782f2264e0e4ff4). Steward property_onboarding hat role is apply_template. Harvest prefers this over the STORE_BLOCK_DEFAULT_ACTIONS fallback."
+      "description": "{\"variance_data\": [{\"item\": \"concrete_c30\", \"variance_pct\": 18.5, \"cost_impact_usd\": 42000}]}",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": 20,
+      "description": "Configuration parameter: max_recommendations",
+      "name": "max_recommendations",
+      "required": false,
+      "type": "number"
+    },
+    {
+      "default": true,
+      "description": "Configuration parameter: include_action_items",
+      "name": "include_action_items",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "default": "RECOMMENDATION_RULES_PATH",
+      "description": "Configuration parameter: custom_rules_env",
+      "name": "custom_rules_env",
+      "required": false,
+      "type": "string"
     }
-  ]
+  ],
+  "layer": 3,
+  "name": "Recommendation Template",
+  "outputs": [
+    {
+      "description": "Recommendation",
+      "name": "recommendation_text",
+      "type": "text"
+    },
+    {
+      "description": "Severity",
+      "name": "severity",
+      "type": "text"
+    },
+    {
+      "description": "Actions",
+      "name": "action_items",
+      "type": "list"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [],
+  "signature": "E0BviN3ej+kJEb1f8MNuh5Lim922U9mKmfhInaqNJ3x6HOWiLI+TPFy++iBM8dQa8Ba8s/2QJKTxpyfpxOPODA==",
+  "tags": [
+    "domain",
+    "construction",
+    "recommendations",
+    "analytics",
+    "reporting"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "{\"variance_data\": [{\"item\": \"concrete_c30\", \"variance_pct\": 18.5, \"cost_impact_usd\": 42000}]}",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Max Recommendations",
+      "name": "max_recommendations",
+      "widget": "number"
+    },
+    {
+      "label": "Include Action Items",
+      "name": "include_action_items",
+      "widget": "toggle"
+    },
+    {
+      "label": "Custom Rules Env",
+      "name": "custom_rules_env",
+      "widget": "text"
+    }
+  ],
+  "version": "1.0.0",
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "file",
+      "scope": "local.read"
+    },
+    {
+      "kind": "env",
+      "scope": "process"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    }
+  ],
+  "never": [],
+  "acceptance": []
 }

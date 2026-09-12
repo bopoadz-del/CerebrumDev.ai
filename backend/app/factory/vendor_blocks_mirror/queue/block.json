@@ -1,10 +1,154 @@
 {
+  "author": "Cerebrum Team",
+  "description": "",
+  "digests": {
+    "Dockerfile": "905bd5e509638c2df98d8f1039fba18adde147d0d7ffbf70778ca87888cd0da1",
+    "block.json": "e768d27afadf29e05a729df5ebe71194b3dc3071d4a460f84f74d5e7bc57cf7e",
+    "block.py": "0a12a09833e081b98fe7c3e175f6b0d43126abaab2f7d0e204c0107f143e4660"
+  },
+  "execution": {
+    "image": "ghcr.io/cerebrum-blocks/queue:latest",
+    "type": "docker"
+  },
   "id": "queue",
-  "name": "queue",
+  "inputs": [
+    {
+      "description": "Job type, payload, queue name",
+      "name": "input",
+      "required": false,
+      "type": "json"
+    },
+    {
+      "default": "enqueue",
+      "description": "Action",
+      "name": "action",
+      "options": [
+        "enqueue",
+        "dequeue",
+        "status",
+        "list"
+      ],
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": "memory",
+      "description": "Backend",
+      "name": "backend",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": null,
+      "description": "Redis Url",
+      "name": "redis_url",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "default": 4,
+      "description": "Max Workers",
+      "name": "max_workers",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "layer": 2,
+  "name": "Queue",
+  "outputs": [
+    {
+      "description": "Result",
+      "name": "result",
+      "type": "json"
+    }
+  ],
+  "permissions": {
+    "blocks": [],
+    "filesystem": false,
+    "imports": [],
+    "network": false
+  },
+  "publisher_id": "cerebrum_platform",
+  "requires": [
+    "config",
+    "memory"
+  ],
+  "signature": "BG5VBNJD7ImFbXG8UVAkBVKXHRgks2pjssU1Cb+lpD0sdYgPqAC3/+SfqV6GGl7oo1IYgE4QUjoSAi3kj6nICQ==",
+  "tags": [
+    "queue",
+    "jobs",
+    "async",
+    "core"
+  ],
+  "trust_tier": "platform",
+  "ui_schema": [
+    {
+      "label": "Job type, payload, queue name",
+      "name": "input",
+      "widget": "json"
+    },
+    {
+      "label": "Action",
+      "name": "action",
+      "options": [
+        "enqueue",
+        "dequeue",
+        "status",
+        "list"
+      ],
+      "widget": "select"
+    },
+    {
+      "label": "Backend",
+      "name": "backend",
+      "widget": "text"
+    },
+    {
+      "label": "Redis Url",
+      "name": "redis_url",
+      "widget": "text"
+    },
+    {
+      "label": "Max Workers",
+      "name": "max_workers",
+      "widget": "number"
+    }
+  ],
   "version": "1.0.0",
-  "description": "Factory vendor mirror of Cerebrum-Blocks block 'queue' for dual-registration when Blocks checkout is unavailable (CI). Canonical upstream remains Cerebrum-Blocks — do not diverge.",
-  "source": "factory-vendor-mirror",
-  "upstream": "cerebrum-blocks/block_registry/queue",
-  "layer": 1,
-  "tags": ["platform", "factory-mirror", "steward-kit"]
+  "reads": [
+    {
+      "kind": "caller",
+      "scope": "input"
+    },
+    {
+      "kind": "config",
+      "scope": "runtime"
+    },
+    {
+      "kind": "memory",
+      "scope": "cache"
+    },
+    {
+      "kind": "queue",
+      "scope": "jobs"
+    }
+  ],
+  "writes": [
+    {
+      "kind": "caller",
+      "scope": "output"
+    },
+    {
+      "kind": "queue",
+      "scope": "jobs"
+    }
+  ],
+  "never": [],
+  "acceptance": [
+    {
+      "id": "unknown_action",
+      "check": "errors on an unknown or missing action",
+      "status": "failed"
+    }
+  ]
 }

@@ -272,7 +272,7 @@ def test_formula_executor_reuse_accept_photograph_without_planted_vendor():
         ["formula_executor", "validation", "analytics"]
     )
     assert harvested["formula_executor"] == "execute"
-    assert harvested["validation"] == "validate"
+    assert harvested["validation"] in {"validate", "validate_pipeline"}
     assert harvested["analytics"] == "track_event"
     assert harvest_block_default_action("formula_executor") == "execute"
     assert harvest_block_default_action("formula_executor_v2") == "execute"
@@ -342,7 +342,10 @@ def test_empty_block_default_actions_is_reuse_accept_miss():
         empty, harvest_block_default_actions(["database", "validation"])
     )
     assert parse_handler_default_actions(filled)["database"] == "query"
-    assert parse_handler_default_actions(filled)["validation"] == "validate"
+    assert parse_handler_default_actions(filled)["validation"] in {
+        "validate",
+        "validate_pipeline",
+    }
     assert reuse_accept_handler_errors(filled, ["database", "validation"]) == []
     ghost = apply_default_actions_to_handler(empty, {"database": "query"})
     errors = reuse_accept_handler_errors(

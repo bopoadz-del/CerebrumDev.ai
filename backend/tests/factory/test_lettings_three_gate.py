@@ -27,6 +27,7 @@ from app.factory.product_architect import (
     draft_blueprint_from_brief,
     lettings_golden_path,
 )
+from tests.factory.offline_estate import remap_blueprint_to_estate_stubs
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -187,7 +188,7 @@ def _assert_full_repo(out: Path) -> None:
 def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path):
     out = tmp_path / "residential-lettings"
     runner = RoleRunner(
-        load_blueprint(LETTINGS),
+        remap_blueprint_to_estate_stubs(load_blueprint(LETTINGS)),
         out,
         budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
         auto_pilot=False,
@@ -267,8 +268,9 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
     never a thin SUCCESS with implied Finished.
     """
     out = tmp_path / "residential-lettings"
+    lettings_offline = remap_blueprint_to_estate_stubs(load_blueprint(LETTINGS))
     code = RoleRunner(
-        load_blueprint(LETTINGS),
+        lettings_offline,
         out,
         budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
         auto_pilot=False,
@@ -276,7 +278,7 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
     assert code.ok, code.to_dict()
 
     pilot = RoleRunner(
-        load_blueprint(LETTINGS),
+        lettings_offline,
         out,
         cycle="pilot",
         budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
