@@ -79,6 +79,19 @@ def runner_enabled() -> bool:
     return os.getenv(RUNNER_FLAG_ENV, "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _cli_pivot_handoff(result: RoleResult) -> bool:
+    notes = getattr(result, "notes", None) or {}
+    payload = notes.get("cli_pivot") if isinstance(notes, Mapping) else None
+    if isinstance(payload, Mapping) and payload.get("honesty") == "HANDOFF_TO_N3":
+        return True
+    return False
+
+
+def _cli_pivot_state_handoff(state: Mapping[str, Any]) -> bool:
+    payload = (state or {}).get("cli_pivot")
+    return isinstance(payload, Mapping) and payload.get("honesty") == "HANDOFF_TO_N3"
+
+
 #: Ledger NOTE ``stage`` for a capability that has landed on disk.
 #: ``resume_point()`` still names the role; this is the intra-WRITER spine.
 CHECKPOINT_STAGE = "checkpoint"
@@ -195,6 +208,8 @@ class Outcome(str, Enum):
     #: stays False and no package identity is sealed. The build is an
     #: instrument report (board P7: one run logging ALL gate findings).
     COLLECT_ALL_REPORT = "COLLECT_ALL_REPORT"
+    #: CLI-pivot receipt accepted; N3 store-gate is next. Not product green.
+    HANDOFF_TO_N3 = "HANDOFF_TO_N3"
     FAILED_GATE = "FAILED_GATE"
     FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
     FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
@@ -515,6 +530,16 @@ class RoleRunner:
         # Only now does the staged pass become visible. Everything before this
         # line could be interrupted without the destination ever changing.
         ws.commit()
+        if role is BuildRole.WRITER and _cli_pivot_handoff(result):
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
+            self._absorb(result)
+            return GateResult(
+                ok=True,
+                gate="cli_pivot",
+                detail=result.detail,
+                payload={"honesty": "HANDOFF_TO_N3", "next": "n3_gate", "green": False},
+            )
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
@@ -628,18 +653,23 @@ class RoleRunner:
                 sealed=sealed,
             )
             write_identity(ws, extra={"engine": "role_runner"})
+        payload: Dict[str, Any] = {
+            "outcome": outcome.value,
+            "rework_used": rework,
+            "findings": list(findings),
+            "cycle": getattr(self, "cycle", "code"),
+            "pilot_ready": getattr(self, "cycle", "code") == "pilot"
+            and outcome is Outcome.SUCCESS,
+        }
+        if outcome is Outcome.HANDOFF_TO_N3:
+            payload["honesty"] = "HANDOFF_TO_N3"
+            payload["next"] = "n3_gate"
+            payload["green"] = False
         self.ledger.append(
             kind,
             role=phase,
             detail=detail,
-            payload={
-                "outcome": outcome.value,
-                "rework_used": rework,
-                "findings": list(findings),
-                "cycle": getattr(self, "cycle", "code"),
-                "pilot_ready": getattr(self, "cycle", "code") == "pilot"
-                and outcome is Outcome.SUCCESS,
-            },
+            payload=payload,
         )
         if (
             outcome is Outcome.SUCCESS
@@ -1134,6 +1164,13 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
+                    if role is BuildRole.WRITER and _cli_pivot_state_handoff(self.state):
+                        return self._finish(
+                            Outcome.HANDOFF_TO_N3,
+                            verdict.detail,
+                            phase=role,
+                            rework=rework_used,
+                        )
                     done.add(role)
                     work_list = ()
                     index += 1
