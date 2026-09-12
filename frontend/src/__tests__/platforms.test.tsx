@@ -238,6 +238,10 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.getByTestId('platforms-pilot-ready-pill')).toHaveTextContent('Pilot-ready')
     expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
+    expect(screen.getByTestId('platforms-product-title')).toHaveTextContent('Vineyard Platform')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('Vineyard Platform')
+    expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('12/12')
+    expect(screen.getByRole('heading', { level: 3 })).not.toHaveTextContent(/^product\b/i)
   })
 
   it('card title prefers blueprint product_name over generic product_id', async () => {

@@ -31,6 +31,7 @@ import {
   withResolvedNRequired,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
+import { displayProductName, humanizeProductId } from './productDisplay'
 
 interface Capability {
   id: string
@@ -57,12 +58,6 @@ interface ChatMsg {
     done_when?: string[]
   }
   plainLanguage?: string
-}
-
-function humanize(id: string): string {
-  return id
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (ch) => ch.toUpperCase())
 }
 
 export function BlueprintCard({
@@ -141,7 +136,7 @@ export function BlueprintCard({
                   setTicked((t) => ({ ...t, [c.id]: e.target.checked }))
                 }
               />
-              <span className="bp-cap-id">{humanize(c.id)}</span>
+              <span className="bp-cap-id">{humanizeProductId(c.id)}</span>
               <span className={'bp-strategy ' + (c.strategy_hint ?? 'REUSE')}>{c.strategy_hint ?? 'REUSE'}</span>
             </label>
             {c.description && <p className="bp-cap-desc">{c.description}</p>}
@@ -689,6 +684,16 @@ export function Floor({
     }
     return -1
   })()
+  const designBp = productDesign?.blueprint as
+    | { product_name?: string; name?: string }
+    | null
+    | undefined
+  const cardBp = latestProductCard(msgs)?.blueprint
+  const productTitle = displayProductName({
+    productName: designBp?.product_name ?? cardBp?.product_name,
+    altName: designBp?.name,
+    productId: productDesign?.generation?.product_id,
+  })
 
   return (
     <div className="floor">
@@ -787,13 +792,22 @@ export function Floor({
           data-testid="floor-coder-takeover"
         >
           <h3>
-            {liveCoderBuild?.state === 'succeeded'
-              ? coderTakeoverHeading(liveCoderBuild)
-              : liveCoderBuild?.state === 'stalled'
-                ? 'Coding agent stalled'
-                : liveCoderBuild?.state === 'failed'
-                  ? 'Coding agent stopped'
-                  : 'Coding agent has taken over'}
+            {liveCoderBuild?.state === 'succeeded' ? (
+              <>
+                <span data-testid="floor-product-title">{productTitle}</span>{' '}
+                <span className="mono" data-testid="floor-acceptance-score">
+                  {formatAcceptanceScore(liveCoderBuild)}
+                </span>
+                {' — '}
+                {coderTakeoverHeading(liveCoderBuild)}
+              </>
+            ) : liveCoderBuild?.state === 'stalled' ? (
+              'Coding agent stalled'
+            ) : liveCoderBuild?.state === 'failed' ? (
+              'Coding agent stopped'
+            ) : (
+              'Coding agent has taken over'
+            )}
           </h3>
           <LevelGradeStrip build={liveCoderBuild} testIdPrefix="floor" />
           <KernelStrip build={liveCoderBuild} />
