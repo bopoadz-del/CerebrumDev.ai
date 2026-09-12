@@ -99,6 +99,9 @@ def llm_key_configured() -> bool:
     ``LLM_PROVIDER=cursor``, so treating it as configured made ``/ready``
     report ``llm_configured: true`` on a keyless box. ``KIMI_MOCK`` is a
     mock and is reported separately as ``llm_mock``.
+
+    Cursor-family keys count whenever present. An OpenRouter key also
+    counts — it arms the chat fallback after the Cursor primary fails.
     """
     return bool(
         os.getenv("KIMI_API_KEY", "").strip()

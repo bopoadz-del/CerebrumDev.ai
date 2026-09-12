@@ -5,7 +5,11 @@ from typing import List, Dict, Any, Optional
 
 from .feature_mapper import fetch_block_registry
 from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
-from .llm_config import get_llm_config, active_provider
+from .llm_config import (
+    get_factory_fallback_leg,
+    get_llm_config,
+    _is_openrouter_base,
+)
 from .source_pack_loader import get_source_pack
 
 logger = logging.getLogger(__name__)
@@ -157,13 +161,21 @@ async def _call_openai_compatible(
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    if _is_openrouter_base(base_url):
+        headers["HTTP-Referer"] = "https://cerebrumdev.ai"
+        headers["X-Title"] = "CerebrumDev Floor"
 
     async def _try(m: str) -> Dict[str, Any]:
         payload = {
             "model": m,
             "messages": messages,
-            "response_format": {"type": "json_object"},
         }
+        # Cursor Cloud Agents is not a chat-completions API; OpenRouter free
+        # models often reject json_object. Only pin the format on Moonshot.
+        if not _is_openrouter_base(base_url) and "api.cursor.com" not in (
+            base_url or ""
+        ).lower():
+            payload["response_format"] = {"type": "json_object"}
         # Omit temperature unless explicitly configured: reasoning models
         # (kimi-k2.x) reject any explicit temperature other than 1.
         if temperature is not None:
@@ -173,7 +185,7 @@ async def _call_openai_compatible(
             resp.raise_for_status()
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
-            return json.loads(content)
+            return _extract_json(content) if isinstance(content, str) else content
 
     try:
         return await _try(model)
@@ -183,21 +195,76 @@ async def _call_openai_compatible(
         return await _try(fallback_model)
 
 
+async def _call_openrouter_fallback(
+    messages: List[Dict[str, str]],
+) -> Dict[str, Any] | None:
+    """Optional OpenRouter leg after the primary chat LLM has already failed.
+
+    Returns None when the leg is unarmed, misconfigured, or itself 401s —
+    a dead OPENROUTER_API_KEY must not become a second hard failure.
+    """
+    leg = get_factory_fallback_leg()
+    if not leg or leg.get("error"):
+        if leg and leg.get("error"):
+            logger.warning("OpenRouter chat fallback not armed: %s", leg["error"])
+        return None
+    try:
+        return await _call_openai_compatible(
+            leg["base_url"],
+            leg["api_key"],
+            leg["model"],
+            messages,
+            leg.get("temperature"),
+            None,
+        )
+    except Exception as exc:
+        logger.warning("OpenRouter chat fallback failed: %s", exc)
+        return None
+
+
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Call the configured Kimi LLM. Returns parsed JSON."""
+    """Call the primary configured LLM, then the OpenRouter fallback.
+
+    Primary is Kimi/Moonshot (or whatever ``get_llm_config()`` resolved).
+    OpenRouter is never the first hop when a native key owns the host.
+    """
     cfg = get_llm_config()
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode - no network call")
-    provider = cfg["provider"]
+    provider = cfg.get("provider")
+    primary_exc: Exception | None = None
+
     if provider in ("moonshot", "kimi", "cursor", "openrouter"):
-        return await _call_openai_compatible(
-            cfg["base_url"],
-            cfg["api_key"],
-            cfg["model"],
-            messages,
-            cfg.get("temperature"),
-            cfg.get("fallback_model"),
+        try:
+            return await _call_openai_compatible(
+                cfg["base_url"],
+                cfg["api_key"],
+                cfg["model"],
+                messages,
+                cfg.get("temperature"),
+                cfg.get("fallback_model"),
+            )
+        except Exception as exc:
+            primary_exc = exc
+            logger.warning(
+                "Primary chat LLM failed (%s %s): %s",
+                provider,
+                cfg.get("base_url"),
+                exc,
+            )
+    elif provider:
+        primary_exc = RuntimeError(
+            f"Chat path has no caller for provider {provider!r}"
         )
+
+    # Do not retry the same dead OpenRouter host as "fallback".
+    if not _is_openrouter_base(str(cfg.get("base_url", ""))):
+        fallback = await _call_openrouter_fallback(messages)
+        if fallback is not None:
+            return fallback
+
+    if primary_exc:
+        raise primary_exc
     raise RuntimeError("No LLM provider configured")
 
 
@@ -230,6 +297,27 @@ def _mock_response(user_message: str, domain: str, available_blocks: List[Dict[s
     }
 
 
+_SOFT_FAIL_MESSAGE = (
+    "I couldn't reach the configured chat model just now. "
+    "Nothing was generated. Try again, or describe the platform you want "
+    "and the Factory Floor will continue from there."
+)
+
+
+def _soft_failure_response(exc: Exception) -> Dict[str, Any]:
+    """Honest Floor reply when every configured LLM hop failed.
+
+    Must not raise — a dead OpenRouter key used to hard-fail chat with
+    ``Failed to generate suggestion: 401`` even when Kimi was configured.
+    """
+    logger.exception("LLM call failed; returning soft failure: %s", exc)
+    return {
+        "message": _SOFT_FAIL_MESSAGE,
+        "chain": None,
+        "rules": [],
+    }
+
+
 async def generate_chain_suggestion(
     domain: str,
     user_message: str,
@@ -257,17 +345,23 @@ async def generate_chain_suggestion(
 
     cfg = get_llm_config()
     try:
-        if cfg.get("mock") or not cfg.get("provider"):
+        # Starter-chain mock is test-only. A live keyless / unknown-provider
+        # box must not loop "I've drafted a starter chain for your
+        # construction workflow" — that hid LLM_PROVIDER=cursor.
+        if cfg.get("mock"):
             result = _mock_response(user_message, domain, available_blocks)
+        elif not cfg.get("provider") or not cfg.get("api_key"):
+            result = _soft_failure_response(
+                RuntimeError("No LLM provider configured")
+            )
         else:
             result = await _call_llm(messages)
     except Exception as exc:
-        if not active_provider() or cfg.get("mock"):
-            logger.warning("No live LLM provider, using mock generator: %s", exc)
+        if cfg.get("mock"):
+            logger.warning("Mock LLM path failed, using mock generator: %s", exc)
             result = _mock_response(user_message, domain, available_blocks)
         else:
-            logger.exception("LLM call failed")
-            raise
+            result = _soft_failure_response(exc)
 
     return {
         "message": result.get("message", ""),

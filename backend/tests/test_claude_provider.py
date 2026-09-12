@@ -48,6 +48,9 @@ CRED_VARS = [
     "CEREBRUM_CHAT_LLM_API_KEY",
     "CEREBRUM_FACTORY_LLM_API_KEY",
     "CEREBRUM_FACTORY_LLM_MODEL",
+    "CURSOR_API_KEY",
+    "CURSOR_AGENT_API_KEY",
+    "FACTORY_CURSOR_API_KEY",
 ]
 
 # Obviously-fake values. No real key may appear in this repository.
