@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..core import accounts_store, billing, data_rights, mailer
-from ..core.auth import Principal, require_api_key
+from ..core.auth import Principal, require_account_allow_unverified, require_api_key
 from ..core.auth_cookies import clear_login_cookie, cookie_login_token, set_login_cookie
 from ..core.rate_limit import check_rate_limit_for_request
 
@@ -347,11 +347,14 @@ def _request_login_token(request: Request) -> str:
 async def change_password(
     body: ChangePasswordBody,
     request: Request,
-    principal: Principal = Depends(require_api_key),
+    principal: Principal = Depends(require_account_allow_unverified),
 ):
     """Signed-in password change. Verifies the current password, updates the
-    hash, and revokes every other login session (this session stays)."""
-    _require_user(principal)
+    hash, and revokes every other login session (this session stays).
+
+    Uses the unverified-allowed dependency so an account that has not
+    finished email verify can still set a password (same as resend).
+    """
     _rate_limit(request, "change-password")
     account_id = principal.account_id or ""
     if not accounts_store.verify_account_password(account_id, body.current_password):
