@@ -112,6 +112,8 @@ def test_llm_drafting_enabled_unset_ignores_kimi_mock_falsy_strings(monkeypatch)
     /ready bool(os.getenv) leak must not change this path.
     """
     monkeypatch.delenv(product_architect.LLM_DRAFTING_ENV, raising=False)
+    # Pin Kimi so this assertion is not hijacked by an ambient LLM_PROVIDER=cursor.
+    monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.setenv("KIMI_API_KEY", "sk-test-not-used")
     monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
     monkeypatch.setenv("KIMI_MOCK", "false")
