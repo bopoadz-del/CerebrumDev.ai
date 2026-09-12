@@ -4,6 +4,10 @@ Does not reimplement CLONER — copies whatever COLLECTOR/CLONER already
 left in ``workspace`` (plus ``docs/coder_brief.md``). Live git+HTTPS
 uses ``CEREBRUM_BUILDS_GITHUB_TOKEN``. Collect uses the GitHub API.
 
+Scratch ``build/**`` branches are cut from the store's ``main`` so
+``.github/workflows/store-gate.yml`` is on the pushed commit (Actions
+``on.push`` reads the workflow from that commit).
+
 TODO(N1c): secret scan of the pushed tree.
 TODO(N1c): delete the scratch branch after collect.
 """
@@ -44,7 +48,14 @@ class BuildsPushError(RuntimeError):
 
 @dataclass(frozen=True)
 class BuildsRef:
-    """Scratch branch on cerebrum-builds. ``seed_sha`` is the pre-agent tip."""
+    """Scratch branch on cerebrum-builds.
+
+    ``seed_sha`` is the factory seed commit (pre-agent tip). That commit
+    is cut from ``cerebrum-builds`` ``main``, so GitHub compare against
+    ``main`` or this SHA has a common ancestor. ``collect_branch`` diffs
+    agent commits against this SHA (not ``main``) so the factory overlay
+    is not judged by the N1b path jail.
+    """
 
     owner: str
     repo: str
@@ -112,14 +123,24 @@ def _default_run_git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedP
     )
 
 
-def _copy_workspace(src: Path, dest: Path) -> None:
+def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
+    """Overlay product files onto a cloned ``main`` tree.
+
+    Replaces or adds workspace entries. Keeps ``dest/.github/`` (Store gate)
+    even when the workspace also has a ``.github/`` directory.
+    """
     dest.mkdir(parents=True, exist_ok=True)
     if not src.is_dir():
         raise BuildsPushError(f"workspace is not a directory: {src}")
     for item in src.iterdir():
-        if item.name == ".git":
+        if item.name in {".git", ".github"}:
             continue
         target = dest / item.name
+        if target.exists() or target.is_symlink():
+            if target.is_dir() and not target.is_symlink():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
         if item.is_dir():
             shutil.copytree(item, target, ignore=shutil.ignore_patterns(".git"))
         else:
@@ -134,7 +155,7 @@ def push_workspace(
     run_git: Optional[Callable[..., subprocess.CompletedProcess]] = None,
     suffix: Optional[str] = None,
 ) -> BuildsRef:
-    """Commit ``workspace`` onto a new ``build/**`` branch and push it."""
+    """Commit ``workspace`` onto a ``build/**`` branch cut from ``main``."""
     token = builds_token(env)
     if not token:
         raise BuildsPushError(
@@ -145,9 +166,19 @@ def push_workspace(
     git = run_git or _default_run_git
     tmp = Path(tempfile.mkdtemp(prefix="cerebrum-builds-"))
     try:
-        _copy_workspace(Path(workspace), tmp)
-        _require_git(git, ["init"], cwd=tmp, token=token)
+        auth_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
+        _require_git(
+            git,
+            ["clone", "--depth=1", "--branch", "main", auth_url, "."],
+            cwd=tmp,
+            token=token,
+        )
+        parent_proc = _require_git(git, ["rev-parse", "HEAD"], cwd=tmp, token=token)
+        parent_sha = (parent_proc.stdout or "").strip()
+        if not parent_sha:
+            raise BuildsPushError("push failed: empty seed parent sha")
         _require_git(git, ["checkout", "-B", branch], cwd=tmp, token=token)
+        _sync_workspace_onto_tree(Path(workspace), tmp)
         _require_git(git, ["add", "-A"], cwd=tmp, token=token)
         commit = git(
             [
@@ -167,8 +198,6 @@ def push_workspace(
         seed_sha = (sha_proc.stdout or "").strip()
         if not seed_sha:
             raise BuildsPushError("push failed: empty seed sha")
-        auth_url = f"https://x-access-token:{token}@github.com/{owner}/{name}.git"
-        _require_git(git, ["remote", "add", "origin", auth_url], cwd=tmp, token=token)
         pushed = git(["push", "-u", "origin", f"HEAD:{branch}"], cwd=tmp)
         if pushed.returncode != 0:
             raise BuildsPushError(
@@ -194,7 +223,7 @@ def _require_git(
     token: str,
 ) -> subprocess.CompletedProcess:
     result = git(list(args), cwd=cwd)
-    return _require_git_result(result, " ".join(args), token)
+    return _require_git_result(result, _scrub(" ".join(args), token), token)
 
 
 def _require_git_result(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 from pathlib import Path
 from subprocess import CompletedProcess
 from urllib.error import URLError
@@ -16,6 +17,8 @@ from app.factory.build.builds_push import (
     BUILDS_TOKEN_ENV,
     BuildsPushError,
     BuildsRef,
+    _default_run_git,
+    _sync_workspace_onto_tree,
     collect_branch,
     make_branch_name,
     parse_builds_repo,
@@ -127,17 +130,33 @@ class FakeOpener:
 
 
 class FakeGit:
-    def __init__(self, *, fail_push: bool = False):
+    def __init__(self, *, fail_push: bool = False, fail_clone: bool = False):
         self.calls: list[list[str]] = []
         self.fail_push = fail_push
+        self.fail_clone = fail_clone
+        self._rev = 0
 
     def __call__(self, args, *, cwd):
         self.calls.append(list(args))
+        if args and args[0] == "clone":
+            if self.fail_clone:
+                token = "builds-test-token"
+                return CompletedProcess(
+                    args,
+                    1,
+                    "",
+                    f"fatal: could not read from "
+                    f"https://x-access-token:{token}@github.com/x/y.git",
+                )
+            return CompletedProcess(args, 0, "", "")
         if args and args[0] == "push":
             if self.fail_push:
                 return CompletedProcess(args, 1, "", "permission denied")
             return CompletedProcess(args, 0, "", "")
         if "rev-parse" in args:
+            self._rev += 1
+            if self._rev == 1:
+                return CompletedProcess(args, 0, "aaa111parentsha\n", "")
             return CompletedProcess(args, 0, "abc123seedsha\n", "")
         return CompletedProcess(args, 0, "", "")
 
@@ -183,9 +202,145 @@ def test_push_workspace_uses_git_and_redacts_on_failure(tmp_path):
             run_git=git,
             suffix="aaaa1111",
         )
+    cloned = [c for c in git.calls if c and c[0] == "clone"]
+    assert cloned
+    assert "--depth=1" in cloned[0]
+    assert "--branch" in cloned[0]
+    assert "main" in cloned[0]
+    assert not any(c and c[0] == "init" for c in git.calls)
+    assert any(c and c[0] == "checkout" and "-B" in c for c in git.calls)
     pushed = [c for c in git.calls if c and c[0] == "push"]
     assert pushed
     assert any("HEAD:build/smoke-aaaa1111" in " ".join(c) for c in pushed)
+
+
+def test_push_workspace_clone_failure_redacts_token(tmp_path):
+    git = FakeGit(fail_clone=True)
+    with pytest.raises(BuildsPushError, match="push failed before agent start") as exc:
+        push_workspace(
+            tmp_path,
+            env=_env(),
+            session_id="smoke",
+            run_git=git,
+            suffix="aaaa1111",
+        )
+    assert "builds-test-token" not in str(exc.value)
+    assert "<redacted>" in str(exc.value)
+    assert not any(c and c[0] == "init" for c in git.calls)
+
+
+def test_sync_workspace_onto_tree_keeps_github(tmp_path):
+    dest = tmp_path / "main"
+    (dest / ".github" / "workflows").mkdir(parents=True)
+    (dest / ".github" / "workflows" / "store-gate.yml").write_text(
+        "name: Store acceptance gate\n", encoding="utf-8"
+    )
+    (dest / "README.md").write_text("store\n", encoding="utf-8")
+    src = tmp_path / "ws"
+    (src / "app").mkdir(parents=True)
+    (src / "app" / "hello.py").write_text("x = 1\n", encoding="utf-8")
+    (src / ".github" / "workflows").mkdir(parents=True)
+    (src / ".github" / "workflows" / "evil.yml").write_text("nope\n", encoding="utf-8")
+    _sync_workspace_onto_tree(src, dest)
+    assert (dest / ".github" / "workflows" / "store-gate.yml").read_text(
+        encoding="utf-8"
+    ) == "name: Store acceptance gate\n"
+    assert not (dest / ".github" / "workflows" / "evil.yml").exists()
+    assert (dest / "app" / "hello.py").is_file()
+    assert (dest / "README.md").read_text(encoding="utf-8") == "store\n"
+
+
+def test_push_workspace_clones_main_keeps_store_gate(tmp_path):
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / ".github" / "workflows").mkdir(parents=True)
+    (origin / ".github" / "workflows" / "store-gate.yml").write_text(
+        "name: Store acceptance gate\n", encoding="utf-8"
+    )
+    (origin / "README.md").write_text("cerebrum-builds\n", encoding="utf-8")
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=origin,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(["git", "add", "-A"], cwd=origin, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=factory@cerebrum.dev",
+            "-c",
+            "user.name=cerebrum-factory",
+            "commit",
+            "-m",
+            "main seed",
+        ],
+        cwd=origin,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    main_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=origin, text=True
+    ).strip()
+
+    workspace = tmp_path / "ws"
+    (workspace / "app").mkdir(parents=True)
+    (workspace / "app" / "hello.py").write_text("x = 1\n", encoding="utf-8")
+    (workspace / ".github" / "workflows").mkdir(parents=True)
+    (workspace / ".github" / "workflows" / "evil.yml").write_text(
+        "nope\n", encoding="utf-8"
+    )
+
+    captured: dict[str, object] = {}
+    real = _default_run_git
+
+    def git(args, *, cwd):
+        args = list(args)
+        if args and args[0] == "clone":
+            url_i = next(
+                i
+                for i, a in enumerate(args)
+                if "github.com" in a or a.startswith("https://")
+            )
+            args[url_i] = str(origin)
+        if args and args[0] == "push":
+            root = Path(cwd)
+            captured["workflow"] = (
+                root / ".github" / "workflows" / "store-gate.yml"
+            ).read_text(encoding="utf-8")
+            captured["evil"] = (root / ".github" / "workflows" / "evil.yml").exists()
+            captured["product"] = (root / "app" / "hello.py").is_file()
+            captured["branch"] = real(
+                ["rev-parse", "--abbrev-ref", "HEAD"], cwd=cwd
+            ).stdout.strip()
+            captured["parent"] = real(["rev-parse", "HEAD^"], cwd=cwd).stdout.strip()
+            captured["head"] = real(["rev-parse", "HEAD"], cwd=cwd).stdout.strip()
+            return real(args, cwd=cwd)
+        return real(args, cwd=cwd)
+
+    ref = push_workspace(
+        workspace,
+        env=_env(),
+        session_id="smoke",
+        run_git=git,
+        suffix="deadbeef",
+    )
+    assert ref.branch == "build/smoke-deadbeef"
+    assert captured["workflow"] == "name: Store acceptance gate\n"
+    assert captured["evil"] is False
+    assert captured["product"] is True
+    assert captured["branch"] == "build/smoke-deadbeef"
+    assert captured["parent"] == main_sha
+    assert ref.seed_sha == captured["head"]
+    assert ref.seed_sha != main_sha
+    remote_branch = subprocess.check_output(
+        ["git", "-C", str(origin), "rev-parse", "build/smoke-deadbeef"],
+        text=True,
+    ).strip()
+    assert remote_branch == ref.seed_sha
 
 
 def test_create_agent_body_is_fixed_prompt_no_model():
