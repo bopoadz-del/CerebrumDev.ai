@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from ..core import accounts_store, billing, data_rights, mailer
 from ..core.auth import Principal, require_api_key
-from ..core.auth_cookies import clear_login_cookie, set_login_cookie
+from ..core.auth_cookies import clear_login_cookie, cookie_login_token, set_login_cookie
 from ..core.rate_limit import check_rate_limit_for_request
 
 router = APIRouter()
@@ -57,6 +57,11 @@ class DeleteAccountBody(BaseModel):
 
 class ResetBody(BaseModel):
     token: str
+    new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
+
+
+class ChangePasswordBody(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=256)
     new_password: str = Field(..., min_length=MIN_PASSWORD_LEN, max_length=256)
 
 
@@ -322,6 +327,46 @@ async def reset_password(body: ResetBody, request: Request):
     )
     clear_login_cookie(response, request)
     return response
+
+
+def _request_login_token(request: Request) -> str:
+    """The caller's current ``cdt_`` session, if any (Bearer, then cookie)."""
+    authorization = (request.headers.get("Authorization") or "").strip()
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() == "bearer":
+        token = token.strip()
+        if token.startswith("cdt_"):
+            return token
+    x_key = (request.headers.get("X-API-Key") or "").strip()
+    if x_key.startswith("cdt_"):
+        return x_key
+    return cookie_login_token(request)
+
+
+@router.post("/change-password")
+async def change_password(
+    body: ChangePasswordBody,
+    request: Request,
+    principal: Principal = Depends(require_api_key),
+):
+    """Signed-in password change. Verifies the current password, updates the
+    hash, and revokes every other login session (this session stays)."""
+    _require_user(principal)
+    _rate_limit(request, "change-password")
+    account_id = principal.account_id or ""
+    if not accounts_store.verify_account_password(account_id, body.current_password):
+        raise HTTPException(status_code=403, detail="Current password is incorrect")
+    if not accounts_store.change_account_password(
+        account_id,
+        body.new_password,
+        keep_login_token=_request_login_token(request),
+    ):
+        raise HTTPException(status_code=404, detail="Account not found")
+    return {
+        "ok": True,
+        "account_id": account_id,
+        "message": "Password updated. Other sessions were signed out.",
+    }
 
 
 @router.post("/keys", status_code=201)

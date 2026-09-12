@@ -419,6 +419,16 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   flex: 1;
 }
 
+.change-password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 1rem 0 0;
+}
+.change-password-form h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
 .account-actions {
   display: flex;
   flex-wrap: wrap;

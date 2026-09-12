@@ -141,6 +141,15 @@ export function isSignedInAuthRedirectPath(pathname: string): boolean {
   return pathname === '/login' || pathname === '/register'
 }
 
+/**
+ * Password-reset URLs must mount AuthGate even when a ``cdt`` cookie exists.
+ * ``/login`` and ``/register`` redirect to Floor when already signed in;
+ * a reset email click must never do that — the token would be ignored.
+ */
+export function isForcedPublicAuthPath(pathname: string): boolean {
+  return pathname === '/forgot-password' || pathname === '/reset-password'
+}
+
 /** `?session=` from a Floor / Platforms deep-link. Empty or whitespace is absent. */
 export function sessionQueryParam(search: string): string | null {
   const raw = new URLSearchParams(search.startsWith('?') ? search : `?${search}`).get('session')
@@ -182,7 +191,10 @@ const NAV_ITEMS: { view: View; label: string; shortLabel: string; icon: string }
 ]
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean | null>(null)
+  const [authed, setAuthed] = useState<boolean | null>(() => {
+    if (typeof window === 'undefined') return null
+    return isForcedPublicAuthPath(window.location.pathname) ? false : null
+  })
   const [view, setView] = useState<View>(() => {
     if (typeof window !== 'undefined') ensureCanonicalSessionUrl()
     return typeof window === 'undefined' ? 'floor' : viewFromPath(window.location.pathname)
@@ -232,13 +244,25 @@ export default function App() {
         window.location.pathname,
         window.location.search,
       )
+      let verifyLinkOk = false
       if (linkToken && window.location.pathname === '/verify-email') {
-        window.history.replaceState(null, '', '/')
+        // Keep the public-auth path while the token is consumed so a
+        // transient /me race is not painted as "Factory unreachable".
+        window.history.replaceState(null, '', '/verify-email')
         try {
           await auth.verifyEmail(linkToken)
+          verifyLinkOk = true
         } catch {
           /* still unverified; boot surfaces the verify gate */
         }
+      }
+      if (isForcedPublicAuthPath(window.location.pathname)) {
+        if (!cancelled) {
+          setNeedsEmailVerify(false)
+          setBootError(null)
+          setAuthed(false)
+        }
+        return
       }
       try {
         const me = await auth.me()
@@ -291,6 +315,9 @@ export default function App() {
             window.history.replaceState(null, '', '/')
             setView('floor')
             setAlreadySignedInNotice(true)
+          } else if (window.location.pathname === '/verify-email') {
+            window.history.replaceState(null, '', '/')
+            setView('floor')
           } else {
             setView(viewFromPath(window.location.pathname))
           }
@@ -302,6 +329,17 @@ export default function App() {
             setNeedsEmailVerify(false)
             setSessionLinkError(null)
             setSessionId(null)
+            if (verifyLinkOk && window.location.pathname === '/verify-email') {
+              try {
+                sessionStorage.setItem(
+                  'cerebrum.factory.authNotice',
+                  'Email verified. Sign in to enter the factory.',
+                )
+              } catch {
+                /* ignore quota / private-mode */
+              }
+              window.history.replaceState(null, '', '/login')
+            }
             setAuthed(false)
           } else if (isEmailNotVerifiedError(e)) {
             setBootError(null)

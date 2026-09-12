@@ -642,6 +642,49 @@ def confirm_reset_token(raw: str, new_password: str) -> Optional[str]:
         return account_id
 
 
+def change_account_password(
+    account_id: str,
+    new_password: str,
+    *,
+    keep_login_token: Optional[str] = None,
+) -> bool:
+    """Update the password and revoke other login sessions.
+
+    Same security as :func:`confirm_reset_token`, except the caller's current
+    ``cdt_`` session is kept when ``keep_login_token`` is provided so an
+    in-account change does not bounce the Floor. API keys (``cdk_``) are not
+    login sessions and stay valid.
+    """
+    if not account_id or not new_password:
+        return False
+    salt = secrets.token_hex(16)
+    keep_hash = None
+    if keep_login_token and keep_login_token.startswith("cdt_"):
+        keep_hash = _hash_token(keep_login_token)
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_accounts.c.id).where(_t_accounts.c.id == account_id)
+        ).first()
+        if row is None:
+            return False
+        conn.execute(
+            sa.update(_t_accounts)
+            .where(_t_accounts.c.id == account_id)
+            .values(
+                password_hash=_hash_password(new_password, salt),
+                reset_token_hash=None,
+                reset_expires_at=None,
+            )
+        )
+        delete = sa.delete(_t_login_tokens).where(
+            _t_login_tokens.c.account_id == account_id
+        )
+        if keep_hash:
+            delete = delete.where(_t_login_tokens.c.token_hash != keep_hash)
+        conn.execute(delete)
+    return True
+
+
 def record_session_owner(session_id: str, account_id: str) -> None:
     with _LOCK, _engine().begin() as conn:
         existing = conn.execute(

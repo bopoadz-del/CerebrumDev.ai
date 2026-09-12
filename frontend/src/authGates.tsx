@@ -35,7 +35,7 @@ export function VerifyEmailGate({
     const params = new URLSearchParams(window.location.search)
     const linkToken = params.get('token')
     if (!linkToken || window.location.pathname !== '/verify-email') return
-    window.history.replaceState(null, '', '/')
+    window.history.replaceState(null, '', '/verify-email')
     setBusy(true)
     setError(null)
     auth
@@ -133,12 +133,38 @@ export function VerifyEmailGate({
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset' | 'verify'
 
+const AUTH_MODE_PATH: Record<AuthMode, string> = {
+  login: '/login',
+  register: '/register',
+  forgot: '/forgot-password',
+  reset: '/reset-password',
+  verify: '/verify-email',
+}
+
 function authModeFromPath(pathname: string): AuthMode {
   if (pathname === '/register') return 'register'
   if (pathname === '/forgot-password') return 'forgot'
   if (pathname === '/reset-password') return 'reset'
   if (pathname === '/verify-email') return 'verify'
   return 'login'
+}
+
+function persistAuthPath(mode: AuthMode) {
+  if (typeof window === 'undefined') return
+  const next = AUTH_MODE_PATH[mode]
+  const cur = `${window.location.pathname}${window.location.search}`
+  if (cur !== next) window.history.replaceState(null, '', next)
+}
+
+function consumeAuthNotice(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = sessionStorage.getItem('cerebrum.factory.authNotice')
+    if (stored) sessionStorage.removeItem('cerebrum.factory.authNotice')
+    return stored
+  } catch {
+    return null
+  }
 }
 
 export function AuthGate({
@@ -157,12 +183,13 @@ export function AuthGate({
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(() => consumeAuthNotice())
 
   function go(m: AuthMode) {
     setMode(m)
     setError(null)
     setNotice(null)
+    persistAuthPath(m)
   }
 
   // The verification and reset emails link to /verify-email?token=… and
@@ -176,18 +203,20 @@ export function AuthGate({
     if (!linkToken) return
     const path = window.location.pathname
     if (path !== '/verify-email' && path !== '/reset-password') return
-    window.history.replaceState(null, '', '/')
     if (path === '/reset-password') {
+      persistAuthPath('reset')
       setToken(linkToken)
       setMode('reset')
       setNotice('Choose a new password to finish the reset.')
       return
     }
+    persistAuthPath('verify')
     setBusy(true)
     auth
       .verifyEmail(linkToken)
       .then(() => {
         setMode('login')
+        persistAuthPath('login')
         setNotice('Email verified. Sign in to enter the factory.')
       })
       .catch((err) => {
@@ -231,11 +260,15 @@ export function AuthGate({
           setNotice(res.message ?? 'If the email is registered, a reset link follows.')
         }
         setMode('reset')
+        persistAuthPath('reset')
       } else if (mode === 'reset') {
         const res = await auth.resetPassword(token, password)
         setNotice(res.message ?? 'Password updated — sign in again.')
         setPassword('')
+        setToken('')
+        clearRememberedPassword()
         setMode('login')
+        persistAuthPath('login')
       } else if (mode === 'verify') {
         await auth.verifyEmail(token)
         try {

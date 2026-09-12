@@ -2012,6 +2012,70 @@ test('Account Send password reset posts forgot-password for the signed-in email'
   await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0)
 })
 
+test('signed-in reset-password deep-link shows the choose-new-password form', async ({
+  page,
+}) => {
+  await mockVerifiedFactory(page)
+  const resetPosts: { token?: string; new_password?: string }[] = []
+  await page.route('**/v1/auth/reset-password', async (route) => {
+    resetPosts.push(route.request().postDataJSON() as { token?: string; new_password?: string })
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        message: 'Password updated — sign in again (all previous sessions were closed).',
+      }),
+    })
+  })
+  await page.goto('/reset-password?token=cdr_from_email')
+  await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(page.getByText('Choose a new password to finish the reset.')).toBeVisible()
+  await expect(page.getByPlaceholder('reset token')).toHaveValue('cdr_from_email')
+  await expect(page.getByRole('heading', { name: 'Factory Floor' })).toHaveCount(0)
+  expect(new URL(page.url()).pathname).toBe('/reset-password')
+  await page.getByPlaceholder('new password (8+ characters)').fill('new-pass-456')
+  await page.getByRole('button', { name: 'Update password' }).click()
+  await expect(
+    page.getByText('Password updated — sign in again (all previous sessions were closed).'),
+  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/login')
+  expect(resetPosts).toEqual([{ token: 'cdr_from_email', new_password: 'new-pass-456' }])
+})
+
+test('Account change password posts current and new password', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  const changePosts: { current_password?: string; new_password?: string }[] = []
+  await page.route('**/v1/auth/change-password', async (route) => {
+    changePosts.push(
+      route.request().postDataJSON() as { current_password?: string; new_password?: string },
+    )
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        message: 'Password updated. Other sessions were signed out.',
+      }),
+    })
+  })
+  await page.goto('/account')
+  await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByRole('heading', { name: 'Change password' })).toBeVisible()
+  await page.getByPlaceholder('current password').fill('old-pass-123')
+  await page.getByPlaceholder('new password (8+ characters)').fill('new-pass-456')
+  await page.getByPlaceholder('confirm new password').fill('new-pass-456')
+  await page.getByRole('button', { name: 'Change password' }).click()
+  await expect(page.getByText('Password updated. Other sessions were signed out.')).toBeVisible()
+  expect(changePosts).toEqual([{ current_password: 'old-pass-123', new_password: 'new-pass-456' }])
+  await expect(page.getByRole('button', { name: 'Send password reset' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toHaveCount(0)
+})
+
 test('signed-in /login and /register stay on Floor with a one-line notice', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.goto('/login')

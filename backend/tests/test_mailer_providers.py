@@ -39,6 +39,17 @@ def test_legacy_smtp_configured_alias(monkeypatch):
     assert mailer.smtp_configured() is True
 
 
+def test_frontend_url_is_public_never_returns_the_url(monkeypatch):
+    monkeypatch.setenv("FRONTEND_URL", "https://www.cerebrum-dev.com")
+    assert mailer.frontend_url_is_public() is True
+    monkeypatch.setenv("FRONTEND_URL", "http://localhost:5173")
+    assert mailer.frontend_url_is_public() is False
+    monkeypatch.setenv("FRONTEND_URL", "http://127.0.0.1:5173")
+    assert mailer.frontend_url_is_public() is False
+    monkeypatch.delenv("FRONTEND_URL", raising=False)
+    assert mailer.frontend_url_is_public() is False
+
+
 def test_sender_prefers_resend_from_then_smtp(monkeypatch):
     monkeypatch.delenv("RESEND_FROM", raising=False)
     monkeypatch.delenv("SMTP_FROM", raising=False)

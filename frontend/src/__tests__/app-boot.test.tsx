@@ -13,7 +13,10 @@ import {
 } from '../api/factory'
 import App, {
   canonicalSessionLocation,
+  isForcedPublicAuthPath,
+  isPublicAuthPath,
   isSessionSurfacePath,
+  isSignedInAuthRedirectPath,
   pathFromView,
   pathSessionWins,
   requestedSessionFromLocation,
@@ -307,6 +310,36 @@ describe('App boot', () => {
     expect(screen.queryByRole('heading', { name: 'Sign in' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Enter the factory' })).not.toBeInTheDocument()
     expect(window.location.pathname).toBe('/')
+  })
+
+  it('signed-in reset-password deep-link shows the reset form and keeps the path', async () => {
+    window.history.pushState(null, '', '/reset-password?token=cdr_from_email')
+    meMock.mockResolvedValue({
+      email: 'new@factory.dev',
+      email_verified: true,
+      account_id: 'acct_boot',
+    })
+    listMock.mockResolvedValue([{ session_id: 'sess_ok' }])
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Choose a new password' })).toBeInTheDocument()
+    expect(screen.getByText('Choose a new password to finish the reset.')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('reset token')).toHaveValue('cdr_from_email')
+    expect(screen.getByPlaceholderText('new password (8+ characters)')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(window.location.pathname).toBe('/reset-password')
+    expect(window.location.search).toBe('')
+    expect(listMock).not.toHaveBeenCalled()
+    expect(meMock).not.toHaveBeenCalled()
+  })
+
+  it('signed-out reset-password deep-link still shows the reset form', async () => {
+    window.history.pushState(null, '', '/reset-password?token=cdr_from_email')
+    meMock.mockRejectedValue(new ApiError(401, 'Invalid or missing API key'))
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Choose a new password' })).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('reset token')).toHaveValue('cdr_from_email')
+    expect(screen.queryByRole('heading', { name: 'Factory Floor' })).not.toBeInTheDocument()
+    expect(meMock).not.toHaveBeenCalled()
   })
 
   it('signed-in visit to /register stays on Floor and does not sign out', async () => {
@@ -906,6 +939,22 @@ describe('App boot', () => {
       expect(btn.querySelector('.nav-label-full')).toHaveTextContent(label)
       expect(btn.textContent?.trim().length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe('public vs signed-in auth paths', () => {
+  it('treats reset and forgot as public and forced — not signed-in redirects', () => {
+    expect(isPublicAuthPath('/reset-password')).toBe(true)
+    expect(isPublicAuthPath('/forgot-password')).toBe(true)
+    expect(isPublicAuthPath('/verify-email')).toBe(true)
+    expect(isForcedPublicAuthPath('/reset-password')).toBe(true)
+    expect(isForcedPublicAuthPath('/forgot-password')).toBe(true)
+    expect(isForcedPublicAuthPath('/verify-email')).toBe(false)
+    expect(isForcedPublicAuthPath('/login')).toBe(false)
+    expect(isSignedInAuthRedirectPath('/login')).toBe(true)
+    expect(isSignedInAuthRedirectPath('/register')).toBe(true)
+    expect(isSignedInAuthRedirectPath('/reset-password')).toBe(false)
+    expect(isSignedInAuthRedirectPath('/forgot-password')).toBe(false)
   })
 })
 

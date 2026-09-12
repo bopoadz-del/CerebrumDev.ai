@@ -238,6 +238,11 @@ export const auth = {
       token,
       new_password: newPassword,
     }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    req<{ ok?: boolean; message?: string }>('POST', '/v1/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
   verifyEmail: (token: string) =>
     req<{ ok?: boolean; email_verified?: boolean }>('POST', '/v1/auth/verify-email', { token }),
   resendVerification: () =>
