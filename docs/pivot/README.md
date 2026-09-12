@@ -32,10 +32,11 @@ still uses the pre-G aliases (`ci_present_and_full_suite`,
 ## N1a — live Cursor Background Agent
 
 When `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`)
-**and** `CEREBRUM_BUILDS_GITHUB_TOKEN` are set, `launch_executor` pushes the
-Factory workspace to a `build/<session>-<id>` branch on private
-`cerebrum-builds` (override with `CEREBRUM_BUILDS_REPO`) and launches a Cursor
-Background Agent against that branch. The launch prompt is fixed; the model is
+**and** `CEREBRUM_BUILDS_GITHUB_TOKEN` are set, `launch_executor` cuts a
+`build/<session>-<id>` branch from `cerebrum-builds` `main` (keeps
+`.github/workflows/store-gate.yml`; override repo with `CEREBRUM_BUILDS_REPO`),
+pushes the Factory workspace onto that branch, and launches a Cursor
+Background Agent against it. The launch prompt is fixed; the model is
 the Cursor account default (not hardcoded in Factory). After `FINISHED`,
 Factory collects `receipt.json` plus the branch diff and hands them to N1b.
 
