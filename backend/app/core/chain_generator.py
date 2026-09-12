@@ -234,7 +234,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     provider = cfg.get("provider")
     primary_exc: Exception | None = None
 
-    if provider in ("moonshot", "kimi", "cursor"):
+    if provider in ("moonshot", "kimi", "cursor", "openrouter"):
         try:
             return await _call_openai_compatible(
                 cfg["base_url"],

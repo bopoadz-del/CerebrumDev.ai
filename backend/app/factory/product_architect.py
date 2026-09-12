@@ -308,7 +308,7 @@ def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     if cfg.get("api_key"):
         headers["Authorization"] = f"Bearer {cfg['api_key']}"
 
-    if provider in ("moonshot", "kimi", "cursor"):
+    if provider in ("moonshot", "kimi", "cursor", "openrouter"):
         url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
 
         def _try(m: str) -> Dict[str, Any]:

@@ -4,28 +4,37 @@ Two paths are configured independently:
 
 * Chat / chain_generator path: ``get_llm_config()``
   - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: ``KIMI_*`` / ``ANTHROPIC_*`` or ``CEREBRUM_LLM_*``
-  - OpenRouter is never the primary host when a native Moonshot or Claude
-    key is present. A leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai`` plus
-    a dead ``OPENROUTER_API_KEY`` used to hijack Floor suggestions and 401
-    while ``CEREBRUM_LLM_API_KEY`` was healthy.
+  - Fallback: leftover ``KIMI_*`` / ``ANTHROPIC_*`` or ``CEREBRUM_LLM_*``
+  - OpenRouter is never the primary host when a native Moonshot, Claude,
+    or Cursor key is present. A leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai``
+    plus a dead ``OPENROUTER_API_KEY`` used to hijack Floor suggestions and
+    401 while ``CEREBRUM_LLM_API_KEY`` was healthy.
 
 * Factory Product Architect / platform CLI path: ``get_factory_llm_config()``
   - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
-  - Fallback: ``CEREBRUM_LLM_*`` then ``KIMI_*`` / ``ANTHROPIC_*``
+  - Fallback: ``CEREBRUM_LLM_*`` then leftover ``KIMI_*`` / ``ANTHROPIC_*``
   - Same OpenRouter-is-fallback-only rule as chat. The coder's optional
     cross-provider leg remains ``get_factory_fallback_leg()``.
 
-**Kimi and Claude are both supported. Kimi is the DEFAULT.**
+``LLM_PROVIDER`` accepts ``cursor``, ``kimi``/``moonshot`` (aliased to kimi)
+and ``claude``/``anthropic`` (aliased to claude).
 
-Claude is an addition, not a replacement: it exists so the factory keeps
-running when Kimi credits are out, and so the two can be compared on one
-blueprint. Selection is deliberate, never accidental --
-:func:`_detect_provider` resolves to Kimi whenever Kimi credentials are
-present, *even if Claude credentials are also present*, so nobody's bill
-changes by having a second key in the environment. Claude is used only when
-``LLM_PROVIDER=claude`` is set explicitly, or when Kimi has no credentials and
-Claude does.
+``LLM_PROVIDER=cursor`` is intentional (render.yaml pins it). Cursor keys
+(``CURSOR_API_KEY`` / ``CURSOR_AGENT_API_KEY`` / ``FACTORY_CURSOR_API_KEY``,
+the tuple in ``cursor_ba.CURSOR_KEY_ENVS``) are the matching credential
+family: they arm Background Agents (cli-pivot) and Floor HTTP chat. Chat
+posts OpenAI-shaped ``/chat/completions`` to ``https://api.cursor.com/v1``.
+It must not fall through to an empty provider or the Floor starter-chain
+mock. OpenRouter is fallback only after that primary fails.
+
+Claude remains an opt-in HTTP provider. Leftover Kimi/Moonshot credentials
+still resolve when ``LLM_PROVIDER`` is unset or ``kimi``/``moonshot``.
+Selection is deliberate, never accidental -- :func:`_detect_provider`
+resolves to Kimi whenever leftover Kimi credentials are present, *even if
+Claude credentials are also present*, so nobody's bill changes by having a
+second key in the environment. Claude is used only when
+``LLM_PROVIDER=claude`` is set explicitly, or when Kimi has no credentials
+and Claude does.
 
 Selecting a provider whose key is missing is a loud error. It never falls
 through to the other provider -- a silent switch is a cost surprise, which is
@@ -36,20 +45,20 @@ see :func:`get_factory_fallback_leg` -- is available to the factory coder
 only, runs only after the primary has already failed, and is pinned to a
 zero-priced model so it cannot create the cost surprise the rule exists to
 prevent.
-
-``LLM_PROVIDER`` accepts ``kimi``/``moonshot`` (aliased to kimi),
-``claude``/``anthropic`` (aliased to claude), and ``cursor``. Cursor keys
-follow the same family rule as the others: ``CURSOR_API_KEY`` /
-``CURSOR_AGENT_API_KEY`` / ``FACTORY_CURSOR_API_KEY`` (the tuple in
-``cursor_ba.CURSOR_KEY_ENVS``). ``LLM_PROVIDER=cursor`` is intentional —
-it must not fall through to an empty provider or the Floor starter-chain
-mock.
 """
 
 from __future__ import annotations
 
 import os
 from typing import Any, Dict, List
+
+#: Cursor BA + Floor chat key names. Any one arms cli-pivot and HTTP chat;
+#: first present wins.
+CURSOR_KEY_ENVS = (
+    "CURSOR_API_KEY",
+    "CURSOR_AGENT_API_KEY",
+    "FACTORY_CURSOR_API_KEY",
+)
 
 
 def _truthy(name: str) -> bool:
@@ -324,7 +333,7 @@ def normalise_provider(name: str) -> str:
     return name
 
 
-SUPPORTED_PROVIDERS = ("kimi", "claude", "cursor")
+SUPPORTED_PROVIDERS = ("cursor", "kimi", "claude")
 
 
 def _cursor_key_envs() -> tuple[str, ...]:
@@ -486,7 +495,10 @@ def get_llm_config() -> Dict[str, Any]:
 
 
 def get_factory_llm_config() -> Dict[str, Any]:
-    """Factory Product Architect — Kimi (default) or Claude, + mock for tests.
+    """Factory Product Architect — cursor, leftover Kimi, or Claude.
+
+    ``LLM_PROVIDER=cursor`` uses Cursor-family keys for HTTP draft
+    (same host as Floor chat). Cursor BA / cli-pivot stays the generate path.
 
     Fails closed per provider: asking for a provider whose key is absent is an
     error carrying that provider's name. It never silently borrows the other
@@ -502,25 +514,13 @@ def get_factory_llm_config() -> Dict[str, Any]:
             "model": "",
             "mock": False,
             "error": (
-                f"Factory architect supports {' and '.join(SUPPORTED_PROVIDERS)} "
-                f"(kimi is the default); LLM_PROVIDER={raw} is not allowed for "
+                f"Factory architect supports {' / '.join(SUPPORTED_PROVIDERS)} "
+                f"(cursor is accepted); LLM_PROVIDER={raw} is not allowed for "
                 "product architecture"
             ),
         }
 
     provider = explicit or _detect_provider() or "kimi"
-
-    if provider == "claude":
-        cfg = _factory_claude_config("CEREBRUM_FACTORY")
-        if cfg["mock"]:
-            return cfg
-        if not cfg["api_key"]:
-            cfg["error"] = (
-                "Factory architect was asked for Claude but ANTHROPIC_API_KEY "
-                "(or CEREBRUM_LLM_API_KEY) is not set; refusing to fall back to "
-                "another provider — set the key or unset LLM_PROVIDER"
-            )
-        return cfg
 
     if provider == "cursor":
         cfg = _cursor_config("CEREBRUM_FACTORY")
@@ -532,6 +532,18 @@ def get_factory_llm_config() -> Dict[str, Any]:
                 "(or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY) is not set; "
                 "refusing to fall back to another provider — set the key or "
                 "unset LLM_PROVIDER"
+            )
+        return cfg
+
+    if provider == "claude":
+        cfg = _factory_claude_config("CEREBRUM_FACTORY")
+        if cfg["mock"]:
+            return cfg
+        if not cfg["api_key"]:
+            cfg["error"] = (
+                "Factory architect was asked for Claude but ANTHROPIC_API_KEY "
+                "(or CEREBRUM_LLM_API_KEY) is not set; refusing to fall back to "
+                "another provider — set the key or unset LLM_PROVIDER"
             )
         return cfg
 

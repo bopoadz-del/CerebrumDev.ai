@@ -201,6 +201,10 @@ async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
         "CEREBRUM_CHAT_LLM_API_KEY",
         "CEREBRUM_FACTORY_LLM_API_KEY",
         "LLM_PROVIDER",
+        "OPENROUTER_API_KEY",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
     _clear_cursor_keys(monkeypatch)
@@ -224,10 +228,14 @@ async def test_ready_does_not_count_provider_without_a_key_as_llm(tmp_path, monk
         "CEREBRUM_CHAT_LLM_API_KEY",
         "CEREBRUM_FACTORY_LLM_API_KEY",
         "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
     _clear_cursor_keys(monkeypatch)
-    monkeypatch.setenv("LLM_PROVIDER", "kimi")
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
     monkeypatch.delenv("KIMI_MOCK", raising=False)
 
     resp = await main.ready()

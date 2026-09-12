@@ -28,6 +28,11 @@ def _clear_env():
         "FACTORY_LLM_FALLBACK_API_KEY",
         "DEEPSEEK_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+        "OPENROUTER_MODEL",
+        "FACTORY_LLM_FALLBACK_MODEL",
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_MODEL",
@@ -83,7 +88,7 @@ def test_factory_llm_rejects_an_unsupported_provider():
     assert cfg["provider"] == ""
     error = cfg.get("error", "")
     assert "qwen" in error
-    assert "kimi" in error and "claude" in error and "cursor" in error
+    assert "cursor" in error and "kimi" in error and "claude" in error
 
 
 def test_factory_llm_mock():
@@ -287,6 +292,41 @@ def test_cursor_agent_api_key_alias_counts():
     cfg = get_llm_config()
     assert cfg["provider"] == "cursor"
     assert cfg["api_key"] == "crsr-agent-alias"
+
+
+def test_llm_provider_cursor_uses_cursor_http_not_moonshot():
+    """LLM_PROVIDER=cursor uses Cursor keys on api.cursor.com, not Moonshot."""
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CURSOR_API_KEY"] = "crsr-cursor-http"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-must-not-be-primary"
+    os.environ["KIMI_API_KEY"] = "sk-moonshot-must-not-win"
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "cursor"
+    assert factory_cfg["provider"] == "cursor"
+    assert chat_cfg["api_key"] == "crsr-cursor-http"
+    assert factory_cfg["api_key"] == "crsr-cursor-http"
+    assert chat_cfg["base_url"].startswith("https://api.cursor.com")
+    assert factory_cfg["base_url"].startswith("https://api.cursor.com")
+    assert "moonshot" not in chat_cfg["base_url"]
+    assert "openrouter" not in chat_cfg["base_url"]
+    assert "error" not in chat_cfg
+    assert "error" not in factory_cfg
+
+
+def test_llm_provider_cursor_without_cursor_key_errors_and_names_cursor_keys():
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-not-the-cursor-family"
+    cfg = get_factory_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == ""
+    error = cfg.get("error", "")
+    assert "CURSOR_API_KEY" in error
+    assert "CURSOR_AGENT_API_KEY" in error
+    assert "FACTORY_CURSOR_API_KEY" in error
 
 
 def test_deepseek_key_does_not_arm_chat_or_factory_llm():
