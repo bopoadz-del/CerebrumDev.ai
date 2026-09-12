@@ -189,7 +189,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     if cfg.get("mock"):
         raise RuntimeError("LLM mock mode - no network call")
     provider = cfg["provider"]
-    if provider in ("moonshot", "kimi"):
+    if provider in ("moonshot", "kimi", "cursor", "openrouter"):
         return await _call_openai_compatible(
             cfg["base_url"],
             cfg["api_key"],
