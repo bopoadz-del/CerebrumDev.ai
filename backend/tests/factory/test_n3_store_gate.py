@@ -6,8 +6,6 @@ import json
 from pathlib import Path
 from urllib.request import Request
 
-import pytest
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.cli_receipt import HANDOFF_TO_N3
 from app.factory.build.ledger import BuildLedger, EventKind
