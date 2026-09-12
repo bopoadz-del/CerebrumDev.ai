@@ -8,6 +8,8 @@ const API_BASE =
   (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') || ''
 
 const EMAIL_KEY = 'cerebrum.factory.email'
+/** Owner-requested convenience remember-me. Client-only; never cookies or logs. */
+const PASSWORD_KEY = 'cerebrum.factory.password'
 const LEGACY_TOKEN_KEY = 'cerebrum.factory.token'
 
 export class ApiError extends Error {
@@ -83,14 +85,32 @@ const RETRY_DELAYS_MS = import.meta.env.MODE === 'test' ? [0, 0] : [200, 600]
 export function getEmail(): string | null {
   return localStorage.getItem(EMAIL_KEY)
 }
+export function getRememberedPassword(): string | null {
+  return localStorage.getItem(PASSWORD_KEY)
+}
 /** Persist the display email only. The ``cdt_`` login token lives in an HttpOnly cookie. */
 export function setSession(email: string): void {
   localStorage.removeItem(LEGACY_TOKEN_KEY)
   localStorage.setItem(EMAIL_KEY, email)
 }
+/** Save email+password after a remembered login. Password stays in localStorage only. */
+export function rememberLogin(email: string, password: string): void {
+  localStorage.setItem(EMAIL_KEY, email)
+  localStorage.setItem(PASSWORD_KEY, password)
+}
+/** Forget saved login fields. Does not touch the HttpOnly session cookie. */
+export function forgetRememberedLogin(): void {
+  localStorage.removeItem(EMAIL_KEY)
+  localStorage.removeItem(PASSWORD_KEY)
+}
+export function clearRememberedPassword(): void {
+  localStorage.removeItem(PASSWORD_KEY)
+}
 export function clearSession(): void {
   localStorage.removeItem(LEGACY_TOKEN_KEY)
-  localStorage.removeItem(EMAIL_KEY)
+  if (!localStorage.getItem(PASSWORD_KEY)) {
+    localStorage.removeItem(EMAIL_KEY)
+  }
 }
 
 /** Drop the display email and ask the API to clear the HttpOnly cookie. */

@@ -1,5 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { auth, getEmail, setSession } from './api/factory'
+import {
+  auth,
+  clearRememberedPassword,
+  forgetRememberedLogin,
+  getEmail,
+  getRememberedPassword,
+  rememberLogin,
+  setSession,
+} from './api/factory'
 
 /* ---------------------------------- Auth ---------------------------------- */
 
@@ -141,8 +149,11 @@ export function AuthGate({
   const [mode, setMode] = useState<AuthMode>(() =>
     typeof window === 'undefined' ? 'login' : authModeFromPath(window.location.pathname),
   )
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] = useState(() => getEmail() ?? '')
+  const [password, setPassword] = useState(() => getRememberedPassword() ?? '')
+  const [rememberMe, setRememberMe] = useState(
+    () => Boolean(getEmail() && getRememberedPassword()),
+  )
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -205,6 +216,11 @@ export function AuthGate({
       } else if (mode === 'login') {
         await auth.login(email, password)
         setSession(email)
+        if (rememberMe) {
+          rememberLogin(email, password)
+        } else {
+          clearRememberedPassword()
+        }
         onAuthed()
       } else if (mode === 'forgot') {
         const res = await auth.forgotPassword(email)
@@ -274,6 +290,20 @@ export function AuthGate({
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+        )}
+        {mode === 'login' && (
+          <label className="remember-me">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => {
+                const next = e.target.checked
+                setRememberMe(next)
+                if (!next) forgetRememberedLogin()
+              }}
+            />
+            Remember me
+          </label>
         )}
         {(mode === 'reset' || mode === 'verify') && (
           <input

@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  clearRememberedPassword,
   clearSession,
   factoryAccessPaused,
+  forgetRememberedLogin,
   getEmail,
+  getRememberedPassword,
   ApiError,
   isTransientBootError,
   isTransientNetworkError,
+  rememberLogin,
   setSession,
   subscriptionDisplay,
 } from '../api/factory'
@@ -28,6 +32,32 @@ describe('factory auth storage', () => {
     clearSession()
     expect(localStorage.getItem('cerebrum.factory.token')).toBeNull()
     expect(getEmail()).toBeNull()
+  })
+
+  it('rememberLogin stores email and password under cerebrum.factory.*', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    expect(getEmail()).toBe('owner@factory.dev')
+    expect(getRememberedPassword()).toBe('supersecret1')
+    expect(localStorage.getItem('cerebrum.factory.email')).toBe('owner@factory.dev')
+    expect(localStorage.getItem('cerebrum.factory.password')).toBe('supersecret1')
+    expect(document.cookie).not.toContain('supersecret1')
+  })
+
+  it('forgetRememberedLogin and clearRememberedPassword drop saved fields', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    clearRememberedPassword()
+    expect(getRememberedPassword()).toBeNull()
+    expect(getEmail()).toBe('owner@factory.dev')
+    forgetRememberedLogin()
+    expect(getEmail()).toBeNull()
+    expect(getRememberedPassword()).toBeNull()
+  })
+
+  it('clearSession keeps remembered email+password for the next visit', () => {
+    rememberLogin('owner@factory.dev', 'supersecret1')
+    clearSession()
+    expect(getEmail()).toBe('owner@factory.dev')
+    expect(getRememberedPassword()).toBe('supersecret1')
   })
 
   it('sends credentials: include and no Authorization header', async () => {
