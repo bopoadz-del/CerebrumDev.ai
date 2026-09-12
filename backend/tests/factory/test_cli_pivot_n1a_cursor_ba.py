@@ -600,3 +600,179 @@ def test_run_cli_pivot_api_down_is_unavailable(tmp_path, monkeypatch):
 def test_extract_spent_usd_reads_usage_else_zero():
     assert extract_spent_usd({}) == 0.0
     assert extract_spent_usd({"usage": {"spent_usd": 1.25}}) == 1.25
+
+
+def test_session_id_from_build_branch():
+    from app.factory.build.builds_push import session_id_from_build_branch
+
+    assert (
+        session_id_from_build_branch("build/sess_6fd63c7aed964146-aabbccdd")
+        == "sess_6fd63c7aed964146"
+    )
+    assert session_id_from_build_branch("build/sess_abc") == "sess_abc"
+
+
+def test_collect_compare_404_retries_then_succeeds():
+    """GitHub ref lag: first compares 404, then the tip appears."""
+
+    class FlakyCompare:
+        def __init__(self):
+            self.compare_hits = 0
+            self.calls: list[str] = []
+
+        def __call__(self, req: Request, timeout=None):
+            url = req.full_url
+            self.calls.append(url)
+            if "/compare/" in url:
+                self.compare_hits += 1
+                if self.compare_hits < 3:
+                    from urllib.error import HTTPError
+                    from io import BytesIO
+
+                    raise HTTPError(
+                        url, 404, "Not Found", hdrs=None, fp=BytesIO(b'{"message":"Not Found"}')
+                    )
+                return _Resp(
+                    200,
+                    {
+                        "files": [
+                            {
+                                "filename": PATHS[0],
+                                "patch": "@@\n+x\n",
+                            }
+                        ]
+                    },
+                )
+            if "/contents/" in url:
+                raw = base64.b64encode(json.dumps(RECEIPT).encode("utf-8")).decode(
+                    "ascii"
+                )
+                return _Resp(200, {"content": raw, "encoding": "base64"})
+            raise URLError(f"unexpected URL {url}")
+
+    sleeps: list[float] = []
+    opener = FlakyCompare()
+    ref = BuildsRef(
+        owner="bopoadz-del",
+        repo="cerebrum-builds",
+        repository_url="https://github.com/bopoadz-del/cerebrum-builds",
+        branch="build/sess_retry-aabbccdd",
+        seed_sha="abc123seedsha",
+    )
+    receipt, paths, diff = collect_branch(
+        ref,
+        env=_env(),
+        opener=opener,
+        sleep=sleeps.append,
+        retries=5,
+        retry_sleep_s=0.01,
+    )
+    assert opener.compare_hits == 3
+    assert len(sleeps) == 2
+    assert receipt["cli_authored_ids"] == IDS
+    assert PATHS[0] in paths
+    assert "diff --git" in diff
+
+
+def test_collect_compare_404_discovers_renamed_session_tip():
+    """Head renamed: discover build/<session>-* via matching-refs and collect."""
+
+    class RenameOpener:
+        def __call__(self, req: Request, timeout=None):
+            from urllib.parse import unquote
+
+            url = unquote(req.full_url)
+            if "/compare/" in url:
+                if "build/sess_rename-aa11bb22" in url:
+                    from urllib.error import HTTPError
+                    from io import BytesIO
+
+                    raise HTTPError(
+                        url, 404, "Not Found", hdrs=None, fp=BytesIO(b"{}")
+                    )
+                if "build/sess_rename-cc33dd44" in url:
+                    return _Resp(
+                        200,
+                        {
+                            "files": [
+                                {"filename": PATHS[0], "patch": "@@\n+y\n"}
+                            ]
+                        },
+                    )
+                from urllib.error import HTTPError
+                from io import BytesIO
+
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=BytesIO(b"{}"))
+            if "/commits/" in url:
+                # seed resolves; old head does not; new tip does
+                if "abc123seedsha" in url or "build/sess_rename-cc33dd44" in url:
+                    return _Resp(200, {"sha": "deadbeef"})
+                from urllib.error import HTTPError
+                from io import BytesIO
+
+                raise HTTPError(url, 404, "Not Found", hdrs=None, fp=BytesIO(b"{}"))
+            if "matching-refs" in url:
+                return _Resp(
+                    200,
+                    [
+                        {
+                            "ref": "refs/heads/build/sess_rename-cc33dd44",
+                            "object": {"sha": "tipsha0001"},
+                        }
+                    ],
+                )
+            if "/contents/" in url:
+                raw = base64.b64encode(json.dumps(RECEIPT).encode("utf-8")).decode(
+                    "ascii"
+                )
+                return _Resp(200, {"content": raw, "encoding": "base64"})
+            raise URLError(f"unexpected URL {url}")
+
+    ref = BuildsRef(
+        owner="bopoadz-del",
+        repo="cerebrum-builds",
+        repository_url="https://github.com/bopoadz-del/cerebrum-builds",
+        branch="build/sess_rename-aa11bb22",
+        seed_sha="abc123seedsha",
+    )
+    receipt, paths, _diff = collect_branch(
+        ref,
+        env=_env(),
+        branch="build/sess_rename-aa11bb22",
+        opener=RenameOpener(),
+        sleep=lambda _s: None,
+        retries=0,
+    )
+    assert receipt["cli_authored_ids"] == IDS
+    assert PATHS[0] in paths
+
+
+def test_collect_compare_404_fails_closed_with_diagnosis_not_api_down():
+    class Always404:
+        def __call__(self, req: Request, timeout=None):
+            url = req.full_url
+            from urllib.error import HTTPError
+            from io import BytesIO
+
+            raise HTTPError(url, 404, "Not Found", hdrs=None, fp=BytesIO(b"{}"))
+
+    ref = BuildsRef(
+        owner="bopoadz-del",
+        repo="cerebrum-builds",
+        repository_url="https://github.com/bopoadz-del/cerebrum-builds",
+        branch="build/sess_gone-deadbeef",
+        seed_sha="abc123seedsha",
+    )
+    with pytest.raises(BuildsPushError, match="compare HTTP 404: seed=") as exc:
+        collect_branch(
+            ref,
+            env=_env(),
+            opener=Always404(),
+            sleep=lambda _s: None,
+            retries=1,
+            retry_sleep_s=0.0,
+        )
+    msg = str(exc.value)
+    assert "GitHub API down" not in msg
+    assert "retryable infra" in msg
+    assert "missing" in msg

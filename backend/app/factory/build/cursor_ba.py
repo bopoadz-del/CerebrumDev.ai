@@ -285,17 +285,35 @@ def run_background_agent(
     work_branch = agent_branch_name(polled, ref.branch)
     head_sha = ""
     try:
-        from app.factory.build.builds_push import builds_token, fetch_commit_sha
+        from app.factory.build.builds_push import BuildsPushError, builds_token, fetch_commit_sha
 
         token = builds_token(env)
         if token:
-            head_sha = fetch_commit_sha(
-                ref.owner,
-                ref.repo,
-                work_branch,
-                token=token,
-                opener=opener,
-            )
+            try:
+                head_sha = fetch_commit_sha(
+                    ref.owner,
+                    ref.repo,
+                    work_branch,
+                    token=token,
+                    opener=opener,
+                )
+            except BuildsPushError:
+                # Cursor may report a renamed head that is not pushed yet, or
+                # the seed branch is the durable tip — fall back before collect.
+                if work_branch != ref.branch:
+                    try:
+                        head_sha = fetch_commit_sha(
+                            ref.owner,
+                            ref.repo,
+                            ref.branch,
+                            token=token,
+                            opener=opener,
+                        )
+                        work_branch = ref.branch
+                    except BuildsPushError:
+                        head_sha = ""
+                else:
+                    head_sha = ""
     except Exception:  # noqa: BLE001 — N3 can discover the tip later
         head_sha = ""
     if hung or not started:

@@ -94,6 +94,10 @@ pushes the Factory workspace onto that branch, and launches a Cursor
 Background Agent against it. The launch prompt is fixed; the model is
 the Cursor account default (not hardcoded in Factory). After `FINISHED`,
 Factory collects `receipt.json` plus the branch diff and hands them to N1b.
+Compare HTTP 404 (missing seed/head after BA rename, branch delete, or ref
+lag) is **not** treated as a GitHub outage: collect retries, rediscovers
+`build/<session>-*` tips, falls back to the seed branch, then fails closed
+as retryable infra with a seed/head diagnosis.
 
 Keys, builds token/repo, Cursor API, never-started, hung-past-wall, and
 push-failed misses stay `EXECUTOR_UNAVAILABLE`. Receipt/path misses stay N1b.
