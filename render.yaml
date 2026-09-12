@@ -272,6 +272,15 @@ services:
         sync: false
       - key: KIMI_CODE_HOME
         value: /app/.kimi-code
+      # Factory post-CLONER domain handoff → Cursor automation webhook.
+      # Dashboard-only: this file is not a live Blueprint; never commit the
+      # URL secret or the Bearer token (crsr_…). post_webhook attaches
+      # Authorization when DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION (or
+      # DOMAIN_HANDOFF_WEBHOOK_KEY) is set. No Cursor agent APIs.
+      - key: DOMAIN_HANDOFF_WEBHOOK_URL
+        sync: false
+      - key: DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION
+        sync: false
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage
