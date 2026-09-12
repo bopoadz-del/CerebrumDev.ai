@@ -125,6 +125,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Regenerate blocks.lock.json from --blocks-root before building",
     )
 
+    p_pivot = sub.add_parser(
+        "cli-pivot",
+        help="N1 keyless seam: compose C-BRIEF, fail-closed executor, receipt jail",
+    )
+    p_pivot.add_argument("--blueprint", required=True)
+    p_pivot.add_argument("--out", required=True)
+    p_pivot.add_argument("--blocks-root", default=None)
+    p_pivot.add_argument(
+        "--wall-s",
+        type=float,
+        default=None,
+        help="wall cap decided before dispatch (clamped to S07 CEILING_S)",
+    )
+    p_pivot.add_argument(
+        "--spend-usd",
+        type=float,
+        default=None,
+        help="spend cap decided before dispatch (default 0)",
+    )
+
     p_store = sub.add_parser("store", help="Block Store Manager tools")
     store_sub = p_store.add_subparsers(dest="store_cmd", required=True)
     p_registry = store_sub.add_parser(
@@ -192,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "build":
         return _build_cmd(args, bp, blocks_root)
+    if args.cmd == "cli-pivot":
+        return _cli_pivot_cmd(args, bp, blocks_root)
 
     try:
         if args.cmd == "plan":
@@ -303,6 +325,21 @@ def _build_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
         )
     )
     return 0 if outcome.ok else 1
+
+
+def _cli_pivot_cmd(args: argparse.Namespace, blueprint, blocks_root) -> int:
+    """New C-BRIEF → executor seam. Keyless default is EXECUTOR_UNAVAILABLE."""
+    from app.factory.build.cli_pivot import HANDOFF_TO_N3, run_cli_pivot
+
+    result = run_cli_pivot(
+        blueprint,
+        args.out,
+        blocks_root=blocks_root,
+        wall_s=args.wall_s,
+        spend_cap_usd=args.spend_usd,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    return 0 if result.honesty == HANDOFF_TO_N3 else 1
 
 
 def _store_cmd(args: argparse.Namespace) -> int:
