@@ -260,6 +260,10 @@ class ExecutorLaunch:
     receipt: Any = None
     changed_paths: List[str] = field(default_factory=list)
     unified_diff: str = ""
+    branch: str = ""
+    head_sha: str = ""
+    owner: str = ""
+    repo: str = ""
 
 
 def _session_id(
@@ -312,6 +316,10 @@ def launch_executor(
         receipt=result.receipt,
         changed_paths=list(result.changed_paths),
         unified_diff=result.unified_diff,
+        branch=getattr(result, "branch", "") or "",
+        head_sha=getattr(result, "head_sha", "") or "",
+        owner=getattr(result, "owner", "") or "",
+        repo=getattr(result, "repo", "") or "",
     )
 
 
@@ -326,13 +334,17 @@ class SeamResult:
     cli_authored_ids: List[str] = field(default_factory=list)
     capability_set: List[str] = field(default_factory=list)
     brief_chars: int = 0
+    builds_branch: str = ""
+    builds_sha: str = ""
+    builds_owner: str = ""
+    builds_repo: str = ""
 
     @property
     def ok(self) -> bool:
         return self.honesty == HANDOFF_TO_N3
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "honesty": self.honesty,
             "failure_class": self.failure_class,
             "green": False,
@@ -344,6 +356,15 @@ class SeamResult:
             "capability_set": list(self.capability_set),
             "brief_chars": self.brief_chars,
         }
+        if self.builds_branch:
+            payload["builds_branch"] = self.builds_branch
+        if self.builds_sha:
+            payload["builds_sha"] = self.builds_sha
+        if self.builds_owner:
+            payload["builds_owner"] = self.builds_owner
+        if self.builds_repo:
+            payload["builds_repo"] = self.builds_repo
+        return payload
 
 
 def _ledger_note(
@@ -526,6 +547,12 @@ def run_cli_pivot(
             brief_chars=len(compiled.text),
         )
 
+    builds_payload = {
+        "builds_branch": getattr(outcome, "branch", "") or "",
+        "builds_sha": getattr(outcome, "head_sha", "") or "",
+        "builds_owner": getattr(outcome, "owner", "") or "",
+        "builds_repo": getattr(outcome, "repo", "") or "",
+    }
     _ledger_note(
         led,
         HANDOFF_TO_N3,
@@ -535,6 +562,7 @@ def run_cli_pivot(
             "next": "n3_gate",
             "green": False,
             "cli_authored_ids": list(verdict.cli_authored_ids),
+            **{k: v for k, v in builds_payload.items() if v},
         },
     )
     return SeamResult(
@@ -547,4 +575,8 @@ def run_cli_pivot(
         cli_authored_ids=list(verdict.cli_authored_ids),
         capability_set=caps,
         brief_chars=len(compiled.text),
+        builds_branch=builds_payload["builds_branch"],
+        builds_sha=builds_payload["builds_sha"],
+        builds_owner=builds_payload["builds_owner"],
+        builds_repo=builds_payload["builds_repo"],
     )

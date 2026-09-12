@@ -661,23 +661,59 @@ def build_status(
 
     if terminal is not None and terminal.kind is EventKind.RUN_SUCCEEDED:
         payload = terminal.payload or {}
-        return _with_level_grade(
-            {
-                "state": "succeeded",
-                "detail": terminal.detail,
+        succeeded = {
+            "state": "succeeded",
+            "detail": terminal.detail,
+            "cycle": payload.get("cycle") or "code",
+            "outcome": payload.get("outcome"),
+            # Only a SUCCESS that closed a pilot cycle is Store-green / pilot-ready.
+            # Code-phase success must not be presented as a finished pilot.
+            "pilot_ready": ledger.pilot_ready(),
+            **progress,
+            **_authorship(output_dir, blueprint=blueprint, plan=plan),
+            "stale": False,
+        }
+        if payload.get("honesty"):
+            succeeded["honesty"] = payload.get("honesty")
+        if payload.get("score"):
+            succeeded["n3_score"] = payload.get("score")
+        if payload.get("builds_sha"):
+            succeeded["builds_sha"] = payload.get("builds_sha")
+        return _with_level_grade(succeeded, output_dir)
+    if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
+        payload = terminal.payload or {}
+        from app.factory.build.n3_store_gate import handoff_awaiting_n3
+
+        if handoff_awaiting_n3(output_dir):
+            # Receipt accepted; N3 store-gate is the next green. Do not paint
+            # this as a terminal coding failure or unlock package.
+            waiting = {
+                "state": "building",
+                "detail": (
+                    "HANDOFF_TO_N3: waiting for cerebrum-builds "
+                    "store-gate 12/12"
+                ),
                 "cycle": payload.get("cycle") or "code",
-                "outcome": payload.get("outcome"),
-                # Only a SUCCESS that closed a pilot cycle is Store-green / pilot-ready.
-                # Code-phase success must not be presented as a finished pilot.
-                "pilot_ready": ledger.pilot_ready(),
+                "outcome": "HANDOFF_TO_N3",
+                "honesty": "HANDOFF_TO_N3",
+                "next": "n3_gate",
+                "green": False,
+                "n3_waiting": True,
+                "pilot_ready": False,
+                "findings": list(payload.get("findings") or [])[:10],
                 **progress,
                 **_authorship(output_dir, blueprint=blueprint, plan=plan),
                 "stale": False,
-            },
-            output_dir,
-        )
-    if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
-        payload = terminal.payload or {}
+            }
+            for key in (
+                "builds_sha",
+                "builds_branch",
+                "builds_owner",
+                "builds_repo",
+            ):
+                if payload.get(key):
+                    waiting[key] = payload[key]
+            return _with_level_grade(waiting, output_dir)
         failed = {
             "state": "failed",
             "detail": terminal.detail,
@@ -689,6 +725,8 @@ def build_status(
             **_authorship(output_dir, blueprint=blueprint, plan=plan),
             "stale": False,
         }
+        if payload.get("honesty"):
+            failed["honesty"] = payload.get("honesty")
         if _thin_authorship_detail(terminal.detail):
             failed = _reevaluate_thin_authorship_failure(
                 failed, output_dir, blueprint=blueprint, plan=plan
@@ -896,7 +934,15 @@ def _run(
         if outcome.outcome is RunnerOutcome.HANDOFF_TO_N3:
             # Receipt accepted; N3 store-gate is next. Keep the generation
             # charge (not a fail) and do not clone a non-green Steward tree.
+            # Poll cerebrum-builds commit status in this same thread — never
+            # re-enter WRITER or launch another Background Agent.
             _clear_quota_marker(output_dir)
+            try:
+                from app.factory.build.n3_store_gate import wait_and_ingest_n3
+
+                wait_and_ingest_n3(output_dir)
+            except Exception:  # noqa: BLE001 — waiter crash must not kill the thread
+                logger.exception("n3 store-gate ingest failed for %s", output_dir)
             return
     except Exception:  # noqa: BLE001
         # The thread must never die silently: without this the ledger's last
@@ -968,6 +1014,45 @@ def start_runner_build(
     if ledger.exists():
         status = build_status(out)
         if status.get("state") == "building":
+            from app.factory.build.n3_store_gate import (
+                handoff_awaiting_n3,
+                n3_ingest_live,
+                start_n3_ingest_job,
+            )
+
+            if handoff_awaiting_n3(out):
+                if n3_ingest_live(out):
+                    logger.info(
+                        "refusing second N3 ingest; store-gate waiter already live at %s",
+                        out,
+                    )
+                    return {
+                        "engine": RUNNER,
+                        "output_dir": str(out),
+                        "product_id": getattr(blueprint, "product_id", "unknown"),
+                        "inputs_hash": inputs_hash,
+                        "build": status,
+                        "cycle": resolved,
+                        "already_running": True,
+                        "n3_waiting": True,
+                    }
+                started = start_n3_ingest_job(out)
+                logger.info(
+                    "HANDOFF_TO_N3 at %s; %s store-gate ingest (no WRITER / BA)",
+                    out,
+                    "started" if started else "attached to",
+                )
+                return {
+                    "engine": RUNNER,
+                    "output_dir": str(out),
+                    "product_id": getattr(blueprint, "product_id", "unknown"),
+                    "inputs_hash": inputs_hash,
+                    "build": build_status(out, blueprint=blueprint),
+                    "cycle": resolved,
+                    "already_running": not started,
+                    "n3_waiting": True,
+                    "n3_ingest": True,
+                }
             logger.info("refusing second runner start; build already in progress at %s", out)
             return {
                 "engine": RUNNER,

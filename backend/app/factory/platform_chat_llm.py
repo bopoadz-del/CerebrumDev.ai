@@ -138,6 +138,13 @@ def _session_facts(state: Any) -> str:
             "Product is pilot-ready (Store-green). start_coder is forbidden — "
             "tell the user it already finished; do not start a new product."
         )
+    elif platform_chat_flow.is_handoff_awaiting_n3(state):
+        lines.append(
+            "Cli-pivot handed off to N3 (HANDOFF_TO_N3). continue / "
+            "start_coder MUST ingest the cerebrum-builds store-gate "
+            "12/12 commit status. Do NOT draft a new platform, do NOT "
+            "re-enter WRITER, and do NOT launch another Background Agent."
+        )
     elif platform_chat_flow.is_generation_complete(state):
         lines.append(
             "Code-phase 5/5 SUCCEEDED but the platform is NOT pilot-ready "

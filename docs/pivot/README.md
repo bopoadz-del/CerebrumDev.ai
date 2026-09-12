@@ -36,7 +36,35 @@ workspace when Cursor executor keys are present (`CURSOR_API_KEY` /
 `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`). Keys-present is the gate
 (no extra `FACTORY_CLI_PIVOT` flag). Absent keys keep the in-process WRITER
 path until N2. A `HANDOFF_TO_N3` receipt is a ledger note, not product green —
-k/12 remains the only green.
+k/12 remains the only green. After that note, Factory polls the
+cerebrum-builds commit status context `store-gate` (optional
+`store_gate.json` artifact) for the session's `build/**` SHA until
+**12/12** `ok=true`, then stamps STORE green + `pilot_ready` so Floor
+package ship can unlock. Continue after `HANDOFF_TO_N3` is **ingest**,
+not another WRITER / Background Agent. Missing, red, or score ≠ 12/12
+fail-closed.
+
+### Floor recovery — `sess_02af51453b364e3f`
+
+Live finance-ops session already handed off on Factory tip `edc03cc`
+(receipt+diff clean; Floor painted failed / package 409). Cerebrum-builds
+branch `build/sess_02af51453b364e3f-278c481a` tip
+`081a52874bb0141c5eb730b01f26dcc0bf8d0fa2` has GHA run **34706583003**
+`store-gate` success, description `acceptance.py in Docker 12/12`,
+artifact `store_gate.json` score 12/12.
+
+After this ingest ships:
+
+1. **Auto-poll** — new sessions: the build thread calls
+   `wait_and_ingest_n3` immediately after cli-pivot `HANDOFF_TO_N3`.
+2. **Continue-as-ingest** — for `sess_02af51453b364e3f`, Floor Continue
+   (or chat `start_coder`) must **not** open a fresh workspace. It
+   resolves the builds SHA (ledger fields, or `build/<session>-*` on
+   cerebrum-builds), fetches `store-gate`, and on 12/12 stamps
+   `docs/store_acceptance.json` + `RUN_SUCCEEDED` `cycle=pilot`. Package
+   unlocks when existing authorship / acceptance gates still hold.
+
+Do not Continue into WRITER as a fake fix.
 
 ## N1a — live Cursor Background Agent
 

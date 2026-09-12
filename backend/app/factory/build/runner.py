@@ -665,6 +665,17 @@ class RoleRunner:
             payload["honesty"] = "HANDOFF_TO_N3"
             payload["next"] = "n3_gate"
             payload["green"] = False
+            cli = (self.state or {}).get("cli_pivot")
+            if isinstance(cli, Mapping):
+                for key in (
+                    "builds_sha",
+                    "builds_branch",
+                    "builds_owner",
+                    "builds_repo",
+                    "cli_authored_ids",
+                ):
+                    if cli.get(key):
+                        payload[key] = cli[key]
         self.ledger.append(
             kind,
             role=phase,
