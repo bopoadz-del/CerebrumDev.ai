@@ -6,7 +6,6 @@ from typing import List, Dict, Any, Optional
 from .feature_mapper import fetch_block_registry
 from .block_taxonomy import BUILTIN_BLOCKS, OPTIONAL_BLOCKS
 from .llm_config import (
-    active_provider,
     get_factory_fallback_leg,
     get_llm_config,
     _is_openrouter_base,
