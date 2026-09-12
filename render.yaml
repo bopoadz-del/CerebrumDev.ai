@@ -102,7 +102,8 @@ services:
         value: "3"
       - key: BACKUP_KEEP
         value: "14"
-      # Accounts engine. Left UNWIRED on purpose.
+      # Accounts engine. Left UNWIRED in this file on purpose (do not sync
+      # this Blueprint). The live dashboard value is the source of truth.
       #
       # Setting this switches accounts_store from SQLite to Postgres, and the
       # switch copies nothing -- pointing a live service at an empty database
@@ -110,8 +111,12 @@ services:
       #   1. sync the blueprint so cerebrumdev-accounts (below) is provisioned
       #   2. python -m scripts.migrate_accounts_to_postgres --verify
       #   3. only then paste the connection string here
-      # Until step 3, accounts stay on SQLite and the nightly backup job keeps
-      # snapshotting them.
+      # Once set on the live web service, ACCOUNTS_DATABASE_URL MUST STAY SET.
+      # Unsetting it falls back to /app/storage/accounts.db while login reads
+      # the (now empty-ish) Postgres — that is how the owner account
+      # (acct_c38ae401…) became invisible. cerebrum-builds is not the
+      # accounts store. Restore leftover SQLite rows with master-key
+      # POST /v1/ops/accounts-restore?force=true (merge; never wipe).
       - key: ACCOUNTS_DATABASE_URL
         sync: false
       # Encryption at rest for Drive OAuth refresh tokens and stored documents.

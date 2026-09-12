@@ -128,6 +128,13 @@ SQLite is one file with one writer: under public signup load it returns
 database loses every account — and the app boots fine reporting no users, so
 nobody notices until a customer cannot log in.
 
+**`ACCOUNTS_DATABASE_URL` must stay set** once the live service uses Postgres.
+Unsetting it (env thrash) makes the app fall back to disk SQLite at
+`STORAGE_PATH/accounts.db` while login reads the new/empty Postgres. The real
+owner account (`acct_c38ae401…`, `chadi.m@theshovel.ai`) has lived on that
+SQLite file. `cerebrum-builds` is **not** the accounts store — never migrate
+accounts there.
+
 ```bash
 # 1. sync the blueprint so cerebrumdev-accounts is provisioned
 # 2. create the schema in the new database
@@ -135,10 +142,35 @@ ACCOUNTS_DATABASE_URL=<url> python -m alembic upgrade head
 # 3. copy the data and check it landed
 ACCOUNTS_DATABASE_URL=<url> python -m scripts.migrate_accounts_to_postgres --verify
 # 4. only now set ACCOUNTS_DATABASE_URL on the web service
+# 5. never unset it again
 ```
 
-The migration refuses a non-empty target unless forced, and `--verify` re-reads
-both sides and compares counts rather than trusting that the inserts ran.
+The CLI refuses a non-empty target unless `--force` is given. `--force` is
+**merge** mode: insert missing ids/emails only, never wipe smoke/existing
+Postgres rows. `--verify` confirms every non-conflict source primary key is
+present (counts may differ after a merge).
+
+### Live restore (master key, one-shot)
+
+When disk SQLite still holds real accounts and Postgres already has smoke
+rows, do not shell into the box. After deploy:
+
+```bash
+# Compare ids + emails only (no password hashes)
+curl -sS -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY" \
+  https://api.cerebrum-dev.com/v1/ops/accounts-restore
+
+# Merge missing SQLite rows into Postgres (idempotent; safe to re-run)
+curl -sS -X POST -H "Authorization: Bearer $CEREBRUM_DEV_API_KEY" \
+  "https://api.cerebrum-dev.com/v1/ops/accounts-restore?force=true"
+```
+
+`POST` without `force=true` refuses if Postgres already has rows. The JSON
+returns sqlite counts, postgres counts before/after, and emails migrated —
+never password hashes. Re-running inserts nothing already present.
+
+Do **not** change Render env to perform this restore. Keep
+`ACCOUNTS_DATABASE_URL` set.
 
 ## Health and alerting
 
