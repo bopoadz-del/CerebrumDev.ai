@@ -72,6 +72,13 @@ NAMED_BLOCKER_CLI_UNUSED = "FACTORY_CODE_CLI_UNUSED"
 #: Factory-grounded fill after that exit is not C-BRIEF authorship
 #: (sess_4e1ec7afa3894dc8 / #368 class under the kimi vehicle).
 NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
+#: Named empty-harvest reasons folded into NO_AUTHORSHIP detail (not new
+#: honesty classes). Fail-closed stays FACTORY_CODE_CLI_NO_AUTHORSHIP.
+CLI_EMPTY_DESCRIBED_NOT_WRITTEN = "described-not-written"
+CLI_EMPTY_REFUSED = "refused"
+CLI_EMPTY_EMPTY_COMPLETION = "empty-completion"
+CLI_EMPTY_WRONG_PATH = "wrong-path"
+FACTORY_STAGING_DIRNAME = ".factory-staging"
 #: CLI/LLM wrote some handlers, but below the launching-ready full-pilot
 #: floor (need = min(5, max(1, n_required)); unknown n_required keeps
 #: need=5). Distinct from written=0 / stub_rate=1.0
@@ -884,14 +891,90 @@ def read_control(root: Path) -> str:
     return action if action in {CONTROL_RUN, CONTROL_PAUSE, CONTROL_STOP} else CONTROL_RUN
 
 
-def read_log_tail(root: Path, *, max_chars: int = 8000) -> str:
-    path = Path(root) / LOG_REL
-    if not path.is_file():
+def writer_staging_dir(output_dir: Path) -> Path:
+    """RoleRunner WRITER staging sibling of ``output_dir``.
+
+    Live log after RoleError (before ``ws.commit()``) lands at
+    ``{output_dir.parent}/.{output_dir.name}.staging-writer/docs/coder_session.log``.
+    """
+    output_dir = Path(output_dir)
+    return output_dir.parent / f".{output_dir.name}.staging-writer"
+
+
+def coder_session_log_candidates(root: Path) -> List[Path]:
+    """Destination log plus documented WRITER staging variants.
+
+    Prefer this list when dest ``docs/coder_session.log`` is missing or
+    empty — one-off jobs do not mount ``/app/storage``, and a WRITER
+    RoleError leaves the live CLI stdout on the staging sibling.
+    """
+    dest = Path(getattr(root, "destination", None) or getattr(root, "workspace", root))
+    try:
+        dest = dest.resolve()
+    except OSError:
+        dest = Path(dest)
+    staging_attr = getattr(root, "workspace", None)
+    out: List[Path] = []
+    seen: set = set()
+
+    def _add(path: Path) -> None:
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(Path(path))
+
+    _add(dest / LOG_REL)
+    if staging_attr is not None:
+        _add(Path(staging_attr) / LOG_REL)
+    _add(writer_staging_dir(dest) / LOG_REL)
+    parent = dest.parent
+    prefix = f".{dest.name}.staging-"
+    try:
+        if parent.is_dir():
+            for child in sorted(parent.iterdir()):
+                if child.is_dir() and child.name.startswith(prefix):
+                    _add(child / LOG_REL)
+    except OSError:
+        pass
+    _add(dest / FACTORY_STAGING_DIRNAME / LOG_REL)
+    return out
+
+
+def resolve_coder_session_log(root: Path) -> Optional[Path]:
+    """Prefer a non-empty coder log, then the newer file."""
+    best_path: Optional[Path] = None
+    best_key: Optional[Tuple[bool, float]] = None
+    for path in coder_session_log_candidates(root):
+        if not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        key = (bool(text.strip()), stat.st_mtime)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_path = path
+    return best_path
+
+
+def read_coder_session_log(root: Path) -> str:
+    path = resolve_coder_session_log(root)
+    if path is None:
         return ""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def read_log_tail(root: Path, *, max_chars: int = 8000) -> str:
+    text = read_coder_session_log(root)
     if len(text) <= max_chars:
         return text
     return text[-max_chars:]
@@ -913,12 +996,12 @@ def session_status(root: Path) -> Dict[str, Any]:
     control = read_control(root)
     receipt = read_receipt(root)
     brief = Path(root) / BRIEF_REL
-    log = Path(root) / LOG_REL
+    resolved = resolve_coder_session_log(root)
     return {
         "coder_control": control,
         "coder_log": read_log_tail(root),
         "coder_brief_present": brief.is_file(),
-        "coder_log_present": log.is_file(),
+        "coder_log_present": bool(resolved and resolved.is_file()),
         "coder_receipt": receipt,
         "brief_dispatch": receipt.get("via") or ("compiled" if brief.is_file() else None),
     }
@@ -1434,6 +1517,117 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
             ),
         )
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
+
+
+_WRITE_TOOL_RE = re.compile(
+    r"(?:"
+    r"Write\s*\("
+    r"|write_file\b"
+    r"|str_replace\b"
+    r'|(?:^|[\s\[{,])Edit\s*\('
+    r'|["\']name["\']\s*:\s*["\']Write["\']'
+    r"|tool(?:_name)?[\"']?\s*[:=]\s*[\"']?Write\b"
+    r"|Using tool Write\b"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+_FENCE_RE = re.compile(r"```(?:[A-Za-z0-9_+-]*)\s*\n")
+_WRITE_PATH_RE = re.compile(
+    r"(?:"
+    r"(?:Write|write_file|Edit|str_replace)\s*\(\s*[\"']?([^\"')\s,]+)"
+    r"|Wrote\s+(\S+)"
+    r")",
+    re.IGNORECASE,
+)
+_CLI_CMD_LINE_RE = re.compile(r"^\$\s+\S+.*$", re.MULTILINE)
+_EMPTY_REFUSE_HINTS = (
+    "i cannot",
+    "i can't",
+    "i will not",
+    "i won't",
+    "i refuse",
+    "i am refusing",
+    "refusing to",
+    "unable to write",
+    "cannot write",
+    "can't write",
+    "won't write",
+    "i'm not able",
+    "i am not able",
+    "against my guidelines",
+    "i must decline",
+    "i decline",
+)
+
+
+def _cli_used_write_tool(blob: str) -> bool:
+    return bool(_WRITE_TOOL_RE.search(blob or ""))
+
+
+def _cli_write_paths(blob: str) -> List[str]:
+    found: List[str] = []
+    for match in _WRITE_PATH_RE.finditer(blob or ""):
+        path = next((g for g in match.groups() if g), "")
+        if path:
+            found.append(path)
+    return found
+
+
+def _is_harvest_handler_path(path: str) -> bool:
+    norm = path.replace("\\", "/").lstrip("./")
+    return norm.startswith("app/actions/") and norm.endswith(".py")
+
+
+def _cli_described_not_written(blob: str) -> bool:
+    return bool(_FENCE_RE.search(blob or "")) and not _cli_used_write_tool(blob)
+
+
+def _cli_refused(blob: str) -> bool:
+    lowered = (blob or "").lower()
+    return any(hint in lowered for hint in _EMPTY_REFUSE_HINTS)
+
+
+def _cli_wrote_wrong_path(blob: str) -> bool:
+    paths = _cli_write_paths(blob)
+    if not paths:
+        return False
+    return not any(_is_harvest_handler_path(p) for p in paths)
+
+
+def _cli_empty_completion(blob: str) -> bool:
+    remainder = _CLI_CMD_LINE_RE.sub("", blob or "")
+    remainder = re.sub(r"^\[FACTORY_[^\]]*\]\s*.*$", "", remainder, flags=re.MULTILINE)
+    return not remainder.strip()
+
+
+def classify_cli_empty(log_text: str) -> str:
+    """Named reason for CLI exit 0 + empty harvest.
+
+    Returns one of ``described-not-written``, ``refused``,
+    ``empty-completion``, ``wrong-path``. Does not change the
+    ``FACTORY_CODE_CLI_NO_AUTHORSHIP`` honesty class.
+    """
+    blob = log_text or ""
+    if _cli_refused(blob):
+        return CLI_EMPTY_REFUSED
+    if _cli_wrote_wrong_path(blob):
+        return CLI_EMPTY_WRONG_PATH
+    if _cli_described_not_written(blob):
+        return CLI_EMPTY_DESCRIBED_NOT_WRITTEN
+    if _cli_empty_completion(blob):
+        return CLI_EMPTY_EMPTY_COMPLETION
+    return CLI_EMPTY_EMPTY_COMPLETION
+
+
+def _no_authorship_detail(log_text: str) -> str:
+    empty_reason = classify_cli_empty(log_text)
+    reason_bit = f" ({empty_reason})" if empty_reason else ""
+    return (
+        f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
+        f"kimi/deepseek exited 0 without harvested "
+        f"agent-written handlers{reason_bit}. A CLI exit 0 is not C-BRIEF "
+        "authorship — do not SUCCESS thin templates."
+    )
 
 
 def _wire_deepseek_cli_credentials() -> Dict[str, Any]:
@@ -3276,12 +3470,17 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
                     )
                 else:
                     result.blocker = NAMED_BLOCKER_CLI_NO_AUTHORSHIP
-                    result.detail = (
-                        f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
-                        f"kimi/deepseek exited 0 without harvested "
-                        "agent-written handlers. A CLI exit 0 is not C-BRIEF "
-                        "authorship — do not SUCCESS thin templates."
-                    )
+                    log_text = ""
+                    try:
+                        log_path = resolve_coder_session_log(root) or (
+                            Path(root) / LOG_REL
+                        )
+                        log_text = log_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    except OSError:
+                        log_text = ""
+                    result.detail = _no_authorship_detail(log_text)
                 ctx.note(
                     result.detail,
                     stage="dispatch",
