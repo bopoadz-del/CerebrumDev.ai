@@ -273,6 +273,7 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             or platform_chat_flow.is_generation_resumable(state)
             or platform_chat_flow.is_generation_complete(state)
             or platform_chat_flow.is_generation_terminal_failure(state)
+            or platform_chat_flow.is_handoff_awaiting_n3(state)
         ):
             if (
                 platform_chat_flow.has_pending_blueprint(state)
