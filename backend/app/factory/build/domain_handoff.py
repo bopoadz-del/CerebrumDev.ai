@@ -8,6 +8,8 @@ URL) to the domain owner **without** Grok Bot ``SendToAgent``:
 2. Write ``docs/domain_handoff.json`` on the workspace (idempotency marker).
 3. Optionally POST JSON to ``DOMAIN_HANDOFF_WEBHOOK_URL`` when set
    (operators set Render env — this module never writes Render).
+   When ``DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION`` (or ``_KEY``) is set,
+   the POST includes ``Authorization`` (Bearer). Never commit the value.
 
 MR.FINANCE then produces / checks / posts / deploys. Never calls Cursor,
 CloudAgent, or SendToAgent APIs.
@@ -42,6 +44,8 @@ HANDOFF_REL = Path("docs") / "domain_handoff.json"
 BRIEF_REL = Path("docs") / "coder_brief.md"
 DOMAIN_HANDOFF_FIRED = "DOMAIN_HANDOFF_FIRED"
 DOMAIN_HANDOFF_WEBHOOK_ENV = "DOMAIN_HANDOFF_WEBHOOK_URL"
+DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV = "DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION"
+DOMAIN_HANDOFF_WEBHOOK_KEY_ENV = "DOMAIN_HANDOFF_WEBHOOK_KEY"
 FLOOR_PUBLIC_URL_ENVS = (
     "FACTORY_PUBLIC_URL",
     "FACTORY_FLOOR_URL",
@@ -464,6 +468,30 @@ def open_or_update_handoff_issue(
     }
 
 
+def webhook_authorization_header(env: Mapping[str, str]) -> Optional[str]:
+    """Return the ``Authorization`` header value, or ``None`` if unset.
+
+    Reads ``DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION``, then
+    ``DOMAIN_HANDOFF_WEBHOOK_KEY``. Never logs the secret.
+
+    - ``Authorization: …`` → use the part after the first colon (then Bearer-normalize).
+    - Already ``Bearer …`` → use as-is.
+    - Raw token (``crsr_…`` or any other) → prefix ``Bearer ``.
+    """
+    raw = str(env.get(DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV) or "").strip()
+    if not raw:
+        raw = str(env.get(DOMAIN_HANDOFF_WEBHOOK_KEY_ENV) or "").strip()
+    if not raw:
+        return None
+    if raw.lower().startswith("authorization:"):
+        raw = raw.split(":", 1)[1].strip()
+        if not raw:
+            return None
+    if raw.lower().startswith("bearer "):
+        return raw
+    return f"Bearer {raw}"
+
+
 def post_webhook(
     payload: Mapping[str, Any],
     *,
@@ -477,10 +505,17 @@ def post_webhook(
     # include paths + instruction; excerpt stays on the GitHub issue.
     body = {k: v for k, v in dict(payload).items() if k != "coder_brief_excerpt"}
     data = json.dumps(body).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "CerebrumFactory",
+    }
+    auth = webhook_authorization_header(env)
+    if auth:
+        headers["Authorization"] = auth
     req = Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "CerebrumFactory"},
+        headers=headers,
         method="POST",
     )
     try:
