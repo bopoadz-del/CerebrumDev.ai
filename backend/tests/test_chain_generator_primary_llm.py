@@ -150,3 +150,66 @@ async def test_openrouter_only_401_is_soft_failure(monkeypatch):
 
     assert result["message"] == _SOFT_FAIL_MESSAGE
     assert result["chain"] is None
+
+
+@pytest.fixture
+def cursor_provider(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CURSOR_API_KEY", "crsr-test-not-real")
+    monkeypatch.delenv("CEREBRUM_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_MOCK", raising=False)
+    monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
+    monkeypatch.delenv("CURSOR_MOCK", raising=False)
+
+
+def test_cursor_provider_is_not_empty(cursor_provider):
+    cfg = get_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == "crsr-test-not-real"
+    assert "api.cursor.com" in cfg["base_url"]
+    assert cfg.get("mock") is False
+
+
+@pytest.mark.anyio
+async def test_cursor_key_does_not_emit_starter_chain_mock(cursor_provider):
+    async def fake_post(self, url, *, json=None, headers=None):
+        assert "api.cursor.com" in url
+        assert "openrouter" not in url
+        return _ok_json({"message": "from-cursor", "chain": None, "rules": []})
+
+    with patch.object(httpx.AsyncClient, "post", fake_post), patch(
+        "app.core.chain_generator.fetch_block_registry",
+        new=AsyncMock(return_value={}),
+    ):
+        result = await generate_chain_suggestion(
+            domain="construction",
+            user_message="hello",
+            chat_history=[],
+            docs_summary="",
+        )
+
+    assert result["message"] == "from-cursor"
+    assert "starter chain" not in result["message"]
+
+
+@pytest.mark.anyio
+async def test_cursor_primary_then_openrouter_fallback(cursor_provider, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-fallback-ok")
+    posts: list[str] = []
+
+    async def fake_post(self, url, *, json=None, headers=None):
+        posts.append(url)
+        if "api.cursor.com" in url:
+            raise _http_error(404, url)
+        if "openrouter" in url:
+            return _ok_json({"message": "from-openrouter", "chain": None, "rules": []})
+        raise _http_error(500, url)
+
+    with patch.object(httpx.AsyncClient, "post", fake_post):
+        result = await _call_llm([{"role": "user", "content": "hi"}])
+
+    assert result["message"] == "from-openrouter"
+    assert any("api.cursor.com" in u for u in posts)
+    assert any("openrouter.ai" in u for u in posts)
+    assert "api.cursor.com" in posts[0]

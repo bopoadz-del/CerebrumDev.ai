@@ -170,8 +170,13 @@ async def _call_openai_compatible(
         payload = {
             "model": m,
             "messages": messages,
-            "response_format": {"type": "json_object"},
         }
+        # Cursor Cloud Agents is not a chat-completions API; OpenRouter free
+        # models often reject json_object. Only pin the format on Moonshot.
+        if not _is_openrouter_base(base_url) and "api.cursor.com" not in (
+            base_url or ""
+        ).lower():
+            payload["response_format"] = {"type": "json_object"}
         # Omit temperature unless explicitly configured: reasoning models
         # (kimi-k2.x) reject any explicit temperature other than 1.
         if temperature is not None:
@@ -230,7 +235,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     provider = cfg.get("provider")
     primary_exc: Exception | None = None
 
-    if provider in ("moonshot", "kimi"):
+    if provider in ("moonshot", "kimi", "cursor"):
         try:
             return await _call_openai_compatible(
                 cfg["base_url"],
@@ -341,13 +346,20 @@ async def generate_chain_suggestion(
 
     cfg = get_llm_config()
     try:
-        if cfg.get("mock") or not cfg.get("provider"):
+        # Starter-chain mock is test-only. A live keyless / unknown-provider
+        # box must not loop "I've drafted a starter chain for your
+        # construction workflow" — that hid LLM_PROVIDER=cursor.
+        if cfg.get("mock"):
             result = _mock_response(user_message, domain, available_blocks)
+        elif not cfg.get("provider") or not cfg.get("api_key"):
+            result = _soft_failure_response(
+                RuntimeError("No LLM provider configured")
+            )
         else:
             result = await _call_llm(messages)
     except Exception as exc:
-        if not active_provider() or cfg.get("mock"):
-            logger.warning("No live LLM provider, using mock generator: %s", exc)
+        if cfg.get("mock"):
+            logger.warning("Mock LLM path failed, using mock generator: %s", exc)
             result = _mock_response(user_message, domain, available_blocks)
         else:
             result = _soft_failure_response(exc)

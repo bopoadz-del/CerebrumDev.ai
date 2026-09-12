@@ -37,8 +37,13 @@ only, runs only after the primary has already failed, and is pinned to a
 zero-priced model so it cannot create the cost surprise the rule exists to
 prevent.
 
-``LLM_PROVIDER`` accepts ``kimi``/``moonshot`` (aliased to kimi) and
-``claude``/``anthropic`` (aliased to claude).
+``LLM_PROVIDER`` accepts ``kimi``/``moonshot`` (aliased to kimi),
+``claude``/``anthropic`` (aliased to claude), and ``cursor``. Cursor keys
+follow the same family rule as the others: ``CURSOR_API_KEY`` /
+``CURSOR_AGENT_API_KEY`` / ``FACTORY_CURSOR_API_KEY`` (the tuple in
+``cursor_ba.CURSOR_KEY_ENVS``). ``LLM_PROVIDER=cursor`` is intentional —
+it must not fall through to an empty provider or the Floor starter-chain
+mock.
 """
 
 from __future__ import annotations
@@ -319,7 +324,78 @@ def normalise_provider(name: str) -> str:
     return name
 
 
-SUPPORTED_PROVIDERS = ("kimi", "claude")
+SUPPORTED_PROVIDERS = ("kimi", "claude", "cursor")
+
+
+def _cursor_key_envs() -> tuple[str, ...]:
+    """Reuse the Factory BA key names — do not fork a second list."""
+    from app.factory.build.cursor_ba import CURSOR_KEY_ENVS
+
+    return CURSOR_KEY_ENVS
+
+
+def _cursor_api_base() -> str:
+    from app.factory.build.cursor_ba import CURSOR_API_BASE
+
+    return CURSOR_API_BASE.rstrip("/")
+
+
+def _cursor_key(*prefixes: str) -> str:
+    """Resolve a Cursor-family API key. Same naming rule as Kimi / Claude."""
+    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
+    candidates.extend(_cursor_key_envs())
+    return _env_first(*candidates)
+
+
+def _cursor_base_url(*prefixes: str) -> str:
+    """OpenAI-compatible path on the documented Cursor API host.
+
+    Cloud Agents (``/v0/agents``, ``/v1/agents``) is not a chat-completions
+    API. Floor still posts OpenAI-shaped ``/chat/completions`` to
+    ``https://api.cursor.com/v1`` with the Cursor-family Bearer key — the
+    documented public host + the key family ``LLM_PROVIDER=cursor`` names.
+    OpenRouter must not steal this primary. Override via ``CURSOR_BASE_URL``
+    / path-prefixed ``*_LLM_BASE_URL`` when those are not OpenRouter.
+    """
+    candidates: List[str] = [f"{prefix}_LLM_BASE_URL" for prefix in prefixes]
+    candidates.extend(["CURSOR_BASE_URL", "CURSOR_LLM_BASE_URL"])
+    override = _env_first_skipping(
+        *candidates, default="", reject=_is_openrouter_base
+    )
+    if override:
+        return override
+    return f"{_cursor_api_base()}/v1"
+
+
+def _looks_like_moonshot_model(model: str) -> bool:
+    slug = (model or "").strip().lower()
+    return slug.startswith("kimi-") or slug.startswith("moonshot-")
+
+
+def _cursor_model(*prefixes: str) -> str:
+    candidates: List[str] = [f"{prefix}_LLM_MODEL" for prefix in prefixes]
+    candidates.extend(["CURSOR_MODEL", "CURSOR_LLM_MODEL"])
+
+    def _reject(value: str) -> bool:
+        return _looks_like_openrouter_model(value) or _looks_like_moonshot_model(value)
+
+    return _env_first_skipping(*candidates, default="auto", reject=_reject)
+
+
+def _cursor_config(*prefixes: str) -> Dict[str, Any]:
+    return {
+        "provider": "cursor",
+        "api_key": _cursor_key(*prefixes),
+        "base_url": _cursor_base_url(*prefixes),
+        "model": _cursor_model(*prefixes),
+        "fallback_model": "",
+        "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("CURSOR_MOCK"),
+        "temperature": _llm_temperature(),
+    }
+
+
+def _has_cursor_credentials() -> bool:
+    return bool(_cursor_key())
 
 
 def _has_kimi_credentials() -> bool:
@@ -366,7 +442,19 @@ def _detect_provider() -> str:
         return "kimi"
     if _has_claude_credentials():
         return "claude"
+    if _has_cursor_credentials():
+        return "cursor"
     return ""
+
+
+def _config_for_provider(provider: str, *prefixes: str) -> Dict[str, Any]:
+    if provider == "kimi":
+        return _kimi_config(*prefixes)
+    if provider == "claude":
+        return _claude_config(*prefixes)
+    if provider == "cursor":
+        return _cursor_config(*prefixes)
+    raise RuntimeError(f"unsupported LLM provider: {provider!r}")
 
 
 def get_llm_config() -> Dict[str, Any]:
@@ -374,11 +462,7 @@ def get_llm_config() -> Dict[str, Any]:
     provider = normalise_provider(os.getenv("LLM_PROVIDER", "")) or _detect_provider()
 
     if provider in SUPPORTED_PROVIDERS:
-        cfg = (
-            _kimi_config("CEREBRUM_CHAT")
-            if provider == "kimi"
-            else _claude_config("CEREBRUM_CHAT")
-        )
+        cfg = _config_for_provider(provider, "CEREBRUM_CHAT")
         # Explicit provider with only the mock flag and no key → inactive for
         # kit chat (stay offline). Factory path uses get_factory_llm_config.
         if cfg["mock"] and not cfg["api_key"]:
@@ -435,6 +519,19 @@ def get_factory_llm_config() -> Dict[str, Any]:
                 "Factory architect was asked for Claude but ANTHROPIC_API_KEY "
                 "(or CEREBRUM_LLM_API_KEY) is not set; refusing to fall back to "
                 "another provider — set the key or unset LLM_PROVIDER"
+            )
+        return cfg
+
+    if provider == "cursor":
+        cfg = _cursor_config("CEREBRUM_FACTORY")
+        if cfg["mock"]:
+            return cfg
+        if not cfg["api_key"]:
+            cfg["error"] = (
+                "Factory architect was asked for Cursor but CURSOR_API_KEY "
+                "(or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY) is not set; "
+                "refusing to fall back to another provider — set the key or "
+                "unset LLM_PROVIDER"
             )
         return cfg
 

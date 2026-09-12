@@ -203,6 +203,7 @@ async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
         "LLM_PROVIDER",
     ):
         monkeypatch.delenv(var, raising=False)
+    _clear_cursor_keys(monkeypatch)
     monkeypatch.setenv("KIMI_MOCK", "1")
 
     # /ready answers with a real status code now (503 when not ready), so it
@@ -225,6 +226,7 @@ async def test_ready_does_not_count_provider_without_a_key_as_llm(tmp_path, monk
         "ANTHROPIC_API_KEY",
     ):
         monkeypatch.delenv(var, raising=False)
+    _clear_cursor_keys(monkeypatch)
     monkeypatch.setenv("LLM_PROVIDER", "kimi")
     monkeypatch.delenv("KIMI_MOCK", raising=False)
 
@@ -240,6 +242,50 @@ async def test_ready_llm_configured_when_a_key_is_present(tmp_path, monkeypatch)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("CEREBRUM_LLM_API_KEY", "sk-not-a-real-key")
     monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    assert body["checks"]["llm_configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_counts_cursor_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CURSOR_API_KEY", "crsr-test-not-real")
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    assert body["checks"]["llm_configured"] is True
+
+
+@pytest.mark.asyncio
+async def test_ready_counts_openrouter_key_when_chat_host_is_openrouter(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("CEREBRUM_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_CHAT_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
     resp = await main.ready()
     body = json.loads(resp.body)

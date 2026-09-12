@@ -31,6 +31,13 @@ def _clear_env():
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_BASE_URL",
         "ANTHROPIC_MODEL",
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+        "CURSOR_BASE_URL",
+        "CURSOR_LLM_BASE_URL",
+        "CURSOR_MODEL",
+        "CURSOR_MOCK",
     ]
     old = {k: os.environ.get(k) for k in keys}
     for k in keys:
@@ -76,7 +83,7 @@ def test_factory_llm_rejects_an_unsupported_provider():
     assert cfg["provider"] == ""
     error = cfg.get("error", "")
     assert "qwen" in error
-    assert "kimi" in error and "claude" in error
+    assert "kimi" in error and "claude" in error and "cursor" in error
 
 
 def test_factory_llm_mock():
@@ -245,6 +252,41 @@ def test_claude_primary_skips_openrouter_base_when_anthropic_key_exists():
     assert chat_cfg["provider"] == "claude"
     assert chat_cfg["api_key"] == "sk-ant-test"
     assert chat_cfg["base_url"] == "https://api.anthropic.com/v1"
+
+
+def test_explicit_cursor_uses_cursor_family_key():
+    """LLM_PROVIDER=cursor must resolve — not empty-provider mock."""
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CURSOR_API_KEY"] = "crsr-test-not-real"
+    os.environ["CEREBRUM_LLM_BASE_URL"] = "https://openrouter.ai/api/v1"
+    os.environ["OPENROUTER_API_KEY"] = "sk-or-test"
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "cursor"
+    assert factory_cfg["provider"] == "cursor"
+    assert chat_cfg["api_key"] == "crsr-test-not-real"
+    assert factory_cfg["api_key"] == "crsr-test-not-real"
+    assert "openrouter" not in chat_cfg["base_url"]
+    assert chat_cfg["base_url"].startswith("https://api.cursor.com")
+    assert "error" not in factory_cfg
+
+
+def test_cursor_key_envs_match_background_agent_tuple():
+    from app.core.llm_config import _cursor_key_envs
+    from app.factory.build.cursor_ba import CURSOR_KEY_ENVS
+
+    assert _cursor_key_envs() == CURSOR_KEY_ENVS
+
+
+def test_cursor_agent_api_key_alias_counts():
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CURSOR_AGENT_API_KEY"] = "crsr-agent-alias"
+
+    cfg = get_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == "crsr-agent-alias"
 
 
 def test_deepseek_key_does_not_arm_chat_or_factory_llm():
