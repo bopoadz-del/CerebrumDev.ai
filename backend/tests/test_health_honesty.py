@@ -219,6 +219,47 @@ async def test_ready_does_not_count_kimi_mock_as_llm(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("1", True),
+        ("true", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("on", True),
+        ("  yes  ", True),
+        ("0", False),
+        ("false", False),
+        ("FALSE", False),
+        ("no", False),
+        ("off", False),
+        ("", False),
+        ("garbage", False),
+        (None, False),
+    ],
+)
+async def test_ready_llm_mock_uses_llm_config_truthy(tmp_path, monkeypatch, raw, expected):
+    """KIMI_MOCK must use llm_config._truthy (1/true/yes/on), not bool(env).
+
+    ``bool(os.getenv("KIMI_MOCK"))`` treated any non-empty string —
+    including ``"0"`` and ``"false"`` — as mock. /ready must match the
+    same helper that get_llm_config / get_factory_llm_config already use.
+    """
+    from app.core.llm_config import _truthy
+
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    if raw is None:
+        monkeypatch.delenv("KIMI_MOCK", raising=False)
+    else:
+        monkeypatch.setenv("KIMI_MOCK", raw)
+
+    resp = await main.ready()
+    body = json.loads(resp.body)
+    assert body["checks"]["llm_mock"] is expected
+    assert body["checks"]["llm_mock"] is _truthy("KIMI_MOCK")
+
+
+@pytest.mark.asyncio
 async def test_ready_does_not_count_provider_without_a_key_as_llm(tmp_path, monkeypatch):
     """LLM_PROVIDER is pinned in render.yaml; it is not a credential."""
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))

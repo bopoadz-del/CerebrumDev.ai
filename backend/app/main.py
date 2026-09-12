@@ -44,6 +44,7 @@ from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
 from .core.auth import require_api_key, require_master_key, verify_production_auth
 from .core.cors_policy import cors_allow_origins
+from .core.llm_config import _truthy
 from .core.metrics import HttpMetricsMiddleware, metrics_response
 from .core.billing import require_entitled
 from .routers import (
@@ -492,7 +493,9 @@ async def ready():
         "storage": bool(storage.get("ok")),
         "cerebrum_blocks": bool(blocks.get("ok")),
         "llm_configured": llm_configured,
-        "llm_mock": bool(os.getenv("KIMI_MOCK")),
+        # Same helper as llm_config: only 1/true/yes/on. bool(os.getenv)
+        # treated "0" and "false" as mock.
+        "llm_mock": _truthy("KIMI_MOCK"),
         "api_key_configured": bool(os.getenv("CEREBRUM_DEV_API_KEY"))
         or os.getenv("ENV", "development") != "production",
     }
