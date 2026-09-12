@@ -8,11 +8,13 @@ still what the live service calls.
 
 ## 1. Set the key
 
-Kimi is the default. Put this in `backend/.env`:
+Cursor is the Factory coding provider (`LLM_PROVIDER=cursor`). HTTP
+architect draft uses OpenRouter. Put this in `backend/.env`:
 
 ```bash
-CEREBRUM_LLM_API_KEY=<your Moonshot key>
-CEREBRUM_FACTORY_LLM_MODEL=kimi-k2.7-code
+LLM_PROVIDER=cursor
+CURSOR_API_KEY=<your Cursor key>   # or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY
+OPENROUTER_API_KEY=<your OpenRouter key>
 FACTORY_CODER_ENABLED=1
 ```
 

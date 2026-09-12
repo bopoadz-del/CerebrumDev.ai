@@ -116,15 +116,22 @@ cd backend && ./venv/bin/alembic upgrade head
 Do **not** set `VITE_API_KEY`. Do **not** flip `BILLING_ENFORCEMENT` or
 `ACCOUNTS_REQUIRE_VERIFIED_EMAIL` until mail + Stripe checkout work.
 
-### LLM providers: Kimi by default, Claude on request
+### LLM providers: Cursor for Factory coding, OpenRouter for HTTP chat
 
-Two providers are supported. **Kimi is the default workhorse**; Claude exists
-so the factory keeps running when Kimi credits are out, and so the two can be
-compared on the same blueprint.
+Factory coding uses Cursor Background Agents when any of
+`CURSOR_API_KEY` / `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY` is
+set (`LLM_PROVIDER=cursor` is valid). HTTP Floor chat / architect draft
+stay on OpenRouter — Cursor keys are not chat-completions credentials.
+
+Leftover Kimi/Moonshot and Claude remain as opt-in HTTP providers.
 
 ```bash
-# Kimi (default) — nothing to do beyond the key
-CEREBRUM_LLM_API_KEY=...        # or KIMI_API_KEY
+# Cursor BA (Factory coding) — any one key arms cli-pivot
+CURSOR_API_KEY=...              # or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY
+LLM_PROVIDER=cursor
+
+# HTTP Floor chat / architect
+OPENROUTER_API_KEY=...
 
 # Claude — opt in explicitly
 LLM_PROVIDER=claude
@@ -143,7 +150,7 @@ Two rules make provider choice deliberate rather than accidental:
   quietly borrow the Kimi key. A silent provider switch is a cost surprise,
   which is a product bug.
 
-`LLM_PROVIDER` accepts `kimi`/`moonshot` (aliased to `kimi`) and
+`LLM_PROVIDER` accepts `cursor`, `kimi`/`moonshot` (aliased to `kimi`) and
 `claude`/`anthropic` (aliased to `claude`).
 
 Claude is called through the **native Messages API**, not an OpenAI-compatible

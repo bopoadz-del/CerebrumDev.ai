@@ -37,6 +37,27 @@ import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadine
 import { LevelGradeStrip } from './levelGradeView'
 import { LoadingSkeleton } from './LoadingSkeleton'
 
+/** Title-case a product slug (`product` → `Product`, `residential-lettings` → `Residential Lettings`). */
+export function humanizeProductId(id: string): string {
+  return id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase())
+}
+
+/** Prefer blueprint product_name, then a humanized product_id, then the raw id. */
+export function platformCardTitle(
+  productName?: string | null,
+  productId?: string | null,
+): string {
+  const name = typeof productName === 'string' ? productName.trim() : ''
+  if (name) return name
+  const id = typeof productId === 'string' ? productId.trim() : ''
+  if (!id) return ''
+  return humanizeProductId(id) || id
+}
+
 /* -------------------------------- Platforms -------------------------------- */
 
 export function Platforms({
@@ -252,8 +273,8 @@ export function Platforms({
         </div>
       ) : (
         <div className="panel">
-          <h3>
-            {gen.product_id}{' '}
+          <h3 data-testid="platforms-product-title">
+            {platformCardTitle(bp?.product_name, gen.product_id)}{' '}
             <span className="mono" data-testid="platforms-acceptance-score">
               {formatAcceptanceScore(liveBuild)}
             </span>
