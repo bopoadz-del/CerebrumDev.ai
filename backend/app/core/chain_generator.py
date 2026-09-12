@@ -227,11 +227,32 @@ async def _call_openrouter_fallback(
         return None
 
 
+_OPENAI_COMPAT_PROVIDERS = frozenset({"moonshot", "kimi", "cursor", "openrouter", ""})
+
+
+def _is_usable_openai_chat_cfg(cfg: Dict[str, Any]) -> bool:
+    """True when Floor chat can POST OpenAI-compatible /chat/completions.
+
+    ``provider="cursor"`` is a coding-family name; HTTP still uses
+    ``CEREBRUM_CHAT_LLM_*`` / Moonshot / OpenRouter. Empty provider with a
+    usable key+host must not raise "No LLM provider configured".
+    ``api.cursor.com`` is never a chat host.
+    """
+    if not cfg.get("api_key"):
+        return False
+    base = str(cfg.get("base_url") or "")
+    if not base or _is_cursor_chat_host(base):
+        return False
+    provider = str(cfg.get("provider") or "")
+    return provider in _OPENAI_COMPAT_PROVIDERS
+
+
 async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """Call the primary configured LLM, then the OpenRouter fallback.
 
-    Primary is ``CEREBRUM_CHAT_LLM_*`` (or leftover Moonshot). Cursor is
-    never a chat-completions host. OpenRouter is fallback only when armed.
+    Primary is ``CEREBRUM_CHAT_LLM_*`` (or leftover Moonshot). ``provider``
+    ``cursor`` is OpenAI-compatible on that host — never ``api.cursor.com``.
+    OpenRouter is fallback only when armed.
     """
     cfg = get_llm_config()
     if cfg.get("mock"):
@@ -243,7 +264,7 @@ async def _call_llm(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         primary_exc = RuntimeError(
             "Refusing api.cursor.com/v1/chat/completions — use CEREBRUM_CHAT_LLM_*"
         )
-    elif provider in ("moonshot", "kimi", "cursor", "openrouter"):
+    elif _is_usable_openai_chat_cfg(cfg):
         try:
             return await _call_openai_compatible(
                 cfg["base_url"],
@@ -359,12 +380,16 @@ async def generate_chain_suggestion(
         # construction workflow" — that hid LLM_PROVIDER=cursor.
         if cfg.get("mock"):
             result = _mock_response(user_message, domain, available_blocks)
-        elif not cfg.get("provider") or not cfg.get("api_key"):
-            result = _soft_failure_response(
-                RuntimeError("No LLM provider configured")
-            )
-        else:
+        elif _is_usable_openai_chat_cfg(cfg) or (
+            cfg.get("provider") and cfg.get("api_key")
+        ):
             result = await _call_llm(messages)
+        else:
+            result = _soft_failure_response(
+                RuntimeError(
+                    cfg.get("error") or "No LLM provider configured"
+                )
+            )
     except Exception as exc:
         if cfg.get("mock"):
             logger.warning("Mock LLM path failed, using mock generator: %s", exc)
