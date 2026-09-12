@@ -69,3 +69,42 @@ def test_backup_includes_factory_outputs(monkeypatch, tmp_path):
         names = tar.getnames()
     assert any("acme-platform" in n for n in names)
     assert any(n.endswith("README.md") for n in names)
+
+
+def test_legacy_app_factory_outputs_resolves_inside_storage_when_symlinked(
+    monkeypatch, tmp_path
+):
+    """Session state may bake /app/factory_outputs/...; symlink must count.
+
+    Mirrors the production entrypoint contract without requiring root: a
+    symlink from the legacy location into STORAGE_PATH must pass containment
+    once resolve() follows it.
+    """
+    storage = tmp_path / "storage"
+    legacy = tmp_path / "legacy_factory_outputs"
+    real = storage / "factory_outputs"
+    real.mkdir(parents=True)
+    (real / "sessions").mkdir()
+    legacy.symlink_to(real)
+
+    monkeypatch.delenv("FACTORY_OUTPUTS_ROOT", raising=False)
+    monkeypatch.setenv("STORAGE_PATH", str(storage))
+
+    assert factory_outputs_root() == real
+    assert is_within_outputs_root(legacy / "sessions" / "sess_x" / "prod")
+    assert safe_output_dir(legacy / "sessions" / "sess_x" / "prod", "prod") == (
+        real / "sessions" / "sess_x" / "prod"
+    ).resolve()
+
+
+def test_entrypoint_persists_factory_outputs_on_storage():
+    """Boot must mkdir disk outputs and symlink the ephemeral legacy path."""
+    from pathlib import Path as P
+
+    entry = (P(__file__).resolve().parents[2] / "docker-entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    assert 'mkdir -p "$STORAGE" "$STORAGE/factory_outputs"' in entry
+    assert "/app/factory_outputs" in entry
+    assert 'ln -s "$_FO_REAL" "$_FO_LINK"' in entry or 'ln -s "$STORAGE/factory_outputs"' in entry
+

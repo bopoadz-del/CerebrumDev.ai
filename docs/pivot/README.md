@@ -66,6 +66,19 @@ After this ingest ships:
 
 Do not Continue into WRITER as a fake fix.
 
+Do not Continue into WRITER as a fake fix.
+
+### Persistence — Factory outputs on Render disk
+
+`factory_outputs_root()` resolves to `$STORAGE_PATH/factory_outputs` when
+`STORAGE_PATH` is set (Render: `/app/storage`). The production entrypoint
+also `mkdir`s that directory and symlinks `/app/factory_outputs` → the disk
+path so session-baked absolute paths and HANDOFF ledgers survive deploys.
+After merge+deploy, Continue on HANDOFF sessions can ingest without WRITER.
+If a ledger was already wiped before this fix, one-time HANDOFF reseed from
+the known builds branch may still be required.
+
+
 ## N1a — live Cursor Background Agent
 
 When `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`)
