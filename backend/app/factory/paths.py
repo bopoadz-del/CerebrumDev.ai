@@ -43,6 +43,10 @@ def factory_outputs_root() -> Path:
        the next release and the download endpoint answered 404
        ("generate again"), burning the customer's metered quota.
     3. ``<repo>/factory_outputs`` — local checkouts and tests, unchanged.
+
+    Production entrypoint also symlinks ``/app/factory_outputs`` →
+    ``$STORAGE_PATH/factory_outputs`` so session-baked absolute paths under
+    the legacy location remain on the Render disk across deploys.
     """
     explicit = os.getenv("FACTORY_OUTPUTS_ROOT", "").strip()
     if explicit:
@@ -50,6 +54,11 @@ def factory_outputs_root() -> Path:
     storage = os.getenv("STORAGE_PATH", "").strip()
     if storage:
         return Path(storage) / "factory_outputs"
+    # Docker layout without env (should not happen on Render): prefer the
+    # conventional mount so a missing STORAGE_PATH cannot silently write to
+    # ephemeral /app/factory_outputs.
+    if Path("/app/storage").is_dir() and (Path("/app/blueprints").is_dir() or Path("/app/app").is_dir()):
+        return Path("/app/storage/factory_outputs")
     return factory_repo_root() / "factory_outputs"
 
 

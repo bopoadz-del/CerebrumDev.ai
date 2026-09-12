@@ -142,8 +142,11 @@ ENV HOME=/app
 # (Render disk mounts are often root-owned) then drops to uid 10001.
 # The HTTP contract is unchanged: bind 0.0.0.0:$PORT after migrations.
 RUN useradd --system --uid 10001 --home-dir /app --no-create-home appuser \
-    && mkdir -p /app/storage \
+    && mkdir -p /app/storage /app/storage/factory_outputs \
     && chown -R appuser:appuser /app
+# Runtime: Render mounts cerebrumdev-storage at /app/storage (hides this layer).
+# docker-entrypoint.sh re-mkdirs $STORAGE/factory_outputs and symlinks
+# /app/factory_outputs → that path so Factory ledgers survive deploys.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 755 /app/docker-entrypoint.sh
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
