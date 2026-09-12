@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.factory import product_architect
 
 
@@ -75,3 +77,46 @@ def test_no_key_uses_keyword_path(monkeypatch):
     bp = product_architect.draft_blueprint_from_brief(_BRIEF)
     assert calls == []
     assert bp.vertical == "fleet_operations"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+        ("1", True),
+        ("true", True),
+        ("yes", True),
+        ("on", True),
+    ],
+)
+def test_llm_drafting_enabled_keeps_explicit_flag_contract(monkeypatch, raw, expected):
+    """ARCHITECT_LLM_DRAFTING_ENABLED is not bool(env) and is not KIMI_MOCK.
+
+    Explicit 0/false/no/off still wins. Explicit 1/true/yes/on still forces
+    the LLM path. This must stay independent of /ready's llm_mock helper.
+    """
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-not-used")
+    monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
+    monkeypatch.delenv("KIMI_MOCK", raising=False)
+    monkeypatch.setenv(product_architect.LLM_DRAFTING_ENV, raw)
+    assert product_architect.llm_drafting_enabled() is expected
+
+
+def test_llm_drafting_enabled_unset_ignores_kimi_mock_falsy_strings(monkeypatch):
+    """KIMI_MOCK=0/false is not mock; keyed + unset flag still drafts.
+
+    Architect drafting already consults llm_config._truthy for mock. A
+    /ready bool(os.getenv) leak must not change this path.
+    """
+    monkeypatch.delenv(product_architect.LLM_DRAFTING_ENV, raising=False)
+    monkeypatch.setenv("KIMI_API_KEY", "sk-test-not-used")
+    monkeypatch.delenv("CEREBRUM_LLM_MOCK", raising=False)
+    monkeypatch.setenv("KIMI_MOCK", "false")
+    assert product_architect.llm_drafting_enabled() is True
+    monkeypatch.setenv("KIMI_MOCK", "0")
+    assert product_architect.llm_drafting_enabled() is True
+    monkeypatch.setenv("KIMI_MOCK", "1")
+    assert product_architect.llm_drafting_enabled() is False
