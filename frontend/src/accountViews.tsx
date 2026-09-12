@@ -36,7 +36,9 @@ import {
 import { FactoryCodeCliStatus, useFactoryCodeCliHonesty } from './factoryReadinessView'
 import { LevelGradeStrip } from './levelGradeView'
 import { LoadingSkeleton } from './LoadingSkeleton'
-import { displayProductName } from './productDisplay'
+import { platformCardTitle } from './productDisplay'
+
+export { humanizeProductId, platformCardTitle } from './productDisplay'
 
 /* -------------------------------- Platforms -------------------------------- */
 
@@ -123,11 +125,6 @@ export function Platforms({
     | null
     | undefined
   const gen = design?.generation
-  const productTitle = displayProductName({
-    productName: bp?.product_name,
-    altName: bp?.name,
-    productId: gen?.product_id,
-  })
   const nRequired =
     nRequiredFromProductInputs(bp) ?? nRequiredFromProductInputs(design?.plan)
   const liveBuild = withClientStall(
@@ -258,8 +255,8 @@ export function Platforms({
         </div>
       ) : (
         <div className="panel">
-          <h3>
-            <span data-testid="platforms-product-title">{productTitle}</span>{' '}
+          <h3 data-testid="platforms-product-title">
+            {platformCardTitle(bp?.product_name, gen.product_id)}{' '}
             <span className="mono" data-testid="platforms-acceptance-score">
               {formatAcceptanceScore(liveBuild)}
             </span>

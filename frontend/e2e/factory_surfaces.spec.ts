@@ -962,6 +962,61 @@ test('Your Platforms shows a loading skeleton — never empty-state — while pr
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
 })
 
+test('Your Platforms card title prefers product_name over generic product_id', async ({ page }) => {
+  await mockVerifiedFactory(page)
+  await page.unroute('**/v1/sessions/sess_e2e_floor/product')
+  await page.route('**/v1/sessions/sess_e2e_floor/product', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        blueprint: { product_name: 'FinanceOps', vertical: 'finance' },
+        generation: {
+          product_id: 'product',
+          engine: 'runner',
+          inputs_hash: 'finops123',
+          output_dir: '/tmp/product',
+          build: {
+            state: 'succeeded',
+            pilot_ready: true,
+            acceptance: { passed: 12, total: 12, ok: true },
+            cycle: 'pilot',
+            authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+          },
+        },
+      }),
+    })
+  })
+  await page.route('**/v1/sessions/sess_e2e_floor/product/build-status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        product_id: 'product',
+        build: {
+          state: 'succeeded',
+          pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
+          cycle: 'pilot',
+          authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+        },
+      }),
+    })
+  })
+
+  await page.goto('/platforms')
+  await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible({
+    timeout: 20_000,
+  })
+  const title = page.getByTestId('platforms-product-title')
+  await expect(title).toBeVisible()
+  await expect(title).toContainText('FinanceOps')
+  await expect(title).toContainText('12/12')
+  await expect(title).not.toHaveText(/^\s*product\b/i)
+  await expect(page.getByRole('heading', { name: /^product\b/i })).toHaveCount(0)
+})
+
 test('Your Platforms shows coder authorship and a zip download', async ({ page }) => {
   await mockVerifiedFactory(page)
   await page.unroute('**/v1/sessions/sess_e2e_floor/product')

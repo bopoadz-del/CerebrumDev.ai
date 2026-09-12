@@ -6,6 +6,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Platforms } from '../App'
+import { platformCardTitle } from '../accountViews'
 
 const getMock = vi.fn()
 const buildStatusMock = vi.fn()
@@ -243,7 +244,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByRole('heading', { level: 3 })).not.toHaveTextContent(/^product\b/i)
   })
 
-  it('titles the finished card with blueprint.product_name, not a generic product_id slug', async () => {
+  it('card title prefers blueprint product_name over generic product_id', async () => {
     getMock.mockResolvedValue({
       generation: { ...GENERATION, product_id: 'product' },
       blueprint: { product_name: 'FinanceOps', vertical: 'finance' },
@@ -257,16 +258,37 @@ describe('Your Platforms — coding-agent build', () => {
         acceptance: { passed: 12, total: 12, ok: true },
       })
     })
-    render(<Platforms sessionId="sess_48a72e0d1cac44ae" />)
-    expect(await screen.findByTestId('platforms-product-title')).toHaveTextContent('FinanceOps')
+    render(<Platforms sessionId="sess_finance" />)
+    const title = await screen.findByTestId('platforms-product-title')
+    expect(title).toHaveTextContent('FinanceOps')
+    expect(title.textContent).not.toMatch(/\bproduct\b/i)
     await waitFor(() => {
       expect(screen.getByTestId('platforms-acceptance-score')).toHaveTextContent('12/12')
     })
-    const title = screen.getByRole('heading', { level: 3 })
     expect(title).toHaveTextContent('FinanceOps')
     expect(title).toHaveTextContent('12/12')
-    expect(title).not.toHaveTextContent(/^product\s+12\/12$/i)
-    expect(screen.queryByText('product 12/12')).not.toBeInTheDocument()
+  })
+
+  it('card title humanizes product_id when product_name is missing', async () => {
+    expect(platformCardTitle(undefined, 'product')).toBe('Product')
+    expect(platformCardTitle('  ', 'residential-lettings')).toBe('Residential Lettings')
+    expect(platformCardTitle('FinanceOps', 'product')).toBe('FinanceOps')
+    getMock.mockResolvedValue({
+      generation: { ...GENERATION, product_id: 'product' },
+      blueprint: { vertical: 'finance' },
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        acceptance: { passed: 12, total: 12, ok: true },
+      })
+    })
+    render(<Platforms sessionId="sess_slug" />)
+    const title = await screen.findByTestId('platforms-product-title')
+    expect(title).toHaveTextContent('Product')
+    expect(title.textContent).not.toMatch(/\bproduct\b/)
   })
 
   it('shows k/12 and refuses Export when authorship is green but acceptance is not k/k', async () => {

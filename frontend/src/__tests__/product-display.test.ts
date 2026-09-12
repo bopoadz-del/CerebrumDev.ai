@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayProductName, humanizeProductId } from '../productDisplay'
+import { displayProductName, humanizeProductId, platformCardTitle } from '../productDisplay'
 
 describe('displayProductName', () => {
   it('prefers blueprint.product_name over a generic product_id slug', () => {
@@ -30,6 +30,15 @@ describe('displayProductName', () => {
 
   it('falls back to Untitled platform when nothing is known', () => {
     expect(displayProductName({})).toBe('Untitled platform')
+  })
+})
+
+describe('platformCardTitle', () => {
+  it('matches the Platforms card contract from #436', () => {
+    expect(platformCardTitle(undefined, 'product')).toBe('Product')
+    expect(platformCardTitle('  ', 'residential-lettings')).toBe('Residential Lettings')
+    expect(platformCardTitle('FinanceOps', 'product')).toBe('FinanceOps')
+    expect(platformCardTitle(null, null)).toBe('')
   })
 })
 

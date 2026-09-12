@@ -10,11 +10,15 @@ from urllib.request import Request
 from app.factory.build.domain_handoff import (
     BRIEF_REL,
     DOMAIN_HANDOFF_FIRED,
+    DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV,
     DOMAIN_HANDOFF_WEBHOOK_ENV,
+    DOMAIN_HANDOFF_WEBHOOK_KEY_ENV,
     HANDOFF_REL,
     handoff_after_cloner,
     is_finance_domain,
     notify_domain_handoff,
+    post_webhook,
+    webhook_authorization_header,
 )
 from app.factory.build.ledger import BuildLedger
 
@@ -42,12 +46,24 @@ class _Resp:
         return False
 
 
+def _req_authorization(req: Request) -> str | None:
+    """Authorization as urllib would send it (header names are title-cased)."""
+    value = req.get_header("Authorization")
+    if value is not None:
+        return value
+    for key, val in req.header_items():
+        if key.lower() == "authorization":
+            return val
+    return None
+
+
 class HandoffOpener:
     def __init__(self):
         self.calls: list[tuple[str, str, dict | None]] = []
         self.issue_number = 42
         self.labels_created: list[str] = []
         self.webhook_posts = 0
+        self.webhook_authorizations: list[str | None] = []
         self.search_items: list[dict] = []
 
     def __call__(self, req: Request, timeout=None):
@@ -59,6 +75,7 @@ class HandoffOpener:
         self.calls.append((method, url, body))
         if "hooks.example.test" in url:
             self.webhook_posts += 1
+            self.webhook_authorizations.append(_req_authorization(req))
             return _Resp(200, {"ok": True})
         if "/search/issues" in url:
             return _Resp(200, {"items": list(self.search_items)})
@@ -209,6 +226,96 @@ def test_handoff_never_calls_cursor_or_agent_apis(tmp_path):
         assert "cloud-agent" not in url
 
 
+def test_webhook_authorization_header_normalizes_token_shapes():
+    assert webhook_authorization_header({}) is None
+    assert webhook_authorization_header({DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: ""}) is None
+    assert (
+        webhook_authorization_header(
+            {DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: "crsr_test_token_not_a_secret"}
+        )
+        == "Bearer crsr_test_token_not_a_secret"
+    )
+    assert (
+        webhook_authorization_header(
+            {DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: "Bearer crsr_already"}
+        )
+        == "Bearer crsr_already"
+    )
+    assert (
+        webhook_authorization_header(
+            {
+                DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: (
+                    "Authorization: Bearer crsr_from_header_line"
+                )
+            }
+        )
+        == "Bearer crsr_from_header_line"
+    )
+    assert (
+        webhook_authorization_header(
+            {DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: "Authorization: crsr_bare_after_label"}
+        )
+        == "Bearer crsr_bare_after_label"
+    )
+    assert (
+        webhook_authorization_header(
+            {DOMAIN_HANDOFF_WEBHOOK_KEY_ENV: "crsr_from_key_alias"}
+        )
+        == "Bearer crsr_from_key_alias"
+    )
+    # AUTHORIZATION wins over KEY when both are set.
+    assert (
+        webhook_authorization_header(
+            {
+                DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: "crsr_primary",
+                DOMAIN_HANDOFF_WEBHOOK_KEY_ENV: "crsr_alias",
+            }
+        )
+        == "Bearer crsr_primary"
+    )
+
+
+def test_post_webhook_attaches_authorization_when_env_set():
+    captured: dict = {}
+
+    def opener(req: Request, timeout=None):
+        captured["url"] = req.full_url
+        captured["authorization"] = _req_authorization(req)
+        captured["has_authorization_header"] = any(
+            k.lower() == "authorization" for k, _ in req.header_items()
+        ) or req.has_header("Authorization")
+        return _Resp(200, {"ok": True})
+
+    env = {
+        DOMAIN_HANDOFF_WEBHOOK_ENV: "https://hooks.example.test/domain-handoff",
+        DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV: "crsr_test_token_not_a_secret",
+    }
+    assert post_webhook({"schema_version": "domain_handoff.v1"}, env=env, opener=opener) is True
+    assert captured["authorization"] == "Bearer crsr_test_token_not_a_secret"
+    assert captured["has_authorization_header"] is True
+    assert "api.cursor.com" not in captured["url"]
+    assert "SendToAgent" not in captured["url"]
+    assert "cloud-agent" not in captured["url"]
+
+
+def test_post_webhook_omits_authorization_when_unset():
+    captured: dict = {}
+
+    def opener(req: Request, timeout=None):
+        captured["url"] = req.full_url
+        captured["authorization"] = _req_authorization(req)
+        captured["header_names"] = [k.lower() for k, _ in req.header_items()]
+        return _Resp(200, {"ok": True})
+
+    env = {DOMAIN_HANDOFF_WEBHOOK_ENV: "https://hooks.example.test/domain-handoff"}
+    assert post_webhook({"schema_version": "domain_handoff.v1"}, env=env, opener=opener) is True
+    assert captured["authorization"] is None
+    assert "authorization" not in captured["header_names"]
+    assert "api.cursor.com" not in captured["url"]
+    assert "SendToAgent" not in captured["url"]
+    assert "cloud-agent" not in captured["url"]
+
+
 def test_webhook_posts_when_env_set(tmp_path):
     out = _finance_ws(tmp_path)
     opener = HandoffOpener()
@@ -222,6 +329,28 @@ def test_webhook_posts_when_env_set(tmp_path):
     )
     assert result.webhook_posted is True
     assert opener.webhook_posts == 1
+    assert opener.webhook_authorizations == [None]
+
+
+def test_webhook_posts_authorization_when_authorization_env_set(tmp_path):
+    out = _finance_ws(tmp_path)
+    opener = HandoffOpener()
+    env = dict(ENV)
+    env[DOMAIN_HANDOFF_WEBHOOK_ENV] = "https://hooks.example.test/domain-handoff"
+    env[DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV] = "Bearer crsr_notify_path"
+    result = notify_domain_handoff(
+        out,
+        session_id="sess_finance_demo",
+        env=env,
+        opener=opener,
+    )
+    assert result.webhook_posted is True
+    assert opener.webhook_posts == 1
+    assert opener.webhook_authorizations == ["Bearer crsr_notify_path"]
+    for _m, url, _b in opener.calls:
+        assert "api.cursor.com" not in url
+        assert "SendToAgent" not in url
+        assert "cloud-agent" not in url
 
 
 def test_handoff_after_cloner_ctx_finance(tmp_path, monkeypatch):
@@ -292,3 +421,23 @@ def test_handoff_updates_existing_issue(tmp_path):
     assert result.issue_number == 7
     assert any(m == "PATCH" and "/issues/7" in u for m, u, _ in opener.calls)
     assert not any(m == "POST" and u.endswith("/issues") for m, u, _ in opener.calls)
+
+
+def test_render_yaml_declares_webhook_secrets_without_values():
+    """Dashboard-only: sync false, no committed URL or Bearer token."""
+    import yaml
+
+    repo = Path(__file__).resolve().parents[3]
+    render = yaml.safe_load((repo / "render.yaml").read_text(encoding="utf-8"))
+    web = [s for s in render["services"] if s.get("name") == "cerebrumdev-backend"]
+    assert web, "cerebrumdev-backend missing from render.yaml"
+    by_key = {e["key"]: e for e in web[0].get("envVars", []) if e.get("key")}
+    for name in (
+        DOMAIN_HANDOFF_WEBHOOK_ENV,
+        DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV,
+    ):
+        assert name in by_key, f"{name} must be declared in render.yaml"
+        entry = by_key[name]
+        assert entry.get("sync") is False, f"{name} must be dashboard-only (sync: false)"
+        assert "value" not in entry, f"{name} must not commit a value"
+        assert "generateValue" not in entry, f"{name} is an operator secret, not generated"
