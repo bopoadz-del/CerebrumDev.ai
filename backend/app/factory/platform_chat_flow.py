@@ -708,7 +708,13 @@ def has_running_build(state: Any) -> bool:
         return False
     from app.factory.build_jobs import build_status
 
-    return build_status(out).get("state") == "building"
+    st = build_status(out)
+    # HANDOFF_TO_N3 keeps state=building while N3 polls store-gate. That is
+    # not a live WRITER — Continue / n3-reseed must not be 409'd as "already
+    # in progress" (sess_1ef39fcba8f54dbc AirOps).
+    if st.get("n3_waiting") or st.get("honesty") == "HANDOFF_TO_N3" or st.get("outcome") == "HANDOFF_TO_N3":
+        return False
+    return st.get("state") == "building"
 
 
 def running_build_reply(state: Any) -> Dict[str, Any]:
@@ -902,10 +908,13 @@ def is_generation_resumable(state: Any) -> bool:
     source — the same-hash path ``POST .../product/generate`` already uses.
 
     A RUN_FAILED / rework-exhausted ledger is terminal, not resumable.
+    ``HANDOFF_TO_N3`` is resumable via Continue → store-gate ingest (not WRITER).
     """
     pd = getattr(state, "product_design", None)
     if not pd or not getattr(pd, "blueprint", None):
         return False
+    if is_handoff_awaiting_n3(state):
+        return True
     if is_generation_complete(state):
         return False
     if is_generation_terminal_failure(state):
