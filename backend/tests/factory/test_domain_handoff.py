@@ -16,6 +16,7 @@ from app.factory.build.domain_handoff import (
     DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV,
     DOMAIN_HANDOFF_WEBHOOK_ENV,
     DOMAIN_HANDOFF_WEBHOOK_KEY_ENV,
+    FINANCE_SPEC,
     HANDOFF_REL,
     detect_domain,
     handoff_after_cloner,
@@ -511,3 +512,97 @@ def test_render_yaml_declares_webhook_secrets_without_values():
         assert entry.get("sync") is False, f"{name} must be dashboard-only (sync: false)"
         assert "value" not in entry, f"{name} must not commit a value"
         assert "generateValue" not in entry, f"{name} is an operator secret, not generated"
+
+
+def test_handoff_fires_on_car_dealership_post_cloner(tmp_path):
+    out = _automotive_ws(tmp_path, product_id="car-dealership")
+    opener = HandoffOpener()
+    first = notify_domain_handoff(
+        out,
+        session_id="sess_auto_demo",
+        product_id="car-dealership",
+        env=ENV,
+        opener=opener,
+    )
+    assert first.fired is True
+    assert first.domain == "automotive"
+    assert first.issue_url.endswith("/issues/42")
+    assert "domain:automotive" in opener.labels_created
+    assert "handoff" in opener.labels_created
+    marker = json.loads((out / HANDOFF_REL).read_text(encoding="utf-8"))
+    assert marker["stage"] == "post_cloner"
+    assert marker["domain"] == "automotive"
+    assert marker["vertical"] == "automotive"
+    assert marker["product_id"] == "car-dealership"
+    assert marker["session_id"] == "sess_auto_demo"
+    assert "for automotive" in marker["instruction"]
+    assert "MR.FINANCE" in marker["instruction"]
+    issue_posts = [b for m, u, b in opener.calls if m == "POST" and u.endswith("/issues")]
+    assert issue_posts
+    assert issue_posts[0]["title"].startswith("[domain-handoff] automotive post-CLONER")
+    assert "domain:automotive" in issue_posts[0]["labels"]
+    assert "automotive" in issue_posts[0]["body"]
+    search = [u for m, u, _ in opener.calls if m == "GET" and "/search/issues" in u]
+    assert search
+    assert "label:domain:automotive" in search[0] or "domain%3Aautomotive" in search[0]
+
+    posts_before = sum(1 for m, u, _ in opener.calls if m == "POST" and u.endswith("/issues"))
+    second = notify_domain_handoff(
+        out,
+        session_id="sess_auto_demo",
+        product_id="car-dealership",
+        env=ENV,
+        opener=opener,
+    )
+    assert second.already is True
+    assert second.fired is False
+    assert second.domain == "automotive"
+    posts_after = sum(1 for m, u, _ in opener.calls if m == "POST" and u.endswith("/issues"))
+    assert posts_after == posts_before
+
+
+def test_handoff_fires_on_car_dealership_underscore_product_id(tmp_path):
+    out = _automotive_ws(tmp_path, product_id="car_dealership")
+    opener = HandoffOpener()
+    result = notify_domain_handoff(
+        out,
+        session_id="sess_auto_demo",
+        product_id="car_dealership",
+        env=ENV,
+        opener=opener,
+    )
+    assert result.fired is True
+    assert result.domain == "automotive"
+    assert result.payload["vertical"] == "automotive"
+    assert result.payload["domain"] == "automotive"
+
+
+def test_handoff_after_cloner_ctx_automotive(tmp_path, monkeypatch):
+    out = _automotive_ws(tmp_path)
+    opener = HandoffOpener()
+    bp = SimpleNamespace(product_id="car-dealership", vertical="automotive")
+    ws = SimpleNamespace(destination=out, workspace=out)
+    ctx = SimpleNamespace(
+        workspace=ws,
+        blueprint=bp,
+        plan=None,
+        blocks_root=None,
+        state={"session_id": "sess_auto_demo", "product_id": "car-dealership"},
+        note=None,
+    )
+
+    import app.factory.build.domain_handoff as mod
+
+    monkeypatch.setattr(mod, "urlopen", opener)
+    real = mod.notify_domain_handoff
+
+    def wrapped(output_dir, **kwargs):
+        kwargs.setdefault("env", ENV)
+        kwargs.setdefault("opener", opener)
+        return real(output_dir, **kwargs)
+
+    monkeypatch.setattr(mod, "notify_domain_handoff", wrapped)
+    result = handoff_after_cloner(ctx, env=ENV)
+    assert result.fired is True
+    assert result.domain == "automotive"
+    assert (out / HANDOFF_REL).is_file()
