@@ -59,6 +59,12 @@ services:
         sync: false
       - key: FACTORY_CURSOR_API_KEY
         sync: false
+      # HTTP Floor chat key. sync: false declares it so a blueprint sync
+      # cannot prune a dashboard-set value. Dashboard "filled" is not
+      # evidence the process received it — GET /ready details.llm
+      # cerebrum_chat_llm_api_key_present is.
+      - key: CEREBRUM_CHAT_LLM_API_KEY
+        sync: false
       - key: CEREBRUM_LLM_API_KEY
         sync: false
       # Cross-provider HTTP fallback / Floor chat leg

@@ -44,7 +44,7 @@ from .core.request_limits import BodySizeLimitMiddleware
 from .core import backup_scheduler
 from .core.auth import require_api_key, require_master_key, verify_production_auth
 from .core.cors_policy import cors_allow_origins
-from .core.llm_config import _truthy
+from .core.llm_config import _truthy, env_key_present, llm_ready_details
 from .core.metrics import HttpMetricsMiddleware, metrics_response
 from .core.billing import require_entitled
 from .routers import (
@@ -104,17 +104,24 @@ def llm_key_configured() -> bool:
     Cursor-family keys count whenever present (Factory coding / BA).
     ``CEREBRUM_CHAT_LLM_API_KEY`` and ``OPENROUTER_API_KEY`` count for
     HTTP Floor chat. Cursor keys are not chat-completions credentials.
+
+    Per-key booleans live on ``/ready`` ``details.llm`` (see
+    ``llm_ready_details``) so a dashboard-filled secret can be proven
+    present or absent in this process without leaking the value.
     """
-    return bool(
-        os.getenv("KIMI_API_KEY", "").strip()
-        or os.getenv("CEREBRUM_LLM_API_KEY", "").strip()
-        or os.getenv("CEREBRUM_CHAT_LLM_API_KEY", "").strip()
-        or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY", "").strip()
-        or os.getenv("ANTHROPIC_API_KEY", "").strip()
-        or os.getenv("OPENROUTER_API_KEY", "").strip()
-        or os.getenv("CURSOR_API_KEY", "").strip()
-        or os.getenv("CURSOR_AGENT_API_KEY", "").strip()
-        or os.getenv("FACTORY_CURSOR_API_KEY", "").strip()
+    return any(
+        env_key_present(name)
+        for name in (
+            "KIMI_API_KEY",
+            "CEREBRUM_LLM_API_KEY",
+            "CEREBRUM_CHAT_LLM_API_KEY",
+            "CEREBRUM_FACTORY_LLM_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "OPENROUTER_API_KEY",
+            "CURSOR_API_KEY",
+            "CURSOR_AGENT_API_KEY",
+            "FACTORY_CURSOR_API_KEY",
+        )
     )
 
 
@@ -519,6 +526,8 @@ async def ready():
             "last_backup": last_backup,
             "sentry": _probe_sentry(),
             "data_encryption": encryption,
+            # Booleans + hostname + error only. Never echo key values.
+            "llm": llm_ready_details(),
         },
     }
     # Answer with a status code the platform can act on. This endpoint is the

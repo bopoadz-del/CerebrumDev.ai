@@ -3,7 +3,14 @@
 import os
 import pytest
 
-from app.core.llm_config import get_factory_llm_config, get_llm_config, active_provider
+from app.core.llm_config import (
+    _chat_http_host,
+    _redact_ready_secrets,
+    active_provider,
+    get_factory_llm_config,
+    get_llm_config,
+    llm_ready_details,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -362,4 +369,44 @@ def test_deepseek_key_does_not_arm_chat_or_factory_llm():
     assert factory_cfg.get("api_key") != "sk-deepseek-test-not-real"
     assert "deepseek.com" not in (chat_cfg.get("base_url") or "")
     assert "deepseek.com" not in (factory_cfg.get("base_url") or "")
+
+
+def test_chat_http_host_is_hostname_only():
+    assert _chat_http_host("https://openrouter.ai/api/v1") == "openrouter.ai"
+    assert _chat_http_host("https://user:pw@api.moonshot.ai/v1") == "api.moonshot.ai"
+    assert _chat_http_host("api.example.test/v1") == "api.example.test"
+    assert _chat_http_host("") == ""
+    assert _chat_http_host("   ") == ""
+
+
+def test_redact_ready_secrets_replaces_known_key_values():
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-or-secret-value"
+    text = "missing key sk-or-secret-value after CEREBRUM_CHAT_LLM_API_KEY"
+    out = _redact_ready_secrets(text)
+    assert "sk-or-secret-value" not in out
+    assert "CEREBRUM_CHAT_LLM_API_KEY" in out
+    assert "[redacted]" in out
+
+
+def test_llm_ready_details_redacts_error_that_embeds_the_key():
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-or-embedded-secret"
+
+    class _Boom(Exception):
+        pass
+
+    def _explode():
+        raise _Boom("CEREBRUM_CHAT_LLM_API_KEY=sk-or-embedded-secret is unusable")
+
+    import app.core.llm_config as llm_config
+
+    original = llm_config.get_llm_config
+    llm_config.get_llm_config = _explode  # type: ignore[method-assign]
+    try:
+        details = llm_ready_details()
+    finally:
+        llm_config.get_llm_config = original  # type: ignore[method-assign]
+    assert details["cerebrum_chat_llm_api_key_present"] is True
+    assert "sk-or-embedded-secret" not in details["chat_http_error"]
+    assert "CEREBRUM_CHAT_LLM_API_KEY" in details["chat_http_error"]
 

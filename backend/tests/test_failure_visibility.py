@@ -128,7 +128,12 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
         assert provider == "cursor"
         for name in ("CURSOR_API_KEY", "CURSOR_AGENT_API_KEY", "FACTORY_CURSOR_API_KEY"):
             assert name in keys, f"render.yaml must document {name}"
-        for keep in ("OPENROUTER_API_KEY", "CEREBRUM_DEV_API_KEY", "RESEND_API_KEY"):
+        for keep in (
+            "OPENROUTER_API_KEY",
+            "CEREBRUM_CHAT_LLM_API_KEY",
+            "CEREBRUM_DEV_API_KEY",
+            "RESEND_API_KEY",
+        ):
             assert keep in keys, f"must not drop unrelated secret {keep}"
 
     def test_production_image_includes_pg_dump(self):
