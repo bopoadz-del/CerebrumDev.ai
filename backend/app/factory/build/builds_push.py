@@ -223,7 +223,7 @@ def _require_git(
     token: str,
 ) -> subprocess.CompletedProcess:
     result = git(list(args), cwd=cwd)
-    return _require_git_result(result, " ".join(args), token)
+    return _require_git_result(result, _scrub(" ".join(args), token), token)
 
 
 def _require_git_result(
