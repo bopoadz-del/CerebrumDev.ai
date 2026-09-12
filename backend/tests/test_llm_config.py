@@ -351,6 +351,71 @@ def test_llm_provider_cursor_without_http_key_errors_and_names_chat_keys():
     assert "api.cursor.com" not in (cfg.get("base_url") or "")
 
 
+def test_llm_provider_cursor_cerebrum_chat_moonshot_key():
+    """Live Render shape after #438: cursor pin + CEREBRUM_CHAT on Moonshot.
+
+    get_llm_config must return provider=cursor with the chat key — never
+    empty provider (that logs "No LLM provider configured").
+    """
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-test"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+    os.environ.pop("CEREBRUM_LLM_MOCK", None)
+    os.environ.pop("CURSOR_MOCK", None)
+    os.environ.pop("KIMI_MOCK", None)
+    os.environ.pop("CURSOR_API_KEY", None)
+
+    chat_cfg = get_llm_config()
+    factory_cfg = get_factory_llm_config()
+
+    assert chat_cfg["provider"] == "cursor"
+    assert chat_cfg["api_key"] == "sk-test"
+    assert chat_cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert chat_cfg.get("mock") is False
+    assert "api.cursor.com" not in chat_cfg["base_url"]
+    assert factory_cfg["provider"] == "cursor"
+    assert factory_cfg["api_key"] == "sk-test"
+    assert "api.cursor.com" not in factory_cfg["base_url"]
+    assert "error" not in chat_cfg
+
+
+def test_explicit_cursor_not_wiped_when_mock_flag_and_chat_key():
+    """CEREBRUM_LLM_MOCK must not drop a live CEREBRUM_CHAT key."""
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-test"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+    os.environ["CEREBRUM_LLM_MOCK"] = "1"
+
+    cfg = get_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["api_key"] == "sk-test"
+    assert cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert "api.cursor.com" not in cfg["base_url"]
+
+
+def test_explicit_cursor_keeps_provider_when_mock_and_no_key():
+    """Wipe used to hide LLM_PROVIDER=cursor behind provider=''."""
+    os.environ["LLM_PROVIDER"] = "cursor"
+    os.environ["CURSOR_MOCK"] = "1"
+
+    cfg = get_llm_config()
+    assert cfg["provider"] == "cursor"
+    assert cfg["mock"] is True
+
+
+def test_unknown_provider_still_uses_cerebrum_chat_key():
+    """A weird LLM_PROVIDER alias must not ignore a live chat key."""
+    os.environ["LLM_PROVIDER"] = "cursor-ba"
+    os.environ["CEREBRUM_CHAT_LLM_API_KEY"] = "sk-test"
+    os.environ["CEREBRUM_CHAT_LLM_BASE_URL"] = "https://api.moonshot.ai/v1"
+
+    cfg = get_llm_config()
+    assert cfg["api_key"] == "sk-test"
+    assert cfg["base_url"] == "https://api.moonshot.ai/v1"
+    assert cfg["provider"] != ""
+    assert "api.cursor.com" not in cfg["base_url"]
+
+
 def test_deepseek_key_does_not_arm_chat_or_factory_llm():
     """DEEPSEEK_API_KEY is FACTORY_CODE_CLI only — Floor chat stays off it."""
     os.environ["DEEPSEEK_API_KEY"] = "sk-deepseek-test-not-real"
