@@ -1,7 +1,8 @@
 """HttpOnly ``cdt`` cookie login for the Floor SPA.
 
 API clients still use ``Authorization: Bearer cdt_…`` / master key / ``cdk_``.
-The cookie is an additional browser path: Secure + HttpOnly + SameSite=Lax.
+The cookie is an additional browser path: Secure + HttpOnly + SameSite=None
+in production (Lax on non-secure TestClient).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ def _cookie_client(monkeypatch, tmp_path, *, env: str = "test"):
     monkeypatch.delenv("ALLOW_ANONYMOUS_DEV", raising=False)
     monkeypatch.delenv("AUTH_COOKIE_DOMAIN", raising=False)
     monkeypatch.delenv("AUTH_COOKIE_SECURE", raising=False)
+    monkeypatch.delenv("AUTH_COOKIE_SAMESITE", raising=False)
     return TestClient(app)
 
 
@@ -52,7 +54,7 @@ def test_login_sets_httponly_samesite_lax_cookie(monkeypatch, tmp_path):
     header = _set_cookie_header(res).lower()
     assert LOGIN_COOKIE_NAME in header
     assert "httponly" in header
-    assert "samesite=lax" in header
+    assert "samesite=lax" in header  # ENV=test → non-secure → Lax
     token = res.cookies.get(LOGIN_COOKIE_NAME)
     assert token and token.startswith("cdt_")
     # Browsers exclude HttpOnly cookies from document.cookie. This flag is
@@ -135,7 +137,7 @@ def test_bearer_header_still_works_without_cookie(monkeypatch, tmp_path):
     assert res.json()["email"] == email
 
 
-def test_production_cookie_is_secure(monkeypatch, tmp_path):
+def test_production_cookie_is_secure_samesite_none(monkeypatch, tmp_path):
     client = _cookie_client(monkeypatch, tmp_path, env="production")
     email = f"sec-{uuid.uuid4().hex[:8]}@example.com"
     _register(client, email)
@@ -143,7 +145,18 @@ def test_production_cookie_is_secure(monkeypatch, tmp_path):
     header = _set_cookie_header(res).lower()
     assert "secure" in header
     assert "httponly" in header
+    assert "samesite=none" in header
+
+
+def test_auth_cookie_samesite_env_override(monkeypatch, tmp_path):
+    client = _cookie_client(monkeypatch, tmp_path, env="production")
+    monkeypatch.setenv("AUTH_COOKIE_SAMESITE", "lax")
+    email = f"ovr-{uuid.uuid4().hex[:8]}@example.com"
+    _register(client, email)
+    res = client.post("/v1/auth/login", json={"email": email, "password": "pilot-pass-123"})
+    header = _set_cookie_header(res).lower()
     assert "samesite=lax" in header
+    assert "secure" in header
 
 
 def test_cookie_is_not_a_master_key_channel(monkeypatch, tmp_path):

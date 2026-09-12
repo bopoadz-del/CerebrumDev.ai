@@ -206,7 +206,7 @@ export function AuthGate({
     try {
       if (mode === 'register') {
         const res = await auth.register(email, password)
-        setSession(email)
+        setSession(email, res.login_token)
         const v = res.verification
         onAuthed(
           v?.dev_verification_token
@@ -214,8 +214,8 @@ export function AuthGate({
             : undefined,
         )
       } else if (mode === 'login') {
-        await auth.login(email, password)
-        setSession(email)
+        const res = await auth.login(email, password)
+        setSession(email, res.login_token)
         if (rememberMe) {
           rememberLogin(email, password)
         } else {
