@@ -323,5 +323,5 @@ def test_code_cli_defaults_to_kimi_when_deepseek_key_present(monkeypatch):
     assert factory_code_provider() == "kimi"
 
 
-def test_supported_providers_are_exactly_kimi_and_claude():
-    assert SUPPORTED_PROVIDERS == ("kimi", "claude")
+def test_supported_providers_include_cursor():
+    assert SUPPORTED_PROVIDERS == ("cursor", "kimi", "claude")

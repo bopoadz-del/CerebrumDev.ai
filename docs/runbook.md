@@ -18,7 +18,9 @@ block. The live service must be a Node web service with
 1. Set secrets in the **Render dashboard** (never commit, never bake into Vite):
    - `CEREBRUM_DEV_API_KEY` — master/admin key, backend only
    - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key
-   - `KIMI_API_KEY` (or `CEREBRUM_LLM_API_KEY`) — Kimi/Moonshot is the only LLM provider
+   - `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`) — Factory coding (Cursor BA)
+   - `OPENROUTER_API_KEY` — HTTP Floor chat / architect (`LLM_PROVIDER=cursor`)
+   - `CEREBRUM_LLM_API_KEY` — optional leftover shared HTTP key (do not re-add `KIMI_*` / `DEEPSEEK_*`)
    - `REDIS_URL` — Internal URL from Key Value `cerebrumdev-redis`
    - `SMOKE_GATE_TOKEN` — production smoke verified-principal gate
    - `SENTRY_DSN` / frontend `VITE_SENTRY_DSN` — optional
@@ -231,13 +233,15 @@ Also:
 
 ## Provider failure
 
-Kimi (Moonshot) is the only LLM provider — there is no cross-provider
-fallback to switch to.
+Factory coding uses Cursor BA (`CURSOR_API_KEY` /
+`CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`). HTTP Floor chat /
+architect use OpenRouter (`OPENROUTER_API_KEY`). There is no Kimi/DeepSeek
+pin in `render.yaml`.
 
-1. Check `/ready` and backend logs; confirm https://api.moonshot.ai is
-   reachable and the key is valid.
-2. Model-level fallback is automatic (`fallback_model` in
-   `backend/app/core/llm_config.py`; override via `KIMI_FALLBACK_MODEL`).
+1. Check `/ready` and backend logs; confirm the Cursor / OpenRouter keys
+   are set and the hosts are reachable.
+2. HTTP fallback is the OpenRouter `:free` leg
+   (`backend/app/core/llm_config.py`; `FACTORY_LLM_FALLBACK_MODEL`).
 3. While the provider is down: drafting falls back through Golden Steward /
    keyword mode with the mode disclosed on the blueprint; the coder ships
    honest stubs with reasons. RAG/admin read paths stay available.
