@@ -1049,7 +1049,7 @@ test('Your Platforms code-cycle SUCCESS is a prototype — never Finished', asyn
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible({
     timeout: 20_000,
   })
-  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Cerebrum Residential Lettings Hub' })).toBeVisible()
   await expect(
     page.getByText('Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready'),
   ).toBeVisible()
@@ -1853,7 +1853,7 @@ test('Your Platforms stays Building after golden lettings Approve — never a go
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   await expect(page.getByTestId('platforms-empty-state')).toHaveCount(0)
   await expect(page.getByText('No platform built yet')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'residential-lettings' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Residential Lettings Platform' })).toBeVisible()
   const building = page.getByRole('button', { name: 'Building…' })
   await expect(building).toBeVisible()
   await expect(building).toBeDisabled()
