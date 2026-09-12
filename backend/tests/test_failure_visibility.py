@@ -104,6 +104,33 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "health check must point at /ready; /health returns 200 even when degraded"
         )
 
+    def test_render_yaml_does_not_declare_kimi_or_deepseek_keys(self):
+        """Dashboard/Blueprint must not keep resurrecting Kimi/DeepSeek env keys."""
+        import yaml
+
+        render = yaml.safe_load((REPO_ROOT / "render.yaml").read_text(encoding="utf-8"))
+        backend = [s for s in render["services"] if s.get("name") == "cerebrumdev-backend"]
+        assert backend, "cerebrumdev-backend missing from render.yaml"
+        frontend = [s for s in render["services"] if s.get("name") == "cerebrumdev-frontend"]
+        env_items = list(backend[0].get("envVars") or [])
+        if frontend:
+            env_items.extend(frontend[0].get("envVars") or [])
+        keys = [e.get("key") or "" for e in env_items]
+        banned = [k for k in keys if k.startswith("KIMI_") or k.startswith("DEEPSEEK_")]
+        assert banned == [], f"render.yaml must not declare KIMI_/DEEPSEEK_ keys: {banned}"
+        values = " ".join(str(e.get("value") or "") for e in env_items)
+        assert "moonshot" not in values.lower()
+        assert "kimi-k2" not in values.lower()
+        provider = next(
+            (e.get("value") for e in backend[0].get("envVars") or [] if e.get("key") == "LLM_PROVIDER"),
+            "",
+        )
+        assert provider == "cursor"
+        for name in ("CURSOR_API_KEY", "CURSOR_AGENT_API_KEY", "FACTORY_CURSOR_API_KEY"):
+            assert name in keys, f"render.yaml must document {name}"
+        for keep in ("OPENROUTER_API_KEY", "CEREBRUM_DEV_API_KEY", "RESEND_API_KEY"):
+            assert keep in keys, f"must not drop unrelated secret {keep}"
+
     def test_production_image_includes_pg_dump(self):
         dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
         assert "postgresql-client-18" in dockerfile, (

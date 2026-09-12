@@ -96,9 +96,12 @@ def llm_key_configured() -> bool:
     """True only when a real LLM credential is present.
 
     ``LLM_PROVIDER`` is a routing choice, not a key. render.yaml pins
-    ``LLM_PROVIDER=kimi``, so treating it as configured made ``/ready``
+    ``LLM_PROVIDER=cursor``, so treating it as configured made ``/ready``
     report ``llm_configured: true`` on a keyless box. ``KIMI_MOCK`` is a
     mock and is reported separately as ``llm_mock``.
+
+    Cursor-family keys count whenever present. An OpenRouter key also
+    counts — it arms the chat fallback after the Cursor primary fails.
     """
     return bool(
         os.getenv("KIMI_API_KEY", "").strip()
@@ -106,6 +109,10 @@ def llm_key_configured() -> bool:
         or os.getenv("CEREBRUM_CHAT_LLM_API_KEY", "").strip()
         or os.getenv("CEREBRUM_FACTORY_LLM_API_KEY", "").strip()
         or os.getenv("ANTHROPIC_API_KEY", "").strip()
+        or os.getenv("OPENROUTER_API_KEY", "").strip()
+        or os.getenv("CURSOR_API_KEY", "").strip()
+        or os.getenv("CURSOR_AGENT_API_KEY", "").strip()
+        or os.getenv("FACTORY_CURSOR_API_KEY", "").strip()
     )
 
 

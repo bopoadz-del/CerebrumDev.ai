@@ -32,13 +32,17 @@ domain. Car dealership / automotive use the single consistent label
    with labels `domain:<id>` + `handoff` (override repo with
    `DOMAIN_HANDOFF_GITHUB_REPO` if needed).
 2. Local marker `docs/domain_handoff.json` (idempotent).
-3. Optional POST to `DOMAIN_HANDOFF_WEBHOOK_URL` when set.
+3. Optional POST to `DOMAIN_HANDOFF_WEBHOOK_URL` when set. Cursor
+   automation webhooks require `Authorization: Bearer <crsr_…>` — set
+   `DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION` (or `DOMAIN_HANDOFF_WEBHOOK_KEY`)
+   in the Render dashboard. Never commit the value.
 
 ## Optional env
 
 | Env | Required | Notes |
 |-----|----------|-------|
 | `DOMAIN_HANDOFF_WEBHOOK_URL` | no | POST handoff JSON after the issue. Set in Render dashboard only — agents must not full-replace Render env. |
+| `DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION` | no | Dashboard-only secret. Sent as the `Authorization` header. Use `Bearer <token>` as-is, or a raw `crsr_…` / token (prefixed with `Bearer `). A value starting with `Authorization:` uses the part after the colon. Alias: `DOMAIN_HANDOFF_WEBHOOK_KEY`. |
 | `DOMAIN_HANDOFF_GITHUB_REPO` | no | Override issue repo (`owner/name`). |
 | `CEREBRUM_BUILDS_GITHUB_TOKEN` | yes for issues | Same token used for cerebrum-builds. |
 
