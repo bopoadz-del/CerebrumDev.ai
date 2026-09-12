@@ -7,8 +7,16 @@ import pytest
 import app.main as main
 
 
+def _clear_cursor_keys(monkeypatch) -> None:
+    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.mark.asyncio
 async def test_health_reports_factory_code_cli_probe(tmp_path, monkeypatch):
+    _clear_cursor_keys(monkeypatch)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("FACTORY_CODE_CLI", str(tmp_path / "no-such-coder"))
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
@@ -24,6 +32,7 @@ async def test_health_reports_factory_code_cli_probe(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, monkeypatch):
+    _clear_cursor_keys(monkeypatch)
     fake = _write_fake_cli(tmp_path)
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
     monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
@@ -41,7 +50,30 @@ async def test_health_reports_credentials_missing_when_kimi_present(tmp_path, mo
 
 
 @pytest.mark.asyncio
+async def test_health_cursor_ba_does_not_report_kimi_creds_missing(tmp_path, monkeypatch):
+    fake = _write_fake_cli(tmp_path)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(fake))
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    monkeypatch.delenv("KIMI_CODE_API_KEY", raising=False)
+    monkeypatch.setenv("CURSOR_API_KEY", "cursor-test-key")
+
+    body = await main.health()
+    probe = body["factory_code_cli"]
+    assert probe["available"] is True
+    assert probe["credentials_file_present"] is False
+    assert probe["cursor_ba_available"] is True
+    assert probe["requires_cli"] is False
+    assert probe["requires_kimi_credentials"] is False
+    assert "blocker" not in probe
+
+
+@pytest.mark.asyncio
 async def test_health_reports_deepseek_credentials_missing(tmp_path, monkeypatch):
+    _clear_cursor_keys(monkeypatch)
     fake = tmp_path / "kimi"
     fake.write_text("#!/bin/sh\necho kimi 0.41.0\nexit 0\n", encoding="utf-8")
     fake.chmod(0o755)
@@ -89,6 +121,7 @@ async def test_health_reports_deepseek_ready(tmp_path, monkeypatch):
 async def test_health_reports_no_model_when_config_lacks_default_model(
     tmp_path, monkeypatch
 ):
+    _clear_cursor_keys(monkeypatch)
     fake = _write_fake_cli(tmp_path)
     home = tmp_path / "kimi-home"
     home.mkdir()

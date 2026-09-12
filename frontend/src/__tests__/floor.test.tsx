@@ -868,6 +868,23 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByTestId('floor-factory-cli-status')).toHaveTextContent(/Kimi Code CLI credentials/)
   })
 
+  it('does not name Kimi CLI credentials when Cursor BA is the executor', async () => {
+    getHealthMock.mockResolvedValue({
+      factory_code_cli: {
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: false,
+        requires_cli: false,
+        cursor_ba_available: true,
+      },
+    })
+    render(<Floor sessionId="sess_cursor_ba" goPlatforms={() => {}} />)
+    await waitFor(() => expect(getHealthMock).toHaveBeenCalled())
+    expect(screen.queryByTestId('floor-factory-cli-status')).not.toBeInTheDocument()
+    expect(screen.queryByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Kimi Code CLI credentials missing/)).not.toBeInTheDocument()
+  })
+
   it('names missing Kimi Code CLI default_model from /health on the Floor', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {

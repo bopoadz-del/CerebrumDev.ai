@@ -415,6 +415,34 @@ describe('build progress copy', () => {
     ).toBe('Kimi Code CLI credentials missing')
   })
 
+  it('factoryCodeCliHonesty is silent when Cursor BA is the executor', () => {
+    expect(
+      factoryCodeCliHonesty({
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: true,
+        blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
+        cursor_ba_available: true,
+      }),
+    ).toBeNull()
+    expect(
+      factoryCodeCliHonesty({
+        available: true,
+        credentials_file_present: false,
+        requires_kimi_credentials: true,
+        requires_cli: false,
+      }),
+    ).toBeNull()
+    expect(
+      factoryCodeCliHonesty({
+        available: false,
+        credentials_file_present: false,
+        requires_cli: false,
+        cursor_ba_available: true,
+      }),
+    ).toBeNull()
+  })
+
   it('gold Download is only for a Store-green success', () => {
     expect(exportAffordance({ state: 'stalled', detail: 'gone' })).toEqual({
       label: 'Export (.zip) — build stalled',
