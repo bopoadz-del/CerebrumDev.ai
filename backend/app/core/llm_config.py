@@ -5,10 +5,16 @@ Two paths are configured independently:
 * Chat / chain_generator path: ``get_llm_config()``
   - Preferred: ``CEREBRUM_CHAT_LLM_API_KEY / BASE_URL / MODEL``
   - Fallback: ``KIMI_*`` / ``ANTHROPIC_*`` or ``CEREBRUM_LLM_*``
+  - OpenRouter is never the primary host when a native Moonshot or Claude
+    key is present. A leftover ``CEREBRUM_LLM_BASE_URL=openrouter.ai`` plus
+    a dead ``OPENROUTER_API_KEY`` used to hijack Floor suggestions and 401
+    while ``CEREBRUM_LLM_API_KEY`` was healthy.
 
 * Factory Product Architect / platform CLI path: ``get_factory_llm_config()``
   - Preferred: ``CEREBRUM_FACTORY_LLM_API_KEY / BASE_URL / MODEL``
   - Fallback: ``CEREBRUM_LLM_*`` then ``KIMI_*`` / ``ANTHROPIC_*``
+  - Same OpenRouter-is-fallback-only rule as chat. The coder's optional
+    cross-provider leg remains ``get_factory_fallback_leg()``.
 
 **Kimi and Claude are both supported. Kimi is the DEFAULT.**
 
@@ -66,6 +72,20 @@ def _is_openrouter_base(base_url: str) -> bool:
     return "openrouter.ai" in (base_url or "").lower()
 
 
+def _looks_like_openrouter_key(key: str) -> bool:
+    """OpenRouter issues ``sk-or-`` keys. Moonshot keys never use that prefix."""
+    return (key or "").strip().lower().startswith("sk-or-")
+
+
+def _looks_like_openrouter_model(model: str) -> bool:
+    """OpenRouter slugs are ``org/model`` and often end in ``:free``.
+
+    Moonshot / Claude ids are bare (``kimi-k2.7-code``, ``claude-sonnet-4-5``).
+    """
+    slug = (model or "").strip().lower()
+    return "/" in slug or ":free" in slug
+
+
 def _openrouter_key(*prefixes: str) -> str:
     """Resolve an OpenRouter key for a kimi-wire OpenRouter base_url.
 
@@ -88,15 +108,44 @@ def _resolve_kimi_api_key(base_url: str, *prefixes: str) -> str:
     return _kimi_key(*prefixes)
 
 
-def _kimi_base_url(*prefixes: str) -> str:
+def _env_first_skipping(*names: str, default: str = "", reject=None) -> str:
+    """Like ``_env_first`` but skip values ``reject(value)`` says are unusable."""
+    skip = reject or (lambda _value: False)
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value and not skip(value):
+            return value
+    return default
+
+
+def _native_moonshot_key(*prefixes: str) -> str:
+    """Moonshot credentials only — never an ``sk-or-`` OpenRouter key.
+
+    Path-prefixed ``*_LLM_API_KEY`` still wins when it is a real Moonshot
+    key. An OpenRouter key stuffed into ``CEREBRUM_LLM_API_KEY`` does not
+    count as a native primary; OpenRouter stays the fallback leg.
+    """
+    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
+    candidates.extend(["KIMI_API_KEY", "CEREBRUM_LLM_API_KEY"])
+    for name in candidates:
+        value = os.getenv(name, "").strip()
+        if value and not _looks_like_openrouter_key(value):
+            return value
+    return ""
+
+
+def _kimi_base_url(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = []
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_BASE_URL")
     candidates.extend(["KIMI_BASE_URL", "CEREBRUM_LLM_BASE_URL"])
-    return _env_first(*candidates, default="https://api.moonshot.ai/v1")
+    reject = _is_openrouter_base if skip_openrouter else None
+    return _env_first_skipping(
+        *candidates, default="https://api.moonshot.ai/v1", reject=reject
+    )
 
 
-def _kimi_model(*prefixes: str) -> str:
+def _kimi_model(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = []
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_MODEL")
@@ -105,25 +154,57 @@ def _kimi_model(*prefixes: str) -> str:
     # 404 on api.moonshot.ai — measured live on the 2026-08-13 factory build:
     # every primary call failed and only the fallback leg did the work. The
     # code-oriented sibling is real on this endpoint; override via KIMI_MODEL.
-    return _env_first(*candidates, default="kimi-k2.7-code")
+    reject = _looks_like_openrouter_model if skip_openrouter else None
+    return _env_first_skipping(
+        *candidates, default="kimi-k2.7-code", reject=reject
+    )
 
 
-def _kimi_fallback_model(*prefixes: str, default: str) -> str:
+def _kimi_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = []
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_FALLBACK_MODEL")
     candidates.extend(["KIMI_FALLBACK_MODEL", "CEREBRUM_LLM_FALLBACK_MODEL"])
-    return _env_first(*candidates, default=default)
+    reject = _looks_like_openrouter_model if skip_openrouter else None
+    return _env_first_skipping(*candidates, default=default, reject=reject)
+
+
+def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
+    """Pick the Kimi primary endpoint.
+
+    A native Moonshot key always owns the host and model. Pointing
+    ``CEREBRUM_LLM_BASE_URL`` at OpenRouter used to send Floor chat through
+    ``OPENROUTER_API_KEY`` and 401 while the Moonshot key sat unused.
+    OpenRouter-only deployments (no Moonshot key) still resolve to
+    OpenRouter via ``_resolve_kimi_api_key``.
+    """
+    native = _native_moonshot_key(*prefixes)
+    if native:
+        return {
+            "base_url": _kimi_base_url(*prefixes, skip_openrouter=True),
+            "api_key": native,
+            "model": _kimi_model(*prefixes, skip_openrouter=True),
+            "fallback_model": _kimi_fallback_model(
+                *prefixes, default="moonshot-v1-8k", skip_openrouter=True
+            ),
+        }
+    base_url = _kimi_base_url(*prefixes)
+    return {
+        "base_url": base_url,
+        "api_key": _resolve_kimi_api_key(base_url, *prefixes),
+        "model": _kimi_model(*prefixes),
+        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
+    }
 
 
 def _kimi_config(*prefixes: str) -> Dict[str, Any]:
-    base_url = _kimi_base_url(*prefixes)
+    endpoint = _resolve_kimi_primary(*prefixes)
     return {
         "provider": "kimi",
-        "api_key": _resolve_kimi_api_key(base_url, *prefixes),
-        "base_url": base_url,
-        "model": _kimi_model(*prefixes),
-        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
+        "api_key": endpoint["api_key"],
+        "base_url": endpoint["base_url"],
+        "model": endpoint["model"],
+        "fallback_model": endpoint["fallback_model"],
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
         "temperature": _llm_temperature(),
     }
@@ -131,21 +212,11 @@ def _kimi_config(*prefixes: str) -> Dict[str, Any]:
 
 def _factory_kimi_config(*prefixes: str) -> Dict[str, Any]:
     """Factory config with a code-oriented fallback model default."""
-    base_url = _kimi_base_url(*prefixes)
-    return {
-        "provider": "kimi",
-        "api_key": _resolve_kimi_api_key(base_url, *prefixes),
-        "base_url": base_url,
-        "model": _kimi_model(*prefixes),
-        # The fallback leg must be a DIFFERENT, live model: with the primary
-        # now kimi-k2.7-code, falling back to itself would just
-        # replay a 429 into the same rate limit. moonshot-v1-8k is weaker but
-        # proven to write handlers, and provenance headers record which leg
-        # produced every artifact.
-        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
-        "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("KIMI_MOCK"),
-        "temperature": _llm_temperature(),
-    }
+    # Same primary-resolution as chat: Moonshot key wins the host so a
+    # leftover OpenRouter base_url cannot steal architect / Floor chat.
+    # fallback_model default stays moonshot-v1-8k — a different live
+    # model from kimi-k2.7-code so a 429 is not replayed into itself.
+    return _kimi_config(*prefixes)
 
 
 def _claude_key(*prefixes: str) -> str:
@@ -160,31 +231,54 @@ def _claude_key(*prefixes: str) -> str:
     return _env_first(*candidates)
 
 
-def _claude_base_url(*prefixes: str) -> str:
+def _claude_base_url(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = [f"{prefix}_LLM_BASE_URL" for prefix in prefixes]
     candidates.extend(["ANTHROPIC_BASE_URL", "CEREBRUM_LLM_BASE_URL"])
-    return _env_first(*candidates, default="https://api.anthropic.com/v1")
+    reject = _is_openrouter_base if skip_openrouter else None
+    return _env_first_skipping(
+        *candidates, default="https://api.anthropic.com/v1", reject=reject
+    )
 
 
-def _claude_model(*prefixes: str) -> str:
+def _claude_model(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = [f"{prefix}_LLM_MODEL" for prefix in prefixes]
     candidates.extend(["ANTHROPIC_MODEL", "CLAUDE_MODEL", "CEREBRUM_LLM_MODEL"])
-    return _env_first(*candidates, default="claude-sonnet-4-5")
+    reject = _looks_like_openrouter_model if skip_openrouter else None
+    return _env_first_skipping(
+        *candidates, default="claude-sonnet-4-5", reject=reject
+    )
 
 
-def _claude_fallback_model(*prefixes: str, default: str) -> str:
+def _claude_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = [f"{prefix}_LLM_FALLBACK_MODEL" for prefix in prefixes]
     candidates.extend(["ANTHROPIC_FALLBACK_MODEL", "CEREBRUM_LLM_FALLBACK_MODEL"])
-    return _env_first(*candidates, default=default)
+    reject = _looks_like_openrouter_model if skip_openrouter else None
+    return _env_first_skipping(*candidates, default=default, reject=reject)
+
+
+def _native_claude_key(*prefixes: str) -> str:
+    """Anthropic-issued keys only — skip ``sk-or-`` and leave shared Moonshot keys alone."""
+    candidates: List[str] = [f"{prefix}_LLM_API_KEY" for prefix in prefixes]
+    candidates.extend(["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"])
+    for name in candidates:
+        value = os.getenv(name, "").strip()
+        if value and not _looks_like_openrouter_key(value):
+            return value
+    return ""
 
 
 def _claude_config(*prefixes: str) -> Dict[str, Any]:
+    native = _native_claude_key(*prefixes)
+    skip = bool(native)
+    api_key = native or _claude_key(*prefixes)
     return {
         "provider": "claude",
-        "api_key": _claude_key(*prefixes),
-        "base_url": _claude_base_url(*prefixes),
-        "model": _claude_model(*prefixes),
-        "fallback_model": _claude_fallback_model(*prefixes, default="claude-haiku-4-5-20251001"),
+        "api_key": api_key,
+        "base_url": _claude_base_url(*prefixes, skip_openrouter=skip),
+        "model": _claude_model(*prefixes, skip_openrouter=skip),
+        "fallback_model": _claude_fallback_model(
+            *prefixes, default="claude-haiku-4-5-20251001", skip_openrouter=skip
+        ),
         "mock": _truthy("CEREBRUM_LLM_MOCK") or _truthy("CLAUDE_MOCK"),
         "temperature": _llm_temperature(),
     }
