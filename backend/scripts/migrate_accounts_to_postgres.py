@@ -12,8 +12,9 @@ until a customer cannot log in.
 Default insert is row-for-row inside one transaction and refuses a non-empty
 target. ``--force`` is merge mode: insert missing ids/emails only, never wipe
 or overwrite existing Postgres rows (smoke accounts stay). ``--verify``
-confirms every non-conflict source primary key is present in the target —
-counts may differ after a merge.
+confirms every non-conflict source **account** primary key landed. Missing
+``session_owners`` / token rows are advisory — those may live outside the
+dump. Counts may differ after a merge.
 
 ``cerebrum-builds`` is not the accounts store. This script reads disk SQLite
 at ``STORAGE_PATH/accounts.db`` and writes only to ``ACCOUNTS_DATABASE_URL``.
@@ -23,10 +24,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sqlite3
 import sys
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -54,6 +56,9 @@ ACCOUNT_FK_TABLES = {
     "session_owners",
     "usage_counters",
 }
+
+# Accounts must land. session_owners / tokens may live outside the dump.
+HARD_VERIFY_TABLES = frozenset({"accounts"})
 
 # Never leak credential material in HTTP / CLI summaries.
 SECRET_COLUMNS = frozenset(
@@ -111,6 +116,12 @@ class RestoreReport:
     inserted: Dict[str, int]
     skipped: Dict[str, int]
     verified: Optional[bool] = None
+    emails_displaced: List[Dict[str, str]] = field(default_factory=list)
+    missing_advisory: Dict[str, List[List[Any]]] = field(default_factory=dict)
+    source: str = "sqlite"
+    archive: Optional[str] = None
+    dump_kind: Optional[str] = None
+    prefer_source: bool = False
     note: str = (
         "Merge inserts missing account ids/emails only. Existing Postgres rows "
         "are never wiped. cerebrum-builds is not the accounts store."
@@ -287,6 +298,54 @@ def _existing_email_owners(conn: sa.engine.Connection, table: sa.Table) -> Dict[
     }
 
 
+def displaced_email_for(postgres_id: str) -> str:
+    """Park a conflicting live email so the backup id can reclaim it."""
+    safe = re.sub(r"[^a-zA-Z0-9_]+", "", postgres_id) or "unknown"
+    return f"displaced+{safe}@invalid.cerebrum-dev.restore"
+
+
+def _displace_conflicting_emails(
+    conn: sa.engine.Connection,
+    tbl: sa.Table,
+    rows: List[Dict[str, Any]],
+    *,
+    dry_run: bool,
+) -> List[Dict[str, str]]:
+    """Free emails that a backup account needs, without deleting live rows."""
+    owners = _existing_email_owners(conn, tbl)
+    existing_emails = set(owners)
+    displaced: List[Dict[str, str]] = []
+    for row in rows:
+        source_id = str(row.get("id") or "")
+        email = _norm_email(row.get("email"))
+        if not source_id or not email:
+            continue
+        owner = owners.get(email)
+        if not owner or owner == source_id:
+            continue
+        parked = displaced_email_for(owner)
+        n = 0
+        while parked in existing_emails:
+            n += 1
+            parked = displaced_email_for(f"{owner}_{n}")
+        if not dry_run:
+            conn.execute(
+                tbl.update().where(tbl.c.id == owner).values(email=parked)
+            )
+        owners.pop(email, None)
+        owners[parked] = owner
+        existing_emails.add(parked)
+        displaced.append(
+            {
+                "postgres_id": owner,
+                "original_email": email,
+                "displaced_email": parked,
+                "source_id": source_id,
+            }
+        )
+    return displaced
+
+
 def _plan_table(
     table_name: str,
     rows: List[Dict[str, Any]],
@@ -406,6 +465,7 @@ def migrate(
     force: bool,
     *,
     dry_run: bool = False,
+    prefer_source: bool = False,
 ) -> RestoreReport:
     existing = target_counts(engine)
     non_empty = {t: n for t, n in existing.items() if n}
@@ -429,6 +489,7 @@ def migrate(
     emails_migrated: List[str] = []
     emails_skipped: List[str] = []
     conflicts: List[EmailConflict] = []
+    displaced: List[Dict[str, str]] = []
     mode = "merge" if force else "insert"
 
     def _apply(conn: sa.engine.Connection) -> None:
@@ -436,6 +497,15 @@ def migrate(
         accounts_tbl = md.tables.get("accounts")
         if accounts_tbl is not None:
             known_ids = _existing_account_ids(conn, accounts_tbl)
+            if prefer_source:
+                displaced.extend(
+                    _displace_conflicting_emails(
+                        conn,
+                        accounts_tbl,
+                        data.get("accounts") or [],
+                        dry_run=dry_run,
+                    )
+                )
 
         for table in TABLES:
             rows = data.get(table) or []
@@ -483,6 +553,8 @@ def migrate(
         email_conflicts=[asdict(c) for c in conflicts],
         inserted=inserted,
         skipped=skipped,
+        emails_displaced=displaced,
+        prefer_source=prefer_source,
     )
 
 
@@ -546,17 +618,31 @@ def run_restore(
                 missing = verify_source_present(
                     engine, data, report.email_conflicts
                 )
-                report.verified = not missing
-                if missing:
+                hard = {
+                    table: keys
+                    for table, keys in missing.items()
+                    if table in HARD_VERIFY_TABLES
+                }
+                advisory = {
+                    table: keys
+                    for table, keys in missing.items()
+                    if table not in HARD_VERIFY_TABLES
+                }
+                report.missing_advisory = {
+                    table: [list(k) for k in keys]
+                    for table, keys in advisory.items()
+                }
+                report.verified = not hard
+                if hard:
                     report.ok = False
                     raise AccountsRestoreError(
                         "verify_failed",
-                        "source primary keys missing from target after migrate",
+                        "source account primary keys missing from target after migrate",
                         extra={
                             **report.as_public_dict(),
                             "missing_keys": {
                                 table: [list(k) for k in keys]
-                                for table, keys in missing.items()
+                                for table, keys in hard.items()
                             },
                         },
                     )
