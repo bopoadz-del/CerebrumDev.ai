@@ -259,18 +259,30 @@ def compile_phase_brief(compiled: Any, phase_id: str) -> Any:
     return compiled
 
 
-def should_dispatch_writer_phase(phase_id: str, dispatch: Any) -> bool:
+def should_dispatch_writer_phase(
+    phase_id: str,
+    dispatch: Any,
+    remaining_work: Optional[Sequence[str]] = None,
+) -> bool:
     """Later phases open another FACTORY_CODE_CLI session only.
 
     HTTP oneshot / skipped / unavailable stay one dispatch (PHASE 1).
     That preserves keyed-path CI (one compiled-brief shot) and does not
     invent extra coder roles.
+
+    When ``remaining_work`` is passed, a later phase with no open
+    C-BRIEF ids (handlers already keepable, or a prior empty CLI
+    already recorded those gaps) must not re-dispatch the same list.
     """
     cid = str(phase_id or "").strip()
     if cid == WRITER_PHASE_BACKEND:
         return True
     via = str(getattr(dispatch, "via", "") or "")
-    return via == "cli"
+    if via != "cli":
+        return False
+    if remaining_work is not None:
+        return bool(remaining_work)
+    return True
 
 
 def landed_phase_ids(ledger: Any, inputs_hash: str) -> List[str]:
