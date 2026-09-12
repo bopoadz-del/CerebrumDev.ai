@@ -299,7 +299,7 @@ def resolve_builds_target(
     )
 
 
-def _parse_score(text: str) -> Tuple[Optional[int], Optional[int]]:
+def _parse_score(text: str) -> tuple[Optional[int], Optional[int]]:
     match = SCORE_RE.search(text or "")
     if not match:
         return None, None
