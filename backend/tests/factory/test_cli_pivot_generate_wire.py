@@ -169,3 +169,67 @@ def test_runner_handoff_is_not_product_green(tmp_path):
     assert terminal.kind is EventKind.RUN_FAILED
     assert terminal.payload.get("next") == "n3_gate"
     assert terminal.payload.get("green") is False
+
+
+def _require_kimi_cli(monkeypatch, tmp_path: Path) -> Path:
+    """Kimi binary on PATH, no credentials, brief requires FACTORY_CODE_CLI."""
+    script = tmp_path / "kimi"
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    monkeypatch.setenv("FACTORY_CODE_CLI", str(script))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(tmp_path / "no-kimi-home"))
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    return script
+
+
+def test_keys_absent_raise_if_cli_session_unready_still_demands_kimi(
+    tmp_path, monkeypatch
+):
+    from app.factory.build.coder_session import (
+        NAMED_BLOCKER_CLI_CREDS,
+        CodeCliCredentialsMissing,
+        brief_requires_cli,
+        raise_if_cli_session_unready,
+    )
+    from app.factory.build_jobs import start_runner_build
+
+    _require_kimi_cli(monkeypatch, tmp_path)
+    assert brief_requires_cli() is True
+    with pytest.raises(CodeCliCredentialsMissing, match=NAMED_BLOCKER_CLI_CREDS):
+        raise_if_cli_session_unready()
+    with pytest.raises(CodeCliCredentialsMissing, match=NAMED_BLOCKER_CLI_CREDS):
+        start_runner_build(_bp(), tmp_path / "out")
+    assert not (tmp_path / "out" / "build_ledger.jsonl").exists()
+
+
+def test_cursor_keys_skip_kimi_preflight_so_generate_can_start(
+    tmp_path, monkeypatch
+):
+    from app.factory.build.coder_session import (
+        brief_requires_cli,
+        raise_if_cli_session_unready,
+    )
+    from app.factory.build_jobs import start_runner_build
+
+    _require_kimi_cli(monkeypatch, tmp_path)
+    monkeypatch.setenv("CURSOR_API_KEY", "cursor-test-key")
+    assert writer_uses_cli_pivot() is True
+    assert brief_requires_cli() is False
+    raise_if_cli_session_unready()
+
+    started = []
+
+    def _record_start(self):
+        started.append(self.name)
+
+    monkeypatch.setattr("threading.Thread.start", _record_start)
+    result = start_runner_build(_bp(), tmp_path / "out")
+    assert started, "generate-start must spawn the runner without Kimi creds"
+    assert result["already_running"] is False
+    assert result["engine"] == "runner"
+    assert (tmp_path / "out" / "build_ledger.jsonl").exists()

@@ -227,11 +227,15 @@ def test_dispatch_deadline_tracks_7200s_timeout_not_1785(tmp_path, monkeypatch):
 
 
 def test_brief_requires_cli_when_coder_on(monkeypatch):
+    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("FACTORY_CODE_PROVIDER", raising=False)
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     assert brief_requires_cli() is True
     assert http_oneshot_enabled() is False
@@ -985,10 +989,14 @@ def _credentials_only_toml() -> str:
 
 
 def _require_cli(monkeypatch) -> None:
+    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_dispatch_kimi_without_config_toml_fail_closed(tmp_path, monkeypatch):

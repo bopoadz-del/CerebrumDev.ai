@@ -101,10 +101,14 @@ def _fake_kimi(tmp_path: Path) -> Path:
 
 
 def _require_cli(monkeypatch) -> None:
+    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
     monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
     monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_deepseek_key_selects_kimi_cli_not_claude(monkeypatch):
