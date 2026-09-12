@@ -192,14 +192,31 @@ def test_case_sensitive_id_is_not_folded():
     assert exact.present is True
 
 
-def test_vendor_mirror_preflip_does_not_invent_scopes():
-    rec = lookup_reuse("event_bus", local_ids={"event_bus"}, base_url="")
+def test_vendor_mirror_estate_stub_does_not_invent_scopes():
+    """Estate lock-era pins have no L2.2 keys — lookup must not invent them."""
+    rec = lookup_reuse("estate_registry", local_ids={"estate_registry"}, base_url="")
     assert rec.present is True
     assert rec.scope_declared is False
     assert rec.reads == []
     assert rec.writes == []
     assert rec.never == []
     assert rec.acceptance == []
+
+
+def test_vendor_mirror_store_pin_harvests_declared_scopes():
+    """Store-sourced event_bus pin declares L2 — harvest those bytes, no extras."""
+    rec = lookup_reuse("event_bus", local_ids={"event_bus"}, base_url="")
+    pin = load_local_block_json("event_bus")
+    assert pin is not None
+    fields, declared = extract_l2_fields(pin)
+    assert rec.present is True
+    assert rec.scope_declared is True
+    assert declared is True
+    assert rec.reads == fields["reads"]
+    assert rec.writes == fields["writes"]
+    assert rec.never == fields["never"]
+    assert rec.acceptance == fields["acceptance"]
+    assert "appointment_slot" not in rec.reads
 
 
 def test_local_block_json_l2_is_harvested_not_invented(tmp_path):

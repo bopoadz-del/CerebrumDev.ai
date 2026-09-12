@@ -1371,10 +1371,11 @@ def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
 
 
 def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(tmp_path, monkeypatch):
-    """End-to-end: the blueprint that binds notification/workflow/team/analytics.
+    """End-to-end: the five field-ops capability shapes.
 
     Residential-lettings failed those shapes at pilot. A keyless field_ops
-    build must emit ``app/block_inputs.py`` and pass
+    build (estate stubs; Store pins are get_block shims) must emit
+    ``app/block_inputs.py`` and pass
     ``test_every_capability_route_accepts_payload``.
     """
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")

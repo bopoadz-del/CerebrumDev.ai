@@ -6,6 +6,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+from app.factory.build.reuse_lookup import extract_l2_fields, load_local_block_json
+
 
 def test_registry_blocks_present_event_bus_is_200(client: TestClient):
     resp = client.get("/v1/registry/blocks/event_bus")
@@ -14,11 +16,16 @@ def test_registry_blocks_present_event_bus_is_200(client: TestClient):
     assert body["present"] is True
     assert body["reuse"] is True
     assert body["id"] == "event_bus"
-    # Vendor mirror is pre-flip — do not invent L2.2 keys.
-    assert "reads" not in body
-    assert "writes" not in body
-    assert "never" not in body
-    assert "acceptance" not in body
+    # Lock-parity pin harvests L2.2 from Store block.json — do not invent extras.
+    pin = load_local_block_json("event_bus")
+    assert pin is not None
+    fields, declared = extract_l2_fields(pin)
+    assert declared is True
+    assert body["reads"] == fields["reads"]
+    assert body["writes"] == fields["writes"]
+    assert body["never"] == fields["never"]
+    assert body["acceptance"] == fields["acceptance"]
+    assert "appointment_slot" not in str(body)
     assert body["manifest"]["id"] == "event_bus"
 
 
