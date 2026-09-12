@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import Request
 
-from app.factory.build.authority import BuildRole
 from app.factory.build.domain_handoff import (
     BRIEF_REL,
     DOMAIN_HANDOFF_FIRED,
@@ -17,7 +16,7 @@ from app.factory.build.domain_handoff import (
     is_finance_domain,
     notify_domain_handoff,
 )
-from app.factory.build.ledger import BuildLedger, EventKind
+from app.factory.build.ledger import BuildLedger
 
 
 ENV = {
