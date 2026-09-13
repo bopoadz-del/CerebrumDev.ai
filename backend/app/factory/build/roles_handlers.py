@@ -1061,25 +1061,51 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
         )
 
-    # Any domain: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
-    # Best-effort — never fail the CLONER role. No SendToAgent.
+    # Deliver the frozen C-BRIEF to MR.FINANCE after CLONER. MR.FINANCE IS the
+    # Writer, so this is the Writer handoff, not decoration. It must not crash
+    # CLONER — but a non-reach must be VISIBLE. The old double best-effort
+    # swallow (this bare `except: pass` plus notify_domain_handoff's own catch)
+    # hid a dead webhook: the GitHub-issue channel masked it, idempotency was
+    # stamped, retries skipped, the build ran the internal WRITER anyway, and
+    # MR.FINANCE was reached exactly never — silently. Always record the result;
+    # mark a non-reach with a distinct stage so it cannot hide again.
     handoff_notes: dict = {}
     try:
         from app.factory.build.domain_handoff import handoff_after_cloner
 
         hr = handoff_after_cloner(ctx)
-        if hr.fired or hr.already or (hr.domain and not hr.skipped):
-            handoff_notes["domain_handoff"] = hr.to_dict()
-            note = getattr(ctx, "note", None)
-            if callable(note):
-                note(
-                    f"domain handoff: {hr.reason or ('fired' if hr.fired else 'skipped')}",
-                    stage="domain_handoff",
-                    issue_url=hr.issue_url or "",
-                    fired=hr.fired,
+        handoff_notes["domain_handoff"] = hr.to_dict()
+        note = getattr(ctx, "note", None)
+        if callable(note):
+            if hr.webhook_posted or hr.already:
+                msg = (
+                    "CLONER→MR.FINANCE handoff reached (webhook posted)"
+                    if hr.webhook_posted
+                    else "CLONER→MR.FINANCE handoff already reached"
                 )
-    except Exception:  # noqa: BLE001
-        pass
+                stage = "domain_handoff"
+            else:
+                msg = (
+                    "CLONER→MR.FINANCE handoff NOT REACHED — "
+                    + (hr.reason or "webhook did not post")
+                )
+                stage = "domain_handoff_unreached"
+            note(
+                msg,
+                stage=stage,
+                issue_url=hr.issue_url or "",
+                fired=hr.fired,
+                webhook_posted=hr.webhook_posted,
+                webhook_required=hr.webhook_required,
+            )
+    except Exception as exc:  # noqa: BLE001 — never crash CLONER, but record it
+        handoff_notes["domain_handoff"] = {"fired": False, "error": str(exc)}
+        note = getattr(ctx, "note", None)
+        if callable(note):
+            note(
+                f"CLONER→MR.FINANCE handoff wiring raised: {exc}",
+                stage="domain_handoff_unreached",
+            )
 
     notes = {"lock": lock}
     notes.update(handoff_notes)

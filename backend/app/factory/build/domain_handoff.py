@@ -152,6 +152,7 @@ class HandoffResult:
     issue_url: str = ""
     issue_number: Optional[int] = None
     webhook_posted: bool = False
+    webhook_required: bool = False
     already: bool = False
     payload: Dict[str, Any] = field(default_factory=dict)
 
@@ -164,6 +165,7 @@ class HandoffResult:
             "issue_url": self.issue_url,
             "issue_number": self.issue_number,
             "webhook_posted": self.webhook_posted,
+            "webhook_required": self.webhook_required,
             "already": self.already,
             "payload": dict(self.payload),
         }
@@ -832,9 +834,24 @@ def notify_domain_handoff(
         logger.exception("domain handoff: webhook failed")
         errors.append(f"webhook: {exc}")
 
-    # Stamp idempotency only when at least one channel reached MR.FINANCE.
-    fired = bool(issue_url) or webhook_posted
-    if fired:
+    # The webhook is MR.FINANCE's reach channel. When DOMAIN_HANDOFF_WEBHOOK_URL
+    # is configured it is REQUIRED: a GitHub issue succeeding must NOT mask a
+    # dead webhook, and a dead webhook must NOT stamp idempotency — that would
+    # make every retry skip and MR.FINANCE would be reached exactly never (the
+    # live symptom: reach-check works, the real CLONER→Writer handoff does not).
+    # Only a real webhook post counts as reached when the webhook is required;
+    # with no webhook configured, the GitHub issue is the reach.
+    webhook_required = bool(str(blob.get(DOMAIN_HANDOFF_WEBHOOK_ENV) or "").strip())
+    if webhook_required:
+        reached = webhook_posted
+        if not webhook_posted:
+            errors.append(
+                "webhook is MR.FINANCE's required reach channel and did not post"
+            )
+    else:
+        reached = bool(issue_url)
+    fired = reached
+    if reached:
         write_local_handoff(root, payload)
         _ledger_note(root, payload)
     return HandoffResult(
@@ -845,6 +862,7 @@ def notify_domain_handoff(
         issue_url=issue_url,
         issue_number=issue_number,
         webhook_posted=webhook_posted,
+        webhook_required=webhook_required,
         payload=dict(payload),
     )
 
