@@ -116,12 +116,13 @@ cd backend && ./venv/bin/alembic upgrade head
 Do **not** set `VITE_API_KEY`. Do **not** flip `BILLING_ENFORCEMENT` or
 `ACCOUNTS_REQUIRE_VERIFIED_EMAIL` until mail + Stripe checkout work.
 
-### LLM providers: Cursor for Factory coding, OpenRouter for HTTP chat
+### LLM providers: Cursor for Factory coding, CEREBRUM_CHAT_* for HTTP chat
 
 Factory coding uses Cursor Background Agents when any of
 `CURSOR_API_KEY` / `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY` is
 set (`LLM_PROVIDER=cursor` is valid). HTTP Floor chat / architect draft
-stay on OpenRouter — Cursor keys are not chat-completions credentials.
+use `CEREBRUM_CHAT_LLM_*` (then leftover `CEREBRUM_LLM_*` / Moonshot).
+Cursor has no public `/v1/chat/completions` — those keys are BA only.
 
 Leftover Kimi/Moonshot and Claude remain as opt-in HTTP providers.
 
@@ -130,8 +131,10 @@ Leftover Kimi/Moonshot and Claude remain as opt-in HTTP providers.
 CURSOR_API_KEY=...              # or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY
 LLM_PROVIDER=cursor
 
-# HTTP Floor chat / architect
-OPENROUTER_API_KEY=...
+# HTTP Floor chat / architect — OpenAI-compatible host already on Render
+CEREBRUM_CHAT_LLM_API_KEY=...
+CEREBRUM_CHAT_LLM_BASE_URL=...
+CEREBRUM_CHAT_LLM_MODEL=...
 
 # Claude — opt in explicitly
 LLM_PROVIDER=claude

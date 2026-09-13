@@ -29,9 +29,10 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from app.core.llm_config import get_factory_llm_config
+from app.core.llm_config import get_llm_config
 from app.factory import platform_chat_flow
-from app.factory.product_architect import LlmSoftMiss, _llm_json_call
+from app.factory.product_architect import LlmSoftMiss
+from app.factory.product_architect import _llm_json_call as _architect_llm_json_call
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,11 @@ Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message"
 """
 
 
+def _llm_json_call(messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    """Floor chat JSON call — uses ``CEREBRUM_CHAT_LLM_*``, never Cursor completions."""
+    return _architect_llm_json_call(messages, use_chat_config=True)
+
+
 def chat_llm_enabled() -> bool:
     """Route Floor chat through the LLM when factory credentials exist.
 
@@ -85,7 +91,7 @@ def chat_llm_enabled() -> bool:
         return False
     if raw in {"1", "true", "yes", "on"}:
         return True
-    cfg = get_factory_llm_config()
+    cfg = get_llm_config()
     if cfg.get("error") or cfg.get("mock"):
         return False
     return bool(cfg.get("api_key"))

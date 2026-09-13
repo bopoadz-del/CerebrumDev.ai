@@ -40,6 +40,19 @@ def test_ready_endpoint(client, tmp_path, monkeypatch):
     assert backup["ok"] in {True, False}
     if backup["ok"] is False:
         assert backup.get("error")
+    llm = body["details"]["llm"]
+    for name in (
+        "cerebrum_chat_llm_api_key_present",
+        "cerebrum_llm_api_key_present",
+        "kimi_api_key_present",
+        "openrouter_api_key_present",
+        "cursor_api_key_present",
+        "chat_http_api_key_present",
+    ):
+        assert isinstance(llm[name], bool), name
+    assert isinstance(llm["llm_provider"], str)
+    assert isinstance(llm["chat_http_base_url_host"], str)
+    assert isinstance(llm["chat_http_error"], str)
 
 
 def test_version_endpoint_does_not_invent_a_sha(client, monkeypatch):

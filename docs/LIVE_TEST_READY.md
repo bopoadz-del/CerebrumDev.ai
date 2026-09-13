@@ -9,12 +9,15 @@ still what the live service calls.
 ## 1. Set the key
 
 Cursor is the Factory coding provider (`LLM_PROVIDER=cursor`). HTTP
-architect draft uses OpenRouter. Put this in `backend/.env`:
+Floor chat / architect draft use `CEREBRUM_CHAT_LLM_*`. Put this in
+`backend/.env`:
 
 ```bash
 LLM_PROVIDER=cursor
 CURSOR_API_KEY=<your Cursor key>   # or CURSOR_AGENT_API_KEY / FACTORY_CURSOR_API_KEY
-OPENROUTER_API_KEY=<your OpenRouter key>
+CEREBRUM_CHAT_LLM_API_KEY=<Floor chat key>
+CEREBRUM_CHAT_LLM_BASE_URL=<OpenAI-compatible host>
+CEREBRUM_CHAT_LLM_MODEL=<chat model>
 FACTORY_CODER_ENABLED=1
 ```
 

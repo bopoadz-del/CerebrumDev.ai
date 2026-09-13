@@ -19,7 +19,8 @@ block. The live service must be a Node web service with
    - `CEREBRUM_DEV_API_KEY` — master/admin key, backend only
    - `CEREBRUM_API_KEY` — must match Cerebrum-Blocks store key
    - `CURSOR_API_KEY` (or `CURSOR_AGENT_API_KEY` / `FACTORY_CURSOR_API_KEY`) — Factory coding (Cursor BA)
-   - `OPENROUTER_API_KEY` — HTTP Floor chat / architect (`LLM_PROVIDER=cursor`)
+   - `CEREBRUM_CHAT_LLM_API_KEY` / `BASE_URL` / `MODEL` — HTTP Floor chat (`LLM_PROVIDER=cursor` is BA naming only)
+   - `OPENROUTER_API_KEY` — optional factory coder fallback leg (not required for Floor chat)
    - `CEREBRUM_LLM_API_KEY` — optional leftover shared HTTP key (do not re-add `KIMI_*` / `DEEPSEEK_*`)
    - `REDIS_URL` — Internal URL from Key Value `cerebrumdev-redis`
    - `SMOKE_GATE_TOKEN` — production smoke verified-principal gate
