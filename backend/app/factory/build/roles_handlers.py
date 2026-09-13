@@ -1061,7 +1061,7 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
         )
 
-    # Supported domains: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
+    # Any domain: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
     # Best-effort — never fail the CLONER role. No SendToAgent.
     handoff_notes: dict = {}
     try:

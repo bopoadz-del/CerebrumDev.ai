@@ -1,19 +1,24 @@
-"""Post-CLONER domain handoff — supported verticals → MR.FINANCE.
+"""Post-CLONER domain handoff — any Factory vertical → MR.FINANCE.
 
-After COLLECTOR + CLONER on a supported domain (finance or automotive /
-car dealership), deliver the frozen command (C-BRIEF /
+After COLLECTOR + CLONER, deliver the frozen command (C-BRIEF /
 ``docs/coder_brief.md`` + workspace pointer + session id + Floor URL) to
 MR.FINANCE **without** Grok Bot ``SendToAgent``:
 
-1. Open or update a GitHub issue (labels ``domain:<id>`` + ``handoff``).
+1. Open or update a GitHub issue (labels ``domain:<resolved>`` + ``handoff``).
 2. Write ``docs/domain_handoff.json`` on the workspace (idempotency marker).
 3. Optionally POST JSON to ``DOMAIN_HANDOFF_WEBHOOK_URL`` when set
    (operators set Render env — this module never writes Render).
    When ``DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION`` (or ``_KEY``) is set,
    the POST includes ``Authorization`` (Bearer). Never commit the value.
 
-MR.FINANCE then produces / checks / posts / deploys. Never calls Cursor,
-CloudAgent, or SendToAgent APIs.
+Every Floor session that finishes CLONER fires. Skip only when already
+fired (idempotent) or there is no workspace. Unknown verticals still
+fire with a derived slug (``domain:airline``, ``domain:hotelops``, …)
+or ``domain:general``.
+
+Finance / automotive keep dedicated label quality when those aliases
+match. MR.FINANCE then produces / checks / posts / deploys. Never calls
+Cursor, CloudAgent, or SendToAgent APIs.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -56,6 +62,28 @@ FLOOR_PUBLIC_URL_ENVS = (
 DEFAULT_FLOOR_BASE = "https://cerebrumdev.ai"
 # Prefer cerebrum-builds for domain issues; fall back via CEREBRUM_BUILDS_REPO.
 HANDOFF_ISSUE_REPO_ENV = "DOMAIN_HANDOFF_GITHUB_REPO"
+# GitHub labels max 50 chars; ``domain:`` is 7.
+_DOMAIN_SLUG_MAX = 40
+_GENERIC_SEGMENTS = frozenset(
+    {
+        "ops",
+        "delivery",
+        "management",
+        "platform",
+        "product",
+        "app",
+        "v1",
+        "v2",
+        "core",
+        "kit",
+        "demo",
+        "test",
+        "session",
+        "workspace",
+        "the",
+        "and",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -167,26 +195,112 @@ def _token_matches(item: str, verticals: frozenset[str]) -> bool:
     return underscored in verticals or collapsed in verticals
 
 
-def _domain_candidates(
+def _slug_domain(raw: str) -> str:
+    """GitHub-label-safe domain slug (lowercase, hyphenated, bounded)."""
+    n = _norm(raw)
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in n)
+    cleaned = cleaned.replace("_", "-")
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
+    return cleaned[:_DOMAIN_SLUG_MAX]
+
+
+def _domain_id_from_token(raw: str) -> str:
+    """Sane slug from a product_id / vertical / folder name.
+
+    ``airline-delivery-management`` → ``airline``;
+    ``air-ops`` / ``air_ops`` → ``air-ops``;
+    ``hotelops`` → ``hotelops``;
+    empty / punctuation-only → ``""``.
+    """
+    slug = _slug_domain(raw)
+    if not slug:
+        return ""
+    parts = [p for p in slug.split("-") if p]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    meaningful = [p for p in parts if p not in _GENERIC_SEGMENTS]
+    if not meaningful:
+        return slug
+    head = meaningful[0]
+    if len(head) >= 4:
+        return head
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return head
+
+
+def _make_derived_spec(
+    domain_id: str, *, vertical: Optional[str] = None
+) -> DomainSpec:
+    slug = _slug_domain(domain_id) or "general"
+    if slug in SPEC_BY_DOMAIN:
+        return SPEC_BY_DOMAIN[slug]
+    vert_raw = str(vertical or "").strip()
+    vert = _slug_domain(vert_raw) if vert_raw else slug
+    if not vert:
+        vert = slug
+    return DomainSpec(
+        domain=slug,
+        vertical=vert,
+        labels=(f"domain:{slug}", "handoff"),
+        title_prefix=f"[domain-handoff] {slug} post-CLONER",
+    )
+
+
+def _known_spec_for_token(item: str) -> Optional[DomainSpec]:
+    if not item:
+        return None
+    for aliases, spec in _SPECS:
+        if _token_matches(item, aliases):
+            return spec
+        slug = _slug_domain(item)
+        parts = [p for p in slug.split("-") if p]
+        if parts and _token_matches(parts[0], aliases):
+            return spec
+        if len(parts) >= 2:
+            joined_hyphen = f"{parts[0]}-{parts[1]}"
+            joined_under = f"{parts[0]}_{parts[1]}"
+            if _token_matches(joined_hyphen, aliases) or _token_matches(
+                joined_under, aliases
+            ):
+                return spec
+    return None
+
+
+def _source_fields(
     output_dir: Path | str,
     *,
     product_id: Optional[str] = None,
     vertical: Optional[str] = None,
     blueprint: Any = None,
-) -> List[str]:
-    candidates: List[str] = []
-    for value in (product_id, vertical):
-        if value:
-            candidates.extend(_token_variants(str(value)))
+) -> List[tuple[str, str]]:
+    """Raw handoff tokens in resolution order: vertical, domain, product_id."""
+    ordered: List[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(kind: str, val: Any) -> None:
+        if val is None:
+            return
+        raw = str(val).strip()
+        if not raw:
+            return
+        key = (kind, _norm(raw))
+        if key in seen:
+            return
+        seen.add(key)
+        ordered.append((kind, raw))
+
+    add("vertical", vertical)
     if blueprint is not None:
-        for attr in ("product_id", "vertical", "domain"):
+        for attr in ("vertical", "domain", "product_id"):
             val = getattr(blueprint, attr, None)
             if val is None and isinstance(blueprint, Mapping):
                 val = blueprint.get(attr)
-            if val:
-                candidates.extend(_token_variants(str(val)))
+            add(attr if attr != "domain" else "domain", val)
+    add("product_id", product_id)
     root = Path(output_dir)
-    candidates.extend(_token_variants(root.name))
     for rel in (
         Path("docs") / "blueprint" / "product_blueprint.json",
         Path("docs") / "product_blueprint.json",
@@ -201,11 +315,10 @@ def _domain_candidates(
             continue
         if not isinstance(data, Mapping):
             continue
-        for key in ("product_id", "vertical", "domain"):
-            val = data.get(key)
-            if val:
-                candidates.extend(_token_variants(str(val)))
-    return candidates
+        for key in ("vertical", "domain", "product_id"):
+            add(key, data.get(key))
+    add("product_id", root.name)
+    return ordered
 
 
 def detect_domain(
@@ -214,15 +327,26 @@ def detect_domain(
     product_id: Optional[str] = None,
     vertical: Optional[str] = None,
     blueprint: Any = None,
-) -> Optional[DomainSpec]:
-    """Return the handoff spec for finance or automotive, else None."""
-    for item in _domain_candidates(
+) -> DomainSpec:
+    """Resolve a handoff spec for any workspace. Never returns None.
+
+    Known finance / automotive aliases keep dedicated label quality.
+    Everything else gets a derived slug (or ``general``).
+    """
+    fields = _source_fields(
         output_dir, product_id=product_id, vertical=vertical, blueprint=blueprint
-    ):
-        for aliases, spec in _SPECS:
-            if _token_matches(item, aliases):
+    )
+    for _kind, raw in fields:
+        for item in _token_variants(raw):
+            spec = _known_spec_for_token(item)
+            if spec is not None:
                 return spec
-    return None
+    vertical_hint = next((raw for kind, raw in fields if kind == "vertical"), None)
+    for _kind, raw in fields:
+        derived = _domain_id_from_token(raw)
+        if derived:
+            return _make_derived_spec(derived, vertical=vertical_hint or derived)
+    return _make_derived_spec("general")
 
 
 def is_finance_domain(
@@ -236,7 +360,7 @@ def is_finance_domain(
     spec = detect_domain(
         output_dir, product_id=product_id, vertical=vertical, blueprint=blueprint
     )
-    return spec is not None and spec.domain == FINANCE_SPEC.domain
+    return spec.domain == FINANCE_SPEC.domain
 
 
 def _floor_base(env: Mapping[str, str]) -> str:
@@ -308,9 +432,13 @@ def _spec_for_payload(
     domain_id = str(payload.get("domain") or "").strip()
     if domain_id in SPEC_BY_DOMAIN:
         return SPEC_BY_DOMAIN[domain_id]
+    if domain_id:
+        return _make_derived_spec(
+            domain_id, vertical=str(payload.get("vertical") or domain_id)
+        )
     if fallback is not None:
         return fallback
-    return FINANCE_SPEC
+    return _make_derived_spec("general")
 
 
 def build_handoff_payload(
@@ -655,16 +783,12 @@ def notify_domain_handoff(
     opener: Callable[..., Any] = urlopen,
     force: bool = False,
 ) -> HandoffResult:
-    """Fire post-CLONER handoff once for a supported domain. No-op otherwise."""
+    """Fire post-CLONER handoff once for any domain. Idempotent skip only."""
     root = Path(output_dir)
     blob: Mapping[str, str] = env if env is not None else os.environ
     spec = detect_domain(
         root, product_id=product_id, vertical=vertical, blueprint=blueprint
     )
-    if spec is None:
-        return HandoffResult(
-            fired=False, skipped=True, reason="not a supported domain", domain=""
-        )
     if not force and _already_fired(root):
         return HandoffResult(
             fired=False,
