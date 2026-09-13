@@ -34,7 +34,7 @@ from app.factory.build.cli_pivot import (
     run_cli_pivot,
     run_writer_via_cli_pivot,
 )
-from app.factory.build.cli_receipt import HANDOFF_TO_N3
+from app.factory.build.cli_receipt import HANDOFF_TO_N3, sealed_globs
 from app.factory.build.cursor_ba import (
     CURSOR_API_BASE,
     LAUNCH_PROMPT,
@@ -344,6 +344,35 @@ def test_push_workspace_clones_main_keeps_store_gate(tmp_path):
         text=True,
     ).strip()
     assert remote_branch == ref.seed_sha
+
+
+def test_launch_prompt_forbids_sealed_paths():
+    """BA must hear the sealed-path ban before N1b assert_path_jail fires."""
+    for glob in sealed_globs():
+        assert glob in LAUNCH_PROMPT
+    for needle in (
+        "SEALED_AFTER_CLONER",
+        "ba_allowed_globs",
+        "Hybrid C",
+        "app/**",
+        "tests/**",
+        "execute(action=)",
+        "Never patch vendored blocks",
+        "receipt.json",
+        "docs/coder_brief.md",
+    ):
+        assert needle in LAUNCH_PROMPT
+    opener = FakeOpener()
+    create_agent(
+        api_key="k",
+        repository_url="https://github.com/bopoadz-del/cerebrum-builds",
+        ref="build/smoke-aaaa1111",
+        opener=opener,
+    )
+    body = opener.calls[0][2]
+    assert body["prompt"]["text"] == LAUNCH_PROMPT
+    assert "vendor/**" in body["prompt"]["text"]
+    assert "build_ledger.jsonl" in body["prompt"]["text"]
 
 
 def test_create_agent_body_is_fixed_prompt_no_model():
