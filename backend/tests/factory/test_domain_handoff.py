@@ -408,6 +408,8 @@ def test_webhook_posts_authorization_when_authorization_env_set(tmp_path):
     assert opener.webhook_authorizations == ["Bearer crsr_notify_path"]
     for _m, url, _b in opener.calls:
         assert "api.cursor.com" not in url
+        assert "SendToAgent" not in url
+        assert "cloud-agent" not in url
 
 
 def test_webhook_required_failure_is_not_masked_by_the_issue(tmp_path):
@@ -443,8 +445,6 @@ def test_webhook_required_failure_is_not_masked_by_the_issue(tmp_path):
     retry = notify_domain_handoff(out, session_id="s", env=env, opener=opener2)
     assert retry.already is False
     assert opener2.webhook_posts == 1
-        assert "SendToAgent" not in url
-        assert "cloud-agent" not in url
 
 
 def test_handoff_after_cloner_ctx_finance(tmp_path, monkeypatch):
