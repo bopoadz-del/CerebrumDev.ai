@@ -192,6 +192,9 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
             (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
             (LaneRoot.WORKSPACE, ".github/workflows/ci.yml"),
+            # Store ships both named OpenAPI files (openapi_committed).
+            # Named, not a docs/** or root wildcard; vendor/** stays sealed.
+            (LaneRoot.WORKSPACE, "openapi.json"),
             (LaneRoot.WORKSPACE, "docs/openapi.json"),
             (LaneRoot.WORKSPACE, "docs/store_acceptance.json"),
             (LaneRoot.WORKSPACE, "alembic.ini"),

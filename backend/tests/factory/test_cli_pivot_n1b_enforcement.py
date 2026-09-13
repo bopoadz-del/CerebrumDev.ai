@@ -153,6 +153,12 @@ def test_ba_allowed_globs_include_tests_not_sealed():
     assert allowed == writer_allowed_globs()
     assert "tests/**" in allowed
     assert "app/**" in allowed
+    # Store ships both named OpenAPI files; jail must allow the root copy.
+    assert "openapi.json" in allowed
+    assert "docs/openapi.json" in allowed
+    assert "docs/**" not in allowed
+    assert "*" not in allowed
+    assert "**" not in allowed
     for sealed in (
         "vendor/**",
         "vendor_blocks/**",
@@ -161,6 +167,20 @@ def test_ba_allowed_globs_include_tests_not_sealed():
         ".git/**",
     ):
         assert sealed not in allowed
+
+
+def test_writer_lanes_include_named_openapi_not_docs_wildcard():
+    """Store ships root + docs OpenAPI; jail stays named-file, vendor sealed."""
+    from app.factory.build.authority import ROLE_CONTRACTS
+
+    lanes = [glob for _root, glob in ROLE_CONTRACTS[BuildRole.WRITER].write_lanes]
+    assert "openapi.json" in lanes
+    assert "docs/openapi.json" in lanes
+    assert "docs/**" not in lanes
+    assert "*" not in lanes
+    assert "vendor/**" not in lanes
+    assert "openapi.json" in ba_allowed_globs()
+    assert "docs/openapi.json" in ba_allowed_globs()
 
 
 def test_in_process_writer_jail_stays_sealed_off_tests(tmp_path):
@@ -180,6 +200,22 @@ def test_in_process_writer_jail_stays_sealed_off_tests(tmp_path):
         assert_write_allowed(
             BuildRole.WRITER, tmp_path / "tests" / "test_alpha.py", workspace=tmp_path
         )
+
+
+def test_root_and_docs_openapi_are_handoff_not_paths_violated():
+    """BA may write the two named OpenAPI files Store already ships."""
+    verdict = enforce_receipt(
+        blueprint=_blueprint("alpha"),
+        receipt={"cli_authored_ids": ["alpha"]},
+        changed_paths=[
+            handler_relpath("alpha"),
+            "openapi.json",
+            "docs/openapi.json",
+        ],
+    )
+    assert verdict.honesty == HANDOFF_TO_N3
+    assert verdict.green is False
+    assert verdict.next == "n3_gate"
 
 
 def test_writing_under_tests_is_handoff_not_paths_violated():

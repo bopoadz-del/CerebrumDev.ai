@@ -41,8 +41,9 @@ LAUNCH_PROMPT = (
     "vendor/**, vendor_blocks/**, vendor_blocks_mirror/**, blocks.lock.json, "
     "build_ledger.jsonl, .git/**, or anything under SEALED_AFTER_CLONER. "
     "Implement domain in app/** and tests/** only as allowed by "
-    "ba_allowed_globs / Hybrid C for BA. Never patch vendored blocks — "
-    "call Store blocks via execute(action=)."
+    "ba_allowed_globs / Hybrid C for BA. Prefer docs/openapi.json and "
+    "root openapi.json only — never vendor/**. Never patch vendored "
+    "blocks — call Store blocks via execute(action=)."
 )
 
 DEFAULT_START_TIMEOUT_S = 90.0
