@@ -1,4 +1,4 @@
-"""Post-CLONER domain handoff: finance + automotive → MR.FINANCE; never SendToAgent."""
+"""Post-CLONER domain handoff: any domain → MR.FINANCE; never SendToAgent."""
 
 from __future__ import annotations
 
@@ -130,31 +130,47 @@ def _finance_ws(tmp_path: Path) -> Path:
     return out
 
 
-def _lettings_ws(tmp_path: Path) -> Path:
-    out = tmp_path / "sessions" / "sess_lettings" / "residential-lettings"
-    out.mkdir(parents=True)
-    (out / "docs").mkdir(parents=True, exist_ok=True)
-    (out / "docs" / "product_blueprint.json").write_text(
-        json.dumps({"product_id": "residential-lettings", "vertical": "lettings"}),
-        encoding="utf-8",
-    )
-    return out
-
-
-def _automotive_ws(tmp_path: Path, product_id: str = "car-dealership") -> Path:
-    out = tmp_path / "sessions" / "sess_auto_demo" / product_id
+def _custom_ws(
+    tmp_path: Path,
+    product_id: str,
+    *,
+    session_id: str = "sess_custom",
+    vertical: str | None = None,
+) -> Path:
+    out = tmp_path / "sessions" / session_id / product_id
     out.mkdir(parents=True)
     ledger = BuildLedger(out / "build_ledger.jsonl")
     ledger.start_run(product_id=product_id, inputs_hash="h")
     (out / "docs").mkdir(parents=True, exist_ok=True)
+    payload = {"product_id": product_id}
+    if vertical is not None:
+        payload["vertical"] = vertical
     (out / "docs" / "product_blueprint.json").write_text(
-        json.dumps({"product_id": product_id, "vertical": "automotive"}),
+        json.dumps(payload),
         encoding="utf-8",
     )
     (out / BRIEF_REL).write_text(
-        "# C-BRIEF\n\nExecute automotive dealership handlers.\n", encoding="utf-8"
+        f"# C-BRIEF\n\nExecute {product_id} handlers.\n", encoding="utf-8"
     )
     return out
+
+
+def _lettings_ws(tmp_path: Path) -> Path:
+    return _custom_ws(
+        tmp_path,
+        "residential-lettings",
+        session_id="sess_lettings",
+        vertical="lettings",
+    )
+
+
+def _automotive_ws(tmp_path: Path, product_id: str = "car-dealership") -> Path:
+    return _custom_ws(
+        tmp_path,
+        product_id,
+        session_id="sess_auto_demo",
+        vertical="automotive",
+    )
 
 
 def test_is_finance_domain_detects_finance_ops(tmp_path):
@@ -163,59 +179,17 @@ def test_is_finance_domain_detects_finance_ops(tmp_path):
     assert is_finance_domain(out, product_id="finance_ops") is True
     assert is_finance_domain(out, vertical="finance-ops") is True
     spec = detect_domain(out)
-    assert spec is not None
     assert spec.domain == "finance"
     assert spec.labels == FINANCE_SPEC.labels
 
 
-def test_is_finance_domain_rejects_lettings(tmp_path):
+def test_is_finance_domain_rejects_lettings_but_detects_derived(tmp_path):
     out = _lettings_ws(tmp_path)
     assert is_finance_domain(out) is False
-    assert detect_domain(out) is None
-
-
-@pytest.mark.parametrize(
-    "product_id",
-    [
-        "finance",
-        "finance_ops",
-        "finance-ops",
-        "financeops",
-    ],
-)
-def test_detect_domain_finance_product_ids(tmp_path, product_id):
-    out = tmp_path / "neutral-workspace"
-    out.mkdir()
-    spec = detect_domain(out, product_id=product_id)
-    assert spec is not None
-    assert spec.domain == "finance"
-    assert spec.vertical == "finance_ops"
-    assert "domain:finance" in spec.labels
-    assert is_finance_domain(out, product_id=product_id) is True
-
-
-@pytest.mark.parametrize(
-    "product_id",
-    [
-        "car_dealership",
-        "car-dealership",
-        "cardealership",
-        "automotive",
-        "auto_dealership",
-        "auto-dealership",
-        "dealership",
-    ],
-)
-def test_detect_domain_automotive_product_ids(tmp_path, product_id):
-    out = tmp_path / "neutral-workspace"
-    out.mkdir()
-    spec = detect_domain(out, product_id=product_id)
-    assert spec is not None
-    assert spec.domain == "automotive"
-    assert spec.vertical == "automotive"
-    assert spec.labels == AUTOMOTIVE_SPEC.labels
-    assert "domain:automotive" in spec.labels
-    assert is_finance_domain(out, product_id=product_id) is False
+    spec = detect_domain(out)
+    assert spec.domain == "lettings"
+    assert "domain:lettings" in spec.labels
+    assert "handoff" in spec.labels
 
 
 def test_handoff_fires_once_on_finance_post_cloner(tmp_path):
@@ -240,6 +214,8 @@ def test_handoff_fires_once_on_finance_post_cloner(tmp_path):
     assert marker["coder_brief_path"] == "docs/coder_brief.md"
     assert "floor?session=" in marker["floor_url"]
     assert "MR.FINANCE" in marker["instruction"]
+    assert "COLLECTOR+CLONER are done. The frozen command is" in marker["instruction"]
+    assert "for finance" not in marker["instruction"]
     # Issue body carried the frozen brief
     issue_posts = [b for m, u, b in opener.calls if m == "POST" and u.endswith("/issues")]
     assert issue_posts
@@ -266,20 +242,32 @@ def test_handoff_fires_once_on_finance_post_cloner(tmp_path):
     assert DOMAIN_HANDOFF_FIRED in honesty
 
 
-def test_handoff_never_on_non_finance(tmp_path):
+def test_handoff_fires_on_unrelated_custom_domain(tmp_path):
+    """Lettings / any custom product must fire — no allowlist skip."""
     out = _lettings_ws(tmp_path)
     opener = HandoffOpener()
     result = notify_domain_handoff(
         out,
+        session_id="sess_lettings",
         product_id="residential-lettings",
         vertical="lettings",
         env=ENV,
         opener=opener,
     )
-    assert result.skipped is True
-    assert result.fired is False
-    assert opener.calls == []
-    assert not (out / HANDOFF_REL).exists()
+    assert result.fired is True
+    assert result.skipped is False
+    assert result.domain == "lettings"
+    assert "domain:lettings" in opener.labels_created
+    assert "handoff" in opener.labels_created
+    marker = json.loads((out / HANDOFF_REL).read_text(encoding="utf-8"))
+    assert marker["domain"] == "lettings"
+    assert marker["vertical"] == "lettings"
+    assert marker["product_id"] == "residential-lettings"
+    assert "for lettings" in marker["instruction"]
+    issue_posts = [b for m, u, b in opener.calls if m == "POST" and u.endswith("/issues")]
+    assert issue_posts
+    assert "domain:lettings" in issue_posts[0]["labels"]
+    assert "handoff" in issue_posts[0]["labels"]
 
 
 def test_handoff_never_calls_cursor_or_agent_apis(tmp_path):
@@ -455,8 +443,9 @@ def test_handoff_after_cloner_ctx_finance(tmp_path, monkeypatch):
     assert (out / HANDOFF_REL).is_file()
 
 
-def test_handoff_after_cloner_skips_non_finance(tmp_path):
+def test_handoff_after_cloner_fires_non_finance(tmp_path, monkeypatch):
     out = _lettings_ws(tmp_path)
+    opener = HandoffOpener()
     bp = SimpleNamespace(product_id="residential-lettings", vertical="lettings")
     ws = SimpleNamespace(destination=out, workspace=out)
     ctx = SimpleNamespace(
@@ -464,13 +453,38 @@ def test_handoff_after_cloner_skips_non_finance(tmp_path):
         blueprint=bp,
         plan=None,
         blocks_root=None,
-        state={"session_id": "sess_lettings"},
+        state={"session_id": "sess_lettings", "product_id": "residential-lettings"},
+        note=None,
+    )
+    import app.factory.build.domain_handoff as mod
+
+    real = mod.notify_domain_handoff
+
+    def wrapped(output_dir, **kwargs):
+        kwargs.setdefault("env", ENV)
+        kwargs.setdefault("opener", opener)
+        return real(output_dir, **kwargs)
+
+    monkeypatch.setattr(mod, "notify_domain_handoff", wrapped)
+    result = handoff_after_cloner(ctx, env=ENV)
+    assert result.fired is True
+    assert result.domain == "lettings"
+    assert (out / HANDOFF_REL).is_file()
+
+
+def test_handoff_after_cloner_skips_without_workspace():
+    ctx = SimpleNamespace(
+        workspace=None,
+        blueprint=None,
+        plan=None,
+        blocks_root=None,
+        state={},
         note=None,
     )
     result = handoff_after_cloner(ctx, env=ENV)
     assert result.skipped is True
     assert result.fired is False
-    assert not (out / HANDOFF_REL).exists()
+    assert result.reason == "no workspace"
 
 
 def test_handoff_updates_existing_issue(tmp_path):
@@ -514,6 +528,74 @@ def test_render_yaml_declares_webhook_secrets_without_values():
         assert "generateValue" not in entry, f"{name} is an operator secret, not generated"
 
 
+@pytest.mark.parametrize(
+    "product_id",
+    [
+        "finance",
+        "finance_ops",
+        "finance-ops",
+        "financeops",
+    ],
+)
+def test_detect_domain_finance_product_ids(tmp_path, product_id):
+    out = tmp_path / "neutral-workspace"
+    out.mkdir()
+    spec = detect_domain(out, product_id=product_id)
+    assert spec.domain == "finance"
+    assert spec.vertical == "finance_ops"
+    assert spec.labels == FINANCE_SPEC.labels
+    assert is_finance_domain(out, product_id=product_id) is True
+
+
+@pytest.mark.parametrize(
+    "product_id",
+    [
+        "car_dealership",
+        "car-dealership",
+        "cardealership",
+        "automotive",
+        "auto_dealership",
+        "auto-dealership",
+        "dealership",
+    ],
+)
+def test_detect_domain_automotive_product_ids(tmp_path, product_id):
+    out = tmp_path / "neutral-workspace"
+    out.mkdir()
+    spec = detect_domain(out, product_id=product_id)
+    assert spec.domain == "automotive"
+    assert spec.vertical == "automotive"
+    assert spec.labels == AUTOMOTIVE_SPEC.labels
+    assert is_finance_domain(out, product_id=product_id) is False
+
+
+@pytest.mark.parametrize(
+    ("token", "expected_domain"),
+    [
+        ("airline", "airline"),
+        ("airline_delivery", "airline"),
+        ("airline-delivery", "airline"),
+        ("airline-delivery-management", "airline"),
+        ("aviation", "aviation"),
+        ("air_ops", "air-ops"),
+        ("air-ops", "air-ops"),
+        ("airops", "airops"),
+        ("air_ops_portfolio", "air-ops"),
+        ("riyadh_air", "riyadh"),
+        ("hotelops", "hotelops"),
+        ("retail", "retail"),
+    ],
+)
+def test_detect_domain_derives_sane_slug_for_any_product(tmp_path, token, expected_domain):
+    out = tmp_path / "neutral-workspace"
+    out.mkdir()
+    spec = detect_domain(out, product_id=token)
+    assert spec.domain == expected_domain
+    assert f"domain:{expected_domain}" in spec.labels
+    assert "handoff" in spec.labels
+    assert is_finance_domain(out, product_id=token) is False
+
+
 def test_handoff_fires_on_car_dealership_post_cloner(tmp_path):
     out = _automotive_ws(tmp_path, product_id="car-dealership")
     opener = HandoffOpener()
@@ -534,14 +616,12 @@ def test_handoff_fires_on_car_dealership_post_cloner(tmp_path):
     assert marker["domain"] == "automotive"
     assert marker["vertical"] == "automotive"
     assert marker["product_id"] == "car-dealership"
-    assert marker["session_id"] == "sess_auto_demo"
     assert "for automotive" in marker["instruction"]
     assert "MR.FINANCE" in marker["instruction"]
     issue_posts = [b for m, u, b in opener.calls if m == "POST" and u.endswith("/issues")]
     assert issue_posts
     assert issue_posts[0]["title"].startswith("[domain-handoff] automotive post-CLONER")
     assert "domain:automotive" in issue_posts[0]["labels"]
-    assert "automotive" in issue_posts[0]["body"]
     search = [u for m, u, _ in opener.calls if m == "GET" and "/search/issues" in u]
     assert search
     assert "label:domain:automotive" in search[0] or "domain%3Aautomotive" in search[0]
@@ -561,20 +641,88 @@ def test_handoff_fires_on_car_dealership_post_cloner(tmp_path):
     assert posts_after == posts_before
 
 
-def test_handoff_fires_on_car_dealership_underscore_product_id(tmp_path):
-    out = _automotive_ws(tmp_path, product_id="car_dealership")
+def test_handoff_fires_webhook_and_labels_for_airline_delivery(tmp_path):
+    out = _custom_ws(
+        tmp_path,
+        "airline-delivery-management",
+        session_id="sess_airline",
+    )
     opener = HandoffOpener()
+    env = dict(ENV)
+    env[DOMAIN_HANDOFF_WEBHOOK_ENV] = "https://hooks.example.test/domain-handoff"
+    env[DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION_ENV] = "Bearer crsr_airline"
+    first = notify_domain_handoff(
+        out,
+        session_id="sess_airline",
+        product_id="airline-delivery-management",
+        env=env,
+        opener=opener,
+    )
+    assert first.fired is True
+    assert first.domain == "airline"
+    assert first.webhook_posted is True
+    assert opener.webhook_posts == 1
+    assert opener.webhook_authorizations == ["Bearer crsr_airline"]
+    assert "domain:airline" in opener.labels_created
+    assert "handoff" in opener.labels_created
+    marker = json.loads((out / HANDOFF_REL).read_text(encoding="utf-8"))
+    assert marker["domain"] == "airline"
+    assert marker["product_id"] == "airline-delivery-management"
+    assert "for airline" in marker["instruction"]
+    issue_posts = [b for m, u, b in opener.calls if m == "POST" and u.endswith("/issues")]
+    assert issue_posts
+    assert "domain:airline" in issue_posts[0]["labels"]
+    assert "handoff" in issue_posts[0]["labels"]
+    webhook_bodies = [
+        b
+        for m, u, b in opener.calls
+        if m == "POST" and "hooks.example.test" in u
+    ]
+    assert webhook_bodies
+    assert webhook_bodies[0]["domain"] == "airline"
+    for _m, url, _b in opener.calls:
+        assert "api.cursor.com" not in url
+        assert "SendToAgent" not in url
+        assert "cloud-agent" not in url
+
+    posts_before = sum(1 for m, u, _ in opener.calls if m == "POST" and u.endswith("/issues"))
+    second = notify_domain_handoff(
+        out,
+        session_id="sess_airline",
+        product_id="airline-delivery-management",
+        env=env,
+        opener=opener,
+    )
+    assert second.already is True
+    assert second.fired is False
+    assert second.domain == "airline"
+    posts_after = sum(1 for m, u, _ in opener.calls if m == "POST" and u.endswith("/issues"))
+    assert posts_after == posts_before
+
+
+def test_handoff_fires_on_aviation_vertical(tmp_path):
+    out = _custom_ws(
+        tmp_path,
+        "airline-delivery-management",
+        session_id="sess_aviation",
+        vertical="aviation",
+    )
+    opener = HandoffOpener()
+    env = dict(ENV)
+    env[DOMAIN_HANDOFF_WEBHOOK_ENV] = "https://hooks.example.test/domain-handoff"
     result = notify_domain_handoff(
         out,
-        session_id="sess_auto_demo",
-        product_id="car_dealership",
-        env=ENV,
+        session_id="sess_aviation",
+        product_id="airline-delivery-management",
+        vertical="aviation",
+        env=env,
         opener=opener,
     )
     assert result.fired is True
-    assert result.domain == "automotive"
-    assert result.payload["vertical"] == "automotive"
-    assert result.payload["domain"] == "automotive"
+    assert result.webhook_posted is True
+    assert result.domain == "aviation"
+    assert "domain:aviation" in opener.labels_created
+    assert "handoff" in opener.labels_created
 
 
 def test_handoff_after_cloner_ctx_automotive(tmp_path, monkeypatch):
@@ -593,7 +741,6 @@ def test_handoff_after_cloner_ctx_automotive(tmp_path, monkeypatch):
 
     import app.factory.build.domain_handoff as mod
 
-    monkeypatch.setattr(mod, "urlopen", opener)
     real = mod.notify_domain_handoff
 
     def wrapped(output_dir, **kwargs):

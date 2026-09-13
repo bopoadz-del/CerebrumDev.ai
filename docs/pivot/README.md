@@ -112,14 +112,15 @@ Cerebrum-builds / cli-pivot BA (`cli_receipt.ba_allowed_globs`) **may write
 `tests/**` until N2**. Do not blanket-expand that jail. 12/12 remains cheat-resistance.
 Still never expand either jail to `vendor/**`, `blocks.lock.json`, the ledger, or `.git`.
 
-## Domain handoff (supported verticals → MR.FINANCE)
+## Domain handoff (any vertical → MR.FINANCE)
 
-After COLLECTOR+CLONER on finance (`finance_ops` / `finance-ops`) or
-automotive / car dealership (`car_dealership`, `automotive`, …), Factory
-opens (or updates) a GitHub issue labeled `domain:<finance|automotive>` +
-`handoff` with the frozen C-BRIEF (`docs/coder_brief.md`), session id,
-workspace pointer, and Floor URL. Optional `DOMAIN_HANDOFF_WEBHOOK_URL`
-POST. Idempotent. No SendToAgent.
+After COLLECTOR+CLONER, Factory opens (or updates) a GitHub issue labeled
+`domain:<resolved>` + `handoff` with the frozen C-BRIEF
+(`docs/coder_brief.md`), session id, workspace pointer, and Floor URL.
+Finance / automotive keep dedicated labels when those aliases match;
+every other product still fires with a derived slug (or
+`domain:general`). Optional `DOMAIN_HANDOFF_WEBHOOK_URL` POST.
+Idempotent. No SendToAgent.
 See [`docs/factory/DOMAIN_HANDOFF.md`](../factory/DOMAIN_HANDOFF.md).
 
 
