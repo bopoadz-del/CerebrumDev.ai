@@ -812,7 +812,9 @@ describe('App boot', () => {
     expect(await screen.findByRole('heading', { name: 'Your Platforms' })).toBeInTheDocument()
     expect(screen.getByText(/session sess_cec9a13/)).toBeInTheDocument()
     expect(screen.queryByText(/session sess_fe80bf1/)).not.toBeInTheDocument()
-    expect(productGetMock).toHaveBeenCalledWith('sess_cec9a13active1')
+    await waitFor(() => {
+      expect(productGetMock).toHaveBeenCalledWith('sess_cec9a13active1')
+    })
     expect(createMock).not.toHaveBeenCalled()
   })
 
@@ -918,7 +920,9 @@ describe('App boot', () => {
     render(<App />)
     expect(await screen.findByText(/session sess_fe80bf1/)).toBeInTheDocument()
     expect(screen.queryByText(/session sess_cec9a13/)).not.toBeInTheDocument()
-    expect(productGetMock).toHaveBeenCalledWith('sess_fe80bf177a8545e6')
+    await waitFor(() => {
+      expect(productGetMock).toHaveBeenCalledWith('sess_fe80bf177a8545e6')
+    })
   })
 
   it('rail nav buttons expose icons, labels, and accessible names', async () => {

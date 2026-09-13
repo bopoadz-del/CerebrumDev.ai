@@ -1,10 +1,11 @@
-"""Post-CLONER domain handoff — FinanceOps command → MR.FINANCE.
+"""Post-CLONER domain handoff — supported verticals → MR.FINANCE.
 
-After COLLECTOR + CLONER on a finance vertical, deliver the frozen command
-(C-BRIEF / ``docs/coder_brief.md`` + workspace pointer + session id + Floor
-URL) to the domain owner **without** Grok Bot ``SendToAgent``:
+After COLLECTOR + CLONER on a supported domain (finance or automotive /
+car dealership), deliver the frozen command (C-BRIEF /
+``docs/coder_brief.md`` + workspace pointer + session id + Floor URL) to
+MR.FINANCE **without** Grok Bot ``SendToAgent``:
 
-1. Open or update a GitHub issue (labels ``domain:finance`` + ``handoff``).
+1. Open or update a GitHub issue (labels ``domain:<id>`` + ``handoff``).
 2. Write ``docs/domain_handoff.json`` on the workspace (idempotency marker).
 3. Optionally POST JSON to ``DOMAIN_HANDOFF_WEBHOOK_URL`` when set
    (operators set Render env — this module never writes Render).
@@ -56,6 +57,31 @@ DEFAULT_FLOOR_BASE = "https://cerebrumdev.ai"
 # Prefer cerebrum-builds for domain issues; fall back via CEREBRUM_BUILDS_REPO.
 HANDOFF_ISSUE_REPO_ENV = "DOMAIN_HANDOFF_GITHUB_REPO"
 
+
+@dataclass(frozen=True)
+class DomainSpec:
+    """Canonical handoff domain: payload id, vertical, GitHub labels, title."""
+
+    domain: str
+    vertical: str
+    labels: tuple[str, ...]
+    title_prefix: str
+
+
+FINANCE_SPEC = DomainSpec(
+    domain="finance",
+    vertical="finance_ops",
+    labels=("domain:finance", "handoff"),
+    title_prefix="[domain-handoff] finance post-CLONER",
+)
+# Car dealership / automotive share one label: domain:automotive
+AUTOMOTIVE_SPEC = DomainSpec(
+    domain="automotive",
+    vertical="automotive",
+    labels=("domain:automotive", "handoff"),
+    title_prefix="[domain-handoff] automotive post-CLONER",
+)
+
 FINANCE_VERTICALS = frozenset(
     {
         "finance",
@@ -64,8 +90,29 @@ FINANCE_VERTICALS = frozenset(
         "financeops",
     }
 )
-FINANCE_LABELS = ("domain:finance", "handoff")
-HANDOFF_ISSUE_TITLE_PREFIX = "[domain-handoff] finance post-CLONER"
+AUTOMOTIVE_VERTICALS = frozenset(
+    {
+        "car_dealership",
+        "car-dealership",
+        "cardealership",
+        "automotive",
+        "auto_dealership",
+        "auto-dealership",
+        "autodealership",
+        "dealership",
+    }
+)
+_SPECS: tuple[tuple[frozenset[str], DomainSpec], ...] = (
+    (FINANCE_VERTICALS, FINANCE_SPEC),
+    (AUTOMOTIVE_VERTICALS, AUTOMOTIVE_SPEC),
+)
+SPEC_BY_DOMAIN: Dict[str, DomainSpec] = {
+    FINANCE_SPEC.domain: FINANCE_SPEC,
+    AUTOMOTIVE_SPEC.domain: AUTOMOTIVE_SPEC,
+}
+# Backward-compatible aliases (finance-only callers).
+FINANCE_LABELS = FINANCE_SPEC.labels
+HANDOFF_ISSUE_TITLE_PREFIX = FINANCE_SPEC.title_prefix
 
 
 @dataclass
@@ -98,34 +145,48 @@ def _norm(raw: str) -> str:
     return str(raw or "").strip().lower().replace(" ", "_")
 
 
-def is_finance_domain(
+def _token_variants(raw: str) -> List[str]:
+    n = _norm(raw)
+    if not n:
+        return []
+    return [
+        n,
+        n.replace("-", "_"),
+        n.replace("_", "-"),
+        n.replace("-", "").replace("_", ""),
+    ]
+
+
+def _token_matches(item: str, verticals: frozenset[str]) -> bool:
+    if not item:
+        return False
+    if item in verticals:
+        return True
+    underscored = item.replace("-", "_")
+    collapsed = item.replace("-", "").replace("_", "")
+    return underscored in verticals or collapsed in verticals
+
+
+def _domain_candidates(
     output_dir: Path | str,
     *,
     product_id: Optional[str] = None,
     vertical: Optional[str] = None,
     blueprint: Any = None,
-) -> bool:
-    """True for finance_ops / finance-ops product or vertical."""
+) -> List[str]:
     candidates: List[str] = []
     for value in (product_id, vertical):
         if value:
-            n = _norm(str(value))
-            candidates.extend((n, n.replace("-", "_"), n.replace("_", "-")))
+            candidates.extend(_token_variants(str(value)))
     if blueprint is not None:
-        for attr in ("product_id", "vertical"):
+        for attr in ("product_id", "vertical", "domain"):
             val = getattr(blueprint, attr, None)
             if val is None and isinstance(blueprint, Mapping):
                 val = blueprint.get(attr)
             if val:
-                n = _norm(str(val))
-                candidates.extend((n, n.replace("-", "_"), n.replace("_", "-")))
+                candidates.extend(_token_variants(str(val)))
     root = Path(output_dir)
-    candidates.extend(
-        (
-            _norm(root.name),
-            _norm(root.name).replace("-", "_"),
-        )
-    )
+    candidates.extend(_token_variants(root.name))
     for rel in (
         Path("docs") / "blueprint" / "product_blueprint.json",
         Path("docs") / "product_blueprint.json",
@@ -143,16 +204,39 @@ def is_finance_domain(
         for key in ("product_id", "vertical", "domain"):
             val = data.get(key)
             if val:
-                n = _norm(str(val))
-                candidates.extend((n, n.replace("-", "_"), n.replace("_", "-")))
-    for item in candidates:
-        if not item:
-            continue
-        if item in FINANCE_VERTICALS:
-            return True
-        if item.replace("-", "_") in FINANCE_VERTICALS:
-            return True
-    return False
+                candidates.extend(_token_variants(str(val)))
+    return candidates
+
+
+def detect_domain(
+    output_dir: Path | str,
+    *,
+    product_id: Optional[str] = None,
+    vertical: Optional[str] = None,
+    blueprint: Any = None,
+) -> Optional[DomainSpec]:
+    """Return the handoff spec for finance or automotive, else None."""
+    for item in _domain_candidates(
+        output_dir, product_id=product_id, vertical=vertical, blueprint=blueprint
+    ):
+        for aliases, spec in _SPECS:
+            if _token_matches(item, aliases):
+                return spec
+    return None
+
+
+def is_finance_domain(
+    output_dir: Path | str,
+    *,
+    product_id: Optional[str] = None,
+    vertical: Optional[str] = None,
+    blueprint: Any = None,
+) -> bool:
+    """True for finance_ops / finance-ops product or vertical."""
+    spec = detect_domain(
+        output_dir, product_id=product_id, vertical=vertical, blueprint=blueprint
+    )
+    return spec is not None and spec.domain == FINANCE_SPEC.domain
 
 
 def _floor_base(env: Mapping[str, str]) -> str:
@@ -218,6 +302,17 @@ def ensure_coder_brief(
     return dest
 
 
+def _spec_for_payload(
+    payload: Mapping[str, Any], *, fallback: Optional[DomainSpec] = None
+) -> DomainSpec:
+    domain_id = str(payload.get("domain") or "").strip()
+    if domain_id in SPEC_BY_DOMAIN:
+        return SPEC_BY_DOMAIN[domain_id]
+    if fallback is not None:
+        return fallback
+    return FINANCE_SPEC
+
+
 def build_handoff_payload(
     output_dir: Path | str,
     *,
@@ -226,6 +321,7 @@ def build_handoff_payload(
     product_id: Optional[str] = None,
     brief_path: Optional[Path] = None,
     brief_excerpt: str = "",
+    domain_spec: Optional[DomainSpec] = None,
 ) -> Dict[str, Any]:
     root = Path(output_dir)
     blob = env if env is not None else os.environ
@@ -236,18 +332,23 @@ def build_handoff_payload(
     if not excerpt and brief.is_file():
         text = brief.read_text(encoding="utf-8")
         excerpt = text if len(text) <= 12000 else text[:12000] + "\n\n…[truncated]…"
+    spec = domain_spec or FINANCE_SPEC
+    scope = "" if spec.domain == FINANCE_SPEC.domain else f" for {spec.domain}"
+    default_product = (
+        "finance-ops" if spec.domain == FINANCE_SPEC.domain else spec.vertical
+    )
     return {
         "schema_version": "domain_handoff.v1",
         "stage": "post_cloner",
         "session_id": sid,
-        "domain": "finance",
-        "vertical": "finance_ops",
-        "product_id": str(product_id or root.name or "finance-ops"),
+        "domain": spec.domain,
+        "vertical": spec.vertical,
+        "product_id": str(product_id or root.name or default_product),
         "workspace": str(root),
         "coder_brief_path": BRIEF_REL.as_posix(),
         "floor_url": floor,
         "instruction": (
-            "MR.FINANCE: COLLECTOR+CLONER are done. The frozen command is "
+            f"MR.FINANCE: COLLECTOR+CLONER are done{scope}. The frozen command is "
             f"`docs/coder_brief.md` for session `{sid}`. "
             "Take over: produce, check, post, and deploy "
             "(GitHub or as the user directs). Do not wait for Grok Bot "
@@ -377,10 +478,11 @@ def _find_existing_issue(
     *,
     token: str,
     opener: Callable[..., Any],
+    domain_label: str = "domain:finance",
 ) -> Optional[Dict[str, Any]]:
     q = (
         f"repo:{owner}/{repo} is:issue "
-        f"label:handoff label:domain:finance "
+        f"label:handoff label:{domain_label} "
         f"in:title {session_id}"
     )
     status, body = github_request(
@@ -410,11 +512,13 @@ def open_or_update_handoff_issue(
     if not token:
         raise BuildsPushError(f"{BUILDS_TOKEN_ENV} missing for domain handoff issue")
     owner, repo, _url = _issue_repo(env)
+    spec = _spec_for_payload(payload)
+    labels = spec.labels
     sid = str(payload.get("session_id") or "")
-    title = f"{HANDOFF_ISSUE_TITLE_PREFIX} {sid}".strip()
+    title = f"{spec.title_prefix} {sid}".strip()
     excerpt = str(payload.get("coder_brief_excerpt") or "")
     body = (
-        f"## Domain handoff — finance (post-CLONER)\n\n"
+        f"## Domain handoff — {spec.domain} (post-CLONER)\n\n"
         f"- **session_id:** `{sid}`\n"
         f"- **product_id:** `{payload.get('product_id')}`\n"
         f"- **workspace:** `{payload.get('workspace')}`\n"
@@ -427,17 +531,24 @@ def open_or_update_handoff_issue(
         f"_Opened by Factory domain_handoff after CLONER (no SendToAgent)._\n"
     )
     try:
-        _ensure_labels(owner, repo, FINANCE_LABELS, token=token, opener=opener)
+        _ensure_labels(owner, repo, labels, token=token, opener=opener)
     except Exception:  # noqa: BLE001
         logger.exception("domain handoff: ensure labels failed")
 
-    existing = _find_existing_issue(owner, repo, sid, token=token, opener=opener)
+    existing = _find_existing_issue(
+        owner,
+        repo,
+        sid,
+        token=token,
+        opener=opener,
+        domain_label=f"domain:{spec.domain}",
+    )
     if existing:
         number = int(existing["number"])
         status, updated = _json_mutate(
             f"https://api.github.com/repos/{owner}/{repo}/issues/{number}",
             token=token,
-            body={"body": body, "state": "open", "labels": list(FINANCE_LABELS)},
+            body={"body": body, "state": "open", "labels": list(labels)},
             opener=opener,
             method="PATCH",
         )
@@ -456,7 +567,7 @@ def open_or_update_handoff_issue(
     status, created = _json_mutate(
         f"https://api.github.com/repos/{owner}/{repo}/issues",
         token=token,
-        body={"title": title, "body": body, "labels": list(FINANCE_LABELS)},
+        body={"title": title, "body": body, "labels": list(labels)},
         opener=opener,
     )
     if status >= 400 or not isinstance(created, Mapping) or not created.get("number"):
@@ -544,14 +655,15 @@ def notify_domain_handoff(
     opener: Callable[..., Any] = urlopen,
     force: bool = False,
 ) -> HandoffResult:
-    """Fire post-CLONER finance handoff once. No-op for non-finance."""
+    """Fire post-CLONER handoff once for a supported domain. No-op otherwise."""
     root = Path(output_dir)
     blob: Mapping[str, str] = env if env is not None else os.environ
-    if not is_finance_domain(
+    spec = detect_domain(
         root, product_id=product_id, vertical=vertical, blueprint=blueprint
-    ):
+    )
+    if spec is None:
         return HandoffResult(
-            fired=False, skipped=True, reason="not finance domain", domain=""
+            fired=False, skipped=True, reason="not a supported domain", domain=""
         )
     if not force and _already_fired(root):
         return HandoffResult(
@@ -559,7 +671,7 @@ def notify_domain_handoff(
             skipped=True,
             already=True,
             reason="domain handoff already fired",
-            domain="finance",
+            domain=spec.domain,
         )
 
     brief = ensure_coder_brief(
@@ -571,6 +683,7 @@ def notify_domain_handoff(
         env=blob,
         product_id=product_id,
         brief_path=brief,
+        domain_spec=spec,
     )
 
     issue_url = ""
@@ -604,7 +717,7 @@ def notify_domain_handoff(
         fired=fired,
         skipped=False,
         reason="; ".join(errors) if errors else "ok",
-        domain="finance",
+        domain=spec.domain,
         issue_url=issue_url,
         issue_number=issue_number,
         webhook_posted=webhook_posted,
@@ -646,5 +759,5 @@ def handoff_after_cloner(ctx: Any, *, env: Optional[Mapping[str, str]] = None) -
     except Exception:  # noqa: BLE001
         logger.exception("post-CLONER domain handoff failed at %s", root)
         return HandoffResult(
-            fired=False, skipped=True, reason="handoff exception", domain="finance"
+            fired=False, skipped=True, reason="handoff exception", domain=""
         )

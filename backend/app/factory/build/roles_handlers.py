@@ -1061,14 +1061,14 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
         )
 
-    # FinanceOps: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
+    # Supported domains: deliver frozen C-BRIEF to MR.FINANCE after CLONER.
     # Best-effort — never fail the CLONER role. No SendToAgent.
     handoff_notes: dict = {}
     try:
         from app.factory.build.domain_handoff import handoff_after_cloner
 
         hr = handoff_after_cloner(ctx)
-        if hr.fired or hr.already or (hr.domain == "finance" and not hr.skipped):
+        if hr.fired or hr.already or (hr.domain and not hr.skipped):
             handoff_notes["domain_handoff"] = hr.to_dict()
             note = getattr(ctx, "note", None)
             if callable(note):
