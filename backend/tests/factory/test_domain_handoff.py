@@ -408,6 +408,41 @@ def test_webhook_posts_authorization_when_authorization_env_set(tmp_path):
     assert opener.webhook_authorizations == ["Bearer crsr_notify_path"]
     for _m, url, _b in opener.calls:
         assert "api.cursor.com" not in url
+
+
+def test_webhook_required_failure_is_not_masked_by_the_issue(tmp_path):
+    """Reach bug: when DOMAIN_HANDOFF_WEBHOOK_URL is set the webhook IS
+    MR.FINANCE's reach channel. If it fails, a succeeding GitHub issue must NOT
+    report the handoff as reached, and idempotency must NOT be stamped — else
+    every retry skips and MR.FINANCE is reached exactly never (live symptom:
+    reach-check works, the real CLONER→Writer handoff does not).
+    """
+    out = _finance_ws(tmp_path)
+
+    class WebhookFails(HandoffOpener):
+        def __call__(self, req: Request, timeout=None):
+            if "hooks.example.test" in req.full_url:
+                self.webhook_posts += 1
+                return _Resp(500, {"error": "down"})
+            return super().__call__(req, timeout=timeout)
+
+    env = dict(ENV)
+    env[DOMAIN_HANDOFF_WEBHOOK_ENV] = "https://hooks.example.test/domain-handoff"
+
+    opener = WebhookFails()
+    result = notify_domain_handoff(out, session_id="s", env=env, opener=opener)
+    assert result.webhook_required is True
+    assert result.webhook_posted is False
+    assert result.issue_url, "the GitHub issue channel did succeed"
+    assert result.fired is False, "a succeeding issue must not mask a dead webhook"
+    assert "required reach channel" in result.reason
+
+    # A dead required webhook must not stamp idempotency: the retry re-attempts
+    # the webhook rather than skipping as 'already fired'.
+    opener2 = WebhookFails()
+    retry = notify_domain_handoff(out, session_id="s", env=env, opener=opener2)
+    assert retry.already is False
+    assert opener2.webhook_posts == 1
         assert "SendToAgent" not in url
         assert "cloud-agent" not in url
 
