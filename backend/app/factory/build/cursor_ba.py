@@ -31,10 +31,18 @@ CURSOR_KEY_ENVS = (
     "FACTORY_CURSOR_API_KEY",
 )
 
-# Fixed launch prompt — do not paraphrase.
+# Fixed launch prompt — do not paraphrase. Sealed-path ban must stay in
+# this constant so N1b assert_path_jail / sealed_globs is not the first
+# time the BA hears vendor trees are read-only.
 LAUNCH_PROMPT = (
     "Execute docs/coder_brief.md exactly. Commit all work to this branch. "
-    "End by committing receipt.json."
+    "End by committing receipt.json. "
+    "HARD RULE — sealed paths are read-only. Do not write, edit, or delete "
+    "vendor/**, vendor_blocks/**, vendor_blocks_mirror/**, blocks.lock.json, "
+    "build_ledger.jsonl, .git/**, or anything under SEALED_AFTER_CLONER. "
+    "Implement domain in app/** and tests/** only as allowed by "
+    "ba_allowed_globs / Hybrid C for BA. Never patch vendored blocks — "
+    "call Store blocks via execute(action=)."
 )
 
 DEFAULT_START_TIMEOUT_S = 90.0
