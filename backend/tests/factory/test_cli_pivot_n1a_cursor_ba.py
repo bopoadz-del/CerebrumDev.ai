@@ -32,17 +32,20 @@ from app.factory.build.cli_pivot import (
     decide_budget,
     launch_executor,
     run_cli_pivot,
+    run_writer_via_cli_pivot,
 )
 from app.factory.build.cli_receipt import HANDOFF_TO_N3
 from app.factory.build.cursor_ba import (
     CURSOR_API_BASE,
     LAUNCH_PROMPT,
     BackgroundAgentResult,
+    ba_progress_line,
     create_agent,
     extract_spent_usd,
     poll_agent,
     run_background_agent,
 )
+from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.product_architect import plan_blueprint
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -399,6 +402,58 @@ def test_poll_hung_past_wall():
     assert str(polled["status"]).upper() == "RUNNING"
 
 
+def test_poll_emits_progress_while_running():
+    """Floor last_event must refresh while the BA stays RUNNING."""
+    opener = FakeOpener(agent_status="RUNNING")
+    clock = Clock()
+    notes: list[str] = []
+
+    def sleep(_s: float) -> None:
+        clock.advance(40.0)
+
+    polled = poll_agent(
+        "bc_abcdef1234",
+        api_key="k",
+        wall_s=100.0,
+        start_timeout_s=90.0,
+        poll_s=5.0,
+        progress_s=30.0,
+        opener=opener,
+        clock=clock,
+        sleep=sleep,
+        on_progress=notes.append,
+    )
+    assert polled["_hung"] is True
+    assert str(polled["status"]).upper() == "RUNNING"
+    assert len(notes) >= 2
+    assert all(n.startswith("WRITER BA bc_abcde") for n in notes)
+    assert all("RUNNING" in n for n in notes)
+    assert any(" / wall 100s" in n for n in notes)
+    assert notes[0] == ba_progress_line("bc_abcdef1234", "RUNNING", 0.0, 100.0)
+    elapsed_values = [float(n.split("—")[1].split("s")[0].strip()) for n in notes]
+    assert elapsed_values[0] == 0.0
+    assert any(value >= 30.0 for value in elapsed_values)
+
+
+def test_poll_progress_errors_do_not_fail_closed():
+    opener = FakeOpener(agent_status="FINISHED")
+
+    def boom(_detail: str) -> None:
+        raise RuntimeError("telemetry down")
+
+    polled = poll_agent(
+        "bc_test",
+        api_key="k",
+        wall_s=100.0,
+        opener=opener,
+        clock=Clock(),
+        sleep=lambda _s: None,
+        on_progress=boom,
+    )
+    assert str(polled["status"]).upper() == "FINISHED"
+    assert polled["_started"] is True
+
+
 def test_poll_never_left_creating():
     opener = FakeOpener(agent_status="CREATING")
     clock = Clock()
@@ -485,6 +540,29 @@ def test_run_background_agent_success(tmp_path):
     assert result.changed_paths
     assert result.unified_diff
     assert any(u == f"{CURSOR_API_BASE}/v0/agents" for _m, u, _b in opener.calls)
+
+
+def test_run_background_agent_notes_start_before_poll(tmp_path):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "coder_brief.md").write_text("brief\n", encoding="utf-8")
+    opener = FakeOpener(agent_status="FINISHED")
+    notes: list[str] = []
+    result = run_background_agent(
+        workspace=tmp_path,
+        wall_s=1800.0,
+        env=_env(),
+        session_id="smoke",
+        opener=opener,
+        run_git=FakeGit(),
+        sleep=lambda _s: None,
+        on_progress=notes.append,
+    )
+    assert result.started is True
+    assert notes
+    assert "started" in notes[0]
+    assert "bc_test" in notes[0]
+    assert "ref" in notes[0]
+    assert any("FINISHED" in n or "RUNNING" in n or "CREATING" in n for n in notes[1:])
 
 
 def test_run_background_agent_hung_skips_collect(tmp_path):
@@ -576,6 +654,89 @@ def test_run_cli_pivot_mocked_ba_hands_to_n3(tmp_path, monkeypatch):
     )
     assert result.honesty == HANDOFF_TO_N3
     assert result.green is False
+
+
+def test_run_cli_pivot_progress_hits_ledger_and_callback(tmp_path, monkeypatch):
+    seen: list[str] = []
+
+    def fake_run(**kwargs):
+        cb = kwargs.get("on_progress")
+        assert callable(cb)
+        cb("WRITER BA bc_test RUNNING — 30s / wall 1800s")
+        return BackgroundAgentResult(
+            started=True,
+            receipt=RECEIPT,
+            changed_paths=PATHS,
+            unified_diff="\n".join(
+                f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}" for p in PATHS
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.factory.build.cli_pivot.run_background_agent", fake_run
+    )
+    dest = tmp_path / "ok"
+    result = run_cli_pivot(
+        _bp(),
+        dest,
+        plan=plan_blueprint(_bp()),
+        env=_env(),
+        on_progress=seen.append,
+    )
+    assert result.honesty == HANDOFF_TO_N3
+    assert seen == ["WRITER BA bc_test RUNNING — 30s / wall 1800s"]
+    ledger = BuildLedger(dest / "build_ledger.jsonl")
+    notes = [e for e in ledger.events() if e.kind is EventKind.NOTE]
+    assert any("WRITER BA bc_test RUNNING" in e.detail for e in notes)
+    progress = [e for e in notes if (e.payload or {}).get("ba_progress")]
+    assert progress
+    assert progress[0].payload.get("honesty") == "WRITER_BA"
+    assert all(e.kind is EventKind.NOTE for e in progress)
+
+
+def test_run_writer_via_cli_pivot_progress_hits_ctx_note(tmp_path, monkeypatch):
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles_models import RoleContext
+    from app.factory.build.workspace import RoleWorkspace
+
+    ctx_notes: list[str] = []
+
+    def fake_run(**kwargs):
+        cb = kwargs.get("on_progress")
+        assert callable(cb)
+        cb("WRITER BA bc_live RUNNING — 45s / wall 1800s")
+        return BackgroundAgentResult(
+            started=True,
+            receipt=RECEIPT,
+            changed_paths=PATHS,
+            unified_diff="\n".join(
+                f"diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}" for p in PATHS
+            ),
+        )
+
+    monkeypatch.setattr(
+        "app.factory.build.cli_pivot.run_background_agent", fake_run
+    )
+    dest = tmp_path / "floor"
+    dest.mkdir()
+    bp = _bp()
+    plan = plan_blueprint(bp)
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=RoleWorkspace(BuildRole.WRITER, dest),
+        blueprint=bp,
+        plan=plan,
+        progress=lambda detail, payload: ctx_notes.append(detail),
+    )
+    outcome = run_writer_via_cli_pivot(ctx, env=_env())
+    assert outcome.ok is True
+    assert any("WRITER BA bc_live RUNNING" in n for n in ctx_notes)
+    ledger = BuildLedger(dest / "build_ledger.jsonl")
+    assert any(
+        "WRITER BA bc_live RUNNING" in e.detail
+        for e in ledger.events()
+        if e.kind is EventKind.NOTE
+    )
 
 
 def test_run_cli_pivot_api_down_is_unavailable(tmp_path, monkeypatch):

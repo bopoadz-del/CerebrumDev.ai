@@ -39,7 +39,11 @@ from app.factory.build.cli_receipt import (
     blueprint_capability_set,
     enforce_receipt,
 )
-from app.factory.build.cursor_ba import CursorBAError, run_background_agent
+from app.factory.build.cursor_ba import (
+    CursorBAError,
+    ProgressCallback,
+    run_background_agent,
+)
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.product_architect import plan_blueprint
 
@@ -196,6 +200,12 @@ def run_writer_via_cli_pivot(
     )
     ledger_path = dest / LEDGER_REL
     ledger = BuildLedger(ledger_path) if ledger_path.is_file() else None
+
+    def _ctx_progress(detail: str) -> None:
+        note = getattr(ctx, "note", None)
+        if callable(note):
+            note(detail, stage="writer_ba")
+
     seam = run_cli_pivot(
         ctx.blueprint,
         dest,
@@ -204,6 +214,7 @@ def run_writer_via_cli_pivot(
         ledger=ledger,
         env=env_map,
         launch=launch,
+        on_progress=_ctx_progress,
     )
     payload = seam.to_dict()
     state["cli_pivot"] = payload
@@ -288,6 +299,7 @@ def launch_executor(
     workspace: Path,
     env: Optional[Mapping[str, str]] = None,
     launch: Optional[Callable[..., ExecutorLaunch]] = None,
+    on_progress: ProgressCallback = None,
 ) -> ExecutorLaunch:
     """Fail-closed infra launch. No kimi / FACTORY_CODE_CLI / template fallback."""
     if launch is not None:
@@ -305,6 +317,7 @@ def launch_executor(
             wall_s=budget.wall_s,
             env=env_map,
             session_id=_session_id(brief, Path(workspace), env_map),
+            on_progress=on_progress,
         )
     except (BuildsPushError, CursorBAError) as exc:
         raise ExecutorUnavailable(f"{EXECUTOR_UNAVAILABLE}: {exc}") from exc
@@ -372,19 +385,52 @@ def _ledger_note(
     honesty: str,
     detail: str,
     payload: Optional[Mapping[str, Any]] = None,
+    *,
+    progress: bool = False,
 ) -> None:
     if ledger is None:
         return
     body = dict(payload or {})
     body["honesty"] = honesty
     body["seam"] = "cli_pivot"
-    kind = EventKind.GATE_FAILED if honesty != HANDOFF_TO_N3 else EventKind.NOTE
+    kind = (
+        EventKind.NOTE
+        if progress or honesty == HANDOFF_TO_N3
+        else EventKind.GATE_FAILED
+    )
     ledger.append(
         kind,
         role=BuildRole.WRITER,
         detail=detail,
         payload=body,
     )
+
+
+def _ba_progress_sink(
+    ledger: Optional[BuildLedger],
+    extra: ProgressCallback = None,
+) -> Callable[[str], None]:
+    """Ledger NOTE + optional Floor ``ctx.note``. Never fail the BA poll."""
+
+    def _emit(detail: str) -> None:
+        try:
+            _ledger_note(
+                ledger,
+                "WRITER_BA",
+                detail,
+                {"stage": "writer_ba", "ba_progress": True},
+                progress=True,
+            )
+        except Exception:  # noqa: BLE001 — telemetry must never fail a build
+            pass
+        if extra is None:
+            return
+        try:
+            extra(detail)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return _emit
 
 
 def run_cli_pivot(
@@ -399,6 +445,7 @@ def run_cli_pivot(
     ledger: Optional[BuildLedger] = None,
     env: Optional[Mapping[str, str]] = None,
     launch: Optional[Callable[..., ExecutorLaunch]] = None,
+    on_progress: ProgressCallback = None,
     elapsed_s: float = 0.0,
     spent_usd: float = 0.0,
     write_brief: bool = True,
@@ -453,6 +500,7 @@ def run_cli_pivot(
             workspace=workspace,
             env=env,
             launch=launch,
+            on_progress=_ba_progress_sink(led, on_progress),
         )
     except ExecutorUnavailable as exc:
         _ledger_note(

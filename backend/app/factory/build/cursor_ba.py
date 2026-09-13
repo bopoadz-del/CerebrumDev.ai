@@ -39,7 +39,10 @@ LAUNCH_PROMPT = (
 
 DEFAULT_START_TIMEOUT_S = 90.0
 DEFAULT_POLL_S = 5.0
+#: Floor ``last_event`` / quiet-reset heartbeat while the BA is RUNNING.
+DEFAULT_PROGRESS_S = 45.0
 HTTP_TIMEOUT_S = 30.0
+ProgressCallback = Optional[Callable[[str], None]]
 
 FINISHED = "FINISHED"
 FAILED = "FAILED"
@@ -101,6 +104,38 @@ def extract_spent_usd(payload: Mapping[str, Any]) -> float:
             except (TypeError, ValueError):
                 continue
     return 0.0
+
+
+def _agent_id_short(agent_id: str) -> str:
+    text = str(agent_id or "").strip()
+    return text[:8] if text else "?"
+
+
+def _safe_progress(on_progress: ProgressCallback, detail: str) -> None:
+    """Floor telemetry. Never fail a build because a note writer raised."""
+    if on_progress is None:
+        return
+    try:
+        on_progress(detail)
+    except Exception:  # noqa: BLE001 — progress must never fail-closed
+        pass
+
+
+def ba_progress_line(
+    agent_id: str, status: str, elapsed_s: float, wall_s: float
+) -> str:
+    return (
+        f"WRITER BA {_agent_id_short(agent_id)} {status} — "
+        f"{elapsed_s:.0f}s / wall {wall_s:.0f}s"
+    )
+
+
+def ba_started_line(agent_id: str, *, ref: str = "") -> str:
+    detail = f"WRITER BA {_agent_id_short(agent_id)} started — id {agent_id}"
+    target = str(ref or "").strip()
+    if target:
+        detail += f" ref {target}"
+    return detail
 
 
 def agent_branch_name(payload: Mapping[str, Any], fallback: str) -> str:
@@ -200,19 +235,37 @@ def poll_agent(
     wall_s: float,
     start_timeout_s: float = DEFAULT_START_TIMEOUT_S,
     poll_s: float = DEFAULT_POLL_S,
+    progress_s: float = DEFAULT_PROGRESS_S,
     opener: Callable[..., Any] = urlopen,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    on_progress: ProgressCallback = None,
 ) -> Dict[str, Any]:
     """Poll until FINISHED / FAILED / wall. FAILED and never-started raise."""
     t0 = clock()
     last: Dict[str, Any] = {"id": agent_id, "status": CREATING}
     left_creating = False
+    last_status = ""
+    last_progress_at = t0
+    heartbeat_s = float(progress_s)
     while True:
         last = get_agent(agent_id, api_key=api_key, opener=opener)
-        status = str(last.get("status") or "").upper()
-        elapsed = float(clock() - t0)
+        status = str(last.get("status") or "").upper() or CREATING
+        now = float(clock())
+        elapsed = float(now - t0)
         last["_elapsed_s"] = elapsed
+        status_changed = status != last_status
+        heartbeat = (
+            status == "RUNNING"
+            and (now - last_progress_at) >= heartbeat_s
+        )
+        if not last_status or status_changed or heartbeat:
+            _safe_progress(
+                on_progress,
+                ba_progress_line(agent_id, status, elapsed, wall_s),
+            )
+            last_status = status
+            last_progress_at = now
         if status and status != CREATING:
             left_creating = True
         if status == FINISHED:
@@ -245,6 +298,8 @@ def run_background_agent(
     sleep: Callable[[float], None] = time.sleep,
     start_timeout_s: float = DEFAULT_START_TIMEOUT_S,
     poll_s: float = DEFAULT_POLL_S,
+    progress_s: float = DEFAULT_PROGRESS_S,
+    on_progress: ProgressCallback = None,
     push: Optional[Callable[..., BuildsRef]] = None,
     collect: Optional[Callable[..., Tuple[Any, List[str], str]]] = None,
 ) -> BackgroundAgentResult:
@@ -269,15 +324,19 @@ def run_background_agent(
     agent_id = str(created.get("id") or "").strip()
     if not agent_id:
         raise CursorBAError("agent never started")
+    started_ref = agent_branch_name(created, ref.branch)
+    _safe_progress(on_progress, ba_started_line(agent_id, ref=started_ref))
     polled = poll_agent(
         agent_id,
         api_key=api_key,
         wall_s=wall_s,
         start_timeout_s=start_timeout_s,
         poll_s=poll_s,
+        progress_s=progress_s,
         opener=opener,
         clock=clock,
         sleep=sleep,
+        on_progress=on_progress,
     )
     elapsed = float(polled.get("_elapsed_s") or 0.0)
     hung = bool(polled.get("_hung"))
