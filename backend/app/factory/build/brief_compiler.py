@@ -681,8 +681,9 @@ def render_slot_bodies(
         "vendor_blocks/**, vendor_blocks_mirror/**, blocks.lock.json, "
         "build_ledger.jsonl, .git/**, or anything under SEALED_AFTER_CLONER; "
         "implement domain in app/** and tests/** only as allowed by "
-        "ba_allowed_globs / Hybrid C for BA; never patch vendored blocks — "
-        "call Store blocks via execute(action=)",
+        "ba_allowed_globs / Hybrid C for BA; prefer docs/openapi.json and "
+        "root openapi.json only — never vendor/**; never patch vendored "
+        "blocks — call Store blocks via execute(action=)",
         "- thin SUCCESS (code-cycle green, pilot_ready=false)",
         full_pilot_authorship_forbidden_lines(n_required),
         "- decorative tests",

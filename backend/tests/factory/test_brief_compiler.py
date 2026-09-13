@@ -158,6 +158,8 @@ def test_compiled_brief_forbids_sealed_vendor():
         ".git/**",
         "SEALED_AFTER_CLONER",
         "ba_allowed_globs",
+        "docs/openapi.json",
+        "openapi.json",
         "execute(action=)",
     ):
         assert needle in forbidden

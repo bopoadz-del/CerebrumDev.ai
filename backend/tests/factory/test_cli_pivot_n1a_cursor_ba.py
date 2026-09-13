@@ -358,6 +358,8 @@ def test_launch_prompt_forbids_sealed_paths():
         "tests/**",
         "execute(action=)",
         "Never patch vendored blocks",
+        "docs/openapi.json",
+        "openapi.json",
         "receipt.json",
         "docs/coder_brief.md",
     ):
