@@ -490,7 +490,31 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     its handler's result and persisted anyway passed every phase and reached
     the customer. Syntax first because it is cheap and its failure mode is
     clearer; behaviour second because that is the claim worth checking.
+
+    Before any of that: the artifact gate (0.5). Zero agent-authored
+    artifacts -- counted from the workspace files the writer actually
+    produced, never from the writer's own status claim -- refuses with
+    ``writer_no_output``. A workspace that parses and behaves but was
+    written entirely by the deterministic template is the hollow pass the
+    gate exists to stop.
     """
+    from app.factory.build.authorship import agent_written_handler_ids_in_workspace
+    from app.factory.build.cli_receipt import WRITER_NO_OUTPUT
+
+    agent_written = agent_written_handler_ids_in_workspace(ctx.workspace)
+    if not agent_written:
+        return GateResult(
+            ok=False,
+            gate="writer_contract",
+            detail=(
+                f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts in the "
+                "workspace (no coding-agent-stamped handler in "
+                "app/actions/*.py); the deterministic template path is not "
+                "a governed product"
+            ),
+            findings=[WRITER_NO_OUTPUT],
+            payload={"agent_written": 0},
+        )
     compiled = gate_workspace_compiles(ctx)
     if not compiled.ok:
         return compiled
@@ -505,7 +529,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
         gate="writer_contract",
         detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}",
         findings=list(behaviour.findings),
-        payload=dict(behaviour.payload),
+        payload={**dict(behaviour.payload), "agent_written": len(agent_written)},
     )
 
 

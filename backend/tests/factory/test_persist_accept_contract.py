@@ -53,7 +53,7 @@ from app.factory.build.persist_accept import (
     emit_factory_grounded_generate_persist,
     wipe_workspace_runtime_db,
 )
-from app.factory.build.product_gate import ROUND_TRIP_PROBE, gate_round_trip
+from app.factory.build.product_gate import ROUND_TRIP_PROBE
 from app.factory.build.roles_handlers import (
     _capability_handler_body,
     _fallback_spec,
@@ -319,19 +319,16 @@ def _no_paid_calls(monkeypatch):
 
 
 def test_emitted_keyword_fallback_vetcare_round_trips(tmp_path):
-    """Fail-closed: WRITER emit of the photographed roster one-record persists.
+    """0.5: factory-LLM GENERATE fallthrough writes zero coding-agent
+    artifacts, so the WRITER refuses with writer_no_output.
 
-    Mutation killed: WRITER green / PRODUCT red because leftover ./data
-    had 0001_baseline stamped without audit / dashboard /
-    veterinary_care_core tables.
-
-    Invokes run_writer (not RoleRunner): CI has no CEREBRUM_BLOCKS_ROOT,
-    so CLONER cannot vendor Store shims. Persist + PRODUCT STORAGE_PATH
-    isolation is the contract.
+    The persist-emit contract itself (persist + PRODUCT round-trip) is
+    covered by the direct emit tests below --
+    test_emit_factory_grounded_generate_persist_* -- because a refused
+    writer commits nothing to round-trip against.
     """
     from app.factory.build.authority import BuildRole
-    from app.factory.build.gates import GateContext
-    from app.factory.build.roles import RoleContext, run_writer
+    from app.factory.build.roles import RoleContext, RoleError, run_writer
     from app.factory.build.workspace import RoleWorkspace
 
     os.environ["FACTORY_CODER_ENABLED"] = "0"
@@ -342,40 +339,20 @@ def test_emitted_keyword_fallback_vetcare_round_trips(tmp_path):
         _Cap("dashboard", [], "GENERATE"),
     )
     ws = RoleWorkspace(BuildRole.WRITER, out)
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=generate_plan,
-            state={
-                "resolved_blocks": (),
-                "vendored_blocks": (),
-                "gaps": list(KEYWORD_FALLBACK_VETCARE_CAPS),
-            },
+    with pytest.raises(RoleError, match="writer_no_output"):
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=generate_plan,
+                state={
+                    "resolved_blocks": (),
+                    "vendored_blocks": (),
+                    "gaps": list(KEYWORD_FALLBACK_VETCARE_CAPS),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
-    for cid in KEYWORD_FALLBACK_VETCARE_CAPS:
-        path = out / "app" / "actions" / f"{cid}.py"
-        assert path.is_file(), cid
-        handler = path.read_text(encoding="utf-8")
-        assert "_persist_record(" in handler or "store.save(" in handler
-    revision = (out / "alembic" / "versions" / "0001_baseline.py").read_text(
-        encoding="utf-8"
-    )
-    for entity in KEYWORD_FALLBACK_VETCARE_CAPS:
-        assert f'"{entity}"' in revision
-    stale = out / "data"
-    stale.mkdir(exist_ok=True)
-    (stale / "platform.db").write_bytes(b"not a migrated schema")
-    ctx = GateContext(workspace=out, role=BuildRole.TESTER, cycle="pilot")
-    trip = gate_round_trip(ctx)
-    assert trip.ok, (trip.detail, trip.findings)
-    assert "round-tripped" in (trip.detail or "")
-    # Honesty: a red PRODUCT still refuses export. This test is a green
-    # persist contract, not a claim that the live Floor shipped a zip.
-    assert "pilot_zip" not in (trip.detail or "").lower()
 
 
 def test_persist_workspace_root_prefers_staging_not_destination(tmp_path):

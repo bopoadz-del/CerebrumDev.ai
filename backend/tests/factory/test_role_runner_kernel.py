@@ -18,7 +18,9 @@ def _no_paid_calls(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
 
-def test_role_runner_vendors_kernel_and_routes_through_execute_action(tmp_path):
+def test_role_runner_vendors_kernel_and_routes_through_execute_action(
+    tmp_path, stub_coder
+):
     out = tmp_path / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()

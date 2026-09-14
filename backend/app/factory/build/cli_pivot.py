@@ -228,6 +228,17 @@ def run_writer_via_cli_pivot(
             green=False,
         )
     if seam.honesty == HANDOFF_TO_N3:
+        # 0.5.2: the receipt-level check (enforce_receipt) already refuses
+        # an empty authored set, but the entry point re-checks so no
+        # zero-artifact handoff can ever be reported as WRITER success.
+        authored_ids = list(getattr(seam, "cli_authored_ids", None) or ())
+        if not authored_ids:
+            from app.factory.build.cli_receipt import WRITER_NO_OUTPUT
+
+            raise RoleError(
+                f"{WRITER_NO_OUTPUT}: cli-pivot handoff with zero "
+                "cli_authored_ids"
+            )
         return RoleResult(
             ok=True,
             detail=seam.detail,

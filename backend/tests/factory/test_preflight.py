@@ -145,7 +145,7 @@ def test_canonical_fingerprint_ignores_timestamps():
     assert canonical_fingerprint(a) == canonical_fingerprint(b)
 
 
-def test_role_runner_records_preflight_before_roles(tmp_path):
+def test_role_runner_records_preflight_before_roles(tmp_path, stub_coder):
     assert build_engine() == RUNNER
     out = tmp_path / "built"
     runner = RoleRunner(load_blueprint(SMOKE), out)

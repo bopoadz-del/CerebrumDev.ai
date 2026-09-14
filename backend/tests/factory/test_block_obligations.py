@@ -625,7 +625,7 @@ class _Blueprint:
     vertical = "testing"
 
 
-def test_the_writer_declares_what_the_cloner_recorded(tmp_path, monkeypatch):
+def test_the_writer_declares_what_the_cloner_recorded(tmp_path, monkeypatch, stub_coder):
     """Mutation killed: run_writer calling _render_requirements(None) -- the
     feature disconnected at the consuming end, with every other test green.
 
@@ -634,7 +634,6 @@ def test_the_writer_declares_what_the_cloner_recorded(tmp_path, monkeypatch):
     from. Asserting on the renderer with the cloner's dict would prove the
     two halves work and say nothing about whether they are joined.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     from app.factory.build.roles import run_writer
 
     store = _store_with_third_party_imports(tmp_path)

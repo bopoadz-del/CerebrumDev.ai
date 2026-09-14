@@ -407,6 +407,22 @@ def test_stale_hard_stop_inspect_does_not_poison_store_green_status(tmp_path):
     assert reconciled["mid_run_decision"] == "hard_stop"
     assert reconciled["superseded_by"] == "RUN_SUCCEEDED"
 
+    # 0.5: build_status re-evaluates the authorship floor; this pilot
+    # success carries 7 CLI-authored capabilities, so record them in the
+    # provenance the floor reads (unmeasured is now below floor).
+    docs = tmp_path / "build" / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "build_provenance.json").write_text(
+        json.dumps(
+            {
+                "artifact_sources": {
+                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
     status = build_status(tmp_path / "build")
     assert status["state"] == "succeeded"
     assert status["pilot_ready"] is True
@@ -456,6 +472,20 @@ def test_pilot_success_closing_inspect_matches_ledger(tmp_path):
     assert last.get("stage") == "pilot_close"
     assert last.get("pilot_ready") is True
     assert last.get("decision") == "already_pilot_ready"
+    # 0.5: the authorship floor is re-evaluated against the provenance;
+    # this pilot success carries 7 CLI-authored capabilities.
+    docs = tmp_path / "build" / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "build_provenance.json").write_text(
+        json.dumps(
+            {
+                "artifact_sources": {
+                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     status = build_status(tmp_path / "build")
     assert status["pilot_ready"] is True
     assert status["budget_inspect"]["pilot_ready"] is True

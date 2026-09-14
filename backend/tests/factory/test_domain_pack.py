@@ -127,7 +127,7 @@ def test_pack_renders_through_delivery_standard():
         assert name in flat
 
 
-def test_role_runner_emits_domain_pack(tmp_path: Path):
+def test_role_runner_emits_domain_pack(tmp_path: Path, stub_coder):
     out = tmp_path / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()

@@ -39,7 +39,7 @@ def test_emitted_dockerfile_runs_release_gate():
     assert "requirements-dev.txt" in text
 
 
-def test_fresh_role_runner_tree_is_clean_of_lotdesk_f18_and_f19(tmp_path):
+def test_fresh_role_runner_tree_is_clean_of_lotdesk_f18_and_f19(tmp_path, stub_coder):
     out = tmp_path / "build"
     outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()

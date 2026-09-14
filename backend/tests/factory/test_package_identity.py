@@ -26,7 +26,7 @@ def _no_paid_calls(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
 
-def test_two_builds_share_a_digest(tmp_path):
+def test_two_builds_share_a_digest(tmp_path, stub_coder):
     bp = load_blueprint(SMOKE)
     a = tmp_path / "a"
     b = tmp_path / "b"
