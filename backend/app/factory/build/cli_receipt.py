@@ -321,6 +321,17 @@ def enforce_receipt(
     else:
         loaded = load_receipt(receipt)
     authored = list(loaded["cli_authored_ids"])
+    if not authored and not required:
+        # An empty ``cli_authored_ids`` against an empty blueprint capability
+        # set is set-equal by construction — the receipt-vs-blueprint check
+        # below cannot see this as a mismatch. Left unchecked, a zero-work
+        # agent run trivially "matches" a zero-capability blueprint and
+        # hands off to N3 with no agent-authored artifact anywhere.
+        raise ReceiptInvalid(
+            f"{RECEIPT_INVALID}: writer_no_output — cli_authored_ids is "
+            "empty and the blueprint declares no required capabilities; "
+            "refusing HANDOFF_TO_N3 on zero agent output"
+        )
     assert_ids_equal_blueprint(authored, required)
     paths = parse_changed_paths(changed_paths, unified_diff)
     assert_ids_in_diff(authored, paths, loaded.get("path_by_id"))

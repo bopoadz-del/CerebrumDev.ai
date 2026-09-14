@@ -582,7 +582,17 @@ class FullPilotAuthorship:
 
     @property
     def below_floor(self) -> bool:
-        return self.measured and not self.meets_floor
+        """True unless authorship is MEASURED and meets the floor.
+
+        Unmeasured authorship used to read as neither pass nor refuse
+        (``measured and not meets_floor`` is False when ``measured`` is
+        False), so a keyless/templated pilot with no authorship signal at
+        all could reach Store-green with zero agent-authored artifacts and
+        no blocker ever fired. Missing/zero measurement is now a refusal,
+        same as a measured build that falls short — a build that IS
+        measured and DOES meet the floor is the only way to stay green.
+        """
+        return not (self.measured and self.meets_floor)
 
 
 def full_pilot_authorship_from(

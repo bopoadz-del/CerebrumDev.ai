@@ -201,11 +201,19 @@ def test_six_required_five_authored_meets_absolute_floor():
     assert four_of_six.below_floor is True
 
 
-def test_unmeasured_authorship_is_not_a_silent_pass_or_refuse():
+def test_unmeasured_authorship_is_a_refusal_not_a_silent_pass():
+    """Missing authorship signal must not slip past as a silent pass.
+
+    ``below_floor`` used to be ``measured and not meets_floor`` — False
+    when authorship was never measured at all, which is exactly the
+    keyless/templated pilot shape (zero agent-authored artifacts, no
+    authorship counters ever set). Unmeasured authorship is now a refusal,
+    same as measured-but-short: only measured AND meets-floor stays green.
+    """
     snap = full_pilot_authorship_from({"pilot_ready": True})
     assert snap.measured is False
     assert snap.meets_floor is False
-    assert snap.below_floor is False
+    assert snap.below_floor is True
 
 
 def test_export_blocker_refuses_thin_pilot_not_code_cycle():

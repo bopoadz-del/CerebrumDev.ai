@@ -483,6 +483,67 @@ def gate_cloner_contract(ctx: GateContext) -> GateResult:
     )
 
 
+def _agent_authored_artifact_count(workspace: Path) -> Optional[int]:
+    """Coding-agent-authored artifact count from ``docs/build_provenance.json``.
+
+    ``None`` when the manifest is absent/unreadable/has no sources at all --
+    a gate-unit-test workspace assembled by hand, not a real WRITER run.
+    Distinguishing "never measured" from "measured zero" here is what lets
+    this stay a defense-in-depth check: the primary refusal is at the
+    WRITER role itself (``roles_handlers.run_writer`` /
+    ``run_writer_via_cli_pivot``), which always writes this manifest.
+    """
+    manifest = workspace / "docs" / "build_provenance.json"
+    if not manifest.is_file():
+        return None
+    import json
+
+    try:
+        prov = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    sources = prov.get("artifact_sources")
+    if not isinstance(sources, Mapping) or not sources:
+        return None
+    from app.factory.build.authorship import coding_agent_artifact_ids
+
+    return len(coding_agent_artifact_ids(sources))
+
+
+def gate_writer_authorship(ctx: GateContext) -> GateResult:
+    """Pilot cycle: zero agent-authored artifacts is a named refusal.
+
+    Templated/keyless output is a legitimate CODE-phase path (a keyless CI
+    run has no coder key at all), so this only fires on the pilot
+    (Store-green) cycle, where ``docs/build_provenance.json`` records real
+    per-artifact authorship and the honesty floor applies.
+    """
+    if (ctx.cycle or "code").strip().lower() != "pilot":
+        return GateResult(ok=True, gate="writer_authorship", detail="code cycle — not scored")
+    count = _agent_authored_artifact_count(ctx.workspace)
+    if count is None:
+        return GateResult(
+            ok=True,
+            gate="writer_authorship",
+            detail="authorship not measured in this workspace",
+        )
+    if count == 0:
+        return GateResult(
+            ok=False,
+            gate="writer_authorship",
+            detail="writer_no_output",
+            findings=[
+                "writer_no_output: pilot cycle build_provenance.json shows "
+                "zero coding-agent-authored artifacts"
+            ],
+        )
+    return GateResult(
+        ok=True,
+        gate="writer_authorship",
+        detail=f"{count} agent-authored artifact(s)",
+    )
+
+
 def gate_writer_contract(ctx: GateContext) -> GateResult:
     """WRITER: the workspace parses *and* fails closed when a block fails.
 
@@ -490,6 +551,11 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     its handler's result and persisted anyway passed every phase and reached
     the customer. Syntax first because it is cheap and its failure mode is
     clearer; behaviour second because that is the claim worth checking.
+
+    On the pilot cycle, a fourth check closes a separate hole: zero
+    agent-authored artifacts (``writer_no_output``) used to pass CODE and
+    reach STORE with nothing the coding agent wrote, because no part of
+    this composite ever looked at authorship.
     """
     compiled = gate_workspace_compiles(ctx)
     if not compiled.ok:
@@ -500,6 +566,9 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     surface = gate_ui_surface(ctx)
     if not surface.ok:
         return surface
+    authorship = gate_writer_authorship(ctx)
+    if not authorship.ok:
+        return authorship
     return GateResult(
         ok=True,
         gate="writer_contract",

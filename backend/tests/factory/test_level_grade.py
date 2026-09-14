@@ -126,6 +126,30 @@ def test_full_repo_with_pilot_ready_is_founding(tmp_path):
                 "PRODUCT PASS — round-trip; "
                 "STORE PASS — restart"
             ),
+            # Measured authorship at/above the floor — a genuine founding
+            # build, not the unmeasured shape the authorship floor now
+            # refuses (below_floor is True whenever authorship was never
+            # measured at all, closing the zero-artifact false-green).
+            "authorship": {
+                "artifacts": 5,
+                "agent_written": 5,
+                "templated": 0,
+                "action_py": 5,
+                "agent_artifacts": [
+                    "unit_registry_and_vacancy_tracking",
+                    "audit",
+                    "workflow",
+                    "team",
+                    "document_engine",
+                ],
+                "cli_authored_ids": [
+                    "unit_registry_and_vacancy_tracking",
+                    "audit",
+                    "workflow",
+                    "team",
+                    "document_engine",
+                ],
+            },
         },
     )
     assert grade["level"] == Level.FOUNDING_CUSTOMER_READY.value
@@ -354,6 +378,28 @@ def test_http_store_callback_blocks_founding(tmp_path):
             "cycle": "pilot",
             "pilot_ready": True,
             "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            # Measured, floor-meeting authorship: the blocker under test is
+            # the httpx store callback, not the authorship floor.
+            "authorship": {
+                "artifacts": 24,
+                "agent_written": 5,
+                "templated": 19,
+                "action_py": 5,
+                "agent_artifacts": [
+                    "unit_registry_and_vacancy_tracking",
+                    "audit",
+                    "workflow",
+                    "team",
+                    "document_engine",
+                ],
+                "cli_authored_ids": [
+                    "unit_registry_and_vacancy_tracking",
+                    "audit",
+                    "workflow",
+                    "team",
+                    "document_engine",
+                ],
+            },
         },
     )
     assert grade["founding_customer_ready"] is False

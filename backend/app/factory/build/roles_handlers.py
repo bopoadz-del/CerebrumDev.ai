@@ -3821,6 +3821,19 @@ def run_writer(
         checkpoint_landed_phase(ctx, phase_id)
 
     by_coder = len(coding_agent_artifact_ids(sources))
+    if str(ctx.state.get("build_cycle") or "").strip().lower() == "pilot" and (
+        written and by_coder == 0
+    ):
+        # Zero agent-authored artifacts on the pilot (Store-green) cycle is
+        # the templated/keyless false-green this guard closes: every
+        # capability landed via ``_templated_body`` (or factory-grounded
+        # fill), none via the coding agent, yet the phase used to report
+        # ok=True and let CODE/STORE grade the build green regardless.
+        raise RoleError(
+            "writer_no_output: pilot cycle produced zero agent-authored "
+            f"artifacts ({len(written)} capability(ies) fully templated) — "
+            "refusing to hand a zero-authorship build to TESTER/STORE_MANAGER"
+        )
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(
