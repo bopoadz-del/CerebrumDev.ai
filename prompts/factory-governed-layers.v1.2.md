@@ -154,27 +154,38 @@ Build:
 
 - **1.1** One store-resolution seam: every corpus / document / chunk /
   embedding / formula / procedure access goes through a single
-  ``resolve_tenant_store(tenant_id)`` (or equivalent) that maps identity to
-  the tenant's file and collection. No call site may construct a path or
-  name a collection from caller input. The tenant identity comes from the
-  authenticated principal, never from a request default.
+  ``resolve_tenant_store(principal)`` (or equivalent) that maps identity to
+  the tenant's file and collection. The resolver's input is the
+  authenticated principal (or an auth-layer-issued token) — it refuses a
+  raw ``tenant_id`` string, because any reachable call site that forwards
+  a string is a bypass. No call site may construct a path or name a
+  collection from caller input.
 - **1.2** SQLite-per-tenant (generated platforms): the database file is
   keyed by tenant; the connection is opened per request scope and closed;
   migrations run per-tenant database (the Alembic renderer ships WITH the
-  code, never hand-applied). Any existing single ``platform.db`` layout
-  migrates once to the keyed layout — never silently shared.
+  code, never hand-applied). **Migrate-on-open is explicit:** a new
+  tenant's file runs ``alembic upgrade head`` idempotently at first open;
+  re-opening an already-migrated file is a no-op. Any existing single
+  ``platform.db`` layout migrates once to the keyed layout — never silently
+  shared.
 - **1.3** Chroma-per-tenant: collection names are derived server-side from
   the identity (e.g. ``tenant_{digest}``); the client can never name a
-  collection. State the vector store explicitly in the phase report. The
+  collection. Replace ``collection_name(session_id)`` and audit ALL of its
+  call sites (chroma_store internals, ``data_rights.py:187``,
+  ``upload_processor.py:444``) — none may be left silently on the old
+  naming. State the vector store explicitly in the phase report. The
   isolation is structural because the handle is identity-derived, not
   caller-supplied — the collection name is never an input.
 - **1.4** Keep existing app-level project/tenant filtering as
   defense-in-depth. It is never the only guard.
 - **1.5** Caches and embedding lookups keyed by tenant. The prompt-assembly
   path takes exactly one tenant.
-- **1.6** Admin/ops tooling reads through the same identity-derived handle
-  or a separate audited service — never a god-path that opens "all tenants"
-  from the app.
+- **1.6** Admin/ops tooling — reads AND the write-side lifecycle — go
+  through the same identity-derived handle or a separate audited service:
+  backup, restore, and delete included (the ``data_lifecycle.py``
+  backup/restore paths and the ``data_rights.py`` delete path). A restore
+  that is not tenant-scoped can cross tenants; that is the breach shape.
+  Never a god-path that opens "all tenants" from the app.
 - **1.7** The store handle is bound FOR THE REQUEST from the authenticated
   identity; no code path may accept a client-supplied store or collection
   name. (Replaces the SET LOCAL / PgBouncer wording of v1.1: there is no
@@ -202,10 +213,17 @@ Acceptance tests:
 - **T1.4** ``test_boot_probe_rejects_client_named_stores``: boot with a
   patched seam that resolves a client-supplied name → refuses to start with
   a named reason.
+- **T1.5** ``test_first_open_migrates_and_reopen_is_idempotent``: a new
+  tenant's first open runs ``alembic upgrade head``; reopening the same
+  file does not re-run or corrupt migrations.
+- **T1.6** ``test_backup_restore_delete_are_tenant_scoped``: tenant A's
+  backup/restore/delete operations never touch tenant B's file or
+  collection, through every lifecycle entry point.
 
 Mutation probe: **P1** ``probe_tenant_isolation`` — patch the resolution
-seam to accept a caller-supplied store name and assert T1.1 / T1.2 FAIL.
-If breaking the seam does not turn the suite red, the phase is REJECTED.
+seam to accept a raw tenant string (and a caller-supplied store name) and
+assert T1.1 / T1.2 FAIL. If breaking the seam does not turn the suite red,
+the phase is REJECTED.
 
 ## PHASE 2 — AUTHORITY PRECEDENCE AS DATA, LOGGED, NEVER MODEL-DECIDED
 
@@ -409,8 +427,17 @@ manifest with no engine present and assert T6.1 goes RED.
 ## CHANGELOG
 
 ### v1.2 — 2026-09-15
+- **Review delta (2026-09-15):** 1.1 resolver input is the authenticated
+  principal (refuses a raw tenant string); 1.2 migrate-on-open explicit
+  (T1.5 first-open-migrates / re-open-idempotent); 1.3 pins the census
+  (replace ``collection_name(session_id)``, audit all 9 call sites); 1.6
+  extended to the write-side lifecycle (backup/restore/delete through the
+  resolver, T1.6 tenant-scoped lifecycle); P1 now patches a raw-string
+  seam. Per-request open/close confirmed (no engine cache to bound).
 - **Phase 0.5 merged** (PR #463, master `5dc2600`): the artifact gate is live;
-  this cut is the Phase 1 resope it unblocks.- **PHASE 1 rewritten to the real stack (option B — physical partition):**
+  this cut is the Phase 1 rescope it unblocks.
+
+- **PHASE 1 rewritten to the real stack (option B — physical partition):**
   per-tenant SQLite file + per-tenant Chroma collection, the store handle
   resolved from the authenticated tenant identity at connection time, never
   overridable by config or admin. Postgres/RLS explicitly reserved for a
