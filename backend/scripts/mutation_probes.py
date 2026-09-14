@@ -136,12 +136,66 @@ def probe_e_control_agent_stamped_handler_is_counted() -> None:
     assert ids == ["widget_intake"], ids
 
 
+def _load_kit_tenant_store():
+    """Load the steward kit's tenant_store under a fresh alias (P1)."""
+    import importlib.util
+    import types
+
+    kit = (
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "factory"
+        / "kits"
+        / "private_estate_operations"
+        / "steward_runtime"
+    )
+    for pkg in ("app", "app.steward"):
+        if pkg not in sys.modules:
+            mod = types.ModuleType(pkg)
+            if pkg.startswith("app."):
+                mod.__path__ = []
+            sys.modules[pkg] = mod
+    spec = importlib.util.spec_from_file_location(
+        "mutation_probes_tenant_store", kit / "tenant_store.py"
+    )
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["mutation_probes_tenant_store"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def probe_f_tenant_isolation_seam_detects_a_broken_seam() -> None:
+    """P1 -- the tenant seam, RED-when-broken: a seam patched to accept
+    client-supplied names must refuse the boot."""
+    import os
+
+    ts = _load_kit_tenant_store()
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ["STORAGE_PATH"] = str(Path(tmp) / "storage")
+        ts.assert_tenant_store_seam()  # the real seam boots
+        original = ts.resolve_tenant_store
+        ts.resolve_tenant_store = lambda candidate: object()
+        try:
+            try:
+                ts.assert_tenant_store_seam()
+            except ts.TenantStoreError as exc:
+                assert ts.TENANT_STORE_NOT_ADDRESSABLE in str(exc), str(exc)
+            else:
+                raise AssertionError(
+                    "a client-named seam booted: tenant isolation is not enforced"
+                )
+        finally:
+            ts.resolve_tenant_store = original
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
     ("P0c unmeasured is below floor", probe_c_unmeasured_is_below_floor),
     ("P0d zero artifacts cannot grade Store-green", probe_d_zero_artifacts_cannot_grade_store_green),
     ("P0e control: agent stamp is counted", probe_e_control_agent_stamped_handler_is_counted),
+    ("P1 tenant seam detects a broken seam", probe_f_tenant_isolation_seam_detects_a_broken_seam),
 ]
 
 

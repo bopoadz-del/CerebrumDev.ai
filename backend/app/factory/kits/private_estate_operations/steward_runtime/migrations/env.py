@@ -17,8 +17,22 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _url() -> str:
+    """The migration target URL.
+
+    Prefers an explicit ``sqlalchemy.url`` set on the alembic Config — that
+    is how the Phase 1 seam migrates ONE tenant's SQLite file
+    (``run_migrations_for``). Falls back to the configured control-plane
+    URL for the legacy single-database path.
+    """
+    explicit = config.get_main_option("sqlalchemy.url")
+    if explicit:
+        return explicit
+    return get_config().normalized_sqlalchemy_url()
+
+
 def run_migrations_offline() -> None:
-    url = get_config().normalized_sqlalchemy_url()
+    url = _url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -31,7 +45,7 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
-    configuration["sqlalchemy.url"] = get_config().normalized_sqlalchemy_url()
+    configuration["sqlalchemy.url"] = _url()
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",

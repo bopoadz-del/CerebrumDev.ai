@@ -6,7 +6,11 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from sqlalchemy import DateTime, String, Text
+from sqlalchemy import JSON
 from sqlalchemy.dialects.postgresql import JSONB
+
+# Phase 1: JSONB on Postgres, JSON on SQLite tenant stores.
+_JSON = JSON().with_variant(JSONB(), "postgresql")
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.steward.models import Base
@@ -30,7 +34,7 @@ class AuditEvent(Base):
     user_id: Mapped[str] = mapped_column(String(64))
     principal_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     detail: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

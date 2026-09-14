@@ -19,7 +19,8 @@ from app.steward.auth import (
     require_admin_principal,
 )
 from app.steward.config import PLATFORM_PROJECT_ID, PLATFORM_TENANT_ID, get_config
-from app.steward.db import init_engine, session_scope
+from app.steward.db import init_engine, tenant_session_scope
+from app.steward.tenant_store import TenantStore, resolve_tenant_store
 from app.steward.embeddings import get_embedder, reset_embedder
 from app.steward.errors import safe_http_exception
 from app.steward.grounding import (
@@ -79,12 +80,23 @@ def rag_status(
     }
 
 
+def get_tenant_store(
+    principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
+) -> TenantStore:
+    """Resolve the request's tenant store from the authenticated principal.
+
+    Phase 1: the only constructor of a TenantStore. No route may take a
+    client-supplied tenant name or store path.
+    """
+    return resolve_tenant_store(principal)
+
+
 @router.get("/v1/steward/packs")
 def pack_inventory(
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> Dict[str, Any]:
-    init_engine()
-    with session_scope() as session:
+    store = resolve_tenant_store(principal)
+    with tenant_session_scope(store) as session:
         rows = session.execute(select(SourceRecord)).scalars().all()
         docs = session.execute(
             select(Document.rag_pack_id, func.count()).group_by(Document.rag_pack_id)
@@ -119,8 +131,8 @@ def steward_query(
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> Dict[str, Any]:
     tenant_id, estate_id = _estate_scope(principal)
-    init_engine()
-    with session_scope() as session:
+    store = resolve_tenant_store(principal)
+    with tenant_session_scope(store) as session:
         authorize_estate(
             session,
             principal=principal,
@@ -227,9 +239,9 @@ def steward_ingest(
     tenant_id, estate_id = _estate_scope(principal)
     if body.knowledge_layer == 1:
         tenant_id, estate_id = PLATFORM_TENANT_ID, PLATFORM_PROJECT_ID
-    init_engine()
+    store = resolve_tenant_store(principal)
     try:
-        with session_scope() as session:
+        with tenant_session_scope(store) as session:
             authorize_estate(
                 session,
                 principal=principal,
@@ -280,8 +292,8 @@ def facilities_query(
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> Dict[str, Any]:
     tenant_id, estate_id = _estate_scope(principal)
-    init_engine()
-    with session_scope() as session:
+    store = resolve_tenant_store(principal)
+    with tenant_session_scope(store) as session:
         authorize_estate(
             session,
             principal=principal,
@@ -331,8 +343,8 @@ def fleet_query(
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> Dict[str, Any]:
     tenant_id, estate_id = _estate_scope(principal)
-    init_engine()
-    with session_scope() as session:
+    store = resolve_tenant_store(principal)
+    with tenant_session_scope(store) as session:
         authorize_estate(
             session,
             principal=principal,
@@ -377,9 +389,9 @@ def classify_intent(
     principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),
 ) -> Dict[str, Any]:
     """Routing aid only — never policy evidence."""
-    init_engine()
+    store = resolve_tenant_store(principal)
     ql = q.lower()
-    with session_scope() as session:
+    with tenant_session_scope(store) as session:
         rows = session.execute(select(HospitalityIntent)).scalars().all()
     scored: List[Dict[str, Any]] = []
     for row in rows:
