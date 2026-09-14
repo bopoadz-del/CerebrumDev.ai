@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -32,7 +34,7 @@ from app.factory.build.persist_accept import (
     assert_persist_round_trip_ready,
     persist_round_trip_errors,
 )
-from app.factory.build.roles import RoleContext, run_writer
+from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.workspace import RoleWorkspace
 from tests.factory.coder_stub_bodies import invoking_handler_body
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
@@ -349,19 +351,23 @@ def test_writer_generate_llm_empty_still_emits_persist_keep_path(
         lambda _ctx: compiled,
     )
     out = tmp_path / "empty-llm"
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=RoleWorkspace(BuildRole.WRITER, out),
-            blueprint=_VetCare(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(store_ids),
-                "vendored_blocks": tuple(store_ids),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=RoleWorkspace(BuildRole.WRITER, out),
+                blueprint=_VetCare(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(store_ids),
+                    "vendored_blocks": tuple(store_ids),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: factory-grounded emit is not coding-agent authorship, so this
+    # writer pass has zero agent artifacts and refuses -- the old
+    # assert result.ok was the false green the gate closes.
+    assert "writer_no_output" in str(exc.value)
     core = (out / "app" / "actions" / "veterinary_care_core.py").read_text(
         encoding="utf-8"
     )
@@ -383,7 +389,7 @@ def test_writer_generate_llm_empty_still_emits_persist_keep_path(
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()
 
 
 def test_writer_staging_leftover_destination_still_emits_generate_persist(
@@ -553,19 +559,22 @@ def test_writer_sess_336246_empty_llm_still_round_trips_after_billing(
         lambda _ctx: compiled,
     )
     out = tmp_path / "sess-336246-empty"
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=RoleWorkspace(BuildRole.WRITER, out),
-            blueprint=_VetCare(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(store_ids),
-                "vendored_blocks": tuple(store_ids),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=RoleWorkspace(BuildRole.WRITER, out),
+                blueprint=_VetCare(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(store_ids),
+                    "vendored_blocks": tuple(store_ids),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: zero agent-authored artifacts refuses the WRITER (the old
+    # assert result.ok was the false green). The emit itself still lands.
+    assert "writer_no_output" in str(exc.value)
     handler = (
         out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
@@ -586,7 +595,7 @@ def test_writer_sess_336246_empty_llm_still_round_trips_after_billing(
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()
 
 
 def test_factory_llm_generate_does_not_claim_founding_on_cli_billing(tmp_path):

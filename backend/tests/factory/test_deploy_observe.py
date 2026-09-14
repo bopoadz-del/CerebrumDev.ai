@@ -8,6 +8,7 @@ id and do not put emoji on machine-parseable stdout.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import socket
@@ -17,6 +18,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
@@ -36,9 +38,66 @@ from app.factory.build.deploy import (
 )
 from app.factory.build.lotdesk_gate import reject_lotdesk_as_shipped
 from app.factory.build.runner import RoleRunner
+from app.factory.coder import CoderError
+from tests.factory.coder_stub_bodies import invoking_handler_body
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
+
+
+def _keep_fallback_spec(**kwargs):
+    # 0.5: the S11 probes persist and assert the deterministic fallback
+    # schema (reference/status/quantity); raising routes the writer to it
+    # (recorded as a coder failure, not fatal).
+    raise CoderError("stub: keep deterministic fallback model spec")
+
+
+@contextlib.contextmanager
+def _stub_coder_with_fallback_specs():
+    """0.5: agent-written HANDLERS satisfy writer_no_output, while model
+
+    specs stay on the deterministic fallback so quantity round-trips.
+    The shared stub_coder_patches replaces specs with a reference-only
+    schema, which would silently drop the quantity column these tests
+    exercise -- so this fixture stubs only the handler/readme legs.
+    """
+    old_env = {
+        k: os.environ.get(k)
+        for k in ("FACTORY_CODER_ENABLED", "FACTORY_BRIEF_DISPATCH")
+    }
+    os.environ["FACTORY_CODER_ENABLED"] = "1"
+    os.environ["FACTORY_BRIEF_DISPATCH"] = "0"
+    patchers = [
+        mock.patch(
+            "app.factory.build.coder_session.cli_available",
+            lambda command=None: False,
+        ),
+        mock.patch(
+            "app.factory.coder.generate_platform_handler",
+            lambda **kw: {
+                "body": invoking_handler_body({"run": "stable"}),
+                "model": "stub-coder",
+            },
+        ),
+        mock.patch("app.factory.coder.generate_model_spec", _keep_fallback_spec),
+        mock.patch("app.factory.coder.generate_from_compiled_brief", _keep_fallback_spec),
+        mock.patch(
+            "app.factory.coder._llm_code_call",
+            lambda messages: ("# stub readme\n", "stub-model"),
+        ),
+    ]
+    for patcher in patchers:
+        patcher.start()
+    try:
+        yield
+    finally:
+        for patcher in patchers:
+            patcher.stop()
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +110,10 @@ def built(tmp_path_factory):
     # Module-scoped: autouse monkeypatch has not run yet.
     os.environ["FACTORY_CODER_ENABLED"] = "0"
     out = tmp_path_factory.mktemp("s11") / "build"
-    outcome = RoleRunner(load_blueprint(SMOKE), out).run()
+    # 0.5: without a coding agent the WRITER refuses (writer_no_output);
+    # stub a deterministic agent so the S11 build still goes green.
+    with _stub_coder_with_fallback_specs():
+        outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()
     return out
 

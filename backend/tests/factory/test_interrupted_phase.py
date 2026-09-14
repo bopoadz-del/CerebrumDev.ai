@@ -127,7 +127,9 @@ def test_a_staged_writer_can_still_read_what_earlier_roles_produced(tmp_path):
     assert ws.read_text("vendor/blocks/web/block.json") == "{}"
 
 
-def test_a_kill_mid_writer_leaves_the_previous_pass_intact(blueprint, tmp_path):
+def test_a_kill_mid_writer_leaves_the_previous_pass_intact(
+    blueprint, tmp_path, stub_coder
+):
     """The whole point: no splice of two attempts on disk.
 
     A first build completes. A second run is then killed part-way through a
@@ -168,7 +170,7 @@ def test_a_kill_mid_writer_leaves_the_previous_pass_intact(blueprint, tmp_path):
     assert "# torn" not in (out / "app" / "models.py").read_text(encoding="utf-8")
 
 
-def test_the_committed_build_is_self_consistent(blueprint, tmp_path):
+def test_the_committed_build_is_self_consistent(blueprint, tmp_path, stub_coder):
     """Entity names in store.py and routes.py must come from one pass."""
     import re
 
@@ -189,7 +191,7 @@ def test_the_committed_build_is_self_consistent(blueprint, tmp_path):
     assert not missing, f"routes reference tables the store never creates: {missing}"
 
 
-def test_staging_directories_are_not_shipped(blueprint, tmp_path):
+def test_staging_directories_are_not_shipped(blueprint, tmp_path, stub_coder):
     out = tmp_path / "build"
     assert RoleRunner(blueprint, out).run().ok
     leftovers = [p.name for p in out.parent.iterdir() if ".staging-" in p.name]

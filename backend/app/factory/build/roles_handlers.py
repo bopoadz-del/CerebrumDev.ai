@@ -3821,6 +3821,17 @@ def run_writer(
         checkpoint_landed_phase(ctx, phase_id)
 
     by_coder = len(coding_agent_artifact_ids(sources))
+    if not by_coder:
+        # 0.5.2: an in-process WRITER pass with zero agent-authored
+        # artifacts is the hollow green the artifact gate exists to stop.
+        # Refuse here, at the entry point -- the gate is the second line.
+        from app.factory.build.cli_receipt import WRITER_NO_OUTPUT
+
+        raise RoleError(
+            f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts "
+            f"({len(sources) - by_coder} templated) -- refusing to report "
+            "WRITER success"
+        )
     ctx.workspace.write_text(
         Path("docs") / "build_provenance.json",
         json.dumps(

@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
@@ -27,7 +29,7 @@ from app.factory.build.persist_accept import (
     assert_persist_round_trip_ready,
     persist_round_trip_errors,
 )
-from app.factory.build.roles import RoleContext, run_writer
+from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.workflow_accept import FACTORY_GROUNDED_EVENT_BUS_SOURCE
 from app.factory.build.workspace import RoleWorkspace
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
@@ -100,19 +102,24 @@ def test_writer_empty_gap_billing_fail_allows_product_round_trip(
         "app.factory.build.brief_compiler.compile_brief_from_ctx",
         lambda _ctx: compiled,
     )
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(store_ids),
-                "vendored_blocks": tuple(store_ids),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(store_ids),
+                    "vendored_blocks": tuple(store_ids),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: the keep-path emit is factory-grounded, not coding-agent
+    # authorship -- zero agent artifacts refuses the WRITER. The old
+    # assert result.ok was the false green the gate closes; the emit
+    # itself still lands and round-trips.
+    assert "writer_no_output" in str(exc.value)
     assert oneshot == []
     receipt = json.loads((out / "docs" / "coder_receipt.json").read_text(encoding="utf-8"))
     assert receipt["ok"] is False
@@ -143,7 +150,7 @@ def test_writer_empty_gap_billing_fail_allows_product_round_trip(
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()
 
 
 def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypatch):
@@ -172,16 +179,20 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
         "app.factory.build.brief_compiler.compile_brief_from_ctx",
         lambda _ctx: compiled,
     )
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=plan,
-            state={"resolved_blocks": (), "vendored_blocks": ()},
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=plan,
+                state={"resolved_blocks": (), "vendored_blocks": ()},
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: GENERATE gap + billing miss + factory-LLM fail lands zero
+    # agent-authored artifacts -- the refusal is the named reason, and
+    # the receipt/handler evidence still lands before it.
+    assert "writer_no_output" in str(exc.value)
     receipt = json.loads(
         (tmp_path / "gap" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -200,4 +211,4 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
     assert "_persist_record(" in handler
     assert "deterministic contract template" not in handler
     assert "FACTORY_CODE_CLI" not in handler
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()

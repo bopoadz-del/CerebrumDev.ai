@@ -19,7 +19,7 @@ import pytest
 
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
-from app.factory.build.runner import RoleRunner
+from app.factory.build.runner import Outcome, RoleRunner
 from tests.factory.coder_stub_bodies import invoking_handler_body
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -217,10 +217,15 @@ def test_writer_records_creds_miss_and_keeps_empty_gap_reuse(
     assert "pilot_zip" not in (outcome.detail or "").lower()
 
 
-def test_a_coder_failure_ships_the_template_and_records_why(
+def test_a_coder_failure_with_no_artifacts_refuses_with_writer_no_output(
     blueprint, tmp_path, monkeypatch
 ):
-    """Degraded output is acceptable; invisible degradation is not."""
+    """0.5: degraded output that lands zero agent artifacts refuses.
+
+    The old contract shipped the deterministic template and recorded why --
+    an honest note on a hollow build. The artifact gate closes that hole:
+    a WRITER pass with zero coding-agent artifacts is writer_no_output.
+    """
     from app.factory.coder import CoderError
 
     def failing_oneshot(**kwargs):
@@ -233,29 +238,25 @@ def test_a_coder_failure_ships_the_template_and_records_why(
     runner = RoleRunner(blueprint, out)
     outcome = runner.run()
 
-    assert outcome.ok, "a coder failure must not fail the build"
-    for name, text in _headers(out).items():
-        assert "deterministic contract template" in text, name
-        assert "coder LLM" not in text, name
+    assert outcome.ok is False
+    assert "writer_no_output" in outcome.detail
+    # The refusal can land at either layer: the entry-point count (in-memory
+    # source labels) or the writer-contract gate (disk ground truth). On the
+    # oneshot-failure path the in-memory labels still claim the attempt while
+    # the disk carries only template bodies, so the gate is the layer that
+    # fires -- both are the named reason, never a silent green.
+    assert outcome.outcome in {Outcome.FAILED_GATE, Outcome.FAILED_ROLE_ERROR}
 
+    # The failure is still recorded with its reason -- refusal is not silence.
     failures = runner.state.get("coder_failures", {})
     assert "brief_dispatch" in failures
     assert "model refused" in failures["brief_dispatch"]
 
-    # Only the handler coder failed, so only the handlers fall back. The other
-    # artifact classes have their own coder calls and are unaffected -- the
-    # accounting must be per-artifact, not a single global verdict.
-    sources = runner.state["artifact_sources"]
-    for cap_id in ("analytics_surface", "dashboard_surface"):
-        assert sources[cap_id] == "deterministic contract template", cap_id
-        # Brief-path oneshot failed: models fall back to the template too.
-        # Per-cap generate_model_spec is retired when FACTORY_BRIEF_DISPATCH=1.
-        assert "template" in sources[f"model:{cap_id}"].lower(), cap_id
-        # Routes are kernel-owned (U12). An LLM body would bypass execute_action.
-        assert sources[f"route:{cap_id}"] == "kernel execute_action template"
-
 
 def test_the_coder_is_not_called_when_disabled(blueprint, tmp_path, monkeypatch):
+    """0.5: coder disabled means the deterministic template, which means
+    zero agent-authored artifacts -- and the WRITER refuses with
+    writer_no_output. The coder is still not called."""
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     called = []
     monkeypatch.setattr(
@@ -264,10 +265,10 @@ def test_the_coder_is_not_called_when_disabled(blueprint, tmp_path, monkeypatch)
     )
 
     out = tmp_path / "build"
-    assert RoleRunner(blueprint, out).run().ok
+    outcome = RoleRunner(blueprint, out).run()
+    assert outcome.ok is False
+    assert "writer_no_output" in outcome.detail
     assert called == []
-    for text in _headers(out).values():
-        assert "deterministic contract template" in text
 
 
 def test_rework_findings_are_handed_to_the_coder(blueprint, tmp_path, monkeypatch):

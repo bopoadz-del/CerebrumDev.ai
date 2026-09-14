@@ -137,7 +137,7 @@ def test_an_empty_root_reports_nothing_rather_than_failing(tmp_path):
     assert report["status_counts"] == {}
 
 
-def test_the_registrar_reads_a_real_build(tmp_path):
+def test_the_registrar_reads_a_real_build(tmp_path, stub_coder):
     """End to end against an actual runner artifact, not a synthetic ledger."""
     out = tmp_path / "platforms" / "runner-smoke"
     assert RoleRunner(load_blueprint(SMOKE), out).run().ok

@@ -82,8 +82,15 @@ def _tree(root: Path) -> dict:
 # -- the real end-to-end build -------------------------------------------
 
 
-def test_end_to_end_build_reaches_success_with_every_gate_passed(blueprint, tmp_path):
-    """One real build, real gates, real subprocesses, no LLM key."""
+def test_end_to_end_build_reaches_success_with_every_gate_passed(
+    blueprint, tmp_path, stub_coder
+):
+    """One real build, real gates, real subprocesses, stubbed agent.
+
+    0.5: with no coder the deterministic path refuses (writer_no_output);
+    the green build therefore runs a stubbed coding agent so the WRITER
+    phase produces real agent-authored artifacts.
+    """
     runner = RoleRunner(blueprint, tmp_path / "build", budget=BuildBudget(max_rework=2))
     outcome = runner.run()
 
@@ -106,7 +113,32 @@ def test_end_to_end_build_reaches_success_with_every_gate_passed(blueprint, tmp_
     assert passed == set(BuildRole)
 
 
-def test_generated_platform_makes_no_store_callback(blueprint, tmp_path):
+def test_zero_agent_artifacts_fails_with_writer_no_output(blueprint, tmp_path):
+    """0.5: the deterministic template path is a refusal, not a green build.
+
+    The autouse fixture leaves FACTORY_CODER_ENABLED=0, so every handler is
+    factory-templated: zero agent-authored artifacts. The WRITER phase must
+    refuse with the named reason writer_no_output -- no CODE pass, no STORE
+    pass -- instead of the old false green.
+    """
+    runner = RoleRunner(
+        blueprint, tmp_path / "build", budget=BuildBudget(max_rework=2)
+    )
+    outcome = runner.run()
+
+    assert outcome.ok is False
+    assert outcome.outcome is Outcome.FAILED_ROLE_ERROR
+    assert "writer_no_output" in outcome.detail
+    terminal = runner.ledger.terminal_event()
+    assert terminal.kind is EventKind.RUN_FAILED
+    # The refusal is the WRITER's, not a downstream gate's.
+    failed = [
+        e for e in runner.ledger.events() if e.kind is EventKind.PHASE_ABORTED
+    ]
+    assert failed and failed[-1].role is BuildRole.WRITER
+
+
+def test_generated_platform_makes_no_store_callback(blueprint, tmp_path, stub_coder):
     """The whole point of the rebuild: the artifact runs without the store.
 
     The old template path emitted httpx.post(store_url + "/v1/execute") into
@@ -132,7 +164,9 @@ def test_generated_platform_makes_no_store_callback(blueprint, tmp_path):
     assert set(lock["blocks"]) == {"estate_registry", "estate_maintenance"}
 
 
-def test_the_generated_platform_suite_really_runs_in_a_subprocess(blueprint, tmp_path):
+def test_the_generated_platform_suite_really_runs_in_a_subprocess(
+    blueprint, tmp_path, stub_coder
+):
     """Rule: a payload that runs in a child process gets a spawning test.
 
     The runner's gates shell out to compileall, the import probe and pytest.
@@ -162,7 +196,7 @@ def test_the_generated_platform_suite_really_runs_in_a_subprocess(blueprint, tmp
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
-def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
+def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path, stub_coder):
     """Every artifact class a delivered platform needs is present.
 
     The runner used to emit ~8 files -- handlers, vendored blocks, a lockfile
@@ -249,7 +283,7 @@ def test_the_artifact_is_a_platform_not_a_parts_list(blueprint, tmp_path):
 
 
 def test_the_platform_suite_exercises_the_surface_it_does_not_just_import(
-    blueprint, tmp_path
+    blueprint, tmp_path, stub_coder
 ):
     """An import-only suite passes on a platform whose storage is broken."""
     out = tmp_path / "build"
@@ -319,7 +353,7 @@ def test_the_writer_still_cannot_write_the_tests_after_the_lane_widened(
 # -- failure is a failure ------------------------------------------------
 
 
-def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path):
+def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder):
     """A tester that never goes green must end FAILED, never SUCCESS."""
 
     def barren_tester(ctx):
@@ -353,9 +387,9 @@ def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path):
     assert status.get("outcome") == Outcome.FAILED_BUDGET_SPENT.value
 
 
-def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path):
+def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder):
     """Time runs out mid-build: FAILED_BUDGET_SPENT, not a partial success."""
-    ticks = iter([0.0, 0.0, 5.0, 500.0, 500.0, 500.0, 500.0, 500.0])
+    ticks = iter([0.0, 0.0, 5.0] + [500.0] * 40)
 
     runner = RoleRunner(
         blueprint,
@@ -371,7 +405,7 @@ def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path):
     assert runner.ledger.terminal_event().kind is EventKind.RUN_FAILED
 
 
-def test_a_failed_non_tester_gate_is_terminal(blueprint, tmp_path):
+def test_a_failed_non_tester_gate_is_terminal(blueprint, tmp_path, stub_coder):
     """Only the TESTER has a role positioned to act on its findings."""
 
     def empty_cloner(ctx):
@@ -412,7 +446,9 @@ def test_a_role_that_raises_ends_the_run(blueprint, tmp_path):
 # -- lanes ---------------------------------------------------------------
 
 
-def test_a_role_writing_outside_its_lane_fails_the_build(blueprint, tmp_path):
+def test_a_role_writing_outside_its_lane_fails_the_build(
+    blueprint, tmp_path, stub_coder
+):
     """The authority kernel must abort the run, not be caught and ignored."""
 
     def overreaching_tester(ctx):
@@ -458,7 +494,7 @@ class _Boom(BaseException):
     """Stands in for a killed process: not caught by the runner."""
 
 
-def test_resume_picks_up_where_the_kill_happened(blueprint, tmp_path):
+def test_resume_picks_up_where_the_kill_happened(blueprint, tmp_path, stub_coder):
     """Kill mid-build, restart, land on the same terminal state.
 
     Asserted by counting PHASE_STARTED per role: a resume that silently
@@ -494,7 +530,9 @@ def test_resume_picks_up_where_the_kill_happened(blueprint, tmp_path):
     assert _phase_starts(final, BuildRole.WRITER) == 2
 
 
-def test_resume_against_a_changed_blueprint_is_refused(blueprint, tmp_path):
+def test_resume_against_a_changed_blueprint_is_refused(
+    blueprint, tmp_path, stub_coder
+):
     out = tmp_path / "build"
     RoleRunner(blueprint, out).run()
 
@@ -518,14 +556,14 @@ def test_blueprint_hash_is_the_resume_key_and_is_stable(blueprint):
     assert blueprint_hash(load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")) not in hashes
 
 
-def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path, monkeypatch):
-    """Byte-reproducible with the coding agent off.
+def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path, stub_coder):
+    """Byte-reproducible with a deterministic stubbed agent.
 
-    Scoped deliberately. Once the coder is wired in, whole-tree equality is
-    only achievable while the agent is idle -- an LLM does not emit the same
-    bytes twice. The coder-on guarantee is the narrower one asserted below.
+    0.5: coder-off determinism was the whole-template path, and that path
+    now refuses (writer_no_output). Determinism is therefore proven on the
+    stubbed-agent path; the coder-on guarantee below keeps the varying
+    stub.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     a, b = tmp_path / "a", tmp_path / "b"
     assert RoleRunner(blueprint, a).run().ok
     assert RoleRunner(blueprint, b).run().ok

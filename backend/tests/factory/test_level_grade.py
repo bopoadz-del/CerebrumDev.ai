@@ -126,6 +126,12 @@ def test_full_repo_with_pilot_ready_is_founding(tmp_path):
                 "PRODUCT PASS — round-trip; "
                 "STORE PASS — restart"
             ),
+            # 0.5: measured authorship is now required to meet the floor.
+            # This fixture represents a real founding build; giving it the
+            # measured record it would have carried is the honest fix, not
+            # a silent flip. Non-thin (agent-majority) so the founding
+            # grade's own templated-majority blocker does not fire.
+            "authorship": {"artifacts": 24, "agent_written": 22, "templated": 2},
         },
     )
     assert grade["level"] == Level.FOUNDING_CUSTOMER_READY.value
@@ -354,6 +360,10 @@ def test_http_store_callback_blocks_founding(tmp_path):
             "cycle": "pilot",
             "pilot_ready": True,
             "detail": "CODE PASS — x; PRODUCT PASS — y; STORE PASS — z",
+            # 0.5: this test is about the HTTP store callback, not
+            # authorship -- give it a measured floor so the callback
+            # blocker is the only thing being asserted.
+            "authorship": {"artifacts": 24, "agent_written": 6, "templated": 18},
         },
     )
     assert grade["founding_customer_ready"] is False

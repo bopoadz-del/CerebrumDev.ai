@@ -185,7 +185,7 @@ def _assert_full_repo(out: Path) -> None:
     assert "prepare_block_input" in handler
 
 
-def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path):
+def test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready(tmp_path, stub_coder):
     out = tmp_path / "residential-lettings"
     runner = RoleRunner(
         remap_blueprint_to_estate_stubs(load_blueprint(LETTINGS)),
@@ -259,13 +259,14 @@ def _docker_acceptance_kk_passthrough(argv, *, cwd=None, timeout=None):
 
 
 def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
-    """Code cycle then PRODUCT/STORE. Thin authorship is not Store-green.
+    """0.5: the no-coder pilot walk refuses at the WRITER.
 
-    This walk disables the coder (no paid CLI). PRODUCT/STORE may pass on
-    factory-grounded emit, but four golden caps + ``FACTORY_CODE_CLI_UNAVAILABLE``
-    must not stamp Store-green or founding-customer-ready. Vendor-mirror
-    durability may still fail PRODUCT/STORE. That must stay a red Level,
-    never a thin SUCCESS with implied Finished.
+    The old walk passed the code cycle on factory templates and then refused
+    Store-green on thin authorship. 0.5 moves the refusal earlier and makes
+    it stronger: zero agent-authored artifacts is writer_no_output -- there
+    is no thin SUCCESS left to be mistaken for a finished pilot. The green
+    code-cycle walk (with a stubbed agent) is
+    test_lettings_code_cycle_is_a_full_repo_and_not_pilot_ready.
     """
     out = tmp_path / "residential-lettings"
     lettings_offline = remap_blueprint_to_estate_stubs(load_blueprint(LETTINGS))
@@ -275,38 +276,8 @@ def test_lettings_three_gate_pilot_walk_is_honest(tmp_path):
         budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
         auto_pilot=False,
     ).run()
-    assert code.ok, code.to_dict()
-
-    pilot = RoleRunner(
-        lettings_offline,
-        out,
-        cycle="pilot",
-        budget=BuildBudget(max_rework=1, wall_clock_s=600, phase_wall_clock_s=300),
-        auto_pilot=False,
-        subprocess_runner=_docker_acceptance_kk_passthrough,
-    ).run()
-    status = build_status(out)
-    grade = status["level_grade"]
-    _assert_full_repo(out)
-
-    assert pilot.ok, (pilot.to_dict(), grade)
-    assert runner_pilot_ready(out) is True
-    assert "PRODUCT PASS" in (pilot.detail or "")
-    assert "STORE PASS" in (pilot.detail or "")
-    assert status["state"] == "succeeded"
-    assert status["pilot_ready"] is False
-    assert grade["three_gate"] == {"CODE": "PASS", "PRODUCT": "PASS", "STORE": "PASS"}
-    assert grade["missing"] == []
-    assert grade["level"] not in {
-        Level.STORE_GREEN.value,
-        Level.FOUNDING_CUSTOMER_READY.value,
-    }
-    assert grade["full_pilot"] is False
-    assert grade["founding_customer_ready"] is False
-    assert any(
-        "full-pilot floor" in b or "FACTORY_CODE_CLI_UNAVAILABLE" in b or "templated" in b
-        for b in grade["blockers"]
-    )
+    assert code.ok is False, code.to_dict()
+    assert "writer_no_output" in (code.detail or "")
 
 
 def runner_pilot_ready(out: Path) -> bool:

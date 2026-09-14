@@ -87,17 +87,17 @@ def test_d4_protected_route_rejects_unauthenticated(monkeypatch):
         assert c.get("/v1/resident/status").status_code == 200
 
 # ── D3b: the PRODUCTION default -> a platform that runs standalone ──────────
-def test_d3_runner_is_the_production_artifact(tmp_path, monkeypatch):
+def test_d3_runner_is_the_production_artifact(tmp_path, monkeypatch, stub_coder):
     """What a customer downloads today, end to end through the real door.
 
     Deliberately does NOT set FACTORY_BUILD_ENGINE: this must exercise
     whatever production defaults to, so the day the default changes this test
-    changes with it. Coder disabled -- the deterministic writer path is what
-    CI can run without a key or a network.
+    changes with it. 0.5: a keyless deterministic writer refuses
+    (writer_no_output), so the production door runs a stubbed coding agent --
+    still no key, still no network.
     """
     import time
 
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     from app.factory.build_jobs import build_status
     from app.factory.product_architect import draft_blueprint_from_brief, generate_product
 

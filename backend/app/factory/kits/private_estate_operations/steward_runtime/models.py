@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
-    Computed,
     DateTime,
     ForeignKey,
     Integer,
@@ -22,6 +22,13 @@ from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.steward.config import EMBED_DIM
+
+# Phase 1 (option B): tenant stores are SQLite files, so schema types must
+# render on both dialects. JSONB stays JSONB on Postgres and JSON on SQLite;
+# TSVECTOR stays TSVECTOR on Postgres and TEXT on SQLite (the pg FTS legs
+# only run against the control-plane database).
+_JSON = JSON().with_variant(JSONB(), "postgresql")
+_TSV = TSVECTOR().with_variant(Text(), "sqlite")
 
 
 def _utcnow() -> datetime:
@@ -88,7 +95,7 @@ class SourceRecord(Base):
     authority_kind: Mapped[str] = mapped_column(
         String(64), default="advisory"
     )  # authoritative|advisory|synthetic|evaluation_only|estate_owned
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
 
 
 class Document(Base):
@@ -110,7 +117,7 @@ class Document(Base):
     embedding_fingerprint: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     authority_kind: Mapped[str] = mapped_column(String(64), default="estate_owned")
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     chunks: Mapped[List["DocumentChunk"]] = relationship(
@@ -131,10 +138,9 @@ class DocumentChunk(Base):
     chunk_ordinal: Mapped[int] = mapped_column(Integer, default=0)
     text: Mapped[str] = mapped_column(Text)
     embedding: Mapped[Any] = mapped_column(Vector(EMBED_DIM))
-    text_tsv: Mapped[Any] = mapped_column(
-        TSVECTOR,
-        Computed("to_tsvector('english', text)", persisted=True),
-    )
+    # Phase 1: app-populated per dialect (func.to_tsvector on Postgres,
+    # plain TEXT on SQLite tenant stores) -- see ingestion.py.
+    text_tsv: Mapped[Any] = mapped_column(_TSV)
     source_filename: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     page: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     sheet: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -143,7 +149,7 @@ class DocumentChunk(Base):
     rag_pack_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     authority_kind: Mapped[str] = mapped_column(String(64), default="estate_owned")
     cite_as_policy: Mapped[bool] = mapped_column(Boolean, default=True)
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
@@ -163,7 +169,7 @@ class HospitalityIntent(Base):
     authority_kind: Mapped[str] = mapped_column(String(64), default="synthetic")
     cite_as_policy: Mapped[bool] = mapped_column(Boolean, default=False)
     source_record_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -190,7 +196,7 @@ class FacilityAsset(Base):
     labour_hours: Mapped[Optional[Decimal]] = mapped_column(Numeric(20, 4), nullable=True)
     inspection_result: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     evaluation_only: Mapped[bool] = mapped_column(Boolean, default=True)
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -214,5 +220,5 @@ class FleetVehicle(Base):
     defect_severity: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     availability_status: Mapped[str] = mapped_column(String(64), default="available")
     evaluation_only: Mapped[bool] = mapped_column(Boolean, default=True)
-    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    meta: Mapped[Dict[str, Any]] = mapped_column("metadata", _JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

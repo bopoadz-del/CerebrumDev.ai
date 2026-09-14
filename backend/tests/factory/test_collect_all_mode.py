@@ -30,7 +30,9 @@ def blueprint():
     return load_blueprint(SMOKE)
 
 
-def test_collect_all_records_failed_gate_and_keeps_going(blueprint, tmp_path, monkeypatch):
+def test_collect_all_records_failed_gate_and_keeps_going(
+    blueprint, tmp_path, monkeypatch, stub_coder
+):
     """A gate failure that is terminal today becomes a recorded finding."""
     monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
 
@@ -58,7 +60,7 @@ def test_collect_all_records_failed_gate_and_keeps_going(blueprint, tmp_path, mo
     assert BuildRole.CLONER not in outcome.completed
 
 
-def test_collect_all_clean_run_is_still_success(blueprint, tmp_path, monkeypatch):
+def test_collect_all_clean_run_is_still_success(blueprint, tmp_path, monkeypatch, stub_coder):
     """The flag alone must not change a green build's outcome."""
     monkeypatch.setenv("FACTORY_GATE_COLLECT_ALL", "1")
     outcome = RoleRunner(blueprint, tmp_path / "build").run()
