@@ -456,14 +456,13 @@ def test_the_base_set_ships_into_a_product_via_generator_copytree(tmp_path, monk
         assert not list(kits.rglob("universal_definitions.json"))
 
 
-def test_the_base_set_ships_into_a_product_via_role_runner_vendor(tmp_path, monkeypatch):
+def test_the_base_set_ships_into_a_product_via_role_runner_vendor(tmp_path, monkeypatch, stub_coder):
     """RoleRunner vendors the kernel file-by-file, not via shutil.copytree.
 
     That is the other path that actually ships ``cerebrum_product_kernel`` into
     a generated product. If only the copytree were proven, a RoleRunner ignore
     of ``*.json`` would silently drop the set on the production default engine.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     from app.factory.blueprint import load_blueprint
     from app.factory.build.runner import RoleRunner
 

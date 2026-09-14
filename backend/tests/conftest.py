@@ -60,3 +60,25 @@ def _writer_hold_off_by_default(monkeypatch):
 def client() -> TestClient:
     """Shared FastAPI test client."""
     return TestClient(app)
+
+
+@pytest.fixture()
+def stub_coder(monkeypatch):
+    """Coder enabled with every entry point stubbed — no paid calls, ever.
+
+    A build under this fixture is a simulation of a coding-agent build,
+    not a template-only run: the stubbed coder authors the README and the
+    build records ``agent_written >= 1``, so the WRITER gate's
+    ``writer_no_output`` check passes honestly and the deterministic
+    emitters still own the rest of the tree.
+    """
+    from tests.factory.coder_stub import apply_stub_coder
+
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_HTTP_ONESHOT", "1")
+    patches = apply_stub_coder()
+    try:
+        yield
+    finally:
+        for patch in patches:
+            patch.stop()

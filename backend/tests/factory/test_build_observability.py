@@ -300,10 +300,6 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
 
     from app.factory import coder
 
-    # The autouse stub_coder fixture stubs _llm_code_call for build
-    # tests; this test is about the real function's timeout behaviour.
-    monkeypatch.setattr(coder, "_llm_code_call", _REAL_LLM_CODE_CALL)
-
     calls = []
 
     def _timeout(url, json=None, headers=None, timeout=None):
@@ -324,7 +320,7 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
     )
 
     with pytest.raises(coder.CoderTimeout) as exc:
-        coder._llm_code_call([{"role": "user", "content": "u"}])
+        _REAL_LLM_CODE_CALL([{"role": "user", "content": "u"}])
 
     assert "coder LLM timed out" in str(exc.value)
     # One attempt per model leg, not three.
