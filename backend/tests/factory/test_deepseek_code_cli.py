@@ -37,7 +37,7 @@ from app.factory.build.coder_session import (
     should_factory_llm_generate_gaps,
     thin_stub_success_blocked,
 )
-from app.factory.build.roles_models import RoleContext
+from app.factory.build.roles_models import RoleContext, RoleError
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.authority import BuildRole
 from app.factory.code_cli import (
@@ -841,19 +841,23 @@ def test_writer_all_reuse_compose_dispatches_cli_when_deepseek_ready(
     dest = tmp_path / "dest"
     dest.mkdir()
     ws = RoleWorkspace(BuildRole.WRITER, dest)
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_Blueprint(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(LETTINGS_STORE),
-                "vendored_blocks": tuple(LETTINGS_STORE),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_Blueprint(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(LETTINGS_STORE),
+                    "vendored_blocks": tuple(LETTINGS_STORE),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: a CLI exit-0 with zero harvest is zero coding-agent artifacts
+    # (never cbrief authorship) -- the writer refuses with the named
+    # reason; the receipt evidence still lands before it.
+    assert "writer_no_output" in str(exc.value)
     assert oneshot == []
     receipt = json.loads(
         (dest / "docs" / "coder_receipt.json").read_text(encoding="utf-8")

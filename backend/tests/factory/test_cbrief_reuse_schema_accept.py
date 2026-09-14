@@ -60,7 +60,7 @@ from app.factory.build.reuse_accept import (
     reuse_accept_needles,
     reuse_accept_rules_text,
 )
-from app.factory.build.roles import RoleContext, run_writer
+from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.roles_handlers import (
     _capability_handler_body,
     _handler_module,
@@ -499,19 +499,23 @@ def test_writer_keep_path_schema_sample_has_no_unknown_action(
     dest.mkdir()
     _plant_store_block_json(dest)
     ws = RoleWorkspace(BuildRole.WRITER, dest, staging=staging)
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(STORE_IDS),
-                "vendored_blocks": tuple(STORE_IDS),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(STORE_IDS),
+                    "vendored_blocks": tuple(STORE_IDS),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: keep-path schema emit is factory-grounded, not coding-agent
+    # authorship -- zero agent artifacts refuses the WRITER. The staged
+    # commit and its evidence still land; only the false green flips.
+    assert "writer_no_output" in str(exc.value)
     receipt = json.loads(
         (staging / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -538,7 +542,7 @@ def test_writer_keep_path_schema_sample_has_no_unknown_action(
         check=False,
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()
     assert "FACTORY_BRIEF_HTTP_ONESHOT" not in json.dumps(receipt)
 
 

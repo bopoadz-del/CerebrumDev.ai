@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.budget_inspect import STAGE_1_S, inspect_build
@@ -25,7 +27,7 @@ from app.factory.build.coder_session import (
 )
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.persist_accept import FACTORY_GROUNDED_PERSIST_SOURCE
-from app.factory.build.roles import RoleContext, run_writer
+from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.runner import Outcome, RoleRunner
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.blueprint import load_blueprint
@@ -263,19 +265,23 @@ def test_writer_deepseek_ready_empty_cli_stages_generate_persist(
         lambda _ctx: compiled,
     )
     out = tmp_path / "writer-persist"
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=RoleWorkspace(BuildRole.WRITER, out),
-            blueprint=_VetCare(),
-            plan=_Plan(),
-            state={
-                "resolved_blocks": ("audit", "dashboard"),
-                "vendored_blocks": ("audit", "dashboard"),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=RoleWorkspace(BuildRole.WRITER, out),
+                blueprint=_VetCare(),
+                plan=_Plan(),
+                state={
+                    "resolved_blocks": ("audit", "dashboard"),
+                    "vendored_blocks": ("audit", "dashboard"),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: deepseek-ready empty harvest lands zero coding-agent artifacts
+    # -- the refusal is the named reason; the generate-persist evidence
+    # still lands before it.
+    assert "writer_no_output" in str(exc.value)
     assert oneshot == []
     handler = (
         out / "app" / "actions" / "vetcare_hub_veterinary_core.py"

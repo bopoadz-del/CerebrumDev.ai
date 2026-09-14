@@ -167,11 +167,13 @@ def test_zero_artifacts_cannot_grade_store_green(tmp_path):
 
 
 def test_zero_artifact_check_is_a_live_instrument(monkeypatch, tmp_path):
-    """Deleting the check body flips the gate green for a hollow workspace.
+    """R4 mutation: removing the check's inputs flips the gate green.
 
-    With the counter patched to claim an agent artifact and the compile /
-    behaviour / surface halves patched to pass, the hollow workspace goes
-    green -- proving the zero-check is exactly what reds it.
+    This is the control experiment for the zero-check, not a literal
+    source deletion: the counter is patched to claim a phantom agent
+    artifact and the compile / behaviour / surface halves are patched to
+    pass. A hollow workspace then goes green -- proving the zero-check is
+    exactly what reds it, since nothing else about the gate can.
     """
     from app.factory.build import gates as gates_mod
 

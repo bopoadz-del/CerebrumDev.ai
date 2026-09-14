@@ -264,10 +264,9 @@ class TestCoder:
             raise AssertionError(f"build never finished: {build_status(out)}")
 
         # The invariant is DISCLOSURE, not a particular outcome: this test
-        # runs with the coder disabled, and the deterministic fallback cannot
-        # satisfy every real Store block contract (that is what the agent is
-        # for -- see KNOWN_INCOMPLETE 1h). Either way the status must be
-        # explicit; what is forbidden is invisible degradation.
+        # runs with the coder disabled, and 0.5 refuses a writer pass with
+        # zero agent-authored artifacts. The refusal is itself the
+        # disclosure -- the status must carry the named reason.
         if status["state"] == "succeeded":
             authorship = status["authorship"]
             assert authorship["artifacts"] > 0
@@ -276,5 +275,5 @@ class TestCoder:
             assert authorship["templated"] == authorship["artifacts"]
         else:
             assert status["state"] == "failed"
-            assert status["findings"], "a failed build must say what failed"
+            assert "writer_no_output" in (status["detail"] or ""), status
             assert status["detail"], "a failed build must carry a reason"
