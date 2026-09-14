@@ -5,7 +5,7 @@ python-multipart==0.0.32
 httpx==0.28.1
 python-dotenv==1.2.3
 cryptography==50.0.1
-pypdf==6.16.2
+pypdf==6.18.0
 python-docx==1.2.0
 beautifulsoup4==4.15.0
 chromadb==1.5.9
@@ -17,7 +17,7 @@ sqlalchemy==2.0.51
 psycopg[binary]==3.3.5
 
 # Accounts DB migrations (Alembic). Runs at container boot; see backend/alembic/.
-alembic==1.19.1
+alembic==1.19.2
 
 # Billing (P3): Stripe subscription checkout + webhooks. Account state changes
 # only through accounts_store.set_subscription; this SDK is the transport.
