@@ -189,6 +189,47 @@ def probe_f_tenant_isolation_seam_detects_a_broken_seam() -> None:
             ts.resolve_tenant_store = original
 
 
+def probe_g_precedence_ladder_is_data_not_prompt_text() -> None:
+    """P2 -- inverting the rank DATA flips the winner (a prompt-baked ladder
+    would survive inversion)."""
+    import json
+
+    from app.cerebrum_product_kernel.precedence import (
+        LayerObject,
+        load_ladder,
+        resolve_formula_by_id,
+    )
+
+    certified = LayerObject(object_id="margin_v1", layer=1, evaluate=lambda: 40.0)
+    taught = LayerObject(
+        object_id="margin_v1", layer=3, tenant_id="tenant_a", evaluate=lambda: 42.0
+    )
+    verdict = resolve_formula_by_id("margin_v1", [certified, taught])
+    assert verdict.winner.layer == 3
+
+    with tempfile.TemporaryDirectory() as tmp:
+        inverted = Path(tmp) / "inverted.json"
+        inverted.write_text(
+            json.dumps(
+                {
+                    "schema": "precedence.v1",
+                    "rank": [
+                        {"layer": 1, "rank": 4, "label": "certified"},
+                        {"layer": 2, "rank": 3, "label": "documents"},
+                        {"layer": 3, "rank": 2, "label": "formulas"},
+                        {"layer": 4, "rank": 1, "label": "procedures"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        ladder = load_ladder(inverted)
+        flipped = resolve_formula_by_id(
+            "margin_v1", [certified, taught], ladder=ladder
+        )
+    assert flipped.winner.layer == 1, "the precedence ladder is baked in, not data"
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -196,6 +237,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P0d zero artifacts cannot grade Store-green", probe_d_zero_artifacts_cannot_grade_store_green),
     ("P0e control: agent stamp is counted", probe_e_control_agent_stamped_handler_is_counted),
     ("P1 tenant seam detects a broken seam", probe_f_tenant_isolation_seam_detects_a_broken_seam),
+    ("P2 precedence ladder is data not prompt text", probe_g_precedence_ladder_is_data_not_prompt_text),
 ]
 
 
