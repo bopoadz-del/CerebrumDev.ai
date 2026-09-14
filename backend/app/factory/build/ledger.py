@@ -521,12 +521,22 @@ class BuildLedger:
         None is the honest answer for a killed run: absence of a verdict is
         not success, and callers must not infer one from "no failures seen".
         A ``PILOT_OPENED`` after the last terminal reopens the run.
+        A post-Cloner ``awaiting_mr_finance_writer`` pause is cleared by
+        the next ``PHASE_STARTED`` (MR. FINANCE launched Writer).
         """
+        from app.factory.build.writer_control import payload_awaits_mr_finance_writer
+
         last: Optional[BuildEvent] = None
         for event in self.events():
             if event.kind in (EventKind.RUN_SUCCEEDED, EventKind.RUN_FAILED):
                 last = event
             elif event.kind is EventKind.PILOT_OPENED:
+                last = None
+            elif (
+                last is not None
+                and event.kind is EventKind.PHASE_STARTED
+                and payload_awaits_mr_finance_writer(last.payload or {})
+            ):
                 last = None
         return last
 

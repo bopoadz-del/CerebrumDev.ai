@@ -57,4 +57,9 @@ domain. Finance instruction text stays the original finance wording.
 
 `run_cloner` → `handoff_after_cloner` (best-effort; never fails CLONER).
 
+After a successful CLONER + handoff, Floor **does not** auto-enter WRITER
+or launch Cursor BA in the same Generate/Continue autopilot. Honesty is
+`awaiting_mr_finance_writer` until MR. FINANCE launches Writer. See
+[`MR_FINANCE_WRITER_CONTROL.md`](MR_FINANCE_WRITER_CONTROL.md).
+
 Module: `backend/app/factory/build/domain_handoff.py`

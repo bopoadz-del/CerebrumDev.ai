@@ -4,6 +4,7 @@ import type {
   FactoryCodeCliProbe,
 } from './api/factory'
 import {
+  AWAITING_MR_FINANCE_WRITER,
   FACTORY_CODE_CLI_CREDENTIALS_MISSING,
   FACTORY_CODE_CLI_FAILED,
   FACTORY_CODE_CLI_NO_MODEL,
@@ -679,7 +680,16 @@ export function outcomeFailed(build: BuildStatus | null | undefined): boolean {
   const outcome = String(build?.outcome || '').trim()
   if (!outcome) return false
   if (/^(SUCCESS|PASS|SUCCEEDED)$/i.test(outcome)) return false
+  if (/^AWAITING_MR_FINANCE_WRITER$/i.test(outcome)) return false
   return /FAIL/i.test(outcome)
+}
+
+/** Collector+Cloner finished; Writer waits for MR. FINANCE. */
+export function isAwaitingMrFinanceWriter(build: BuildStatus | null | undefined): boolean {
+  if (!build) return false
+  if (build.awaiting_mr_finance_writer === true) return true
+  if (build.state === 'waiting') return true
+  return String(build.honesty || '') === AWAITING_MR_FINANCE_WRITER
 }
 
 /**
@@ -702,7 +712,9 @@ export function isAuthoritativePilotReady(build: BuildStatus | null | undefined)
  */
 export function shouldRefuseExport(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
-  if (build.state === 'building' || build.state === 'not_started') return false
+  if (build.state === 'building' || build.state === 'not_started' || build.state === 'waiting')
+    return false
+  if (isAwaitingMrFinanceWriter(build)) return true
   if (isUnreadableLedger(build)) return true
   if (build.state === 'failed') return true
   if (productSuiteFailed(build)) return true
