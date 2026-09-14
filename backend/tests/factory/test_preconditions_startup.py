@@ -356,7 +356,7 @@ def test_a_failing_precondition_step_cannot_take_the_boot_down():
 
 
 def test_the_writer_renders_the_module_from_the_blocks_it_vendored(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, stub_coder
 ):
     """Mutation killed: run_writer calling render_preconditions_module(())
     or writing it to the wrong path -- the feature disconnected at the
@@ -366,7 +366,6 @@ def test_the_writer_renders_the_module_from_the_blocks_it_vendored(
     the JOIN: the ids come from the build's own state, the name from its
     blueprint, and the bytes land at app/preconditions.py.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
     import app.factory.build.block_obligations as obligations
     import app.factory.build.roles_handlers as handlers

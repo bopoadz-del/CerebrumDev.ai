@@ -77,7 +77,7 @@ def _writer_ctx(tmp_path: Path, work_list=(), state=None):
     )
 
 
-def test_a_green_capability_survives_a_rework_round_untouched(tmp_path):
+def test_a_green_capability_survives_a_rework_round_untouched(tmp_path, stub_coder):
     """The handler file of a capability the findings do not implicate must
     not be rewritten -- byte-for-byte, sentinel included."""
     first = _writer_ctx(tmp_path)
@@ -107,10 +107,11 @@ def test_a_green_capability_survives_a_rework_round_untouched(tmp_path):
     assert result.notes["artifact_sources"]["alpha_cap"] in (
         "deterministic contract template",
         "unchanged from previous round",
+        "coder LLM (stub-coder)",
     )
 
 
-def test_a_failing_capability_is_regenerated(tmp_path):
+def test_a_failing_capability_is_regenerated(tmp_path, stub_coder):
     first = _writer_ctx(tmp_path)
     result = run_writer(first)
     state = dict(first.state)
@@ -131,7 +132,7 @@ def test_a_failing_capability_is_regenerated(tmp_path):
     )
 
 
-def test_specs_of_green_capabilities_are_reused(tmp_path):
+def test_specs_of_green_capabilities_are_reused(tmp_path, stub_coder):
     """Schema stability across rounds: a green capability's entity and fields
     must not drift while another capability is being fixed -- drifting
     schemas were half of every 'no column named X' failure."""

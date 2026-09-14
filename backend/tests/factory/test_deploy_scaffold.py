@@ -32,7 +32,9 @@ def _no_paid_calls(monkeypatch):
 
 
 @pytest.fixture()
-def built(tmp_path):
+def built(tmp_path, stub_coder):
+    # 0.5: without a coding agent the WRITER refuses (writer_no_output);
+    # the fixture stubs a deterministic agent so the build goes green.
     out = tmp_path / "build"
     assert RoleRunner(load_blueprint(SMOKE), out).run().ok
     return out
@@ -77,7 +79,8 @@ def test_the_render_blueprint_declares_no_database(built):
         assert forbidden not in text.lower(), forbidden
 
 
-def test_the_service_name_is_slugged_from_the_product_id(tmp_path):
+def test_the_service_name_is_slugged_from_the_product_id(tmp_path, stub_coder):
+    # 0.5: needs a green build; stub a deterministic coding agent.
     out = tmp_path / "b"
     assert RoleRunner(load_blueprint(SMOKE), out).run().ok
     text = (out / "render.yaml").read_text(encoding="utf-8")

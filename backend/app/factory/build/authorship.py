@@ -12,6 +12,7 @@ the templated inventory for the same run.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
@@ -391,6 +392,37 @@ class DualListedAuthorshipError(ValueError):
     """A capability cannot be both agent-written and templated."""
 
 
+_WRITER_ROLE_STAMP_RE = re.compile(
+    r"Written by the factory WRITER role \(([^)]*)\)"
+)
+
+
+def agent_written_handler_ids_in_workspace(workspace: Path | str) -> List[str]:
+    """Handler files whose stamped WRITER source is the coding agent.
+
+    Ground truth for the writer-contract gate: a gate must not trust the
+    writer's own status claim, so the agent-authored set is re-derived from
+    the files the writer physically produced (the ``Written by the factory
+    WRITER role (...)`` docstring stamp in ``app/actions/*.py``). Zero is
+    ``writer_no_output`` -- templated and factory-grounded writes do not
+    count.
+    """
+    root = Path(workspace)
+    actions = root / "app" / "actions"
+    if not actions.is_dir():
+        return []
+    ids: List[str] = []
+    for path in sorted(actions.glob("*.py")):
+        try:
+            head = path.read_text(encoding="utf-8")[:4000]
+        except OSError:
+            continue
+        match = _WRITER_ROLE_STAMP_RE.search(head)
+        if match and is_coding_agent_source(match.group(1)):
+            ids.append(path.stem)
+    return ids
+
+
 def is_coding_agent_source(source: Any) -> bool:
     """True for coder LLM, coder CLI, or harvested keep-path labels.
 
@@ -582,7 +614,14 @@ class FullPilotAuthorship:
 
     @property
     def below_floor(self) -> bool:
-        return self.measured and not self.meets_floor
+        """Unmeasured or zero authorship is below floor (0.5).
+
+        The old path returned ``measured and not meets_floor``, so a build
+        with no authorship record at all slipped past the floor silently.
+        Zero artifacts can never meet the floor; unmeasured is unmeasured
+        because nothing was recorded to measure.
+        """
+        return not (self.measured and self.meets_floor)
 
 
 def full_pilot_authorship_from(

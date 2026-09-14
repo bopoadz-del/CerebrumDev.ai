@@ -74,10 +74,19 @@ def test_cloner_contract_refuses_a_block_that_is_not_vendored(tmp_path):
 def test_writer_contract_refuses_a_workspace_that_does_not_parse(tmp_path):
     """Syntax first, because its failure mode is the clearest."""
     app = tmp_path / "app"
-    app.mkdir(parents=True, exist_ok=True)
+    (app / "actions").mkdir(parents=True, exist_ok=True)
+    (app / "actions" / "widget_intake.py").write_text(
+        '"""Handler for capability widget_intake.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n',
+        encoding="utf-8",
+    )
     (app / "routes.py").write_text("def broken(:\n", encoding="utf-8")
     result = gate_writer_contract(_ctx(tmp_path, BuildRole.WRITER))
     assert result.ok is False
+    assert "writer_no_output" not in result.detail
 
 
 def test_writer_contract_does_not_stop_at_compilation(tmp_path):
@@ -88,11 +97,20 @@ def test_writer_contract_does_not_stop_at_compilation(tmp_path):
     composite is gate_workspace_compiles under a new name.
     """
     app = tmp_path / "app"
-    app.mkdir(parents=True, exist_ok=True)
+    (app / "actions").mkdir(parents=True, exist_ok=True)
+    (app / "actions" / "widget_intake.py").write_text(
+        '"""Handler for capability widget_intake.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n',
+        encoding="utf-8",
+    )
     (app / "routes.py").write_text("x = 1\n", encoding="utf-8")
     result = gate_writer_contract(_ctx(tmp_path, BuildRole.WRITER))
     assert result.ok is False, (
         "a workspace containing nothing but a valid assignment passed the "
         "WRITER contract; only the compile half can be running"
     )
+    assert "writer_no_output" not in result.detail
     assert result.gate != "workspace_compiles" or "compile" not in result.detail.lower()

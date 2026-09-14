@@ -235,19 +235,23 @@ def test_writer_staged_vetcare_reuse_emits_importable_handlers(
     staging = tmp_path / "staging"
     dest.mkdir()
     ws = RoleWorkspace(BuildRole.WRITER, dest, staging=staging)
-    result = run_writer(
-        RoleContext(
-            role=BuildRole.WRITER,
-            workspace=ws,
-            blueprint=_VetCare(),
-            plan=plan,
-            state={
-                "resolved_blocks": tuple(STORE_IDS),
-                "vendored_blocks": tuple(STORE_IDS),
-            },
+    with pytest.raises(RoleError) as exc:
+        run_writer(
+            RoleContext(
+                role=BuildRole.WRITER,
+                workspace=ws,
+                blueprint=_VetCare(),
+                plan=plan,
+                state={
+                    "resolved_blocks": tuple(STORE_IDS),
+                    "vendored_blocks": tuple(STORE_IDS),
+                },
+            )
         )
-    )
-    assert result.ok, result.detail
+    # 0.5: the REUSE keep-path emit is factory-grounded, not coding-agent
+    # authorship -- zero agent artifacts refuses the WRITER. The staged
+    # commit and its evidence still land; only the false green flips.
+    assert "writer_no_output" in str(exc.value)
     receipt = json.loads(
         (staging / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
@@ -276,7 +280,7 @@ def test_writer_staged_vetcare_reuse_emits_importable_handlers(
         for cid in VETCARE_REUSE_CAPS
     }
     assert persist_round_trip_errors(dest, specs) == []
-    assert "pilot_zip" not in (result.detail or "").lower()
+    assert "pilot_zip" not in str(exc.value).lower()
 
 
 def test_false_reuse_fails_closed_before_writer_behaviour(tmp_path, monkeypatch):

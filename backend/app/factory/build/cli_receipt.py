@@ -32,6 +32,10 @@ RECEIPT_INVALID = "RECEIPT_INVALID"
 PATHS_VIOLATED = "PATHS_VIOLATED"
 HANDOFF_TO_N3 = "HANDOFF_TO_N3"
 
+#: Named refusal reason shared by the artifact gate (0.5): a build whose
+#: agent-authored artifact count is zero can never pass, hand off, or grade.
+WRITER_NO_OUTPUT = "writer_no_output"
+
 RECEIPT_SCHEMA = "cli_receipt.v1"
 RECEIPT_NAMES = ("receipt.json", "docs/receipt.json", "docs/coder_receipt.json")
 
@@ -321,6 +325,14 @@ def enforce_receipt(
     else:
         loaded = load_receipt(receipt)
     authored = list(loaded["cli_authored_ids"])
+    if not authored and not required:
+        # Both sets empty is set-equality, and set-equality alone would hand
+        # this off to N3 as a clean receipt. Zero authored and zero required
+        # is a writer that produced nothing -- never a valid handoff.
+        raise ReceiptInvalid(
+            f"{RECEIPT_INVALID}: {WRITER_NO_OUTPUT}: zero cli_authored_ids "
+            "and zero blueprint capabilities cannot hand off to N3"
+        )
     assert_ids_equal_blueprint(authored, required)
     paths = parse_changed_paths(changed_paths, unified_diff)
     assert_ids_in_diff(authored, paths, loaded.get("path_by_id"))

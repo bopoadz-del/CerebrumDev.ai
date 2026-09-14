@@ -105,6 +105,11 @@ def _write_workspace(root: Path, route_body: str) -> None:
     )
 
     (app / "actions" / "widget_intake.py").write_text(
+        '"""Handler for capability widget_intake.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'widget_intake'\n\n"
         "def handle(payload):\n"
@@ -179,10 +184,12 @@ def test_gate_passes_when_the_route_checks_its_handler(tmp_path):
 
 
 def test_gate_reports_a_writer_that_produced_nothing(tmp_path):
+    """0.5: zero agent-authored artifacts is a hard refusal, not a miss."""
     result = _run_gate(tmp_path)
 
     assert result.ok is False
-    assert "missing" in result.detail or "nothing" in result.detail
+    assert "writer_no_output" in result.detail
+    assert "writer_no_output" in result.findings
 
 
 # A coder-shaped handler that ignores execute() errors — the live
@@ -225,6 +232,11 @@ def _write_mixed_workspace(root: Path) -> None:
         encoding="utf-8",
     )
     (app / "actions" / "invoice_management.py").write_text(
+        '"""Handler for capability invoice_management.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'invoice_management'\n\n"
         "def handle(payload):\n"
@@ -291,6 +303,11 @@ def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
         encoding="utf-8",
     )
     (app / "actions" / "invoice_management.py").write_text(
+        '"""Handler for capability invoice_management.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'invoice_management'\n\n"
         "def handle(payload):\n"
@@ -433,6 +450,11 @@ def _add_schema_refuser(root: Path, cap_id: str = "broken_schema") -> None:
         encoding="utf-8",
     )
     (app / "actions" / f"{cap_id}.py").write_text(
+        f'"""Handler for capability {cap_id}.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         f"CAPABILITY_ID = '{cap_id}'\n\n"
         "def handle(payload):\n"
         "    return {'ok': False, 'error': 'name is required'}\n",
@@ -480,6 +502,11 @@ def test_gate_fails_all_schema_with_schema_detail_not_f1(tmp_path):
     # has only capabilities that never accept their own payload.
     app = tmp_path / "app"
     (app / "actions" / "widget_intake.py").write_text(
+        '"""Handler for capability widget_intake.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         "CAPABILITY_ID = 'widget_intake'\n\n"
         "def handle(payload):\n"
         "    return {'ok': False, 'error': 'name is required'}\n",
@@ -902,6 +929,11 @@ def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) ->
         encoding="utf-8",
     )
     (app / "actions" / "end_to_end_appointment_workflow.py").write_text(
+        '"""Handler for capability end_to_end_appointment_workflow.\n\n'
+        'Written by the factory WRITER role (coder LLM). Blocks are invoked '
+        'through\n'
+        'the local dispatch runtime -- this module makes no network call.\n'
+        '"""\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'end_to_end_appointment_workflow'\n\n"
         "def handle(payload):\n"

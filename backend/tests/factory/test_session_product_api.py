@@ -30,7 +30,7 @@ def client(monkeypatch):
     return TestClient(app)
 
 
-def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path):
+def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path, stub_coder):
     """The TEMPLATE path's golden flow (provenance.json, kernel ActionOutcome
     actions, command_center.tsx) -- all template-only artifacts.
 

@@ -50,7 +50,9 @@ def test_fourteen_class_contract_is_the_documented_list():
     assert DECLARED_RUNNER_EXTRAS
 
 
-def test_role_runner_does_not_call_product_generator_generate(tmp_path, monkeypatch):
+def test_role_runner_does_not_call_product_generator_generate(
+    tmp_path, monkeypatch, stub_coder
+):
     def _boom(*_a, **_k):
         raise AssertionError(
             "ProductGenerator.generate() rmtree's the destination; "
@@ -62,7 +64,9 @@ def test_role_runner_does_not_call_product_generator_generate(tmp_path, monkeypa
     assert result.ok, result.to_dict()
 
 
-def test_role_runner_and_product_generator_share_fourteen_classes(tmp_path):
+def test_role_runner_and_product_generator_share_fourteen_classes(
+    tmp_path, stub_coder
+):
     bp = load_blueprint(SMOKE)
     runner_out = tmp_path / "runner"
     runner = RoleRunner(bp, runner_out)

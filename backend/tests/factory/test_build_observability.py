@@ -58,7 +58,7 @@ def test_note_is_a_noop_without_a_progress_sink():
     ctx.note("still must not raise")
 
 
-def test_a_build_records_intra_phase_progress(tmp_path):
+def test_a_build_records_intra_phase_progress(tmp_path, stub_coder):
     """The WRITER must say what it is doing while it does it."""
     out = tmp_path / "build"
     runner = RoleRunner(load_blueprint(SMOKE), out)
@@ -81,7 +81,7 @@ def test_a_build_records_intra_phase_progress(tmp_path):
             assert isinstance(payload.get("total"), int)
 
 
-def test_progress_notes_do_not_disturb_the_verdict_readers(tmp_path):
+def test_progress_notes_do_not_disturb_the_verdict_readers(tmp_path, stub_coder):
     """NOTE is not a verdict. completed_roles / terminal_event / succeeded
     must read exactly as they did before progress existed."""
     out = tmp_path / "build"
@@ -407,7 +407,9 @@ def test_a_red_suite_never_reports_zero_findings(tmp_path):
     assert result.findings, "a failing gate must always give the writer something"
 
 
-def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
+def test_the_artifact_declares_the_dependency_its_release_gate_needs(
+    tmp_path, stub_coder
+):
     """The delivered platform ships scripts/release_gate.py but never declared
     pytest, so a customer running the clone-and-test gate hit the same
     ModuleNotFoundError. It now ships requirements-dev.txt and the gate says
@@ -429,7 +431,7 @@ def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
     assert "[{sys.executable}" not in gate
 
 
-def test_runner_readme_installs_dev_deps_before_pytest(tmp_path):
+def test_runner_readme_installs_dev_deps_before_pytest(tmp_path, stub_coder):
     """README 'Run it' must not tell a stranger to pytest after only
     requirements.txt — pytest lives in requirements-dev.txt on the runner path."""
     out = tmp_path / "build"
@@ -455,7 +457,7 @@ def test_release_gate_template_passes_this_interpreter_not_a_set():
     compile(src, "release_gate.py", "exec")
 
 
-def test_phase_wall_clock_caps_the_writer_deadline(tmp_path):
+def test_phase_wall_clock_caps_the_writer_deadline(tmp_path, stub_coder):
     """An explicit per-phase cap still binds RoleContext.deadline.
 
     Production Store-green uses a 90-minute phase default so WRITER can

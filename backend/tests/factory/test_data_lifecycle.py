@@ -25,6 +25,7 @@ from app.factory.build.data_lifecycle import (
     migration_table_names,
 )
 from app.factory.build.runner import RoleRunner
+from tests.factory.conftest import stub_coder_patches
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
@@ -40,7 +41,10 @@ def built(tmp_path_factory):
     # Module-scoped: autouse monkeypatch has not run yet.
     os.environ["FACTORY_CODER_ENABLED"] = "0"
     out = tmp_path_factory.mktemp("s10") / "build"
-    outcome = RoleRunner(load_blueprint(SMOKE), out).run()
+    # 0.5: without a coding agent the WRITER refuses (writer_no_output);
+    # stub a deterministic agent so the S10 build still goes green.
+    with stub_coder_patches():
+        outcome = RoleRunner(load_blueprint(SMOKE), out).run()
     assert outcome.ok, outcome.to_dict()
     return out
 

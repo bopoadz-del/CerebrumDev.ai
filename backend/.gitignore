@@ -11,3 +11,7 @@ storage/automotive_core_rag_v1/
 *.nhtsa.zip
 model_cache/
 automotive_core_rag_v1/
+
+# Workaround test venv (Smart App Control blocks the standard .venv pydantic DLL)
+.venv-test/
+

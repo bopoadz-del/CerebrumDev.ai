@@ -34,7 +34,7 @@ def _no_paid_calls(monkeypatch):
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
 
 
-def test_nothing_is_recorded_as_unpinned(tmp_path):
+def test_nothing_is_recorded_as_unpinned(tmp_path, stub_coder):
     out = tmp_path / "build"
     runner = RoleRunner(load_blueprint(SMOKE), out)
     assert runner.run().ok
@@ -53,7 +53,7 @@ def test_nothing_is_recorded_as_unpinned(tmp_path):
         assert clone["source_commit"] != "unpinned"
 
 
-def test_the_ledger_carries_the_revision_for_the_registrar(tmp_path):
+def test_the_ledger_carries_the_revision_for_the_registrar(tmp_path, stub_coder):
     """iter_ledgers() is how the registrar answers its question."""
     out = tmp_path / "build"
     runner = RoleRunner(load_blueprint(SMOKE), out)

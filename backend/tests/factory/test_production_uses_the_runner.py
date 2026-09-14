@@ -112,7 +112,7 @@ def test_generate_product_routes_to_the_runner(tmp_path, monkeypatch):
     assert "template" not in called
 
 
-def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
+def test_a_finished_build_carries_agent_manufactured_shape(tmp_path, stub_coder):
     """The artifact the customer receives must be a FULL platform repo.
 
     Workspace + download zip both carry the 14-class contract (README,
@@ -202,7 +202,7 @@ def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
     assert not any("__pycache__" in n for n in names)
 
 
-def test_status_is_read_from_the_ledger_not_process_memory(tmp_path):
+def test_status_is_read_from_the_ledger_not_process_memory(tmp_path, stub_coder):
     """Status must survive a worker restart, so it is a read of the
     artifact. A build directory with no ledger is 'unknown', never a crash."""
     assert build_status(tmp_path / "nothing-here")["state"] == "unknown"

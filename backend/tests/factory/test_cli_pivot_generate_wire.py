@@ -71,7 +71,7 @@ def test_resolve_pivot_session_env_uses_factory_session_path(tmp_path):
     assert pinned["FACTORY_SESSION_ID"] == "already"
 
 
-def test_keys_absent_writer_does_not_call_cli_pivot(tmp_path, monkeypatch):
+def test_keys_absent_writer_does_not_call_cli_pivot(tmp_path, monkeypatch, stub_coder):
     for name in CURSOR_KEY_ENVS:
         monkeypatch.delenv(name, raising=False)
     called = []

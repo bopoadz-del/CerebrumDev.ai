@@ -198,11 +198,15 @@ def test_zip_omits_prototype_marker_when_pilot_ready(tmp_path):
         assert _PROTOTYPE_MARKER not in zf.namelist()
 
 
-def test_auto_pilot_opens_pilot_instead_of_code_success(tmp_path, monkeypatch):
+def test_auto_pilot_opens_pilot_instead_of_code_success(tmp_path, monkeypatch, stub_coder):
     """A keyed (or forced) run must not park on code-cycle SUCCESS.
 
     The smoke product may fail Store-green; the contract is that the ledger
     never records a terminal code SUCCESS when auto-pilot is on.
+
+    0.5: the code cycle must reach SUCCESS for the pilot to open at all,
+    and an un-stubbed writer refuses (writer_no_output); stub a
+    deterministic coding agent so this test exercises auto-pilot itself.
     """
     monkeypatch.setenv("FACTORY_AUTO_PILOT", "1")
     out = tmp_path / "build"
@@ -292,7 +296,8 @@ def test_floor_run_opts_into_auto_pilot_when_enabled(monkeypatch, tmp_path):
     assert captured["budget"].phase_wall_clock_s == 5400.0
 
 
-def test_code_only_success_still_exists_without_auto_pilot(tmp_path):
+def test_code_only_success_still_exists_without_auto_pilot(tmp_path, stub_coder):
+    # 0.5: a green build needs a coding agent; stub a deterministic one.
     out = tmp_path / "build"
     runner = RoleRunner(
         load_blueprint(SMOKE),
