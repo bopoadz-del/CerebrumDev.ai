@@ -258,12 +258,39 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'automotive-retail', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_done" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Coding agent finished/ })).toBeInTheDocument()
+    expect(screen.getByTestId('floor-product-title')).toHaveTextContent('Vineyard Platform')
+    expect(screen.getByTestId('floor-acceptance-score')).toHaveTextContent('12/12')
     expect(screen.getByText('Finished — 22 artifacts; 6 templated. Download ready.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download platform export (.zip)' })).toBeEnabled()
     expect(screen.queryByText(/22 of 28/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
+  })
+
+  it('finished heading prefers blueprint.product_name over a generic product_id slug', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        pilot_ready: true,
+        cycle: 'pilot',
+        authorship: { artifacts: 10, agent_written: 6, templated: 4 },
+        acceptance: { passed: 12, total: 12, ok: true },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: { product_name: 'FinanceOps', vertical: 'finance', drafting_mode: 'architect_llm' },
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'product', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_48a72e0d1cac44ae" goPlatforms={() => {}} />)
+    expect(await screen.findByTestId('floor-product-title')).toHaveTextContent('FinanceOps')
+    expect(screen.getByTestId('floor-acceptance-score')).toHaveTextContent('12/12')
+    const title = screen.getByRole('heading', { name: /FinanceOps/ })
+    expect(title).toHaveTextContent('FinanceOps')
+    expect(title).toHaveTextContent('12/12')
+    expect(title).not.toHaveTextContent(/^product\s+12\/12/i)
+    expect(screen.queryByText('product 12/12')).not.toBeInTheDocument()
   })
 
   it('code-cycle SUCCESS is a prototype, not Finished / Download ready', async () => {
@@ -281,13 +308,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_proto" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     expect(
       screen.getByText(/Code-cycle prototype — 11 artifacts; 13 templated. Not yet pilot-ready/),
     ).toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download code-cycle prototype (.zip)' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Continue to pilot' })).toBeEnabled()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
@@ -315,7 +342,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_code_green" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.getByTestId('floor-gate-code')).toHaveTextContent('CODE PASS')
     expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT NOT RUN')
@@ -361,11 +388,11 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_cec9a1345b2049bb" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.getByText(/Code-cycle prototype — 6 artifacts; 18 templated/)).toBeInTheDocument()
     expect(screen.getByText(/Not yet pilot-ready/)).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
     expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
@@ -400,7 +427,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'residential-lettings', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_founding" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Coding agent finished/ })).toBeInTheDocument()
     expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Founding-customer-ready')
     expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT PASS')
     expect(screen.getByTestId('floor-gate-store')).toHaveTextContent('STORE PASS')
@@ -468,7 +495,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_c220986f67914681" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.queryByText(/Founding-customer-ready\. Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
@@ -537,7 +564,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
     })
     render(<Floor sessionId="sess_45729bb662cf4a5d" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Coding agent finished/ })).toBeInTheDocument()
     expect(screen.getByTestId('floor-pilot-ready-pill')).toHaveTextContent('Store-green')
     expect(screen.getByTestId('floor-pilot-ready-pill')).not.toHaveTextContent(
       'Founding-customer-ready',
@@ -572,7 +599,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_lock" goPlatforms={() => {}} />)
     expect(
-      await screen.findByRole('heading', { name: 'Acceptance 0/12 — not pilot-ready' }),
+      await screen.findByRole('heading', { name: /Acceptance 0\/12 — not pilot-ready/ }),
     ).toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.getByText(/Acceptance is 0\/12/)).toBeInTheDocument()
@@ -618,9 +645,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_4591d5cc45d04fe1" goPlatforms={() => {}} />)
     expect(
-      await screen.findByRole('heading', { name: 'Acceptance 0/12 — not pilot-ready' }),
+      await screen.findByRole('heading', { name: /Acceptance 0\/12 — not pilot-ready/ }),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Code-cycle prototype ready' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Code-cycle prototype ready/ })).not.toBeInTheDocument()
     expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent('Code-green (prototype)')
     expect(screen.getByTestId('floor-gate-code')).toHaveTextContent('CODE PASS')
     expect(screen.getByTestId('floor-gate-product')).toHaveTextContent('PRODUCT PASS')
@@ -674,7 +701,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Continue to pilot' }))
     await waitFor(() => expect(chatStreamMock).toHaveBeenCalledWith('sess_cta', 'continue', expect.any(Function)))
     expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
   })
 
   it('downloads the zip from the Floor after the coding agent finishes', async () => {
@@ -736,13 +763,13 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_pilot" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByRole('heading', { name: 'Coding agent has taken over' })).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
     expect(screen.getByText(/Writing your platform/)).toBeInTheDocument()
   })
@@ -785,7 +812,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     render(<Floor sessionId="sess_dup" goPlatforms={() => {}} />)
     // Wait for the succeeded snapshot — otherwise coderActive+null build
     // briefly disables the composer (pilot reopen race).
-    expect(await screen.findByRole('heading', { name: 'Code-cycle prototype ready' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Code-cycle prototype ready/ })).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: '(a) continue the existing lettings hub into its pilot cycle' },
@@ -844,7 +871,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(failedExport).toBeDisabled()
     expect(failedExport).toHaveAttribute('disabled')
     expect(failedExport).toHaveClass('ghost')
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
     const startNew = screen.getByRole('button', { name: 'Start a new product' })
     expect(startNew).toBeEnabled()
     fireEvent.click(startNew)
@@ -1010,7 +1037,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     releaseApprove?.()
     expect(await screen.findByText('coding agent')).toBeInTheDocument()
     expect(screen.getByTestId('floor-coder-takeover')).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Coding agent finished' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
   })
 
   it('does not offer Floor download while the coding agent is still writing', async () => {
@@ -1101,7 +1128,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       })
     })
     render(<Floor sessionId="sess_redraft" goPlatforms={() => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Coding agent finished' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /Coding agent finished/ })).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/Try:/)).toBeEnabled()
     fireEvent.change(screen.getByPlaceholderText(/Try:/), {
       target: { value: 'build me a tasting room for a family winery' },

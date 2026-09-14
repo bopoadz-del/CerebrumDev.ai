@@ -72,6 +72,23 @@ def test_chat_llm_on_when_key_present(monkeypatch):
     assert platform_chat_llm.chat_llm_enabled() is True
 
 
+def test_chat_llm_uses_cerebrum_chat_when_provider_is_cursor(monkeypatch):
+    """Live shape: LLM_PROVIDER=cursor + CURSOR_API_KEY + CEREBRUM_CHAT_*."""
+    monkeypatch.delenv(platform_chat_llm.CHAT_LLM_ENV, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "cursor")
+    monkeypatch.setenv("CURSOR_API_KEY", "crsr-ba-only")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_API_KEY", "chat-key-live")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_BASE_URL", "https://chat.example.test/v1")
+    monkeypatch.setenv("CEREBRUM_CHAT_LLM_MODEL", "chat-model-live")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert platform_chat_llm.chat_llm_enabled() is True
+    from app.core.llm_config import get_llm_config
+
+    cfg = get_llm_config()
+    assert cfg["api_key"] == "chat-key-live"
+    assert "api.cursor.com" not in cfg["base_url"]
+
+
 def test_kit_config_never_orchestrates(monkeypatch, session):
     monkeypatch.setattr(platform_chat_llm, "chat_llm_enabled", lambda: True)
     assert (

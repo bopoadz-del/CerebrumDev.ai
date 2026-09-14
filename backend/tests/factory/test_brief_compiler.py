@@ -135,6 +135,36 @@ def test_compiled_brief_has_the_gated_shape():
     assert 'execute("workflow", payload)' in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert "llm_writes_brief: never" in load_brief_template()
+    assert "HARD RULE" in text
+
+
+def test_compiled_brief_forbids_sealed_vendor():
+    """BA reads the sealed-vendor HARD RULE in C-BRIEF as well as LAUNCH_PROMPT."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("clinic_intake", [], "GENERATE")),
+        store_ids={"event_bus"},
+    )
+    assert "llm_writes_brief: never" in load_brief_template()
+    forbidden = compiled.text.split("\nFORBIDDEN\n", 1)[1]
+    for needle in (
+        "HARD RULE",
+        "sealed vendor",
+        "vendor/**",
+        "vendor_blocks/**",
+        "vendor_blocks_mirror/**",
+        "blocks.lock.json",
+        "build_ledger.jsonl",
+        ".git/**",
+        "SEALED_AFTER_CLONER",
+        "ba_allowed_globs",
+        "docs/openapi.json",
+        "openapi.json",
+        "execute(action=)",
+    ):
+        assert needle in forbidden
+    assert "never patch vendored blocks" in forbidden.lower()
+    assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
 def test_claimed_reuse_missing_from_store_halts():

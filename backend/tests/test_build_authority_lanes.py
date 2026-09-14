@@ -68,6 +68,30 @@ def test_each_role_is_confined_to_its_lane(workspace, role, allowed, denied):
         assert_write_allowed(role, workspace / denied, workspace=workspace)
 
 
+def test_writer_may_write_named_openapi_files_not_vendor(workspace):
+    """Store ships root + docs OpenAPI; named files only, vendor stays sealed."""
+    from app.factory.build.authority import SEALED_AFTER_CLONER
+
+    assert assert_write_allowed(
+        BuildRole.WRITER, workspace / "openapi.json", workspace=workspace
+    )
+    (workspace / "docs").mkdir()
+    assert assert_write_allowed(
+        BuildRole.WRITER, workspace / "docs" / "openapi.json", workspace=workspace
+    )
+    with pytest.raises(AuthorityError, match="its lanes are"):
+        assert_write_allowed(
+            BuildRole.WRITER, workspace / "openapi.yaml", workspace=workspace
+        )
+    with pytest.raises(AuthorityError, match="sealed after CLONER"):
+        assert_write_allowed(
+            BuildRole.WRITER,
+            workspace / "vendor" / "openapi.json",
+            workspace=workspace,
+            sealed=SEALED_AFTER_CLONER,
+        )
+
+
 def test_writer_cannot_touch_the_tests_that_judge_it(workspace):
     """The load-bearing separation: no self-grading."""
     with pytest.raises(AuthorityError):
