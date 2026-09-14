@@ -21,6 +21,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     AuditEvent.__table__.create(bind=bind, checkfirst=True)
     HealApproval.__table__.create(bind=bind, checkfirst=True)
+    # Phase 1: the legacy float->NUMERIC conversion is Postgres-only DDL;
+    # SQLite tenant stores are created fresh and never carried float money.
+    if bind.dialect.name != "postgresql":
+        return
     # Convert legacy float money columns to NUMERIC(20,4) when present.
     op.execute(
         """

@@ -19,24 +19,32 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    is_pg = bind.dialect.name == "postgresql"
+    # Phase 1 (option B): tenant stores are SQLite files. Postgres-only DDL
+    # (extension, ivfflat/gin indexes) applies to the control-plane database
+    # only; a tenant file gets schema parity without the pg-specific indexes.
+    if is_pg:
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     # RESIDUAL GAP (G5): initial schema still uses create_all for bootstrap speed.
     # Wave 2+ migrations (0002+) use explicit table DDL. Full DDL-only 0001 rewrite
     # is deferred — see docs/audits/STEWARD_V2_AGENT_AUDIT.md domain 12.
     Base.metadata.create_all(bind=bind)
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_steward_chunk_embedding "
-        "ON document_chunks USING ivfflat (embedding vector_cosine_ops) "
-        "WITH (lists = 100)"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_steward_chunk_tsv "
-        "ON document_chunks USING gin (text_tsv)"
-    )
+    if is_pg:
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS ix_steward_chunk_embedding "
+            "ON document_chunks USING ivfflat (embedding vector_cosine_ops) "
+            "WITH (lists = 100)"
+        )
+        op.execute(
+            "CREATE INDEX IF NOT EXISTS ix_steward_chunk_tsv "
+            "ON document_chunks USING gin (text_tsv)"
+        )
 
 
 def downgrade() -> None:
     bind = op.get_bind()
-    op.execute("DROP INDEX IF EXISTS ix_steward_chunk_tsv")
-    op.execute("DROP INDEX IF EXISTS ix_steward_chunk_embedding")
+    is_pg = bind.dialect.name == "postgresql"
+    if is_pg:
+        op.execute("DROP INDEX IF EXISTS ix_steward_chunk_tsv")
+        op.execute("DROP INDEX IF EXISTS ix_steward_chunk_embedding")
     Base.metadata.drop_all(bind=bind)

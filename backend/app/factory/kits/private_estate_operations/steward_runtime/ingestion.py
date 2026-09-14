@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.steward.embedding_guard import assert_fingerprint_compatible
@@ -241,6 +242,14 @@ def ingest_bytes(
         pieces = _chunk_text(unit.text)
         vectors = embedder.embed_batch(pieces) if pieces else []
         for text, vector in zip(pieces, vectors):
+            # Phase 1: text_tsv is app-populated — tsvector on the Postgres
+            # control plane, NULL on SQLite tenant stores (the pg FTS legs
+            # never run against tenant files).
+            tsv = (
+                func.to_tsvector("english", text)
+                if session.get_bind().dialect.name == "postgresql"
+                else None
+            )
             chunk = DocumentChunk(
                 id=uuid.uuid4().hex,
                 tenant_id=tenant_id,
@@ -250,6 +259,7 @@ def ingest_bytes(
                 chunk_ordinal=ordinal,
                 text=text,
                 embedding=vector,
+                text_tsv=tsv,
                 source_filename=filename,
                 page=unit.page,
                 sheet=unit.sheet,
