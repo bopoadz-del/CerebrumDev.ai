@@ -30,8 +30,8 @@ MIRROR = ROOT / "backend/app/factory/vendor_blocks_mirror"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 def test_nothing_is_recorded_as_unpinned(tmp_path):

@@ -192,8 +192,7 @@ def test_vendor_is_sealed_after_cloner(tmp_path: Path):
         )
 
 
-def test_opening_pilot_does_not_rewrite_vendor(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def test_opening_pilot_does_not_rewrite_vendor(tmp_path, monkeypatch, stub_coder):
     out = tmp_path / "build"
     first = RoleRunner(load_blueprint(SMOKE), out).run()
     assert first.ok, first.to_dict()

@@ -348,14 +348,13 @@ def test_the_route_prompt_forbids_inventing_constraints():
 # -- end to end, keyless ---------------------------------------------------
 
 
-def test_a_constrained_build_passes_its_own_route_test(tmp_path, monkeypatch):
+def test_a_constrained_build_passes_its_own_route_test(tmp_path, monkeypatch, stub_coder):
     """The regression, end to end: the five-capability blueprint that failed.
 
-    Runs on the deterministic path so CI exercises it with no key. The
-    templated route enforces the declared constraints, so this would go red
-    again if the sample payload and the route ever stopped agreeing.
+    Runs keyless (stubbed coding agent). The templated route enforces the
+    declared constraints, so this would go red again if the sample payload
+    and the route ever stopped agreeing.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     out = tmp_path / "build"
     outcome = RoleRunner(load_blueprint(FIELD_OPS), out).run()
 
@@ -372,13 +371,12 @@ def test_a_constrained_build_passes_its_own_route_test(tmp_path, monkeypatch):
     assert "'sample'" not in tests.split("status")[1][:80]
 
 
-def test_the_route_actually_rejects_a_value_outside_the_vocabulary(tmp_path, monkeypatch):
+def test_the_route_actually_rejects_a_value_outside_the_vocabulary(tmp_path, monkeypatch, stub_coder):
     """The constraint must be real, not decorative.
 
     Without this, a route that ignored CONSTRAINTS entirely would pass every
     other test here -- the payload is valid, so nothing would notice.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     out = tmp_path / "build"
     assert RoleRunner(load_blueprint(FIELD_OPS), out).run().ok
 

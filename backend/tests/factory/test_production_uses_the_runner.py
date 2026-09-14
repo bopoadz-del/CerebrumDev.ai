@@ -41,8 +41,8 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
     monkeypatch.delenv("FACTORY_BUILD_ENGINE", raising=False)
 
 
@@ -63,7 +63,7 @@ def test_the_runner_is_the_default_engine():
 
 
 def test_production_floor_budget_is_a_code_phase(monkeypatch):
-    """Without a factory key the Floor still gates a 20–30 min code pass.
+    """Without a factory key the Floor still gates a 20â€“30 min code pass.
 
     When the coder is keyed, ``factory_auto_pilot_enabled`` starts the
     staged 30 min stop-and-inspect wall (see test_auto_pilot).
@@ -170,7 +170,7 @@ def test_a_finished_build_carries_agent_manufactured_shape(tmp_path):
     assert "blocks.lock.json" in gate, "the gate does not audit block provenance"
     assert "coder LLM" in gate, "the gate does not report agent authorship"
 
-    # The customer download is this zip — not the on-disk workspace. A parts
+    # The customer download is this zip â€” not the on-disk workspace. A parts
     # list that only exists on disk is not a delivered platform.
     import zipfile
 

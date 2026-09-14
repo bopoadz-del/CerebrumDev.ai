@@ -34,8 +34,8 @@ OLD = "b" * 40
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 def _ledger(root: Path, product: str, clones) -> BuildLedger:

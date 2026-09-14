@@ -35,14 +35,19 @@ from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.roles import RoleContext
 from app.factory.build.runner import RoleRunner
 from app.factory.build_jobs import build_status
+from app.factory import coder as _coder_module
+
+#: The autouse ``stub_coder`` fixture replaces ``_llm_code_call``; the
+#: timeout test below exercises the real function, so keep a handle.
+_REAL_LLM_CODE_CALL = _coder_module._llm_code_call
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 def test_note_is_a_noop_without_a_progress_sink():
@@ -295,6 +300,10 @@ def test_a_read_timeout_is_not_retried(monkeypatch):
 
     from app.factory import coder
 
+    # The autouse stub_coder fixture stubs _llm_code_call for build
+    # tests; this test is about the real function's timeout behaviour.
+    monkeypatch.setattr(coder, "_llm_code_call", _REAL_LLM_CODE_CALL)
+
     calls = []
 
     def _timeout(url, json=None, headers=None, timeout=None):
@@ -431,7 +440,7 @@ def test_the_artifact_declares_the_dependency_its_release_gate_needs(tmp_path):
 
 def test_runner_readme_installs_dev_deps_before_pytest(tmp_path):
     """README 'Run it' must not tell a stranger to pytest after only
-    requirements.txt — pytest lives in requirements-dev.txt on the runner path."""
+    requirements.txt â€” pytest lives in requirements-dev.txt on the runner path."""
     out = tmp_path / "build"
     runner = RoleRunner(load_blueprint(SMOKE), out)
     assert runner.run().ok

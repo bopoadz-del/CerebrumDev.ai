@@ -201,11 +201,27 @@ def test_six_required_five_authored_meets_absolute_floor():
     assert four_of_six.below_floor is True
 
 
-def test_unmeasured_authorship_is_not_a_silent_pass_or_refuse():
+def test_unmeasured_authorship_is_a_refusal():
+    """Unmeasured authorship is below the floor — the loudest refusal.
+
+    A run that never recorded authorship data cannot prove it met the
+    launching-ready bar, so it must refuse Store-green exactly like a
+    measured thin run. There is no silent-pass path.
+    """
     snap = full_pilot_authorship_from({"pilot_ready": True})
     assert snap.measured is False
     assert snap.meets_floor is False
-    assert snap.below_floor is False
+    assert snap.below_floor is True
+
+
+def test_zero_agent_written_is_a_measured_refusal():
+    """agent_written=0 is measured and below floor — never a pass."""
+    zero = full_pilot_authorship_from(
+        {"authorship": {"agent_written": 0, "artifacts": 23, "templated": 23}}
+    )
+    assert zero.measured is True
+    assert zero.meets_floor is False
+    assert zero.below_floor is True
 
 
 def test_export_blocker_refuses_thin_pilot_not_code_cycle():

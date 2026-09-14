@@ -264,10 +264,15 @@ def test_the_coder_is_not_called_when_disabled(blueprint, tmp_path, monkeypatch)
     )
 
     out = tmp_path / "build"
-    assert RoleRunner(blueprint, out).run().ok
+    outcome = RoleRunner(blueprint, out).run()
     assert called == []
     for text in _headers(out).values():
         assert "deterministic contract template" in text
+    # New honesty: a coder-disabled template-only build is refused at the
+    # WRITER gate. Zero agent-authored artifacts is writer_no_output —
+    # templated file writes never count as a coding-agent pass.
+    assert not outcome.ok
+    assert "writer_no_output" in (outcome.detail or "")
 
 
 def test_rework_findings_are_handed_to_the_coder(blueprint, tmp_path, monkeypatch):

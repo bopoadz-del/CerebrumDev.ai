@@ -34,3 +34,4 @@ artifacts/audits/
 # and must never be committed (they were, as test-run byproducts).
 artifacts/steward_*.json
 backend/.venv-factory/
+backend/.venv-test/

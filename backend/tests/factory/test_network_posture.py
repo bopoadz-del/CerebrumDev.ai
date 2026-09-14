@@ -140,8 +140,7 @@ def test_cloner_emits_p1_capture_without_blocks_root(tmp_path):
     assert meta["permissions"]["network"] is False
 
 
-def test_role_runner_tree_is_p1(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def test_role_runner_tree_is_p1(tmp_path, monkeypatch, stub_coder):
     out = tmp_path / "build"
     result = RoleRunner(load_blueprint(SMOKE), out).run()
     assert result.ok, result.to_dict()

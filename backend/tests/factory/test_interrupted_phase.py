@@ -12,7 +12,7 @@ different entity names on each call, so two partial passes do not compose.
 
 Resume made it worse rather than catching it: WRITER's last *terminal* event
 was GATE_PASSED from the previous round, so completed_roles() called it done
-and resume_point() returned TESTER — which would test a torn app/. The
+and resume_point() returned TESTER â€” which would test a torn app/. The
 existing resume test only ever kills *between* phases, so it could not see
 this.
 
@@ -40,8 +40,8 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 @pytest.fixture()

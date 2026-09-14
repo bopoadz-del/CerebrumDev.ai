@@ -1,7 +1,7 @@
 """S10: a generated product writes real data, with versioned migrations.
 
-The restore drill is PERFORMED here (backup file → wipe → restore → assert
-rows), not merely configured. Schema v1→v2 on a populated DB rolls back.
+The restore drill is PERFORMED here (backup file â†’ wipe â†’ restore â†’ assert
+rows), not merely configured. Schema v1â†’v2 on a populated DB rolls back.
 Parallel writes run at the FastAPI sync threadpool size.
 """
 
@@ -37,11 +37,30 @@ def _no_paid_calls(monkeypatch):
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    # Module-scoped: autouse monkeypatch has not run yet.
-    os.environ["FACTORY_CODER_ENABLED"] = "0"
-    out = tmp_path_factory.mktemp("s10") / "build"
-    outcome = RoleRunner(load_blueprint(SMOKE), out).run()
-    assert outcome.ok, outcome.to_dict()
+    # Module-scoped: autouse monkeypatch has not run yet â€” apply the coder
+    # stubs directly so the build records measured authorship.
+    prev_coder = os.environ.get("FACTORY_CODER_ENABLED")
+    prev_oneshot = os.environ.get("FACTORY_BRIEF_HTTP_ONESHOT")
+    os.environ["FACTORY_CODER_ENABLED"] = "1"
+    os.environ["FACTORY_BRIEF_HTTP_ONESHOT"] = "1"
+    from tests.factory.coder_stub import apply_stub_coder
+
+    patches = apply_stub_coder()
+    try:
+        out = tmp_path_factory.mktemp("s10") / "build"
+        outcome = RoleRunner(load_blueprint(SMOKE), out).run()
+        assert outcome.ok, outcome.to_dict()
+    finally:
+        for patch in patches:
+            patch.stop()
+        if prev_coder is None:
+            os.environ.pop("FACTORY_CODER_ENABLED", None)
+        else:
+            os.environ["FACTORY_CODER_ENABLED"] = prev_coder
+        if prev_oneshot is None:
+            os.environ.pop("FACTORY_BRIEF_HTTP_ONESHOT", None)
+        else:
+            os.environ["FACTORY_BRIEF_HTTP_ONESHOT"] = prev_oneshot
     return out
 
 

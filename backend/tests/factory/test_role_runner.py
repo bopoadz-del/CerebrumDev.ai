@@ -39,19 +39,23 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    """These tests are about the RUNNER, not the coder.
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Every build runs with a stubbed coding agent, never a live one.
 
-    FACTORY_CODER_ENABLED defaults to 1, so on any machine with a live key in
-    backend/.env every build here hit the real LLM: 399s locally against 29s
-    in CI, real money per run, and non-determinism injected into tests that
-    have nothing to do with the coder. Pinned off; the coder path is covered
-    by tests/factory/test_writer_coder_wiring.py, which mocks it and asserts
-    authorship, fallback, disabled-state and rework hand-off.
-
-    Individual tests below re-enable it deliberately with a stub.
+    The stubbed agent authors the README, so builds record measured
+    authorship and the WRITER gate's ``writer_no_output`` check passes
+    honestly (the build is a coding-agent simulation, not a template-only
+    run). No paid calls, no network, no kimi CLI.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+    monkeypatch.delenv("FACTORY_AUTO_PILOT", raising=False)
+    for var in (
+        "KIMI_API_KEY",
+        "CEREBRUM_LLM_API_KEY",
+        "CEREBRUM_FACTORY_LLM_API_KEY",
+        "KIMI_MOCK",
+        "CEREBRUM_LLM_MOCK",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
 
 @pytest.fixture()
@@ -355,7 +359,7 @@ def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path):
 
 def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path):
     """Time runs out mid-build: FAILED_BUDGET_SPENT, not a partial success."""
-    ticks = iter([0.0, 0.0, 5.0, 500.0, 500.0, 500.0, 500.0, 500.0])
+    ticks = iter([0.0, 0.0, 5.0] + [500.0] * 60)
 
     runner = RoleRunner(
         blueprint,
@@ -518,14 +522,14 @@ def test_blueprint_hash_is_the_resume_key_and_is_stable(blueprint):
     assert blueprint_hash(load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")) not in hashes
 
 
-def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path, monkeypatch):
-    """Byte-reproducible with the coding agent off.
+def test_two_runs_produce_an_identical_artifact(blueprint, tmp_path):
+    """Byte-reproducible with the deterministic stubbed agent.
 
-    Scoped deliberately. Once the coder is wired in, whole-tree equality is
-    only achievable while the agent is idle -- an LLM does not emit the same
-    bytes twice. The coder-on guarantee is the narrower one asserted below.
+    The stub writes the same bytes every run. Once a live coder is wired
+    in, whole-tree equality is only achievable while the agent is idle —
+    an LLM does not emit the same bytes twice. The coder-on guarantee is
+    the narrower one asserted below.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     a, b = tmp_path / "a", tmp_path / "b"
     assert RoleRunner(blueprint, a).run().ok
     assert RoleRunner(blueprint, b).run().ok

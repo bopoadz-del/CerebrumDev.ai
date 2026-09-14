@@ -22,8 +22,8 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 def test_two_builds_share_a_digest(tmp_path):

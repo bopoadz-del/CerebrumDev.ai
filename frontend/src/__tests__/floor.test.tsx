@@ -504,6 +504,46 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     ).toBeDisabled()
   })
 
+  it('“0 artifacts” and “Store-green” cannot co-render when nothing was authored', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        outcome: 'SUCCESS',
+        pilot_ready: true,
+        acceptance: { passed: 12, total: 12, ok: true },
+        cycle: 'pilot',
+        authorship: { artifacts: 23, agent_written: 0, templated: 23 },
+        level_grade: {
+          level: 'STORE_GREEN',
+          pilot_ready: true,
+          acceptance: { passed: 12, total: 12, ok: true },
+          three_gate: { CODE: 'PASS', PRODUCT: 'PASS', STORE: 'PASS' },
+          blockers: [],
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'veterinary-care', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_zero_artifacts" goPlatforms={() => {}} />)
+    expect(await screen.findByText(/Coding agent wrote 0 artifacts/)).toBeInTheDocument()
+    expect(screen.getByTestId('floor-prototype-pill')).toHaveTextContent(
+      'Code-green (prototype)',
+    )
+    // The two strings must never share a render: zero artifacts refuses the
+    // Store-green paint even when the backend overclaims it.
+    expect(screen.queryByText(/Store-green/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Store-green zip ready/)).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Export (.zip) — below full-pilot authorship floor' }),
+    ).toBeDisabled()
+  })
+
   it('refuses Floor Download when CLI-failed card is not actually pilot-ready', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({

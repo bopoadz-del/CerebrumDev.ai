@@ -483,6 +483,55 @@ def gate_cloner_contract(ctx: GateContext) -> GateResult:
     )
 
 
+def _writer_no_output_verdict(workspace: Path) -> Optional[GateResult]:
+    """Zero agent-authored artifacts refuses the WRITER gate.
+
+    Reads ``docs/build_provenance.json`` off the absorbed workspace: the
+    WRITER handler writes it before this gate runs. Templated file
+    writes never count — only coder LLM / coder CLI / FACTORY_CODE_CLI /
+    harvested keep-path sources do. A keep-path with ``cli_authored_ids``
+    or ``kept_handler_ids`` is agent work and is not refused.
+    """
+    import json
+
+    from app.factory.build.authorship import (
+        WRITER_NO_OUTPUT,
+        cli_authored_ids_from,
+        kept_handler_ids_from,
+        writer_authorship_counts,
+    )
+
+    manifest = workspace / "docs" / "build_provenance.json"
+    if not manifest.is_file():
+        return None
+    try:
+        prov = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(prov, dict):
+        return None
+    counts = writer_authorship_counts(prov.get("artifact_sources"))
+    dispatch = prov.get("brief_dispatch") or {}
+    cli_ids = cli_authored_ids_from(dispatch) or []
+    kept_ids = kept_handler_ids_from(dispatch)
+    if counts["agent_written"] > 0 or cli_ids or kept_ids:
+        return None
+    return GateResult(
+        ok=False,
+        gate="writer_contract",
+        detail=(
+            f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts — "
+            f"{counts['artifacts']} file(s) written, all templated; "
+            "templated file writes do not count"
+        ),
+        findings=[
+            f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts "
+            f"({counts['artifacts']} templated)"
+        ],
+        payload=dict(counts),
+    )
+
+
 def gate_writer_contract(ctx: GateContext) -> GateResult:
     """WRITER: the workspace parses *and* fails closed when a block fails.
 
@@ -490,7 +539,14 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     its handler's result and persisted anyway passed every phase and reached
     the customer. Syntax first because it is cheap and its failure mode is
     clearer; behaviour second because that is the claim worth checking.
+
+    A workspace whose provenance records zero agent-authored artifacts
+    refuses first with ``writer_no_output`` — a compiling, behaviour-clean
+    tree of pure templates is still not a WRITER pass.
     """
+    no_output = _writer_no_output_verdict(ctx.workspace)
+    if no_output is not None:
+        return no_output
     compiled = gate_workspace_compiles(ctx)
     if not compiled.ok:
         return compiled

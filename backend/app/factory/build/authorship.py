@@ -41,6 +41,7 @@ __all__ = (
     "refuse_dual_listed_caps",
     "writer_authorship_counts",
     "writer_contract_role_detail",
+    "WRITER_NO_OUTPUT",
 )
 
 #: Absolute launching-ready bar when n_required is unknown or ≥5.
@@ -50,6 +51,11 @@ __all__ = (
 #: ``cli_authored_ids``).
 FULL_PILOT_MIN_AUTHORED_ACTIONS = 5
 FULL_PILOT_AUTHORSHIP_CHECK = "full_pilot_authorship"
+
+#: Named WRITER-gate refusal: zero agent-authored artifacts. Templated
+#: file writes never count toward this verdict (only coder LLM / coder
+#: CLI / FACTORY_CODE_CLI / harvested keep-path sources do).
+WRITER_NO_OUTPUT = "writer_no_output"
 
 #: Workspace files that may list required / planned capability ids.
 _N_REQUIRED_WORKSPACE_FILES = (
@@ -582,7 +588,15 @@ class FullPilotAuthorship:
 
     @property
     def below_floor(self) -> bool:
-        return self.measured and not self.meets_floor
+        """Zero or unmeasured authorship is a refusal, never a silent pass.
+
+        ``measured`` counts the attempt (``agent_artifacts`` /
+        ``agent_written`` / ``cli_authored_ids`` present). An unmeasured
+        run cannot prove it met the floor, so it is below it; a measured
+        run below ``need`` is below it too. Only a measured run at or
+        above ``need`` is not.
+        """
+        return (not self.measured) or (not self.meets_floor)
 
 
 def full_pilot_authorship_from(
@@ -596,9 +610,10 @@ def full_pilot_authorship_from(
     """Count agent-written action handlers / ``cli_authored_ids``.
 
     ``full_pilot`` needs ≥ ``full_pilot_authorship_need(n_required)`` of
-    either. Missing counts are not a pass. A present count below the
-    floor is a measured refuse (VetCare action_py=3). A 4-cap golden
-    with 4 authored ids meets the floor when ``n_required`` is 4.
+    either. Missing counts are a refusal, not a pass: an unmeasured run
+    is ``below_floor`` exactly like a measured run below the bar
+    (VetCare action_py=3). A 4-cap golden with 4 authored ids meets the
+    floor when ``n_required`` is 4.
     """
     status = dict(status or {})
     authorship = status.get("authorship")

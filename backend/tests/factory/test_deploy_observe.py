@@ -48,11 +48,30 @@ def _no_paid_calls(monkeypatch):
 
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
-    # Module-scoped: autouse monkeypatch has not run yet.
-    os.environ["FACTORY_CODER_ENABLED"] = "0"
-    out = tmp_path_factory.mktemp("s11") / "build"
-    outcome = RoleRunner(load_blueprint(SMOKE), out).run()
-    assert outcome.ok, outcome.to_dict()
+    # Module-scoped: autouse monkeypatch has not run yet â€” apply the coder
+    # stubs directly so the build records measured authorship.
+    prev_coder = os.environ.get("FACTORY_CODER_ENABLED")
+    prev_oneshot = os.environ.get("FACTORY_BRIEF_HTTP_ONESHOT")
+    os.environ["FACTORY_CODER_ENABLED"] = "1"
+    os.environ["FACTORY_BRIEF_HTTP_ONESHOT"] = "1"
+    from tests.factory.coder_stub import apply_stub_coder
+
+    patches = apply_stub_coder()
+    try:
+        out = tmp_path_factory.mktemp("s11") / "build"
+        outcome = RoleRunner(load_blueprint(SMOKE), out).run()
+        assert outcome.ok, outcome.to_dict()
+    finally:
+        for patch in patches:
+            patch.stop()
+        if prev_coder is None:
+            os.environ.pop("FACTORY_CODER_ENABLED", None)
+        else:
+            os.environ["FACTORY_CODER_ENABLED"] = prev_coder
+        if prev_oneshot is None:
+            os.environ.pop("FACTORY_BRIEF_HTTP_ONESHOT", None)
+        else:
+            os.environ["FACTORY_BRIEF_HTTP_ONESHOT"] = prev_oneshot
     return out
 
 
@@ -144,7 +163,7 @@ def _wait_health(port: int, proc: subprocess.Popen | None = None, timeout: float
             )
         try:
             return _http_json(f"http://127.0.0.1:{port}/health", timeout=1.0)
-        except Exception as exc:  # noqa: BLE001 — wait loop
+        except Exception as exc:  # noqa: BLE001 â€” wait loop
             last = exc
             time.sleep(0.1)
     raise AssertionError(f"health did not answer on {port}: {last}")

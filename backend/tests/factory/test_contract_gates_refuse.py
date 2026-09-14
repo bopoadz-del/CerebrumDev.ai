@@ -11,6 +11,7 @@ quietly.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -96,3 +97,69 @@ def test_writer_contract_does_not_stop_at_compilation(tmp_path):
         "WRITER contract; only the compile half can be running"
     )
     assert result.gate != "workspace_compiles" or "compile" not in result.detail.lower()
+
+
+def _write_provenance(root: Path, sources: dict, dispatch: dict | None = None) -> None:
+    docs = root / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "build_provenance.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "build_provenance.v1",
+                "artifact_sources": sources,
+                "brief_dispatch": dispatch or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_writer_contract_refuses_zero_agent_artifacts(tmp_path):
+    """Provenance with agent_written=0 is writer_no_output, never a pass.
+
+    A compiling tree of pure templates is still not a WRITER pass:
+    templated file writes do not count as agent authorship.
+    """
+    _write_provenance(
+        tmp_path,
+        {
+            "audit": "deterministic contract template",
+            "workflow": "deterministic contract template",
+        },
+    )
+    result = gate_writer_contract(_ctx(tmp_path, BuildRole.WRITER))
+    assert result.ok is False
+    assert result.gate == "writer_contract"
+    assert "writer_no_output" in result.detail
+    assert "templated file writes do not count" in result.detail
+    assert result.findings and any(
+        "writer_no_output" in f for f in result.findings
+    )
+    assert result.payload.get("agent_written") == 0
+    assert result.payload.get("templated") == 2
+
+
+def test_writer_contract_keep_path_ids_are_not_zero_output(tmp_path):
+    """CLI keep-path cli_authored_ids are agent work, not zero output."""
+    _write_provenance(
+        tmp_path,
+        {"readme": "deterministic contract template"},
+        {
+            "via": "cli",
+            "ok": True,
+            "cli_authored_ids": ["audit", "workflow"],
+        },
+    )
+    result = gate_writer_contract(_ctx(tmp_path, BuildRole.WRITER))
+    assert "writer_no_output" not in result.detail
+
+
+def test_writer_contract_missing_provenance_is_not_zero_output(tmp_path):
+    """No provenance file keeps the legacy path — the check only fires on
+    measured zero, never on absence."""
+    app = tmp_path / "app"
+    app.mkdir(parents=True, exist_ok=True)
+    (app / "routes.py").write_text("def broken(:\n", encoding="utf-8")
+    result = gate_writer_contract(_ctx(tmp_path, BuildRole.WRITER))
+    assert result.ok is False
+    assert "writer_no_output" not in result.detail

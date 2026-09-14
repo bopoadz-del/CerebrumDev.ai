@@ -41,8 +41,8 @@ LIVE_CAPS = {
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
     monkeypatch.delenv("FACTORY_AUTO_PILOT", raising=False)
     for var in (
         "KIMI_API_KEY",

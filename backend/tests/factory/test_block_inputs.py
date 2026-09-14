@@ -1370,7 +1370,7 @@ def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
     assert "'role': 'sample'" not in routes
 
 
-def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(tmp_path, monkeypatch):
+def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(tmp_path, monkeypatch, stub_coder):
     """End-to-end: the five field-ops capability shapes.
 
     Residential-lettings failed those shapes at pilot. A keyless field_ops
@@ -1378,7 +1378,6 @@ def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(tmp_path, mo
     ``app/block_inputs.py`` and pass
     ``test_every_capability_route_accepts_payload``.
     """
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
     from app.factory.blueprint import load_blueprint
     from app.factory.build.runner import RoleRunner
 

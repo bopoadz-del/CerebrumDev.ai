@@ -27,6 +27,7 @@ from app.factory.build.authority import (
     BuildRole,
     _matches_lane,
 )
+from app.factory.build.authorship import WRITER_NO_OUTPUT
 
 RECEIPT_INVALID = "RECEIPT_INVALID"
 PATHS_VIOLATED = "PATHS_VIOLATED"
@@ -212,9 +213,20 @@ def assert_ids_equal_blueprint(
     authored: Iterable[str],
     blueprint_ids: Iterable[str],
 ) -> None:
-    """Set equality. Missing or extra = FAILED. No partial credit."""
+    """Set equality. Missing or extra = FAILED. No partial credit.
+
+    An empty required set is not a pass: there is nothing to author, so
+    a clean empty receipt proves nothing and must never read as a clean
+    handoff (``writer_no_output``).
+    """
     claimed = {str(x).strip() for x in authored if str(x).strip()}
     required = {str(x).strip() for x in blueprint_ids if str(x).strip()}
+    if not required:
+        raise ReceiptInvalid(
+            f"{RECEIPT_INVALID}: blueprint capability set is empty — "
+            f"nothing was authored ({WRITER_NO_OUTPUT}); an empty "
+            "blueprint is not a pass"
+        )
     missing = sorted(required - claimed)
     extra = sorted(claimed - required)
     if missing or extra:

@@ -35,8 +35,8 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 def test_preflight_records_required_keys():
@@ -173,7 +173,7 @@ def test_preflight_repo_root_follows_factory_repo_root():
 
 
 def test_old_docker_layout_is_factory_source_missing(tmp_path):
-    """COPY backend/app → /app/app without planting backend/ or ci.yml.
+    """COPY backend/app â†’ /app/app without planting backend/ or ci.yml.
 
     That is the live cerebrumdev-backend failure: factory_source_missing
     lists every inventory path.

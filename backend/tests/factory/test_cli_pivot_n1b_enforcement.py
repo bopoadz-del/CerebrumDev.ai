@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -98,6 +99,58 @@ def test_missing_and_extra_ids_are_no_partial_credit():
                 "tests/test_alpha.py",
             ],
         )
+
+
+def test_empty_blueprint_set_is_not_a_pass():
+    """An empty required set must never read as a clean HANDOFF_TO_N3.
+
+    A clean receipt+diff over zero required capabilities proves nothing
+    was authored. It is RECEIPT_INVALID / writer_no_output.
+    """
+    bp = _blueprint("alpha")
+    with pytest.raises(ReceiptInvalid, match="writer_no_output"):
+        enforce_receipt(
+            blueprint=bp,
+            blueprint_ids=set(),
+            receipt={"cli_authored_ids": []},
+            changed_paths=[],
+        )
+    # A legacy/duck-typed blueprint whose capabilities yield no ids is the
+    # same hole — the pydantic model refuses empty capabilities at intake,
+    # but the receipt seam must not depend on that.
+    stub = SimpleNamespace(capabilities=[])
+    assert blueprint_capability_set(stub) == set()
+    with pytest.raises(ReceiptInvalid, match="empty"):
+        enforce_receipt(
+            blueprint=stub,
+            receipt={"cli_authored_ids": []},
+            changed_paths=[],
+        )
+
+
+def test_empty_blueprint_seam_is_receipt_invalid_not_handoff(tmp_path, monkeypatch):
+    """run_cli_pivot with an empty required set refuses, never HANDOFF_TO_N3."""
+    import app.factory.build.cli_receipt as receipt_mod
+
+    bp = _blueprint("alpha")
+    monkeypatch.setattr(
+        receipt_mod, "blueprint_capability_set", lambda *_a, **_k: set()
+    )
+    result = run_cli_pivot(
+        bp,
+        tmp_path / "empty-bp",
+        launch=lambda **_k: ExecutorLaunch(
+            started=True,
+            receipt={"cli_authored_ids": []},
+            changed_paths=[],
+        ),
+    )
+    assert result.honesty == RECEIPT_INVALID
+    assert result.honesty != HANDOFF_TO_N3
+    assert result.failure_class == CLASS_CONTENT
+    assert "writer_no_output" in result.detail
+    assert result.ok is False
+    assert result.next is None
 
 
 def test_claimed_id_must_appear_as_a_real_diff_file():

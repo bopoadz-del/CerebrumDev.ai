@@ -385,6 +385,25 @@ def test_inspect_file_templated_is_not_capability_templated(tmp_path):
 
 def test_stale_hard_stop_inspect_does_not_poison_store_green_status(tmp_path):
     ledger = _ledger_with_written(tmp_path)
+    # Measured authorship on disk: the pilot really authored its caps, so
+    # the inverted floor must NOT demote this Store-green status.
+    docs = tmp_path / "build" / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "build_provenance.json").write_text(
+        json.dumps(
+            {
+                "artifact_sources": {
+                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
+                },
+                "brief_dispatch": {
+                    "via": "cli",
+                    "ok": True,
+                    "cli_authored_ids": list(INSURE_CAPS),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     ledger.append(
         EventKind.RUN_SUCCEEDED,
         detail="CODE PASS — suite; PRODUCT PASS — persist; STORE PASS — ops",
@@ -429,6 +448,25 @@ def test_pilot_success_closing_inspect_matches_ledger(tmp_path):
         "ok": True,
         "cli_authored_ids": list(INSURE_CAPS),
     }
+    # Measured authorship on disk so the inverted floor does not demote
+    # this legitimately-authored pilot SUCCESS.
+    docs = tmp_path / "build" / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "build_provenance.json").write_text(
+        json.dumps(
+            {
+                "artifact_sources": {
+                    cid: "coder CLI (/usr/local/bin/kimi)" for cid in INSURE_CAPS
+                },
+                "brief_dispatch": {
+                    "via": "cli",
+                    "ok": True,
+                    "cli_authored_ids": list(INSURE_CAPS),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     for cid in INSURE_CAPS:
         runner.ledger.append(
             EventKind.NOTE,

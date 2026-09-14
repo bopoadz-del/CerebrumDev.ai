@@ -241,13 +241,21 @@ def grade_workspace(
             if floor.n_required is not None
             else ""
         )
-        blockers.append(
-            "authorship is below the full-pilot floor "
-            f"(action_py={floor.action_py}, "
-            f"cli_authored_ids={len(floor.cli_authored_ids)}, "
-            f"need ≥{floor.need}{n_req})"
-        )
-        # Honesty: a measured thin keep-path cannot stay Store-green.
+        if not floor.measured:
+            blockers.append(
+                "authorship is unmeasured — treated as below the "
+                f"full-pilot floor (action_py={floor.action_py}, "
+                f"cli_authored_ids={len(floor.cli_authored_ids)}, "
+                f"need ≥{floor.need}{n_req})"
+            )
+        else:
+            blockers.append(
+                "authorship is below the full-pilot floor "
+                f"(action_py={floor.action_py}, "
+                f"cli_authored_ids={len(floor.cli_authored_ids)}, "
+                f"need ≥{floor.need}{n_req})"
+            )
+        # Honesty: an unmeasured or measured thin run cannot stay Store-green.
         ready = False
 
     from app.factory.build.store_acceptance import (

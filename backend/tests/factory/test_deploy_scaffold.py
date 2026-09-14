@@ -7,7 +7,7 @@ generator showed Dockerfile, Procfile, render.yaml and .env.example among the
 developer's machine and nowhere else.
 
 The scaffold is templated rather than coder-written on purpose. Container and
-process config is mechanical — there is no domain judgement for an agent to
+process config is mechanical â€” there is no domain judgement for an agent to
 add, and a hallucinated base image or start command is a deployment failure
 rather than a test failure.
 """
@@ -27,8 +27,8 @@ SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 
 
 @pytest.fixture(autouse=True)
-def _no_paid_calls(monkeypatch):
-    monkeypatch.setenv("FACTORY_CODER_ENABLED", "0")
+def _no_paid_calls(monkeypatch, stub_coder):
+    """Stubbed coding agent (authors the README) — no paid calls."""
 
 
 @pytest.fixture()
