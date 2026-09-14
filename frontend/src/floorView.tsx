@@ -21,6 +21,7 @@ import {
   hasSourcedLevel,
   honestLevel,
   isAcceptancePendingPrototype,
+  isAwaitingMrFinanceWriter,
   isPilotZipReady,
   shouldDemoteFounding,
   phaseBarFraction,
@@ -247,6 +248,7 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
 }
 
 function coderTakeoverHeading(build: BuildStatus | null): string {
+  if (isAwaitingMrFinanceWriter(build)) return 'Awaiting MR. FINANCE to launch Writer'
   if (build?.state === 'succeeded') {
     if (isPilotZipReady(build)) return 'Coding agent finished'
     if (isAcceptancePendingPrototype(build)) {
@@ -294,6 +296,12 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
     return build.auto_pilot
       ? 'Code-cycle 5/5 passed. Not yet pilot-ready. The pilot cycle should open automatically.'
       : 'Code-cycle 5/5 passed. Not yet pilot-ready. Continue to open a pilot cycle.'
+  }
+  if (isAwaitingMrFinanceWriter(build)) {
+    return (
+      (build.detail || 'Collector and Cloner finished.') +
+      ' Honesty awaiting_mr_finance_writer. Launch Writer when you have reviewed the handoff — Floor will not auto-start Cursor BA.'
+    )
   }
   if (build.state === 'failed' || build.state === 'stalled') {
     return 'The coding agent stopped: ' + (build.detail ?? 'build did not pass its gates') + '.'
@@ -354,9 +362,12 @@ function hydrateFromDesign(design: ProductDesign): {
     return { msgs, coderActive: false }
   }
   if (gen?.engine === 'runner') {
+    const hold = isAwaitingMrFinanceWriter(gen.build as BuildStatus | undefined)
     msgs.push({
       role: 'factory',
-      text: 'The coding agent has taken over the floor.',
+      text: hold
+        ? 'Collector and Cloner finished. Awaiting MR. FINANCE to launch Writer.'
+        : 'The coding agent has taken over the floor.',
       card: 'generation',
       engine: 'runner',
       triggeredBy: gen.triggered_by,
@@ -805,6 +816,8 @@ export function Floor({
               'Coding agent stalled'
             ) : liveCoderBuild?.state === 'failed' ? (
               'Coding agent stopped'
+            ) : isAwaitingMrFinanceWriter(liveCoderBuild) ? (
+              'Awaiting MR. FINANCE to launch Writer'
             ) : (
               'Coding agent has taken over'
             )}
@@ -865,6 +878,18 @@ export function Floor({
               {coderTakeoverNote(liveCoderBuild) ??
                 'The feature list is approved. The coding agent is starting WRITER now.'}
             </p>
+          )}
+          {isAwaitingMrFinanceWriter(liveCoderBuild) && (
+            <div className="card-actions">
+              <button
+                type="button"
+                data-testid="launch-writer"
+                onClick={() => void send('continue')}
+                disabled={busy || accessPaused}
+              >
+                Launch Writer
+              </button>
+            </div>
           )}
           {coderSucceeded && (
             <div className="card-actions">

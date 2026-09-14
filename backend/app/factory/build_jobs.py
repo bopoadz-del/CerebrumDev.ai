@@ -683,6 +683,29 @@ def build_status(
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         payload = terminal.payload or {}
         from app.factory.build.n3_store_gate import handoff_awaiting_n3
+        from app.factory.build.writer_control import (
+            AWAITING_DETAIL,
+            AWAITING_MR_FINANCE_WRITER,
+            payload_awaits_mr_finance_writer,
+        )
+
+        if payload_awaits_mr_finance_writer(payload):
+            waiting = {
+                "state": "waiting",
+                "detail": terminal.detail or AWAITING_DETAIL,
+                "cycle": payload.get("cycle") or "code",
+                "outcome": "AWAITING_MR_FINANCE_WRITER",
+                "honesty": AWAITING_MR_FINANCE_WRITER,
+                "next": payload.get("next") or "writer",
+                "green": False,
+                "awaiting_mr_finance_writer": True,
+                "pilot_ready": False,
+                "findings": list(payload.get("findings") or [])[:10],
+                **progress,
+                **_authorship(output_dir, blueprint=blueprint, plan=plan),
+                "stale": False,
+            }
+            return _with_level_grade(waiting, output_dir)
 
         if handoff_awaiting_n3(output_dir):
             # Receipt accepted; N3 store-gate is the next green. Do not paint
@@ -931,11 +954,17 @@ def _run(
         )
         from app.factory.build.runner import Outcome as RunnerOutcome
 
+        if outcome.outcome is RunnerOutcome.AWAITING_MR_FINANCE_WRITER:
+            # Post-Cloner hold. Keep the generation charge (not a fail).
+            # Do not enter WRITER / cli-pivot / BA in this same thread.
+            _clear_quota_marker(output_dir)
+            return
         if outcome.outcome is RunnerOutcome.HANDOFF_TO_N3:
-            # Receipt accepted; N3 store-gate is next. Keep the generation
-            # charge (not a fail) and do not clone a non-green Steward tree.
-            # Poll cerebrum-builds commit status in this same thread — never
-            # re-enter WRITER or launch another Background Agent.
+            # Receipt accepted after TESTER + STORE_MANAGER. N3 store-gate
+            # is next. Keep the generation charge (not a fail) and do not
+            # clone a non-green Steward tree. Poll cerebrum-builds commit
+            # status in this same thread — never re-enter WRITER or launch
+            # another Background Agent.
             _clear_quota_marker(output_dir)
             try:
                 from app.factory.build.n3_store_gate import wait_and_ingest_n3

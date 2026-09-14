@@ -64,6 +64,11 @@ from app.factory.build.roles import (
     RoleResult,
 )
 from app.factory.build.workspace import RoleWorkspace
+from app.factory.build.writer_control import (
+    AWAITING_DETAIL,
+    AWAITING_MR_FINANCE_WRITER,
+    writer_requires_handoff,
+)
 
 RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
 LEDGER_FILENAME = "build_ledger.jsonl"
@@ -209,7 +214,12 @@ class Outcome(str, Enum):
     #: instrument report (board P7: one run logging ALL gate findings).
     COLLECT_ALL_REPORT = "COLLECT_ALL_REPORT"
     #: CLI-pivot receipt accepted; N3 store-gate is next. Not product green.
+    #: Emitted only after TESTER (and STORE_MANAGER) have run — never
+    #: immediately after WRITER in a way that skips the acceptance inspector.
     HANDOFF_TO_N3 = "HANDOFF_TO_N3"
+    #: CLONER + domain handoff finished. WRITER / BA must not auto-start.
+    #: MR. FINANCE (or an explicit Floor action he owns) launches Writer.
+    AWAITING_MR_FINANCE_WRITER = "AWAITING_MR_FINANCE_WRITER"
     FAILED_GATE = "FAILED_GATE"
     FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
     FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
@@ -534,12 +544,32 @@ class RoleRunner:
             if staging is not None:
                 shutil.rmtree(staging, ignore_errors=True)
             self._absorb(result)
-            return GateResult(
+            # Receipt is clean but TESTER (acceptance inspector) is next —
+            # do not skip GATE_PASSED or the runner would re-enter WRITER
+            # on resume and never record that manufacture finished.
+            verdict = GateResult(
                 ok=True,
                 gate="cli_pivot",
                 detail=result.detail,
-                payload={"honesty": "HANDOFF_TO_N3", "next": "n3_gate", "green": False},
+                payload={
+                    "honesty": "HANDOFF_TO_N3",
+                    "next": "tester",
+                    "green": False,
+                },
             )
+            self.ledger.append(
+                EventKind.GATE_PASSED,
+                role=role,
+                detail=verdict.detail,
+                payload={
+                    "gate": verdict.gate,
+                    "findings": list(verdict.findings),
+                    "role_detail": result.detail,
+                    "next": "tester",
+                    "wrote": list(ws.written),
+                },
+            )
+            return verdict
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
@@ -676,6 +706,10 @@ class RoleRunner:
                 ):
                     if cli.get(key):
                         payload[key] = cli[key]
+        if outcome is Outcome.AWAITING_MR_FINANCE_WRITER:
+            payload["honesty"] = AWAITING_MR_FINANCE_WRITER
+            payload["next"] = "writer"
+            payload["green"] = False
         self.ledger.append(
             kind,
             role=phase,
@@ -1175,7 +1209,35 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
-                    if role is BuildRole.WRITER and _cli_pivot_state_handoff(self.state):
+                    if role is BuildRole.CLONER and writer_requires_handoff():
+                        done.add(role)
+                        work_list = ()
+                        self.ledger.append(
+                            EventKind.NOTE,
+                            role=role,
+                            detail=AWAITING_DETAIL,
+                            payload={
+                                "stage": AWAITING_MR_FINANCE_WRITER,
+                                "honesty": AWAITING_MR_FINANCE_WRITER,
+                                "next": "writer",
+                                "green": False,
+                            },
+                        )
+                        return self._finish(
+                            Outcome.AWAITING_MR_FINANCE_WRITER,
+                            AWAITING_DETAIL,
+                            phase=role,
+                            rework=rework_used,
+                        )
+                    # cli-pivot WRITER success used to _finish(HANDOFF_TO_N3)
+                    # here and skip TESTER. Advance to the acceptance
+                    # inspector; N3 store-gate waits until STORE_MANAGER.
+                    if (
+                        role is BuildRole.STORE_MANAGER
+                        and _cli_pivot_state_handoff(self.state)
+                    ):
+                        done.add(role)
+                        work_list = ()
                         return self._finish(
                             Outcome.HANDOFF_TO_N3,
                             verdict.detail,

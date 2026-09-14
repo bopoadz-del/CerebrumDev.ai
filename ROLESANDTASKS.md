@@ -2,7 +2,7 @@
 
 > Living handoff for CerebrumDev Factory. Update this file whenever roles or open work change.
 > Owner agent: **MR. FINANCE** (Grok Bot). Authoritative UI: Factory Floor (`https://www.cerebrum-dev.com/floor`).
-> Last written: 2026-09-12 (Asia/Dubai).
+> Last written: 2026-09-14 (Asia/Dubai).
 >
 > **Lives on `master` at repo root. Never open a PR for this file — commit and push directly to `master`.**
 
@@ -12,7 +12,7 @@
 
 **MR. FINANCE** owns CerebrumDev.ai Factory Floor **end-to-end**:
 
-1. Collector → Cloner → Writer → test → post/deploy
+1. Collector → Cloner → **hold** → (MR. FINANCE launches) Writer → Tester → audit → release / post/deploy
 2. Keep Floor UI healthy, clean, and live
 3. Own the repos; **merge when CI/gates are all green** — do not ask CHADi for merge permission
 4. Never ask CHADi for API keys — keys live on Render; choose best option and deploy yourself
@@ -27,6 +27,17 @@ AI Product Delivery Engineer is **retired** for this lane.
 
 ---
 
+## Standing CHADi locks (2026-09-14)
+
+**After Cloner handoff MR. FINANCE:** (1) review Collector+Cloner, (2) fix
+gaps, (3) launch Writer, (4) Tester, (5) audit, (6) release. Floor must
+**not** auto-start Cursor BA after Cloner. Honesty
+`awaiting_mr_finance_writer`. Grok chat is not the delivery surface.
+Writer (including cli-pivot BA) must not skip TESTER — advance to the
+acceptance inspector before STORE_MANAGER / N3.
+
+Canonical: `docs/factory/MR_FINANCE_WRITER_CONTROL.md`.
+
 ## Standing CHADi locks (2026-09-12)
 
 | Lock | Detail |
@@ -38,6 +49,7 @@ AI Product Delivery Engineer is **retired** for this lane.
 | Keys on Render | Never ask CHADi; never full-replace Render env (`replace:true`) |
 | HotelOps bar | Every platform must pass HotelOps A–H + Store 12/12 |
 | Domain handoff | GitHub `domain:*` + `handoff` and/or `DOMAIN_HANDOFF_WEBHOOK_URL` — expand beyond finance to car_dealership/automotive |
+| Writer hold | After Cloner, Floor waits (`FACTORY_WRITER_REQUIRES_HANDOFF`); MR. FINANCE launches Writer; TESTER before N3 |
 | BA path-lane | Option C Hybrid: pivot/cerebrum-builds BA may write `tests/**`; in-process Factory WRITER sealed off `tests/**` until N2 |
 | This file | Direct push to `master` only — never a PR |
 

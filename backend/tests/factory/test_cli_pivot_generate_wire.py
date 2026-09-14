@@ -125,7 +125,17 @@ def test_keys_present_launch_unavailable_is_infra(tmp_path):
     assert EXECUTOR_UNAVAILABLE in str(excinfo.value)
 
 
-def test_runner_handoff_is_not_product_green(tmp_path):
+def test_runner_handoff_is_not_product_green(tmp_path, monkeypatch):
+    """cli-pivot is still not Store-green; TESTER must run before N3."""
+    from app.factory.build.gates import GateResult, gate_for as real_gate_for
+
+    def pass_later(role):
+        if role in {BuildRole.TESTER, BuildRole.STORE_MANAGER}:
+            return lambda _ctx: GateResult(ok=True, gate="stub", detail="ok")
+        return real_gate_for(role)
+
+    monkeypatch.setattr("app.factory.build.runner.gate_for", pass_later)
+    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     bp = _bp()
     out = tmp_path / "build"
     out.mkdir()
@@ -154,16 +164,24 @@ def test_runner_handoff_is_not_product_green(tmp_path):
             notes={"cli_pivot": payload, "next": "n3_gate"},
         )
 
+    def tester(_ctx):
+        return RoleResult(ok=True, detail="acceptance inspector")
+
+    def store(_ctx):
+        return RoleResult(ok=True, detail="store registrar")
+
     from app.factory.build.roles import ROLE_IMPLEMENTATIONS
 
     roles = dict(ROLE_IMPLEMENTATIONS)
     roles[BuildRole.WRITER] = handoff_writer
+    roles[BuildRole.TESTER] = tester
+    roles[BuildRole.STORE_MANAGER] = store
     runner = RoleRunner(bp, out, roles=roles, ledger=ledger)
     outcome = runner.run()
     assert outcome.outcome is Outcome.HANDOFF_TO_N3
     assert outcome.ok is False
     assert runner.ledger.succeeded() is False
-    assert BuildRole.TESTER not in outcome.completed
+    assert BuildRole.TESTER in outcome.completed
     terminal = runner.ledger.terminal_event()
     assert terminal is not None
     assert terminal.kind is EventKind.RUN_FAILED

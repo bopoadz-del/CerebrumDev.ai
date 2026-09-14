@@ -954,6 +954,57 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(exportBtn).toHaveClass('ghost')
   })
 
+  it('shows awaiting_mr_finance_writer and Launch Writer after Cloner', async () => {
+    chatStreamMock.mockImplementation(async (_sid: string, _msg: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      onEvent({
+        event: 'generation',
+        data: {
+          summary: 'MR. FINANCE launched Writer for stayflow.',
+          triggered_by: 'regex_resume',
+        },
+      })
+    })
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'waiting',
+        honesty: 'awaiting_mr_finance_writer',
+        awaiting_mr_finance_writer: true,
+        outcome: 'AWAITING_MR_FINANCE_WRITER',
+        detail: 'CLONER complete; awaiting MR. FINANCE to launch Writer',
+        completed: ['COLLECTOR', 'CLONER'],
+        phases_done: 2,
+        phases_total: 5,
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        next_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        pilot_ready: false,
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: {
+        engine: 'runner',
+        product_id: 'stayflow',
+        triggered_by: 'regex_approve',
+        build: {
+          state: 'waiting',
+          honesty: 'awaiting_mr_finance_writer',
+          awaiting_mr_finance_writer: true,
+        },
+      },
+    })
+    render(<Floor sessionId="sess_hold" goPlatforms={() => {}} />)
+    expect(
+      await screen.findByRole('heading', { name: 'Awaiting MR. FINANCE to launch Writer' }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/awaiting_mr_finance_writer/)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('launch-writer'))
+    await waitFor(() =>
+      expect(chatStreamMock).toHaveBeenCalledWith('sess_hold', 'continue', expect.any(Function)),
+    )
+  })
+
   it('stops the takeover chrome when the ledger is unreadable', async () => {
     watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
       onProgress({

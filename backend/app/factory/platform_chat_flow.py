@@ -24,10 +24,13 @@ Routing contract (this is law, the smoke tests enforce it):
      on the same workspace (pytest -m pilot + STORE ops), not a new product.
      A RUN_FAILED / rework-exhausted ledger is terminal: same-hash continue
      or a new brief must start a fresh workspace (reset rework budget),
-     never a no-op resume of the dead run. ``HANDOFF_TO_N3`` is not that
-     terminal: continue / start_coder ingests the cerebrum-builds
-     ``store-gate`` 12/12 status and must not re-enter WRITER or launch
-     another Background Agent.
+     never a no-op resume of the dead run. ``awaiting_mr_finance_writer``
+     after Cloner is not that terminal: continue / start_coder is the
+     MR. FINANCE action that launches WRITER (Floor must not auto-start
+     BA in the same Generate that finished CLONER). ``HANDOFF_TO_N3`` is
+     also not a coding-failure terminal: continue / start_coder ingests
+     the cerebrum-builds ``store-gate`` 12/12 status and must not
+     re-enter WRITER or launch another Background Agent.
     5. Kit-configurator vocabulary (chain/blocks/kits/domain/lora/...) stays
      in the legacy chat flow even when it also mentions a platform noun.
     6. Anything else falls through to the normal kit-configurator chat.
@@ -639,13 +642,30 @@ def approve_and_generate(
     if result.get("engine") == "runner":
         caps = len((pd.plan or {}).get("capabilities", []) or [])
         from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+        from app.factory.build.writer_control import writer_requires_handoff
 
-        if factory_auto_pilot_enabled():
+        if writer_requires_handoff():
+            expect = (
+                "Collector then Cloner will run. Floor then waits "
+                "(awaiting_mr_finance_writer) — MR. FINANCE launches Writer. "
+                "Cursor BA will not auto-start after Cloner. Grok chat is not "
+                "the delivery surface."
+            )
+            takeover = (
+                f"{trigger_line}Build started for {result['product_id']}: "
+                f"Collector+Cloner for {caps} capability(ies). "
+            )
+        elif factory_auto_pilot_enabled():
             expect = (
                 "This is a Store-green run: code cycle, then a pilot cycle "
                 "(pytest -m pilot and WRITER rework) on the same workspace. "
                 "Watch it here — Finished / Download ready unlocks only when "
                 "the platform is pilot-ready."
+            )
+            takeover = (
+                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
+                "has taken over the floor and is "
+                f"writing {caps} capability(ies) against the real block contracts. "
             )
         else:
             expect = (
@@ -653,17 +673,17 @@ def approve_and_generate(
                 "A SUCCESS here is a prototype, not pilot-ready. "
                 "The download will be labeled as a code-cycle prototype."
             )
+            takeover = (
+                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
+                "has taken over the floor and is "
+                f"writing {caps} capability(ies) against the real block contracts. "
+            )
         return {
             "ok": True,
             "generation": pd.generation,
             "plan": pd.plan,
             "triggered_by": triggered_by,
-            "summary": (
-                f"{trigger_line}Build started for {result['product_id']}: the coding agent "
-                "has taken over the floor and is "
-                f"writing {caps} capability(ies) against the real block contracts. "
-                + expect
-            ),
+            "summary": takeover + expect,
         }
 
     # Say what generation actually is: deterministic composition of prebuilt
@@ -712,6 +732,11 @@ def has_running_build(state: Any) -> bool:
     # HANDOFF_TO_N3 keeps state=building while N3 polls store-gate. That is
     # not a live WRITER — Continue / n3-reseed must not be 409'd as "already
     # in progress" (sess_1ef39fcba8f54dbc AirOps).
+    # awaiting_mr_finance_writer is a pause after CLONER — not a live BA.
+    from app.factory.build.writer_control import status_awaits_mr_finance_writer
+
+    if status_awaits_mr_finance_writer(st):
+        return False
     if st.get("n3_waiting") or st.get("honesty") == "HANDOFF_TO_N3" or st.get("outcome") == "HANDOFF_TO_N3":
         return False
     return st.get("state") == "building"
@@ -871,6 +896,27 @@ def is_handoff_awaiting_n3(
         return False
 
 
+def is_awaiting_mr_finance_writer(
+    state: Any, output_root: Optional[Path] = None
+) -> bool:
+    """True after CLONER while MR. FINANCE has not yet launched Writer."""
+    out = _generation_output_dir(state, output_root)
+    st = _generation_status(state, output_root)
+    from app.factory.build.writer_control import (
+        ledger_awaits_mr_finance_writer,
+        status_awaits_mr_finance_writer,
+    )
+
+    if status_awaits_mr_finance_writer(st):
+        return True
+    if not out:
+        return False
+    try:
+        return bool(ledger_awaits_mr_finance_writer(_ledger_for(out)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def is_generation_terminal_failure(
     state: Any, output_root: Optional[Path] = None
 ) -> bool:
@@ -882,7 +928,10 @@ def is_generation_terminal_failure(
 
     ``HANDOFF_TO_N3`` is a ledger note, not this terminal — Continue must
     ingest store-gate, not start a fresh WRITER / BA.
+    ``awaiting_mr_finance_writer`` is a pause — Continue launches Writer.
     """
+    if is_awaiting_mr_finance_writer(state, output_root):
+        return False
     if is_handoff_awaiting_n3(state, output_root):
         return False
     st = _generation_status(state, output_root)
@@ -908,11 +957,15 @@ def is_generation_resumable(state: Any) -> bool:
     source — the same-hash path ``POST .../product/generate`` already uses.
 
     A RUN_FAILED / rework-exhausted ledger is terminal, not resumable.
-    ``HANDOFF_TO_N3`` is resumable via Continue → store-gate ingest (not WRITER).
+    ``awaiting_mr_finance_writer`` is resumable via Continue → WRITER
+    (MR. FINANCE launch). ``HANDOFF_TO_N3`` is resumable via Continue →
+    store-gate ingest (not WRITER).
     """
     pd = getattr(state, "product_design", None)
     if not pd or not getattr(pd, "blueprint", None):
         return False
+    if is_awaiting_mr_finance_writer(state):
+        return True
     if is_handoff_awaiting_n3(state):
         return True
     if is_generation_complete(state):
@@ -1410,6 +1463,7 @@ def resume_generation(
         }
 
     prior_hash = (pd.generation or {}).get("inputs_hash")
+    writer_hold_release = is_awaiting_mr_finance_writer(state, output_root)
     try:
         result = generate_product(
             bp,
@@ -1453,10 +1507,17 @@ def resume_generation(
     artifact_bit = ""
     if written is not None and of is not None:
         artifact_bit = f", {written}/{of} artifacts"
-    summary = (
-        f"Resuming the coding agent for {result['product_id']} from {resume_at} "
-        f"({done}/{total} phases{artifact_bit}). Same blueprint hash — not starting over."
-    )
+    if writer_hold_release:
+        summary = (
+            f"MR. FINANCE launched Writer for {result['product_id']} "
+            f"({done}/{total} phases{artifact_bit}). Collector+Cloner already "
+            "finished — this is not a silent post-Cloner BA start."
+        )
+    else:
+        summary = (
+            f"Resuming the coding agent for {result['product_id']} from {resume_at} "
+            f"({done}/{total} phases{artifact_bit}). Same blueprint hash — not starting over."
+        )
     return {
         "ok": True,
         "sse": "generation",
@@ -1578,6 +1639,13 @@ def start_or_resume_coder(
     if is_handoff_awaiting_n3(state, output_root):
         return ingest_n3_store_gate_reply(
             state, output_root=output_root, triggered_by=triggered_by
+        )
+    if is_awaiting_mr_finance_writer(state, output_root):
+        resume_by = (
+            "chat_llm" if triggered_by == "chat_llm" else "regex_resume"
+        )
+        return resume_generation(
+            state, output_root=output_root, triggered_by=resume_by
         )
     if has_pending_blueprint(state):
         return approve_and_generate(
