@@ -1,5 +1,20 @@
 # AGENTS.md
 
+## Platform build doctrine — read GATES.md first
+
+Before building a platform product (a repo assembled from Cerebrum-Blocks)
+— or reviewing such a PR — read [GATES.md](GATES.md) in this repo. This is
+binding on every writer, human or AI, including work in external product
+repos.
+
+- A platform build must pass gates G0–G7 before it is pushed.
+- A platform PR must map its acceptance criteria to GATES.md gates.
+- After every build: update GATES.md with any failure a gate missed, then
+  update the store block/pattern that would have prevented it, then
+  re-vendor the product at the new pinned commit.
+- Verify any product repo with
+  `python scripts/check_platform_gates.py --repo <path>`.
+
 ## Cursor Cloud specific instructions
 
 ### Committed cloud environment (versioned)
