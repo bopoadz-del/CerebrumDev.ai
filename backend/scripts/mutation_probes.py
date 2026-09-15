@@ -249,6 +249,47 @@ def probe_h_claim_labels_refuse_stripped_layer() -> None:
         raise AssertionError("an unlabeled claim was emitted — labels are not enforced")
 
 
+def probe_i_retrieval_engine_is_real() -> None:
+    """P4 -- swap the embedder for a keyword matcher and T4.1's semantic
+    path goes RED (the engine refuses keyword retrieval)."""
+    from app.cerebrum_product_kernel.retrieval_engine import (
+        InMemoryVectorStore,
+        KEYWORD_EMBEDDER_NOT_RETRIEVAL,
+        RetrievalEngine,
+        RetrievalEngineError,
+    )
+
+    class SemanticFixture:
+        semantic = True
+
+        def __call__(self, text):
+            v = [1.0, 0.0] if "price" in text or "cost" in text else [0.0, 1.0]
+            n = (v[0] * v[0] + v[1] * v[1]) ** 0.5
+            return [x / n for x in v]
+
+    class KeywordMatcher:
+        semantic = False
+
+        def __call__(self, text):
+            return [0.5, 0.5]
+
+    engine = RetrievalEngine(embedder=SemanticFixture(), store=InMemoryVectorStore())
+    engine.ingest(
+        "t",
+        [{"id": "c1", "text": "The service price is forty.", "layer": 1}],
+    )
+    assert engine.retrieve("t", "how much does it cost")
+
+    try:
+        RetrievalEngine(embedder=KeywordMatcher(), store=InMemoryVectorStore())
+    except RetrievalEngineError as exc:
+        assert KEYWORD_EMBEDDER_NOT_RETRIEVAL in str(exc), str(exc)
+    else:
+        raise AssertionError(
+            "a keyword matcher drove the retrieval engine — retrieval is not real"
+        )
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -258,6 +299,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P1 tenant seam detects a broken seam", probe_f_tenant_isolation_seam_detects_a_broken_seam),
     ("P2 precedence ladder is data not prompt text", probe_g_precedence_ladder_is_data_not_prompt_text),
     ("P3 claim labels refuse a stripped layer", probe_h_claim_labels_refuse_stripped_layer),
+    ("P4 retrieval engine is real RAG", probe_i_retrieval_engine_is_real),
 ]
 
 
