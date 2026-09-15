@@ -50,6 +50,21 @@ def worker_cli_path() -> Optional[str]:
     return shutil.which("codewhale")
 
 
+def worker_provider() -> str:
+    """Model provider for the headless CLI. DeepSeek by default (the CLI's
+    production provider); deployments may override via env."""
+    return os.getenv("CODEWHALE_PROVIDER", "deepseek").strip() or "deepseek"
+
+
+def worker_api_key() -> str:
+    """The CLI's API key from the deployment env. Empty when the CLI's own
+    stored config is the credential source (local dev)."""
+    return (
+        os.getenv("CODEWHALE_API_KEY", "").strip()
+        or os.getenv("DEEPSEEK_API_KEY", "").strip()
+    )
+
+
 def worker_cap() -> int:
     return int(os.getenv("FACTORY_CODEWHALE_WORKER_CAP", str(DEFAULT_WORKER_CAP)) or 1)
 
@@ -158,9 +173,16 @@ def run_worker_job(
         cwd = Path(checkout_dir)
         cwd.mkdir(parents=True, exist_ok=True)
         timeout = timeout_s if timeout_s is not None else worker_timeout_s()
+        argv = [cli, "exec", "--auto", "--json"]
+        # Headless deployments pass credentials explicitly; local dev lets
+        # the CLI read its own stored config when the env key is absent.
+        api_key = worker_api_key()
+        if api_key:
+            argv += ["--provider", worker_provider(), "--api-key", api_key]
+        argv.append(prompt)
         try:
             proc = subprocess.run(
-                [cli, "exec", "--auto", "--json", prompt],
+                argv,
                 cwd=str(cwd),
                 capture_output=True,
                 text=True,
