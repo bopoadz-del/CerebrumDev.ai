@@ -86,6 +86,51 @@ def test_writer_uses_codewhale_falls_back_to_process_env(monkeypatch):
     assert writer_uses_codewhale(None) is False
 
 
+def test_tenant_store_binding_is_identity_derived(tmp_path, monkeypatch):
+    """Phase 1: the store handle is server-derived from the authenticated
+    identity — same account, same digest; never a client-supplied name in
+    the path; no identity, no binding."""
+    from app.factory.build.tenant_bind import (
+        bind_tenant_store,
+        tenant_stores_root,
+    )
+
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    a = bind_tenant_store("acct_alpha")
+    b = bind_tenant_store("acct_alpha")
+    c = bind_tenant_store("acct_beta")
+    assert a is not None and b is not None and c is not None
+    assert a.tenant_key == b.tenant_key
+    assert a.store_dir == b.store_dir
+    assert a.tenant_key != c.tenant_key
+    assert a.store_dir.parent == tenant_stores_root()
+    assert "acct_alpha" not in str(a.store_dir)
+    assert bind_tenant_store(None) is None
+    assert bind_tenant_store("") is None
+    assert bind_tenant_store("  ") is None
+
+
+def test_runner_seeds_bound_tenant_store_into_writer_state(tmp_path):
+    """The runner must hand the WRITER the bound handle — the worker's
+    isolation gate reads ctx.state['tenant_store'] and refuses an unbound
+    job (live-factory failure sess_b9db05967cb94e6f)."""
+    from pathlib import Path as _Path
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.build.runner import RoleRunner
+
+    smoke = _Path(__file__).resolve().parents[2] / "blueprints" / "examples" / "runner_smoke.yaml"
+    workspace = tmp_path / "out"
+    workspace.mkdir()
+    binding = object()
+    runner = RoleRunner(
+        load_blueprint(smoke),
+        workspace,
+        tenant_store=binding,
+    )
+    assert runner.state.get("tenant_store") is binding
+
+
 def test_tester_harness_models_file_compiles_with_no_specs(tmp_path):
     """Capabilities declared but zero handler specs must still yield a
     syntactically valid tests/test_models.py (bare-def regression)."""
