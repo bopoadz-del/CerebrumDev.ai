@@ -27,6 +27,7 @@ from app.factory.build import codewhale_worker
 from app.factory.build.authority import BuildRole
 from app.factory.build.roles_handlers import run_tester
 from app.factory.build.roles_models import RoleContext
+from app.factory.build.tenant_bind import bind_tenant_store
 from app.factory.build.workspace import RoleWorkspace
 
 
@@ -35,9 +36,10 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     prompt = "write the platform"
     captured: dict = {}
 
-    def fake_run(argv, *, cwd, capture_output, text, timeout):
+    def fake_run(argv, *, cwd, capture_output, text, timeout, env):
         captured["argv"] = argv
         captured["cwd"] = cwd
+        captured["env"] = env
         return subprocess.CompletedProcess(
             args=argv,
             returncode=0,
@@ -47,16 +49,25 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
             stderr="",
         )
 
+    # The slot manager is NOT mocked out: patching it made this test blind to
+    # every slot regression, and it passed `object()` as the tenant handle —
+    # a handle with no tenant_key, which the accounting must refuse rather
+    # than drop into a shared bucket. Use the handle production binds.
+    tenant_store = bind_tenant_store("acct-writer-delivery")
     with mock.patch.object(codewhale_worker, "worker_cli_path", return_value="codewhale"), \
          mock.patch.object(codewhale_worker, "worker_api_key", return_value="sk-test"), \
          mock.patch.object(codewhale_worker, "worker_provider", return_value="deepseek"), \
-         mock.patch.object(codewhale_worker, "worker_job_slot", side_effect=mock.MagicMock()), \
          mock.patch.object(codewhale_worker.subprocess, "run", side_effect=fake_run):
         receipt = codewhale_worker.run_worker_job(
-            prompt, tmp_path / "checkout", tenant_store=object()
+            prompt, tmp_path / "checkout", tenant_store=tenant_store
         )
 
     assert receipt.status == "completed"
+    # The slot was really taken and really given back.
+    assert codewhale_worker.worker_slots_snapshot() == {"total": 0, "by_tenant": {}}
+    # The child runs under an explicit per-job environment, never the live
+    # process env inherited by reference at fork.
+    assert isinstance(captured["env"], dict)
     assert captured["argv"] == [
         "codewhale",
         "--provider",

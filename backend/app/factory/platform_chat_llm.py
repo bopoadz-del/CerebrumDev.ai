@@ -144,13 +144,6 @@ def _session_facts(state: Any) -> str:
             "Product is pilot-ready (Store-green). start_coder is forbidden — "
             "tell the user it already finished; do not start a new product."
         )
-    elif platform_chat_flow.is_awaiting_mr_finance_writer(state):
-        lines.append(
-            "Collector+Cloner finished. Honesty is awaiting_mr_finance_writer. "
-            "Floor must NOT auto-start Cursor BA / WRITER. continue / "
-            "start_coder is the MR. FINANCE action that launches Writer. "
-            "Do NOT draft a new platform. Grok chat is not the delivery surface."
-        )
     elif platform_chat_flow.is_handoff_awaiting_n3(state):
         lines.append(
             "Cli-pivot handed off to N3 (HANDOFF_TO_N3). continue / "

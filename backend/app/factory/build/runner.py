@@ -64,11 +64,6 @@ from app.factory.build.roles import (
     RoleResult,
 )
 from app.factory.build.workspace import RoleWorkspace
-from app.factory.build.writer_control import (
-    AWAITING_DETAIL,
-    AWAITING_MR_FINANCE_WRITER,
-    writer_requires_handoff,
-)
 
 RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
 LEDGER_FILENAME = "build_ledger.jsonl"
@@ -217,9 +212,6 @@ class Outcome(str, Enum):
     #: Emitted only after TESTER (and STORE_MANAGER) have run — never
     #: immediately after WRITER in a way that skips the acceptance inspector.
     HANDOFF_TO_N3 = "HANDOFF_TO_N3"
-    #: CLONER + domain handoff finished. WRITER / BA must not auto-start.
-    #: MR. FINANCE (or an explicit Floor action he owns) launches Writer.
-    AWAITING_MR_FINANCE_WRITER = "AWAITING_MR_FINANCE_WRITER"
     FAILED_GATE = "FAILED_GATE"
     FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
     FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
@@ -319,6 +311,7 @@ class RoleRunner:
         blocks_lock: Optional[Dict[str, Any]] = None,
         tenant_store: Any = None,
         brief: str = "",
+        session_id: str = "",
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -346,6 +339,14 @@ class RoleRunner:
         # (no_authenticated_tenant) before the CLI starts.
         if tenant_store is not None:
             self.state["tenant_store"] = tenant_store
+        # THIS build's session id, resolved by the caller into a local and
+        # threaded here rather than parked in os.environ. Under concurrency a
+        # process-global session id is a cross-tenant identifier bleed: the
+        # writer subprocess and the cli-pivot seam both resolve `build/
+        # <session>-*` from it, so two tenants would resolve the same output
+        # path. Same path the tenant handle takes, for the same reason.
+        if str(session_id or "").strip():
+            self.state["session_id"] = str(session_id).strip()
         # The user's own words from the Floor chat — the WRITER's BRIEF
         # section. Threaded from the session at generate/resume time.
         if str(brief or "").strip():
@@ -718,10 +719,6 @@ class RoleRunner:
                 ):
                     if cli.get(key):
                         payload[key] = cli[key]
-        if outcome is Outcome.AWAITING_MR_FINANCE_WRITER:
-            payload["honesty"] = AWAITING_MR_FINANCE_WRITER
-            payload["next"] = "writer"
-            payload["green"] = False
         self.ledger.append(
             kind,
             role=phase,
@@ -1221,26 +1218,6 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
-                    if role is BuildRole.CLONER and writer_requires_handoff():
-                        done.add(role)
-                        work_list = ()
-                        self.ledger.append(
-                            EventKind.NOTE,
-                            role=role,
-                            detail=AWAITING_DETAIL,
-                            payload={
-                                "stage": AWAITING_MR_FINANCE_WRITER,
-                                "honesty": AWAITING_MR_FINANCE_WRITER,
-                                "next": "writer",
-                                "green": False,
-                            },
-                        )
-                        return self._finish(
-                            Outcome.AWAITING_MR_FINANCE_WRITER,
-                            AWAITING_DETAIL,
-                            phase=role,
-                            rework=rework_used,
-                        )
                     # cli-pivot WRITER success used to _finish(HANDOFF_TO_N3)
                     # here and skip TESTER. Advance to the acceptance
                     # inspector; N3 store-gate waits until STORE_MANAGER.

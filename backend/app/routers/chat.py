@@ -78,11 +78,6 @@ def _session_state_summary(state) -> str:
             lines.append(f"Output dir: {gen.get('output_dir')}.")
         if platform_chat_flow.is_generation_complete(state):
             lines.append("Last coding run finished successfully.")
-        elif platform_chat_flow.is_awaiting_mr_finance_writer(state):
-            lines.append(
-                "Collector+Cloner finished (awaiting_mr_finance_writer). "
-                "Continue launches Writer — MR. FINANCE owns that action."
-            )
         elif platform_chat_flow.is_generation_terminal_failure(state):
             lines.append(
                 "Last coding run FAILED (rework exhausted or gates still red). "
@@ -279,7 +274,6 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
             or platform_chat_flow.is_generation_complete(state)
             or platform_chat_flow.is_generation_terminal_failure(state)
             or platform_chat_flow.is_handoff_awaiting_n3(state)
-            or platform_chat_flow.is_awaiting_mr_finance_writer(state)
         ):
             if (
                 platform_chat_flow.has_pending_blueprint(state)

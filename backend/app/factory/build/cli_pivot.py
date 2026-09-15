@@ -27,9 +27,13 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from app.factory.build.authority import BuildRole
-from app.factory.build.brief_compiler import CompiledBrief, compile_brief
+from app.factory.build.brief_compiler import CompiledBrief
 from app.factory.build.budget_inspect import CEILING_S
 from app.factory.build.builds_push import BuildsPushError
+# Re-export: this module's own seam (run_cli_pivot) still composes the
+# C-BRIEF here, but the compiler now LIVES in cbrief so retiring the
+# Cursor seam cannot take the C-BRIEF compiler with it.
+from app.factory.build.cbrief import compose_cbrief  # noqa: F401
 from app.factory.build.cli_receipt import (
     HANDOFF_TO_N3,
     PATHS_VIOLATED,
@@ -45,7 +49,6 @@ from app.factory.build.cursor_ba import (
     run_background_agent,
 )
 from app.factory.build.ledger import BuildLedger, EventKind
-from app.factory.product_architect import plan_blueprint
 
 EXECUTOR_UNAVAILABLE = "EXECUTOR_UNAVAILABLE"
 BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
@@ -158,18 +161,30 @@ def resolve_pivot_session_env(
     *,
     session_id: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Copy env and pin ``FACTORY_SESSION_ID`` so ``build/<session>-*`` is stable."""
+    """Copy env and pin ``FACTORY_SESSION_ID`` so ``build/<session>-*`` is stable.
+
+    The EXPLICIT ``session_id`` argument is the authority; the ambient
+    process env is a last-resort fallback. It used to be the other way
+    round: an already-present ``FACTORY_SESSION_ID`` short-circuited and the
+    copy was returned unchanged — which, under concurrency, is precisely the
+    case where the value present belongs to a DIFFERENT tenant. ``build/
+    <session>-*`` was then "stable across tenants", i.e. two tenants
+    resolving the same output path.
+    """
     blob = dict(os.environ if env is None else env)
+    sid = str(session_id or "").strip()
+    if sid:
+        blob["FACTORY_SESSION_ID"] = sid
+        blob["FACTORY_CLI_PIVOT_SESSION_ID"] = sid
+        return blob
     if any(str(blob.get(name) or "").strip() for name in (
         "FACTORY_CLI_PIVOT_SESSION_ID",
         "FACTORY_SESSION_ID",
     )):
         return blob
-    sid = str(session_id or "").strip()
-    if not sid:
-        from app.factory.build.orphan_recovery import session_id_from_output
+    from app.factory.build.orphan_recovery import session_id_from_output
 
-        sid = session_id_from_output(workspace) or ""
+    sid = session_id_from_output(workspace) or ""
     if sid:
         blob["FACTORY_SESSION_ID"] = sid
     return blob
@@ -248,27 +263,6 @@ def run_writer_via_cli_pivot(
             },
         )
     raise RoleError(seam.detail)
-
-
-def compose_cbrief(
-    blueprint: Any,
-    *,
-    plan: Any = None,
-    blocks_root: Optional[Path] = None,
-    store_ids: Optional[Sequence[str]] = None,
-    budget_s: Optional[float] = None,
-) -> CompiledBrief:
-    """Deterministic C-BRIEF. LLM never writes this text."""
-    resolved_plan = plan if plan is not None else plan_blueprint(
-        blueprint, blocks_root=blocks_root
-    )
-    return compile_brief(
-        blueprint,
-        resolved_plan,
-        blocks_root=blocks_root,
-        store_ids=store_ids,
-        budget_s=budget_s,
-    )
 
 
 @dataclass(frozen=True)

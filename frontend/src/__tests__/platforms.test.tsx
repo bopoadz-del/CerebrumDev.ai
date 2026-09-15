@@ -699,7 +699,7 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download the export/)
   })
 
-  it('names missing Kimi Code CLI credentials from /health on Platforms', async () => {
+  it('names missing coding-agent credentials from /health on Platforms', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {
         available: true,
@@ -717,10 +717,10 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_creds" />)
     const banner = await screen.findByTestId('platforms-factory-cli-status')
-    expect(banner).toHaveTextContent('Kimi Code CLI credentials missing')
+    expect(banner).toHaveTextContent('Coding agent credentials missing')
     expect(banner).toHaveTextContent('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
-    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
-    expect(banner).toHaveTextContent('config.toml')
+    expect(banner).toHaveTextContent('DEEPSEEK_API_KEY')
+    expect(banner).toHaveTextContent('FACTORY_CODEWHALE_WRITER=1')
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
@@ -745,10 +745,10 @@ describe('Your Platforms — coding-agent build', () => {
     await waitFor(() => expect(getHealthMock).toHaveBeenCalled())
     expect(screen.queryByTestId('platforms-factory-cli-status')).not.toBeInTheDocument()
     expect(screen.queryByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Kimi Code CLI credentials missing/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Coding agent credentials missing/)).not.toBeInTheDocument()
   })
 
-  it('names missing Kimi Code CLI default_model from /health on Platforms', async () => {
+  it('names missing coding-agent default_model from /health on Platforms', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {
         available: true,
@@ -766,7 +766,7 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_no_model" />)
     const banner = await screen.findByTestId('platforms-factory-cli-status')
-    expect(banner).toHaveTextContent('Kimi Code CLI has no model')
+    expect(banner).toHaveTextContent('Coding agent has no model')
     expect(banner).toHaveTextContent('FACTORY_CODE_CLI_NO_MODEL')
     expect(banner).toHaveTextContent('default_model')
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)

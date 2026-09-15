@@ -1,4 +1,8 @@
-"""Generate/Continue WRITER hook: keys present → run_cli_pivot, not dispatch."""
+"""Generate/Continue WRITER hook: the WRITER runs on CodeWhale (DeepSeek).
+
+The Cursor cli-pivot branch was removed from ``run_writer`` — what remains
+here covers the surviving predicates and the per-tenant session-id rules.
+"""
 
 from __future__ import annotations
 
@@ -9,17 +13,13 @@ import pytest
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.cli_pivot import (
-    CLASS_INFRA,
     CURSOR_KEY_ENVS,
-    EXECUTOR_UNAVAILABLE,
-    ExecutorLaunch,
-    ExecutorUnavailable,
     resolve_pivot_session_env,
     writer_uses_cli_pivot,
 )
 from app.factory.build.cli_receipt import HANDOFF_TO_N3
 from app.factory.build.ledger import BuildLedger, EventKind
-from app.factory.build.roles import RoleContext, RoleError, RoleResult, run_writer
+from app.factory.build.roles import RoleContext, RoleResult, run_writer
 from app.factory.build.runner import Outcome, RoleRunner, blueprint_hash
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.product_architect import plan_blueprint
@@ -45,14 +45,6 @@ def _ctx(tmp_path: Path, *, state=None):
     )
 
 
-def _handoff_launch(**_k):
-    return ExecutorLaunch(
-        started=True,
-        receipt={"schema": "cli_receipt.v1", "cli_authored_ids": IDS},
-        changed_paths=[f"app/actions/{cid}.py" for cid in IDS],
-    )
-
-
 def test_writer_uses_cli_pivot_is_keys_present_only():
     assert writer_uses_cli_pivot({}) is False
     assert writer_uses_cli_pivot({"FACTORY_CLI_PIVOT": "1"}) is False
@@ -69,6 +61,28 @@ def test_resolve_pivot_session_env_uses_factory_session_path(tmp_path):
         env={"CURSOR_API_KEY": "k", "FACTORY_SESSION_ID": "already"},
     )
     assert pinned["FACTORY_SESSION_ID"] == "already"
+
+
+def test_an_explicit_session_id_outranks_another_tenants_ambient_one(tmp_path):
+    """Cross-tenant bleed containment.
+
+    The explicit ``session_id`` is THIS build's own identity, threaded from
+    the runner state. It used to lose to whatever ``FACTORY_SESSION_ID``
+    happened to be sitting in the process env — which, with more than one
+    build in flight, is exactly the case where the value present belongs to
+    a DIFFERENT tenant. ``build/<session>-*`` was then "stable across
+    tenants": two tenants resolving the same output path.
+    """
+    dest = tmp_path / "factory_outputs" / "sessions" / "sess_mine" / "demo"
+    dest.mkdir(parents=True)
+
+    env = resolve_pivot_session_env(
+        dest,
+        env={"CURSOR_API_KEY": "k", "FACTORY_SESSION_ID": "sess_some_other_tenant"},
+        session_id="sess_mine",
+    )
+    assert env["FACTORY_SESSION_ID"] == "sess_mine"
+    assert env["FACTORY_CLI_PIVOT_SESSION_ID"] == "sess_mine"
 
 
 def test_keys_absent_writer_does_not_call_cli_pivot(tmp_path, monkeypatch, stub_coder):
@@ -89,42 +103,6 @@ def test_keys_absent_writer_does_not_call_cli_pivot(tmp_path, monkeypatch, stub_
     assert "cli_pivot" not in (result.notes or {})
 
 
-def test_keys_present_stub_launch_skips_dispatch(tmp_path, monkeypatch):
-    dispatched = []
-
-    def fake_dispatch(*_a, **_k):
-        dispatched.append(True)
-        raise AssertionError("dispatch_compiled_brief must not run on cli-pivot")
-
-    monkeypatch.setattr(
-        "app.factory.build.coder_session.dispatch_compiled_brief",
-        fake_dispatch,
-    )
-    env = {"CURSOR_API_KEY": "cursor-test-key"}
-    result = run_writer(_ctx(tmp_path), launch=_handoff_launch, env=env)
-    assert dispatched == []
-    assert result.ok
-    assert result.notes["cli_pivot"]["honesty"] == HANDOFF_TO_N3
-    assert result.notes["cli_pivot"]["green"] is False
-    assert result.notes["next"] == "n3_gate"
-    brief = (tmp_path / "build" / "docs" / "coder_brief.md").read_text(encoding="utf-8")
-    assert "analytics_surface" in brief
-
-
-def test_keys_present_launch_unavailable_is_infra(tmp_path):
-    def boom(**_k):
-        raise ExecutorUnavailable(f"{EXECUTOR_UNAVAILABLE}: Cursor API down")
-
-    with pytest.raises(RoleError, match=EXECUTOR_UNAVAILABLE) as excinfo:
-        run_writer(
-            _ctx(tmp_path),
-            launch=boom,
-            env={"CURSOR_API_KEY": "cursor-test-key"},
-        )
-    assert CLASS_INFRA == "infra"
-    assert EXECUTOR_UNAVAILABLE in str(excinfo.value)
-
-
 def test_runner_handoff_is_not_product_green(tmp_path, monkeypatch):
     """cli-pivot is still not Store-green; TESTER must run before N3."""
     from app.factory.build.gates import GateResult, gate_for as real_gate_for
@@ -135,7 +113,6 @@ def test_runner_handoff_is_not_product_green(tmp_path, monkeypatch):
         return real_gate_for(role)
 
     monkeypatch.setattr("app.factory.build.runner.gate_for", pass_later)
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     bp = _bp()
     out = tmp_path / "build"
     out.mkdir()

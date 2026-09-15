@@ -683,29 +683,6 @@ def build_status(
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         payload = terminal.payload or {}
         from app.factory.build.n3_store_gate import handoff_awaiting_n3
-        from app.factory.build.writer_control import (
-            AWAITING_DETAIL,
-            AWAITING_MR_FINANCE_WRITER,
-            payload_awaits_mr_finance_writer,
-        )
-
-        if payload_awaits_mr_finance_writer(payload):
-            waiting = {
-                "state": "waiting",
-                "detail": terminal.detail or AWAITING_DETAIL,
-                "cycle": payload.get("cycle") or "code",
-                "outcome": "AWAITING_MR_FINANCE_WRITER",
-                "honesty": AWAITING_MR_FINANCE_WRITER,
-                "next": payload.get("next") or "writer",
-                "green": False,
-                "awaiting_mr_finance_writer": True,
-                "pilot_ready": False,
-                "findings": list(payload.get("findings") or [])[:10],
-                **progress,
-                **_authorship(output_dir, blueprint=blueprint, plan=plan),
-                "stale": False,
-            }
-            return _with_level_grade(waiting, output_dir)
 
         if handoff_awaiting_n3(output_dir):
             # Receipt accepted; N3 store-gate is the next green. Do not paint
@@ -923,15 +900,30 @@ def _run(
     from app.factory.build.runner import BuildBudget, RoleRunner
 
     auto = cycle == "code" and factory_auto_pilot_enabled()
-    if not (
+    # THIS BUILD's session id, resolved into a LOCAL and threaded through the
+    # runner — never written back into os.environ.
+    #
+    # This used to do `os.environ["FACTORY_SESSION_ID"] = sid` from inside the
+    # per-build THREAD, and nothing ever cleared it. Two ways that is wrong,
+    # and only one of them needs concurrency:
+    #   LOST WRITE (already live at a cap of 1): build A sets the global and
+    #     never unsets it, so build B finds it non-empty, takes the `if not`
+    #     branch as false, and runs its whole lifetime under A's session id.
+    #     Every build after the first in a process inherited the first one's.
+    #   CLOBBER (needs concurrency): two builds both find it empty, both
+    #     write, last writer wins for both.
+    # The session id is per-build state and the process environment is not a
+    # place to keep per-build state in a multi-tenant process. An externally
+    # set FACTORY_SESSION_ID is still honoured — it is a deliberate operator
+    # override — it is just no longer written by us.
+    from app.factory.build.orphan_recovery import session_id_from_output
+
+    session_id = (
         str(os.getenv("FACTORY_SESSION_ID") or "").strip()
         or str(os.getenv("FACTORY_CLI_PIVOT_SESSION_ID") or "").strip()
-    ):
-        from app.factory.build.orphan_recovery import session_id_from_output
-
-        sid = session_id_from_output(output_dir) or ""
-        if sid:
-            os.environ["FACTORY_SESSION_ID"] = sid
+        or session_id_from_output(output_dir)
+        or ""
+    )
     try:
         runner = RoleRunner(
             blueprint,
@@ -948,6 +940,7 @@ def _run(
             auto_pilot=auto if cycle == "code" else False,
             tenant_store=tenant_store,
             brief=brief,
+            session_id=session_id,
         )
         outcome = runner.run()
         logger.info(
@@ -958,11 +951,6 @@ def _run(
         )
         from app.factory.build.runner import Outcome as RunnerOutcome
 
-        if outcome.outcome is RunnerOutcome.AWAITING_MR_FINANCE_WRITER:
-            # Post-Cloner hold. Keep the generation charge (not a fail).
-            # Do not enter WRITER / cli-pivot / BA in this same thread.
-            _clear_quota_marker(output_dir)
-            return
         if outcome.outcome is RunnerOutcome.HANDOFF_TO_N3:
             # Receipt accepted after TESTER + STORE_MANAGER. N3 store-gate
             # is next. Keep the generation charge (not a fail) and do not

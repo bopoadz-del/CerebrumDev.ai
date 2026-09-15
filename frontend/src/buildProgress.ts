@@ -4,7 +4,6 @@ import type {
   FactoryCodeCliProbe,
 } from './api/factory'
 import {
-  AWAITING_MR_FINANCE_WRITER,
   FACTORY_CODE_CLI_CREDENTIALS_MISSING,
   FACTORY_CODE_CLI_FAILED,
   FACTORY_CODE_CLI_NO_MODEL,
@@ -362,7 +361,7 @@ export function isUnreadableLedger(build: BuildStatus | null | undefined): boole
 const CLI_FAIL_TEXT =
   /FACTORY_CODE_CLI_FAILED|FACTORY_CODE_CLI_BILLING|FACTORY_CODE_CLI_UNAVAILABLE|FACTORY_CODE_CLI_MODEL_DENIED|FACTORY_CODE_CLI_CREDENTIALS_MISSING|FACTORY_CODE_CLI_NO_MODEL|CLI exited/i
 
-/** Receipt or ledger says the Kimi Code CLI failed. Not enough alone to refuse Export. */
+/** Receipt or ledger says the coding agent failed. Not enough alone to refuse Export. */
 export function isCoderCliFailed(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
   const receipt = build.coder_receipt
@@ -680,16 +679,7 @@ export function outcomeFailed(build: BuildStatus | null | undefined): boolean {
   const outcome = String(build?.outcome || '').trim()
   if (!outcome) return false
   if (/^(SUCCESS|PASS|SUCCEEDED)$/i.test(outcome)) return false
-  if (/^AWAITING_MR_FINANCE_WRITER$/i.test(outcome)) return false
   return /FAIL/i.test(outcome)
-}
-
-/** Collector+Cloner finished; Writer waits for MR. FINANCE. */
-export function isAwaitingMrFinanceWriter(build: BuildStatus | null | undefined): boolean {
-  if (!build) return false
-  if (build.awaiting_mr_finance_writer === true) return true
-  if (build.state === 'waiting') return true
-  return String(build.honesty || '') === AWAITING_MR_FINANCE_WRITER
 }
 
 /**
@@ -712,9 +702,7 @@ export function isAuthoritativePilotReady(build: BuildStatus | null | undefined)
  */
 export function shouldRefuseExport(build: BuildStatus | null | undefined): boolean {
   if (!build) return false
-  if (build.state === 'building' || build.state === 'not_started' || build.state === 'waiting')
-    return false
-  if (isAwaitingMrFinanceWriter(build)) return true
+  if (build.state === 'building' || build.state === 'not_started') return false
   if (isUnreadableLedger(build)) return true
   if (build.state === 'failed') return true
   if (productSuiteFailed(build)) return true
@@ -888,62 +876,59 @@ export function platformsLeadCopy(
   return 'What the factory built for you. Download the export and launch it anywhere.'
 }
 
-const MISSING_KIMI_CLI_CREDS =
-  'Kimi Code CLI credentials are missing (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
-  'Set KIMI_CODE_API_KEY so boot writes ~/.kimi-code/config.toml. ' +
-  'The CLI binary can be present while credentials_file_present is false — ' +
-  'CEREBRUM_LLM_API_KEY and HTTP architect keys do not authenticate the Kimi Code CLI.'
+const MISSING_AGENT_CLI_CREDS =
+  'The coding agent has no credentials (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
+  'Set DEEPSEEK_API_KEY on the service so the CodeWhale worker can authenticate, ' +
+  'and arm the writer with FACTORY_CODEWHALE_WRITER=1. OPENROUTER_API_KEY is the ' +
+  'fallback leg only — it does not authenticate the coding agent.'
 
 const MISSING_DEEPSEEK_CLI_CREDS =
-  'DeepSeek FACTORY_CODE_CLI credentials are missing (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
-  'Set DEEPSEEK_API_KEY so boot writes ~/.kimi-code/config.toml [providers.deepseek] ' +
-  '(OpenAI-compat https://api.deepseek.com, model deepseek-v4-pro) and injects ' +
-  'KIMI_MODEL_* on the kimi subprocess. FACTORY_CODE_CLI=kimi. Floor chat stays ' +
-  'on OpenRouter — do not use DEEPSEEK_API_KEY for chat. Claude Code is not the DeepSeek vehicle.'
+  'DeepSeek credentials are missing (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
+  'DeepSeek is the only primary (OpenAI-compat https://api.deepseek.com): set ' +
+  'DEEPSEEK_API_KEY on the service and arm the writer with ' +
+  'FACTORY_CODEWHALE_WRITER=1. OpenRouter (OPENROUTER_API_KEY) is the fallback ' +
+  'leg only.'
 
-const MISSING_KIMI_CLI_MODEL =
-  'Kimi Code CLI has no usable default_model (FACTORY_CODE_CLI_NO_MODEL). ' +
-  'config.toml can be present (credentials_file_present=true) while default_model ' +
-  'or its [models] entry is missing. Set KIMI_CODE_API_KEY so boot writes ' +
-  'default_model (KIMI_CODE_MODEL, default kimi-k3). Headless Floor cannot run ' +
-  'kimi /login. CEREBRUM_LLM_API_KEY does not configure the Kimi Code model.'
+const MISSING_AGENT_CLI_MODEL =
+  'The coding agent has no usable default_model (FACTORY_CODE_CLI_NO_MODEL). ' +
+  'DeepSeek is the only primary: check DEEPSEEK_API_KEY and the configured ' +
+  'DeepSeek model, with OpenRouter (OPENROUTER_API_KEY / OPENROUTER_MODEL) as ' +
+  'the fallback leg.'
 
 /**
- * Operator copy from GET /health factory_code_cli. Named blocker wins;
- * credentials_file_present=false also fires unless Kimi credentials are
- * explicitly not required (DeepSeek uses DEEPSEEK_API_KEY). A credentials
- * file without default_model is FACTORY_CODE_CLI_NO_MODEL, not a successful
- * probe.
+ * Operator copy from GET /health factory_code_cli. Named blocker wins. A
+ * credentials file without default_model is FACTORY_CODE_CLI_NO_MODEL, not a
+ * successful probe.
  *
- * When Cursor BA is the Generate/Continue executor (`cursor_ba_available`
- * or `requires_cli === false`), Kimi/DeepSeek CLI is unused — do not
- * surface FACTORY_CODE_CLI_CREDENTIALS_MISSING as a Floor blocker.
+ * DeepSeek is the only primary and OpenRouter the only fallback; the coding
+ * agent runs through the CodeWhale worker, so `requires_cli === false` means
+ * no CLI credential blocker applies.
  */
 export function factoryCodeCliHonesty(
   probe: FactoryCodeCliProbe | null | undefined,
 ): string | null {
   if (!probe) return null
-  if (probe.cursor_ba_available === true || probe.requires_cli === false) {
+  if (probe.requires_cli === false) {
     return null
   }
   if (probe.blocker === FACTORY_CODE_CLI_NO_MODEL) {
-    return MISSING_KIMI_CLI_MODEL
+    return MISSING_AGENT_CLI_MODEL
   }
   if (
     probe.credentials_file_present === true &&
     probe.default_model_configured === false &&
     probe.requires_kimi_credentials !== false
   ) {
-    return MISSING_KIMI_CLI_MODEL
+    return MISSING_AGENT_CLI_MODEL
   }
   if (probe.blocker === FACTORY_CODE_CLI_CREDENTIALS_MISSING) {
     if (probe.requires_deepseek_credentials) {
       return MISSING_DEEPSEEK_CLI_CREDS
     }
-    return MISSING_KIMI_CLI_CREDS
+    return MISSING_AGENT_CLI_CREDS
   }
   if (probe.credentials_file_present === false && probe.requires_kimi_credentials !== false) {
-    return MISSING_KIMI_CLI_CREDS
+    return MISSING_AGENT_CLI_CREDS
   }
   return null
 }
@@ -957,12 +942,12 @@ export function factoryCodeCliStatusTitle(
       ? probeOrMessage
       : factoryCodeCliHonesty(probeOrMessage) || ''
   if (text.includes(FACTORY_CODE_CLI_NO_MODEL) || text.includes('default_model')) {
-    return 'Kimi Code CLI has no model'
+    return 'Coding agent has no model'
   }
-  if (text.includes('DEEPSEEK_API_KEY') || text.includes('DeepSeek')) {
-    return 'DeepSeek CLI credentials missing'
-  }
-  return 'Kimi Code CLI credentials missing'
+  // DeepSeek is the only primary, so every credential message names
+  // DEEPSEEK_API_KEY — a separate "DeepSeek vs other vendor" title would now
+  // match everything and say nothing.
+  return 'Coding agent credentials missing'
 }
 
 /** Honest export CTA. Gold "Download platform export" is only for Store-green. */

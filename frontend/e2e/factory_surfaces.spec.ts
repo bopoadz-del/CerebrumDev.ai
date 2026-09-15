@@ -2225,21 +2225,21 @@ test('Floor and Platforms name FACTORY_CODE_CLI_CREDENTIALS_MISSING from /health
   await page.goto('/')
   const floorBanner = page.getByTestId('floor-factory-cli-status')
   await expect(floorBanner).toBeVisible({ timeout: 20_000 })
-  await expect(floorBanner).toContainText('Kimi Code CLI credentials missing')
+  await expect(floorBanner).toContainText('Coding agent credentials missing')
   await expect(floorBanner).toContainText('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
-  await expect(floorBanner).toContainText('KIMI_CODE_API_KEY')
-  await expect(floorBanner).toContainText('config.toml')
+  await expect(floorBanner).toContainText('DEEPSEEK_API_KEY')
+  await expect(floorBanner).toContainText('FACTORY_CODEWHALE_WRITER')
 
   await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
   const platformsBanner = page.getByTestId('platforms-factory-cli-status')
   await expect(platformsBanner).toBeVisible()
   await expect(platformsBanner).toContainText('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
-  await expect(platformsBanner).toContainText('KIMI_CODE_API_KEY')
+  await expect(platformsBanner).toContainText('DEEPSEEK_API_KEY')
   await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
 })
 
-test('Floor and Platforms hide Kimi CLI credentials when Cursor BA is the executor', async ({
+test('Floor and Platforms show no CLI blocker when the CodeWhale worker is the executor', async ({
   page,
 }) => {
   await mockVerifiedFactory(page)
@@ -2259,7 +2259,6 @@ test('Floor and Platforms hide Kimi CLI credentials when Cursor BA is the execut
           credentials_file_present: false,
           requires_kimi_credentials: false,
           requires_cli: false,
-          cursor_ba_available: true,
         },
       }),
     })
@@ -2268,7 +2267,7 @@ test('Floor and Platforms hide Kimi CLI credentials when Cursor BA is the execut
   await page.goto('/')
   await expect(page.getByTestId('floor-factory-cli-status')).toHaveCount(0)
   await expect(page.getByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).toHaveCount(0)
-  await expect(page.getByText(/Kimi Code CLI credentials missing/)).toHaveCount(0)
+  await expect(page.getByText(/Coding agent credentials missing/)).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
@@ -2305,7 +2304,7 @@ test('Floor and Platforms name FACTORY_CODE_CLI_NO_MODEL from /health', async ({
   await page.goto('/')
   const floorBanner = page.getByTestId('floor-factory-cli-status')
   await expect(floorBanner).toBeVisible({ timeout: 20_000 })
-  await expect(floorBanner).toContainText('Kimi Code CLI has no model')
+  await expect(floorBanner).toContainText('Coding agent has no model')
   await expect(floorBanner).toContainText('FACTORY_CODE_CLI_NO_MODEL')
   await expect(floorBanner).toContainText('default_model')
   await expect(page.getByText(/CODING AGENT HAS TAKEN OVER/i)).toHaveCount(0)

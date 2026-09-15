@@ -339,6 +339,75 @@ def probe_k_manifest_honesty_detects_forgery() -> None:
     assert all(MANIFEST_MISMATCH in p for p in problems)
 
 
+def probe_l_one_tenant_cannot_starve_the_platform() -> None:
+    """P7 -- CerebrumDev.ai is multi-tenant. One account holding a slot must
+    not refuse every other account on the box, and must still be held to its
+    OWN limit while the box has room.
+
+    Asserts on the REFUSAL REASON, never on a count of results: a
+    `sum(1 for ok, _ in runs)` counts every tuple regardless of outcome and
+    has reported green against a broken build in this project before.
+    """
+    import os
+
+    from app.factory.build.codewhale_worker import (
+        PROCESS_CAP_ENV,
+        PROCESS_SLOTS_EXHAUSTED,
+        TENANT_CAP_ENV,
+        TENANT_SLOTS_EXHAUSTED,
+        InProcessSlotCounter,
+        WorkerError,
+        set_slot_counter,
+        worker_job_slot,
+        worker_slots_snapshot,
+    )
+    from app.factory.build.tenant_bind import bind_tenant_store
+
+    saved = {k: os.environ.get(k) for k in (PROCESS_CAP_ENV, TENANT_CAP_ENV)}
+    previous = set_slot_counter(InProcessSlotCounter())
+    os.environ[PROCESS_CAP_ENV] = "3"
+    os.environ[TENANT_CAP_ENV] = "1"
+    try:
+        hog = bind_tenant_store("probe_l_hog")
+        other = bind_tenant_store("probe_l_other")
+        assert hog is not None and other is not None
+        assert hog.tenant_key != other.tenant_key
+
+        with worker_job_slot(hog):
+            # 1. The hog is stopped at its OWN limit, not the box's.
+            try:
+                with worker_job_slot(hog):
+                    pass
+            except WorkerError as exc:
+                assert TENANT_SLOTS_EXHAUSTED in str(exc), str(exc)
+                assert PROCESS_SLOTS_EXHAUSTED not in str(exc), str(exc)
+            else:
+                raise AssertionError(
+                    "one tenant took a second slot past its per-tenant cap — "
+                    "fairness is not enforced"
+                )
+            # 2. A DIFFERENT tenant is still served. This is the bug.
+            try:
+                with worker_job_slot(other):
+                    assert worker_slots_snapshot()["total"] == 2
+            except WorkerError as exc:
+                raise AssertionError(
+                    "a second tenant was refused while the box had free "
+                    "slots — one tenant consumed the platform, concurrency "
+                    f"is single-tenant: {exc}"
+                )
+        # 3. Nothing leaked.
+        snap = worker_slots_snapshot()
+        assert snap == {"total": 0, "by_tenant": {}}, snap
+    finally:
+        set_slot_counter(previous)
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -351,6 +420,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P4 retrieval engine is real RAG", probe_i_retrieval_engine_is_real),
     ("P5 worker refuses an unbound tenant", probe_j_worker_refuses_unbound_tenant),
     ("P6 manifest honesty detects forgery", probe_k_manifest_honesty_detects_forgery),
+    ("P7 one tenant cannot starve the platform", probe_l_one_tenant_cannot_starve_the_platform),
 ]
 
 

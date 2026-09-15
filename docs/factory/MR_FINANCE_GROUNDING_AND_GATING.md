@@ -216,4 +216,7 @@ Finance vertical after COLLECTOR+CLONER: GitHub issue `domain:finance`+`handoff`
 - Content miss (`RECEIPT_INVALID` / `PATHS_VIOLATED`): one re-dispatch with FORBIDDEN echo; second → `BUILD_FAILED` / park (aligns with max 2 repairs).
 
 ### DOMAIN_HANDOFF note
-- Code today auto-fires for **finance** verticals only after CLONER (`domain_handoff.py`). Optional webhook. Does not authorize spend or path-jail widen.
+- **Stale.** There is no domain handoff and no vertical detection. The webhook and the
+  domain-spec table were both removed; `domain_handoff.py` now only stages the compiled
+  C-BRIEF at `docs/coder_brief.md` after CLONER for the CodeWhale (DeepSeek) WRITER.
+  See [`DOMAIN_HANDOFF.md`](DOMAIN_HANDOFF.md).
