@@ -109,6 +109,26 @@ describe('factoryAccessPaused', () => {
     expect(factoryAccessPaused(null)).toBe(false)
     expect(factoryAccessPaused(undefined)).toBe(false)
   })
+
+  it('never pauses while enforcement is off, even for an expired trial', () => {
+    // assert_entitled() returns early when BILLING_ENFORCEMENT is off, so the
+    // API serves these accounts. Pausing the composer anyway locked the user
+    // out of a UI whose backend was open.
+    expect(factoryAccessPaused({ entitled: false, enforcement: false })).toBe(false)
+    expect(factoryAccessPaused({ entitled: true, enforcement: false })).toBe(false)
+  })
+
+  it('still pauses an unentitled account while enforcement is on', () => {
+    expect(factoryAccessPaused({ entitled: false, enforcement: true })).toBe(true)
+    expect(factoryAccessPaused({ entitled: true, enforcement: true })).toBe(false)
+  })
+
+  it('falls back to the entitled flag when enforcement is absent', () => {
+    // Older backend, or a status call that failed and resolved to null.
+    expect(factoryAccessPaused({ entitled: false })).toBe(true)
+    expect(factoryAccessPaused({ entitled: false, enforcement: undefined })).toBe(true)
+    expect(factoryAccessPaused(null)).toBe(false)
+  })
 })
 
 describe('isTransientNetworkError', () => {
