@@ -339,6 +339,7 @@ def test_a_missing_test_runner_is_not_reported_as_failing_tests(tmp_path):
     from app.factory.build.gates import GateContext, gate_suite_green
 
     tests_dir = tmp_path / "tests"
+    (tmp_path / "app").mkdir()  # suite gate requires the app package first
     tests_dir.mkdir()
     (tests_dir / "test_probe.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
 
@@ -365,6 +366,7 @@ def test_a_genuinely_red_suite_still_reports_red_with_findings(tmp_path):
     from app.factory.build.gates import GateContext, gate_suite_green
 
     tests_dir = tmp_path / "tests"
+    (tmp_path / "app").mkdir()  # suite gate requires the app package first
     tests_dir.mkdir()
     (tests_dir / "test_probe.py").write_text("def test_x():\n    assert 0\n", encoding="utf-8")
 

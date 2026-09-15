@@ -158,7 +158,17 @@ def test_headless_dispatch_passes_provider_and_key_from_env(monkeypatch, tmp_pat
     assert receipt.status == "completed"
     argv = captured["argv"]
     assert argv[0].endswith("codewhale")
-    assert argv[1:4] == ["exec", "--auto", "--json"]
+    # codewhale 0.9.13 parses --provider/--api-key as GLOBAL flags: they
+    # must precede the exec subcommand. After the subcommand the CLI
+    # refuses them and the WRITER dies in under a second authoring
+    # nothing (live-factory failure sess_d5a7f55b8a9c4dad).
+    assert argv.index("--provider") < argv.index("exec")
+    assert argv[argv.index("--provider") + 1] == "deepseek"
+    assert argv.index("--api-key") < argv.index("exec")
+    assert argv[argv.index("exec") + 1 : argv.index("exec") + 3] == [
+        "--auto",
+        "--json",
+    ]
     assert "--provider" in argv and "deepseek" in argv
     assert "--api-key" in argv and "sk-deepseek-test" in argv
 
