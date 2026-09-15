@@ -473,7 +473,7 @@ def normalise_provider(name: str) -> str:
     return name
 
 
-SUPPORTED_PROVIDERS = ("cursor", "kimi", "claude")
+SUPPORTED_PROVIDERS = ("deepseek", "cursor", "kimi", "claude")
 
 
 def _cursor_key_envs() -> tuple[str, ...]:
@@ -584,7 +584,53 @@ def _detect_provider() -> str:
     return ""
 
 
+def _deepseek_config(*prefixes: str) -> Dict[str, Any]:
+    """DeepSeek OpenAI-compatible chat/architect config.
+
+    A present path-scoped triple (``CEREBRUM_FACTORY_LLM_*`` /
+    ``CEREBRUM_CHAT_LLM_*``) owns host and model; otherwise
+    ``DEEPSEEK_API_KEY`` + the default deepseek endpoint.
+    """
+    scoped = _scoped_path_endpoint(*prefixes)
+    if scoped:
+        fallback = str(scoped["fallback_model"] or "")
+        if not fallback or "moonshot" in fallback.lower() or "kimi" in fallback.lower():
+            fallback = "deepseek-chat"
+        return {
+            "provider": "deepseek",
+            "api_key": scoped["api_key"],
+            "base_url": scoped["base_url"],
+            "model": scoped["model"],
+            "fallback_model": fallback,
+            "mock": False,
+            "temperature": _llm_temperature(),
+        }
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    if not api_key:
+        return {
+            "provider": "deepseek",
+            "api_key": "",
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-chat",
+            "fallback_model": "deepseek-chat",
+            "mock": False,
+            "temperature": _llm_temperature(),
+            "error": "deepseek selected but DEEPSEEK_API_KEY is not set",
+        }
+    return {
+        "provider": "deepseek",
+        "api_key": api_key,
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+        "fallback_model": "deepseek-chat",
+        "mock": False,
+        "temperature": _llm_temperature(),
+    }
+
+
 def _config_for_provider(provider: str, *prefixes: str) -> Dict[str, Any]:
+    if provider == "deepseek":
+        return _deepseek_config(*prefixes)
     if provider == "kimi":
         return _kimi_config(*prefixes)
     if provider == "claude":
@@ -696,6 +742,9 @@ def get_factory_llm_config() -> Dict[str, Any]:
         }
 
     provider = explicit or _detect_provider() or "kimi"
+
+    if provider == "deepseek":
+        return _deepseek_config("CEREBRUM_FACTORY")
 
     if provider == "cursor":
         cfg = _cursor_http_config("CEREBRUM_FACTORY")
