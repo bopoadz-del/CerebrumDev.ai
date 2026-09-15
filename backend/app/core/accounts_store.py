@@ -67,6 +67,14 @@ _t_api_keys = sa.Table(
     sa.Column("created_at", sa.String(64), nullable=False),
     sa.Column("revoked_at", sa.String(64), nullable=True),
 )
+_t_stripe_events = sa.Table(
+    "stripe_events",
+    _META,
+    sa.Column("id", sa.String(128), primary_key=True),
+    sa.Column("event_type", sa.String(128), nullable=False),
+    sa.Column("account_id", sa.String(64), nullable=True),
+    sa.Column("created_at", sa.String(64), nullable=False),
+)
 _t_login_tokens = sa.Table(
     "login_tokens",
     _META,
@@ -452,6 +460,31 @@ def set_subscription(
             sa.update(_t_accounts).where(_t_accounts.c.id == account_id).values(**values)
         )
         return result.rowcount > 0
+
+
+def stripe_event_seen(event_id: str) -> bool:
+    """True when this Stripe event id was already applied (dedupe)."""
+    with _LOCK, _engine().begin() as conn:
+        row = conn.execute(
+            sa.select(_t_stripe_events.c.id).where(_t_stripe_events.c.id == event_id)
+        ).first()
+        return row is not None
+
+
+def record_stripe_event(
+    event_id: str, event_type: str, account_id: Optional[str] = None
+) -> None:
+    """Mark an event applied. Idempotent (INSERT OR IGNORE semantics)."""
+    with _LOCK, _engine().begin() as conn:
+        if not stripe_event_seen(event_id):
+            conn.execute(
+                sa.insert(_t_stripe_events).values(
+                    id=event_id,
+                    event_type=event_type,
+                    account_id=account_id,
+                    created_at=_iso(_utcnow()),
+                )
+            )
 
 
 def issue_login_token(account_id: str) -> str:
