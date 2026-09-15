@@ -917,6 +917,7 @@ def _run(
     blocks_root: Optional[Path],
     cycle: str = "code",
     tenant_store: Any = None,
+    brief: str = "",
 ) -> None:
     from app.factory.build.auto_pilot import factory_auto_pilot_enabled
     from app.factory.build.runner import BuildBudget, RoleRunner
@@ -946,6 +947,7 @@ def _run(
             cycle=cycle,
             auto_pilot=auto if cycle == "code" else False,
             tenant_store=tenant_store,
+            brief=brief,
         )
         outcome = runner.run()
         logger.info(
@@ -1010,6 +1012,7 @@ def start_runner_build(
     cycle: Optional[str] = None,
     quota_account_id: Optional[str] = None,
     tenant_identity: Optional[str] = None,
+    brief: str = "",
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
 
@@ -1152,6 +1155,7 @@ def start_runner_build(
             Path(blocks_root) if blocks_root else None,
             resolved,
             tenant_store,
+            str(brief or "").strip(),
         ),
         name=f"build-{getattr(blueprint, 'product_id', 'product')}",
         daemon=True,

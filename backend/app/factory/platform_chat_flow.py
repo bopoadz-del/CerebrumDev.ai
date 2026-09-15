@@ -621,6 +621,7 @@ def approve_and_generate(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None)
             or getattr(state, "session_id", None),
+            brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1365,6 +1366,7 @@ def start_fresh_generation(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None)
             or getattr(state, "session_id", None),
+            brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1477,6 +1479,7 @@ def resume_generation(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None)
             or getattr(state, "session_id", None),
+            brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1584,6 +1587,7 @@ def resume_pilot_cycle(
             quota_account_id=getattr(state, "user_id", None),
             tenant_identity=getattr(state, "user_id", None)
             or getattr(state, "session_id", None),
+            brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)

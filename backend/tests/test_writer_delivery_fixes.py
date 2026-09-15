@@ -147,8 +147,9 @@ def test_start_runner_build_binds_tenant_from_session_identity_when_account_abse
     smoke = _Path(__file__).resolve().parents[2] / "blueprints" / "examples" / "runner_smoke.yaml"
     captured = {}
 
-    def fake_run(blueprint, output_dir, blocks_root, cycle="code", tenant_store=None):
+    def fake_run(blueprint, output_dir, blocks_root, cycle="code", tenant_store=None, brief=""):
         captured["tenant_store"] = tenant_store
+        captured["brief"] = brief
 
     class _InlineThread:
         def __init__(self, *args, **kwargs):
@@ -169,11 +170,14 @@ def test_start_runner_build_binds_tenant_from_session_identity_when_account_abse
         load_blueprint(smoke),
         tmp_path / "out",
         tenant_identity="sess_admin_test",
+        brief="I need a platform for my car dealership",
     )
     ts = captured["tenant_store"]
     assert ts is not None
     assert ts.tenant_key
     assert "sess_admin_test" not in str(ts.store_dir)
+    # The user's Floor-chat brief threads alongside the tenant binding.
+    assert captured["brief"] == "I need a platform for my car dealership"
 
     # A legacy caller that passes only quota_account_id still binds from
     # the authenticated account identity.
@@ -183,6 +187,104 @@ def test_start_runner_build_binds_tenant_from_session_identity_when_account_abse
         quota_account_id="acct_1",
     )
     assert captured["tenant_store"].tenant_key == tenant_bind.bind_tenant_store("acct_1").tenant_key
+
+
+def test_writer_prompt_carries_the_compiled_brief_not_an_empty_brief(tmp_path):
+    """The worker must follow the C-BRIEF CLONER compiled — live builds
+    shipped an EMPTY BRIEF section because ctx.state['brief'] was never
+    set and the seam never read the compiled brief
+    (sess_9f67681a79324fcc class)."""
+    from app.factory.build.roles_handlers import _compiled_writer_brief
+    from app.factory.build.writer_prompt import render_writer_prompt
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "coder_brief.md").write_text(
+        "# C-BRIEF\n\ninventory: REUSE audit {json:true}\n",
+        encoding="utf-8",
+    )
+    bp = SimpleNamespace(
+        product_id="automotive",
+        product_name="AutoDealer",
+        vertical="automotive",
+        summary="car dealership",
+        capabilities=[],
+    )
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=RoleWorkspace("WRITER", tmp_path),
+        blueprint=bp,
+        plan=SimpleNamespace(capabilities=[]),
+        state={},
+    )
+    brief = _compiled_writer_brief(ctx)
+    assert "inventory: REUSE audit" in brief
+    # Literal braces in the brief must survive rendering (values are
+    # inserted verbatim by str.format).
+    prompt = render_writer_prompt(bp, brief=brief)
+    assert "inventory: REUSE audit {json:true}" in prompt
+
+
+def test_user_floor_brief_wins_over_the_compiled_brief(tmp_path):
+    """ALL brief sources reach the worker together: the user's Floor-chat
+    words, the compiled C-BRIEF, and the capability specs."""
+    from app.factory.build.roles_handlers import _compiled_writer_brief
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "coder_brief.md").write_text(
+        "# C-BRIEF\n\ncompiled inventory",
+        encoding="utf-8",
+    )
+    bp = SimpleNamespace(
+        product_id="automotive",
+        product_name="AutoDealer",
+        vertical="automotive",
+        summary="car dealership",
+        capabilities=[
+            SimpleNamespace(id="vehicles", description="inventory make/model/year"),
+        ],
+    )
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=RoleWorkspace("WRITER", tmp_path),
+        blueprint=bp,
+        plan=SimpleNamespace(capabilities=[]),
+        state={"brief": "I need a platform for my car dealership"},
+    )
+    brief = _compiled_writer_brief(ctx)
+    assert "USER BRIEF" in brief
+    assert "I need a platform for my car dealership" in brief
+    assert "COMPILED C-BRIEF" in brief
+    assert "compiled inventory" in brief
+    assert "CAPABILITIES" in brief
+    assert "vehicles: inventory make/model/year" in brief
+
+
+def test_writer_brief_falls_back_to_capability_specs_when_no_coder_brief(tmp_path):
+    """Without a compiled brief the worker still gets the blueprint's
+    capability specs — never an empty BRIEF section."""
+    from app.factory.build.roles_handlers import _compiled_writer_brief
+
+    bp = SimpleNamespace(
+        product_id="automotive",
+        product_name="AutoDealer",
+        vertical="automotive",
+        summary="car dealership platform",
+        capabilities=[
+            SimpleNamespace(id="vehicles", description="inventory make/model/year"),
+            SimpleNamespace(id="leads", description="customer inquiries"),
+        ],
+    )
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=RoleWorkspace("WRITER", tmp_path),
+        blueprint=bp,
+        plan=SimpleNamespace(capabilities=[]),
+        state={},
+    )
+    brief = _compiled_writer_brief(ctx)
+    assert brief
+    assert "vehicles: inventory make/model/year" in brief
+    assert "leads: customer inquiries" in brief
 
 
 def test_tester_harness_models_file_compiles_with_no_specs(tmp_path):
