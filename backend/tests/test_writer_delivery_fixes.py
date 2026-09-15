@@ -225,8 +225,8 @@ def test_writer_prompt_carries_the_compiled_brief_not_an_empty_brief(tmp_path):
 
 
 def test_user_floor_brief_wins_over_the_compiled_brief(tmp_path):
-    """The BRIEF section must be the user's own words from the Floor chat,
-    threaded via state['brief'] — not the compiled technical brief."""
+    """ALL brief sources reach the worker together: the user's Floor-chat
+    words, the compiled C-BRIEF, and the capability specs."""
     from app.factory.build.roles_handlers import _compiled_writer_brief
 
     (tmp_path / "docs").mkdir()
@@ -239,7 +239,9 @@ def test_user_floor_brief_wins_over_the_compiled_brief(tmp_path):
         product_name="AutoDealer",
         vertical="automotive",
         summary="car dealership",
-        capabilities=[],
+        capabilities=[
+            SimpleNamespace(id="vehicles", description="inventory make/model/year"),
+        ],
     )
     ctx = RoleContext(
         role=BuildRole.WRITER,
@@ -249,7 +251,12 @@ def test_user_floor_brief_wins_over_the_compiled_brief(tmp_path):
         state={"brief": "I need a platform for my car dealership"},
     )
     brief = _compiled_writer_brief(ctx)
-    assert brief == "I need a platform for my car dealership"
+    assert "USER BRIEF" in brief
+    assert "I need a platform for my car dealership" in brief
+    assert "COMPILED C-BRIEF" in brief
+    assert "compiled inventory" in brief
+    assert "CAPABILITIES" in brief
+    assert "vehicles: inventory make/model/year" in brief
 
 
 def test_writer_brief_falls_back_to_capability_specs_when_no_coder_brief(tmp_path):
