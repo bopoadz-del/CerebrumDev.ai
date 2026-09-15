@@ -20,6 +20,29 @@ def is_abstract(node):
         if n == "abstractmethod": return True
     return False
 
+
+def is_protocol(cls):
+    """A typing.Protocol class — its method bodies are interface contracts,
+    not hollow implementations. Flagging ``def f(...) -> None: ...`` in a
+    Protocol is a false positive: there is nothing to implement."""
+    for base in getattr(cls, "bases", []) or []:
+        if isinstance(base, ast.Name) and base.id == "Protocol":
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == "Protocol":
+            return True
+    return False
+
+
+def protocol_methods(tree):
+    """(lineno, name) of methods declared directly on Protocol classes."""
+    out = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and is_protocol(node):
+            for item in node.body:
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    out.add((item.lineno, item.name))
+    return out
+
 def hollow(node):
     body = [x for x in node.body if not (isinstance(x, ast.Expr)
             and isinstance(x.value, ast.Constant)
@@ -55,8 +78,11 @@ def main():
             try: tree = ast.parse(open(p, encoding="utf-8", errors="ignore").read())
             except SyntaxError: continue
             in_tests = rel.startswith("tests/") or "/tests/" in rel
+            skip_protocol = protocol_methods(tree)
             for n in ast.walk(tree):
                 if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if (n.lineno, n.name) in skip_protocol:
+                        continue  # a Protocol's signature body is the contract
                     if not hollow(n) or is_abstract(n): continue
                     tag = f"{rel}:{n.lineno} {n.name}"
                     key = f"{rel} :: {n.name}"
