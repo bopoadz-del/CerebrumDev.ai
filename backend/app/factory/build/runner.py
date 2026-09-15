@@ -317,6 +317,7 @@ class RoleRunner:
         cycle: str = "code",
         auto_pilot: bool = False,
         blocks_lock: Optional[Dict[str, Any]] = None,
+        tenant_store: Any = None,
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -338,6 +339,12 @@ class RoleRunner:
         self.clock = clock
         self.ledger = ledger or BuildLedger(self.workspace / LEDGER_FILENAME)
         self.state: Dict[str, Any] = {}
+        # Phase 1: the tenant store handle bound from the authenticated
+        # principal at build start. The WRITER role hands it to the
+        # headless worker, whose isolation gate refuses an unbound job
+        # (no_authenticated_tenant) before the CLI starts.
+        if tenant_store is not None:
+            self.state["tenant_store"] = tenant_store
         from app.factory.build.authorship import n_required_capabilities_from
 
         n_required = n_required_capabilities_from(

@@ -916,6 +916,7 @@ def _run(
     output_dir: Path,
     blocks_root: Optional[Path],
     cycle: str = "code",
+    tenant_store: Any = None,
 ) -> None:
     from app.factory.build.auto_pilot import factory_auto_pilot_enabled
     from app.factory.build.runner import BuildBudget, RoleRunner
@@ -944,6 +945,7 @@ def _run(
             ),
             cycle=cycle,
             auto_pilot=auto if cycle == "code" else False,
+            tenant_store=tenant_store,
         )
         outcome = runner.run()
         logger.info(
@@ -1130,9 +1132,23 @@ def start_runner_build(
 
     _write_quota_marker(out, quota_account_id)
 
+    # Phase 1 tenant isolation: bind the store handle from the
+    # authenticated account BEFORE the thread starts. An unauthenticated
+    # build gets None and the worker refuses (no_authenticated_tenant)
+    # instead of running unbound.
+    from app.factory.build.tenant_bind import bind_tenant_store
+
+    tenant_store = bind_tenant_store(quota_account_id)
+
     thread = threading.Thread(
         target=_run,
-        args=(blueprint, out, Path(blocks_root) if blocks_root else None, resolved),
+        args=(
+            blueprint,
+            out,
+            Path(blocks_root) if blocks_root else None,
+            resolved,
+            tenant_store,
+        ),
         name=f"build-{getattr(blueprint, 'product_id', 'product')}",
         daemon=True,
     )
