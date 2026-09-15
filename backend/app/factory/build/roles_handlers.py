@@ -2799,35 +2799,41 @@ def writer_uses_codewhale(env: Optional[Mapping[str, str]]) -> bool:
 
 
 def _compiled_writer_brief(ctx: RoleContext) -> str:
-    """The BRIEF the worker must follow.
+    """The full BRIEF the worker must follow — ALL sources, together:
 
-    Priority: the user's own words from the Floor chat (threaded from the
-    session as ``state['brief']``), then the frozen compiled C-BRIEF
-    (block contracts, REUSE inventory, gap list) CLONER wrote to
-    docs/coder_brief.md, then the blueprint's capability specs.
+    1. the user's own words from the Floor chat (threaded from the
+       session as ``state['brief']``),
+    2. the frozen compiled C-BRIEF (block contracts, REUSE inventory,
+       gap list) CLONER wrote to docs/coder_brief.md,
+    3. the blueprint's capability specs.
 
     Live builds shipped an EMPTY BRIEF section because nothing set
     ``state['brief']`` and the seam never read the compiled brief — the
     agent authored the platform blind from the one-line blueprint
     summary (sess_9f67681a79324fcc class).
     """
+    sections: List[str] = []
     user_brief = str(ctx.state.get("brief") or "").strip()
     if user_brief:
-        return user_brief
+        sections.append(f"USER BRIEF\n{user_brief}")
     coder_brief_rel = Path("docs") / "coder_brief.md"
     if ctx.workspace.exists(coder_brief_rel):
         text = ctx.workspace.read_text(coder_brief_rel).strip()
         if text:
-            return text
-    summary = str(getattr(ctx.blueprint, "summary", "") or "").strip()
-    caps = getattr(ctx.blueprint, "capabilities", None) or []
-    lines = [summary] if summary else []
-    for cap in caps:
+            sections.append(f"COMPILED C-BRIEF\n{text}")
+    cap_lines: List[str] = []
+    for cap in getattr(ctx.blueprint, "capabilities", None) or []:
         cid = str(getattr(cap, "id", "") or "").strip()
         desc = str(getattr(cap, "description", "") or "").strip()
         if cid:
-            lines.append(f"- {cid}: {desc}".rstrip())
-    return "\n".join(lines)
+            cap_lines.append(f"- {cid}: {desc}".rstrip())
+    if cap_lines:
+        sections.append("CAPABILITIES\n" + "\n".join(cap_lines))
+    if not sections:
+        summary = str(getattr(ctx.blueprint, "summary", "") or "").strip()
+        if summary:
+            sections.append(summary)
+    return "\n\n".join(sections)
 
 
 def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
