@@ -72,6 +72,20 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     assert captured["argv"].index("--provider") < captured["argv"].index("exec")
 
 
+def test_writer_uses_codewhale_falls_back_to_process_env(monkeypatch):
+    """The runner invokes role handlers with ctx only — env is always None
+    in production — so the worker switch must read os.environ (the same
+    fallback writer_uses_cli_pivot applies). Without it the seam silently
+    never arms (live-factory failure sess_b9db05967cb94e6f: writer_no_output,
+    28 templated files, zero agent-authored)."""
+    from app.factory.build.roles_handlers import writer_uses_codewhale
+
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "1")
+    assert writer_uses_codewhale(None) is True
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "0")
+    assert writer_uses_codewhale(None) is False
+
+
 def test_tester_harness_models_file_compiles_with_no_specs(tmp_path):
     """Capabilities declared but zero handler specs must still yield a
     syntactically valid tests/test_models.py (bare-def regression)."""
