@@ -145,6 +145,10 @@ def run_worker_job(
     worker slot; beyond the cap it refuses, never queues-and-forgets.
     """
     cli = worker_cli_path()
+    # The tenant boundary precedes everything: an unbound job is refused
+    # before the binary is even looked up — isolation is the first gate,
+    # and P5 must hold on runners with no codewhale installed.
+    _require_bound_tenant(tenant_store)
     if cli is None:
         raise WorkerError(
             f"{WORKER_CLI_MISSING}: codewhale executable not found — the "
