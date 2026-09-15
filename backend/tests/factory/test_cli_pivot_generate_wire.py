@@ -14,7 +14,6 @@ from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.cli_pivot import (
     CURSOR_KEY_ENVS,
-    ExecutorLaunch,
     resolve_pivot_session_env,
     writer_uses_cli_pivot,
 )

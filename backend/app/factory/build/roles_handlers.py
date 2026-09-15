@@ -10,7 +10,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.factory.build.authority import (
     KERNEL_ROUTE_NAMES,
@@ -4835,8 +4835,6 @@ def run_store_manager(ctx: RoleContext) -> RoleResult:
     gate still passes with an honest ``store_unwired`` flag — local reads
     only. No agent. Published on the product as ``GET /v1/provenance``.
     """
-    import os
-
     from app.factory.store_manager import StoreOp, assert_store_op_allowed
 
     vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
