@@ -588,10 +588,28 @@ export interface BillingStatus {
   [k: string]: unknown
 }
 
-/** Same flag Subscription uses for Factory access: Paused iff entitled === false. */
+/**
+ * Factory access is paused only when the backend would actually refuse.
+ *
+ * The backend gate reads:
+ *
+ *     if not enforcement_enabled(): return principal   # off => always pass
+ *     if not is_entitled(...):      raise 402
+ *
+ * but `entitled` in the status payload is computed from the subscription
+ * alone and never consults enforcement. Pausing on `entitled` by itself meant
+ * that with BILLING_ENFORCEMENT off the API served the account while this flag
+ * hard-disabled the composer -- locked out of a UI whose backend was open.
+ * Mirror the backend: enforcement off => never paused.
+ *
+ * `enforcement` undefined (older backend, or a status call that failed and
+ * resolved to null) keeps the previous behaviour: paused iff entitled is
+ * explicitly false.
+ */
 export function factoryAccessPaused(
-  status: Pick<BillingStatus, 'entitled'> | null | undefined,
+  status: Pick<BillingStatus, 'entitled' | 'enforcement'> | null | undefined,
 ): boolean {
+  if (status?.enforcement === false) return false
   return status?.entitled === false
 }
 
