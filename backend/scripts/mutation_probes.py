@@ -290,6 +290,25 @@ def probe_i_retrieval_engine_is_real() -> None:
         )
 
 
+def probe_j_worker_refuses_unbound_tenant() -> None:
+    """P5 -- run the writer worker without a bound tenant store and the
+    dispatch must refuse (the builder lives under Phase 1 isolation)."""
+    from app.factory.build.codewhale_worker import (
+        NO_AUTHENTICATED_TENANT,
+        WorkerError,
+        run_worker_job,
+    )
+
+    try:
+        run_worker_job("build anything", "/tmp/anywhere", tenant_store=None)
+    except WorkerError as exc:
+        assert NO_AUTHENTICATED_TENANT in str(exc), str(exc)
+    else:
+        raise AssertionError(
+            "the worker ran with no tenant store — builder isolation is not enforced"
+        )
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -300,6 +319,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P2 precedence ladder is data not prompt text", probe_g_precedence_ladder_is_data_not_prompt_text),
     ("P3 claim labels refuse a stripped layer", probe_h_claim_labels_refuse_stripped_layer),
     ("P4 retrieval engine is real RAG", probe_i_retrieval_engine_is_real),
+    ("P5 worker refuses an unbound tenant", probe_j_worker_refuses_unbound_tenant),
 ]
 
 
