@@ -41,6 +41,12 @@ OUTPUT
 Write the platform into this checkout, then report the files you wrote
 and the artifacts you authored. A zero-artifact pass is refused
 (writer_no_output).
+
+AUTHORSHIP STAMP (mandatory — the factory's disk-level artifact gate
+counts it): every action handler you author must carry this exact line in
+its module docstring:
+
+    Written by the factory WRITER role (codewhale exec)
 """
 
 

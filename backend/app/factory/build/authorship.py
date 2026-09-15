@@ -436,6 +436,10 @@ def is_coding_agent_source(source: Any) -> bool:
         return True
     if text.startswith("FACTORY_CODE_CLI"):
         return True
+    if text.startswith("codewhale"):
+        # Phase 5: the headless CodeWhale worker is a coding agent; its
+        # stamped handlers count toward the artifact gate like any other.
+        return True
     lowered = text.lower()
     return lowered in {"harvested workspace handler", "compiled-brief oneshot"}
 
