@@ -619,6 +619,8 @@ def approve_and_generate(
             out,
             blocks_root=_blocks_root(),
             quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None)
+            or getattr(state, "session_id", None),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1361,6 +1363,8 @@ def start_fresh_generation(
             blocks_root=_blocks_root(),
             cycle="code",
             quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None)
+            or getattr(state, "session_id", None),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1471,6 +1475,8 @@ def resume_generation(
             blocks_root=_blocks_root(),
             cycle=_resume_cycle(state, output_root),
             quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None)
+            or getattr(state, "session_id", None),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)
@@ -1576,6 +1582,8 @@ def resume_pilot_cycle(
             blocks_root=_blocks_root(),
             cycle="pilot",
             quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None)
+            or getattr(state, "session_id", None),
         )
     except CodeCliUnavailable as exc:
         return _cli_unavailable_reply(pd, exc)

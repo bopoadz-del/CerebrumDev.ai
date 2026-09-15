@@ -131,6 +131,60 @@ def test_runner_seeds_bound_tenant_store_into_writer_state(tmp_path):
     assert runner.state.get("tenant_store") is binding
 
 
+def test_start_runner_build_binds_tenant_from_session_identity_when_account_absent(
+    tmp_path, monkeypatch
+):
+    """Master-key (admin) callers carry no account id: the tenant binding
+    falls back to the server-owned session identity so the worker's
+    isolation gate still gets a bound handle (live-factory failure
+    sess_665604dce87046d7)."""
+    from pathlib import Path as _Path
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.build import tenant_bind
+    import app.factory.build_jobs as bj
+
+    smoke = _Path(__file__).resolve().parents[2] / "blueprints" / "examples" / "runner_smoke.yaml"
+    captured = {}
+
+    def fake_run(blueprint, output_dir, blocks_root, cycle="code", tenant_store=None):
+        captured["tenant_store"] = tenant_store
+
+    class _InlineThread:
+        def __init__(self, *args, **kwargs):
+            self._args = args
+            self._kwargs = kwargs
+            self.name = kwargs.get("name", "inline")
+            self.daemon = True
+
+        def start(self):
+            self._kwargs.get("target", lambda *_: None)(*self._kwargs.get("args", ()))
+
+    monkeypatch.setattr(bj, "_run", fake_run)
+    monkeypatch.setattr("threading.Thread", _InlineThread)
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "1")
+
+    bj.start_runner_build(
+        load_blueprint(smoke),
+        tmp_path / "out",
+        tenant_identity="sess_admin_test",
+    )
+    ts = captured["tenant_store"]
+    assert ts is not None
+    assert ts.tenant_key
+    assert "sess_admin_test" not in str(ts.store_dir)
+
+    # A legacy caller that passes only quota_account_id still binds from
+    # the authenticated account identity.
+    bj.start_runner_build(
+        load_blueprint(smoke),
+        tmp_path / "out2",
+        quota_account_id="acct_1",
+    )
+    assert captured["tenant_store"].tenant_key == tenant_bind.bind_tenant_store("acct_1").tenant_key
+
+
 def test_tester_harness_models_file_compiles_with_no_specs(tmp_path):
     """Capabilities declared but zero handler specs must still yield a
     syntactically valid tests/test_models.py (bare-def regression)."""

@@ -1009,6 +1009,7 @@ def start_runner_build(
     blocks_root: Optional[Path] = None,
     cycle: Optional[str] = None,
     quota_account_id: Optional[str] = None,
+    tenant_identity: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
 
@@ -1133,12 +1134,15 @@ def start_runner_build(
     _write_quota_marker(out, quota_account_id)
 
     # Phase 1 tenant isolation: bind the store handle from the
-    # authenticated account BEFORE the thread starts. An unauthenticated
+    # authenticated identity BEFORE the thread starts. An unauthenticated
     # build gets None and the worker refuses (no_authenticated_tenant)
-    # instead of running unbound.
+    # instead of running unbound. tenant_identity wins when present
+    # (account id for account callers; the server-owned session id for
+    # master-key/admin callers, which carry no account).
     from app.factory.build.tenant_bind import bind_tenant_store
 
-    tenant_store = bind_tenant_store(quota_account_id)
+    identity = tenant_identity if tenant_identity is not None else quota_account_id
+    tenant_store = bind_tenant_store(identity)
 
     thread = threading.Thread(
         target=_run,
