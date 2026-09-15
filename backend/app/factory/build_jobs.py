@@ -900,15 +900,30 @@ def _run(
     from app.factory.build.runner import BuildBudget, RoleRunner
 
     auto = cycle == "code" and factory_auto_pilot_enabled()
-    if not (
+    # THIS BUILD's session id, resolved into a LOCAL and threaded through the
+    # runner — never written back into os.environ.
+    #
+    # This used to do `os.environ["FACTORY_SESSION_ID"] = sid` from inside the
+    # per-build THREAD, and nothing ever cleared it. Two ways that is wrong,
+    # and only one of them needs concurrency:
+    #   LOST WRITE (already live at a cap of 1): build A sets the global and
+    #     never unsets it, so build B finds it non-empty, takes the `if not`
+    #     branch as false, and runs its whole lifetime under A's session id.
+    #     Every build after the first in a process inherited the first one's.
+    #   CLOBBER (needs concurrency): two builds both find it empty, both
+    #     write, last writer wins for both.
+    # The session id is per-build state and the process environment is not a
+    # place to keep per-build state in a multi-tenant process. An externally
+    # set FACTORY_SESSION_ID is still honoured — it is a deliberate operator
+    # override — it is just no longer written by us.
+    from app.factory.build.orphan_recovery import session_id_from_output
+
+    session_id = (
         str(os.getenv("FACTORY_SESSION_ID") or "").strip()
         or str(os.getenv("FACTORY_CLI_PIVOT_SESSION_ID") or "").strip()
-    ):
-        from app.factory.build.orphan_recovery import session_id_from_output
-
-        sid = session_id_from_output(output_dir) or ""
-        if sid:
-            os.environ["FACTORY_SESSION_ID"] = sid
+        or session_id_from_output(output_dir)
+        or ""
+    )
     try:
         runner = RoleRunner(
             blueprint,
@@ -925,6 +940,7 @@ def _run(
             auto_pilot=auto if cycle == "code" else False,
             tenant_store=tenant_store,
             brief=brief,
+            session_id=session_id,
         )
         outcome = runner.run()
         logger.info(

@@ -63,7 +63,7 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
         },
     )()
 
-    def fake_run(prompt, dest, tenant_store=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id=""):
         return receipt
 
     monkeypatch.setattr(
@@ -75,7 +75,7 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
-    def boom(prompt, dest, tenant_store=None):
+    def boom(prompt, dest, tenant_store=None, session_id=""):
         raise WorkerError("worker_exec_failed: nope")
 
     monkeypatch.setattr(

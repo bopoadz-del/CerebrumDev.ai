@@ -18,7 +18,12 @@ services:
     # reporting "degraded" -- and Render only reads the status code, so a
     # service with an unwritable disk looked healthy to the platform.
     healthCheckPath: /ready
-    plan: starter
+    # The LIVE service runs 1c-2g (1 vCPU / 2 GB), read from the Render API
+    # 2026-09-16. This file said `starter` -- 0.5 vCPU / 512 MB -- which cannot
+    # host a `codewhale exec` Node child at all next to the app's own ~500 MB
+    # resident footprint. Syncing this blueprint to pick up the cap vars below
+    # would have silently DOWNGRADED production into an OOM.
+    plan: standard
     region: oregon
     envVars:
       - key: ENV
@@ -268,15 +273,48 @@ services:
         sync: false
       - key: FACTORY_CODE_PROVIDER
         sync: false
-      # Factory post-CLONER domain handoff → Cursor automation webhook.
-      # Dashboard-only: this file is not a live Blueprint; never commit the
-      # URL secret or the Bearer token (crsr_…). post_webhook attaches
-      # Authorization when DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION (or
-      # DOMAIN_HANDOFF_WEBHOOK_KEY) is set. No Cursor agent APIs.
-      - key: DOMAIN_HANDOFF_WEBHOOK_URL
-        sync: false
-      - key: DOMAIN_HANDOFF_WEBHOOK_AUTHORIZATION
-        sync: false
+      # WORKER CONCURRENCY -- two independent limits, both honoured by
+      # app/factory/build/codewhale_worker.py.
+      #
+      #   FACTORY_WORKER_PROFILE        THE SINGLE UPGRADE KNOB. A Render plan
+      #                                 slug from WORKER_PROFILES. Changing it
+      #                                 (plus resizing the instance) is the
+      #                                 WHOLE upgrade: 3 slots -> 50-tenant
+      #                                 capacity with no code edit.
+      #   FACTORY_CODEWHALE_WORKER_CAP  PROCESS cap: total jobs in flight on
+      #                                 this instance, across all tenants.
+      #                                 Host protection.
+      #   FACTORY_CODEWHALE_TENANT_CAP  PER-TENANT cap: jobs in flight for ONE
+      #                                 bound account. Fairness -- one tenant
+      #                                 cannot take the box.
+      #
+      # Only the PROFILE is declared below, deliberately. The two cap vars
+      # OVERRIDE the profile, so declaring them here as well would make the
+      # profile inert and let the two drift apart -- a reader would see
+      # `1c-2g` next to caps that no longer match it, and an operator who
+      # upgraded by changing only the profile would watch nothing happen.
+      # That silent no-op is the same class of bug this change removes. They
+      # stay UNSET so the profile governs; set one in the dashboard only to
+      # deviate from the table deliberately (e.g. after MEASURING PER_JOB_MB).
+      #
+      # WHY 3 on this box: 2048 MB RAM - 500 MB (uvicorn + FastAPI + chromadb
+      # + the app import graph, resident) - 150 MB (Render overhead, page
+      # cache, per-build Python objects) = 1398 MB; 1398 / 400 MB per
+      # `codewhale exec` Node child = 3. The CPU bound (1 vCPU x 8, since the
+      # children are blocked on DeepSeek HTTP) is slack. RECOMPUTE all three
+      # numbers -- and MEASURE the 400 -- before raising anything.
+      #
+      # Upgrade table (plan -> process / per-tenant):
+      #   1c-2g 3/1 (live) | 2c-4g 8/1 | 4c-8g 18/1 | 4c-16g 32/2 | 8c-32g 64/4
+      # 8c-32g is the first plan with the RAM for 50 concurrent tenants.
+      #
+      # NOTE ON THIS FILE: it is not applied (see the header), so declaring the
+      # keys here is DOCUMENTATION -- it makes the intended operating caps
+      # greppable and stops a future sync from pruning them. The REMEDIATION is
+      # the CODE DEFAULT (DEFAULT_PROCESS_CAP=3 / DEFAULT_TENANT_CAP=1), which
+      # production receives on the next deploy with zero dashboard action.
+      - key: FACTORY_WORKER_PROFILE
+        value: "1c-2g"
     disk:
       name: cerebrumdev-storage
       mountPath: /app/storage

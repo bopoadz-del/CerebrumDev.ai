@@ -71,6 +71,28 @@ def test_resolve_pivot_session_env_uses_factory_session_path(tmp_path):
     assert pinned["FACTORY_SESSION_ID"] == "already"
 
 
+def test_an_explicit_session_id_outranks_another_tenants_ambient_one(tmp_path):
+    """Cross-tenant bleed containment.
+
+    The explicit ``session_id`` is THIS build's own identity, threaded from
+    the runner state. It used to lose to whatever ``FACTORY_SESSION_ID``
+    happened to be sitting in the process env — which, with more than one
+    build in flight, is exactly the case where the value present belongs to
+    a DIFFERENT tenant. ``build/<session>-*`` was then "stable across
+    tenants": two tenants resolving the same output path.
+    """
+    dest = tmp_path / "factory_outputs" / "sessions" / "sess_mine" / "demo"
+    dest.mkdir(parents=True)
+
+    env = resolve_pivot_session_env(
+        dest,
+        env={"CURSOR_API_KEY": "k", "FACTORY_SESSION_ID": "sess_some_other_tenant"},
+        session_id="sess_mine",
+    )
+    assert env["FACTORY_SESSION_ID"] == "sess_mine"
+    assert env["FACTORY_CLI_PIVOT_SESSION_ID"] == "sess_mine"
+
+
 def test_keys_absent_writer_does_not_call_cli_pivot(tmp_path, monkeypatch, stub_coder):
     for name in CURSOR_KEY_ENVS:
         monkeypatch.delenv(name, raising=False)

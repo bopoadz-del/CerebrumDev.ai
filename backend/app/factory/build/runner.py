@@ -311,6 +311,7 @@ class RoleRunner:
         blocks_lock: Optional[Dict[str, Any]] = None,
         tenant_store: Any = None,
         brief: str = "",
+        session_id: str = "",
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -338,6 +339,14 @@ class RoleRunner:
         # (no_authenticated_tenant) before the CLI starts.
         if tenant_store is not None:
             self.state["tenant_store"] = tenant_store
+        # THIS build's session id, resolved by the caller into a local and
+        # threaded here rather than parked in os.environ. Under concurrency a
+        # process-global session id is a cross-tenant identifier bleed: the
+        # writer subprocess and the cli-pivot seam both resolve `build/
+        # <session>-*` from it, so two tenants would resolve the same output
+        # path. Same path the tenant handle takes, for the same reason.
+        if str(session_id or "").strip():
+            self.state["session_id"] = str(session_id).strip()
         # The user's own words from the Floor chat — the WRITER's BRIEF
         # section. Threaded from the session at generate/resume time.
         if str(brief or "").strip():

@@ -2829,7 +2829,12 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     )
     try:
         receipt = run_worker_job(
-            prompt, dest, tenant_store=ctx.state.get("tenant_store")
+            prompt,
+            dest,
+            tenant_store=ctx.state.get("tenant_store"),
+            # THIS build's own identity, so a concurrent build cannot hand
+            # its session id to this writer child through the process env.
+            session_id=str(ctx.state.get("session_id") or ""),
         )
     except WorkerError as exc:
         raise RoleError(f"codewhale_worker_failed: {exc}") from exc
