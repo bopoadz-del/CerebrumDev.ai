@@ -3,8 +3,8 @@
 The live loop is full-pipeline autopilot - COLLECTOR -> CLONER -> WRITER ->
 TESTER -> STORE_MANAGER - with no pause between CLONER and WRITER and no
 external BA. The WRITER dispatches to the headless CodeWhale (DeepSeek)
-worker when ``FACTORY_CODEWHALE_WRITER`` is on; cli-pivot stays first in the
-dispatch order (R6).
+worker when ``FACTORY_CODEWHALE_WRITER`` is on. The Cursor cli-pivot branch
+is gone from ``run_writer``: CodeWhale is the only dispatch.
 """
 
 from __future__ import annotations

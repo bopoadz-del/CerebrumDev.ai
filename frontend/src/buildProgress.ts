@@ -876,7 +876,7 @@ export function platformsLeadCopy(
   return 'What the factory built for you. Download the export and launch it anywhere.'
 }
 
-const MISSING_KIMI_CLI_CREDS =
+const MISSING_AGENT_CLI_CREDS =
   'The coding agent has no credentials (FACTORY_CODE_CLI_CREDENTIALS_MISSING). ' +
   'Set DEEPSEEK_API_KEY on the service so the CodeWhale worker can authenticate, ' +
   'and arm the writer with FACTORY_CODEWHALE_WRITER=1. OPENROUTER_API_KEY is the ' +
@@ -889,7 +889,7 @@ const MISSING_DEEPSEEK_CLI_CREDS =
   'FACTORY_CODEWHALE_WRITER=1. OpenRouter (OPENROUTER_API_KEY) is the fallback ' +
   'leg only.'
 
-const MISSING_KIMI_CLI_MODEL =
+const MISSING_AGENT_CLI_MODEL =
   'The coding agent has no usable default_model (FACTORY_CODE_CLI_NO_MODEL). ' +
   'DeepSeek is the only primary: check DEEPSEEK_API_KEY and the configured ' +
   'DeepSeek model, with OpenRouter (OPENROUTER_API_KEY / OPENROUTER_MODEL) as ' +
@@ -912,23 +912,23 @@ export function factoryCodeCliHonesty(
     return null
   }
   if (probe.blocker === FACTORY_CODE_CLI_NO_MODEL) {
-    return MISSING_KIMI_CLI_MODEL
+    return MISSING_AGENT_CLI_MODEL
   }
   if (
     probe.credentials_file_present === true &&
     probe.default_model_configured === false &&
     probe.requires_kimi_credentials !== false
   ) {
-    return MISSING_KIMI_CLI_MODEL
+    return MISSING_AGENT_CLI_MODEL
   }
   if (probe.blocker === FACTORY_CODE_CLI_CREDENTIALS_MISSING) {
     if (probe.requires_deepseek_credentials) {
       return MISSING_DEEPSEEK_CLI_CREDS
     }
-    return MISSING_KIMI_CLI_CREDS
+    return MISSING_AGENT_CLI_CREDS
   }
   if (probe.credentials_file_present === false && probe.requires_kimi_credentials !== false) {
-    return MISSING_KIMI_CLI_CREDS
+    return MISSING_AGENT_CLI_CREDS
   }
   return null
 }
