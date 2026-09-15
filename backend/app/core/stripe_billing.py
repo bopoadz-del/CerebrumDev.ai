@@ -28,7 +28,9 @@ def _env(name: str) -> str:
 
 
 def secret_key() -> str:
-    return _env("STRIPE_SECRET_KEY")
+    """Secret key, accepting the two names deployments actually use:
+    STRIPE_SECRET_KEY (canonical) or STRIPE_API_KEY (Render env)."""
+    return _env("STRIPE_SECRET_KEY") or _env("STRIPE_API_KEY")
 
 
 def price_id() -> str:
@@ -51,6 +53,13 @@ def _configure() -> None:
     stripe.api_key = secret_key()
 
 
+def _automatic_tax_enabled() -> bool:
+    """Opt-in: automatic_tax only when Stripe Tax is on for the account.
+    Enabling it on an account without Tax fails checkout, so the flag is
+    explicit instead of assumed."""
+    return _env("STRIPE_AUTOMATIC_TAX").lower() in {"1", "true", "yes", "on"}
+
+
 def create_checkout_session(account_id: str, email: str) -> str:
     """Create a subscription Checkout Session; returns the hosted URL.
 
@@ -59,15 +68,22 @@ def create_checkout_session(account_id: str, email: str) -> str:
     """
     _configure()
     fields = accounts_store.subscription_fields(account_id) or {}
+    subscription_data: Dict[str, Any] = {
+        "metadata": {"account_id": account_id},
+        # Phase B: plan changes prorate rather than bill on the next cycle.
+        "proration_behavior": "create_prorations",
+    }
     params: Dict[str, Any] = {
         "mode": "subscription",
         "line_items": [{"price": price_id(), "quantity": 1}],
         "client_reference_id": account_id,
         "metadata": {"account_id": account_id},
-        "subscription_data": {"metadata": {"account_id": account_id}},
+        "subscription_data": subscription_data,
         "success_url": f"{_frontend_url()}/billing?checkout=success",
         "cancel_url": f"{_frontend_url()}/billing?checkout=cancel",
     }
+    if _automatic_tax_enabled():
+        params["automatic_tax"] = {"enabled": True}
     if fields.get("stripe_customer_id"):
         params["customer"] = fields["stripe_customer_id"]
     else:
@@ -128,11 +144,16 @@ def handle_event(event: Dict[str, Any]) -> Dict[str, Any]:
     """Apply a verified Stripe event to account state.
 
     All mutations are idempotent sets, so Stripe's at-least-once delivery is
-    safe. Unknown/irrelevant events are acked (handled=False) so Stripe stops
-    retrying them.
+    safe; event ids are additionally recorded so a redelivery is acked
+    without re-applying (the stripe_events dedupe table).
     """
+    event_id = str(event.get("id") or "")
     etype = event.get("type", "")
     data = (event.get("data") or {}).get("object") or {}
+    if event_id and accounts_store.stripe_event_seen(event_id):
+        return {"handled": False, "type": etype, "reason": "duplicate event"}
+
+    result: Optional[Dict[str, Any]] = None
 
     if etype == "checkout.session.completed":
         account_id = data.get("client_reference_id") or (data.get("metadata") or {}).get(
@@ -146,9 +167,9 @@ def handle_event(event: Dict[str, Any]) -> Dict[str, Any]:
             stripe_customer_id=data.get("customer"),
             stripe_subscription_id=data.get("subscription"),
         )
-        return {"handled": True, "type": etype, "account_id": account_id}
+        result = {"handled": True, "type": etype, "account_id": account_id}
 
-    if etype in (
+    elif etype in (
         "customer.subscription.created",
         "customer.subscription.updated",
         "customer.subscription.deleted",
@@ -166,13 +187,21 @@ def handle_event(event: Dict[str, Any]) -> Dict[str, Any]:
             stripe_customer_id=data.get("customer"),
             stripe_subscription_id=data.get("id"),
         )
-        return {"handled": True, "type": etype, "account_id": account_id, "status": status}
+        result = {"handled": True, "type": etype, "account_id": account_id, "status": status}
 
-    if etype == "invoice.payment_failed":
+    elif etype in ("invoice.payment_failed", "invoice.paid"):
         account_id = _account_id_for(data.get("customer"), None)
         if not account_id:
             return {"handled": False, "type": etype, "reason": "unknown customer"}
-        accounts_store.set_subscription(account_id, "past_due")
-        return {"handled": True, "type": etype, "account_id": account_id, "status": "past_due"}
+        # A paid invoice recovers the account; a failed one downgrades it.
+        status = "active" if etype.endswith("paid") else "past_due"
+        accounts_store.set_subscription(account_id, status)
+        result = {"handled": True, "type": etype, "account_id": account_id, "status": status}
 
+    if result is not None:
+        if event_id:
+            accounts_store.record_stripe_event(
+                event_id, etype, result.get("account_id")
+            )
+        return result
     return {"handled": False, "type": etype, "reason": "unhandled event type"}
