@@ -7,6 +7,7 @@ Public types and templates live in ``roles_models`` / ``roles_constants``.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
@@ -2781,9 +2782,18 @@ def writer_uses_codewhale(env: Optional[Mapping[str, str]]) -> bool:
 
     Explicit env switch (FACTORY_CODEWHALE_WRITER=1), never a production
     default; cli-pivot stays first in the dispatch order (R6).
+
+    ``env=None`` means the live process environment (the runner invokes
+    the role handler with only ctx, so env is ALWAYS None in production
+    and the switch must read os.environ — the same fallback
+    writer_uses_cli_pivot already applies; without it the worker seam
+    silently never arms and the deterministic template path authors
+    zero artifacts, refused as writer_no_output — live-factory failure
+    sess_b9db05967cb94e6f).
     """
+    blob = os.environ if env is None else env
     return (
-        str((env or {}).get("FACTORY_CODEWHALE_WRITER", "")).strip().lower()
+        str(blob.get("FACTORY_CODEWHALE_WRITER", "")).strip().lower()
         in {"1", "true", "yes", "on"}
     )
 
