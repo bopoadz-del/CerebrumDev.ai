@@ -2798,6 +2798,38 @@ def writer_uses_codewhale(env: Optional[Mapping[str, str]]) -> bool:
     )
 
 
+def _compiled_writer_brief(ctx: RoleContext) -> str:
+    """The BRIEF the worker must follow.
+
+    Priority: the user's own words from the Floor chat (threaded from the
+    session as ``state['brief']``), then the frozen compiled C-BRIEF
+    (block contracts, REUSE inventory, gap list) CLONER wrote to
+    docs/coder_brief.md, then the blueprint's capability specs.
+
+    Live builds shipped an EMPTY BRIEF section because nothing set
+    ``state['brief']`` and the seam never read the compiled brief — the
+    agent authored the platform blind from the one-line blueprint
+    summary (sess_9f67681a79324fcc class).
+    """
+    user_brief = str(ctx.state.get("brief") or "").strip()
+    if user_brief:
+        return user_brief
+    coder_brief_rel = Path("docs") / "coder_brief.md"
+    if ctx.workspace.exists(coder_brief_rel):
+        text = ctx.workspace.read_text(coder_brief_rel).strip()
+        if text:
+            return text
+    summary = str(getattr(ctx.blueprint, "summary", "") or "").strip()
+    caps = getattr(ctx.blueprint, "capabilities", None) or []
+    lines = [summary] if summary else []
+    for cap in caps:
+        cid = str(getattr(cap, "id", "") or "").strip()
+        desc = str(getattr(cap, "description", "") or "").strip()
+        if cid:
+            lines.append(f"- {cid}: {desc}".rstrip())
+    return "\n".join(lines)
+
+
 def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     """Phase 5: the WRITER role runs headless through `codewhale exec`.
 
@@ -2813,7 +2845,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
 
     dest = persist_workspace_root(ctx.workspace)
     prompt = render_writer_prompt(
-        ctx.blueprint, brief=str(ctx.state.get("brief") or "")
+        ctx.blueprint, brief=_compiled_writer_brief(ctx)
     )
     try:
         receipt = run_worker_job(

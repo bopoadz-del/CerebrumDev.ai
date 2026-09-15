@@ -805,6 +805,7 @@ def generate_approved_product(
             cycle=body.cycle,
             quota_account_id=principal.account_id,
             tenant_identity=principal.account_id or session_id,
+            brief=str(state.product_design.brief or "").strip(),
         )
         if result.get("already_running"):
             raise HTTPException(
