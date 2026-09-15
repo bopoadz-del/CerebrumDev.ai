@@ -1,0 +1,196 @@
+"""The honest zip manifest (Phase 6).
+
+Every exported platform carries ``MANIFEST.json`` declaring what it really
+is — engine version, retrieval mode, embedder + vector store, populated
+layers with object counts, tenant id, tenancy mode, prompt version, the CI
+run id that greened it, and whether the kit engine is included. The UI's
+export label is DERIVED from the manifest: it is impossible to render
+"RAG included" unless the manifest says ``vector_rag`` AND the engine
+files are present, and impossible to render multi-tenant unless the mode
+says so.
+
+Tenancy mode strings reflect the real stack (option B): the factory runs
+no Postgres RLS, so the honest values are ``single_tenant_only`` and
+``multi_tenant_partition`` — ``multi_tenant_rls`` from prompt v1.1 is
+deliberately NOT a value here because no such mode exists in this
+codebase. This deviation is named, not hidden.
+
+The zip itself is refused (``zip_requires_green_ci``) unless the CI run
+that greened the build is recorded AND the Phase 0.5 artifact gate holds
+(agent-authored artifacts > 0). A manifest claim that the zip's contents
+do not back is ``manifest_mismatch`` — verified, not trusted.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+MANIFEST_SCHEMA = "export_manifest.v1"
+MANIFEST_FILENAME = "MANIFEST.json"
+
+RETRIEVAL_MODES = ("vector_rag", "keyword_lexical")
+TENANCY_MODES = ("single_tenant_only", "multi_tenant_partition")
+
+ZIP_REQUIRES_GREEN_CI = "zip_requires_green_ci"
+MANIFEST_MISMATCH = "manifest_mismatch"
+
+#: The kernel engine file a manifest claim must be able to back.
+ENGINE_FILE = "app/cerebrum_product_kernel/retrieval_engine.py"
+
+
+class ExportManifestError(ValueError):
+    """A named refusal from the export-manifest layer."""
+
+
+def ci_run_id(env: Optional[Dict[str, str]] = None) -> str:
+    """The CI run that greened this build, fed by the pipeline."""
+    source = env if env is not None else os.environ
+    return str(source.get("FACTORY_CI_RUN_ID") or source.get("GITHUB_RUN_ID") or "").strip()
+
+
+def assert_zip_eligibility(status: Dict[str, Any], run_id: str) -> None:
+    """6.3: a zip is produced ONLY after CI is green AND the artifact gate
+    (Phase 0.5) passed. Anything else refuses with the named reason."""
+    state = str(status.get("state") or "")
+    authorship = status.get("authorship") or {}
+    agent_written = int(authorship.get("agent_written") or 0)
+    if state != "succeeded":
+        raise ExportManifestError(
+            f"{ZIP_REQUIRES_GREEN_CI}: build state is {state!r}, not succeeded"
+        )
+    if agent_written <= 0:
+        raise ExportManifestError(
+            f"{ZIP_REQUIRES_GREEN_CI}: the artifact gate did not pass "
+            f"(agent_written={agent_written})"
+        )
+    if not run_id:
+        raise ExportManifestError(
+            f"{ZIP_REQUIRES_GREEN_CI}: no CI run id recorded — the build "
+            "was not greened by CI"
+        )
+
+
+def build_manifest(
+    *,
+    product_id: str,
+    tenant_id: Optional[str],
+    ci_run: str,
+    retrieval_mode: str,
+    tenancy_mode: str,
+    embedder: str,
+    vector_store: str,
+    engine_version: str,
+    prompt_version: str,
+    layer_counts: Dict[int, int],
+    engine_included: bool,
+) -> Dict[str, Any]:
+    """Assemble the versioned manifest. Validated, never a free-form dict."""
+    if retrieval_mode not in RETRIEVAL_MODES:
+        raise ExportManifestError(
+            f"{MANIFEST_MISMATCH}: retrieval_mode must be one of "
+            f"{RETRIEVAL_MODES}, got {retrieval_mode!r}"
+        )
+    if tenancy_mode not in TENANCY_MODES:
+        raise ExportManifestError(
+            f"{MANIFEST_MISMATCH}: tenancy_mode must be one of "
+            f"{TENANCY_MODES}, got {tenancy_mode!r}"
+        )
+    for layer, count in layer_counts.items():
+        if layer not in (1, 2, 3, 4) or int(count) < 0:
+            raise ExportManifestError(
+                f"{MANIFEST_MISMATCH}: layer_counts must be 1-4 -> non-negative, "
+                f"got {layer!r}: {count!r}"
+            )
+    return {
+        "schema": MANIFEST_SCHEMA,
+        "product_id": product_id,
+        "tenant_id": tenant_id,
+        "engine": {
+            "version": engine_version,
+            "included": bool(engine_included),
+        },
+        "retrieval": {
+            "mode": retrieval_mode,
+            "embedder": embedder,
+            "vector_store": vector_store,
+        },
+        "layers": {str(layer): int(count) for layer, count in layer_counts.items()},
+        "tenancy_mode": tenancy_mode,
+        "prompt_template_version": prompt_version,
+        "ci_run_id": ci_run,
+    }
+
+
+def write_export_manifest(product_root: Path | str, manifest: Dict[str, Any]) -> Path:
+    root = Path(product_root)
+    path = root / MANIFEST_FILENAME
+    path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return path
+
+
+def verify_manifest(
+    manifest: Dict[str, Any], zip_contents: Set[str]
+) -> List[str]:
+    """Verify every manifest claim against the zip's ACTUAL contents.
+
+    Returns a list of ``manifest_mismatch`` reasons; empty = the manifest
+    is honest. A vector-rag or engine-included claim with no engine file
+    in the zip is the forgery P6 exists to catch.
+    """
+    problems: List[str] = []
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        problems.append(
+            f"{MANIFEST_MISMATCH}: schema must be {MANIFEST_SCHEMA!r}"
+        )
+    engine_included = bool(manifest.get("engine", {}).get("included"))
+    mode = str(manifest.get("retrieval", {}).get("mode") or "")
+    engine_present = ENGINE_FILE in zip_contents
+    if mode == "vector_rag" and not engine_present:
+        problems.append(
+            f"{MANIFEST_MISMATCH}: manifest claims vector_rag but the kit "
+            f"engine file ({ENGINE_FILE}) is not in the zip"
+        )
+    if engine_included and not engine_present:
+        problems.append(
+            f"{MANIFEST_MISMATCH}: manifest claims the kit engine is "
+            f"included but {ENGINE_FILE} is not in the zip"
+        )
+    tenancy = str(manifest.get("tenancy_mode") or "")
+    if tenancy not in TENANCY_MODES:
+        problems.append(
+            f"{MANIFEST_MISMATCH}: tenancy_mode must be one of {TENANCY_MODES}"
+        )
+    if mode not in RETRIEVAL_MODES:
+        problems.append(
+            f"{MANIFEST_MISMATCH}: retrieval mode must be one of {RETRIEVAL_MODES}"
+        )
+    return problems
+
+
+def ui_labels_from_manifest(
+    manifest: Dict[str, Any], zip_contents: Set[str]
+) -> Dict[str, Optional[str]]:
+    """The ONLY labels the UI may render for this export.
+
+    Derived, never asserted by the UI itself: "RAG included" appears iff
+    the manifest says vector_rag AND the engine file is really in the zip;
+    multi-tenant appears iff the mode says so. Absent = the UI renders
+    nothing for that slot.
+    """
+    mode = str(manifest.get("retrieval", {}).get("mode") or "")
+    engine_present = ENGINE_FILE in zip_contents
+    tenancy = str(manifest.get("tenancy_mode") or "")
+    rag_label = None
+    if mode == "vector_rag" and engine_present:
+        rag_label = "RAG included"
+    tenancy_label = (
+        "Multi-tenant"
+        if tenancy == "multi_tenant_partition"
+        else ("Single-tenant" if tenancy == "single_tenant_only" else None)
+    )
+    return {"rag": rag_label, "tenancy": tenancy_label}

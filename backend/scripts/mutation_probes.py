@@ -309,6 +309,36 @@ def probe_j_worker_refuses_unbound_tenant() -> None:
         )
 
 
+def probe_k_manifest_honesty_detects_forgery() -> None:
+    """P6 -- a forged vector_rag manifest with no engine in the zip must be
+    a manifest_mismatch, never shipped."""
+    from app.factory.build.export_manifest import (
+        MANIFEST_MISMATCH,
+        build_manifest,
+        verify_manifest,
+    )
+
+    manifest = build_manifest(
+        product_id="probe",
+        tenant_id=None,
+        ci_run="ci-1",
+        retrieval_mode="vector_rag",
+        tenancy_mode="multi_tenant_partition",
+        embedder="onnx-minilm",
+        vector_store="chroma_tenant_collection",
+        engine_version="retrieval_engine.v1",
+        prompt_version="writer_worker_prompt.v1",
+        layer_counts={1: 1},
+        engine_included=True,
+    )
+    problems = verify_manifest(manifest, {"app/main.py"})
+    if not problems:
+        raise AssertionError(
+            "a forged vector_rag manifest verified clean — the manifest is decorative"
+        )
+    assert all(MANIFEST_MISMATCH in p for p in problems)
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -320,6 +350,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P3 claim labels refuse a stripped layer", probe_h_claim_labels_refuse_stripped_layer),
     ("P4 retrieval engine is real RAG", probe_i_retrieval_engine_is_real),
     ("P5 worker refuses an unbound tenant", probe_j_worker_refuses_unbound_tenant),
+    ("P6 manifest honesty detects forgery", probe_k_manifest_honesty_detects_forgery),
 ]
 
 

@@ -394,7 +394,51 @@ def download_product_package(
         )
 
     from app.factory.build.authorship import thin_store_green_export_blocker
+    from app.factory.build.export_manifest import (
+        ENGINE_FILE,
+        assert_zip_eligibility,
+        build_manifest,
+        ci_run_id,
+        verify_manifest,
+        write_export_manifest,
+    )
     from app.factory.build.store_acceptance import acceptance_export_blocker
+    from app.factory.build.writer_prompt import PROMPT_VERSION
+
+    # 6.3: a zip exists only after CI is green AND the artifact gate passed.
+    # The template engine has no ledger (state "unknown") and its zip carries
+    # the prototype marker declaring it unfinished — the gate applies to
+    # runner builds, which are the ones claiming a governed product.
+    if status.get("state") != "unknown":
+        assert_zip_eligibility(status, ci_run_id())
+
+    engine_present = (out / ENGINE_FILE).is_file()
+    seam_present = (out / "app" / "steward" / "tenant_store.py").is_file()
+    manifest = build_manifest(
+        product_id=gen.get("product_id") or out.name,
+        tenant_id=status.get("tenant_id"),
+        ci_run=ci_run_id(),
+        retrieval_mode="vector_rag" if engine_present else "keyword_lexical",
+        tenancy_mode=(
+            "multi_tenant_partition" if seam_present else "single_tenant_only"
+        ),
+        embedder=("provider-configured" if engine_present else "none"),
+        vector_store=("chroma_tenant_collection" if engine_present else "none"),
+        engine_version="retrieval_engine.v1" if engine_present else "none",
+        prompt_version=PROMPT_VERSION,
+        # A fresh build ships layer 1 (certified kernel definitions);
+        # client layers 2-4 are zero until client content lands — honest
+        # zeros, never invented counts.
+        layer_counts={1: 1} if (out / "app" / "cerebrum_product_kernel" / "formulas").is_dir() else {},
+        engine_included=engine_present,
+    )
+    write_export_manifest(out, manifest)
+    tree_contents = {
+        p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()
+    }
+    problems = verify_manifest(manifest, tree_contents)
+    if problems:
+        raise HTTPException(status_code=500, detail="; ".join(problems))
 
     thin = thin_store_green_export_blocker(
         status, out, plan=plan, blueprint=blueprint
