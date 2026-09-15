@@ -35,6 +35,14 @@ def test_secret_key_falls_back_to_stripe_api_key(monkeypatch):
     assert stripe_billing.secret_key() == "sk_test_canonical"
 
 
+def test_publishable_key_in_the_secret_slot_is_refused(monkeypatch):
+    """The mistake this guard exists for: pk_... pasted into the secret env."""
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "pk_test_public_key")
+    with pytest.raises(stripe_billing.StripeKeyError) as exc:
+        stripe_billing.assert_secret_key_shape()
+    assert stripe_billing.PUBLISHABLE_AS_SECRET in str(exc.value)
+
+
 def test_checkout_prorates_and_tax_is_opt_in(monkeypatch, _storage):
     captured = {}
 

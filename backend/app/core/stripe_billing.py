@@ -45,11 +45,33 @@ def stripe_configured() -> bool:
     return bool(secret_key() and price_id())
 
 
+#: Refused when a publishable key (pk_...) is placed in the secret slot.
+#: A pk_ key can never drive server calls; failing here is fail-loud —
+#: the silent version is a checkout that 401s at Stripe with no reason.
+PUBLISHABLE_AS_SECRET = "stripe_publishable_key_used_as_secret"
+
+
+class StripeKeyError(ValueError):
+    """A named refusal about Stripe credential placement."""
+
+
+def assert_secret_key_shape() -> None:
+    """The secret slot must hold a secret key, never a publishable one."""
+    key = secret_key()
+    if key.startswith("pk_"):
+        raise StripeKeyError(
+            f"{PUBLISHABLE_AS_SECRET}: STRIPE_SECRET_KEY holds a publishable "
+            "key (pk_...) — publishable keys belong in the frontend env "
+            "(STRIPE_PUBLISHABLE_KEY), never in the server secret slot"
+        )
+
+
 def _frontend_url() -> str:
     return _env("FRONTEND_URL") or "http://localhost:5173"
 
 
 def _configure() -> None:
+    assert_secret_key_shape()
     stripe.api_key = secret_key()
 
 
