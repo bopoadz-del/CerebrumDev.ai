@@ -4404,7 +4404,12 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "",
         "def test_every_model_round_trips():",
     ]
-    if entities:
+    # `entities` can be non-empty while `specs` is empty: no on-disk
+    # handler means no sampleable fields, and the loop below then emits
+    # zero record lines — leaving `def test_every_model_round_trips():`
+    # bare and the generated file an IndentationError the suite reports
+    # as "missing module" noise. A body must always be emitted.
+    if entities and specs:
         for cap_id, spec in sorted(specs.items()):
             entity = spec.get("entity", cap_id)
             sample = {

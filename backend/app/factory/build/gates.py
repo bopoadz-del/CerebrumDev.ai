@@ -334,6 +334,34 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             findings=["tester produced no test files"],
         )
 
+    # The suite's import surface is the app package. When the coder's
+    # checkout lacks it, every generated test fails collection with
+    # "No module named 'app'" and the rework round burns its budget on
+    # import errors instead of the real gap. Fail fast and name the gap.
+    app_root = ctx.workspace / "app"
+    if not app_root.is_dir():
+        expected = (
+            "app/__init__.py",
+            "app/main.py",
+            "app/models.py",
+            "app/actions",
+        )
+        missing = [
+            rel for rel in expected if not (ctx.workspace / rel).exists()
+        ]
+        return GateResult(
+            ok=False,
+            gate="suite_green",
+            detail=(
+                "the coder's checkout has no app/ package — the suite "
+                "cannot import it "
+                f"(missing: {', '.join(missing) or 'app/'})"
+            ),
+            findings=[f"missing founding file: {rel}" for rel in missing]
+            or ["app/ package absent"],
+            payload={"assertion_classes": ["missing app package"]},
+        )
+
     marker = (ctx.suite_marker or FACTORY_SUITE_MARKER_EXPR).strip() or FACTORY_SUITE_MARKER_EXPR
     gate_name = "pilot_green" if marker == "pilot" else "suite_green"
     proc = ctx.run(

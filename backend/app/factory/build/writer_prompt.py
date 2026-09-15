@@ -39,8 +39,23 @@ AUTHORITY
 
 OUTPUT
 Write the platform into this checkout, then report the files you wrote
-and the artifacts you authored. A zero-artifact pass is refused
-(writer_no_output).
+and the artifacts you authored. The factory grades this exact tree — a
+missing file is a missing gate, so write it all under this checkout root:
+
+- app/main.py (FastAPI app factory + /health)
+- app/models.py exporting ``MODELS``: dict of capability -> model class,
+  each class with ``FIELDS`` and ``from_dict``/``to_dict``
+- app/actions/<capability>.py — one module per capability, each exporting
+  ``CAPABILITY_ID`` and ``handle(payload) -> dict``
+- app/routers/ — HTTP routes over the actions
+- app/tenancy.py, app/security.py, app/authority.py (precedence.v1),
+  app/retrieval.py, app/formulas.py, app/llm.py
+- app/block_inputs.py, app/migrations/ (versioned schema revisions)
+- tests/ — pytest suite, runnable from the checkout root
+- frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
+- scripts/release_gate.py
+
+A zero-artifact pass is refused (writer_no_output).
 
 AUTHORSHIP STAMP (mandatory — the factory's disk-level artifact gate
 counts it): every action handler you author must carry this exact line in

@@ -173,12 +173,17 @@ def run_worker_job(
         cwd = Path(checkout_dir)
         cwd.mkdir(parents=True, exist_ok=True)
         timeout = timeout_s if timeout_s is not None else worker_timeout_s()
-        argv = [cli, "exec", "--auto", "--json"]
+        # codewhale 0.9.13 parses --provider/--api-key as GLOBAL flags:
+        # they must precede `exec`. After the subcommand they are refused
+        # ("--provider must be placed before `exec`") and the job dies in
+        # under a second with zero authored artifacts.
+        argv = [cli]
         # Headless deployments pass credentials explicitly; local dev lets
         # the CLI read its own stored config when the env key is absent.
         api_key = worker_api_key()
         if api_key:
             argv += ["--provider", worker_provider(), "--api-key", api_key]
+        argv += ["exec", "--auto", "--json"]
         argv.append(prompt)
         try:
             proc = subprocess.run(
