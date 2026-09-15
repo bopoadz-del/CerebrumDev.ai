@@ -329,7 +329,7 @@ def _llm_json_call(
         headers["HTTP-Referer"] = "https://cerebrumdev.ai"
         headers["X-Title"] = "CerebrumDev Floor"
 
-    if provider in ("moonshot", "kimi", "cursor", "openrouter") or (
+    if provider in ("deepseek", "moonshot", "kimi", "cursor", "openrouter") or (
         not provider
         and cfg.get("api_key")
         and cfg.get("base_url")

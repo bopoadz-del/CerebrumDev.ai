@@ -227,7 +227,7 @@ async def _call_openrouter_fallback(
         return None
 
 
-_OPENAI_COMPAT_PROVIDERS = frozenset({"moonshot", "kimi", "cursor", "openrouter", ""})
+_OPENAI_COMPAT_PROVIDERS = frozenset({"deepseek", "moonshot", "kimi", "cursor", "openrouter", ""})
 
 
 def _is_usable_openai_chat_cfg(cfg: Dict[str, Any]) -> bool:
