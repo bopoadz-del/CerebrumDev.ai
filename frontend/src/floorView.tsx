@@ -776,7 +776,7 @@ export function Floor({
                         chat LLM
                       </span>
                     )}
-                    {i === latestGenerationIdx && (
+                    {i === latestGenerationIdx && !coderBuilding && (
                       <button type="button" onClick={goPlatforms}>
                         Open Your Platforms
                       </button>

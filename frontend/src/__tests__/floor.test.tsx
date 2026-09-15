@@ -149,8 +149,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText(/Last: wrote handler payments/)).toBeInTheDocument()
     expect(screen.getByText(/still working/)).toBeInTheDocument()
     expect(screen.getByPlaceholderText(/coding agent has taken over/i)).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Open Your Platforms' }))
-    expect(goPlatforms).toHaveBeenCalled()
+    // The build is still running (WRITER 3/5), so the Floor must not offer the
+    // platforms CTA yet — there is no platform to open until the agent lands.
+    expect(
+      screen.queryByRole('button', { name: 'Open Your Platforms' }),
+    ).not.toBeInTheDocument()
+    expect(goPlatforms).not.toHaveBeenCalled()
     expect(chatStreamMock).toHaveBeenCalledWith('sess_ui', 'approve', expect.any(Function))
     expect(watchBuildMock).toHaveBeenCalled()
   })
@@ -819,7 +823,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await screen.findByText('Opening pilot cycle.')
-    expect(screen.getAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(1)
+    // The second card is mid-build, so the CTA is hidden rather than
+    // duplicated — never more than one, and none while building.
+    expect(screen.queryAllByRole('button', { name: 'Open Your Platforms' })).toHaveLength(0)
   })
 
   it('offers New session on the Floor header', async () => {
@@ -878,7 +884,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
   })
 
-  it('names missing Kimi Code CLI credentials from /health on the Floor', async () => {
+  it('names missing coding-agent credentials from /health on the Floor', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {
         available: true,
@@ -888,11 +894,11 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_creds" goPlatforms={() => {}} />)
     const banner = await screen.findByTestId('floor-factory-cli-status')
-    expect(banner).toHaveTextContent('Kimi Code CLI credentials missing')
+    expect(banner).toHaveTextContent('Coding agent credentials missing')
     expect(banner).toHaveTextContent('FACTORY_CODE_CLI_CREDENTIALS_MISSING')
-    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
-    expect(banner).toHaveTextContent('config.toml')
-    expect(screen.queryByTestId('floor-factory-cli-status')).toHaveTextContent(/Kimi Code CLI credentials/)
+    expect(banner).toHaveTextContent('DEEPSEEK_API_KEY')
+    expect(banner).toHaveTextContent('FACTORY_CODEWHALE_WRITER=1')
+    expect(screen.queryByTestId('floor-factory-cli-status')).toHaveTextContent(/Coding agent credentials/)
   })
 
   it('does not name Kimi CLI credentials when Cursor BA is the executor', async () => {
@@ -909,10 +915,10 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     await waitFor(() => expect(getHealthMock).toHaveBeenCalled())
     expect(screen.queryByTestId('floor-factory-cli-status')).not.toBeInTheDocument()
     expect(screen.queryByText(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Kimi Code CLI credentials missing/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Coding agent credentials missing/)).not.toBeInTheDocument()
   })
 
-  it('names missing Kimi Code CLI default_model from /health on the Floor', async () => {
+  it('names missing coding-agent default_model from /health on the Floor', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {
         available: true,
@@ -923,10 +929,10 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     })
     render(<Floor sessionId="sess_no_model" goPlatforms={() => {}} />)
     const banner = await screen.findByTestId('floor-factory-cli-status')
-    expect(banner).toHaveTextContent('Kimi Code CLI has no model')
+    expect(banner).toHaveTextContent('Coding agent has no model')
     expect(banner).toHaveTextContent('FACTORY_CODE_CLI_NO_MODEL')
     expect(banner).toHaveTextContent('default_model')
-    expect(banner).toHaveTextContent('KIMI_CODE_API_KEY')
+    expect(banner).toHaveTextContent('DEEPSEEK_API_KEY')
     expect(screen.queryByText(/CODING AGENT HAS TAKEN OVER/i)).not.toBeInTheDocument()
   })
 

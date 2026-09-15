@@ -360,7 +360,7 @@ describe('build progress copy', () => {
     ).toMatch(/Download the export/)
   })
 
-  it('factoryCodeCliHonesty names Kimi Code CLI credentials, not a vague credentials string', () => {
+  it('factoryCodeCliHonesty names the DeepSeek credential, not a vague credentials string', () => {
     expect(factoryCodeCliHonesty(null)).toBeNull()
     expect(
       factoryCodeCliHonesty({
@@ -380,17 +380,17 @@ describe('build progress copy', () => {
       credentials_file_present: false,
       blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
     })
-    expect(named).toMatch(/Kimi Code CLI credentials are missing/)
+    expect(named).toMatch(/coding agent has no credentials/)
     expect(named).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
-    expect(named).toMatch(/KIMI_CODE_API_KEY/)
-    expect(named).toMatch(/config\.toml/)
+    expect(named).toMatch(/DEEPSEEK_API_KEY/)
+    expect(named).toMatch(/FACTORY_CODEWHALE_WRITER=1/)
     const fileOnly = factoryCodeCliHonesty({
       available: true,
       credentials_file_present: false,
       requires_kimi_credentials: true,
     })
     expect(fileOnly).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
-    expect(fileOnly).toMatch(/KIMI_CODE_API_KEY/)
+    expect(fileOnly).toMatch(/DEEPSEEK_API_KEY/)
     const deepseek = factoryCodeCliHonesty({
       available: true,
       credentials_file_present: false,
@@ -400,8 +400,8 @@ describe('build progress copy', () => {
     })
     expect(deepseek).toMatch(/DEEPSEEK_API_KEY/)
     expect(deepseek).toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
-    expect(deepseek).toMatch(/not the DeepSeek vehicle/)
-    expect(factoryCodeCliStatusTitle(deepseek)).toBe('DeepSeek CLI credentials missing')
+    expect(deepseek).toMatch(/OpenRouter \(OPENROUTER_API_KEY\) is the fallback/)
+    expect(factoryCodeCliStatusTitle(deepseek)).toBe('Coding agent credentials missing')
   })
 
   it('factoryCodeCliHonesty names missing default_model as FACTORY_CODE_CLI_NO_MODEL', () => {
@@ -413,7 +413,7 @@ describe('build progress copy', () => {
     })
     expect(named).toMatch(/FACTORY_CODE_CLI_NO_MODEL/)
     expect(named).toMatch(/default_model/)
-    expect(named).toMatch(/KIMI_CODE_API_KEY/)
+    expect(named).toMatch(/DEEPSEEK_API_KEY/)
     expect(named).not.toMatch(/FACTORY_CODE_CLI_CREDENTIALS_MISSING/)
     const fileOnly = factoryCodeCliHonesty({
       available: true,
@@ -422,30 +422,28 @@ describe('build progress copy', () => {
       requires_kimi_credentials: true,
     })
     expect(fileOnly).toMatch(/FACTORY_CODE_CLI_NO_MODEL/)
-    expect(factoryCodeCliStatusTitle(named)).toBe('Kimi Code CLI has no model')
+    expect(factoryCodeCliStatusTitle(named)).toBe('Coding agent has no model')
     expect(
       factoryCodeCliStatusTitle({
         blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
         credentials_file_present: false,
       }),
-    ).toBe('Kimi Code CLI credentials missing')
+    ).toBe('Coding agent credentials missing')
   })
 
-  it('factoryCodeCliHonesty is silent when Cursor BA is the executor', () => {
+  it('factoryCodeCliHonesty is silent when no CLI credential is required', () => {
     expect(
       factoryCodeCliHonesty({
         available: true,
         credentials_file_present: false,
-        requires_kimi_credentials: true,
         blocker: 'FACTORY_CODE_CLI_CREDENTIALS_MISSING',
-        cursor_ba_available: true,
+        requires_cli: false,
       }),
     ).toBeNull()
     expect(
       factoryCodeCliHonesty({
         available: true,
         credentials_file_present: false,
-        requires_kimi_credentials: true,
         requires_cli: false,
       }),
     ).toBeNull()
@@ -454,7 +452,6 @@ describe('build progress copy', () => {
         available: false,
         credentials_file_present: false,
         requires_cli: false,
-        cursor_ba_available: true,
       }),
     ).toBeNull()
   })

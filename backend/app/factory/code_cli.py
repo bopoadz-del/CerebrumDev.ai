@@ -26,9 +26,17 @@ DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY"
 DEEPSEEK_CODE_MODEL_ENV = "DEEPSEEK_CODE_MODEL"
 DEEPSEEK_BASE_URL_ENV = "DEEPSEEK_BASE_URL"
 
-DEFAULT_KIMI_CLI = "kimi"
-#: DeepSeek's vehicle is Kimi Code CLI — never Claude Code.
-DEFAULT_DEEPSEEK_CLI = "kimi"
+#: The coding agent runs through CodeWhale, which hosts DeepSeek. The kimi
+#: binary is NOT a vehicle any more: a build that fell through to it ran
+#: `/usr/local/bin/kimi` against a suspended Moonshot account and died 429.
+#: Keeping the name here at all is what let that happen, so both constants
+#: now point at codewhale and `kimi` is rejected outright (see
+#: `reject_retired_cli`).
+DEFAULT_KIMI_CLI = "codewhale"
+DEFAULT_DEEPSEEK_CLI = "codewhale"
+
+#: CLI names that must never be spawned again, whatever the env says.
+RETIRED_CLI_NAMES = ("kimi", "claude", "cursor")
 
 #: DeepSeek OpenAI-compat catalog id.
 #: https://api-docs.deepseek.com/quick_start/pricing lists ``deepseek-v4-pro``.
@@ -112,17 +120,18 @@ def deepseek_coder_selected(command: Optional[str] = None) -> bool:
 
 
 def code_cli_command(default: Optional[str] = None) -> str:
-    """The agentic coder CLI to invoke. FACTORY_CODE_CLI wins, then legacy.
+    """The agentic coder CLI to invoke — CodeWhale, hosting DeepSeek.
 
-    When neither CLI name is set, DeepSeek V4 Pro defaults to ``kimi``.
-    Leftover ``FACTORY_CODE_CLI=claude`` while DeepSeek is selected is
-    remapped to ``kimi`` (Claude Code is not the DeepSeek vehicle).
+    A retired vehicle name in the environment (``kimi``, ``claude``,
+    ``cursor``) is IGNORED, not honoured: a stale ``FACTORY_CODE_CLI=kimi``
+    is exactly how a live build spawned ``/usr/local/bin/kimi`` against a
+    suspended Moonshot account. Env can no longer choose a dead provider.
     """
     explicit = os.getenv(CODE_CLI_ENV, "").strip() or os.getenv(
         LEGACY_CODE_CLI_ENV, ""
     ).strip()
     if explicit:
-        if factory_code_provider() == "deepseek" and is_claude_code_cli(explicit):
+        if _cli_basename(explicit) in RETIRED_CLI_NAMES:
             return DEFAULT_DEEPSEEK_CLI
         return explicit
     if default is not None:

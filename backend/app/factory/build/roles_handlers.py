@@ -93,6 +93,9 @@ from app.factory.build.supply_chain import (
     emit_supply_chain_artifacts,
     redact_unpinned_images,
 )
+
+#: Named refusal when the sole writer (CodeWhale/DeepSeek) is not armed.
+WRITER_NO_CODER = "writer_no_coder"
 from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
 from app.factory.build.vendored_integrity import lock_record as _integrity_record
 
@@ -1085,20 +1088,31 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
                     else "CLONER→MR.FINANCE handoff already reached"
                 )
                 stage = "domain_handoff"
-            else:
+            elif hr.webhook_required:
                 msg = (
                     "CLONER→MR.FINANCE handoff NOT REACHED — "
                     + (hr.reason or "webhook did not post")
                 )
                 stage = "domain_handoff_unreached"
-            note(
-                msg,
-                stage=stage,
-                issue_url=hr.issue_url or "",
-                fired=hr.fired,
-                webhook_posted=hr.webhook_posted,
-                webhook_required=hr.webhook_required,
-            )
+            else:
+                # MR. FINANCE is not in the loop: #477 made the handoff
+                # opt-in legacy and DOMAIN_HANDOFF_WEBHOOK_URL is unset, so
+                # webhook_required is False. A handoff nobody asked for did
+                # not "fail to reach" — surfacing NOT REACHED on the Floor
+                # reports a missing stage as a defect on every build. The
+                # result is still recorded in handoff_notes below, so an
+                # ARMED non-reach can never hide (the #444 guarantee).
+                msg = ""
+                stage = ""
+            if msg:
+                note(
+                    msg,
+                    stage=stage,
+                    issue_url=hr.issue_url or "",
+                    fired=hr.fired,
+                    webhook_posted=hr.webhook_posted,
+                    webhook_required=hr.webhook_required,
+                )
     except Exception as exc:  # noqa: BLE001 — never crash CLONER, but record it
         handoff_notes["domain_handoff"] = {"fired": False, "error": str(exc)}
         note = getattr(ctx, "note", None)
@@ -2922,13 +2936,10 @@ def run_writer(
     Inventory is checked against the Store registry before any handler
     is written.
     """
-    from app.factory.build.cli_pivot import (
-        run_writer_via_cli_pivot,
-        writer_uses_cli_pivot,
-    )
-
-    if writer_uses_cli_pivot(env):
-        return run_writer_via_cli_pivot(ctx, launch=launch, env=env)
+    # CodeWhale (DeepSeek) hosts the writer. It is checked first and, in
+    # production, FACTORY_CODEWHALE_WRITER=1 makes it the only path taken.
+    # The kimi CLI vehicle underneath has been removed outright (see
+    # app/factory/code_cli.py), so no later branch can shell out to it.
     if writer_uses_codewhale(env):
         return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)
