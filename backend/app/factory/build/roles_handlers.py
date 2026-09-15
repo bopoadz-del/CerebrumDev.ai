@@ -2776,6 +2776,51 @@ def _dispatch_cli_keep_ids(dispatch: Any) -> Sequence[str]:
     return list(getattr(dispatch, "kept_handler_ids", None) or [])
 
 
+def writer_uses_codewhale(env: Optional[Mapping[str, str]]) -> bool:
+    """Phase 5 opt-in: dispatch the WRITER to the headless CodeWhale worker.
+
+    Explicit env switch (FACTORY_CODEWHALE_WRITER=1), never a production
+    default; cli-pivot stays first in the dispatch order (R6).
+    """
+    return (
+        str((env or {}).get("FACTORY_CODEWHALE_WRITER", "")).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
+
+def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
+    """Phase 5: the WRITER role runs headless through `codewhale exec`.
+
+    The worker authors the checkout (the staged persist root, so the
+    runner's normal commit flow owns the output); the receipt is recorded
+    in the result notes. The writer-contract gate still judges the disk
+    (Phase 0.5): the worker prompt instructs the agent to stamp every
+    authored handler, so the disk-level agent count applies to worker
+    output exactly as it applies to the in-process coder.
+    """
+    from app.factory.build.codewhale_worker import WorkerError, run_worker_job
+    from app.factory.build.writer_prompt import render_writer_prompt
+
+    dest = persist_workspace_root(ctx.workspace)
+    prompt = render_writer_prompt(
+        ctx.blueprint, brief=str(ctx.state.get("brief") or "")
+    )
+    try:
+        receipt = run_worker_job(
+            prompt, dest, tenant_store=ctx.state.get("tenant_store")
+        )
+    except WorkerError as exc:
+        raise RoleError(f"codewhale_worker_failed: {exc}") from exc
+    return RoleResult(
+        ok=True,
+        detail=(
+            f"codewhale worker {receipt.status} "
+            f"({receipt.termination_reason or 'no reason'})"
+        ),
+        notes={"codewhale_worker": receipt.to_dict()},
+    )
+
+
 def run_writer(
     ctx: RoleContext,
     *,
@@ -2836,6 +2881,8 @@ def run_writer(
 
     if writer_uses_cli_pivot(env):
         return run_writer_via_cli_pivot(ctx, launch=launch, env=env)
+    if writer_uses_codewhale(env):
+        return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)
     if (
         str(ctx.state.get("build_cycle") or "") == "pilot"

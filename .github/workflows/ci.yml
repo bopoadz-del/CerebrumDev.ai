@@ -368,3 +368,11 @@ jobs:
             test "$(command -v claude)" = /usr/local/bin/claude
             claude --version
           '
+
+      - name: codewhale (DeepSeek worker) is on PATH
+        run: |
+          docker run --rm --user 10001 --entrypoint /bin/sh cerebrumdev-backend:ci -c '
+            set -eu
+            command -v codewhale
+            codewhale --version
+          '

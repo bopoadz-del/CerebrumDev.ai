@@ -9,7 +9,7 @@ WORKDIR /app
 # omit the gpg binary even when gnupg is listed, which failed CI in ~20s.
 # SQLAlchemy fallback in app.core.backup still covers a mismatch if apt pins drift.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ cmake git ca-certificates curl util-linux bash \
+    build-essential gcc g++ cmake git ca-certificates curl util-linux bash nodejs npm \
     && mkdir -p /usr/share/keyrings \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
       -o /usr/share/keyrings/pgdg.asc \
@@ -60,6 +60,14 @@ RUN set -eu \
     && rm -rf /tmp/kimi-code-home /root/.kimi-code \
     && test -x /usr/local/bin/kimi \
     && /usr/local/bin/kimi --version
+
+# The CodeWhale writer worker (Phase 5): headless `codewhale exec` drives the
+# WRITER role. npm-global, version-pinned like every other binary in this
+# image. Credentials stay OUT of the image: the CLI reads its model config
+# from the deployment env at runtime (same pattern as FACTORY_CODE_CLI).
+ARG CODEWHALE_VERSION=0.9.13
+RUN npm install -g --no-fund --no-audit codewhale@${CODEWHALE_VERSION} \
+    && codewhale --version
 
 # Leftover official Claude Code CLI. DeepSeek V4 Pro is NOT reached
 # through this binary — Factory coding uses FACTORY_CODE_CLI=kimi +
