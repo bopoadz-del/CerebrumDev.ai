@@ -132,3 +132,56 @@ def test_worker_cli_missing_is_a_named_refusal(monkeypatch):
     with pytest.raises(WorkerError) as exc:
         run_worker_job("x", "/tmp/x", tenant_store=_FakeStore("d2"))
     assert WORKER_CLI_MISSING in str(exc.value)
+
+
+def test_headless_dispatch_passes_provider_and_key_from_env(monkeypatch, tmp_path):
+    """On Render the CLI authenticates with explicit flags; without the env
+    key the CLI falls back to its own stored config (local dev)."""
+    import subprocess
+
+    from app.factory.build import codewhale_worker as worker_mod
+
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"status": "completed", "termination_reason": "resolved"}', stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+    monkeypatch.delenv("CODEWHALE_PROVIDER", raising=False)
+
+    receipt = run_worker_job("build it", tmp_path, tenant_store=_FakeStore("d3"))
+    assert receipt.status == "completed"
+    argv = captured["argv"]
+    assert argv[0].endswith("codewhale")
+    assert argv[1:4] == ["exec", "--auto", "--json"]
+    assert "--provider" in argv and "deepseek" in argv
+    assert "--api-key" in argv and "sk-deepseek-test" in argv
+
+
+def test_no_env_key_falls_back_to_cli_config(monkeypatch, tmp_path):
+    import subprocess
+
+    from app.factory.build import codewhale_worker as worker_mod
+
+    captured = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"status": "completed"}', stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("CODEWHALE_API_KEY", raising=False)
+
+    run_worker_job("build it", tmp_path, tenant_store=_FakeStore("d4"))
+    argv = captured["argv"]
+    assert "--api-key" not in argv
+    assert argv[-1] == "build it"
