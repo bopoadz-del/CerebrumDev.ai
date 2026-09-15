@@ -50,13 +50,12 @@ jobs:
       # newly named job is not the only gate while branch protection catches up.
       - name: Fail if a manifest moved without its lockfile
         working-directory: .
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            --paginate --jq '.[].filename' \
-            | python3 scripts/check_lockfile_consistency.py --stdin
+          git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+          python3 scripts/check_lockfile_consistency.py \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head HEAD
 
       - uses: actions/setup-python@v7
         with:
