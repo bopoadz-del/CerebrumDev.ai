@@ -230,6 +230,25 @@ def probe_g_precedence_ladder_is_data_not_prompt_text() -> None:
     assert flipped.winner.layer == 1, "the precedence ladder is baked in, not data"
 
 
+def probe_h_claim_labels_refuse_stripped_layer() -> None:
+    """P3 -- stripping a claim's layer must fail the emission (unlabeled_claim)."""
+    from app.cerebrum_product_kernel.claim_labels import (
+        Claim,
+        ClaimLabelError,
+        LabeledAnswer,
+        UNLABELED_CLAIM,
+    )
+
+    stripped = Claim.__new__(Claim)  # the mutation: no layer, no validation
+    answer = LabeledAnswer(claims=[stripped])
+    try:
+        answer.to_dict()
+    except ClaimLabelError as exc:
+        assert UNLABELED_CLAIM in str(exc), str(exc)
+    else:
+        raise AssertionError("an unlabeled claim was emitted — labels are not enforced")
+
+
 PROBES: List[Tuple[str, Probe]] = [
     ("P0a writer gate refuses zero artifacts", probe_a_writer_gate_refuses_zero_artifacts),
     ("P0b receipt refuses empty handoff", probe_b_receipt_refuses_empty_handoff),
@@ -238,6 +257,7 @@ PROBES: List[Tuple[str, Probe]] = [
     ("P0e control: agent stamp is counted", probe_e_control_agent_stamped_handler_is_counted),
     ("P1 tenant seam detects a broken seam", probe_f_tenant_isolation_seam_detects_a_broken_seam),
     ("P2 precedence ladder is data not prompt text", probe_g_precedence_ladder_is_data_not_prompt_text),
+    ("P3 claim labels refuse a stripped layer", probe_h_claim_labels_refuse_stripped_layer),
 ]
 
 
