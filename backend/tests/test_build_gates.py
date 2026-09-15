@@ -173,10 +173,27 @@ def test_compiling_app_passes(tmp_path):
 
 def test_no_tests_written_is_a_failure_not_a_pass(tmp_path):
     """'No tests ran' is the most dangerous green in a generated platform."""
+    (tmp_path / "app").mkdir()
     (tmp_path / "tests").mkdir()
     result = gate_suite_green(_ctx(tmp_path, BuildRole.TESTER))
     assert not result.ok
     assert "no tests were written" in result.detail
+
+
+def test_missing_app_package_fails_fast_naming_the_gap(tmp_path):
+    """A coder checkout with no app/ must be named, not masked as
+    'No module named app' collection noise that burns the rework budget."""
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_x.py").write_text(
+        "def test_x(): pass\n", encoding="utf-8"
+    )
+    ctx = _ctx(tmp_path, BuildRole.TESTER)
+    result = gate_suite_green(ctx)
+    assert not result.ok
+    assert "no app/ package" in result.detail
+    assert any("app/__init__.py" in f for f in result.findings)
+    # The suite must NOT have been run: the gap is named before pytest.
+    assert ctx._calls == []
 
 
 def test_missing_tests_dir_is_a_failure(tmp_path):
@@ -184,6 +201,7 @@ def test_missing_tests_dir_is_a_failure(tmp_path):
 
 
 def test_red_suite_reports_the_failing_test_names_as_the_work_list(tmp_path):
+    (tmp_path / "app").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text("def test_x(): pass\n", encoding="utf-8")
     ctx = _ctx(
@@ -197,6 +215,7 @@ def test_red_suite_reports_the_failing_test_names_as_the_work_list(tmp_path):
 
 
 def test_green_suite_passes(tmp_path):
+    (tmp_path / "app").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text("def test_x(): pass\n", encoding="utf-8")
     ctx = _ctx(tmp_path, BuildRole.TESTER, result=_proc(0, stdout="1 passed in 0.01s"))
@@ -218,6 +237,7 @@ def test_factory_gate_ignores_a_red_pilot_test(tmp_path):
     from app.factory.build.gates import GateContext
 
     tests = tmp_path / "tests"
+    (tmp_path / "app").mkdir()
     tests.mkdir()
     (tests / "conftest.py").write_text(
         "def pytest_configure(config):\n"
@@ -247,6 +267,7 @@ def test_factory_gate_ignores_a_red_pilot_test(tmp_path):
 
 
 def test_pilot_marker_runs_pytest_m_pilot(tmp_path):
+    (tmp_path / "app").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text("def test_x(): pass\n", encoding="utf-8")
     ctx = _ctx(
