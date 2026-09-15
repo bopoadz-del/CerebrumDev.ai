@@ -54,12 +54,6 @@ def _no_ambient_fallback_leg(monkeypatch):
         monkeypatch.delenv(var, raising=False)
 
 
-@pytest.fixture(autouse=True)
-def _writer_hold_off_by_default(monkeypatch):
-    """Prior full-pipeline autopilot unless a test opts into the Writer hold."""
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
-
-
 @pytest.fixture
 def client() -> TestClient:
     """Shared FastAPI test client."""

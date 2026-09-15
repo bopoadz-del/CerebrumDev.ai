@@ -1063,61 +1063,39 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             "blocks.lock.json", json.dumps(lock, indent=2, sort_keys=True) + "\n"
         )
 
-    # Deliver the frozen C-BRIEF to MR.FINANCE after CLONER. MR.FINANCE IS the
-    # Writer, so this is the Writer handoff, not decoration. It must not crash
-    # CLONER — but a non-reach must be VISIBLE. The old double best-effort
-    # swallow (this bare `except: pass` plus notify_domain_handoff's own catch)
-    # hid a dead webhook: the GitHub-issue channel masked it, idempotency was
-    # stamped, retries skipped, the build ran the internal WRITER anyway, and
-    # MR.FINANCE was reached exactly never — silently. Always record the result;
-    # mark a non-reach with a distinct stage so it cannot hide again.
+    # Freeze the compiled C-BRIEF on the workspace for the WRITER. The WRITER
+    # runs on CodeWhale (DeepSeek) and reads docs/coder_brief.md back as its
+    # COMPILED C-BRIEF section (_compiled_writer_brief) — without it the agent
+    # authors the platform blind from the one-line blueprint summary
+    # (sess_9f67681a79324fcc class). It must not crash CLONER — but a brief
+    # that did not land must be VISIBLE, never swallowed: the old double
+    # best-effort swallow hid a non-delivery on every build.
     handoff_notes: dict = {}
     try:
-        from app.factory.build.domain_handoff import handoff_after_cloner
+        from app.factory.build.domain_handoff import ensure_coder_brief
 
-        hr = handoff_after_cloner(ctx)
-        handoff_notes["domain_handoff"] = hr.to_dict()
-        note = getattr(ctx, "note", None)
-        if callable(note):
-            if hr.webhook_posted or hr.already:
-                msg = (
-                    "CLONER→MR.FINANCE handoff reached (webhook posted)"
-                    if hr.webhook_posted
-                    else "CLONER→MR.FINANCE handoff already reached"
-                )
-                stage = "domain_handoff"
-            elif hr.webhook_required:
-                msg = (
-                    "CLONER→MR.FINANCE handoff NOT REACHED — "
-                    + (hr.reason or "webhook did not post")
-                )
-                stage = "domain_handoff_unreached"
-            else:
-                # MR. FINANCE is not in the loop: #477 made the handoff
-                # opt-in legacy and DOMAIN_HANDOFF_WEBHOOK_URL is unset, so
-                # webhook_required is False. A handoff nobody asked for did
-                # not "fail to reach" — surfacing NOT REACHED on the Floor
-                # reports a missing stage as a defect on every build. The
-                # result is still recorded in handoff_notes below, so an
-                # ARMED non-reach can never hide (the #444 guarantee).
-                msg = ""
-                stage = ""
-            if msg:
-                note(
-                    msg,
-                    stage=stage,
-                    issue_url=hr.issue_url or "",
-                    fired=hr.fired,
-                    webhook_posted=hr.webhook_posted,
-                    webhook_required=hr.webhook_required,
-                )
+        ws = getattr(ctx, "workspace", None)
+        dest = getattr(ws, "destination", None) or getattr(ws, "workspace", None)
+        if dest is None:
+            raise RuntimeError("CLONER has no workspace to stage the C-BRIEF on")
+        brief = ensure_coder_brief(
+            dest,
+            blueprint=getattr(ctx, "blueprint", None),
+            plan=getattr(ctx, "plan", None),
+            blocks_root=getattr(ctx, "blocks_root", None),
+        )
+        handoff_notes["coder_brief"] = {
+            "written": True,
+            "path": "docs/coder_brief.md",
+            "bytes": brief.stat().st_size,
+        }
     except Exception as exc:  # noqa: BLE001 — never crash CLONER, but record it
-        handoff_notes["domain_handoff"] = {"fired": False, "error": str(exc)}
+        handoff_notes["coder_brief"] = {"written": False, "error": str(exc)}
         note = getattr(ctx, "note", None)
         if callable(note):
             note(
-                f"CLONER→MR.FINANCE handoff wiring raised: {exc}",
-                stage="domain_handoff_unreached",
+                f"C-BRIEF not frozen for the WRITER: {exc}",
+                stage="coder_brief_unwritten",
             )
 
     notes = {"lock": lock}
@@ -2789,25 +2767,9 @@ def _dispatch_cli_keep_ids(dispatch: Any) -> Sequence[str]:
     return list(getattr(dispatch, "kept_handler_ids", None) or [])
 
 
-def writer_uses_codewhale(env: Optional[Mapping[str, str]]) -> bool:
-    """Phase 5 opt-in: dispatch the WRITER to the headless CodeWhale worker.
-
-    Explicit env switch (FACTORY_CODEWHALE_WRITER=1), never a production
-    default; cli-pivot stays first in the dispatch order (R6).
-
-    ``env=None`` means the live process environment (the runner invokes
-    the role handler with only ctx, so env is ALWAYS None in production
-    and the switch must read os.environ — the same fallback
-    writer_uses_cli_pivot already applies; without it the worker seam
-    silently never arms and the deterministic template path authors
-    zero artifacts, refused as writer_no_output — live-factory failure
-    sess_b9db05967cb94e6f).
-    """
-    blob = os.environ if env is None else env
-    return (
-        str(blob.get("FACTORY_CODEWHALE_WRITER", "")).strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+# WRITER dispatch control now lives in its own module; re-exported here so
+# the existing importers of roles_handlers.writer_uses_codewhale keep working.
+from app.factory.build.writer_control import writer_uses_codewhale  # noqa: F401,E402
 
 
 def _compiled_writer_brief(ctx: RoleContext) -> str:

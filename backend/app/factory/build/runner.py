@@ -64,11 +64,6 @@ from app.factory.build.roles import (
     RoleResult,
 )
 from app.factory.build.workspace import RoleWorkspace
-from app.factory.build.writer_control import (
-    AWAITING_DETAIL,
-    AWAITING_MR_FINANCE_WRITER,
-    writer_requires_handoff,
-)
 
 RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
 LEDGER_FILENAME = "build_ledger.jsonl"
@@ -217,9 +212,6 @@ class Outcome(str, Enum):
     #: Emitted only after TESTER (and STORE_MANAGER) have run — never
     #: immediately after WRITER in a way that skips the acceptance inspector.
     HANDOFF_TO_N3 = "HANDOFF_TO_N3"
-    #: CLONER + domain handoff finished. WRITER / BA must not auto-start.
-    #: MR. FINANCE (or an explicit Floor action he owns) launches Writer.
-    AWAITING_MR_FINANCE_WRITER = "AWAITING_MR_FINANCE_WRITER"
     FAILED_GATE = "FAILED_GATE"
     FAILED_BUDGET_SPENT = "FAILED_BUDGET_SPENT"
     FAILED_ROLE_ERROR = "FAILED_ROLE_ERROR"
@@ -718,10 +710,6 @@ class RoleRunner:
                 ):
                     if cli.get(key):
                         payload[key] = cli[key]
-        if outcome is Outcome.AWAITING_MR_FINANCE_WRITER:
-            payload["honesty"] = AWAITING_MR_FINANCE_WRITER
-            payload["next"] = "writer"
-            payload["green"] = False
         self.ledger.append(
             kind,
             role=phase,
@@ -1221,26 +1209,6 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
-                    if role is BuildRole.CLONER and writer_requires_handoff():
-                        done.add(role)
-                        work_list = ()
-                        self.ledger.append(
-                            EventKind.NOTE,
-                            role=role,
-                            detail=AWAITING_DETAIL,
-                            payload={
-                                "stage": AWAITING_MR_FINANCE_WRITER,
-                                "honesty": AWAITING_MR_FINANCE_WRITER,
-                                "next": "writer",
-                                "green": False,
-                            },
-                        )
-                        return self._finish(
-                            Outcome.AWAITING_MR_FINANCE_WRITER,
-                            AWAITING_DETAIL,
-                            phase=role,
-                            rework=rework_used,
-                        )
                     # cli-pivot WRITER success used to _finish(HANDOFF_TO_N3)
                     # here and skip TESTER. Advance to the acceptance
                     # inspector; N3 store-gate waits until STORE_MANAGER.

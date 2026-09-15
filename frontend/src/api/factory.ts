@@ -458,8 +458,6 @@ export type BuildStatus = {
   /** Required-capability count when authorship is missing (failed re-eval). */
   n_required?: number
   honesty?: string
-  /** Post-Cloner hold — MR. FINANCE must launch Writer. */
-  awaiting_mr_finance_writer?: boolean
   /** Owner Pause / Stop / Resume for the live coder session. */
   coder_control?: 'run' | 'pause' | 'stop' | string
   /** Tail of docs/coder_session.log — the live coder session. */
@@ -702,8 +700,6 @@ export const FACTORY_CODE_CLI_CREDENTIALS_MISSING = 'FACTORY_CODE_CLI_CREDENTIAL
 export const FACTORY_CODE_CLI_NO_MODEL = 'FACTORY_CODE_CLI_NO_MODEL'
 /** Coder receipt / WRITER honesty when FACTORY_CODE_CLI exited non-zero. */
 export const FACTORY_CODE_CLI_FAILED = 'FACTORY_CODE_CLI_FAILED'
-/** Post-Cloner hold: MR. FINANCE must launch Writer (not silent BA). */
-export const AWAITING_MR_FINANCE_WRITER = 'awaiting_mr_finance_writer'
 /** Moonshot 429 / insufficient-balance / account-suspended CLI miss. */
 export const FACTORY_CODE_CLI_BILLING = 'FACTORY_CODE_CLI_BILLING'
 

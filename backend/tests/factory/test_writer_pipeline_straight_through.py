@@ -1,4 +1,4 @@
-"""CHADi lock 2026-09-14: Writer hold after Cloner; TESTER before N3."""
+"""Straight-through pipeline: CLONER -> WRITER with no pause; TESTER before N3."""
 
 from __future__ import annotations
 
@@ -13,10 +13,6 @@ from app.factory.build.gates import GateResult, gate_for as real_gate_for
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.roles import ROLE_IMPLEMENTATIONS, RoleError, RoleResult
 from app.factory.build.runner import Outcome, RoleRunner, blueprint_hash
-from app.factory.build.writer_control import (
-    AWAITING_MR_FINANCE_WRITER,
-    writer_requires_handoff,
-)
 from app.factory.build_jobs import build_status
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -53,69 +49,52 @@ def _pass_later_gates(role):
     return real_gate_for(role)
 
 
-def test_writer_requires_handoff_explicit_and_unset(monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "1")
-    assert writer_requires_handoff() is True
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
-    assert writer_requires_handoff() is False
-    monkeypatch.delenv("FACTORY_WRITER_REQUIRES_HANDOFF", raising=False)
-    # Unset runs the full pipeline straight through - the MR. FINANCE hold
-    # is opt-in legacy, production included.
-    assert writer_requires_handoff() is False
-    assert writer_requires_handoff({"ENV": "prod"}) is False
-    assert writer_requires_handoff({"ENV": "test"}) is False
-    assert writer_requires_handoff({"FACTORY_WRITER_REQUIRES_HANDOFF": "1"}) is True
+def test_cloner_pass_runs_writer_straight_through(tmp_path):
+    """A passing CLONER gate must NOT end the run.
 
-
-def test_post_cloner_hold_does_not_launch_writer(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "1")
-    writer_calls: list[bool] = []
-
-    def boom_writer(_ctx):
-        writer_calls.append(True)
-        raise AssertionError("WRITER / BA must not auto-start after Cloner")
-
-    roles = dict(ROLE_IMPLEMENTATIONS)
-    roles[BuildRole.WRITER] = boom_writer
-    runner = RoleRunner(_bp(), tmp_path / "build", roles=roles)
-    outcome = runner.run()
-
-    assert writer_calls == []
-    assert outcome.outcome is Outcome.AWAITING_MR_FINANCE_WRITER
-    assert outcome.ok is False
-    assert BuildRole.WRITER not in outcome.completed
-    assert BuildRole.CLONER in outcome.completed
-    status = build_status(tmp_path / "build")
-    assert status["state"] == "waiting"
-    assert status["honesty"] == AWAITING_MR_FINANCE_WRITER
-    assert status["awaiting_mr_finance_writer"] is True
-    assert status["next"] == "writer"
-
-
-def test_continue_after_hold_launches_writer(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "1")
+    The live loop is COLLECTOR -> CLONER -> WRITER -> TESTER ->
+    STORE_MANAGER with no post-Cloner pause and no launch action: WRITER is
+    reached on the same run, without a Continue.
+    """
     writer_calls: list[bool] = []
 
     def writer(_ctx):
         writer_calls.append(True)
-        raise RoleError("stopped after proving MR. FINANCE launched Writer")
+        raise RoleError("stopped inside WRITER - reached with no hold")
 
     roles = dict(ROLE_IMPLEMENTATIONS)
     roles[BuildRole.WRITER] = writer
     out = tmp_path / "build"
-    first = RoleRunner(_bp(), out, roles=roles)
-    hold = first.run()
-    assert hold.outcome is Outcome.AWAITING_MR_FINANCE_WRITER
-    assert writer_calls == []
+    outcome = RoleRunner(_bp(), out, roles=roles).run()
 
-    second = RoleRunner(_bp(), out, roles=roles, ledger=first.ledger)
-    launched = second.run()
+    # WRITER ran in the same pass that finished CLONER.
     assert writer_calls == [True]
-    assert launched.outcome is Outcome.FAILED_ROLE_ERROR
+    assert BuildRole.CLONER in outcome.completed
+    # Our stub writer raised; the run is a real role error, never a pause.
+    assert outcome.outcome is Outcome.FAILED_ROLE_ERROR
+
+    started = [
+        e.role
+        for e in BuildLedger(out / "build_ledger.jsonl").events()
+        if e.kind is EventKind.PHASE_STARTED
+    ]
+    assert BuildRole.WRITER in started
+
+
+def test_build_status_can_never_park_a_run_as_waiting(tmp_path):
+    """No code path may report a build as parked after CLONER."""
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = lambda _ctx: RoleResult(ok=True, detail="writer ran")
+    out = tmp_path / "build"
+    RoleRunner(_bp(), out, roles=roles).run()
+
+    status = build_status(out)
+    assert status["state"] != "waiting"
+    assert [k for k in status if k.startswith("awaiting_")] == []
+    assert "AWAITING" not in str(status.get("outcome") or "")
 
 
 def test_cli_pivot_writer_runs_tester_before_handoff_to_n3(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     monkeypatch.setattr("app.factory.build.runner.gate_for", _pass_later_gates)
     order: list[str] = []
     bp = _bp()
@@ -165,7 +144,6 @@ def test_cli_pivot_writer_runs_tester_before_handoff_to_n3(tmp_path, monkeypatch
 
 
 def test_cli_pivot_tester_fail_rewinds_to_writer(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     writer_n = [0]
     tester_n = [0]
     bp = _bp()
@@ -223,28 +201,3 @@ def test_cli_pivot_tester_fail_rewinds_to_writer(tmp_path, monkeypatch):
     assert writer_n[0] >= 2
     assert outcome.outcome is Outcome.HANDOFF_TO_N3
     assert BuildRole.TESTER in outcome.completed
-
-
-def test_awaiting_is_not_terminal_failure(tmp_path, monkeypatch):
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "1")
-    out = tmp_path / "build"
-    roles = dict(ROLE_IMPLEMENTATIONS)
-    roles[BuildRole.WRITER] = lambda _ctx: RoleResult(ok=True, detail="no")
-    runner = RoleRunner(_bp(), out, roles=roles)
-    runner.run()
-
-    from types import SimpleNamespace
-
-    from app.factory import platform_chat_flow
-
-    state = SimpleNamespace(
-        session_id="sess_hold",
-        product_design=SimpleNamespace(
-            blueprint={"product_id": "runner-smoke"},
-            generation={"engine": "runner", "output_dir": str(out)},
-        ),
-    )
-    assert platform_chat_flow.is_awaiting_mr_finance_writer(state) is True
-    assert platform_chat_flow.is_generation_terminal_failure(state) is False
-    assert platform_chat_flow.is_generation_resumable(state) is True
-    assert platform_chat_flow.has_running_build(state) is False

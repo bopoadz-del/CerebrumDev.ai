@@ -16,7 +16,6 @@ import {
   formatAcceptanceScore,
   isAcceptanceKk,
   isAcceptancePendingPrototype,
-  isAwaitingMrFinanceWriter,
   FULL_PILOT_MIN_AUTHORED_ACTIONS,
   fullPilotAuthorshipCount,
   fullPilotAuthorshipNeed,
@@ -303,18 +302,13 @@ describe('build progress copy', () => {
     ).not.toMatch(/Finished/)
   })
 
-  it('awaiting_mr_finance_writer is a hold, not a failed outcome', () => {
-    const hold: BuildStatus = {
-      state: 'waiting',
-      honesty: 'awaiting_mr_finance_writer',
-      awaiting_mr_finance_writer: true,
-      outcome: 'AWAITING_MR_FINANCE_WRITER',
-      detail: 'CLONER complete; awaiting MR. FINANCE to launch Writer',
-    }
-    expect(isAwaitingMrFinanceWriter(hold)).toBe(true)
-    expect(outcomeFailed(hold)).toBe(false)
-    expect(shouldRefuseExport(hold)).toBe(false)
-    expect(honestLevel(hold)).toBeNull()
+  it('outcomeFailed scores named ledger outcomes, not success or absence', () => {
+    expect(outcomeFailed({ outcome: 'FAILED_GATE' } as BuildStatus)).toBe(true)
+    expect(outcomeFailed({ outcome: 'FAILED_BUDGET_SPENT' } as BuildStatus)).toBe(true)
+    expect(outcomeFailed({ outcome: 'SUCCESS' } as BuildStatus)).toBe(false)
+    expect(outcomeFailed({ outcome: 'HANDOFF_TO_N3' } as BuildStatus)).toBe(false)
+    expect(outcomeFailed({} as BuildStatus)).toBe(false)
+    expect(outcomeFailed(null)).toBe(false)
   })
 
   it('unreadable ledger is failed honesty — never Building / writing', () => {

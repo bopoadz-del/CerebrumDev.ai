@@ -135,7 +135,6 @@ def test_runner_handoff_is_not_product_green(tmp_path, monkeypatch):
         return real_gate_for(role)
 
     monkeypatch.setattr("app.factory.build.runner.gate_for", pass_later)
-    monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     bp = _bp()
     out = tmp_path / "build"
     out.mkdir()
