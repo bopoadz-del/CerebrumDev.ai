@@ -853,10 +853,20 @@ def raise_if_cli_session_unready() -> None:
 
     Cursor-keyed Generate uses ``run_cli_pivot`` (not FACTORY_CODE_CLI).
     Skip Kimi/DeepSeek credential preflight when those keys are present.
+
+    The headless CodeWhale worker (FACTORY_CODEWHALE_WRITER=1) is its own
+    executor seam: it needs no kimi/cursor binary or credentials file, so
+    the FACTORY_CODE_CLI preflight must not gate it (live-factory failure
+    sess_b9db05967cb94e6f: generate refused 503 with FACTORY_CODE_CLI=cursor
+    before the worker dispatch was ever reached).
     """
     from app.factory.build.cli_pivot import writer_uses_cli_pivot
 
     if writer_uses_cli_pivot():
+        return
+    from app.factory.build.roles_handlers import writer_uses_codewhale
+
+    if writer_uses_codewhale(os.environ):
         return
     if not brief_requires_cli():
         return

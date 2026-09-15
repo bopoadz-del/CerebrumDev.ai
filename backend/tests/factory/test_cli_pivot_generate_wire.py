@@ -251,3 +251,40 @@ def test_cursor_keys_skip_kimi_preflight_so_generate_can_start(
     assert result["already_running"] is False
     assert result["engine"] == "runner"
     assert (tmp_path / "out" / "build_ledger.jsonl").exists()
+
+
+def test_codewhale_worker_flag_skips_kimi_preflight_so_generate_can_start(
+    tmp_path, monkeypatch
+):
+    """FACTORY_CODEWHALE_WRITER=1 is its own executor seam: the
+    FACTORY_CODE_CLI preflight (kimi binary + creds file) must not gate
+    it. Live-factory failure sess_b9db05967cb94e6f: generate refused 503
+    with FACTORY_CODE_CLI=cursor before the worker dispatch was reached."""
+    from app.factory.build.coder_session import raise_if_cli_session_unready
+    from app.factory.build_jobs import start_runner_build
+
+    for name in CURSOR_KEY_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("FACTORY_CODE_CLI", raising=False)
+    monkeypatch.delenv("KIMI_CODE_CLI", raising=False)
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "1")
+    monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
+    monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")
+    monkeypatch.delenv("FACTORY_BRIEF_HTTP_ONESHOT", raising=False)
+    monkeypatch.delenv("FACTORY_BRIEF_DISPATCH", raising=False)
+
+    # No kimi binary, no credentials file — and still no refusal: the
+    # worker path carries its own executor.
+    raise_if_cli_session_unready()
+
+    started = []
+
+    def _record_start(self):
+        started.append(self.name)
+
+    monkeypatch.setattr("threading.Thread.start", _record_start)
+    result = start_runner_build(_bp(), tmp_path / "out")
+    assert started, "generate-start must spawn the runner without Kimi creds"
+    assert result["already_running"] is False
+    assert result["engine"] == "runner"
+    assert (tmp_path / "out" / "build_ledger.jsonl").exists()
