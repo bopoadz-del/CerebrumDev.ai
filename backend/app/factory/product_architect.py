@@ -657,6 +657,7 @@ def generate_product(
     blocks_root: Optional[Path] = None,
     cycle: Optional[str] = None,
     quota_account_id: Optional[str] = None,
+    tenant_identity: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build a product. The role runner is the default engine.
 
@@ -709,6 +710,7 @@ def generate_product(
             blocks_root=blocks,
             cycle=cycle,
             quota_account_id=quota_account_id,
+            tenant_identity=tenant_identity,
         )
 
     factory_root = _repo_root()

@@ -804,6 +804,7 @@ def generate_approved_product(
             blocks_root=blocks_root,
             cycle=body.cycle,
             quota_account_id=principal.account_id,
+            tenant_identity=principal.account_id or session_id,
         )
         if result.get("already_running"):
             raise HTTPException(

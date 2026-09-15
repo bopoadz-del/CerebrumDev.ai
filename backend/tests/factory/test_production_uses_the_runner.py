@@ -101,7 +101,7 @@ def test_generate_product_routes_to_the_runner(tmp_path, monkeypatch):
     monkeypatch.setattr(product_architect, "ProductGenerator", _Boom)
     monkeypatch.setattr(
         "app.factory.build_jobs.start_runner_build",
-        lambda bp, out, blocks_root=None, cycle=None, quota_account_id=None: {
+        lambda bp, out, blocks_root=None, cycle=None, quota_account_id=None, tenant_identity=None: {
             "engine": RUNNER,
             "output_dir": str(out),
         },
