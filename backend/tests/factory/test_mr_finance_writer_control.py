@@ -59,10 +59,12 @@ def test_writer_requires_handoff_explicit_and_unset(monkeypatch):
     monkeypatch.setenv("FACTORY_WRITER_REQUIRES_HANDOFF", "0")
     assert writer_requires_handoff() is False
     monkeypatch.delenv("FACTORY_WRITER_REQUIRES_HANDOFF", raising=False)
-    # Unset under pytest keeps prior autopilot.
+    # Unset runs the full pipeline straight through - the MR. FINANCE hold
+    # is opt-in legacy, production included.
     assert writer_requires_handoff() is False
-    assert writer_requires_handoff({"ENV": "prod"}) is True
+    assert writer_requires_handoff({"ENV": "prod"}) is False
     assert writer_requires_handoff({"ENV": "test"}) is False
+    assert writer_requires_handoff({"FACTORY_WRITER_REQUIRES_HANDOFF": "1"}) is True
 
 
 def test_post_cloner_hold_does_not_launch_writer(tmp_path, monkeypatch):

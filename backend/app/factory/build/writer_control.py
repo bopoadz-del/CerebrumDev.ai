@@ -1,14 +1,11 @@
-"""MR. FINANCE control of WRITER after Cloner handoff.
+"""Writer hold control (legacy MR. FINANCE seam).
 
-CHADi lock (2026-09-14): Floor must not auto-enter WRITER / cli-pivot BA
-in the same Generate/Continue autopilot that just finished CLONER.
-``handoff_after_cloner`` delivers the frozen command; MR. FINANCE launches
-Writer. TESTER (acceptance inspector) still runs after Writer — including
-cli-pivot — before STORE_MANAGER / N3.
-
-``FACTORY_WRITER_REQUIRES_HANDOFF`` defaults ON outside unit tests
-(fail-closed for production). Unset under ``ENV=test`` or pytest keeps
-prior full-pipeline autopilot so existing runner tests stay intact.
+SUPERSEDED (2026-09-15): the live loop is full-pipeline autopilot -
+COLLECTOR -> CLONER -> WRITER -> TESTER -> STORE_MANAGER with no
+MR. FINANCE pause and no Cursor BA. ``FACTORY_WRITER_REQUIRES_HANDOFF``
+is now OPT-IN: explicit ``1``/``true`` re-enables the old hold; unset
+(production included) runs straight through. TESTER (acceptance
+inspector) still runs after Writer before STORE_MANAGER / N3.
 """
 
 from __future__ import annotations
@@ -25,24 +22,15 @@ AWAITING_DETAIL = (
 
 
 def writer_requires_handoff(env: Optional[Mapping[str, str]] = None) -> bool:
-    """True when Floor must stop after CLONER and wait for MR. FINANCE.
+    """True when Floor must stop after CLONER and wait for a launch action.
 
-    Explicit ``0``/``false`` disables. Explicit ``1``/``true`` enables.
-    When unset: ON for production/dev; OFF under ``ENV=test`` or pytest
-    (``PYTEST_CURRENT_TEST``) so unit tests keep prior autopilot unless
-    they opt in.
+    Legacy opt-in: the MR. FINANCE hold is out of the loop. Only an
+    explicit ``1``/``true``/``yes``/``on`` enables it; unset (production
+    included) runs the full pipeline straight through.
     """
     src = env if env is not None else os.environ
     raw = str(src.get(WRITER_HOLD_ENV) or "").strip().lower()
-    if raw in {"0", "false", "no", "off"}:
-        return False
-    if raw in {"1", "true", "yes", "on"}:
-        return True
-    if str(src.get("ENV") or "").strip().lower() == "test":
-        return False
-    if src.get("PYTEST_CURRENT_TEST"):
-        return False
-    return True
+    return raw in {"1", "true", "yes", "on"}
 
 
 def payload_awaits_mr_finance_writer(payload: Any) -> bool:
