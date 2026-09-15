@@ -71,7 +71,12 @@ def render_writer_prompt(
     brief: str = "",
     version: str = PROMPT_VERSION,
 ) -> str:
-    """Fill the template from the brief. Deterministic by construction."""
+    """Fill the template from the brief. Deterministic by construction.
+
+    Brief/summary text is inserted verbatim: str.format interprets braces
+    only in the template, never in values, so user/model content passes
+    through untouched.
+    """
     product_id = getattr(blueprint, "product_id", "") or ""
     product_name = getattr(blueprint, "product_name", "") or ""
     vertical = getattr(blueprint, "vertical", "") or ""

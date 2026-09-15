@@ -318,6 +318,7 @@ class RoleRunner:
         auto_pilot: bool = False,
         blocks_lock: Optional[Dict[str, Any]] = None,
         tenant_store: Any = None,
+        brief: str = "",
     ) -> None:
         from app.factory.planner import CapabilityPlanner, assert_generatable
 
@@ -345,6 +346,10 @@ class RoleRunner:
         # (no_authenticated_tenant) before the CLI starts.
         if tenant_store is not None:
             self.state["tenant_store"] = tenant_store
+        # The user's own words from the Floor chat — the WRITER's BRIEF
+        # section. Threaded from the session at generate/resume time.
+        if str(brief or "").strip():
+            self.state["brief"] = str(brief).strip()
         from app.factory.build.authorship import n_required_capabilities_from
 
         n_required = n_required_capabilities_from(
