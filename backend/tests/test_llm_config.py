@@ -475,3 +475,33 @@ def test_llm_ready_details_redacts_error_that_embeds_the_key():
     assert "sk-or-embedded-secret" not in details["chat_http_error"]
     assert "CEREBRUM_CHAT_LLM_API_KEY" in details["chat_http_error"]
 
+
+
+def test_deepseek_provider_resolves_scoped_triple_without_moonshot_names(monkeypatch):
+    """LLM_PROVIDER=deepseek must resolve the scoped triple and scrub the
+    kimi-era fallback-model default so no moonshot/kimi names leak into the
+    live config."""
+    from app.core import llm_config
+
+    monkeypatch.setenv('LLM_PROVIDER', 'deepseek')
+    monkeypatch.setenv('CEREBRUM_FACTORY_LLM_API_KEY', 'sk-ds-test')
+    monkeypatch.setenv('CEREBRUM_FACTORY_LLM_BASE_URL', 'https://api.deepseek.com/v1')
+    monkeypatch.setenv('CEREBRUM_FACTORY_LLM_MODEL', 'deepseek-chat')
+    cfg = llm_config.get_factory_llm_config()
+    assert cfg['provider'] == 'deepseek'
+    assert cfg['api_key'] == 'sk-ds-test'
+    assert 'deepseek.com' in cfg['base_url']
+    assert cfg['fallback_model'] == 'deepseek-chat'
+    assert not cfg.get('error')
+
+
+def test_deepseek_provider_uses_deepseek_api_key_without_scoped_triple(monkeypatch):
+    """Without a scoped triple the provider falls back to DEEPSEEK_API_KEY."""
+    from app.core import llm_config
+
+    monkeypatch.setenv('LLM_PROVIDER', 'deepseek')
+    monkeypatch.setenv('DEEPSEEK_API_KEY', 'sk-ds-global')
+    cfg = llm_config.get_factory_llm_config()
+    assert cfg['provider'] == 'deepseek'
+    assert cfg['api_key'] == 'sk-ds-global'
+    assert 'deepseek.com' in cfg['base_url']
