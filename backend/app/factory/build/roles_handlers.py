@@ -94,8 +94,6 @@ from app.factory.build.supply_chain import (
     redact_unpinned_images,
 )
 
-#: Named refusal when the sole writer (CodeWhale/DeepSeek) is not armed.
-WRITER_NO_CODER = "writer_no_coder"
 from app.factory.build.vendored_integrity import LOCK_KEY as _INTEGRITY_KEY
 from app.factory.build.vendored_integrity import lock_record as _integrity_record
 
