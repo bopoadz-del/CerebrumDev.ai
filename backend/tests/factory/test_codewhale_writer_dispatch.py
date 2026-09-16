@@ -46,32 +46,87 @@ def _ctx(tmp_path):
     )
 
 
+def _receipt(tools, **kw):
+    base = {
+        "status": "completed",
+        "termination_reason": "resolved",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "output": "built",
+        "tools": tools,
+        "error": None,
+        "error_category": None,
+    }
+    base.update(kw)
+    base["to_dict"] = lambda self: {
+        k: v
+        for k, v in type(self).__dict__.items()
+        if k != "to_dict" and not k.startswith("__")
+    }
+    return type("R", (), base)()
+
+
+def _plant_authored_handler(root):
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True, exist_ok=True)
+    (actions / "cap.py").write_text(
+        '"""Handler for capability cap.\n\n'
+        'Written by the factory WRITER role (codewhale exec).\n'
+        '"""\n',
+        encoding="utf-8",
+    )
+
+
 def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
-    receipt = type(
-        "R",
-        (),
-        {
-            "status": "completed",
-            "termination_reason": "resolved",
-            "provider": "deepseek",
-            "model": "deepseek-v4-pro",
-            "output": "built",
-            "tools": [],
-            "error": None,
-            "error_category": None,
-            "to_dict": lambda self: {"status": self.status},
-        },
-    )()
+    ctx = _ctx(tmp_path)
+    _plant_authored_handler(tmp_path / "build")
 
     def fake_run(prompt, dest, tenant_store=None, session_id=""):
-        return receipt
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", fake_run
+    )
+    result = _run_writer_via_codewhale_worker(ctx)
+    assert result.ok is True
+    assert result.notes["codewhale_worker"]["status"] == "completed"
+    # E2: the Floor monitor receipt reflects the leg that ran.
+    receipt_file = tmp_path / "build" / "docs" / "coder_receipt.json"
+    assert receipt_file.is_file()
+    import json as _json
+    payload = _json.loads(receipt_file.read_text(encoding="utf-8"))
+    assert payload["via"] == "codewhale_worker"
+
+
+def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
+    """E1: a 'completed' receipt with zero tool calls or zero stamped
+    handlers is the same silent success the writer_contract gate refuses —
+    the role must refuse it, not report ok=True."""
+    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+        return _receipt(tools=[])
 
     monkeypatch.setattr(
         "app.factory.build.codewhale_worker.run_worker_job", fake_run
     )
     result = _run_writer_via_codewhale_worker(_ctx(tmp_path))
-    assert result.ok is True
-    assert result.notes["codewhale_worker"]["status"] == "completed"
+    assert result.ok is False
+    assert "writer_no_output" in result.detail
+
+
+def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
+    tmp_path, monkeypatch
+):
+    """E1: tool calls alone are not authorship — the disk-level stamp
+    count is what counts."""
+    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+        return _receipt(tools=[{"tool": "write", "path": "notes.txt"}])
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", fake_run
+    )
+    result = _run_writer_via_codewhale_worker(_ctx(tmp_path))
+    assert result.ok is False
+    assert "writer_no_output" in result.detail
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
