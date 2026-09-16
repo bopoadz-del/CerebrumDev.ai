@@ -157,9 +157,10 @@ export function BlueprintCard({
       {!accessPaused && (
         <>
           <div className="card-actions">
-            <label className="bp-delivery" data-testid="bp-delivery-format">
+            <label className="bp-delivery">
               Deliver as:{' '}
               <select
+                data-testid="bp-delivery-format"
                 value={delivery}
                 disabled={busy}
                 onChange={(e) =>

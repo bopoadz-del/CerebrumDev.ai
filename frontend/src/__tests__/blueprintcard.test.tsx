@@ -43,13 +43,21 @@ describe('BlueprintCard capability picker', () => {
     fireEvent.click(screen.getAllByRole('checkbox')[1])
     const btn = screen.getByRole('button', { name: /Approve & build \(1 of 3\)/ })
     fireEvent.click(btn)
-    expect(onApprove).toHaveBeenCalledWith(['audit', 'voice_assistant'])
+    expect(onApprove).toHaveBeenCalledWith(['audit', 'voice_assistant'], 'zip')
   })
 
   it('full selection approves with no exclusions', () => {
     const { onApprove } = setup()
     fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
-    expect(onApprove).toHaveBeenCalledWith([])
+    expect(onApprove).toHaveBeenCalledWith([], 'zip')
+  })
+
+  it('the delivery picker chooses zip by default and github_repo on change', () => {
+    const { onApprove } = setup()
+    const select = screen.getByTestId('bp-delivery-format')
+    fireEvent.change(select, { target: { value: 'github_repo' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
+    expect(onApprove).toHaveBeenCalledWith([], 'github_repo')
   })
 
   it('zero selection disables the approve button', () => {
@@ -66,7 +74,7 @@ describe('BlueprintCard capability picker', () => {
     fireEvent.click(voice) // out
     fireEvent.click(voice) // back in
     fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
-    expect(onApprove).toHaveBeenCalledWith([])
+    expect(onApprove).toHaveBeenCalledWith([], 'zip')
   })
 
   it('busy state freezes checkboxes and the approve button', () => {
