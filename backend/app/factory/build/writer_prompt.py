@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-PROMPT_VERSION = "writer_worker_prompt.v1"
+PROMPT_VERSION = "writer_worker_prompt.v2"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -54,6 +54,16 @@ missing file is a missing gate, so write it all under this checkout root:
 - tests/ — pytest suite, runnable from the checkout root
 - frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
 - scripts/release_gate.py
+
+PROGRESS LOG (the operator watches this file live):
+After EVERY completed step — before starting the next — append exactly
+one line to docs/writer_progress.log in this format:
+
+    STEP <n>: <one-line summary of what you just did>
+
+Start at STEP 1 and number strictly upward. The factory streams this file
+to the build monitor; a silent pass looks like a hang, so update it even
+for small steps (files written, models emitted, tests added).
 
 A zero-artifact pass is refused (writer_no_output).
 

@@ -735,6 +735,36 @@ def run_worker_job(
 
         stdout_reader = threading.Thread(target=_stdout_reader, daemon=True)
         stderr_reader = threading.Thread(target=_stderr_reader, daemon=True)
+        # The prompt instructs the agent to append STEP lines to
+        # docs/writer_progress.log; pump that file's growth into the relay
+        # so the Floor narrates the pass even when the CLI's own logs are
+        # not visible from the container.
+        prompt_log_path = cwd / "docs" / "writer_progress.log"
+        prompt_log_offset = 0
+
+        def _pump_prompt_progress() -> None:
+            nonlocal prompt_log_offset
+            try:
+                size = prompt_log_path.stat().st_size
+            except OSError:
+                return
+            if size < prompt_log_offset:
+                prompt_log_offset = 0
+            if size == prompt_log_offset:
+                return
+            try:
+                with prompt_log_path.open(
+                    "r", encoding="utf-8", errors="replace"
+                ) as fh:
+                    fh.seek(prompt_log_offset)
+                    chunk = fh.read()
+                    prompt_log_offset = fh.tell()
+            except OSError:
+                return
+            for raw in chunk.splitlines():
+                if raw.strip():
+                    _relay("writer: " + raw)
+
         stdout_reader.start()
         stderr_reader.start()
         deadline = time.monotonic() + timeout
@@ -759,6 +789,7 @@ def run_worker_job(
                         except queue.Empty:
                             break
                     tailer.pump(_relay)
+                    _pump_prompt_progress()
         finally:
             # Drain the remainder so no authored evidence is lost.
             stdout_reader.join(timeout=5)
@@ -769,6 +800,7 @@ def run_worker_job(
                 except queue.Empty:
                     break
             tailer.pump(_relay)
+            _pump_prompt_progress()
             if progress_handle is not None:
                 try:
                     progress_handle.close()
