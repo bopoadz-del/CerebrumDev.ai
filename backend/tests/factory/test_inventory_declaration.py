@@ -37,6 +37,33 @@ class TestReadyVerticals:
         assert "not on the declared-ready list" in note
 
 
+class TestDomainGaps:
+    def test_generic_plumbing_only_is_a_domain_gap(self):
+        from app.factory.inventory import domain_gaps
+
+        gaps = domain_gaps(
+            "retail",
+            [
+                {"capability_id": "orders", "block_ids": ["database", "workflow"]},
+                {"capability_id": "products", "block_ids": ["retail_v2"]},
+            ],
+        )
+        assert len(gaps) == 1
+        assert gaps[0]["capability_id"] == "orders"
+        assert "generic blocks only" in gaps[0]["note"]
+
+    def test_domain_block_satisfies_the_capability(self):
+        from app.factory.inventory import domain_gaps
+
+        gaps = domain_gaps("insurance", [{"capability_id": "claims", "block_ids": ["bordereaux_ingest"]}])
+        assert gaps == []
+
+    def test_excluded_vertical_has_no_kit_gap_opinion(self):
+        from app.factory.inventory import domain_gaps
+
+        assert domain_gaps("veterinary", [{"capability_id": "x", "block_ids": ["database"]}]) == []
+
+
 class TestDraftCarriesTheDeclaration:
     def test_excluded_vertical_draft_warns_instead_of_silent(self, monkeypatch):
         # No LLM: deterministic keyword drafting so the test is offline.

@@ -91,3 +91,80 @@ def inventory_drafting_note(vertical: str) -> str:
             "this vertical is unverified — domain depth not guaranteed"
         )
     return ""
+
+
+#: The DOMAIN blocks each ready kit contributes, from its manifest's block
+#: list minus the shared generic core (pdf, ocr, chat, image, formula_*).
+#: Ground truth: Cerebrum-Blocks block_store/kits/<kit>/manifest.json.
+KIT_DOMAIN_BLOCKS: Dict[str, frozenset] = {
+    "hotel_management": frozenset({"hotel_v2"}),
+    "insurance": frozenset(
+        {
+            "insurance_v2",
+            "agency_hierarchy",
+            "producer_record",
+            "agency_commission_engine",
+            "channel_router",
+            "attrition_scorer",
+            "incentive_targeting",
+            "hkia_gn16_rules",
+            "bordereaux_ingest",
+            "distribution_analytics",
+        }
+    ),
+    "construction": frozenset(
+        {
+            "construction_v2",
+            "boq_processor",
+            "spec_analyzer",
+            "sympy_reasoning",
+            "drawing_qto",
+            "primavera_parser",
+            "smart_orchestrator",
+            "jetson_gateway",
+            "bim_extractor",
+            "bim",
+            "learning_engine",
+            "recommendation_template",
+            "project_reasoner",
+        }
+    ),
+    "finance": frozenset({"finance_v2"}),
+    "finance_ops": frozenset({"finance_v2"}),
+    "retail": frozenset({"retail_v2"}),
+}
+
+
+def domain_gaps(
+    vertical: str, capabilities: list
+) -> list:
+    """Capabilities that resolved to blocks but none domain-relevant.
+
+    The vet-clinic failure shape: every capability marked REUSE, every
+    reused block generic plumbing, zero domain content. A capability whose
+    resolved blocks are disjoint from the vertical's kit domain set is
+    recorded here — 'resolved to a block' must never read as 'resolved to
+    the right block'.
+    """
+    kit = ready_kit(vertical)
+    if not kit:
+        return []
+    domain = KIT_DOMAIN_BLOCKS.get(kit)
+    if not domain:
+        return []
+    gaps = []
+    for cap in capabilities or []:
+        blocks = set(cap.get("block_ids") or [])
+        if not blocks or not blocks.isdisjoint(domain):
+            continue
+        gaps.append(
+            {
+                "capability_id": str(cap.get("capability_id") or cap.get("id") or "?"),
+                "blocks": sorted(blocks),
+                "note": (
+                    f"resolved to generic blocks only — none from the "
+                    f"{kit} kit domain set"
+                ),
+            }
+        )
+    return gaps

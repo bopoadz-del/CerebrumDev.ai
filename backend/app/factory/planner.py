@@ -28,6 +28,9 @@ class ProductPlan:
     #: the plan rather than being a caller's argument so that a tolerated
     #: plan cannot be handed to a builder that never asked how it was made.
     fail_closed: bool = True
+    #: Capabilities that resolved to blocks, but none domain-relevant for
+    #: the vertical's kit (the vet-clinic generic-plumbing substitution).
+    inventory_domain_gaps: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -36,6 +39,7 @@ class ProductPlan:
             "fail_closed": self.fail_closed,
             "product_id": self.product_id,
             "unsupported": list(self.unsupported),
+            "inventory_domain_gaps": list(self.inventory_domain_gaps),
         }
 
 
@@ -110,6 +114,7 @@ class CapabilityPlanner:
             unsupported=unsupported,
             dual_registered_blocks=sorted(set(used_blocks)),
             fail_closed=True,
+            inventory_domain_gaps=self._domain_gaps(blueprint, planned),
         )
 
     def survey(self, blueprint: ProductBlueprint) -> ProductPlan:
@@ -133,7 +138,26 @@ class CapabilityPlanner:
             unsupported=unsupported,
             dual_registered_blocks=sorted(set(used_blocks)),
             fail_closed=False,
+            inventory_domain_gaps=self._domain_gaps(blueprint, planned),
         )
+
+    @staticmethod
+    def _domain_gaps(
+        blueprint: ProductBlueprint, planned: List[PlannedCapability]
+    ) -> List[Dict[str, Any]]:
+        """2b: capabilities that resolved to blocks, but none domain-relevant."""
+        try:
+            from app.factory.inventory import domain_gaps
+
+            caps = [
+                {"capability_id": c.capability_id, "block_ids": list(c.block_ids)}
+                for c in planned
+            ]
+            return domain_gaps(
+                str(getattr(blueprint, "vertical", "") or ""), caps
+            )
+        except Exception:  # noqa: BLE001 — inventory advice never fails a plan
+            return []
 
     def _plan_one(self, cap: CapabilitySpec) -> PlannedCapability:
         hint = cap.strategy_hint
