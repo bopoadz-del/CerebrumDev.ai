@@ -480,6 +480,8 @@ def _round_trip_flow(rows, listed, get_status=200, entity="unit"):
     is how a generate-only capability presents.
     """
     ns = {}
+    # The probe now authenticates its GET; the lifted check references AUTH.
+    ns["AUTH"] = {"Authorization": "Bearer dev-local-token"}
     exec(_lift_from_probe({"_record_matches", "_listed_records",
                            "_check_round_trip", "_ROUND_TRIP_CHECKED"}), ns)
 
@@ -491,7 +493,7 @@ def _round_trip_flow(rows, listed, get_status=200, entity="unit"):
             return listed
 
     class _Client:
-        def get(self, path):
+        def get(self, path, **kwargs):
             return _Resp()
 
     class _Store:
