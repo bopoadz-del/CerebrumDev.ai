@@ -176,6 +176,33 @@ class RoleWorkspace:
             shutil.copy2(src, dest)
         return list(self.written)
 
+    def record_existing(self, root: Optional[Path | str] = None) -> List[str]:
+        """Register files already on disk under the workspace into ``written``.
+
+        Subprocess writers (the CodeWhale worker) create files directly in
+        the staging tree without going through ``write_text``, so commit()
+        silently dropped every authored handler and the worker receipt
+        (live-factory sess_620b8581fb224bea: the role counted authored=8,
+        the gate counted 0 — the worker's output was stranded in staging
+        and rmtree'd after commit). Recording the tree makes the pass's own
+        output travel with the commit.
+        """
+        base = Path(root).resolve() if root is not None else self.workspace
+        added: List[str] = []
+        if not base.is_dir():
+            return added
+        for path in base.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                rel = path.relative_to(self.workspace).as_posix()
+            except ValueError:
+                continue
+            if rel not in self.written:
+                self.written.append(rel)
+                added.append(rel)
+        return added
+
     # -- writes (authority-checked) --------------------------------------
 
     def _authorise(self, relpath: str | Path) -> Path:

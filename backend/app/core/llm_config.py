@@ -147,10 +147,27 @@ def llm_ready_details() -> Dict[str, Any]:
         "openrouter_api_key_present": env_key_present("OPENROUTER_API_KEY"),
         "cursor_api_key_present": env_key_present("CURSOR_API_KEY"),
         "llm_provider": os.getenv("LLM_PROVIDER") or "",
+        # Whether THIS process sees the writer-seam switch. A Render
+        # dashboard-set FACTORY_CODEWHALE_WRITER is not evidence the
+        # runtime received it — this flag is (live-factory
+        # sess_620b8581fb224bea: service env said 1, writer still took
+        # the compiled-brief leg).
+        "factory_codewhale_writer_armed": _codewhale_writer_armed(),
+        "factory_codewhale_writer_env": os.getenv("FACTORY_CODEWHALE_WRITER", ""),
         "chat_http_base_url_host": host,
         "chat_http_api_key_present": bool(api_key.strip()),
         "chat_http_error": _redact_ready_secrets(error, api_key.strip()),
     }
+
+
+def _codewhale_writer_armed() -> bool:
+    """Same predicate the writer role uses, evaluated in this process."""
+    try:
+        from app.factory.build.writer_control import writer_uses_codewhale
+
+        return bool(writer_uses_codewhale())
+    except Exception:  # noqa: BLE001 — /ready must not raise
+        return False
 
 
 def _env_first(*names: str, default: str = "") -> str:

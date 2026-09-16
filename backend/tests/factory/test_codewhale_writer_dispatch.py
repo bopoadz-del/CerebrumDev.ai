@@ -154,3 +154,56 @@ def test_codewhale_stamp_counts_as_agent_output(tmp_path):
         encoding="utf-8",
     )
     assert agent_written_handler_ids_in_workspace(tmp_path) == ["cap"]
+
+def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
+    """Regression: the worker writes into the staging tree directly; those
+    files are not in the tracked ``written`` list, so commit() used to drop
+    every authored handler (live-factory sess_620b8581fb224bea: the role
+    counted authored=8, the gate counted 0). The role must register them so
+    the pass's own output travels with the commit."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.roles import RoleContext
+    from app.factory.build.workspace import RoleWorkspace
+
+    from pathlib import Path
+
+    ws = RoleWorkspace(
+        BuildRole.WRITER,
+        tmp_path / "build",
+        staging=tmp_path / ".factory-staging" / "writer",
+    )
+    ctx = RoleContext(
+        role=BuildRole.WRITER,
+        workspace=ws,
+        blueprint=type(
+            "B",
+            (),
+            {"product_id": "p", "product_name": "n", "vertical": "v", "summary": "s"},
+        )(),
+        plan=None,
+        state={},
+    )
+
+    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+        # The worker subprocess writes directly into the staging dir.
+        actions = Path(dest) / "app" / "actions"
+        actions.mkdir(parents=True, exist_ok=True)
+        (actions / "cap.py").write_text(
+            '"""Handler for capability cap.\n\n'
+            "Written by the factory WRITER role (codewhale exec).\n"
+            '"""\n',
+            encoding="utf-8",
+        )
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", fake_run
+    )
+    result = _run_writer_via_codewhale_worker(ctx)
+    assert result.ok is True
+    ws.commit()
+
+    dest_handler = ws.destination / "app" / "actions" / "cap.py"
+    assert dest_handler.is_file(), "worker-authored handler was dropped by commit"
+    dest_receipt = ws.destination / "docs" / "coder_receipt.json"
+    assert dest_receipt.is_file(), "worker receipt was dropped by commit"
