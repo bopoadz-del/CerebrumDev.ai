@@ -78,3 +78,31 @@ def test_coder_prompts_carry_each_kernel_jd():
     roster = {j["kernel"]: j for j in jobs_manifest()}
     assert roster["CLONER"]["agent"] == "none"
     assert roster["STORE_MANAGER"]["agent"] == "none"
+
+def test_every_capability_crud_route_requires_the_platform_token():
+    """No capability route is unauthenticated: create/list/get/update/delete
+    and the work_queue trio all guard with require_platform_token. The live
+    audit (vetclinic) found GET/PUT/DELETE open — creation-only auth."""
+    src = _render_routes(
+        [
+            {
+                "capability_id": "orders",
+                "name": "orders",
+                "entity": "order",
+                "body": '    return {"ok": True}',
+                "source": "template",
+            }
+        ]
+    )
+    # create + list + get + update + delete (capability) and
+    # enqueue + process + list (work_queue).
+    assert src.count("require_platform_token(request)") == 8
+    for route in (
+        '@router.post("/orders")',
+        '@router.get("/orders")',
+        '@router.get("/orders/{item_id}")',
+        '@router.put("/orders/{item_id}")',
+        '@router.delete("/orders/{item_id}")',
+    ):
+        block = src[src.index(route):]
+        assert "require_platform_token" in block[:400], route

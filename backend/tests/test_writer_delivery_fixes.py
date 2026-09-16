@@ -49,6 +49,7 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
             import io
 
             self.stdout = io.StringIO(summary_text + "\n")
+            self.stderr = io.StringIO("")
             self.returncode = 0
 
         def wait(self, timeout=None):
