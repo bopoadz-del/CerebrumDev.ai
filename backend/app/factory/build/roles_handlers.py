@@ -7,10 +7,13 @@ Public types and templates live in ``roles_models`` / ``roles_constants``.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+
+logger = logging.getLogger("cerebrumdev.factory.roles_handlers")
 
 from app.factory.build.authority import (
     KERNEL_ROUTE_NAMES,
@@ -2838,11 +2841,62 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         )
     except WorkerError as exc:
         raise RoleError(f"codewhale_worker_failed: {exc}") from exc
+
+    # E2: the session status must reflect the leg that actually ran —
+    # write the worker's own receipt where the Floor monitor reads it,
+    # tagged with the seam name.
+    try:
+        from app.factory.build.coder_session_status import RECEIPT_REL
+
+        receipt_path = Path(dest) / RECEIPT_REL
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        receipt_path.write_text(
+            json.dumps(
+                {"via": "codewhale_worker", **receipt.to_dict()}, indent=2
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.exception("writer receipt persistence failed")
+
+    # E1 + E3: three outcomes must be distinguishable at the ROLE level —
+    # dispatched-and-failed (above), dispatched-and-succeeded, and
+    # dispatched-succeeded-but-wrote-nothing. A "completed" receipt with
+    # zero tool calls or zero stamped handlers is the same silent success
+    # the writer_contract gate refuses; the role now refuses it too, so
+    # the gate is defense-in-depth rather than the only line.
+    from app.factory.build.authorship import (
+        agent_written_handler_ids_in_workspace,
+    )
+
+    authored = agent_written_handler_ids_in_workspace(Path(dest))
+    logger.info(
+        "codewhale writer result: status=%s tools=%d authored=%d",
+        receipt.status,
+        len(receipt.tools),
+        len(authored),
+    )
+    if (
+        receipt.status != "completed"
+        or not receipt.tools
+        or not authored
+    ):
+        return RoleResult(
+            ok=False,
+            detail=(
+                "codewhale_worker_failed: writer_no_output: "
+                f"status={receipt.status!r} tools={len(receipt.tools)} "
+                f"authored={len(authored)}"
+            ),
+            notes={"codewhale_worker": receipt.to_dict()},
+        )
     return RoleResult(
         ok=True,
         detail=(
             f"codewhale worker {receipt.status} "
-            f"({receipt.termination_reason or 'no reason'})"
+            f"({receipt.termination_reason or 'no reason'}) "
+            f"authored={len(authored)}"
         ),
         notes={"codewhale_worker": receipt.to_dict()},
     )

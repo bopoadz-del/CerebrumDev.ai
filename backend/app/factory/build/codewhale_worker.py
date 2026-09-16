@@ -35,6 +35,7 @@ number is invented.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -43,6 +44,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
+
+logger = logging.getLogger("cerebrumdev.factory.codewhale_worker")
 
 WORKER_CONCURRENCY_CAPPED = "worker_concurrency_capped"
 WORKER_DISPATCH_AMBIGUOUS = "worker_dispatch_ambiguous"
@@ -621,6 +624,34 @@ def run_worker_job(
             argv += ["--provider", worker_provider(), "--api-key", api_key]
         argv += ["exec", "--auto", "--json"]
         argv.append(prompt)
+
+        # E4: persist exactly what the coder was told and how it was
+        # invoked, so "what did the writer receive" never needs a source
+        # read or an SSH session again. The api key is scrubbed from the
+        # persisted argv.
+        sanitized = [
+            "[redacted]" if (a == api_key and api_key) else a for a in argv
+        ]
+        try:
+            (cwd / "docs").mkdir(parents=True, exist_ok=True)
+            (cwd / "docs" / "writer_prompt.txt").write_text(
+                prompt, encoding="utf-8"
+            )
+            (cwd / "docs" / "writer_argv.json").write_text(
+                json.dumps({"argv": sanitized}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:  # never fail the build on audit persistence
+            logger.exception("writer prompt/argv persistence failed")
+
+        # E3 part 1: the dispatch line an operator can tail on Render.
+        logger.info(
+            "codewhale writer dispatch: cli=%s provider=%s session=%s timeout=%ss",
+            cli,
+            worker_provider(),
+            str(session_id or "")[:12] or "-",
+            timeout,
+        )
         try:
             proc = subprocess.run(
                 argv,
@@ -645,7 +676,7 @@ def run_worker_job(
             raise WorkerError(
                 f"{WORKER_EXEC_FAILED}: non-JSON summary from the CLI"
             ) from exc
-        return WorkerReceipt(
+        receipt = WorkerReceipt(
             status=str(payload.get("status") or ""),
             termination_reason=payload.get("termination_reason"),
             provider=str(payload.get("provider") or ""),
@@ -657,3 +688,15 @@ def run_worker_job(
             error=payload.get("error"),
             error_category=payload.get("error_category"),
         )
+        # E3 part 2: the verdict line.
+        logger.info(
+            "codewhale writer receipt: status=%s reason=%s provider=%s "
+            "model=%s tools=%d error=%s",
+            receipt.status,
+            receipt.termination_reason or "-",
+            receipt.provider,
+            receipt.model,
+            len(receipt.tools),
+            receipt.error_category or "-",
+        )
+        return receipt
