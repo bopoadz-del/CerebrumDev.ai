@@ -35,6 +35,26 @@ class TestReadyReturnsAnActionableStatusCode:
         assert json.loads(resp.body)["status"] == "ready"
 
     @pytest.mark.asyncio
+    async def test_ready_reports_whether_the_process_sees_the_writer_seam(
+        self, tmp_path, monkeypatch
+    ):
+        """A dashboard-set FACTORY_CODEWHALE_WRITER is not evidence the
+        runtime received it — /ready must say what THIS process sees."""
+        monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+        monkeypatch.setenv("CEREBRUM_DEV_API_KEY", "present")
+
+        monkeypatch.delenv("FACTORY_CODEWHALE_WRITER", raising=False)
+        resp = await main.ready()
+        llm = json.loads(resp.body)["details"]["llm"]
+        assert llm["factory_codewhale_writer_armed"] is False
+
+        monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "1")
+        resp = await main.ready()
+        llm = json.loads(resp.body)["details"]["llm"]
+        assert llm["factory_codewhale_writer_armed"] is True
+        assert llm["factory_codewhale_writer_env"] == "1"
+
+    @pytest.mark.asyncio
     async def test_ready_is_503_when_storage_is_broken(self, monkeypatch):
         """The load-bearing case: a broken disk must not read as healthy.
 
