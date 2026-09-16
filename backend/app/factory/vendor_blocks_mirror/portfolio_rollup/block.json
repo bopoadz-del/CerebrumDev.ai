@@ -12,10 +12,20 @@
   ],
   "inputs": [
     {
-      "name": "input",
-      "type": "json",
+      "name": "action",
+      "type": "string",
       "required": false,
-      "description": "Capability input payload"
+      "default": "aggregate",
+      "options": [
+        "aggregate"
+      ],
+      "description": "aggregate"
+    },
+    {
+      "name": "properties",
+      "type": "json",
+      "required": true,
+      "description": "[{id, value, status}] property records"
     }
   ],
   "outputs": [

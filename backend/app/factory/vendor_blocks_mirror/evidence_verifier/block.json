@@ -12,10 +12,28 @@
   ],
   "inputs": [
     {
-      "name": "input",
-      "type": "json",
+      "name": "action",
+      "type": "string",
       "required": false,
-      "description": "Capability input payload"
+      "default": "store",
+      "options": [
+        "store",
+        "verify",
+        "list"
+      ],
+      "description": "store | verify | list"
+    },
+    {
+      "name": "content",
+      "type": "json",
+      "required": true,
+      "description": "Content to hash (store) or verify"
+    },
+    {
+      "name": "record_id",
+      "type": "string",
+      "required": false,
+      "description": "Integrity record id for verify"
     }
   ],
   "outputs": [

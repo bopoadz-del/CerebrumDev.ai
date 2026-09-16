@@ -12,10 +12,34 @@
   ],
   "inputs": [
     {
-      "name": "input",
-      "type": "json",
+      "name": "action",
+      "type": "string",
       "required": false,
-      "description": "Capability input payload"
+      "default": "create",
+      "options": [
+        "create",
+        "list",
+        "complete"
+      ],
+      "description": "create | list | complete"
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "required": true,
+      "description": "Work order title (create)"
+    },
+    {
+      "name": "due",
+      "type": "string",
+      "required": true,
+      "description": "Due date ISO (create)"
+    },
+    {
+      "name": "id",
+      "type": "string",
+      "required": false,
+      "description": "Work order id (complete)"
     }
   ],
   "outputs": [

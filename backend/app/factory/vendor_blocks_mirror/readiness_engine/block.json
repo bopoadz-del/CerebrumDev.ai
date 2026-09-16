@@ -12,10 +12,26 @@
   ],
   "inputs": [
     {
-      "name": "input",
+      "name": "action",
+      "type": "string",
+      "required": false,
+      "default": "evaluate",
+      "options": [
+        "evaluate"
+      ],
+      "description": "evaluate"
+    },
+    {
+      "name": "checklist",
+      "type": "json",
+      "required": true,
+      "description": "[{id, required}] checklist"
+    },
+    {
+      "name": "state",
       "type": "json",
       "required": false,
-      "description": "Capability input payload"
+      "description": "Map of item id -> state"
     }
   ],
   "outputs": [

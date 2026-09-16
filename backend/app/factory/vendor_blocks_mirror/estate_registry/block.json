@@ -12,10 +12,28 @@
   ],
   "inputs": [
     {
-      "name": "input",
+      "name": "action",
+      "type": "string",
+      "required": false,
+      "default": "create",
+      "options": [
+        "create",
+        "read",
+        "list"
+      ],
+      "description": "create | read | list"
+    },
+    {
+      "name": "id",
+      "type": "string",
+      "required": true,
+      "description": "Registry record id (unique)"
+    },
+    {
+      "name": "data",
       "type": "json",
       "required": false,
-      "description": "Capability input payload"
+      "description": "Record payload"
     }
   ],
   "outputs": [
