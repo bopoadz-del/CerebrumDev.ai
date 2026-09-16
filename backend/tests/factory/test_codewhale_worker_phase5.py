@@ -38,7 +38,7 @@ def _binding(digest: str = "d1") -> TenantStoreBinding:
     """A handle shaped exactly like the one production binds.
 
     This used to be a class carrying digest/sqlite_path/chroma_collection/
-    tenant_id and NO ``tenant_key`` — which is not the handle the runner
+    tenant_id and NO ``tenant_key`` â€” which is not the handle the runner
     threads to the worker. Slot accounting keys on ``tenant_key``, so a
     double without one proves nothing about the real path.
     """
@@ -77,7 +77,7 @@ def test_process_cap_refuses_when_the_instance_is_full(monkeypatch):
     """The surviving host-protection half of the old T5.3.
 
     The old test held a slot as tenant "a" and asserted tenant "b" was
-    REFUSED — cross-tenant starvation written down as expected behaviour,
+    REFUSED â€” cross-tenant starvation written down as expected behaviour,
     and the reason the bug shipped green. What is genuinely true is
     narrower: when the INSTANCE is full, the next job is refused whoever it
     belongs to, and the message says so. The per-tenant half now lives in
@@ -157,7 +157,7 @@ def test_prompt_version_is_the_product():
 
 
 @pytest.mark.skipif(
-    _CLI is None, reason="codewhale CLI not installed — headless probe is CI-gated"
+    _CLI is None, reason="codewhale CLI not installed â€” headless probe is CI-gated"
 )
 def test_codewhale_exec_headless(tmp_path):
     """The worker completes a trivial job with no interactive prompt.
@@ -274,10 +274,15 @@ def test_worker_streams_cli_progress_lines(monkeypatch, tmp_path):
 
     class _FakePopen:
         def __init__(self, argv, **kwargs):
+            # stdout carries ONLY the final JSON summary; the progress line
+            # arrives on stderr — mirrors the real CLI (run4 mixed them and
+            # broke the parse).
             self.stdout = io.StringIO(
+                '{"status": "completed", "termination_reason": "resolved"}\n'
+            )
+            self.stderr = io.StringIO(
                 "2026-09-16T10:00:00Z INFO engine.turn: engine turn "
                 "completion settled status=Completed\n"
-                '{"status": "completed", "termination_reason": "resolved"}\n'
             )
             self.returncode = 0
 
