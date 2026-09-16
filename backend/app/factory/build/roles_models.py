@@ -81,6 +81,11 @@ class RoleContext:
 class RoleResult:
     ok: bool
     detail: str = ""
+    #: F1: named reason token (writer_no_output, codewhale_worker_failed,
+    #: worker_timed_out, ...) — structural, never only a detail string.
+    reason: str = ""
+    #: F1: where the failure lives (role name or gate id).
+    location: str = ""
     #: Merged into the shared state and into the next GateContext.
     gaps: tuple = ()
     vendored_blocks: tuple = ()
@@ -89,3 +94,9 @@ class RoleResult:
 
 class RoleError(RuntimeError):
     """A role could not do its job. Never swallowed into a partial success."""
+
+    def __init__(self, detail: str, *, reason: str = "", location: str = "") -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.reason = reason
+        self.location = location

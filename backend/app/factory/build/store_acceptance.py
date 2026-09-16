@@ -1092,6 +1092,7 @@ def gate_store_acceptance(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="acceptance_script_missing",
             detail="STORE (acceptance): scripts/acceptance.py is missing",
             findings=["missing scripts/acceptance.py"],
             payload=report.to_json(),
@@ -1105,6 +1106,7 @@ def gate_store_acceptance(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="docker_unavailable",
             detail="STORE (acceptance): docker is not available; will not pass on a host-side skip",
             findings=["docker CLI missing — Store-green is image-measured"],
             payload=report.to_json(),
@@ -1127,6 +1129,7 @@ def gate_store_acceptance(ctx: "GateContext") -> "GateResult":
             return GateResult(
                 ok=False,
                 gate=GATE_NAME,
+                reason="docker_build_failed",
                 detail="STORE (acceptance): docker build failed",
                 findings=findings[:8],
                 payload=report.to_json(),
@@ -1149,6 +1152,7 @@ def gate_store_acceptance(ctx: "GateContext") -> "GateResult":
             return GateResult(
                 ok=False,
                 gate=GATE_NAME,
+                reason="docker_run_failed",
                 detail="STORE (acceptance): docker run failed",
                 findings=[(getattr(started, "stderr", "") or "docker run failed")[:400]],
                 payload=report.to_json(),
@@ -1202,6 +1206,7 @@ def gate_store_acceptance(ctx: "GateContext") -> "GateResult":
             return GateResult(
                 ok=False,
                 gate=GATE_NAME,
+                reason="acceptance_not_kk",
                 detail="STORE (acceptance): %s/%s inside the Store-built image" % (report.passed, report.total),
                 findings=failed[:12] or ["acceptance is not k/k"],
                 payload=report.to_json(),

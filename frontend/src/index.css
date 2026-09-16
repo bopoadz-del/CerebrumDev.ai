@@ -534,6 +534,21 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   border-color: #8a7030;
   background: #1c1a10;
 }
+.kernel-strip li.failed {
+  color: #ff8f8f;
+  border-color: #7a3a3a;
+  background: #1f1010;
+  font-weight: 600;
+}
+.coder-failure-line {
+  color: #ff8f8f;
+  background: #1f1010;
+  border: 1px solid #7a3a3a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
 .coder-takeover.stale {
   border-color: #8a7030;
 }
@@ -604,6 +619,15 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 }
 .bp-summary {
   color: var(--dim);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+.bp-fallback-warning {
+  color: #f0d080;
+  background: #1c1a10;
+  border: 1px solid #8a7030;
+  border-radius: 6px;
+  padding: 8px 10px;
   font-size: 13px;
   margin: 0 0 14px;
 }

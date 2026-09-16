@@ -43,6 +43,8 @@ class GateResult:
     ok: bool
     gate: str
     detail: str = ""
+    #: F1: named reason token (writer_no_output, suite_red, ...).
+    reason: str = ""
     #: Machine-readable specifics the runner records in the ledger and the
     #: next WRITER pass reads as its work list.
     findings: List[str] = field(default_factory=list)
@@ -53,6 +55,7 @@ class GateResult:
             "ok": self.ok,
             "gate": self.gate,
             "detail": self.detail,
+            "reason": self.reason,
             "findings": list(self.findings),
             "payload": dict(self.payload),
         }
@@ -213,6 +216,7 @@ def gate_gaps_enumerated(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="gaps_enumerated",
+            reason="gaps_unnamed",
             detail="collector reported an unnamed gap",
             findings=[f"gap {i} has no capability id" for i, _ in enumerate(unresolved)],
         )
@@ -237,6 +241,7 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="blocks_import_offline",
+            reason="vendor_blocks_missing",
             detail="vendor/blocks is missing — nothing was cloned",
             findings=["cloner produced no vendored blocks"],
         )
@@ -246,6 +251,7 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="blocks_import_offline",
+            reason="registered_block_missing",
             detail=f"{len(missing)} block(s) registered but not on disk",
             findings=[f"vendor/blocks/{b}/block.py missing" for b in missing],
         )
@@ -255,6 +261,7 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="blocks_import_offline",
+            reason="block_import_offline_failed",
             detail="a vendored block failed to import offline",
             findings=[ln for ln in (proc.stderr or "").splitlines() if ln.strip()][-10:],
         )
@@ -297,6 +304,7 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="workspace_compiles",
+            reason="writer_no_app",
             detail="app/ is missing — the writer produced nothing",
             findings=["no app/ directory"],
         )
@@ -307,6 +315,7 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="workspace_compiles",
+            reason="workspace_compile_failed",
             detail="app/ does not compile",
             findings=[ln for ln in output if ln.strip()][-20:],
         )
@@ -330,6 +339,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="suite_green",
+            reason="no_tests_written",
             detail="no tests were written",
             findings=["tester produced no test files"],
         )
@@ -352,6 +362,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="suite_green",
+            reason="missing_app_package",
             detail=(
                 "the coder's checkout has no app/ package — the suite "
                 "cannot import it "
@@ -396,6 +407,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             return GateResult(
                 ok=False,
                 gate=gate_name,
+                reason="suite_could_not_run",
                 detail=(
                     "the suite could not be RUN (test runner unavailable or "
                     "collection failed) — this is a build-environment fault, "
@@ -409,6 +421,7 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate=gate_name,
+            reason="suite_red",
             detail=classify_suite_red(classified_findings, raw),
             # Never report a failure with nothing to act on: fall back to the
             # output tail so a rework round has something concrete.
@@ -472,6 +485,7 @@ def gate_store_ops_authorised(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="store_ops_authorised",
+            reason="no_store_ops_recorded",
             detail="pilot cycle recorded no store ops",
             findings=["STORE_MANAGER applied no store op"],
         )
@@ -534,6 +548,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
         return GateResult(
             ok=False,
             gate="writer_contract",
+            reason="writer_no_output",
             detail=(
                 f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts in the "
                 "workspace (no coding-agent-stamped handler in "
@@ -584,6 +599,7 @@ def gate_store_manager_contract(ctx: GateContext) -> GateResult:
             return GateResult(
                 ok=False,
                 gate="store_manager_contract",
+                reason=accept.reason or "store_acceptance_failed",
                 detail=accept.detail,
                 findings=list(accept.findings),
                 payload=payload,

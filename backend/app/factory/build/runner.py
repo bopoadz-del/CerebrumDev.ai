@@ -469,6 +469,7 @@ class RoleRunner:
     def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
         """Run the role then its gate. Raises RoleError / AuthorityError up."""
         self.ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
+        logger.info("phase start: role=%s", role.value)
         # The WRITER is staged: it rewrites app/ wholesale on every rework
         # round, and the agent picks different entity names each call, so a
         # pass killed part-way through would leave models.py from one attempt
@@ -536,7 +537,11 @@ class RoleRunner:
         with self.ledger.protect():
             result = self.roles[role](ctx)
         if not result.ok:
-            raise RoleError(result.detail or f"{role.value} reported failure")
+            raise RoleError(
+                result.detail or f"{role.value} reported failure",
+                reason=result.reason or f"{role.value.lower()}_role_failed",
+                location=result.location or role.value,
+            )
         # Only now does the staged pass become visible. Everything before this
         # line could be interrupted without the destination ever changing.
         ws.commit()
@@ -557,12 +562,24 @@ class RoleRunner:
         gate = gate_for(role)
         verdict = gate(self._gate_context(role))
         kind = EventKind.GATE_PASSED if verdict.ok else EventKind.GATE_FAILED
+        logger.info(
+            "gate verdict: role=%s gate=%s ok=%s reason=%s",
+            role.value,
+            verdict.gate,
+            verdict.ok,
+            verdict.reason or "-",
+        )
         self.ledger.append(
             kind,
             role=role,
             detail=verdict.detail,
             payload={
                 "gate": verdict.gate,
+                # F1: every gate failure carries a named reason token —
+                # explicit when the gate supplies one, derived otherwise so
+                # no failure can ever reach the ledger reasonless.
+                "reason": verdict.reason or f"{verdict.gate}_failed",
+                "location": role.value,
                 "findings": list(verdict.findings),
                 "role_detail": result.detail,
                 "wrote": list(ws.written),
@@ -1134,8 +1151,19 @@ class RoleRunner:
                         work_list = ()
                         index += 1
                         continue
+                    reason = getattr(exc, "reason", "") or ""
+                    location = getattr(exc, "location", "") or role.value
                     self.ledger.append(
-                        EventKind.PHASE_ABORTED, role=role, detail=str(exc)
+                        EventKind.PHASE_ABORTED,
+                        role=role,
+                        detail=str(exc),
+                        payload={"reason": reason, "location": location},
+                    )
+                    logger.error(
+                        "phase aborted: role=%s reason=%s location=%s",
+                        role.value,
+                        reason or "-",
+                        location,
                     )
                     return self._finish(
                         Outcome.FAILED_ROLE_ERROR,

@@ -75,6 +75,7 @@ def gate_ui_surface(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="ui_surface_missing",
             detail=f"{len(modules)} UI module(s) declared but frontend/ was not emitted",
             findings=[f"missing frontend/src/modules/{_safe(m)}.tsx" for m in modules],
         )
@@ -99,6 +100,7 @@ def gate_ui_surface(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="ui_surface_declared_missing",
             detail="the declared UI surface is missing or a placeholder",
             findings=findings,
         )

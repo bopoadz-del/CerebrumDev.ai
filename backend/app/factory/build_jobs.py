@@ -33,7 +33,7 @@ import re
 import shutil
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.build_jobs")
 
@@ -488,6 +488,59 @@ def _reevaluate_thin_authorship_failure(
     return status
 
 
+def _phase_trail(
+    events: Sequence[Any],
+) -> tuple[list, "dict | None"]:
+    """F3: per-phase trail from ledger events, plus the first failure.
+
+    One row per build phase in BUILD_PHASES order — never one concatenated
+    string. A row carries outcome, named reason token, location, timestamp
+    and detail so the Floor can render "WRITER failed — writer_no_output".
+    """
+    from app.factory.build.authority import BUILD_PHASES
+    from app.factory.build.sanitize import sanitize_for_status
+
+    phases = [p.value for p in BUILD_PHASES]
+    state: Dict[str, Dict[str, Any]] = {
+        p: {
+            "phase": p,
+            "outcome": "not_reached",
+            "reason": "",
+            "location": "",
+            "timestamp": None,
+            "detail": "",
+        }
+        for p in phases
+    }
+    failure: Optional[Dict[str, Any]] = None
+    for event in events:
+        role = getattr(event, "role", None)
+        kind = getattr(event, "kind", None)
+        if role is None:
+            continue
+        role_name = role.value if hasattr(role, "value") else str(role)
+        kind_name = kind.value if hasattr(kind, "value") else str(kind)
+        entry = state.get(role_name)
+        if entry is None:
+            continue
+        if kind_name == "PHASE_STARTED":
+            entry["outcome"] = "running"
+            entry["timestamp"] = event.ts
+        elif kind_name == "GATE_PASSED":
+            entry["outcome"] = "passed"
+            entry["timestamp"] = event.ts
+        elif kind_name in ("GATE_FAILED", "PHASE_ABORTED"):
+            payload = event.payload or {}
+            entry["outcome"] = "failed" if kind_name == "GATE_FAILED" else "aborted"
+            entry["reason"] = sanitize_for_status(payload.get("reason")) or ""
+            entry["location"] = sanitize_for_status(payload.get("location")) or role_name
+            entry["timestamp"] = event.ts
+            entry["detail"] = sanitize_for_status(event.detail) or ""
+            if failure is None:
+                failure = dict(entry)
+    return [state[p] for p in phases], failure
+
+
 def build_status(
     output_dir: Path | str,
     *,
@@ -502,6 +555,7 @@ def build_status(
     """
     from app.factory.build.authority import BUILD_PHASES
     from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.sanitize import sanitize_for_status
 
     path = _ledger_path(output_dir)
     if not path.is_file():
@@ -612,7 +666,10 @@ def build_status(
         "phase_index": phase_index,
         "phase_total": len(phases),
         "next_phase": _phase_ref(nxt) if nxt else None,
-        "last_event": (last_note or last_any).detail if (last_note or last_any) else None,
+        # F5: keys and auth headers are never rendered to the Floor.
+        "last_event": sanitize_for_status(
+            (last_note or last_any).detail if (last_note or last_any) else None
+        ),
         "last_event_at": last_any.ts if last_any else None,
         "last_event_age_s": round(idle_s, 1),
         "stale": idle_s > _STALE_AFTER_S,
@@ -631,12 +688,16 @@ def build_status(
 
     from app.factory.build.coder_session_status import session_status
 
+    phase_trail, failure = _phase_trail(events)
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
         "phases_total": len(phases),
         "phases_done": sum(1 for p in phases if p in completed),
         "ledger_quarantined_notes": quarantined,
+        # F3: per-phase outcome trail + the failure's exact location, named.
+        "phase_trail": phase_trail,
+        "failure": failure,
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),
@@ -739,7 +800,7 @@ def build_status(
     activity: Dict[str, Any] = {}
     if last_note is not None:
         activity = {
-            "activity": last_note.detail,
+            "activity": sanitize_for_status(last_note.detail),
             "activity_stage": (last_note.payload or {}).get("stage"),
             "activity_done": (last_note.payload or {}).get("done"),
             "activity_total": (last_note.payload or {}).get("total"),

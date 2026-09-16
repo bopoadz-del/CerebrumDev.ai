@@ -301,6 +301,7 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate="product_round_trip",
+            reason="product_no_models",
             detail="app/models.py is missing — there is no product to boot",
             findings=["no models to round-trip"],
         )
@@ -320,6 +321,7 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate="product_round_trip",
+            reason="product_boot_failed",
             detail="the product did not boot: " + findings[0],
             findings=findings[:20],
         )
@@ -327,6 +329,7 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate="product_round_trip",
+            reason="round_trip_misses",
             detail=(
                 "%d capability(ies) did not remember a record they were given"
                 % len(misses)
@@ -338,6 +341,7 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate="product_round_trip",
+            reason="round_trip_probe_failed",
             detail="round-trip probe exited %s with no finding" % proc.returncode,
             findings=[ln for ln in out if ln.strip()][-8:] or ["no output"],
         )
@@ -345,6 +349,7 @@ def gate_round_trip(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate="product_round_trip",
+            reason="round_trip_unjudged",
             detail=(
                 "no capability was judgeable — the round-trip check ran and "
                 "decided nothing, which is not a pass"
@@ -374,6 +379,7 @@ def gate_product(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason=suite.reason or "pilot_suite_red",
             detail="PRODUCT (pilot-marked suite): " + suite.detail,
             findings=list(suite.findings),
             payload={"half": "pilot_suite", **dict(suite.payload)},
@@ -384,6 +390,7 @@ def gate_product(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason=trip.reason or "round_trip_failed",
             detail="PRODUCT (one-record round-trip): " + trip.detail,
             findings=list(trip.findings),
             payload={"half": "round_trip", **dict(trip.payload)},

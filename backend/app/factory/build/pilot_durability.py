@@ -214,6 +214,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="pilot_no_models",
             detail="app/models.py is missing — nothing to persist",
             findings=["no models to probe"],
         )
@@ -231,6 +232,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="durability_failed",
             detail="a written record did not survive the process that wrote it",
             findings=lines[-20:] or ["durability probe failed with no output"],
         )
