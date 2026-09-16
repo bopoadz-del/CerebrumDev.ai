@@ -12,8 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.authorship import full_pilot_authorship_from
 from app.factory.build.gates import GateContext, GateResult, gate_writer_contract
