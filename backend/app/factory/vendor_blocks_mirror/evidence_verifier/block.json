@@ -2,7 +2,7 @@
   "id": "evidence_verifier",
   "name": "Evidence Verifier",
   "version": "1.0.0",
-  "description": "Evidence capture and verification for estate ops",
+  "description": "SHA-256 tamper evidence: hashes content into chained integrity records (store) and verifies them, failing on tampered content (verify).",
   "author": "Cerebrum Factory",
   "layer": 3,
   "tags": [

@@ -2,7 +2,7 @@
   "id": "estate_maintenance",
   "name": "Estate Maintenance",
   "version": "1.0.0",
-  "description": "Maintenance work orders and schedules",
+  "description": "Maintenance work orders: create(title, due), list sorted by due date, and complete(id); unknown work-order ids fail.",
   "author": "Cerebrum Factory",
   "layer": 3,
   "tags": [

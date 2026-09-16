@@ -2,7 +2,7 @@
   "id": "readiness_engine",
   "name": "Readiness Engine",
   "version": "1.0.0",
-  "description": "Property readiness scoring and gates",
+  "description": "Readiness gate: evaluates a checklist ({id, required}) against a state map and passes only when every required item is satisfied, else fails listing unmet items.",
   "author": "Cerebrum Factory",
   "layer": 3,
   "tags": [

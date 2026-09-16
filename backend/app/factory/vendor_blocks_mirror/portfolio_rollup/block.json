@@ -2,7 +2,7 @@
   "id": "portfolio_rollup",
   "name": "Portfolio Rollup",
   "version": "1.0.0",
-  "description": "Multi-property portfolio rollup intelligence",
+  "description": "Aggregates property records ({id, value, status}) into total value, count, and per-status groupings; empty input yields honest zeros.",
   "author": "Cerebrum Factory",
   "layer": 3,
   "tags": [

@@ -2,7 +2,7 @@
   "id": "estate_registry",
   "name": "Estate Registry",
   "version": "1.0.0",
-  "description": "Property and asset registry for private estates",
+  "description": "JSON-file-backed registry of property and asset records: create with duplicate-id rejection and read-back of stored records.",
   "author": "Cerebrum Factory",
   "layer": 3,
   "tags": [
