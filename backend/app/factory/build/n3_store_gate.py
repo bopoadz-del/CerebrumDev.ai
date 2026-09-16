@@ -177,6 +177,37 @@ def _event_outcome(event: Any) -> str:
     return str(payload.get("outcome") or "").strip()
 
 
+def dispatch_store_gate(
+    branch: str,
+    *,
+    env: Optional[Mapping[str, str]] = None,
+    opener: Callable[..., Any] = urlopen,
+) -> None:
+    """Trigger the cerebrum-builds store-gate workflow for *branch*.
+
+    The handoff pushes the workspace with a GitHub App token
+    (x-access-token), and pushes made with App tokens do NOT trigger
+    workflow runs on GitHub. Without an explicit dispatch the store-gate
+    never runs and the build waits in HANDOFF_TO_N3 forever (live retail
+    build sess_c8b01eb6de53495c). Best-effort: the handoff already
+    fail-closed if the push itself failed.
+    """
+    blob = env if env is not None else os.environ
+    token = builds_token(blob)
+    if not token:
+        return
+    owner, _name, _url = parse_builds_repo(blob)
+    from app.factory.build.builds_push import github_request
+
+    github_request(
+        "POST",
+        f"/repos/{owner}/{_name}/actions/workflows/store-gate.yml/dispatches",
+        token=token,
+        opener=opener,
+        body={"ref": branch},
+    )
+
+
 def handoff_awaiting_n3(output_dir: Path | str) -> bool:
     """True when cli-pivot handed off and N3 has not yet been ingested."""
     path = Path(output_dir) / "build_ledger.jsonl"
