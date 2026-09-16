@@ -2864,6 +2864,14 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     except OSError:
         logger.exception("writer receipt persistence failed")
 
+    # The worker subprocess writes into the staging tree directly, so its
+    # files are not in the workspace's tracked ``written`` list — commit()
+    # would drop every authored handler (live-factory
+    # sess_620b8581fb224bea: authored=8 at the role, 0 at the gate).
+    record_existing = getattr(ctx.workspace, "record_existing", None)
+    if callable(record_existing):
+        record_existing()
+
     # E1 + E3: three outcomes must be distinguishable at the ROLE level —
     # dispatched-and-failed (above), dispatched-and-succeeded, and
     # dispatched-succeeded-but-wrote-nothing. A "completed" receipt with
