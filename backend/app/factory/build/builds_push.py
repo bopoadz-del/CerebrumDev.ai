@@ -251,6 +251,7 @@ def github_request(
     token: str,
     opener: Callable[..., Any] = urlopen,
     timeout_s: float = 30.0,
+    body: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[int, Any]:
     url = path if path.startswith("https://") else f"{GITHUB_API}{path}"
     headers = {
@@ -258,7 +259,11 @@ def github_request(
         "Accept": "application/vnd.github+json",
         "User-Agent": "CerebrumFactory-N1a",
     }
-    req = Request(url, headers=headers, method=method.upper())
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = Request(url, headers=headers, method=method.upper(), data=data)
     try:
         with opener(req, timeout=timeout_s) as resp:
             raw = resp.read()

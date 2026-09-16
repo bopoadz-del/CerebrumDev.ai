@@ -101,13 +101,20 @@ def test_docker_unavailable_hands_off_to_n3(monkeypatch, tmp_path):
 
     monkeypatch.setenv("CEREBRUM_BUILDS_GITHUB_TOKEN", "tok")
     pushed = []
+    dispatched = []
 
     def fake_push(workspace, *, env, session_id, run_git=None, suffix=None):
         pushed.append(str(workspace))
         return type("R", (), {"branch": "build/x", "sha": "abc"})()
 
+    def fake_dispatch(branch, *, env=None, opener=None):
+        dispatched.append(branch)
+
     monkeypatch.setattr(
         "app.factory.build.builds_push.push_workspace", fake_push
+    )
+    monkeypatch.setattr(
+        "app.factory.build.n3_store_gate.dispatch_store_gate", fake_dispatch
     )
 
     def fake_gate(role):
@@ -129,6 +136,7 @@ def test_docker_unavailable_hands_off_to_n3(monkeypatch, tmp_path):
 
     assert outcome.outcome is Outcome.HANDOFF_TO_N3, outcome
     assert pushed, "the workspace was never pushed to cerebrum-builds"
+    assert dispatched == ["build/x"], "the store-gate workflow was not dispatched"
     notes = [
         e
         for e in BuildLedger(out / "build_ledger.jsonl").events()

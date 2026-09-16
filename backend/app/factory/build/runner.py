@@ -1307,13 +1307,20 @@ class RoleRunner:
                 ):
                     try:
                         from app.factory.build.builds_push import push_workspace
-                        from app.factory.build.n3_store_gate import HANDOFF_TO_N3
+                        from app.factory.build.n3_store_gate import (
+                            HANDOFF_TO_N3,
+                            dispatch_store_gate,
+                        )
 
-                        push_workspace(
+                        pushed = push_workspace(
                             self.workspace,
                             env=os.environ,
                             session_id=str(self.state.get("session_id") or ""),
                         )
+                        # App-token pushes do not trigger workflow runs;
+                        # dispatch the store-gate explicitly or the handoff
+                        # waits forever.
+                        dispatch_store_gate(pushed.branch, env=os.environ)
                         self.ledger.append(
                             EventKind.NOTE,
                             role=role,
