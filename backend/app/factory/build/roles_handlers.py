@@ -2840,7 +2840,11 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             session_id=str(ctx.state.get("session_id") or ""),
         )
     except WorkerError as exc:
-        raise RoleError(f"codewhale_worker_failed: {exc}") from exc
+        raise RoleError(
+            f"codewhale_worker_failed: {exc}",
+            reason="codewhale_worker_failed",
+            location="WRITER",
+        ) from exc
 
     # E2: the session status must reflect the leg that actually ran —
     # write the worker's own receipt where the Floor monitor reads it,
@@ -2889,6 +2893,8 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 f"status={receipt.status!r} tools={len(receipt.tools)} "
                 f"authored={len(authored)}"
             ),
+            reason="writer_no_output",
+            location="WRITER",
             notes={"codewhale_worker": receipt.to_dict()},
         )
     return RoleResult(
@@ -2976,6 +2982,8 @@ def run_writer(
             vendored = sorted(set(ctx.state.get("vendored_blocks", ())))
             return RoleResult(
                 ok=False,
+                reason="pilot_rework_no_coder_key",
+                location="WRITER",
                 detail=(
                     "pilot rework requires a coder key; cannot regenerate failing "
                     f"handlers ({len(ctx.plan.capabilities)} capability(ies) unchanged)"

@@ -180,6 +180,11 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText(/template fallback — no LLM/)).toBeInTheDocument()
     expect(screen.getByText(/The architect LLM did not draft this blueprint/)).toBeInTheDocument()
+    // F4: the fallback is a visible warning before approval, not a dim aside.
+    const warning = screen.getByTestId('bp-drafting-fallback-warning')
+    expect(warning).toHaveTextContent(/The architect LLM did not draft/)
+    expect(warning).toHaveTextContent(/LLM drafting disabled/)
+    expect(warning).toHaveAttribute('role', 'alert')
   })
 
   it('labels a golden lettings draft as a golden blueprint, not template fallback', async () => {
@@ -1212,6 +1217,49 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     fireEvent.click(screen.getByTestId('floor-coder-stop'))
     await waitFor(() =>
       expect(coderControlMock).toHaveBeenCalledWith('sess_monitor', 'stop'),
+    )
+  })
+
+  it('names the failed stage and its reason when build-status carries a failure', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        detail: 'writer_no_output: zero agent-authored artifacts',
+        failure: {
+          phase: 'WRITER',
+          location: 'WRITER',
+          reason: 'writer_no_output',
+          detail: 'zero agent-authored artifacts in the workspace',
+        },
+        phase_trail: [
+          { phase: 'COLLECTOR', outcome: 'passed' },
+          { phase: 'CLONER', outcome: 'passed' },
+          {
+            phase: 'WRITER',
+            outcome: 'failed',
+            reason: 'writer_no_output',
+            location: 'WRITER',
+            detail: 'zero agent-authored artifacts',
+          },
+          { phase: 'TESTER', outcome: 'not_reached' },
+          { phase: 'STORE_MANAGER', outcome: 'not_reached' },
+        ],
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'retal', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_f4_failure" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
+    // The red stage is the one the user was watching.
+    expect(screen.getByTestId('floor-phase-failed-WRITER')).toBeInTheDocument()
+    // The pill names the phase, not a generic "pilot failed".
+    expect(screen.getByTestId('floor-failed-pill')).toHaveTextContent('WRITER failed')
+    // The reason token is rendered, with the gate's own words.
+    expect(screen.getByTestId('floor-failure-line')).toHaveTextContent(
+      'WRITER failed — writer_no_output: zero agent-authored artifacts in the workspace',
     )
   })
 })

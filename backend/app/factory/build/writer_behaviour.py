@@ -892,6 +892,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="writer_no_models",
             detail="app/models.py is missing — nothing to probe",
             findings=["writer produced no models"],
         )
@@ -905,6 +906,7 @@ def gate_writer_behaviour(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="writer_behaviour_failed",
             detail=banner_detail(findings),
             findings=findings,
         )

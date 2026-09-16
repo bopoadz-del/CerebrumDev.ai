@@ -99,10 +99,15 @@ export function BlueprintCard({
         )}
       </div>
       {blueprint.drafting_mode === 'keyword_fallback' && (
-        <p className="bp-summary dim">
-          The architect LLM did not draft this blueprint
+        <p
+          className="bp-fallback-warning"
+          data-testid="bp-drafting-fallback-warning"
+          role="alert"
+        >
+          ⚠ The architect LLM did not draft this blueprint
           {blueprint.drafting_note ? ' (' + blueprint.drafting_note + ')' : ''} — it was
-          assembled from deterministic templates.
+          assembled from deterministic templates. Approve only if a template product is
+          what you intend to build.
         </p>
       )}
       {blueprint.summary && <p className="bp-summary">{blueprint.summary}</p>}
@@ -189,13 +194,26 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
     : ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER']
   const done = new Set(build?.completed ?? [])
   const current = build?.current_phase?.id
+  const failedAt = build?.failure?.location || build?.failure?.phase
+  const failedReason = build?.failure?.reason || 'unknown'
+  const failedDetail = build?.failure?.detail || ''
   return (
     <ol className="kernel-strip">
       {phases.map((phase) => {
         const job = KERNEL_JOBS[phase]
         const cls = done.has(phase) ? 'done' : phase === current ? 'current' : undefined
+        const failed = phase === failedAt
         return (
-          <li key={phase} className={cls}>
+          <li
+            key={phase}
+            className={[cls, failed ? 'failed' : undefined].filter(Boolean).join(' ')}
+            title={
+              failed
+                ? `${phase} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
+                : undefined
+            }
+            data-testid={failed ? `floor-phase-failed-${phase}` : undefined}
+          >
             <span className="kernel-id">{phase}</span>
             {job ? <span className="kernel-title">{job.title}</span> : null}
             {job?.agent ? <span className="kernel-agent">agent</span> : null}
@@ -811,6 +829,15 @@ export function Floor({
           </h3>
           <LevelGradeStrip build={liveCoderBuild} testIdPrefix="floor" />
           <KernelStrip build={liveCoderBuild} />
+          {liveCoderBuild?.failure && (
+            <p className="coder-failure-line" data-testid="floor-failure-line" role="alert">
+              <strong>
+                {liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'Build'} failed
+              </strong>
+              {liveCoderBuild.failure.reason ? ` — ${liveCoderBuild.failure.reason}` : ''}
+              {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
+            </p>
+          )}
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (
             <>
               <CoderProgress build={liveCoderBuild} nowMs={nowMs} />
@@ -910,7 +937,9 @@ export function Floor({
           {coderFailed && (
             <div className="card-actions">
               <span className="status-pill status-pill-failed" data-testid="floor-failed-pill">
-                Pilot suite failed
+                {liveCoderBuild?.failure
+                  ? `${liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'Build'} failed`
+                  : 'Pilot suite failed'}
               </span>
               <button
                 type="button"

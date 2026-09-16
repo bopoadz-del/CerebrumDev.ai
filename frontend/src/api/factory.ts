@@ -411,6 +411,26 @@ export type BuildPhaseProgress = {
   stage?: string
 }
 
+/** F3: one row per build phase, from the ledger — never a concatenated string. */
+export type PhaseTrailEntry = {
+  phase: string
+  outcome: 'not_reached' | 'running' | 'passed' | 'failed' | 'aborted'
+  reason?: string
+  location?: string
+  timestamp?: string | null
+  detail?: string
+}
+
+/** F3: the first failing/aborted phase, with its named reason and location. */
+export type BuildFailure = {
+  phase?: string
+  outcome?: string
+  reason?: string
+  location?: string
+  timestamp?: string | null
+  detail?: string
+}
+
 export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled' | 'waiting'
   detail?: string
@@ -441,6 +461,10 @@ export type BuildStatus = {
   phase_index?: number
   phase_total?: number
   phase_progress?: BuildPhaseProgress
+  /** F3: per-phase outcome trail; the red stage the user is watching. */
+  phase_trail?: PhaseTrailEntry[]
+  /** F3: exact location + named reason of the failure, if any. */
+  failure?: BuildFailure | null
   last_event?: string | null
   last_event_at?: string | null
   last_event_age_s?: number

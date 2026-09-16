@@ -186,6 +186,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="cloner_no_lockfile",
             detail="blocks.lock.json is missing - no integrity record to check",
             findings=["cloner wrote no lockfile"],
         )
@@ -195,6 +196,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="lockfile_unreadable",
             detail=f"blocks.lock.json is unreadable: {exc}",
             findings=[str(exc)],
         )
@@ -236,6 +238,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=False,
             gate=GATE_NAME,
+            reason="vendored_integrity_failed",
             detail="a vendored block failed or skipped clone-time integrity verification",
             findings=findings[:20],
             payload={"blocks_checked": checked, "files_hashed": files},
