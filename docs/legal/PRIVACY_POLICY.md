@@ -12,7 +12,7 @@
 **Effective date:** `[[NEEDS INPUT: date of publication]]`
 **Controller:** `[[NEEDS INPUT: registered legal entity, address]]`
 **Privacy contact:** `[[NEEDS INPUT: email address for data-subject requests]]`
-**Facts verified against production code on:** 2026-08-01
+**Facts verified against production code on:** 2026-09-16
 
 ---
 
@@ -48,9 +48,15 @@ is derived from the production code.
 | Processor | What it receives | Purpose | Location |
 |---|---|---|---|
 | Render | Everything hosted — the application, database and disks | Hosting | Oregon, USA |
-| Moonshot AI (Kimi) | **Your Content** — briefs, chat messages, and document text sent for inference | Generating output | `[[NEEDS INPUT: confirm region and obtain their DPA]]` |
+| DeepSeek | **Your Content** — briefs, chat messages, and document text sent for inference | Generating output (primary model provider, active) | `[[NEEDS INPUT: confirm region and obtain their DPA]]` |
+| OpenRouter | **Your Content** — only if the fallback model leg is armed (it is not armed today: a fail-closed guard refuses it unless an operator explicitly enables it) | Fallback model routing | `[[NEEDS INPUT: confirm region and obtain their DPA]]` |
 | Stripe | Email, billing identifiers, payment details | Subscriptions | Global |
 | Sentry | Error reports, which may incidentally include request context | Error tracking | `[[NEEDS INPUT: confirm region]]` |
+
+Moonshot AI (Kimi) is **not** in the production data path: no Moonshot
+credentials are configured, and the legacy compatibility resolver in code
+cannot send content anywhere without them. It is listed here only so this
+policy is honest about what used to be true.
 
 **The most important disclosure on this page: to generate output, the content
 you submit is transmitted to a third-party AI model provider outside our
@@ -59,10 +65,11 @@ to someone else, it leaves our systems. Do not submit anything you are not
 permitted to share with a third-party processor.
 
 `[[NEEDS INPUT: a signed data-processing agreement is required with each
-processor above before onboarding EU/UK users. Moonshot AI is the one to check
-first — confirm what they do with submitted content, in particular whether they
-retain it or train on it, and whether that can be disabled. If they train on
-submitted content by default, that must be stated here in plain language, and
+processor above before onboarding EU/UK users. DeepSeek is the active
+primary provider and the one to check first — confirm what they do with
+submitted content, in particular whether they retain it or train on it,
+and whether that can be disabled. If they train on submitted content by
+default, that must be stated here in plain language, and
 it may be commercially unacceptable to business customers.]]`
 
 ## 3. Why we process it, and on what basis
@@ -77,7 +84,8 @@ it may be commercially unacceptable to business customers.]]`
 
 We do **not** sell your data, and we do not use Your Content to train our own
 models. `[[NEEDS INPUT: this statement is only true end-to-end if the upstream
-model provider also does not train on submitted content — verify before
+model providers (DeepSeek; OpenRouter if armed) also do not train on
+submitted content — verify before
 publishing, because publishing it while untrue would be a misrepresentation.]]`
 
 ## 4. How long we keep it
@@ -148,7 +156,8 @@ These are product gaps this document exposes, listed so they are not lost:
 1. **Self-service data export and account deletion.** Neither exists today.
 2. **Defined retention, and a job that enforces it.** Nothing expires now.
 3. **A monitored privacy inbox** for data-subject requests.
-4. **Signed DPAs** with Render, Moonshot AI, Stripe and Sentry.
+4. **Signed DPAs** with Render, DeepSeek, Stripe and Sentry (and OpenRouter,
+   if the fallback leg is armed).
 5. **A documented breach-notification process** meeting the 72-hour rule.
-6. **Confirmation of what Moonshot AI does with submitted content** — this is
+6. **Confirmation of what DeepSeek does with submitted content** — this is
    the single highest-impact unknown on this page.
