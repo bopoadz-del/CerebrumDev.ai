@@ -541,6 +541,25 @@ def _phase_trail(
     return [state[p] for p in phases], failure
 
 
+def _crash_failure(trail: list) -> "Dict[str, Any] | None":
+    """F: a crashed thread must still name the phase it died in.
+
+    The crash handler records RUN_FAILED with no per-phase verdict, so the
+    trail's last started phase reads 'running' forever. Mark it aborted
+    with a named reason and return it as the failure the Floor renders.
+    """
+    running = next(
+        (row for row in trail if row.get("outcome") == "running"), None
+    )
+    if running is None:
+        return None
+    running["outcome"] = "aborted"
+    running["reason"] = "build_thread_crashed"
+    running["location"] = running.get("location") or running.get("phase") or ""
+    running["detail"] = "build thread crashed; see service logs"
+    return dict(running)
+
+
 def build_status(
     output_dir: Path | str,
     *,
@@ -589,12 +608,17 @@ def build_status(
     phases = [p.value for p in BUILD_PHASES]
     current_role = interrupted or resume
     if terminal is None and _crash_marker_path(output_dir).is_file():
+        trail, failure = _phase_trail(events)
+        failure = failure or _crash_failure(trail)
         return _with_level_grade(
             {
                 "state": "failed",
                 "detail": "build thread crashed; see service logs",
                 "pilot_ready": False,
                 "honesty": "BUILD_THREAD_CRASHED",
+                # F: the Floor must still name the phase that died.
+                "phase_trail": trail,
+                "failure": failure,
             },
             output_dir,
         )
@@ -689,6 +713,12 @@ def build_status(
     from app.factory.build.coder_session_status import session_status
 
     phase_trail, failure = _phase_trail(events)
+    # F: a crashed thread (RUN_FAILED with no per-phase verdict) must still
+    # name the phase it died in — otherwise the Floor cannot say 'why'.
+    if failure is None and terminal is not None and terminal.kind is EventKind.RUN_FAILED:
+        tp = terminal.payload or {}
+        if not tp.get("reason") or tp.get("reason") == "build_thread_crashed":
+            failure = _crash_failure(phase_trail)
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
@@ -1034,8 +1064,15 @@ def _run(
         try:
             from app.factory.build.ledger import BuildLedger, EventKind
 
-            BuildLedger(_ledger_path(output_dir)).append(
-                EventKind.RUN_FAILED, detail=crash_detail
+            ledger = BuildLedger(_ledger_path(output_dir))
+            crashed_role = ledger.interrupted_role()
+            ledger.append(
+                EventKind.RUN_FAILED,
+                detail=crash_detail,
+                payload={
+                    "reason": "build_thread_crashed",
+                    "location": crashed_role.value if crashed_role else "",
+                },
             )
         except Exception:  # noqa: BLE001
             logger.exception("could not record the crash in the ledger")

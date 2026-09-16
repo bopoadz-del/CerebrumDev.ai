@@ -120,6 +120,66 @@ class TestBuildStatusCarriesTheTrail:
         assert "[redacted]" in status.get("activity", "")
 
 
+class TestCrashFailureNaming:
+    def test_a_crashed_thread_names_the_phase_it_died_in(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.RUN_FAILED,
+            detail="build thread crashed; see service logs",
+            payload={"reason": "build_thread_crashed", "location": "TESTER"},
+        )
+
+        status = build_status(tmp_path / "build")
+
+        assert status["state"] == "failed"
+        assert status["failure"]["phase"] == "TESTER"
+        assert status["failure"]["reason"] == "build_thread_crashed"
+        tester = next(
+            row for row in status["phase_trail"] if row["phase"] == "TESTER"
+        )
+        assert tester["outcome"] == "aborted"
+
+    def test_a_crash_marker_without_terminal_event_still_names_the_phase(self, tmp_path):
+        from app.factory.build_jobs import CRASH_MARKER_NAME
+
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        (tmp_path / "build" / CRASH_MARKER_NAME).write_text(
+            "boom", encoding="utf-8"
+        )
+
+        status = build_status(tmp_path / "build")
+
+        assert status["state"] == "failed"
+        assert status["failure"]["phase"] == "TESTER"
+        assert status["failure"]["reason"] == "build_thread_crashed"
+
+    def test_a_normally_failed_build_keeps_its_gate_reason(self, tmp_path):
+        """The synthesis must not overwrite a real gate failure."""
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.WRITER,
+            detail="writer_no_output: zero agent-authored artifacts",
+            payload={
+                "gate": "writer_contract",
+                "reason": "writer_no_output",
+                "location": "WRITER",
+            },
+        )
+        ledger.append(
+            EventKind.RUN_FAILED,
+            detail="writer failed",
+            payload={"reason": "writer_no_output", "location": "WRITER"},
+        )
+
+        status = build_status(tmp_path / "build")
+
+        assert status["failure"]["reason"] == "writer_no_output"
+
+
 class TestRoleFailureShape:
     def test_role_error_carries_reason_and_location(self):
         exc = RoleError("boom", reason="codewhale_worker_failed", location="WRITER")
