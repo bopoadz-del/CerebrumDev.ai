@@ -527,7 +527,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     gate exists to stop.
     """
     from app.factory.build.authorship import agent_written_handler_ids_in_workspace
-    from app.factory.build.cli_receipt import WRITER_NO_OUTPUT
+    WRITER_NO_OUTPUT = "writer_no_output"
 
     agent_written = agent_written_handler_ids_in_workspace(ctx.workspace)
     if not agent_written:

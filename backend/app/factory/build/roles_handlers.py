@@ -2856,9 +2856,11 @@ def run_writer(
 ) -> RoleResult:
     """Platform manufacturer: dispatch runtime plus one handler per capability.
 
-    When Cursor executor keys are present, authorship is ``run_cli_pivot``
-    on the already-cloned tree (no ``dispatch_compiled_brief`` / kimi /
-    ``_templated_body``). Absent keys keep this in-process path until N2.
+    Executor order: the headless CodeWhale worker when
+    ``FACTORY_CODEWHALE_WRITER=1`` is armed; otherwise the compiled-brief
+    dispatch (``dispatch_compiled_brief``) and the deterministic template
+    fallback. The retired cursor BA / kimi CLI seams are gone from this
+    ladder.
 
     The coding agent writes each body when one is configured; otherwise the
     body is composed from the block contract deterministically. Which path ran
@@ -3896,7 +3898,7 @@ def run_writer(
         # 0.5.2: an in-process WRITER pass with zero agent-authored
         # artifacts is the hollow green the artifact gate exists to stop.
         # Refuse here, at the entry point -- the gate is the second line.
-        from app.factory.build.cli_receipt import WRITER_NO_OUTPUT
+        WRITER_NO_OUTPUT = "writer_no_output"
 
         raise RoleError(
             f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts "

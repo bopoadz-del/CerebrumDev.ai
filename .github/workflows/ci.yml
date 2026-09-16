@@ -356,22 +356,12 @@ jobs:
           raise SystemExit(0 if not missing else 'factory_source_missing:' + ','.join(missing))
           "
 
-      - name: FACTORY_CODE_CLI (kimi) is on PATH
+      - name: Retired executors (kimi / claude) are NOT in the image
         run: |
           docker run --rm --user 10001 --entrypoint /bin/sh cerebrumdev-backend:ci -c '
             set -eu
-            command -v kimi
-            test "$(command -v kimi)" = /usr/local/bin/kimi
-            kimi --version
-          '
-
-      - name: FACTORY_CODE_CLI (claude) is on PATH
-        run: |
-          docker run --rm --user 10001 --entrypoint /bin/sh cerebrumdev-backend:ci -c '
-            set -eu
-            command -v claude
-            test "$(command -v claude)" = /usr/local/bin/claude
-            claude --version
+            ! command -v kimi
+            ! command -v claude
           '
 
       - name: codewhale (DeepSeek worker) is on PATH

@@ -54,7 +54,6 @@ from .product_architect import (
     plan_blueprint,
     session_domain_from_blueprint,
 )
-from .build.coder_session import NAMED_BLOCKER_CLI, CodeCliUnavailable
 
 # --- Intent detection -------------------------------------------------------
 
@@ -545,24 +544,6 @@ def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, An
     }
 
 
-def _cli_unavailable_reply(pd: Any, exc: BaseException) -> Dict[str, Any]:
-    """Fail-closed named class — coding session never opened, no takeover."""
-    detail = str(exc)
-    blocker = getattr(exc, "blocker", NAMED_BLOCKER_CLI)
-    pd.last_error = detail
-    logger.error("%s", detail)
-    return {
-        "ok": False,
-        "sse": "error",
-        "blocker": blocker,
-        "summary": (
-            f"{blocker} — coding session never opened. {detail}"
-        ),
-        "blueprint_approved": bool(getattr(pd, "blueprint_approved", False)),
-        "stream_delta": False,
-    }
-
-
 def approve_and_generate(
     state: Any,
     output_root: Optional[Path] = None,
@@ -610,8 +591,7 @@ def approve_and_generate(
         return reply
 
     out = _session_output(state.session_id, bp.product_id, output_root)
-    try:
-        result = generate_product(
+    result = generate_product(
             bp,
             out,
             blocks_root=_blocks_root(),
@@ -620,8 +600,6 @@ def approve_and_generate(
             or getattr(state, "session_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
-    except CodeCliUnavailable as exc:
-        return _cli_unavailable_reply(pd, exc)
     if result.get("already_running"):
         _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
         reply = running_build_reply(state)
@@ -1310,8 +1288,7 @@ def start_fresh_generation(
     base = prior or _session_output(state.session_id, bp.product_id, output_root)
     out = next_fresh_output(base)
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    try:
-        result = generate_product(
+    result = generate_product(
             bp,
             out,
             blocks_root=_blocks_root(),
@@ -1321,8 +1298,6 @@ def start_fresh_generation(
             or getattr(state, "session_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
-    except CodeCliUnavailable as exc:
-        return _cli_unavailable_reply(pd, exc)
     if result.get("already_running"):
         _record_generation(pd, result, triggered_by=triggered_by, resumed=False)
         reply = running_build_reply(state)
@@ -1422,8 +1397,7 @@ def resume_generation(
         }
 
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    try:
-        result = generate_product(
+    result = generate_product(
             bp,
             out,
             blocks_root=_blocks_root(),
@@ -1433,8 +1407,6 @@ def resume_generation(
             or getattr(state, "session_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
-    except CodeCliUnavailable as exc:
-        return _cli_unavailable_reply(pd, exc)
     if result.get("already_running"):
         _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
         return {
@@ -1523,8 +1495,7 @@ def resume_pilot_cycle(
             "build": st,
         }
     prior_hash = (pd.generation or {}).get("inputs_hash")
-    try:
-        result = generate_product(
+    result = generate_product(
             bp,
             out,
             blocks_root=_blocks_root(),
@@ -1534,8 +1505,6 @@ def resume_pilot_cycle(
             or getattr(state, "session_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
-    except CodeCliUnavailable as exc:
-        return _cli_unavailable_reply(pd, exc)
     if result.get("already_running"):
         _record_generation(pd, result, triggered_by=triggered_by, resumed=True)
         return {

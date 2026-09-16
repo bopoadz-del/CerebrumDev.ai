@@ -19,7 +19,7 @@ from pathlib import Path
 from app.factory.blueprint import CapabilitySpec, ProductBlueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import BuildLedger, EventKind
-from app.factory.build.coder_session import write_control
+from app.factory.build.coder_session_status import write_control
 from app.factory.build.orphan_recovery import (
     ORPHAN_FAIL_DETAIL,
     fail_orphaned_model_call,
@@ -297,7 +297,8 @@ def test_lifespan_recovers_orphaned_model_calls():
 
     src = inspect.getsource(_lifespan)
     assert "recover_orphaned_model_calls" in src
-    assert "ensure_code_cli_credentials" in src
+    # The CLI credential wire is retired with the executor seam.
+    assert "ensure_code_cli_credentials" not in src
 
 
 def _plant_session_workspace(

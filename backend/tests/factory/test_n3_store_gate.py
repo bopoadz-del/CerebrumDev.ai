@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.request import Request
 
 from app.factory.build.authority import BuildRole
-from app.factory.build.cli_receipt import HANDOFF_TO_N3
+from app.factory.build.n3_store_gate import HANDOFF_TO_N3
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.n3_store_gate import (
     N3_STORE_GATE_FAILED,

@@ -214,52 +214,18 @@ class TestHealthCheckPathPointsAtSomethingThatCanFail:
             "blueprint does not pin BACKUP_SCHEDULE_ENABLED on the web service"
         )
 
-    def test_production_image_installs_official_kimi_code_cli(self):
-        """FACTORY_CODE_CLI=kimi must resolve in the Render image.
-
-        Live tip 98b2bc7 fail-closed FACTORY_CODE_CLI_UNAVAILABLE because
-        `kimi` was not an executable on the host. The production Dockerfile
-        installs the official Kimi Code CLI (docs + install.sh), pinned, at
-        /usr/local/bin/kimi. This is a text contract on the Dockerfile; CI
-        `docker run` asserts `which kimi` / `kimi --version`. Do not replace
-        the official installer with a stub binary. Do not weaken the
-        missing-CLI fail-closed path.
-        """
+    def test_production_image_ships_no_kimi_or_claude_executor(self):
+        """The executor is the CodeWhale worker. The image must NOT install
+        the retired kimi / claude / cursor binaries — their seams were
+        removed with the Dockerfile purge."""
         dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-        assert "https://code.kimi.com/kimi-code/install.sh" in dockerfile
-        assert "KIMI_CODE_VERSION" in dockerfile
-        assert "KIMI_INSTALL_DIR=/usr/local" in dockerfile
-        assert "/usr/local/bin/kimi" in dockerfile
-        assert "kimi --version" in dockerfile
-        assert "--http1.1" in dockerfile
-        assert "--retry" in dockerfile
-        assert "is NOT installed" not in dockerfile
-        docs = (REPO_ROOT / "docs/factory/KIMI_ENV_SETUP.md").read_text(encoding="utf-8")
-        assert "/usr/local/bin/kimi" in docs
-        assert "KIMI_CODE_VERSION" in docs
-
-    def test_production_image_installs_official_claude_code_cli(self):
-        """Leftover Claude Code may still be in the image; DeepSeek uses kimi.
-
-        Claude Code is not the DeepSeek vehicle. The production Dockerfile
-        still plants official Claude at /usr/local/bin/claude as unused
-        leftover. DeepSeek C-BRIEF is FACTORY_CODE_CLI=kimi +
-        DEEPSEEK_API_KEY over OpenAI-compat https://api.deepseek.com.
-        """
-        dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
-        assert "https://code.kimi.com/kimi-code/install.sh" in dockerfile
-        assert "/usr/local/bin/kimi" in dockerfile
-        assert "DEEPSEEK_API_KEY" in dockerfile
-        docs = (REPO_ROOT / "docs/factory/DEEPSEEK_ENV_SETUP.md").read_text(
-            encoding="utf-8"
-        )
-        assert "FACTORY_CODE_CLI=kimi" in docs
-        assert "https://api.deepseek.com" in docs
-        assert "deepseek-v4-pro" in docs
-        assert "KIMI_MODEL_" in docs
-        assert "Claude Code is **not** the DeepSeek vehicle" in docs
-        assert "FACTORY_BRIEF_HTTP_ONESHOT" in docs
-        assert "pilot_zip" in docs
+        assert "code.kimi.com/kimi-code/install.sh" not in dockerfile
+        assert "KIMI_CODE_VERSION" not in dockerfile
+        assert "/usr/local/bin/kimi" not in dockerfile
+        assert "claude.ai/install.sh" not in dockerfile
+        assert "/usr/local/bin/claude" not in dockerfile
+        assert "CODEWHALE_VERSION" in dockerfile
+        assert "codewhale --version" in dockerfile
 
     def test_production_image_plants_s0_factory_source_in_the_workdir(self):
         """S0 fingerprints repo-relative paths from factory_repo_root()=/app.
