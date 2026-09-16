@@ -140,6 +140,26 @@ class TestCrashFailureNaming:
         )
         assert tester["outcome"] == "aborted"
 
+    def test_the_crash_exception_text_reaches_the_floor(self, tmp_path):
+        """The crash handler stamps the real exception; the Floor shows it."""
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.RUN_FAILED,
+            detail="build thread crashed: UnicodeDecodeError: 'utf-8' codec",
+            payload={
+                "reason": "build_thread_crashed",
+                "location": "TESTER",
+                "exception": "UnicodeDecodeError",
+            },
+        )
+
+        status = build_status(tmp_path / "build")
+
+        assert status["failure"]["reason"] == "build_thread_crashed"
+        assert "UnicodeDecodeError" in status["failure"]["detail"]
+        assert "UnicodeDecodeError" in status["detail"]
+
     def test_a_crash_marker_without_terminal_event_still_names_the_phase(self, tmp_path):
         from app.factory.build_jobs import CRASH_MARKER_NAME
 

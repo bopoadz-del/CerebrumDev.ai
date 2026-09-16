@@ -719,6 +719,12 @@ def build_status(
         tp = terminal.payload or {}
         if not tp.get("reason") or tp.get("reason") == "build_thread_crashed":
             failure = _crash_failure(phase_trail)
+            if failure is not None:
+                # The crash handler stamps the actual exception into the
+                # terminal detail — show it, not the generic marker text.
+                failure["detail"] = sanitize_for_status(terminal.detail) or (
+                    failure.get("detail") or ""
+                )
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
@@ -1056,11 +1062,16 @@ def _run(
             except Exception:  # noqa: BLE001 — waiter crash must not kill the thread
                 logger.exception("n3 store-gate ingest failed for %s", output_dir)
             return
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         # The thread must never die silently: without this the ledger's last
         # event stays PHASE_STARTED and status reads "building" forever.
         logger.exception("runner build crashed for %s", output_dir)
-        crash_detail = "build thread crashed; see service logs"
+        from app.factory.build.sanitize import sanitize_for_status
+
+        crash_detail = "build thread crashed: " + sanitize_for_status(
+            str(exc) or type(exc).__name__
+        )
+        crash_detail = crash_detail[:400]
         try:
             from app.factory.build.ledger import BuildLedger, EventKind
 
@@ -1072,6 +1083,7 @@ def _run(
                 payload={
                     "reason": "build_thread_crashed",
                     "location": crashed_role.value if crashed_role else "",
+                    "exception": sanitize_for_status(type(exc).__name__),
                 },
             )
         except Exception:  # noqa: BLE001
