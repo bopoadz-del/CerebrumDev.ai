@@ -4356,6 +4356,15 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             "\n".join(parts),
         )
         specs[cid], _env = ensure_record_envelope(specs[cid])
+    # A mined or state-carried spec can lack ``entity`` (the worker's
+    # handler format does not always carry it). Every suite emitter below
+    # indexes ``spec["entity"]`` (data_lifecycle, domain_acceptance,
+    # deploy) — a missing key there crashed the TESTER thread with
+    # KeyError 'entity' (live sess_620b8581fb224bea run3). Default it to
+    # the capability id, the same fallback the entities map uses.
+    for cid, spec in list(specs.items()):
+        if isinstance(spec, dict) and not spec.get("entity"):
+            spec["entity"] = cid.replace("-", "_")
     _assert_fields_sampleable(specs)
     entities = {
         cap.capability_id.replace("-", "_"): specs.get(cap.capability_id, {}).get(

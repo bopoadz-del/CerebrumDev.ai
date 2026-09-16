@@ -318,3 +318,33 @@ def test_pilot_tester_rework_refreshes_suite_from_model_specs(tmp_path):
     assert "test_every_capability_executes_end_to_end" in smoke
     routes = ws.read_text(Path("tests") / "test_routes.py")
     assert "test_every_capability_route_accepts_payload" in routes
+
+def test_tester_spec_without_entity_defaults_instead_of_crashing(tmp_path):
+    """Regression: KeyError 'entity' crashed the TESTER thread (live
+    sess_620b8581fb224bea run3). A spec mined from a worker-authored
+    handler can lack 'entity'; every suite emitter indexes spec["entity"],
+    so the TESTER must default it, not crash the build thread."""
+    ws = RoleWorkspace(BuildRole.TESTER, tmp_path / "ws")
+    ctx = RoleContext(
+        role=BuildRole.TESTER,
+        workspace=ws,
+        blueprint=_Blueprint(),
+        plan=_Plan(),
+        state={
+            "vendored_blocks": (),
+            "model_specs": {
+                "vehicle_inventory": {
+                    "fields": [
+                        {"name": "vin", "type": "str"},
+                        {"name": "status", "type": "str"},
+                    ]
+                }
+            },
+        },
+    )
+    result = run_tester(ctx)
+    assert result.ok
+    lifecycle = ws.read_text(Path("tests") / "test_data_lifecycle.py")
+    assert "vehicle_inventory" in lifecycle
+    domain = ws.read_text(Path("tests") / "test_domain_acceptance.py")
+    assert "vehicle_inventory" in domain
