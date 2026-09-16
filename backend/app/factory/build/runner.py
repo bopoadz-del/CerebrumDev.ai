@@ -544,8 +544,38 @@ class RoleRunner:
             )
         # Only now does the staged pass become visible. Everything before this
         # line could be interrupted without the destination ever changing.
-        ws.commit()
+        committed = ws.commit()
         if staging is not None:
+            # Commit-time visibility: the log must say what the staged pass
+            # actually carried — and scream when files on disk in staging
+            # were NOT carried. The writer_no_output live incident
+            # (sess_620b8581fb224bea runs 1-2) read 'authored=8' at the
+            # role and '0' at the gate for three runs because the worker's
+            # subprocess files were stranded in staging and nothing logged
+            # the drop. A missing-file warning here exposes that on run 1.
+            try:
+                staged_files = sorted(
+                    p.relative_to(staging).as_posix()
+                    for p in Path(staging).rglob("*")
+                    if p.is_file()
+                )
+            except OSError:
+                staged_files = []
+            missing = [
+                rel for rel in staged_files if rel not in set(committed)
+            ]
+            logger.info(
+                "staged commit: role=%s carried=%d staged_on_disk=%d",
+                role.value,
+                len(set(committed)),
+                len(staged_files),
+            )
+            if missing:
+                logger.warning(
+                    "staged commit DROPPED %d file(s): %s",
+                    len(missing),
+                    ", ".join(missing[:10]),
+                )
             shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
 
