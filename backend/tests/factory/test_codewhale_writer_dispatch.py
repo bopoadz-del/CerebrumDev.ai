@@ -81,7 +81,7 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     _plant_authored_handler(tmp_path / "build")
 
-    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
     monkeypatch.setattr(
@@ -100,9 +100,9 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
 
 def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
     """E1: a 'completed' receipt with zero tool calls or zero stamped
-    handlers is the same silent success the writer_contract gate refuses —
+    handlers is the same silent success the writer_contract gate refuses â€”
     the role must refuse it, not report ok=True."""
-    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
         return _receipt(tools=[])
 
     monkeypatch.setattr(
@@ -116,9 +116,9 @@ def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
 def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
     tmp_path, monkeypatch
 ):
-    """E1: tool calls alone are not authorship — the disk-level stamp
+    """E1: tool calls alone are not authorship â€” the disk-level stamp
     count is what counts."""
-    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
         return _receipt(tools=[{"tool": "write", "path": "notes.txt"}])
 
     monkeypatch.setattr(
@@ -130,7 +130,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
-    def boom(prompt, dest, tenant_store=None, session_id=""):
+    def boom(prompt, dest, tenant_store=None, session_id="", progress=None):
         raise WorkerError("worker_exec_failed: nope")
 
     monkeypatch.setattr(
@@ -184,7 +184,7 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
         state={},
     )
 
-    def fake_run(prompt, dest, tenant_store=None, session_id=""):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
         # The worker subprocess writes directly into the staging dir.
         actions = Path(dest) / "app" / "actions"
         actions.mkdir(parents=True, exist_ok=True)

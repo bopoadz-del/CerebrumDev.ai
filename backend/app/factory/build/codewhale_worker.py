@@ -37,13 +37,16 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import shutil
 import subprocess
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 logger = logging.getLogger("cerebrumdev.factory.codewhale_worker")
 
@@ -587,6 +590,7 @@ def run_worker_job(
     tenant_store: Any = None,
     timeout_s: Optional[float] = None,
     session_id: Optional[str] = None,
+    progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
 ) -> WorkerReceipt:
     """Run one headless CodeWhale exec — non-interactive, JSON summary.
 
@@ -652,30 +656,132 @@ def run_worker_job(
             str(session_id or "")[:12] or "-",
             timeout,
         )
+        from app.factory.build.sanitize import sanitize_for_status
+
+        # The writer pass narrates itself: the CLI's agent-loop progress
+        # (its log file) and its stdout are streamed line by line into the
+        # progress callback — the role relays throttled NOTEs to the ledger
+        # so the Floor shows what the writer is doing instead of "quiet
+        # for N min". Persisted to docs/writer_progress.jsonl too.
+        tailer = _cli_log_tailer()
+        progress_path = cwd / "docs" / "writer_progress.jsonl"
         try:
-            proc = subprocess.run(
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            progress_handle = progress_path.open("a", encoding="utf-8")
+        except OSError:
+            progress_handle = None
+        lines: List[str] = []
+        relay_queue: "queue.Queue[str]" = queue.Queue()
+
+        def _relay(raw: str) -> None:
+            line = sanitize_for_status(raw)[:400]
+            if not line.strip():
+                return
+            lines.append(line)
+            if progress_handle is not None:
+                try:
+                    progress_handle.write(
+                        json.dumps(
+                            {
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                                "line": line,
+                            }
+                        )
+                        + "\n"
+                    )
+                    progress_handle.flush()
+                except OSError:
+                    pass
+            if progress is not None:
+                try:
+                    progress(line, {"count": len(lines), "tool": _tool_hint(line)})
+                except Exception:  # noqa: BLE001 — telemetry never fails the build
+                    pass
+
+        def _reader() -> None:
+            try:
+                assert proc.stdout is not None
+                for raw in iter(proc.stdout.readline, ""):
+                    if raw.strip():
+                        relay_queue.put(raw.rstrip("\r\n"))
+            except (OSError, ValueError):  # closed pipe on kill
+                pass
+
+        try:
+            proc = subprocess.Popen(
                 argv,
                 cwd=str(cwd),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=timeout,
+                bufsize=1,
                 env=_child_env(session_id),
             )
-        except subprocess.TimeoutExpired as exc:
+        except OSError as exc:
             raise WorkerError(
-                f"{WORKER_TIMED_OUT}: headless job exceeded {timeout}s"
+                f"{WORKER_EXEC_FAILED}: could not start {cli}: {exc}"
             ) from exc
-        if proc.returncode != 0:
-            raise WorkerError(
-                f"{WORKER_EXEC_FAILED}: exit {proc.returncode}: "
-                f"{(proc.stderr or proc.stdout or '')[:400]}"
-            )
+
+        reader = threading.Thread(target=_reader, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout
         try:
-            payload = json.loads(proc.stdout)
-        except ValueError as exc:
+            while True:
+                try:
+                    proc.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.monotonic() > deadline:
+                        proc.kill()
+                        proc.wait()
+                        raise WorkerError(
+                            f"{WORKER_TIMED_OUT}: headless job exceeded "
+                            f"{timeout}s"
+                        )
+                    # Drain relays on THIS thread: ledger notes stay
+                    # single-writer (the build thread is blocked here).
+                    while True:
+                        try:
+                            _relay(relay_queue.get_nowait())
+                        except queue.Empty:
+                            break
+                    tailer.pump(_relay)
+        finally:
+            # Drain the remainder so no authored evidence is lost.
+            reader.join(timeout=5)
+            while True:
+                try:
+                    _relay(relay_queue.get_nowait())
+                except queue.Empty:
+                    break
+            tailer.pump(_relay)
+            if progress_handle is not None:
+                try:
+                    progress_handle.close()
+                except OSError:
+                    pass
+        returncode = proc.returncode
+        if returncode != 0:
+            tail = "\n".join(lines)[-400:]
+            raise WorkerError(
+                f"{WORKER_EXEC_FAILED}: exit {returncode}: {tail}"
+            )
+        # The summary is the CLI's final JSON. Stdout may also carry
+        # progress lines (and the log-tailer feeds the rest), so parse the
+        # last JSON-bearing line, falling back to the whole buffer.
+        payload = None
+        candidates = [lines[-1]] if lines else []
+        candidates.append("\n".join(lines))
+        for candidate in candidates:
+            try:
+                payload = json.loads(candidate)
+                break
+            except ValueError:
+                continue
+        if payload is None:
             raise WorkerError(
                 f"{WORKER_EXEC_FAILED}: non-JSON summary from the CLI"
-            ) from exc
+            )
         receipt = WorkerReceipt(
             status=str(payload.get("status") or ""),
             termination_reason=payload.get("termination_reason"),
@@ -700,3 +806,128 @@ def run_worker_job(
             receipt.error_category or "-",
         )
         return receipt
+
+
+def _cli_log_tailer() -> Any:
+    """A fresh tailer for one worker pass."""
+    return _CliLogTailer()
+
+
+def _tool_hint(line: str) -> str:
+    """Best-effort classification of one CLI progress line for the Floor."""
+    text = (line or "").lower()
+    if "engine turn" in text:
+        return "agent-step"
+    for name in (
+        "write",
+        "edit",
+        "create",
+        "delete",
+        "bash",
+        "exec",
+        "read",
+        "search",
+        "grep",
+        "test",
+        "pytest",
+    ):
+        if name in text:
+            return name
+    return ""
+
+
+class _CliLogTailer:
+    """Polls the CLI's own log file for new lines during a headless pass.
+
+    The codewhale CLI writes its agent-loop progress (e.g. ``engine turn
+    completion settled status=...``) to ``~/.codewhale/logs/*.log`` rather
+    than stdout. Tailing it turns the 30-minute silent pass into a stream
+    of named steps. Best-effort: no log dir is never an error.
+    """
+
+    def __init__(self) -> None:
+        self._dir: Optional[Path] = None
+        self._file: Optional[Path] = None
+        self._offset = 0
+        self._last: Optional[float] = None
+        for candidate in (
+            Path.home() / ".codewhale" / "logs",
+            Path(os.getenv("CODWHALE_HOME", "") or "") / "logs",
+        ):
+            try:
+                if candidate.is_dir():
+                    self._dir = candidate
+                    break
+            except OSError:
+                continue
+
+    def _pick(self) -> None:
+        if self._dir is None:
+            return
+        try:
+            candidates = sorted(
+                (p for p in self._dir.iterdir() if p.is_file()),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except OSError:
+            candidates = []
+        if not candidates:
+            return
+        newest = candidates[0]
+        if newest != self._file:
+            self._file = newest
+            try:
+                # The CLI rotates per run; only new lines from this file.\n"
+                self._offset = newest.stat().st_size
+            except OSError:
+                self._offset = 0
+
+    def pump(self, relay: Any) -> None:
+        """Relay lines appended since the last pump. No-op when no logs."""
+        if self._dir is None:
+            return
+        if self._file is None:
+            self._pick()
+            return
+        try:
+            stat = self._file.stat()
+        except OSError:
+            return
+        if stat.st_size < self._offset:
+            # Truncated/rotated: start from the current end.\n"
+            self._offset = stat.st_size
+            return
+        if stat.st_size == self._offset:
+            return
+        try:
+            with self._file.open("r", encoding="utf-8", errors="replace") as fh:
+                fh.seek(self._offset)
+                chunk = fh.read()
+                self._offset = fh.tell()
+        except OSError:
+            return
+        for raw in chunk.splitlines():
+            if raw.strip():
+                relay(_cli_log_line(raw))
+        # Rotation check: the CLI may have opened a new file.\n"
+        try:
+            newest = max(
+                (p for p in self._dir.iterdir() if p.is_file()),
+                key=lambda p: p.stat().st_mtime,
+                default=None,
+            )
+        except OSError:
+            newest = None
+        if newest is not None and newest != self._file:
+            self._file = None
+            self._offset = 0
+
+
+def _cli_log_line(raw: str) -> str:
+    """Strip the CLI log's timestamp/level prefix for Floor readability."""
+    text = raw.strip()
+    parts = text.split(" ", 2)
+    if len(parts) == 3 and parts[0].startswith("20") and "T" in parts[0]:
+        text = parts[2]
+    return "codewhale log: " + text
