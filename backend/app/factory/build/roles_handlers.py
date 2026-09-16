@@ -2831,6 +2831,24 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         ctx.blueprint, brief=_compiled_writer_brief(ctx)
     )
     try:
+        # The writer narrates itself on the Floor: CLI progress lines
+        # become throttled ledger NOTEs (one per ~3s), so build-status
+        # shows what the writer is doing instead of "quiet for N min".
+        throttle = {"last": 0.0}
+
+        def relay_progress(line: str, info: Any) -> None:
+            import time as _time
+
+            now = _time.monotonic()
+            if now - throttle["last"] < 3.0:
+                return
+            throttle["last"] = now
+            ctx.note(
+                line[:200],
+                stage=str(info.get("tool") or "writer-cli"),
+                source="codewhale_worker",
+            )
+
         receipt = run_worker_job(
             prompt,
             dest,
@@ -2838,6 +2856,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             # THIS build's own identity, so a concurrent build cannot hand
             # its session id to this writer child through the process env.
             session_id=str(ctx.state.get("session_id") or ""),
+            progress=relay_progress,
         )
     except WorkerError as exc:
         raise RoleError(

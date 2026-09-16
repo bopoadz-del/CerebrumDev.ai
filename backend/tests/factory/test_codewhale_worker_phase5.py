@@ -188,19 +188,28 @@ def test_worker_cli_missing_is_a_named_refusal(monkeypatch):
 def test_headless_dispatch_passes_provider_and_key_from_env(monkeypatch, tmp_path):
     """On Render the CLI authenticates with explicit flags; without the env
     key the CLI falls back to its own stored config (local dev)."""
+    import io
     import subprocess
 
     from app.factory.build import codewhale_worker as worker_mod
 
     captured = {}
 
-    def fake_run(argv, **kwargs):
-        captured["argv"] = argv
-        return subprocess.CompletedProcess(
-            argv, 0, stdout='{"status": "completed", "termination_reason": "resolved"}', stderr=""
-        )
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            self.stdout = io.StringIO(
+                '{"status": "completed", "termination_reason": "resolved"}\n'
+            )
+            self.returncode = 0
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = 9
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
     monkeypatch.delenv("CODEWHALE_PROVIDER", raising=False)
@@ -225,19 +234,26 @@ def test_headless_dispatch_passes_provider_and_key_from_env(monkeypatch, tmp_pat
 
 
 def test_no_env_key_falls_back_to_cli_config(monkeypatch, tmp_path):
+    import io
     import subprocess
 
     from app.factory.build import codewhale_worker as worker_mod
 
     captured = {}
 
-    def fake_run(argv, **kwargs):
-        captured["argv"] = argv
-        return subprocess.CompletedProcess(
-            argv, 0, stdout='{"status": "completed"}', stderr=""
-        )
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            self.stdout = io.StringIO('{"status": "completed"}\n')
+            self.returncode = 0
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = 9
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("CODEWHALE_API_KEY", raising=False)
@@ -246,3 +262,47 @@ def test_no_env_key_falls_back_to_cli_config(monkeypatch, tmp_path):
     argv = captured["argv"]
     assert "--api-key" not in argv
     assert argv[-1] == "build it"
+
+
+def test_worker_streams_cli_progress_lines(monkeypatch, tmp_path):
+    """The 30-minute pass narrates itself: CLI progress lines stream to the
+    progress callback and persist to docs/writer_progress.jsonl."""
+    import io
+    import subprocess
+
+    from app.factory.build import codewhale_worker as worker_mod
+
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            self.stdout = io.StringIO(
+                "2026-09-16T10:00:00Z INFO engine.turn: engine turn "
+                "completion settled status=Completed\n"
+                '{"status": "completed", "termination_reason": "resolved"}\n'
+            )
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = 9
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(
+        worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale"
+    )
+
+    progress_lines: list = []
+    receipt = run_worker_job(
+        "build it",
+        tmp_path,
+        tenant_store=_binding("d5"),
+        progress=lambda line, info: progress_lines.append((line, info)),
+    )
+    assert receipt.status == "completed"
+    assert any("engine turn" in ln for ln, _ in progress_lines)
+    step = next(info for _, info in progress_lines if info.get("tool"))
+    assert step["tool"] == "agent-step"
+    progress_file = tmp_path / "docs" / "writer_progress.jsonl"
+    assert progress_file.is_file()
+    assert "engine turn" in progress_file.read_text(encoding="utf-8")
