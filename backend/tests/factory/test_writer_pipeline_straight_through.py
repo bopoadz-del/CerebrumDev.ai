@@ -91,3 +91,78 @@ def test_build_status_can_never_park_a_run_as_waiting(tmp_path):
     assert status["state"] != "waiting"
     assert [k for k in status if k.startswith("awaiting_")] == []
     assert "AWAITING" not in str(status.get("outcome") or "")
+
+
+def test_docker_unavailable_hands_off_to_n3(monkeypatch, tmp_path):
+    """A docker-less host must not fake Store-green and must not just fail:
+    with cerebrum-builds armed, the workspace hands off to the N3 store-gate."""
+    import app.factory.build.runner as runner_mod
+    from app.factory.build.gates import GateResult
+
+    monkeypatch.setenv("CEREBRUM_BUILDS_GITHUB_TOKEN", "tok")
+    pushed = []
+
+    def fake_push(workspace, *, env, session_id, run_git=None, suffix=None):
+        pushed.append(str(workspace))
+        return type("R", (), {"branch": "build/x", "sha": "abc"})()
+
+    monkeypatch.setattr(
+        "app.factory.build.builds_push.push_workspace", fake_push
+    )
+
+    def fake_gate(role):
+        if role is BuildRole.STORE_MANAGER:
+            return lambda _ctx: GateResult(
+                ok=False,
+                gate="store_manager_contract",
+                reason="docker_unavailable",
+                detail="STORE (acceptance): docker is not available; will not pass on a host-side skip",
+            )
+        return lambda _ctx: GateResult(ok=True, gate=f"{role.value}_stub", detail="ok")
+
+    monkeypatch.setattr(runner_mod, "gate_for", fake_gate)
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = lambda _ctx: RoleResult(ok=True, detail="writer ran")
+
+    out = tmp_path / "build"
+    outcome = RoleRunner(_bp(), out, roles=roles).run()
+
+    assert outcome.outcome is Outcome.HANDOFF_TO_N3, outcome
+    assert pushed, "the workspace was never pushed to cerebrum-builds"
+    notes = [
+        e
+        for e in BuildLedger(out / "build_ledger.jsonl").events()
+        if e.kind is EventKind.NOTE
+    ]
+    assert any("cerebrum-builds" in (e.detail or "") for e in notes)
+
+
+def test_docker_unavailable_without_n3_armed_stays_a_named_gate_failure(
+    monkeypatch, tmp_path,
+):
+    """No builds token: the docker refusal stays exactly what it was —
+    a named gate failure, never a handoff that cannot complete."""
+    import app.factory.build.runner as runner_mod
+    from app.factory.build.gates import GateResult
+
+    monkeypatch.delenv("CEREBRUM_BUILDS_GITHUB_TOKEN", raising=False)
+
+    def fake_gate(role):
+        if role is BuildRole.STORE_MANAGER:
+            return lambda _ctx: GateResult(
+                ok=False,
+                gate="store_manager_contract",
+                reason="docker_unavailable",
+                detail="STORE (acceptance): docker is not available",
+            )
+        return lambda _ctx: GateResult(ok=True, gate=f"{role.value}_stub", detail="ok")
+
+    monkeypatch.setattr(runner_mod, "gate_for", fake_gate)
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = lambda _ctx: RoleResult(ok=True, detail="writer ran")
+
+    out = tmp_path / "build"
+    outcome = RoleRunner(_bp(), out, roles=roles).run()
+
+    assert outcome.outcome is Outcome.FAILED_GATE, outcome
+    assert "docker" in outcome.detail

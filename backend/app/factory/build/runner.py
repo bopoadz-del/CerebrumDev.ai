@@ -619,6 +619,15 @@ class RoleRunner:
 
     # -- terminal bookkeeping --------------------------------------------
 
+    def _n3_handoff_armed(self) -> bool:
+        """True when the cerebrum-builds handoff can actually push."""
+        try:
+            from app.factory.build.builds_push import builds_token
+
+            return bool(builds_token(os.environ))
+        except Exception:  # noqa: BLE001
+            return False
+
     def _thin_cli_success_blocker(self) -> Optional[str]:
         """Refuse Store-green SUCCESS from pure templates when CLI is ready."""
         from app.factory.build.budget_inspect import inspect_build
@@ -1284,6 +1293,69 @@ class RoleRunner:
                 # Only the TESTER sends work back to the WRITER;
                 # every other failed gate is terminal, because there is no role
                 # positioned to act on its findings.
+                #
+                # EXCEPT the docker-shaped STORE refusal: when the host has no
+                # docker and cerebrum-builds is armed (CEREBRUM_BUILDS_GITHUB_TOKEN),
+                # the workspace is handed off to the N3 store-gate instead of
+                # failing — Store-green is measured there, 12/12, not faked
+                # on the host. A failed handoff is a named failure, never a
+                # silent docker-skip pass.
+                if (
+                    role is BuildRole.STORE_MANAGER
+                    and verdict.reason == "docker_unavailable"
+                    and self._n3_handoff_armed()
+                ):
+                    try:
+                        from app.factory.build.builds_push import push_workspace
+                        from app.factory.build.n3_store_gate import HANDOFF_TO_N3
+
+                        push_workspace(
+                            self.workspace,
+                            env=os.environ,
+                            session_id=str(self.state.get("session_id") or ""),
+                        )
+                        self.ledger.append(
+                            EventKind.NOTE,
+                            role=role,
+                            detail=(
+                                "docker unavailable — workspace handed off to "
+                                "cerebrum-builds; N3 store-gate is next"
+                            ),
+                            payload={"handoff": HANDOFF_TO_N3},
+                        )
+                        delivery_format = str(
+                            getattr(self.blueprint, "delivery_format", "zip")
+                            or "zip"
+                        )
+                        if delivery_format == "github_repo":
+                            from app.factory.build.github_delivery import (
+                                push_workspace_repo,
+                            )
+
+                            self.state["repo_url"] = push_workspace_repo(
+                                self.workspace,
+                                product_id=str(
+                                    getattr(self.blueprint, "product_id", "platform")
+                                ),
+                                session_id=str(self.state.get("session_id") or ""),
+                            )
+                        return self._finish(
+                            Outcome.HANDOFF_TO_N3,
+                            "docker unavailable; workspace handed off to "
+                            "cerebrum-builds — N3 store-gate is next",
+                            phase=role,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("N3 handoff failed")
+                        return self._finish(
+                            Outcome.FAILED_GATE,
+                            f"{role.value} gate '{verdict.gate}' failed and N3 "
+                            f"handoff failed: {exc}",
+                            phase=role,
+                            findings=list(verdict.findings)
+                            + [f"n3_handoff_failed: {exc}"],
+                        )
+
                 if role is not REWORK_SOURCE:
                     return self._finish(
                         Outcome.FAILED_GATE,
