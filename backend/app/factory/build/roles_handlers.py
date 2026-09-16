@@ -4701,7 +4701,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 "        else:",
                 "            if not isinstance(body, dict):",
                 f"                failures.append('{name}: JSON body is not a dict')",
-                f'            listed = client.get("/v1/{name}")',
+                f'            listed = client.get("/v1/{name}", headers=AUTH)',
                 "            if listed.status_code != 200:",
                 f"                failures.append('{name} list: HTTP '"
                 " + str(listed.status_code))",
@@ -4734,7 +4734,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 f"        failures.append('{name} rejected a payload built from its "
                 "own schema: ' + str(resp.json().get('error')))",
                 "    else:",
-                f'        listed = client.get("/v1/{name}")',
+                f'        listed = client.get("/v1/{name}", headers=AUTH)',
                 "        listed_body = listed.json() if listed.content else {}",
                 "        if listed.status_code != 200:",
                 f"            failures.append('{name} list: HTTP '"
@@ -4750,11 +4750,11 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 "persisted nothing')",
                 "            else:",
                 '                item_id = rows[0].get("id")',
-                f'                got = client.get(f"/v1/{name}/{{item_id}}")',
+                f'                got = client.get(f"/v1/{name}/{{item_id}}", headers=AUTH)',
                 "                if got.status_code != 200:",
                 f"                    failures.append('{name} get: HTTP '"
                 " + str(got.status_code))",
-                f'                missing = client.get("/v1/{name}/999999")',
+                f'                missing = client.get("/v1/{name}/999999", headers=AUTH)',
                 "                if missing.status_code != 404:",
                 f"                    failures.append('{name} missing id: HTTP '"
                 " + str(missing.status_code) + ' (expected 404)')",

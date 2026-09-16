@@ -443,9 +443,10 @@ def _check_round_trip(cap_id, cls, body):
             "supplied (ROUND-TRIP: wrong record)" % (cap_id, entity, rows)
         )
         return
-    # ... and the GET the buyer actually makes.
+    # ... and the GET the buyer actually makes — authenticated, matching
+    # the emitted routes (every CRUD route requires the platform token).
     try:
-        got = client.get("/v1/" + cap_id)
+        got = client.get("/v1/" + cap_id, headers=AUTH)
     except Exception as exc:
         findings.append(
             "%s: GET raised %s: %s" % (cap_id, type(exc).__name__, exc)
