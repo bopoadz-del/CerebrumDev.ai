@@ -1,6 +1,10 @@
 # Cerebrum Product Delivery Standard — operating model
 
-**The factory's coder is Kimi Code. No one else writes product code.**
+**The factory's coder is the headless CodeWhale worker (DeepSeek). No one else writes product code.**
+
+The deterministic template path is a fallback scaffold, not governed product
+code: a build whose handlers are not coding-agent-stamped is refused at the
+``writer_no_output`` gate.
 
 This is the permanent Cerebrum Product Delivery Standard: one universal
 execution system, with the domain intelligence inserted at the top.
@@ -19,10 +23,12 @@ execution system, with the domain intelligence inserted at the top.
 3. **The factory assembles the brief.** `factory.delivery_standard.render()`
    (or `POST /v1/factory/delivery-standard/render`) fills every slot and
    fails closed — the coder never receives a partial brief.
-4. **The workbench hands the brief to Kimi Code.** When a change request
+4. **The workbench hands the brief to the CodeWhale worker.** When a change request
    carries `platform` + `domain_pack`, the brief is the full rendered
-   standard (`candidate/kimi_prompt.md`). Otherwise the legacy CR-scoped
-   brief is used, honestly labeled. A one-sided or incomplete pack raises —
+   standard (``candidate/kimi_prompt.md`` — legacy artifact name; the
+   executor is the CodeWhale worker, not Kimi Code). Otherwise the legacy
+   CR-scoped brief is used, honestly labeled. A one-sided or incomplete
+   pack raises —
    it never silently downgrades.
 
 ## Why
