@@ -544,6 +544,41 @@ def draft_blueprint_from_brief(
     use_golden_lettings: bool = True,
     use_llm: Optional[bool] = None,
 ) -> ProductBlueprint:
+    """Draft a ProductBlueprint and stamp the honest inventory declaration.
+
+    The draft itself runs in ``_draft_blueprint_from_brief_inner``; this
+    wrapper stamps ``drafting_note`` with the factory inventory verdict when
+    the vertical is not on the declared-ready list — the client must see
+    "the Store has no domain kit for this" before approving, never after.
+    Golden drafts (lettings/steward) are shipped, store-backed products and
+    are exempt.
+    """
+    bp = _draft_blueprint_from_brief_inner(
+        brief,
+        vertical_hint=vertical_hint,
+        use_golden_steward=use_golden_steward,
+        use_golden_lettings=use_golden_lettings,
+        use_llm=use_llm,
+    )
+    if str(bp.drafting_mode or "").startswith("golden_"):
+        return bp
+    from app.factory.inventory import inventory_drafting_note
+
+    note = inventory_drafting_note(str(getattr(bp, "vertical", "") or ""))
+    if note:
+        existing = str(bp.drafting_note or "")
+        bp.drafting_note = (existing + "; " if existing else "") + note
+    return bp
+
+
+def _draft_blueprint_from_brief_inner(
+    brief: str,
+    *,
+    vertical_hint: Optional[str] = None,
+    use_golden_steward: bool = True,
+    use_golden_lettings: bool = True,
+    use_llm: Optional[bool] = None,
+) -> ProductBlueprint:
     """Draft a ProductBlueprint from a user brief.
 
     Order of preference:
