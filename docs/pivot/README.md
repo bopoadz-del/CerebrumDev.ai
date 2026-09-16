@@ -1,9 +1,19 @@
 # Factory CLI-pivot — cerebrum-builds store gate (G)
 
 Drop-in workflow for the **private `cerebrum-builds` store** once that repo exists
-(owner click — this PR does not create it). Copy
-[`cerebrum-builds-store-gate.yml`](cerebrum-builds-store-gate.yml) to
-`.github/workflows/store-gate.yml` in that repo.
+(owner click — this PR does not create it). Copy **both** files into the
+workspace before the seed push:
+
+- [`cerebrum-builds-store-gate.yml`](cerebrum-builds-store-gate.yml) →
+  `.github/workflows/store-gate.yml`
+- [`ci.yml`](ci.yml) → `.github/workflows/ci.yml`
+
+The store acceptance floor includes `ci_present_and_full_suite`, which
+requires the product to ship a CI workflow running the FULL suite
+(`python -m pytest tests`, no `not pilot` exclusion) — a build without
+`ci.yml` can never reach 12/12. This version of the gate is the one
+proven green 2026-09-16 on `build/sess_c8b01eb6de53495c-4db4944f`
+(commit status: `acceptance.py in Docker 12/12`).
 
 ## What it does
 
@@ -27,7 +37,18 @@ k/12 of those named lines is the only green. A clean Factory receipt+diff is
 G-floor names above are canonical (`ci_present_full_suite`,
 `authorship==receipt`). Factory `store_acceptance.ACCEPTANCE_CHECK_NAMES`
 still uses the pre-G aliases (`ci_present_and_full_suite`,
-`authorship_floor`); that self-grade is not rewritten in this PR.
+`authorship_floor`); the workflow parser greps the SCRIPT's printed names
+(status-first `PASS name — detail`), so the two name sets must stay in
+sync with what `render_acceptance_script()` prints.
+
+### Vendored-block dependencies
+
+The ci.yml full suite runs on a clean runner that installs only the
+declared requirements. A vendored block importing an undeclared package
+(e.g. `numpy` for vector_search/formula_executor) passes locally only if
+the host Python already has it by accident, and fails in CI. When a
+block declares an import, `requirements.txt` must declare the package —
+the full-suite CI is the tripwire for exactly that gap.
 
 ## Generate / Continue
 

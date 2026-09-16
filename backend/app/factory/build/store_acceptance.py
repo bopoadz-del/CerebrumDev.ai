@@ -864,6 +864,7 @@ def check_handler_bodies_distinct() -> Tuple[str, str]:
 
 def check_health_fail_closed() -> Tuple[str, str]:
     missing = ROOT / ".acceptance-missing-disk"
+    previous = os.environ.get("STORAGE_PATH")
     os.environ["STORAGE_PATH"] = str(missing)
     try:
         from app.health import evaluate_health
@@ -871,6 +872,13 @@ def check_health_fail_closed() -> Tuple[str, str]:
         code, body = evaluate_health()
     except Exception as exc:
         return "FAIL", "evaluate_health raised %s" % type(exc).__name__
+    finally:
+        # Restore so later checks (docker_health_200) probe the real disk,
+        # not the poisoned path from this fail-closed probe.
+        if previous is None:
+            os.environ.pop("STORAGE_PATH", None)
+        else:
+            os.environ["STORAGE_PATH"] = previous
     if code == 200 or (isinstance(body, dict) and body.get("ok") is True):
         return "FAIL", "health stayed 200/ok when STORAGE_PATH is missing"
     if int(code) in (503, 500) and (not body.get("ok")):
