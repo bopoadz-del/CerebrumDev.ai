@@ -476,13 +476,6 @@ def normalise_provider(name: str) -> str:
 SUPPORTED_PROVIDERS = ("deepseek", "cursor", "kimi", "claude")
 
 
-def _cursor_key_envs() -> tuple[str, ...]:
-    """Reuse the Factory BA key names — do not fork a second list."""
-    from app.factory.build.cursor_ba import CURSOR_KEY_ENVS
-
-    return CURSOR_KEY_ENVS
-
-
 def _cursor_http_config(*prefixes: str) -> Dict[str, Any]:
     """HTTP talk for ``LLM_PROVIDER=cursor`` uses ``CEREBRUM_CHAT_LLM_*``.
 

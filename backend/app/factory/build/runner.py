@@ -79,19 +79,6 @@ def runner_enabled() -> bool:
     return os.getenv(RUNNER_FLAG_ENV, "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _cli_pivot_handoff(result: RoleResult) -> bool:
-    notes = getattr(result, "notes", None) or {}
-    payload = notes.get("cli_pivot") if isinstance(notes, Mapping) else None
-    if isinstance(payload, Mapping) and payload.get("honesty") == "HANDOFF_TO_N3":
-        return True
-    return False
-
-
-def _cli_pivot_state_handoff(state: Mapping[str, Any]) -> bool:
-    payload = (state or {}).get("cli_pivot")
-    return isinstance(payload, Mapping) and payload.get("honesty") == "HANDOFF_TO_N3"
-
-
 #: Ledger NOTE ``stage`` for a capability that has landed on disk.
 #: ``resume_point()`` still names the role; this is the intra-WRITER spine.
 CHECKPOINT_STAGE = "checkpoint"
@@ -553,36 +540,6 @@ class RoleRunner:
         # Only now does the staged pass become visible. Everything before this
         # line could be interrupted without the destination ever changing.
         ws.commit()
-        if role is BuildRole.WRITER and _cli_pivot_handoff(result):
-            if staging is not None:
-                shutil.rmtree(staging, ignore_errors=True)
-            self._absorb(result)
-            # Receipt is clean but TESTER (acceptance inspector) is next —
-            # do not skip GATE_PASSED or the runner would re-enter WRITER
-            # on resume and never record that manufacture finished.
-            verdict = GateResult(
-                ok=True,
-                gate="cli_pivot",
-                detail=result.detail,
-                payload={
-                    "honesty": "HANDOFF_TO_N3",
-                    "next": "tester",
-                    "green": False,
-                },
-            )
-            self.ledger.append(
-                EventKind.GATE_PASSED,
-                role=role,
-                detail=verdict.detail,
-                payload={
-                    "gate": verdict.gate,
-                    "findings": list(verdict.findings),
-                    "role_detail": result.detail,
-                    "next": "tester",
-                    "wrote": list(ws.written),
-                },
-            )
-            return verdict
         if staging is not None:
             shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
@@ -704,21 +661,6 @@ class RoleRunner:
             "pilot_ready": getattr(self, "cycle", "code") == "pilot"
             and outcome is Outcome.SUCCESS,
         }
-        if outcome is Outcome.HANDOFF_TO_N3:
-            payload["honesty"] = "HANDOFF_TO_N3"
-            payload["next"] = "n3_gate"
-            payload["green"] = False
-            cli = (self.state or {}).get("cli_pivot")
-            if isinstance(cli, Mapping):
-                for key in (
-                    "builds_sha",
-                    "builds_branch",
-                    "builds_owner",
-                    "builds_repo",
-                    "cli_authored_ids",
-                ):
-                    if cli.get(key):
-                        payload[key] = cli[key]
         self.ledger.append(
             kind,
             role=phase,
@@ -1218,21 +1160,6 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
-                    # cli-pivot WRITER success used to _finish(HANDOFF_TO_N3)
-                    # here and skip TESTER. Advance to the acceptance
-                    # inspector; N3 store-gate waits until STORE_MANAGER.
-                    if (
-                        role is BuildRole.STORE_MANAGER
-                        and _cli_pivot_state_handoff(self.state)
-                    ):
-                        done.add(role)
-                        work_list = ()
-                        return self._finish(
-                            Outcome.HANDOFF_TO_N3,
-                            verdict.detail,
-                            phase=role,
-                            rework=rework_used,
-                        )
                     done.add(role)
                     work_list = ()
                     index += 1

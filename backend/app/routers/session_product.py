@@ -200,10 +200,6 @@ def _raise_product_error(session_id: str, state, exc: BaseException) -> None:
         exc, (BlueprintError, DualRegistryError, UnsafeOutputDir, ValidationError)
     ):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    from app.factory.build.coder_session import CodeCliUnavailable
-
-    if isinstance(exc, CodeCliUnavailable):
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     logger.exception("session product handler failed")
     raise HTTPException(status_code=500, detail="internal_error") from exc
 
@@ -504,7 +500,7 @@ def set_coder_control(
     Writes ``docs/coder_control.json`` in the product workspace. The
     dispatcher polls it; this is not a role write.
     """
-    from app.factory.build.coder_session import write_control
+    from app.factory.build.coder_session_status import write_control
 
     state = _require_session(session_id, principal)
     gen = state.product_design.generation

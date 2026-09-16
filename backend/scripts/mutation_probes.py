@@ -40,12 +40,7 @@ from app.factory.build.authorship import (  # noqa: E402
     agent_written_handler_ids_in_workspace,
     full_pilot_authorship_from,
 )
-from app.factory.build.cli_receipt import (  # noqa: E402
-    HANDOFF_TO_N3,
-    WRITER_NO_OUTPUT,
-    ReceiptInvalid,
-    enforce_receipt,
-)
+WRITER_NO_OUTPUT = "writer_no_output"
 from app.factory.build.gates import GateContext, gate_writer_contract  # noqa: E402
 from app.factory.build.level_grade import Level, grade_workspace  # noqa: E402
 
@@ -63,21 +58,14 @@ def probe_a_writer_gate_refuses_zero_artifacts() -> None:
 
 
 def probe_b_receipt_refuses_empty_handoff() -> None:
-    """P0b -- an empty-authored empty-required receipt never hands to N3."""
-    try:
-        enforce_receipt(
-            blueprint=None,
-            blueprint_ids=[],
-            receipt={"cli_authored_ids": [], "path_by_id": {}},
-            changed_paths=[],
-        )
-    except ReceiptInvalid as exc:
-        message = str(exc)
-        assert WRITER_NO_OUTPUT in message, message
-    else:
-        raise AssertionError(
-            f"empty receipt handed off ({HANDOFF_TO_N3}) instead of refusing"
-        )
+    """P0b -- a workspace with no agent-authored artifacts can never hand
+    off: the writer-contract gate refuses it as writer_no_output (the
+    retired cli_receipt enforcement folded into the gate)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ctx = GateContext(workspace=Path(tmp), role=BuildRole.WRITER)
+        result = gate_writer_contract(ctx)
+    assert result.ok is False, result.to_json()
+    assert WRITER_NO_OUTPUT in result.detail, result.detail
 
 
 def probe_c_unmeasured_is_below_floor() -> None:

@@ -34,7 +34,7 @@ from app.factory.build.builds_push import (
     list_session_build_refs,
     parse_builds_repo,
 )
-from app.factory.build.cli_receipt import HANDOFF_TO_N3
+HANDOFF_TO_N3 = "HANDOFF_TO_N3"
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.store_acceptance import (
     ACCEPTANCE_CHECK_NAMES,

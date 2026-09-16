@@ -66,7 +66,7 @@ from .routers import (
 from .resident_engineer.router import router as resident_engineer_router
 from .change_requests.router import router as change_requests_router
 from .workbench.router import router as workbench_router
-from .workbench.flags import build_mode_enabled, kimi_workbench_enabled
+from .workbench.flags import build_mode_enabled
 from .resident_engineer.flags import resident_engineer_enabled
 
 verify_production_auth()
@@ -197,14 +197,6 @@ async def _lifespan(app: FastAPI):
     # disks and a disk belongs to exactly one service, so this process is the
     # only one that can read /app/storage at all. See core/backup_scheduler.py.
     app.state.backup_task = backup_scheduler.start()
-    try:
-        from app.factory.build.coder_session import ensure_code_cli_credentials
-
-        ensure_code_cli_credentials()
-    except Exception:  # noqa: BLE001 — boot must not die on owner-gated CLI setup
-        logging.getLogger("cerebrumdev.factory.coder_session").exception(
-            "FACTORY_CODE_CLI credential wire failed (owner-gated)"
-        )
     try:
         from app.factory.build.orphan_recovery import recover_orphaned_model_calls
 
@@ -426,49 +418,10 @@ def _probe_blocks() -> dict:
         return {"ok": False, "error": str(exc)}
 
 
-def _probe_kimi_cli() -> dict:
-    """Evaluated Kimi workbench capability: flag AND a CLI that answers.
-
-    A true flag with no binary is configuration, not capability — health
-    must never report it as enabled.
-    """
-    flag = kimi_workbench_enabled()
-    probe: dict = {"flag_enabled": flag, "cli_ok": False}
-    if not flag:
-        return probe
-    from app.factory.coder import code_cli_command
-
-    cli = code_cli_command()
-    try:
-        import subprocess
-
-        proc = subprocess.run(
-            [cli, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        probe["cli_ok"] = proc.returncode == 0
-        if proc.returncode == 0:
-            probe["cli_version"] = (proc.stdout or "").strip()[:80]
-        else:
-            probe["error"] = (proc.stderr or "").strip()[:200] or f"exit {proc.returncode}"
-    except FileNotFoundError:
-        probe["error"] = f"CLI not found: {cli}"
-    except Exception as exc:  # noqa: BLE001 - health probes must not raise
-        probe["error"] = str(exc)[:200]
-    return probe
-
-
 @app.get("/health")
 async def health():
     storage = _probe_storage()
     redis = _probe_redis()
-    kimi = _probe_kimi_cli()
-    from app.factory.build.coder_session import probe_code_cli
-
-    factory_cli = probe_code_cli()
     from app.core.mailer import frontend_url_is_public
 
     return {
@@ -479,9 +432,6 @@ async def health():
         "build_mode_enabled": build_mode_enabled(),
         # Evaluated capability, not configuration: enabled only when the
         # flag is on AND the CLI actually answers.
-        "kimi_workbench_enabled": bool(kimi["flag_enabled"] and kimi["cli_ok"]),
-        "kimi_workbench": kimi,
-        "factory_code_cli": factory_cli,
         "sentry": _probe_sentry(),
         # Boolean only — never echo FRONTEND_URL. False means reset/verify
         # mail still falls back to localhost.

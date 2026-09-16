@@ -107,8 +107,9 @@ def _wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
                 return 0.0
             if 0 < value <= _DEEPSEEK_LEFTOVER_WALL_MAX_S:
                 from app.factory.build.coder_session import deepseek_cli_ready
+                from app.factory.build.roles_handlers import writer_uses_codewhale
 
-                if deepseek_cli_ready():
+                if deepseek_cli_ready() or writer_uses_codewhale(None):
                     return _DEFAULT_WALL_CLOCK_S
             return value
     if _uses_pilot_budget(cycle, auto_pilot):
@@ -628,7 +629,7 @@ def build_status(
                 "stage": payload.get("stage"),
             }
 
-    from app.factory.build.coder_session import session_status
+    from app.factory.build.coder_session_status import session_status
 
     progress = {
         "phases": phases,
@@ -920,7 +921,6 @@ def _run(
 
     session_id = (
         str(os.getenv("FACTORY_SESSION_ID") or "").strip()
-        or str(os.getenv("FACTORY_CLI_PIVOT_SESSION_ID") or "").strip()
         or session_id_from_output(output_dir)
         or ""
     )

@@ -101,7 +101,7 @@ def _fake_kimi(tmp_path: Path) -> Path:
 
 
 def _require_cli(monkeypatch) -> None:
-    from app.factory.build.cli_pivot import CURSOR_KEY_ENVS
+    from app.core.llm_config import CURSOR_KEY_ENVS
 
     monkeypatch.setenv("FACTORY_CODER_ENABLED", "1")
     monkeypatch.setenv("FACTORY_BRIEF_REQUIRE_CLI", "1")

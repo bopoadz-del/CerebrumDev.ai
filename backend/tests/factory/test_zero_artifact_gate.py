@@ -12,15 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from app.factory.build.authority import BuildRole
 from app.factory.build.authorship import full_pilot_authorship_from
-from app.factory.build.cli_receipt import (
-    HANDOFF_TO_N3,
-    ReceiptInvalid,
-    enforce_receipt,
-)
 from app.factory.build.gates import GateContext, GateResult, gate_writer_contract
 from app.factory.build.level_grade import Level, grade_workspace
 
@@ -85,45 +78,6 @@ def test_templated_stamp_does_not_count_as_agent_output(tmp_path):
     )
     assert result.ok is False
     assert "writer_no_output" in result.detail
-
-
-# -- T0.5.3: empty receipt never hands off to N3 ------------------------------
-
-
-def test_empty_authored_and_empty_required_refuses():
-    """Empty blueprint set -> RED, never HANDOFF_TO_N3."""
-    with pytest.raises(ReceiptInvalid) as exc:
-        enforce_receipt(
-            blueprint=None,
-            blueprint_ids=[],
-            receipt={"cli_authored_ids": [], "path_by_id": {}},
-            changed_paths=[],
-        )
-    assert "writer_no_output" in str(exc.value)
-
-
-def test_empty_authored_with_required_ids_is_plain_set_mismatch():
-    """Empty authored vs non-empty required keeps the old set-equality
-    refusal (missing=...), never the no-output reason."""
-    with pytest.raises(ReceiptInvalid, match="missing=widget_intake"):
-        enforce_receipt(
-            blueprint_ids=["widget_intake"],
-            receipt={"cli_authored_ids": [], "path_by_id": {}},
-            changed_paths=[],
-        )
-
-
-def test_matching_receipt_still_hands_off():
-    """Normal non-empty id-set-equality behaviour is untouched."""
-    verdict = enforce_receipt(
-        blueprint_ids=["widget_intake"],
-        receipt={
-            "cli_authored_ids": ["widget_intake"],
-            "path_by_id": {"widget_intake": "app/actions/widget_intake.py"},
-        },
-        changed_paths=["app/actions/widget_intake.py"],
-    )
-    assert verdict.honesty == HANDOFF_TO_N3
 
 
 # -- T0.5.4: unmeasured is below floor; measured-and-meets stays green --------

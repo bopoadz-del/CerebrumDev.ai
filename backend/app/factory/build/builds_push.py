@@ -30,7 +30,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from app.factory.build.cli_receipt import RECEIPT_NAMES
+RECEIPT_NAMES = ("receipt.json", "docs/receipt.json", "docs/coder_receipt.json")
 
 BUILDS_TOKEN_ENV = "CEREBRUM_BUILDS_GITHUB_TOKEN"
 BUILDS_REPO_ENV = "CEREBRUM_BUILDS_REPO"

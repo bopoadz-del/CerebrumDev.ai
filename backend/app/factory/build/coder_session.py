@@ -283,10 +283,6 @@ def brief_requires_cli() -> bool:
     DeepSeek+kimi session as optional — that is how sess_b9fbae7
     coded via in-process OpenRouter while health showed a ready CLI.
     """
-    from app.factory.build.cli_pivot import writer_uses_cli_pivot
-
-    if writer_uses_cli_pivot():
-        return False
     if http_oneshot_enabled():
         return False
     from app.factory.coder import coder_enabled
@@ -860,10 +856,6 @@ def raise_if_cli_session_unready() -> None:
     sess_b9db05967cb94e6f: generate refused 503 with FACTORY_CODE_CLI=cursor
     before the worker dispatch was ever reached).
     """
-    from app.factory.build.cli_pivot import writer_uses_cli_pivot
-
-    if writer_uses_cli_pivot():
-        return
     from app.factory.build.roles_handlers import writer_uses_codewhale
 
     if writer_uses_codewhale(os.environ):
@@ -1095,7 +1087,6 @@ def probe_code_cli() -> Dict[str, Any]:
     ``FACTORY_CODE_CLI_CREDENTIALS_MISSING`` (or UNAVAILABLE / NO_MODEL)
     as a Floor blocker in that case.
     """
-    from app.factory.build.cli_pivot import writer_uses_cli_pivot
     from app.factory.coder import (
         code_cli_command,
         deepseek_api_key,
@@ -1106,9 +1097,9 @@ def probe_code_cli() -> Dict[str, Any]:
     command = code_cli_command()
     resolved = resolve_code_cli(command)
     provider = factory_code_provider()
-    cursor_ba = writer_uses_cli_pivot()
-    wants_deepseek = False if cursor_ba else cli_requires_deepseek_credentials(command)
-    wants_kimi = False if cursor_ba else cli_requires_kimi_credentials(command)
+    cursor_ba = False
+    wants_deepseek = cli_requires_deepseek_credentials(command)
+    wants_kimi = cli_requires_kimi_credentials(command)
     kimi_file = credentials_file_present()
     config_text = read_kimi_config_text() if kimi_file else ""
     kimi_alias = config_default_model(config_text) if kimi_file else ""

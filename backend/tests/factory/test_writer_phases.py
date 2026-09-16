@@ -21,7 +21,6 @@ from app.factory.build.runner import (
     RoleRunner,
     blueprint_hash,
 )
-from app.factory.build.coder_session import cbrief_work_ids
 from app.factory.build.rag_surface import (
     FACTORY_GROUNDED_RAG_SOURCE,
     RAG_ROUTES_REL,
@@ -441,21 +440,6 @@ def test_phase_two_accepts_steward_canonical_routes_outside_routes_py(tmp_path):
     assert WRITER_PHASE_BACKEND in ctx.state["landed_writer_phases"]
     assert WRITER_PHASE_FRONTEND_RAG in ctx.state["landed_writer_phases"]
     assert pending_writer_phases(ctx) == [WRITER_PHASE_INTEGRATION]
-
-
-def test_phase_two_work_list_is_capability_ids_not_http_routes(tmp_path):
-    """run6 photograph: work=6 gaps_only never listed ingest/query as WRITES.
-
-    cbrief_work_ids is GENERATE gaps + REUSE hole-fill capability ids.
-    dual_rag_* are REUSE. The HTTP contract lived only in DO prose, so
-    kimi completed the six capability items without quoting /v1/rag/*.
-    """
-    compiled = _compiled_steward_dual_rag()
-    work = cbrief_work_ids(compiled, tmp_path)
-    assert "dual_rag_estate_docs" in work
-    assert "dual_rag_sop" in work
-    assert not any("ingest" in item or "query" in item for item in work)
-    assert not any("/v1/rag" in item for item in work)
 
 
 def test_phase_two_brief_hard_writes_rag_routes_file():

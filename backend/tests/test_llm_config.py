@@ -290,13 +290,16 @@ def test_explicit_cursor_uses_cerebrum_chat_not_cursor_host():
     assert "error" not in factory_cfg
 
 
-def test_cursor_key_envs_match_background_agent_tuple():
-    from app.core.llm_config import _cursor_key_envs
-    from app.factory.build.cursor_ba import CURSOR_KEY_ENVS
+def test_cursor_key_envs_match_retired_ba_tuple():
+    """The tuple survives as the fail-closed cursor-key predicate even
+    though the Background-Agent module itself is retired."""
+    from app.core.llm_config import CURSOR_KEY_ENVS
 
-    assert _cursor_key_envs() == CURSOR_KEY_ENVS
-
-
+    assert set(CURSOR_KEY_ENVS) == {
+        "CURSOR_API_KEY",
+        "CURSOR_AGENT_API_KEY",
+        "FACTORY_CURSOR_API_KEY",
+    }
 def test_cursor_agent_api_key_is_not_a_chat_credential():
     os.environ["LLM_PROVIDER"] = "cursor"
     os.environ["CURSOR_AGENT_API_KEY"] = "crsr-agent-alias"
