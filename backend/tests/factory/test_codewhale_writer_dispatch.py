@@ -1,4 +1,4 @@
-﻿"""Phase 5 dispatch wiring: the CodeWhale worker as the WRITER target."""
+"""Phase 5 dispatch wiring: the CodeWhale worker as the WRITER target."""
 
 from __future__ import annotations
 
