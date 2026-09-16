@@ -659,10 +659,13 @@ def run_worker_job(
         from app.factory.build.sanitize import sanitize_for_status
 
         # The writer pass narrates itself: the CLI's agent-loop progress
-        # (its log file) and its stdout are streamed line by line into the
+        # (its log file) and its stderr are streamed line by line into the
         # progress callback — the role relays throttled NOTEs to the ledger
         # so the Floor shows what the writer is doing instead of "quiet
         # for N min". Persisted to docs/writer_progress.jsonl too.
+        # stdout stays RAW and separate: it carries the final JSON summary
+        # (merging stderr in broke the parse — live run4
+        # sess_620b8581fb224bea).
         tailer = _cli_log_tailer()
         progress_path = cwd / "docs" / "writer_progress.jsonl"
         try:
@@ -670,14 +673,13 @@ def run_worker_job(
             progress_handle = progress_path.open("a", encoding="utf-8")
         except OSError:
             progress_handle = None
-        lines: List[str] = []
+        stdout_lines: List[str] = []
         relay_queue: "queue.Queue[str]" = queue.Queue()
 
         def _relay(raw: str) -> None:
             line = sanitize_for_status(raw)[:400]
             if not line.strip():
                 return
-            lines.append(line)
             if progress_handle is not None:
                 try:
                     progress_handle.write(
@@ -694,14 +696,23 @@ def run_worker_job(
                     pass
             if progress is not None:
                 try:
-                    progress(line, {"count": len(lines), "tool": _tool_hint(line)})
+                    progress(line, {"tool": _tool_hint(line)})
                 except Exception:  # noqa: BLE001 — telemetry never fails the build
                     pass
 
-        def _reader() -> None:
+        def _stdout_reader() -> None:
             try:
                 assert proc.stdout is not None
                 for raw in iter(proc.stdout.readline, ""):
+                    if raw.strip():
+                        stdout_lines.append(raw.rstrip("\r\n"))
+            except (OSError, ValueError):  # closed pipe on kill
+                pass
+
+        def _stderr_reader() -> None:
+            try:
+                assert proc.stderr is not None
+                for raw in iter(proc.stderr.readline, ""):
                     if raw.strip():
                         relay_queue.put(raw.rstrip("\r\n"))
             except (OSError, ValueError):  # closed pipe on kill
@@ -712,7 +723,7 @@ def run_worker_job(
                 argv,
                 cwd=str(cwd),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
                 env=_child_env(session_id),
@@ -722,8 +733,10 @@ def run_worker_job(
                 f"{WORKER_EXEC_FAILED}: could not start {cli}: {exc}"
             ) from exc
 
-        reader = threading.Thread(target=_reader, daemon=True)
-        reader.start()
+        stdout_reader = threading.Thread(target=_stdout_reader, daemon=True)
+        stderr_reader = threading.Thread(target=_stderr_reader, daemon=True)
+        stdout_reader.start()
+        stderr_reader.start()
         deadline = time.monotonic() + timeout
         try:
             while True:
@@ -748,7 +761,8 @@ def run_worker_job(
                     tailer.pump(_relay)
         finally:
             # Drain the remainder so no authored evidence is lost.
-            reader.join(timeout=5)
+            stdout_reader.join(timeout=5)
+            stderr_reader.join(timeout=5)
             while True:
                 try:
                     _relay(relay_queue.get_nowait())
@@ -762,16 +776,16 @@ def run_worker_job(
                     pass
         returncode = proc.returncode
         if returncode != 0:
-            tail = "\n".join(lines)[-400:]
+            tail = "\n".join(stdout_lines)[-400:]
             raise WorkerError(
                 f"{WORKER_EXEC_FAILED}: exit {returncode}: {tail}"
             )
-        # The summary is the CLI's final JSON. Stdout may also carry
-        # progress lines (and the log-tailer feeds the rest), so parse the
-        # last JSON-bearing line, falling back to the whole buffer.
+        # The summary is the CLI's final JSON on stdout. Parse exactly as
+        # before the streaming change: the last line, then the whole raw
+        # buffer (never the sanitised relay copy).
         payload = None
-        candidates = [lines[-1]] if lines else []
-        candidates.append("\n".join(lines))
+        candidates = [stdout_lines[-1]] if stdout_lines else []
+        candidates.append("\n".join(stdout_lines))
         for candidate in candidates:
             try:
                 payload = json.loads(candidate)
