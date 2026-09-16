@@ -700,6 +700,35 @@ class RoleRunner:
                 sealed=sealed,
             )
             write_identity(ws, extra={"engine": "role_runner"})
+            # Delivery is the client's choice made at request time. A green
+            # build with delivery_format=github_repo pushes now; a push
+            # failure turns the run into a NAMED failure — a client who
+            # asked for a repo must not be handed a silent zip instead.
+            delivery_format = str(
+                getattr(self.blueprint, "delivery_format", "zip") or "zip"
+            )
+            if delivery_format == "github_repo":
+                try:
+                    from app.factory.build.github_delivery import (
+                        push_workspace_repo,
+                    )
+
+                    repo_url = push_workspace_repo(
+                        self.workspace,
+                        product_id=str(
+                            getattr(self.blueprint, "product_id", "platform")
+                        ),
+                        session_id=str(self.state.get("session_id") or ""),
+                    )
+                    self.state["repo_url"] = repo_url
+                    logger.info("github delivery: repo=%s", repo_url)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("github delivery failed")
+                    outcome = Outcome.FAILED_ROLE_ERROR
+                    detail = f"github_delivery_failed: {exc}"
+                    findings = list(findings) + [detail]
+                    phase = phase or BuildRole.STORE_MANAGER
+                    self.state["repo_url"] = detail
         payload: Dict[str, Any] = {
             "outcome": outcome.value,
             "rework_used": rework,
@@ -707,6 +736,10 @@ class RoleRunner:
             "cycle": getattr(self, "cycle", "code"),
             "pilot_ready": getattr(self, "cycle", "code") == "pilot"
             and outcome is Outcome.SUCCESS,
+            "delivery_format": str(
+                getattr(self.blueprint, "delivery_format", "zip") or "zip"
+            ),
+            "repo_url": self.state.get("repo_url") or "",
         }
         self.ledger.append(
             kind,

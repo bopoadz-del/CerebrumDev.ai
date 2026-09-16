@@ -53,6 +53,8 @@ interface ChatMsg {
     capabilities?: Capability[]
     drafting_mode?: string
     drafting_note?: string
+    /** Client's delivery choice at request time: zip | github_repo. */
+    delivery_format?: 'zip' | 'github_repo'
     roles?: string[]
     users?: string[]
     done_when?: string[]
@@ -69,7 +71,7 @@ export function BlueprintCard({
 }: {
   blueprint: NonNullable<ChatMsg['blueprint']>
   busy: boolean
-  onApprove: (excludedIds: string[]) => void
+  onApprove: (excludedIds: string[], delivery: 'zip' | 'github_repo') => void
   onRefine: (text: string) => void
   accessPaused?: boolean
 }) {
@@ -79,6 +81,7 @@ export function BlueprintCard({
   )
   const excluded = caps.filter((c) => ticked[c.id] === false).map((c) => c.id)
   const selectedCount = caps.length - excluded.length
+  const [delivery, setDelivery] = useState<'zip' | 'github_repo'>('zip')
   return (
     <div className="blueprint-card">
       <div className="bp-header">
@@ -154,7 +157,23 @@ export function BlueprintCard({
       {!accessPaused && (
         <>
           <div className="card-actions">
-            <button disabled={busy || selectedCount === 0} onClick={() => onApprove(excluded)}>
+            <label className="bp-delivery" data-testid="bp-delivery-format">
+              Deliver as:{' '}
+              <select
+                value={delivery}
+                disabled={busy}
+                onChange={(e) =>
+                  setDelivery(e.target.value === 'github_repo' ? 'github_repo' : 'zip')
+                }
+              >
+                <option value="zip">ZIP file in the chat</option>
+                <option value="github_repo">GitHub repository</option>
+              </select>
+            </label>
+            <button
+              disabled={busy || selectedCount === 0}
+              onClick={() => onApprove(excluded, delivery)}
+            >
               {excluded.length > 0
                 ? 'Approve & build (' + selectedCount + ' of ' + caps.length + ')'
                 : 'Approve & build'}
@@ -614,10 +633,25 @@ export function Floor({
   )
 
   const approveWithSelection = useCallback(
-    async (excludedIds: string[]) => {
+    async (excludedIds: string[], delivery: 'zip' | 'github_repo') => {
       if (busy || accessPaused) return
       approveHoldRef.current = true
       setBusy(true)
+      // The delivery format is the client's choice at request time: stamp
+      // it on the session blueprint before the chat approve triggers the
+      // build, so STORE delivery honours it.
+      const latest = latestProductCard(msgs)
+      const bpForDelivery = latest?.blueprint
+      if (bpForDelivery) {
+        try {
+          await product.approve(sessionId, false, {
+            ...bpForDelivery,
+            delivery_format: delivery,
+          })
+        } catch {
+          // The chat approve below still proceeds; delivery defaults to zip.
+        }
+      }
       // Mount coding chrome immediately so the Floor cannot flash an empty
       // composer / hide takeover while chat SSE and the first status poll
       // are still in flight.
@@ -644,7 +678,7 @@ export function Floor({
         }
       }
     },
-    [accessPaused, busy, sendCore],
+    [accessPaused, busy, msgs, sendCore, sessionId],
   )
 
   async function startNewSession() {
@@ -761,7 +795,9 @@ export function Floor({
                     blueprint={m.blueprint}
                     busy={busy || coderActive}
                     accessPaused={accessPaused}
-                    onApprove={(excludedIds) => void approveWithSelection(excludedIds)}
+                    onApprove={(excludedIds, delivery) =>
+                void approveWithSelection(excludedIds, delivery)
+              }
                     onRefine={(text) => send(text)}
                   />
                 )}
@@ -914,6 +950,18 @@ export function Floor({
               >
                 {downloading ? 'Packing…' : exportBtn.label}
               </button>
+              {liveCoderBuild?.repo_url &&
+                liveCoderBuild.repo_url.startsWith('http') && (
+                  <a
+                    className="ghost"
+                    href={liveCoderBuild.repo_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid="floor-repo-link"
+                  >
+                    Open repository
+                  </a>
+                )}
             </div>
           )}
           {liveCoderBuild?.state === 'stalled' && (

@@ -13,6 +13,7 @@ const getMock = vi.fn()
 const downloadMock = vi.fn()
 const coderControlMock = vi.fn()
 const getHealthMock = vi.fn()
+const approveMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -27,6 +28,7 @@ vi.mock('../api/factory', async (importOriginal) => {
       ...actual.product,
       get: (...args: unknown[]) => getMock(...args),
       coderControl: (...args: unknown[]) => coderControlMock(...args),
+      approve: (...args: unknown[]) => approveMock(...args),
     },
   }
 })
@@ -50,6 +52,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     getMock.mockReset()
     downloadMock.mockReset()
     coderControlMock.mockReset()
+    approveMock.mockReset()
+    approveMock.mockResolvedValue({ ok: true, blueprint_approved: false })
     coderControlMock.mockResolvedValue({ ok: true, control: { action: 'pause' } })
     getHealthMock.mockReset()
     getHealthMock.mockResolvedValue({
