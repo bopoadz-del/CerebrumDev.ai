@@ -64,6 +64,17 @@ class ProductBlueprint(BaseModel):
     # a user whose LLM credit died must see that templates drafted this.
     drafting_mode: Optional[str] = None
     drafting_note: Optional[str] = None
+    #: How the client wants the platform delivered — chosen at request
+    #: time, never after the build: "zip" (download in the Floor) or
+    #: "github_repo" (pushed to a repo, URL returned on the build).
+    delivery_format: str = "zip"
+
+    @field_validator("delivery_format")
+    @classmethod
+    def _delivery(cls, v: str) -> str:
+        if v not in ("zip", "github_repo"):
+            raise ValueError("delivery_format must be 'zip' or 'github_repo'")
+        return v
 
     @field_validator("schema_version")
     @classmethod

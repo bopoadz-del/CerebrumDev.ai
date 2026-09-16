@@ -132,6 +132,8 @@ def _clear_sticky_thin_authorship_error(
 class DraftBody(BaseModel):
     brief: str = Field(..., min_length=1)
     vertical_hint: Optional[str] = None
+    #: Client's delivery choice at request time: zip | github_repo.
+    delivery_format: Optional[str] = None
 
 
 class ApproveBody(BaseModel):
@@ -534,6 +536,8 @@ def draft_product(
     require_llm_rate(principal, "draft")
     try:
         bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
+        if body.delivery_format in ("zip", "github_repo"):
+            bp.delivery_format = body.delivery_format
         state.product_design.brief = body.brief
         state.product_design.blueprint = bp.model_dump(mode="json")
         state.product_design.plan = None

@@ -777,6 +777,9 @@ def build_status(
             succeeded["n3_score"] = payload.get("score")
         if payload.get("builds_sha"):
             succeeded["builds_sha"] = payload.get("builds_sha")
+        succeeded["delivery_format"] = payload.get("delivery_format") or "zip"
+        if payload.get("repo_url"):
+            succeeded["repo_url"] = payload.get("repo_url")
         return _with_level_grade(succeeded, output_dir)
     if terminal is not None and terminal.kind is EventKind.RUN_FAILED:
         payload = terminal.payload or {}
@@ -819,10 +822,13 @@ def build_status(
             "outcome": payload.get("outcome"),
             "pilot_ready": False,
             "findings": list(payload.get("findings") or [])[:10],
+            "delivery_format": payload.get("delivery_format") or "zip",
             **progress,
             **_authorship(output_dir, blueprint=blueprint, plan=plan),
             "stale": False,
         }
+        if payload.get("repo_url"):
+            failed["repo_url"] = payload.get("repo_url")
         if payload.get("honesty"):
             failed["honesty"] = payload.get("honesty")
         if _thin_authorship_detail(terminal.detail):
