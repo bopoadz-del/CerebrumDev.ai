@@ -106,9 +106,10 @@ def _wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
             if value == 0:
                 return 0.0
             if 0 < value <= _DEEPSEEK_LEFTOVER_WALL_MAX_S:
+                from app.factory.build.coder_session import deepseek_cli_ready
                 from app.factory.build.roles_handlers import writer_uses_codewhale
 
-                if writer_uses_codewhale(None):
+                if deepseek_cli_ready() or writer_uses_codewhale(None):
                     return _DEFAULT_WALL_CLOCK_S
             return value
     if _uses_pilot_budget(cycle, auto_pilot):
