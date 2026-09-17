@@ -200,7 +200,7 @@ def test_cli_scout_compile_validate(tmp_path: Path, donor_repo: Path):
 
     venv_python = BACKEND / ".venv-factory" / "Scripts" / "python.exe"
     if not venv_python.is_file():
-        pytest.skip("factory venv not present")
+        pytest.skip(reason="factory venv not present")
     report_out = tmp_path / "scout.json"
     proc = subprocess.run(
         [

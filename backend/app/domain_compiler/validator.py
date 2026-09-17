@@ -22,20 +22,33 @@ class SchemaUnavailableError(RuntimeError):
 
 
 def _load_domain_pack_schema():
-    blocks_path = Path(os.environ.get("CEREBRUM_BLOCKS_PATH", DEFAULT_BLOCKS_PATH))
-    schemas_py = blocks_path / "app" / "reasoning_kernel" / "schemas.py"
-    if not schemas_py.is_file():
-        raise SchemaUnavailableError(
-            f"kernel schemas not found at {schemas_py} — "
-            "set CEREBRUM_BLOCKS_PATH to the Cerebrum-Blocks checkout"
-        )
-    spec = importlib.util.spec_from_file_location(
-        "cerebrum_blocks_kernel_schemas", str(schemas_py)
-    )
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module.DomainPack
+    """Load the DomainPack schema: live store checkout first, pinned copy last.
+
+    Order: CEREBRUM_BLOCKS_PATH env -> sibling Cerebrum-Blocks checkout ->
+    the pinned vendored snapshot (kernel_schemas_pinned.py). Validation must
+    never silently pass without a schema.
+    """
+    candidates: List[Path] = []
+    env_path = os.environ.get("CEREBRUM_BLOCKS_PATH")
+    if env_path:
+        candidates.append(Path(env_path) / "app" / "reasoning_kernel" / "schemas.py")
+    sibling = Path(__file__).resolve().parents[3] / "Cerebrum-Blocks"
+    candidates.append(sibling / "app" / "reasoning_kernel" / "schemas.py")
+    candidates.append(Path(DEFAULT_BLOCKS_PATH) / "app" / "reasoning_kernel" / "schemas.py")
+
+    for schemas_py in candidates:
+        if schemas_py.is_file():
+            spec = importlib.util.spec_from_file_location(
+                "cerebrum_blocks_kernel_schemas_live", str(schemas_py)
+            )
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            return module.DomainPack
+
+    from . import kernel_schemas_pinned
+
+    return kernel_schemas_pinned.DomainPack
 
 
 def validate_pack(pack: Dict[str, Any]) -> Tuple[bool, List[str]]:
