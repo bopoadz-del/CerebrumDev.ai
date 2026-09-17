@@ -25,7 +25,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
 GATE_NAME = "store_acceptance"
-ACCEPTANCE_REQUIRED = 12
+ACCEPTANCE_REQUIRED = 13
 ACCEPTANCE_SCRIPT_REL = Path("scripts") / "acceptance.py"
 ACCEPTANCE_REPORT_REL = Path("docs") / "store_acceptance.json"
 OPENAPI_REL = Path("docs") / "openapi.json"
@@ -45,6 +45,7 @@ ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = (
     "health_fail_closed",
     "openapi_committed",
     "docker_health_200",
+    "cross_tenant_404",
     "authorship_floor",
 )
 
@@ -309,82 +310,208 @@ def acceptance_export_blocker(
 
 
 def render_auth_module() -> str:
-    return '''"""Capability write routes require a platform token.
+    """Emit app/auth.py: tenancy-resolving token auth + payload validator."""
+    lines = [
+        '"""Capability write routes require a platform token.',
+        '',
+        'POST /v1/<capability> without a bearer / X-Platform-Token is HTTP 401.',
+        'Missing required fields and invalid enums are HTTP 422. JSON ``ok: false``',
+        'with HTTP 200 is not an auth or validation pass.',
+        '"""',
+        '',
+        'from __future__ import annotations',
+        '',
+        'import os',
+        'from typing import Any, Dict',
+        '',
+        'from fastapi import HTTPException, Request',
+        '',
+        'PLATFORM_TOKEN_ENV = "PLATFORM_TOKEN"',
+        'DEFAULT_PLATFORM_TOKEN = "dev-local-token"',
+        '',
+        '',
+        'def platform_token() -> str:',
+        '    return (os.environ.get(PLATFORM_TOKEN_ENV) or DEFAULT_PLATFORM_TOKEN).strip()',
+        '',
+        '',
+        'def require_platform_token(request: Request) -> Any:',
+        '    """Resolve the caller\'s tenant from the presented bearer token.',
+        '',
+        '    Delegates to app.tenancy.resolve_tenant — the single resolution path',
+        '    shared with rag_routes and kernel_bridge. A missing, unknown, or',
+        '    client-named tenant is refused with 401 by name',
+        '    (authentication_required), never silently mapped to a default.',
+        '    """',
+        '    import app.tenancy as tenancy',
+        '',
+        '    try:',
+        '        return tenancy.resolve_tenant(request.headers)',
+        '    except tenancy.TenantRefused:',
+        '        raise HTTPException(status_code=401, detail="authentication_required")',
+        '',
+        '',
+        'def reject_invalid_payload(capability_id: str, payload: Dict[str, Any] | None) -> None:',
+        '    from app.models import MODELS',
+        '',
+        '    cls = MODELS.get(capability_id)',
+        '    if cls is None:',
+        '        raise HTTPException(status_code=422, detail="unknown capability")',
+        '    if not isinstance(payload, dict):',
+        '        raise HTTPException(status_code=422, detail="payload must be an object")',
+        '    fields = list(getattr(cls, "FIELDS", []) or [])',
+        '    constraints = getattr(cls, "CONSTRAINTS", {}) or {}',
+        '    required = [',
+        '        name',
+        '        for name in fields',
+        '        if (constraints.get(name) or {}).get("required")',
+        '        or name in getattr(cls, "REQUIRED", ())',
+        '    ]',
+        '    if not required:',
+        '        # Models stamp required on the field spec; fall back to every field',
+        '        # that has no default in CONSTRAINTS.required=False only.',
+        '        required = [',
+        '            name',
+        '            for name in fields',
+        '            if (constraints.get(name) or {}).get("required") is not False',
+        '            and name in constraints',
+        '            and constraints[name].get("required")',
+        '        ]',
+        '    for name in required:',
+        '        if name not in payload or payload[name] in (None, ""):',
+        '            raise HTTPException(',
+        '                status_code=422, detail="Missing required field: " + name',
+        '            )',
+        '    for name, rules in constraints.items():',
+        '        if name not in payload:',
+        '            continue',
+        '        allowed = rules.get("allowed_values")',
+        '        if allowed is not None and payload[name] not in allowed:',
+        '            raise HTTPException(',
+        '                status_code=422,',
+        '                detail=name + " must be one of: " + ", ".join(str(v) for v in allowed),',
+        '            )',
+    ]
+    return "\n".join(lines)
 
-POST /v1/<capability> without a bearer / X-Platform-Token is HTTP 401.
-Missing required fields and invalid enums are HTTP 422. JSON ``ok: false``
-with HTTP 200 is not an auth or validation pass.
-"""
 
-from __future__ import annotations
+TENANCY_REL = "app/tenancy.py"
 
-import os
-from typing import Any, Dict
 
-from fastapi import HTTPException, Request
-
-PLATFORM_TOKEN_ENV = "PLATFORM_TOKEN"
-DEFAULT_PLATFORM_TOKEN = "dev-local-token"
-
+def render_tenancy_module() -> str:
+    """Emit the deterministic tenancy module (single resolution path)."""
+    lines = [
+        '"""Tenancy for this platform: one tenant per request, always.',
+        '',
+        'The tenant is resolved from the authenticated principal — the bearer',
+        'token the caller presented — and never from a client-supplied name. A',
+        'payload that tries to name its own tenant is refused rather than trusted.',
+        '',
+        'Token → tenant mapping comes from the environment:',
+        '',
+        '    PLATFORM_TOKEN      the platform token (default dev-local-token)',
+        '    TENANT_TOKENS       "token:tenant,token:tenant" for extra tenants',
+        '    TENANT_NAMES        "tenant:display name" for readable names',
+        '',
+        'Every capability read and write goes through the tenant resolved here —',
+        'app/store.py scopes every row by tenant_id.',
+        '"""',
+        '',
+        'from __future__ import annotations',
+        '',
+        'import os',
+        'from dataclasses import dataclass',
+        'from typing import Dict, List, Mapping, Tuple',
+        '',
+        '#: Reserved keys a capability payload may never carry: tenancy is',
+        '#: server-side, resolved from the token, never from the payload.',
+        'RESERVED_TENANT_KEYS = ("tenant", "tenant_id", "tenant_name", "org_id", "organisation_id")',
+        '',
+        'DEFAULT_TENANT = "local"',
+        '',
+        '',
+        'class TenantRefused(PermissionError):',
+        '    """A caller presented no token, an unbound token, or tried to name',
+        '    their own tenant."""',
+        '',
+        '',
+        '@dataclass(frozen=True)',
+        'class Tenant:',
+        '    tenant_id: str',
+        '    name: str',
+        '    roles: Tuple[str, ...] = ("admin",)',
+        '',
+        '    def to_dict(self) -> Dict[str, object]:',
+        '        return {"tenant_id": self.tenant_id, "name": self.name, "roles": list(self.roles)}',
+        '',
+        '',
+        'def _pairs(raw: str) -> List[Tuple[str, str]]:',
+        '    out: List[Tuple[str, str]] = []',
+        '    for chunk in str(raw or "").split(","):',
+        '        chunk = chunk.strip()',
+        '        if not chunk or ":" not in chunk:',
+        '            continue',
+        '        left, right = chunk.split(":", 1)',
+        '        left, right = left.strip(), right.strip()',
+        '        if left and right:',
+        '            out.append((left, right))',
+        '    return out',
+        '',
+        '',
+        'def token_map() -> Dict[str, str]:',
+        '    """token → tenant_id. The platform token owns the default tenant."""',
+        '    out: Dict[str, str] = {}',
+        '    platform = (os.environ.get("PLATFORM_TOKEN") or "dev-local-token").strip()',
+        '    if platform:',
+        '        out[platform] = DEFAULT_TENANT',
+        '    for token, tenant in _pairs(os.environ.get("TENANT_TOKENS", "")):',
+        '        out[token] = tenant',
+        '    return out',
+        '',
+        '',
+        'def name_map() -> Dict[str, str]:',
+        '    return dict(_pairs(os.environ.get("TENANT_NAMES", "")))',
+        '',
+        '',
+        'def resolve_tenant(headers: Mapping[str, str]) -> Tenant:',
+        '    """Resolve the caller\'s tenant from the request headers.',
+        '',
+        '    Refuses by name: no token, an unknown token, or a payload-supplied',
+        '    tenant identity all raise TenantRefused — the caller is never mapped',
+        '    to a default tenant.',
+        '    """',
+        '    header = str(headers.get("authorization") or headers.get("Authorization") or "")',
+        '    token = str(headers.get("x-platform-token") or "").strip()',
+        '    if header.lower().startswith("bearer "):',
+        '        token = header[7:].strip()',
+        '    if not token:',
+        '        raise TenantRefused("no token presented")',
+        '    tenant_id = token_map().get(token)',
+        '    if not tenant_id:',
+        '        raise TenantRefused("token is not bound to a tenant")',
+        '    return Tenant(tenant_id=tenant_id, name=name_map().get(tenant_id, tenant_id))',
+    ]
+    return "\n".join(lines)
 
 def platform_token() -> str:
     return (os.environ.get(PLATFORM_TOKEN_ENV) or DEFAULT_PLATFORM_TOKEN).strip()
 
 
-def require_platform_token(request: Request) -> str:
-    expected = platform_token()
-    header = request.headers.get("authorization") or ""
-    token = (request.headers.get("x-platform-token") or "").strip()
-    if header.lower().startswith("bearer "):
-        token = header[7:].strip()
-    if not token:
+def require_platform_token(request: Request) -> Any:
+    """Resolve the caller's tenant from the presented bearer token.
+
+    Delegates to app.tenancy.resolve_tenant — the single resolution path
+    shared with rag_routes and kernel_bridge. A missing, unknown, or
+    client-named tenant is refused with 401 by name, never mapped to a
+    default.
+    """
+    import app.tenancy as tenancy
+
+    try:
+        return tenancy.resolve_tenant(request.headers)
+    except tenancy.TenantRefused:
         raise HTTPException(status_code=401, detail="authentication_required")
-    if token != expected:
-        raise HTTPException(status_code=401, detail="authentication_required")
-    return token
 
 
-def reject_invalid_payload(capability_id: str, payload: Dict[str, Any] | None) -> None:
-    from app.models import MODELS
-
-    cls = MODELS.get(capability_id)
-    if cls is None:
-        raise HTTPException(status_code=422, detail="unknown capability")
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=422, detail="payload must be an object")
-    fields = list(getattr(cls, "FIELDS", []) or [])
-    constraints = getattr(cls, "CONSTRAINTS", {}) or {}
-    required = [
-        name
-        for name in fields
-        if (constraints.get(name) or {}).get("required")
-        or name in getattr(cls, "REQUIRED", ())
-    ]
-    if not required:
-        # Models stamp required on the field spec; fall back to every field
-        # that has no default in CONSTRAINTS.required=False only.
-        required = [
-            name
-            for name in fields
-            if (constraints.get(name) or {}).get("required") is not False
-            and name in constraints
-            and constraints[name].get("required")
-        ]
-    for name in required:
-        if name not in payload or payload[name] in (None, ""):
-            raise HTTPException(
-                status_code=422, detail="Missing required field: " + name
-            )
-    for name, rules in constraints.items():
-        if name not in payload:
-            continue
-        allowed = rules.get("allowed_values")
-        if allowed is not None and payload[name] not in allowed:
-            raise HTTPException(
-                status_code=422,
-                detail=name + " must be one of: " + ", ".join(str(v) for v in allowed),
-            )
-'''
 
 
 def render_github_ci() -> str:
@@ -915,6 +1042,58 @@ def check_docker_health_200(http: _Http) -> Tuple[str, str]:
     return "PASS", "docker health 200"
 
 
+def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
+    """Write as tenant A, read as tenant B: the read must be 404.
+
+    404-not-403 is the platform's stated doctrine — cross-tenant access
+    never leaks existence. A 200/403 here means the product is
+    single-tenant by construction (the Phase-2 0.2 defect).
+    """
+    previous = os.environ.get("TENANT_TOKENS")
+    os.environ["TENANT_TOKENS"] = "token-a:tenant-a,token-b:tenant-b"
+    try:
+        cap = _first_cap()
+        if not cap:
+            return "FAIL", "no first capability to POST"
+        payload: Dict[str, Any] = {{}}
+        models = _models()
+        cls = models.get(cap)
+        if cls is not None:
+            constraints = getattr(cls, "CONSTRAINTS", {{}}) or {{}}
+            for field in getattr(cls, "FIELDS", []) or []:
+                rules = constraints.get(field) or {{}}
+                if rules.get("allowed_values"):
+                    payload[field] = rules["allowed_values"][0]
+                elif rules.get("required"):
+                    payload[field] = "sample"
+        created = http.request(
+            "post", "/v1/" + cap, json=payload,
+            headers={{"Authorization": "Bearer token-a"}},
+        )
+        if created.status_code not in (200, 201):
+            return "FAIL", "tenant A create: HTTP %s" % created.status_code
+        body = {{}}
+        try:
+            body = created.json()
+        except Exception:
+            pass
+        record = body.get("stored") or {{}}
+        if not isinstance(record, dict) or not record.get("id"):
+            return "FAIL", "tenant A create returned no stored id"
+        read = http.request(
+            "get", "/v1/%s/%s" % (cap, record["id"]),
+            headers={{"Authorization": "Bearer token-b"}},
+        )
+        if read.status_code == 404:
+            return "PASS", "tenant B read of tenant A record: HTTP 404"
+        return "FAIL", "tenant B read returned HTTP %s (want 404)" % read.status_code
+    finally:
+        if previous is None:
+            os.environ.pop("TENANT_TOKENS", None)
+        else:
+            os.environ["TENANT_TOKENS"] = previous
+
+
 def check_authorship_floor() -> Tuple[str, str]:
     from app.factory.build.authorship import (  # type: ignore
         full_pilot_authorship_from,
@@ -979,6 +1158,7 @@ def main() -> int:
             ("health_fail_closed", check_health_fail_closed),
             ("openapi_committed", check_openapi_committed),
             ("docker_health_200", lambda: check_docker_health_200(http)),
+            ("cross_tenant_404", lambda: check_cross_tenant_404(http)),
             ("authorship_floor", check_authorship_floor),
         ]
         for name, fn in runners:
@@ -1018,6 +1198,7 @@ def stamp_acceptance_artifacts(
     """WRITER / ProductGenerator emit the harness and the files it measures."""
     workspace.write_text(ACCEPTANCE_SCRIPT_REL, render_acceptance_script())
     workspace.write_text(AUTH_REL, render_auth_module())
+    workspace.write_text(Path("app") / "tenancy.py", render_tenancy_module())
     workspace.write_text(GITHUB_CI_REL, render_github_ci())
     workspace.write_text(OPENAPI_REL, render_openapi(product_name, cap_ids))
     workspace.write_text(UI_INDEX_REL, render_ui_index(product_name))
@@ -1033,6 +1214,7 @@ def stamp_acceptance_into_path(
     files = {
         ACCEPTANCE_SCRIPT_REL: render_acceptance_script(),
         AUTH_REL: render_auth_module(),
+    Path("app") / "tenancy.py": render_tenancy_module(),
         GITHUB_CI_REL: render_github_ci(),
         OPENAPI_REL: render_openapi(product_name, cap_ids or ()),
         UI_INDEX_REL: render_ui_index(product_name),

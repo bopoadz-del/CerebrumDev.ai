@@ -1,4 +1,4 @@
-"""Pilot gate: a written record must survive the process that wrote it.
+﻿"""Pilot gate: a written record must survive the process that wrote it.
 
 ``pilot_ready`` is read off a ``RUN_SUCCEEDED`` event whose cycle is
 ``pilot``, so it means "the pilot cycle's phases passed". Every one of those
@@ -146,10 +146,11 @@ READBACK = (
     "import json, os, sys\n"
     "sys.path.insert(0, os.getcwd())\n"
     "from app import store\n"
+    "TENANT = \"test-tenant\"\n"
     "out = {}\n"
     "for cap, ent in json.loads(os.environ['PILOT_ENTITIES']).items():\n"
     "    try:\n"
-    "        out[cap] = len(store.list_all(ent))\n"
+    "        out[cap] = len(store.list_all(ent, tenant_id=TENANT))\n"
     "    except Exception as exc:\n"
     "        out[cap] = 'ERROR: ' + type(exc).__name__ + ': ' + str(exc)\n"
     "sys.stdout.write(json.dumps(out))\n"
@@ -189,7 +190,7 @@ for cap_id, entity in written.items():
         findings.append("%s: %s cannot be read from a new process (%s)" % (cap_id, entity, seen))
     elif not isinstance(seen, int) or seen < 1:
         findings.append(
-            "%s: wrote to %s and a new process sees %r row(s) — persistence "
+            "%s: wrote to %s and a new process sees %r row(s) â€” persistence "
             "did not outlive the writing process" % (cap_id, entity, seen)
         )
 
@@ -207,7 +208,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
         return GateResult(
             ok=True,
             gate=GATE_NAME,
-            detail="code cycle — durability is decided on the pilot cycle",
+            detail="code cycle â€” durability is decided on the pilot cycle",
         )
 
     if not (ctx.workspace / "app" / "models.py").is_file():
@@ -215,7 +216,7 @@ def gate_pilot_outcome_survives_restart(ctx: "GateContext") -> "GateResult":
             ok=False,
             gate=GATE_NAME,
             reason="pilot_no_models",
-            detail="app/models.py is missing — nothing to persist",
+            detail="app/models.py is missing â€” nothing to persist",
             findings=["no models to probe"],
         )
 

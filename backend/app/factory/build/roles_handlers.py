@@ -1644,7 +1644,7 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
     """
     lines = [
         _constraint_guard(spec),
-        "    result = await run_capability(CAPABILITY_ID, payload)",
+        "    result = await run_capability(CAPABILITY_ID, payload, request)",
         "    if isinstance(result, dict) and result.get('status') != 'success':",
         "        return {'ok': False,",
         "                'error': result.get('error_message') or result.get('status'),",
@@ -1833,19 +1833,19 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f'@router.post("/{name}")',
             f"async def {name}_create(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
             "    from app.auth import reject_invalid_payload, require_platform_token",
-            "    require_platform_token(request)",
+            "    tenant = require_platform_token(request)",
             f'    reject_invalid_payload("{e["capability_id"]}", payload)',
             f'    CAPABILITY_ID = "{e["capability_id"]}"',
             f"    handle = _{name}_handle",
-            f'    save = lambda record: store.save("{entity}", record)',
-            f'    list_all = lambda: store.list_all("{entity}")',
+            f'    save = lambda record: store.save("{entity}", record, tenant_id=tenant.tenant_id)',
+            f'    list_all = lambda: store.list_all("{entity}", tenant_id=tenant.tenant_id)',
             e["body"],
             "",
             "",
             f'@router.get("/{name}")',
             f"def {name}_list(request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
-            "    require_platform_token(request)",
+            "    tenant = require_platform_token(request)",
             "    # F7: filter/sort/page from the entity's own declared columns.",
             "    # An unrecognised query field is refused rather than ignored --",
             "    # silently dropping ?staus=open returns the whole table and looks",
@@ -1858,7 +1858,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             '        return {"ok": False,',
             '                "error": "unknown query field(s): " + ", ".join(unknown)}',
             "    try:",
-            f'        return store.query("{entity}",',
+            f'        return store.query("{entity}", tenant.tenant_id,',
             "            filters={k: v for k, v in given.items() if k not in CONTROLS},",
             '            sort=given.get("sort"),',
             '            order=given.get("order", "asc"),',
@@ -1871,8 +1871,8 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f'@router.get("/{name}/{{item_id}}")',
             f"def {name}_get(item_id: int, request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
-            "    require_platform_token(request)",
-            f'    record = store.get("{entity}", item_id)',
+            "    tenant = require_platform_token(request)",
+            f'    record = store.get("{entity}", item_id, tenant.tenant_id)',
             "    if record is None:",
             '        raise HTTPException(status_code=404, detail="not found")',
             "    return record",
@@ -1882,8 +1882,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f"async def {name}_update(item_id: int, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
             "    require_platform_token(request)",
+            "    from app.kernel_bridge import product_context",
             f'    result = await perform_domain("update", "{e["capability_id"]}", '
-            "{**(payload or {}), 'id': item_id})",
+            "{**(payload or {}), 'id': item_id}, context=product_context(request))",
             "    if result.get('status') != 'success':",
             "        return {'ok': False,",
             "                'error': result.get('error_message') or result.get('status'),",
@@ -1896,8 +1897,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f"async def {name}_delete(item_id: int, request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
             "    require_platform_token(request)",
+            "    from app.kernel_bridge import product_context",
             f'    result = await perform_domain("delete", "{e["capability_id"]}", '
-            "{'id': item_id})",
+            "{'id': item_id}, context=product_context(request))",
             "    if result.get('status') != 'success':",
             "        return {'ok': False,",
             "                'error': result.get('error_message') or result.get('status'),",
@@ -2729,19 +2731,33 @@ def spec_for(capability_id: str) -> ActionSpec:
     )
 
 
-def product_context() -> ActionContext:
+def product_context(request) -> ActionContext:
+    """Build the kernel ActionContext from the authenticated principal.
+
+    The tenant is resolved from the request's bearer token by
+    app.tenancy.resolve_tenant — the single resolution path shared with
+    rag_routes. A caller that cannot be bound to a tenant is refused by
+    name (401 authentication_required), never mapped to a default.
+    """
+    import app.tenancy as tenancy
+    from fastapi import HTTPException
+
+    try:
+        tenant = tenancy.resolve_tenant(request.headers)
+    except tenancy.TenantRefused:
+        raise HTTPException(status_code=401, detail="authentication_required")
     return ActionContext(
-        user_id="anonymous",
-        tenant_id="local",
-        organisation_id="local",
-        project_id="local",
-        permissions=[],
+        user_id=tenant.tenant_id,
+        tenant_id=tenant.tenant_id,
+        organisation_id=tenant.tenant_id,
+        project_id=tenant.tenant_id,
+        permissions=list(getattr(tenant, "roles", ())),
         allowed_domains=["product"],
     )
 
 
-async def run_capability(capability_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    result = await execute_action(spec_for(capability_id), product_context(), payload or {})
+async def run_capability(capability_id: str, payload: Dict[str, Any], request) -> Dict[str, Any]:
+    result = await execute_action(spec_for(capability_id), product_context(request), payload or {})
     return result.to_dict()
 '''
 
@@ -4540,6 +4556,10 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "from app.models import MODELS",
         "",
         "",
+        "#: Tenant the generated tests act as (the platform token's tenant).",
+        "TENANT = 'local'",
+        "",
+        "",
         "def test_every_model_round_trips():",
     ]
     # `entities` can be non-empty while `specs` is empty: no on-disk
@@ -4558,13 +4578,13 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             payload = "{" + ", ".join(f"'{k}': {v}" for k, v in sample.items()) + "}"
             model_lines += [
                 f"    record = {payload}",
-                f"    saved = store.save('{entity}', record)",
+                f"    saved = store.save('{entity}', record, tenant_id=TENANT)",
                 f"    assert saved['id'] is not None, 'no id assigned for {entity}'",
-                f"    fetched = store.get('{entity}', saved['id'])",
+                f"    fetched = store.get('{entity}', saved['id'], tenant_id=TENANT)",
                 f"    assert fetched is not None, '{entity} did not persist'",
                 "    for key, value in record.items():",
                 "        assert fetched[key] == value, (key, fetched[key], value)",
-                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}'))",
+                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}', tenant_id=TENANT))",
             ]
         model_lines += [
             "",

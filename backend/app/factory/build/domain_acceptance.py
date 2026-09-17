@@ -529,10 +529,10 @@ async def _handle_create(_context: ActionContext, arguments: Dict[str, Any]) -> 
     if key:
         hit = work_queue.recall(str(key))
         if hit:
-            row = store.get(hit["entity"], int(hit["record_id"]))
+            row = store.get(hit["entity"], int(hit["record_id"]), tenant_id=_context.tenant_id)
             if row is not None:
                 return ActionOutcome.success({{"stored": row, "replayed": True}})
-    stored = store.save(entity, record_fields(capability_id, arguments))
+    stored = store.save(entity, record_fields(capability_id, arguments), tenant_id=_context.tenant_id)
     if key:
         work_queue.remember(str(key), entity, int(stored["id"]))
     return ActionOutcome.success({{"stored": stored, "replayed": False}})
@@ -540,7 +540,7 @@ async def _handle_create(_context: ActionContext, arguments: Dict[str, Any]) -> 
 
 async def _handle_read(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
     capability_id = str(arguments.get("capability_id") or DEFAULT_CAPABILITY)
-    row = store.get(entity_of(capability_id), int(arguments["id"]))
+    row = store.get(entity_of(capability_id), int(arguments["id"]), tenant_id=_context.tenant_id)
     if row is None:
         return ActionOutcome(
             status=ActionStatus.VALIDATION_ERROR,
@@ -553,7 +553,7 @@ async def _handle_read(_context: ActionContext, arguments: Dict[str, Any]) -> Ac
 async def _handle_update(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
     capability_id = str(arguments.get("capability_id") or DEFAULT_CAPABILITY)
     entity = entity_of(capability_id)
-    current = store.get(entity, int(arguments["id"]))
+    current = store.get(entity, int(arguments["id"]), tenant_id=_context.tenant_id)
     if current is None:
         return ActionOutcome(
             status=ActionStatus.VALIDATION_ERROR,
@@ -561,7 +561,7 @@ async def _handle_update(_context: ActionContext, arguments: Dict[str, Any]) -> 
             error_message="record not found",
         )
     merged = {{**current, **record_fields(capability_id, arguments)}}
-    updated = store.update(entity, int(arguments["id"]), merged)
+    updated = store.update(entity, int(arguments["id"]), merged, tenant_id=_context.tenant_id)
     if updated is None:
         return ActionOutcome(
             status=ActionStatus.EXECUTION_ERROR,
@@ -573,7 +573,7 @@ async def _handle_update(_context: ActionContext, arguments: Dict[str, Any]) -> 
 
 async def _handle_delete(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
     capability_id = str(arguments.get("capability_id") or DEFAULT_CAPABILITY)
-    removed = store.delete(entity_of(capability_id), int(arguments["id"]))
+    removed = store.delete(entity_of(capability_id), int(arguments["id"]), tenant_id=_context.tenant_id)
     if not removed:
         return ActionOutcome(
             status=ActionStatus.VALIDATION_ERROR,
@@ -585,7 +585,7 @@ async def _handle_delete(_context: ActionContext, arguments: Dict[str, Any]) -> 
 
 async def _handle_list(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
     capability_id = str(arguments.get("capability_id") or DEFAULT_CAPABILITY)
-    items = store.list_all(entity_of(capability_id))
+    items = store.list_all(entity_of(capability_id), tenant_id=_context.tenant_id)
     query = arguments.get("q")
     if query:
         needle = str(query)
@@ -743,7 +743,7 @@ async def perform_all(capability_id: Optional[str] = None) -> Dict[str, Any]:
 
     created = await perform("create", cap, dict(sample), context=ctx)
     stored = (created.get("output") or {{}}).get("stored") or {{}}
-    fetched = store.get(entity, stored["id"]) if stored.get("id") is not None else None
+    fetched = store.get(entity, stored["id"], tenant_id=ctx.tenant_id) if stored.get("id") is not None else None
     if created.get("status") == "success" and fetched is not None:
         field_ok = all(fetched.get(k) == sample[k] for k in sample)
         outcomes[OUTCOME_CREATE_PERSISTS] = _record(
@@ -786,7 +786,7 @@ async def perform_all(capability_id: Optional[str] = None) -> Dict[str, Any]:
     updated = await perform(
         "update", cap, {{**mutated, "id": stored.get("id")}}, context=ctx
     )
-    after = store.get(entity, stored["id"]) if stored.get("id") is not None else None
+    after = store.get(entity, stored["id"], tenant_id=ctx.tenant_id) if stored.get("id") is not None else None
     update_ok = (
         updated.get("status") == "success"
         and after is not None
@@ -802,7 +802,7 @@ async def perform_all(capability_id: Optional[str] = None) -> Dict[str, Any]:
         item.get("id")
         for item in (listed.get("output") or {{}}).get("items") or []
     }}
-    persisted_ids = {{row["id"] for row in store.list_all(entity)}}
+    persisted_ids = {{row["id"] for row in store.list_all(entity, tenant_id=ctx.tenant_id)}}
     list_ok = (
         listed.get("status") == "success"
         and listed_ids == persisted_ids
@@ -913,7 +913,7 @@ async def perform_all(capability_id: Optional[str] = None) -> Dict[str, Any]:
     doomed = await perform("create", cap, dict(sample), context=ctx)
     doomed_id = ((doomed.get("output") or {{}}).get("stored") or {{}}).get("id")
     deleted = await perform("delete", cap, {{"id": doomed_id}}, context=ctx)
-    gone = store.get(entity, doomed_id) if doomed_id is not None else "no-id"
+    gone = store.get(entity, doomed_id, tenant_id=ctx.tenant_id) if doomed_id is not None else "no-id"
     delete_ok = (
         doomed.get("status") == "success"
         and deleted.get("status") == "success"

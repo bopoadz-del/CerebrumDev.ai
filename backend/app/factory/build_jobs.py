@@ -1243,9 +1243,9 @@ def start_runner_build(
     # Phase 1 tenant isolation: bind the store handle from the
     # authenticated identity BEFORE the thread starts. An unauthenticated
     # build gets None and the worker refuses (no_authenticated_tenant)
-    # instead of running unbound. tenant_identity wins when present
-    # (account id for account callers; the server-owned session id for
-    # master-key/admin callers, which carry no account).
+    # instead of running unbound. The account id is the only accepted
+    # identity — a caller without one (admin/master-key) is refused by
+    # name, never bound to a session-name digest the caller could choose.
     from app.factory.build.tenant_bind import bind_tenant_store
 
     identity = tenant_identity if tenant_identity is not None else quota_account_id

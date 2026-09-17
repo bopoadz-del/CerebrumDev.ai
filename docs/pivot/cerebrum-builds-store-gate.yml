@@ -82,7 +82,7 @@ jobs:
               "rag_roundtrip_hit", "single_persistence_root",
               "ci_present_and_full_suite", "handler_bodies_distinct",
               "health_fail_closed", "openapi_committed", "docker_health_200",
-              "authorship_floor",
+              "cross_tenant_404", "authorship_floor",
           ]
           lines = []
           passed = 0
@@ -95,14 +95,14 @@ jobs:
           result = {
               "schema_version": "store_gate.v1",
               "passed": passed,
-              "total": 12,
-              "ok": passed == 12,
+              "total": 13,
+              "ok": passed == 13,
               "lines": lines,
               "via": "acceptance.py in Docker",
           }
           Path("store_gate.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
-          print(f"store-gate {passed}/12 ok={result['ok']}")
-          if passed != 12:
+          print(f"store-gate {passed}/13 ok={result['ok']}")
+          if passed != 13:
               sys.exit(1)
           PY
 
@@ -125,7 +125,7 @@ jobs:
           body = {
               "state": state,
               "context": "store-gate",
-              "description": f"acceptance.py in Docker {payload['passed']}/12",
+              "description": f"acceptance.py in Docker {payload['passed']}/13",
           }
           repo = os.environ["GITHUB_REPOSITORY"]
           sha = os.environ["GITHUB_SHA"]

@@ -1,4 +1,4 @@
-"""Session-scoped product architecture API (Design Product mode).
+﻿"""Session-scoped product architecture API (Design Product mode).
 
 POST /v1/sessions/{id}/product/draft
 POST /v1/sessions/{id}/product/plan
@@ -47,7 +47,7 @@ router = APIRouter()
 
 
 def _session_product_inputs(state: Any) -> tuple[Any, Any]:
-    """Blueprint / plan parked on the session — used to resolve n_required."""
+    """Blueprint / plan parked on the session â€” used to resolve n_required."""
     pd = getattr(state, "product_design", None)
     raw_bp = getattr(pd, "blueprint", None) if pd is not None else None
     plan = getattr(pd, "plan", None) if pd is not None else None
@@ -55,7 +55,7 @@ def _session_product_inputs(state: Any) -> tuple[Any, Any]:
     if isinstance(raw_bp, dict) and raw_bp:
         try:
             blueprint = ProductBlueprint.model_validate(raw_bp)
-        except Exception:  # noqa: BLE001 — dict still has capabilities
+        except Exception:  # noqa: BLE001 â€” dict still has capabilities
             blueprint = raw_bp
     return blueprint, plan
 
@@ -69,10 +69,10 @@ def generation_with_live_build(
     """Re-read the workspace ledger onto ``generation.build``.
 
     ``_record_generation`` snapshots ``build`` at session start
-    (state=building, current_phase=COLLECTOR, last_event_age_s≈0.7).
+    (state=building, current_phase=COLLECTOR, last_event_age_sâ‰ˆ0.7).
     Floor / Platforms poll ``/product/build-status`` (live ledger) and
     correctly show CODING AGENT STOPPED after RUN_FAILED. GET /product
-    used to return that frozen snapshot — live sess_14e690829d1f4282.
+    used to return that frozen snapshot â€” live sess_14e690829d1f4282.
     """
     if not generation:
         return generation
@@ -96,7 +96,7 @@ def _clear_sticky_thin_authorship_error(
 ) -> Optional[str]:
     """Drop a pre-#392 THIN_AUTHORSHIP last_error once live status is SUCCESS.
 
-    Platforms must not keep painting the baked ``need ≥5`` string after
+    Platforms must not keep painting the baked ``need â‰¥5`` string after
     package / build-status already re-evaluated n_required.
     """
     pd = getattr(state, "product_design", None)
@@ -124,7 +124,7 @@ def _clear_sticky_thin_authorship_error(
         pd.generation = gen
     try:
         update_session(session_id, state)
-    except Exception:  # noqa: BLE001 — serving honesty must not 500
+    except Exception:  # noqa: BLE001 â€” serving honesty must not 500
         logger.exception("could not persist live SUCCESS over sticky thin-authorship")
     return pd.last_error
 
@@ -340,20 +340,20 @@ def get_product_design(
 def download_product_package(
     session_id: str, principal: Principal = Depends(require_api_key)
 ) -> FileResponse:
-    """Export the generated platform as a zip — the factory's deliverable."""
+    """Export the generated platform as a zip â€” the factory's deliverable."""
     state = _require_session(session_id, principal)
     _enforce_export_quota(principal.account_id)
     gen = state.product_design.generation
     if not gen or not gen.get("output_dir"):
         raise HTTPException(
             status_code=404,
-            detail="no generated product — draft and approve a blueprint first",
+            detail="no generated product â€” draft and approve a blueprint first",
         )
     out = Path(gen["output_dir"])
     if not out.is_dir():
         raise HTTPException(
             status_code=404,
-            detail="generated product not found on disk — generate again",
+            detail="generated product not found on disk â€” generate again",
         )
 
     # A runner build is a background job. Zipping mid-build would hand the
@@ -371,7 +371,7 @@ def download_product_package(
             detail=(
                 "the platform is still being built "
                 f"({status.get('phases_done', 0)}/{status.get('phases_total', 5)} "
-                "phases complete) — poll /product/build-status"
+                "phases complete) â€” poll /product/build-status"
             ),
         )
     if status["state"] == "failed":
@@ -405,7 +405,7 @@ def download_product_package(
 
     # 6.3: a zip exists only after CI is green AND the artifact gate passed.
     # The template engine has no ledger (state "unknown") and its zip carries
-    # the prototype marker declaring it unfinished — the gate applies to
+    # the prototype marker declaring it unfinished â€” the gate applies to
     # runner builds, which are the ones claiming a governed product.
     if status.get("state") != "unknown":
         assert_zip_eligibility(status, ci_run_id())
@@ -425,7 +425,7 @@ def download_product_package(
         engine_version="retrieval_engine.v1" if engine_present else "none",
         prompt_version=PROMPT_VERSION,
         # A fresh build ships layer 1 (certified kernel definitions);
-        # client layers 2-4 are zero until client content lands — honest
+        # client layers 2-4 are zero until client content lands â€” honest
         # zeros, never invented counts.
         layer_counts={1: 1} if (out / "app" / "cerebrum_product_kernel" / "formulas").is_dir() else {},
         engine_included=engine_present,
@@ -507,7 +507,7 @@ def set_coder_control(
     state = _require_session(session_id, principal)
     gen = state.product_design.generation
     if not gen or not gen.get("output_dir"):
-        raise HTTPException(status_code=409, detail="no build workspace — start a generate first")
+        raise HTTPException(status_code=409, detail="no build workspace â€” start a generate first")
     out = Path(gen["output_dir"])
     if not out.is_dir():
         raise HTTPException(status_code=404, detail="generated product not found on disk")
@@ -661,7 +661,7 @@ def _run_n3_reseed(
     if has_running_build(state):
         raise HTTPException(
             status_code=409,
-            detail="a build is already in progress — poll /product/build-status",
+            detail="a build is already in progress â€” poll /product/build-status",
         )
     if not state.product_design.blueprint:
         raise HTTPException(status_code=400, detail="no blueprint")
@@ -774,7 +774,7 @@ def generate_approved_product(
     if has_running_build(state):
         raise HTTPException(
             status_code=409,
-            detail="a build is already in progress — poll /product/build-status",
+            detail="a build is already in progress â€” poll /product/build-status",
         )
     # Same resolver as the chat flow (env path, then Store clone).
     blocks_root = resolve_blocks_root()
@@ -786,7 +786,7 @@ def generate_approved_product(
         if not gated["lint"].ok:
             raise HTTPException(
                 status_code=400,
-                detail="BRIEF_LINT_REJECTED — session never opens: "
+                detail="BRIEF_LINT_REJECTED â€” session never opens: "
                 + "; ".join(gated["lint"].errors),
             )
         if not state.product_design.plan:
@@ -804,13 +804,13 @@ def generate_approved_product(
             blocks_root=blocks_root,
             cycle=body.cycle,
             quota_account_id=principal.account_id,
-            tenant_identity=principal.account_id or session_id,
+            tenant_identity=principal.account_id,
             brief=str(state.product_design.brief or "").strip(),
         )
         if result.get("already_running"):
             raise HTTPException(
                 status_code=409,
-                detail="a build is already in progress — poll /product/build-status",
+                detail="a build is already in progress â€” poll /product/build-status",
             )
         _consume_generation_on_start(principal.account_id)
         state.product_design.generation = {
