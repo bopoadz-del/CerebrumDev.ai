@@ -277,10 +277,18 @@ def _vendor_mirror_dir(block_id: str) -> Optional[Path]:
 
 
 def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Path]:
-    """Real Store checkout first, factory vendor mirror second."""
+    """Real Store checkout first, factory vendor mirror second.
+
+    A block dir counts as store-sourced only when the pinned store sha
+    actually commits it — untracked working-tree leftovers in the local
+    checkout must not shadow the vendor mirror (Phase 2 §0.2 lock
+    determinism).
+    """
     if blocks_root:
-        candidate = Path(blocks_root) / "block_registry" / block_id
-        if (candidate / "block.py").is_file():
+        from app.factory.blocks_lock import _block_dir_in_store
+
+        candidate = _block_dir_in_store(Path(blocks_root), block_id)
+        if candidate is not None:
             return candidate
     return _vendor_mirror_dir(block_id)
 
@@ -1239,14 +1247,12 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        }\n"
         "    if isinstance(result, dict) and result.get('ok') is False:\n"
         "        return result\n"
-        "    stored = _persist_record(payload)\n"
         "    if isinstance(result, dict):\n"
         "        result = dict(result)\n"
         "        result.setdefault('ok', True)\n"
-        "        result['stored'] = stored\n"
         "        return result\n"
         "    return {'ok': True, 'capability': CAPABILITY_ID, "
-        "'stored': stored, 'result': result}"
+        "'result': result}"
     )
 
 
@@ -1331,6 +1337,10 @@ def _handler_module(
 
 Written by the factory WRITER role ({source}). Blocks are invoked through the
 local dispatch runtime -- this module makes no network call.
+
+Persistence is route-scoped (factory-grounded persist envelope): the ROUTE's
+tenant-scoped save writes the request after SUCCESS; handle() is pure
+dispatch and must not persist directly (Phase 2 §0.2).
 """
 
 from __future__ import annotations
@@ -1350,21 +1360,6 @@ BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
 #: is the obvious one for construction) would be deleted before handle() ever
 #: saw it. Declaring the names here tells the kernel they are domain data.
 CAPABILITY_FIELDS = {list(field_names or [])!r}
-
-
-def _persist_record(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Factory-grounded one-record persist. PRODUCT re-reads this entity.
-
-    Store is imported here, not at module load: isolated contract probes
-    exec this file against the factory ``app`` package (no product
-    ``app.store``). A generated workspace still has ``app/store.py``.
-    """
-    record = dict(payload) if isinstance(payload, dict) else {{}}
-    try:
-        from app import store as _store
-    except ImportError:
-        return record
-    return _store.save(ENTITY, record)
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1418,11 +1413,9 @@ def _capability_handler_body(
 
 def _templated_body(block_ids: Sequence[str]) -> str:
     if not block_ids:
-        return (
-            "    stored = _persist_record(payload)\n"
-            '    return {"ok": True, "capability": CAPABILITY_ID, '
-            '"stored": stored}'
-        )
+        # Phase 2 §0.2: handlers are pure dispatch. The ROUTE persists the
+        # request via its tenant-scoped save(payload) after SUCCESS.
+        return '    return {"ok": True, "capability": CAPABILITY_ID}'
     # Domain JSON is not block-acceptable JSON. prepare_block_input (invoked
     # inside the fail-closed execute wrapper, and explicitly here so the
     # template documents the contract) builds channel/message, steps, team
@@ -1450,9 +1443,9 @@ def _templated_body(block_ids: Sequence[str]) -> str:
         '            "error": "; ".join(f"{b}: {e}" for b, e in sorted(errors.items())),\n'
         '            "results": results,\n'
         "        }\n"
-        "    stored = _persist_record(payload)\n"
-        '    return {"ok": True, "capability": CAPABILITY_ID, '
-        '"results": results, "stored": stored}'
+        # Phase 2 §0.2: persistence is the ROUTE's job (tenant-scoped
+        # save(payload)); the handler reports dispatch results only.
+        '    return {"ok": True, "capability": CAPABILITY_ID, "results": results}'
     )
 
 
@@ -1644,7 +1637,7 @@ def _templated_route_body(spec: Dict[str, Any]) -> str:
     """
     lines = [
         _constraint_guard(spec),
-        "    result = await run_capability(CAPABILITY_ID, payload)",
+        "    result = await run_capability(CAPABILITY_ID, payload, request)",
         "    if isinstance(result, dict) and result.get('status') != 'success':",
         "        return {'ok': False,",
         "                'error': result.get('error_message') or result.get('status'),",
@@ -1833,19 +1826,19 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f'@router.post("/{name}")',
             f"async def {name}_create(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
             "    from app.auth import reject_invalid_payload, require_platform_token",
-            "    require_platform_token(request)",
+            "    tenant = require_platform_token(request)",
             f'    reject_invalid_payload("{e["capability_id"]}", payload)',
             f'    CAPABILITY_ID = "{e["capability_id"]}"',
             f"    handle = _{name}_handle",
-            f'    save = lambda record: store.save("{entity}", record)',
-            f'    list_all = lambda: store.list_all("{entity}")',
+            f'    save = lambda record: store.save("{entity}", record, tenant_id=tenant.tenant_id)',
+            f'    list_all = lambda: store.list_all("{entity}", tenant_id=tenant.tenant_id)',
             e["body"],
             "",
             "",
             f'@router.get("/{name}")',
             f"def {name}_list(request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
-            "    require_platform_token(request)",
+            "    tenant = require_platform_token(request)",
             "    # F7: filter/sort/page from the entity's own declared columns.",
             "    # An unrecognised query field is refused rather than ignored --",
             "    # silently dropping ?staus=open returns the whole table and looks",
@@ -1858,7 +1851,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             '        return {"ok": False,',
             '                "error": "unknown query field(s): " + ", ".join(unknown)}',
             "    try:",
-            f'        return store.query("{entity}",',
+            f'        return store.query("{entity}", tenant.tenant_id,',
             "            filters={k: v for k, v in given.items() if k not in CONTROLS},",
             '            sort=given.get("sort"),',
             '            order=given.get("order", "asc"),',
@@ -1871,8 +1864,8 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f'@router.get("/{name}/{{item_id}}")',
             f"def {name}_get(item_id: int, request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
-            "    require_platform_token(request)",
-            f'    record = store.get("{entity}", item_id)',
+            "    tenant = require_platform_token(request)",
+            f'    record = store.get("{entity}", item_id, tenant.tenant_id)',
             "    if record is None:",
             '        raise HTTPException(status_code=404, detail="not found")',
             "    return record",
@@ -1882,8 +1875,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f"async def {name}_update(item_id: int, payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
             "    require_platform_token(request)",
+            "    from app.kernel_bridge import product_context",
             f'    result = await perform_domain("update", "{e["capability_id"]}", '
-            "{**(payload or {}), 'id': item_id})",
+            "{**(payload or {}), 'id': item_id}, context=product_context(request))",
             "    if result.get('status') != 'success':",
             "        return {'ok': False,",
             "                'error': result.get('error_message') or result.get('status'),",
@@ -1896,8 +1890,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
             f"async def {name}_delete(item_id: int, request: Request) -> Dict[str, Any]:",
             "    from app.auth import require_platform_token",
             "    require_platform_token(request)",
+            "    from app.kernel_bridge import product_context",
             f'    result = await perform_domain("delete", "{e["capability_id"]}", '
-            "{'id': item_id})",
+            "{'id': item_id}, context=product_context(request))",
             "    if result.get('status') != 'success':",
             "        return {'ok': False,",
             "                'error': result.get('error_message') or result.get('status'),",
@@ -2729,19 +2724,33 @@ def spec_for(capability_id: str) -> ActionSpec:
     )
 
 
-def product_context() -> ActionContext:
+def product_context(request) -> ActionContext:
+    """Build the kernel ActionContext from the authenticated principal.
+
+    The tenant is resolved from the request's bearer token by
+    app.tenancy.resolve_tenant — the single resolution path shared with
+    rag_routes. A caller that cannot be bound to a tenant is refused by
+    name (401 authentication_required), never mapped to a default.
+    """
+    import app.tenancy as tenancy
+    from fastapi import HTTPException
+
+    try:
+        tenant = tenancy.resolve_tenant(request.headers)
+    except tenancy.TenantRefused:
+        raise HTTPException(status_code=401, detail="authentication_required")
     return ActionContext(
-        user_id="anonymous",
-        tenant_id="local",
-        organisation_id="local",
-        project_id="local",
-        permissions=[],
+        user_id=tenant.tenant_id,
+        tenant_id=tenant.tenant_id,
+        organisation_id=tenant.tenant_id,
+        project_id=tenant.tenant_id,
+        permissions=list(getattr(tenant, "roles", ())),
         allowed_domains=["product"],
     )
 
 
-async def run_capability(capability_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    result = await execute_action(spec_for(capability_id), product_context(), payload or {})
+async def run_capability(capability_id: str, payload: Dict[str, Any], request) -> Dict[str, Any]:
+    result = await execute_action(spec_for(capability_id), product_context(request), payload or {})
     return result.to_dict()
 '''
 
@@ -3403,10 +3412,11 @@ def run_writer(
                 )
             ):
                 authored = None
-            elif "_persist_record(" not in kept_text and "store.save(" not in kept_text:
-                # Live keyword-fallback audit/dashboard/{vertical}_core:
-                # keepable CLI stubs executed blocks but never persisted,
-                # then PRODUCT raised no such table / remembered nothing.
+            elif "_persist_record(" in kept_text or "store.save(" in kept_text or "save(payload)" in kept_text:
+                # Phase 2 §0.2: persistence is route-scoped. A keepable CLI
+                # handler that still persists directly collides with the
+                # tenant-required store signature (handler has no tenant);
+                # regenerate the pure-dispatch envelope.
                 authored = None
             else:
                 # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED
@@ -4540,6 +4550,10 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "from app.models import MODELS",
         "",
         "",
+        "#: Tenant the generated tests act as (the platform token's tenant).",
+        "TENANT = 'local'",
+        "",
+        "",
         "def test_every_model_round_trips():",
     ]
     # `entities` can be non-empty while `specs` is empty: no on-disk
@@ -4558,13 +4572,13 @@ def run_tester(ctx: RoleContext) -> RoleResult:
             payload = "{" + ", ".join(f"'{k}': {v}" for k, v in sample.items()) + "}"
             model_lines += [
                 f"    record = {payload}",
-                f"    saved = store.save('{entity}', record)",
+                f"    saved = store.save('{entity}', record, tenant_id=TENANT)",
                 f"    assert saved['id'] is not None, 'no id assigned for {entity}'",
-                f"    fetched = store.get('{entity}', saved['id'])",
+                f"    fetched = store.get('{entity}', saved['id'], tenant_id=TENANT)",
                 f"    assert fetched is not None, '{entity} did not persist'",
                 "    for key, value in record.items():",
                 "        assert fetched[key] == value, (key, fetched[key], value)",
-                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}'))",
+                f"    assert any(r['id'] == saved['id'] for r in store.list_all('{entity}', tenant_id=TENANT))",
             ]
         model_lines += [
             "",

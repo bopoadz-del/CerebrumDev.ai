@@ -196,8 +196,8 @@ def _write_acceptance_kk(out: Path) -> None:
     write_acceptance_report(
         out,
         AcceptanceReport(
-            passed=12,
-            total=12,
+            passed=13,
+            total=13,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),

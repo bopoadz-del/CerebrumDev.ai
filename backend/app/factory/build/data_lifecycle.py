@@ -1,4 +1,4 @@
-"""S10 data lifecycle emitters for RoleRunner products.
+﻿"""S10 data lifecycle emitters for RoleRunner products.
 
 Unused kits already carry Alembic (steward_runtime/migrations). RoleRunner
 did not emit it; generated products used ``CREATE TABLE IF NOT EXISTS`` on
@@ -82,7 +82,7 @@ def sample_for_spec(
     """A deterministic row from one capability/table spec.
 
     S10 lifecycle tests insert the first *table*. S12 domain acceptance
-    must insert the DEFAULT capability's own columns — those two are not
+    must insert the DEFAULT capability's own columns â€” those two are not
     the same order (live sess_5dfb4a3: ``client_pet_records`` / pet_record
     vs alphabetically-first entity ``availability``).
     """
@@ -170,27 +170,27 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "    return conn\n"
         "\n"
         "\n"
-        "def save(entity: str, record: Dict[str, Any]) -> Dict[str, Any]:\n"
-        '    """Insert a record and return it with its assigned id."""\n'
+        "def save(entity: str, record: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:\n"
+        '    """Insert a record for one tenant and return it with its assigned id."""\n'
         "    cols = COLUMNS[entity]\n"
-        "    values = [record.get(c) for c in cols]\n"
+        "    values = [tenant_id, *(record.get(c) for c in cols)]\n"
         '    placeholders = ", ".join("?" for _ in cols)\n'
         "    conn = connect()\n"
         "    try:\n"
         "        cur = conn.execute(\n"
-        '            f"INSERT INTO {entity} ({\', \'.join(cols)}) VALUES ({placeholders})",\n'
+        '            f"INSERT INTO {entity} (tenant_id, {\', \'.join(cols)}) VALUES (?, {placeholders})",\n'
         "            values,\n"
         "        )\n"
         "        conn.commit()\n"
-        '        return {"id": cur.lastrowid, **{c: record.get(c) for c in cols}}\n'
+        '        return {"id": cur.lastrowid, "tenant_id": tenant_id, **{c: record.get(c) for c in cols}}\n'
         "    finally:\n"
         "        conn.close()\n"
         "\n"
         "\n"
-        "def list_all(entity: str) -> List[Dict[str, Any]]:\n"
+        "def list_all(entity: str, tenant_id: str) -> List[Dict[str, Any]]:\n"
         "    conn = connect()\n"
         "    try:\n"
-        '        rows = conn.execute(f"SELECT * FROM {entity} ORDER BY id").fetchall()\n'
+        '        rows = conn.execute(f"SELECT * FROM {entity} WHERE tenant_id = ? ORDER BY id", (tenant_id,)).fetchall()\n'
         "        return [dict(r) for r in rows]\n"
         "    finally:\n"
         "        conn.close()\n"
@@ -202,6 +202,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "\n"
         "def query(\n"
         "    entity: str,\n"
+        "    tenant_id: str,\n"
         "    *,\n"
         "    filters: Dict[str, Any] | None = None,\n"
         "    sort: str | None = None,\n"
@@ -216,7 +217,7 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "    SQL. Values always travel as bound parameters.\n"
         "    \"\"\"\n"
         "    cols = COLUMNS[entity]\n"
-        "    where, params = [], []\n"
+        '    where, params = ["tenant_id = ?"], [tenant_id]\n'
         "    for name, value in (filters or {}).items():\n"
         "        if name not in cols:\n"
         "            raise QueryError(\"unknown filter field: \" + str(name))\n"
@@ -254,18 +255,18 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "        conn.close()\n"
         "\n"
         "\n"
-        "def get(entity: str, record_id: int) -> Dict[str, Any] | None:\n"
+        "def get(entity: str, record_id: int, tenant_id: str) -> Dict[str, Any] | None:\n"
         "    conn = connect()\n"
         "    try:\n"
         "        row = conn.execute(\n"
-        '            f"SELECT * FROM {entity} WHERE id = ?", (record_id,)\n'
+        '            f"SELECT * FROM {entity} WHERE id = ? AND tenant_id = ?", (record_id, tenant_id)\n'
         "        ).fetchone()\n"
         "        return dict(row) if row else None\n"
         "    finally:\n"
         "        conn.close()\n"
         "\n"
         "\n"
-        "def update(entity: str, record_id: int, record: Dict[str, Any]) -> Dict[str, Any] | None:\n"
+        "def update(entity: str, record_id: int, record: Dict[str, Any], tenant_id: str) -> Dict[str, Any] | None:\n"
         '    """Overwrite a persisted row. Returns None when the id does not exist."""\n'
         "    cols = COLUMNS[entity]\n"
         '    assignments = ", ".join(f"{c} = ?" for c in cols)\n'
@@ -273,23 +274,23 @@ def render_store(specs: Dict[str, Dict[str, Any]]) -> str:
         "    conn = connect()\n"
         "    try:\n"
         "        cur = conn.execute(\n"
-        '            f"UPDATE {entity} SET {assignments} WHERE id = ?",\n'
-        "            [*values, record_id],\n"
+        '            f"UPDATE {entity} SET {assignments} WHERE id = ? AND tenant_id = ?",\n'
+        "            [*values, record_id, tenant_id],\n"
         "        )\n"
         "        conn.commit()\n"
         "        if cur.rowcount == 0:\n"
         "            return None\n"
         "    finally:\n"
         "        conn.close()\n"
-        "    return get(entity, record_id)\n"
+        "    return get(entity, record_id, tenant_id)\n"
         "\n"
         "\n"
-        "def delete(entity: str, record_id: int) -> bool:\n"
+        "def delete(entity: str, record_id: int, tenant_id: str) -> bool:\n"
         '    """Delete a persisted row. True when a row was removed."""\n'
         "    conn = connect()\n"
         "    try:\n"
         "        cur = conn.execute(\n"
-        '            f"DELETE FROM {entity} WHERE id = ?", (record_id,)\n'
+        '            f"DELETE FROM {entity} WHERE id = ? AND tenant_id = ?", (record_id, tenant_id)\n'
         "        )\n"
         "        conn.commit()\n"
         "        return cur.rowcount > 0\n"
@@ -368,8 +369,8 @@ def render_backup() -> str:
         "\n"
         "Uses SQLite's online backup API (not a file copy) so a live WAL\n"
         "writer cannot produce a torn snapshot. A restore that has not been\n"
-        "drilled is not a restore — tests/test_data_lifecycle.py performs\n"
-        "backup → wipe → restore → assert rows.\n"
+        "drilled is not a restore â€” tests/test_data_lifecycle.py performs\n"
+        "backup â†’ wipe â†’ restore â†’ assert rows.\n"
         "\n"
         "Same-disk BACKUP_DIR (the default) protects against logical loss,\n"
         "not disk loss. The mounted Render disk is a SPOF.\n"
@@ -594,7 +595,8 @@ def render_revision_0001(specs: Dict[str, Dict[str, Any]]) -> str:
     downgrade_lines: List[str] = []
     for spec in tables:
         cols = [
-            '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),'
+            '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),',
+            '        sa.Column("tenant_id", sa.Text(), nullable=False),',
         ]
         seen = {"id"}
         for field in spec["fields"]:
@@ -613,6 +615,7 @@ def render_revision_0001(specs: Dict[str, Dict[str, Any]]) -> str:
         '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),'
     )
     upgrade_lines.append('        sa.Column("capability_id", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("tenant_id", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("payload", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("status", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("result", sa.Text(), nullable=True),')
@@ -731,7 +734,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
             "api": "sqlite3.Connection.backup",
             "default_dir": "$STORAGE_PATH/backups",
             "retention": BACKUP_KEEP,
-            "restore_drill": "tests/test_data_lifecycle.py performs backup→wipe→restore",
+            "restore_drill": "tests/test_data_lifecycle.py performs backupâ†’wipeâ†’restore",
         },
         "sqlite_on_mounted_disk": True,
         "spof": (
@@ -759,10 +762,10 @@ def render_lifecycle_doc() -> str:
 def render_product_tests(specs: Dict[str, Dict[str, Any]]) -> str:
     entity, sample = first_entity_sample(specs)
     entities = [spec["entity"] for spec in table_specs(specs)]
-    return f'''"""S10 data lifecycle — performed, not configured.
+    return f'''"""S10 data lifecycle â€” performed, not configured.
 
-Schema up/down on a populated v1 DB, a restore drill (backup → wipe →
-restore → assert rows), and parallel writes at the FastAPI sync threadpool
+Schema up/down on a populated v1 DB, a restore drill (backup â†’ wipe â†’
+restore â†’ assert rows), and parallel writes at the FastAPI sync threadpool
 size. connect() must not CREATE TABLE.
 """
 
@@ -778,6 +781,9 @@ from app.migrations import current_revision, downgrade, upgrade_head, upgrade_to
 
 ENTITY = {entity!r}
 SAMPLE = {sample!r}
+#: Tenant the generated tests act as. Tenant-scoped store calls require
+#: an explicit tenant — never a default (the tenancy module's rule).
+TENANT = "test-tenant"
 ENTITIES = {entities!r}
 REV_V1 = {REVISION_0001!r}
 REV_V2 = {REVISION_0002!r}
@@ -828,14 +834,14 @@ def test_connect_does_not_create_domain_tables(isolated_db):
 @pytest.mark.skipif(not ENTITY, reason="no domain entity to migrate")
 def test_schema_change_applies_to_populated_v1_and_rolls_back(isolated_db):
     assert upgrade_to(REV_V1) == REV_V1
-    saved = store.save(ENTITY, dict(SAMPLE))
+    saved = store.save(ENTITY, dict(SAMPLE), tenant_id=TENANT)
     assert saved["id"] is not None
-    assert store.get(ENTITY, saved["id"]) is not None
+    assert store.get(ENTITY, saved["id"], tenant_id=TENANT) is not None
     assert ENTITY in _tables()
     assert AUDIT not in _tables()
 
     assert upgrade_head() == REV_V2
-    fetched = store.get(ENTITY, saved["id"])
+    fetched = store.get(ENTITY, saved["id"], tenant_id=TENANT)
     assert fetched is not None, "v1 row did not survive upgrade to v2"
     for key, value in SAMPLE.items():
         assert fetched[key] == value
@@ -843,7 +849,7 @@ def test_schema_change_applies_to_populated_v1_and_rolls_back(isolated_db):
     assert current_revision() == REV_V2
 
     assert downgrade(REV_V1) == REV_V1
-    rolled = store.get(ENTITY, saved["id"])
+    rolled = store.get(ENTITY, saved["id"], tenant_id=TENANT)
     assert rolled is not None, "v1 row did not survive downgrade"
     for key, value in SAMPLE.items():
         assert rolled[key] == value
@@ -854,7 +860,7 @@ def test_schema_change_applies_to_populated_v1_and_rolls_back(isolated_db):
 @pytest.mark.skipif(not ENTITY, reason="no domain entity to restore")
 def test_restore_drill_backup_wipe_restore_rows(isolated_db):
     upgrade_head()
-    original = [store.save(ENTITY, dict(SAMPLE)) for _ in range(3)]
+    original = [store.save(ENTITY, dict(SAMPLE), tenant_id=TENANT) for _ in range(3)]
     ids = [row["id"] for row in original]
     archive = backup.create_backup()
     assert archive.is_file() and archive.stat().st_size > 0
@@ -864,10 +870,10 @@ def test_restore_drill_backup_wipe_restore_rows(isolated_db):
 
     backup.restore_backup(archive)
     assert store.db_path().exists()
-    restored_ids = [row["id"] for row in store.list_all(ENTITY)]
+    restored_ids = [row["id"] for row in store.list_all(ENTITY, tenant_id=TENANT)]
     assert restored_ids == ids
     for row in original:
-        fetched = store.get(ENTITY, row["id"])
+        fetched = store.get(ENTITY, row["id"], tenant_id=TENANT)
         assert fetched is not None
         for key, value in SAMPLE.items():
             assert fetched[key] == value
@@ -882,14 +888,14 @@ def test_parallel_writes_match_fastapi_threadpool(isolated_db):
         payload = dict(SAMPLE)
         if "reference" in payload:
             payload["reference"] = f"s10-{{i}}"
-        return store.save(ENTITY, payload)
+        return store.save(ENTITY, payload, tenant_id=TENANT)
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_write, i) for i in range(workers)]
         results = [f.result() for f in as_completed(futures)]
     assert len(results) == workers
     assert all(r["id"] is not None for r in results)
-    persisted = store.list_all(ENTITY)
+    persisted = store.list_all(ENTITY, tenant_id=TENANT)
     assert len(persisted) == workers
     assert {{r["id"] for r in persisted}} == {{r["id"] for r in results}}
 
@@ -908,7 +914,7 @@ def test_wal_and_busy_timeout_after_migrate(isolated_db):
 
 def test_retention_prunes_old_backups(isolated_db):
     upgrade_head()
-    store.save(ENTITY, dict(SAMPLE)) if ENTITY else None
+    store.save(ENTITY, dict(SAMPLE), tenant_id=TENANT) if ENTITY else None
     root = backup.backup_root()
     root.mkdir(parents=True, exist_ok=True)
     for i in range(6):

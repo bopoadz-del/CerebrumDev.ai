@@ -178,7 +178,7 @@ def test_system_brief_and_oneshot_name_the_persist_halt():
     assert PRODUCT_ROUND_TRIP_HALT in contract or "store.save(ENTITY, payload)" in contract
     assert PRODUCT_NO_SUCH_TABLE_HALT in contract
     assert contract in CODING_AGENT_BRIEF
-    assert "store.save(ENTITY, payload)" in _WHOLE_JOB_SYSTEM
+    assert "tenant-scoped save(payload)" in _WHOLE_JOB_SYSTEM
     assert PRODUCT_NO_SUCH_TABLE_HALT in _WHOLE_JOB_SYSTEM
     assert f"[check:{PRODUCT_ROUND_TRIP_CHECK}]" in persist_accept_acceptance_line()
 
@@ -190,23 +190,28 @@ def test_product_probe_and_writer_probe_both_isolate_storage():
     assert "no such table" in BEHAVIOUR_PROBE
 
 
-def test_factory_generate_body_persists_instead_of_no_block_bound():
+def test_factory_generate_body_is_pure_dispatch_not_no_block_bound():
     body = _capability_handler_body("veterinary_care_core", [])
     assert "no_block_bound" not in body
-    assert "_persist_record(payload)" in body
+    assert "_persist_record" not in body
+    assert "store.save" not in body
+    assert 'return {"ok": True, "capability": CAPABILITY_ID}' in body
     module = _handler_module(
         "veterinary_care_core", [], body, "deterministic contract template",
         entity="veterinary_care_core",
     )
-    assert "def _persist_record" in module
-    assert "_store.save(ENTITY, record)" in module
-    assert "from app import store as _store" in module
+    assert "def _persist_record" not in module
+    assert "store.save" not in module
+    assert "from app import store" not in module
+    assert "def handle" in module
 
 
-def test_factory_reuse_body_persists_after_blocks():
+def test_factory_reuse_body_dispatches_after_blocks():
     body = _capability_handler_body("audit", ["audit"])
-    assert "_persist_record(payload)" in body
+    assert "_persist_record" not in body
+    assert "store.save" not in body
     assert "no_block_bound" not in body
+    assert '"results": results' in body
 
 
 def test_templated_route_wraps_save_so_post_does_not_raise():
@@ -401,7 +406,8 @@ def test_emit_factory_grounded_generate_persist_wraps_llm_body(tmp_path):
     text = (tmp_path / "app" / "actions" / "veterinary_care_core.py").read_text(
         encoding="utf-8"
     )
-    assert "_persist_record(" in text
+    assert "_persist_record(" not in text
+    assert "def handle" in text
     assert "coder LLM (factory)" in text
     empty = emit_factory_grounded_generate_persist(
         tmp_path / "empty",
@@ -413,7 +419,8 @@ def test_emit_factory_grounded_generate_persist_wraps_llm_body(tmp_path):
     empty_text = (
         tmp_path / "empty" / "app" / "actions" / "veterinary_care_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in empty_text
+    assert "_persist_record(" not in empty_text
+    assert "def handle" in empty_text
     assert FACTORY_GROUNDED_PERSIST_SOURCE in empty_text
     assert "deterministic contract template" not in empty_text
 

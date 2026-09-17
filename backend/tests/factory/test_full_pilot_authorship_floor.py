@@ -353,6 +353,9 @@ def test_product_package_refuses_thin_store_green_zip(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_thin_floor", "tester")
@@ -381,6 +384,9 @@ def test_product_package_allows_steward_shaped_five(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_steward_floor", "tester")
@@ -408,6 +414,9 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_authored_only", "tester")
@@ -426,7 +435,7 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
         out,
         AcceptanceReport(
             passed=5,
-            total=12,
+            total=13,
             ok=False,
             lines=[
                 AcceptanceLine(name=n, status="PASS" if i < 5 else "FAIL")
@@ -448,7 +457,7 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
     assert pkg.status_code == 409, pkg.text
     detail = pkg.json()["detail"]
     assert "STORE_ACCEPTANCE" in detail
-    assert "5/12" in detail
+    assert "5/13" in detail
 
 
 def _write_required_blueprint(out: Path, cap_ids: tuple[str, ...]) -> None:
@@ -482,6 +491,9 @@ def test_product_package_allows_four_of_four_lettings(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_lettings_floor", "tester")
@@ -509,6 +521,9 @@ def test_product_package_refuses_three_of_four_lettings(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_lettings_thin", "tester")
@@ -622,6 +637,9 @@ def test_product_package_allows_four_of_four_from_session_blueprint_only(
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_lettings_session_bp", "tester")
@@ -654,6 +672,9 @@ def test_product_package_reevaluates_sticky_need_five_failure(tmp_path, monkeypa
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_4591d5cc_sticky", "tester")
@@ -693,6 +714,9 @@ def test_product_get_clears_sticky_need_five_for_platforms_card(tmp_path, monkey
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_4591d5cc_platforms", "tester")
@@ -742,6 +766,9 @@ def test_product_package_sticky_three_of_four_uses_live_need_four(tmp_path, monk
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_lettings_sticky_thin", "tester")
@@ -780,6 +807,9 @@ def test_sticky_four_authored_unknown_n_required_still_need_five(tmp_path, monke
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_unknown_nreq", "tester")
@@ -819,6 +849,9 @@ def test_lettings_draft_writes_residential_lettings_domain(monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_lettings_domain", "tester")
@@ -846,6 +879,9 @@ def test_steward_draft_writes_cerebrum_steward_domain(monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_ANONYMOUS_DEV", "1")
     monkeypatch.delenv("CEREBRUM_DEV_API_KEY", raising=False)
+    # 6.3 zip eligibility requires a recorded CI run id; the local
+    # suite stubs it the way GITHUB_RUN_ID does on the runner.
+    monkeypatch.setenv("FACTORY_CI_RUN_ID", "floor-test-run")
     client = TestClient(app)
 
     create_session("sess_steward_domain", "tester")

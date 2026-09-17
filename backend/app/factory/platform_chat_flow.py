@@ -1,4 +1,4 @@
-"""Chat-driven platform creation flow.
+﻿"""Chat-driven platform creation flow.
 
 Bridges free-text chat messages onto the EXISTING session product state
 machine (routers/session_product.py). No parallel machinery: the same
@@ -10,7 +10,7 @@ Routing contract (this is law, the smoke tests enforce it):
     1. Explicit commands ALWAYS enter the platform flow:
      "/platform <brief>", "new platform <brief>", "platform: <brief>".
     2. Free-text NLP intent ("build me a platform for hotels") enters the
-     platform flow by DEFAULT — factory doctrine: the chat's purpose is
+     platform flow by DEFAULT â€” factory doctrine: the chat's purpose is
      building platforms. Set PLATFORM_CHAT_FLOW_ENABLED=off to keep the
      legacy kit-configurator routing for unauthenticated deployments.
     3. When a factory LLM key is configured, the chat LLM decides the action
@@ -19,7 +19,7 @@ Routing contract (this is law, the smoke tests enforce it):
      offline fallback when the LLM is unset or the call fails.
     4. Approval starts WRITER when a blueprint is pending. continue/resume
      resumes an in-flight or interrupted (non-terminal) run even after the
-     blueprint is already approved — a pending unapproved blueprint is not
+     blueprint is already approved â€” a pending unapproved blueprint is not
      required. After code-phase 5/5 SUCCESS, continue opens a pilot cycle
      on the same workspace (pytest -m pilot + STORE ops), not a new product.
      A RUN_FAILED / rework-exhausted ledger is terminal: same-hash continue
@@ -107,7 +107,7 @@ _APPROVAL_RE = re.compile(
 )
 
 # "continue" / "resume" after takeover. Must NOT require a pending
-# (unapproved) blueprint — that is the live Floor hole: after start_coder
+# (unapproved) blueprint â€” that is the live Floor hole: after start_coder
 # the blueprint is approved and generation is mid-flight or interrupted,
 # and the chat LLM was told start_coder is forbidden.
 _RESUME_RE = re.compile(
@@ -118,7 +118,7 @@ _RESUME_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Floor "run the pilot" after code-phase 5/5. Same workspace — not a new draft.
+# Floor "run the pilot" after code-phase 5/5. Same workspace â€” not a new draft.
 _PILOT_RE = re.compile(
     r"^\s*(?:please\s+)?"
     r"(?:run\s+(?:the\s+)?pilot(?:\s+gate|\s+cycle)?|"
@@ -216,7 +216,7 @@ def has_pending_blueprint(state: Any) -> bool:
 def _blocks_root() -> Optional[Path]:
     """Thin alias for the shared resolver (kept so existing monkeypatches and
     call sites stay valid). See app.factory.blocks_source for the fix history:
-    every generation door — chat AND the HTTP plan/generate routes — must use
+    every generation door â€” chat AND the HTTP plan/generate routes â€” must use
     the same resolution or products differ in fidelity by entry point."""
     return resolve_blocks_root()
 
@@ -263,7 +263,7 @@ def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
         }
     return {
         "id": cap_id,
-        "description": f"{human} capability — generated scaffolding, extend via Factory templates",
+        "description": f"{human} capability â€” generated scaffolding, extend via Factory templates",
         "block_ids": [],
         "strategy_hint": "GENERATE",
         "required": True,
@@ -341,7 +341,7 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
                 "ok": False,
                 "refined": False,
                 "action": action,
-                "summary": "Cannot remove the last capability — a blueprint needs at least one.",
+                "summary": "Cannot remove the last capability â€” a blueprint needs at least one.",
                 "blueprint": pd.blueprint,
             }
 
@@ -442,7 +442,7 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
         )
         pd.intake_blueprint = intake
         plain = render_plain_language(intake)
-    except Exception:  # noqa: BLE001 — draft must still park the product blueprint
+    except Exception:  # noqa: BLE001 â€” draft must still park the product blueprint
         pd.intake_blueprint = None
         plain = ""
 
@@ -485,7 +485,7 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
 
 
 def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, Any]:
-    """Approve is the only Floor event that opens compile → lint → session.
+    """Approve is the only Floor event that opens compile â†’ lint â†’ session.
 
     Spend-gated by construction: a rejected brief never starts generate.
     """
@@ -546,7 +546,7 @@ def _compile_and_lint_approved(state: Any, bp: ProductBlueprint) -> Dict[str, An
 
 
 def _cli_unavailable_reply(pd: Any, exc: BaseException) -> Dict[str, Any]:
-    """Fail-closed named class — coding session never opened, no takeover."""
+    """Fail-closed named class â€” coding session never opened, no takeover."""
     detail = str(exc)
     blocker = getattr(exc, "blocker", NAMED_BLOCKER_CLI)
     pd.last_error = detail
@@ -556,7 +556,7 @@ def _cli_unavailable_reply(pd: Any, exc: BaseException) -> Dict[str, Any]:
         "sse": "error",
         "blocker": blocker,
         "summary": (
-            f"{blocker} — coding session never opened. {detail}"
+            f"{blocker} â€” coding session never opened. {detail}"
         ),
         "blueprint_approved": bool(getattr(pd, "blueprint_approved", False)),
         "stream_delta": False,
@@ -577,12 +577,12 @@ def approve_and_generate(
     Floor LLM called start_coder, ``regex_approve`` when the offline keyword
     path ran. The coding agent still lives only in WRITER.
 
-    Approve is the only event that opens compile → lint → coder session.
+    Approve is the only event that opens compile â†’ lint â†’ coder session.
     A BRIEF_LINT_REJECTED brief never starts generate.
     """
     pd = state.product_design
     if not pd.blueprint:
-        raise ValueError("no blueprint drafted — describe the platform first")
+        raise ValueError("no blueprint drafted â€” describe the platform first")
 
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
@@ -594,7 +594,7 @@ def approve_and_generate(
             "ok": False,
             "sse": "error",
             "summary": (
-                "Brief rejected — coding session never opened. "
+                "Brief rejected â€” coding session never opened. "
                 + pd.last_error
             ),
             "brief_lint": lint.to_dict(),
@@ -616,8 +616,7 @@ def approve_and_generate(
             out,
             blocks_root=_blocks_root(),
             quota_account_id=getattr(state, "user_id", None),
-            tenant_identity=getattr(state, "user_id", None)
-            or getattr(state, "session_id", None),
+            tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
@@ -636,7 +635,7 @@ def approve_and_generate(
         else ""
     )
 
-    # A runner build has STARTED, not finished. Saying "product generated —
+    # A runner build has STARTED, not finished. Saying "product generated â€”
     # download it" here would be a lie the customer discovers as a 409 on the
     # download, so the runner engine gets its own honest message.
     if result.get("engine") == "runner":
@@ -647,7 +646,7 @@ def approve_and_generate(
             expect = (
                 "This is a Store-green run: code cycle, then a pilot cycle "
                 "(pytest -m pilot and WRITER rework) on the same workspace. "
-                "Watch it here — Finished / Download ready unlocks only when "
+                "Watch it here â€” Finished / Download ready unlocks only when "
                 "the platform is pilot-ready."
             )
             takeover = (
@@ -694,7 +693,7 @@ def approve_and_generate(
         reason = next(iter(stubbed.values()))
         summary += (
             f" Note: {len(stubbed)} capability(ies) shipped as honest stubs "
-            f"— the coder could not write them ({names}: {reason})."
+            f"â€” the coder could not write them ({names}: {reason})."
         )
     return {
         "ok": True,
@@ -718,7 +717,7 @@ def has_running_build(state: Any) -> bool:
 
     st = build_status(out)
     # HANDOFF_TO_N3 keeps state=building while N3 polls store-gate. That is
-    # not a live WRITER — Continue / n3-reseed must not be 409'd as "already
+    # not a live WRITER â€” Continue / n3-reseed must not be 409'd as "already
     # in progress" (sess_1ef39fcba8f54dbc AirOps).
     if st.get("n3_waiting") or st.get("honesty") == "HANDOFF_TO_N3" or st.get("outcome") == "HANDOFF_TO_N3":
         return False
@@ -737,7 +736,7 @@ def running_build_reply(state: Any) -> Dict[str, Any]:
     total = st.get("phases_total") or 5
     summary = (
         f"The coding agent has taken over. It is writing {gen.get('product_id')} "
-        f"— {done}/{total} phases ({activity}). Confirmations are already in: "
+        f"â€” {done}/{total} phases ({activity}). Confirmations are already in: "
         "wait for the gates, or watch progress on Your Platforms."
     )
     return {
@@ -808,7 +807,7 @@ def _generation_status(state: Any, output_root: Optional[Path] = None) -> Dict[s
                 from app.factory.blueprint import ProductBlueprint
 
                 blueprint = ProductBlueprint.model_validate(raw_bp)
-            except Exception:  # noqa: BLE001 — dict still has capabilities
+            except Exception:  # noqa: BLE001 â€” dict still has capabilities
                 blueprint = raw_bp
         st = build_status(out, blueprint=blueprint, plan=plan)
         if st.get("state") != "unknown":
@@ -827,7 +826,7 @@ def _ledger_resume_point(state: Any, output_root: Optional[Path] = None) -> Opti
             return None
         point = ledger.resume_point()
         return point.value if point else None
-    except Exception:  # noqa: BLE001 — a torn ledger must not block chat
+    except Exception:  # noqa: BLE001 â€” a torn ledger must not block chat
         return None
 
 
@@ -888,7 +887,7 @@ def is_generation_terminal_failure(
     dead ledger (TESTER still red, rework spent) and the Floor would stay
     CODING AGENT STOPPED. Callers must start a fresh workspace instead.
 
-    ``HANDOFF_TO_N3`` is a ledger note, not this terminal — Continue must
+    ``HANDOFF_TO_N3`` is a ledger note, not this terminal â€” Continue must
     ingest store-gate, not start a fresh WRITER.
     """
     if is_handoff_awaiting_n3(state, output_root):
@@ -913,10 +912,10 @@ def is_generation_resumable(state: Any) -> bool:
 
     Does not require a pending (unapproved) blueprint. After takeover the
     blueprint is approved and the runner workspace / ledger is the resume
-    source — the same-hash path ``POST .../product/generate`` already uses.
+    source â€” the same-hash path ``POST .../product/generate`` already uses.
 
     A RUN_FAILED / rework-exhausted ledger is terminal, not resumable.
-    ``HANDOFF_TO_N3`` is resumable via Continue → store-gate ingest
+    ``HANDOFF_TO_N3`` is resumable via Continue â†’ store-gate ingest
     (not WRITER).
     """
     pd = getattr(state, "product_design", None)
@@ -1040,7 +1039,7 @@ def already_complete_reply(state: Any) -> Dict[str, Any]:
     """Honest answer when continue is typed after a finished run.
 
     Pilot-ready (Store-green) is the only terminal that refuses another
-    coding run. Code-phase 5/5 still has a pilot cycle to open — callers
+    coding run. Code-phase 5/5 still has a pilot cycle to open â€” callers
     should use ``resume_pilot_cycle`` instead of this reply.
     """
     pd = state.product_design
@@ -1185,7 +1184,7 @@ def reseed_and_ingest_n3(
 
     pd = getattr(state, "product_design", None)
     if pd is None or not getattr(pd, "blueprint", None):
-        raise ValueError("no blueprint — draft and approve before n3_reseed")
+        raise ValueError("no blueprint â€” draft and approve before n3_reseed")
 
     bp = ProductBlueprint.model_validate(pd.blueprint)
     out = _generation_output_dir(state, output_root)
@@ -1265,13 +1264,13 @@ def start_fresh_generation(
 ) -> Dict[str, Any]:
     """Start a new auto-pilot cycle on a new workspace after a terminal failure.
 
-    Same blueprint hash is allowed — the previous RUN_FAILED / rework-
+    Same blueprint hash is allowed â€” the previous RUN_FAILED / rework-
     exhausted ledger is not a resume source. The new dir gets a reset
     rework budget so #287 auto-pilot and #288 payload contracts can run.
     """
     pd = state.product_design
     if not pd or not pd.blueprint:
-        raise ValueError("no blueprint drafted — describe the platform first")
+        raise ValueError("no blueprint drafted â€” describe the platform first")
     if is_pilot_ready(state, output_root):
         return already_complete_reply(state)
     if is_handoff_awaiting_n3(state, output_root):
@@ -1317,8 +1316,7 @@ def start_fresh_generation(
             blocks_root=_blocks_root(),
             cycle="code",
             quota_account_id=getattr(state, "user_id", None),
-            tenant_identity=getattr(state, "user_id", None)
-            or getattr(state, "session_id", None),
+            tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
@@ -1342,7 +1340,7 @@ def start_fresh_generation(
     summary = (
         f"Starting a fresh build for {result['product_id']} on a new workspace. "
         "The previous run failed (rework exhausted or gates still red) and "
-        "will not be resumed — the rework budget is reset. This is not a "
+        "will not be resumed â€” the rework budget is reset. This is not a "
         "same-hash resume."
     )
     return {
@@ -1373,12 +1371,12 @@ def resume_generation(
     sees the ledger, skips completed phases, and does not re-CLONER from
     zero when WRITER/TESTER already progressed.
 
-    A terminal RUN_FAILED is not resumed — that path starts a fresh
+    A terminal RUN_FAILED is not resumed â€” that path starts a fresh
     workspace so a dead ledger cannot swallow the request.
     """
     pd = state.product_design
     if not pd.blueprint:
-        raise ValueError("no blueprint drafted — describe the platform first")
+        raise ValueError("no blueprint drafted â€” describe the platform first")
     if is_generation_complete(state):
         return already_complete_reply(state)
     if is_handoff_awaiting_n3(state, output_root):
@@ -1412,7 +1410,7 @@ def resume_generation(
             "ok": True,
             "sse": "info",
             "summary": (
-                f"The coding agent is still writing {bp.product_id} — "
+                f"The coding agent is still writing {bp.product_id} â€” "
                 f"{done}/{total} phases ({activity}). I did not start a second run."
             ),
             "stream_delta": True,
@@ -1429,8 +1427,7 @@ def resume_generation(
             blocks_root=_blocks_root(),
             cycle=_resume_cycle(state, output_root),
             quota_account_id=getattr(state, "user_id", None),
-            tenant_identity=getattr(state, "user_id", None)
-            or getattr(state, "session_id", None),
+            tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:
@@ -1470,7 +1467,7 @@ def resume_generation(
         artifact_bit = f", {written}/{of} artifacts"
     summary = (
         f"Resuming the coding agent for {result['product_id']} from {resume_at} "
-        f"({done}/{total} phases{artifact_bit}). Same blueprint hash — not starting over."
+        f"({done}/{total} phases{artifact_bit}). Same blueprint hash â€” not starting over."
     )
     return {
         "ok": True,
@@ -1499,7 +1496,7 @@ def resume_pilot_cycle(
         return already_complete_reply(state)
     pd = state.product_design
     if not pd or not pd.blueprint:
-        raise ValueError("no blueprint drafted — describe the platform first")
+        raise ValueError("no blueprint drafted â€” describe the platform first")
     bp = ProductBlueprint.model_validate(pd.blueprint)
     pd.blueprint_approved = True
     if not pd.plan:
@@ -1530,8 +1527,7 @@ def resume_pilot_cycle(
             blocks_root=_blocks_root(),
             cycle="pilot",
             quota_account_id=getattr(state, "user_id", None),
-            tenant_identity=getattr(state, "user_id", None)
-            or getattr(state, "session_id", None),
+            tenant_identity=getattr(state, "user_id", None),
             brief=str(getattr(getattr(state, "product_design", None), "brief", "") or "").strip(),
         )
     except CodeCliUnavailable as exc:

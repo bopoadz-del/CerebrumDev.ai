@@ -105,8 +105,8 @@ def _full_repo(root: Path) -> None:
     write_acceptance_report(
         root,
         AcceptanceReport(
-            passed=12,
-            total=12,
+            passed=13,
+            total=13,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),
@@ -372,7 +372,7 @@ def test_http_store_callback_blocks_founding(tmp_path):
 
 
 def test_authorship_only_cannot_claim_store_green(tmp_path):
-    """Mutation: authorship floor is not acceptance. 5/12 refuses Store-green."""
+    """Mutation: authorship floor is not acceptance. 5/13 refuses Store-green."""
     _full_repo(tmp_path)
     from app.factory.build.store_acceptance import (
         ACCEPTANCE_CHECK_NAMES,
@@ -385,7 +385,7 @@ def test_authorship_only_cannot_claim_store_green(tmp_path):
         tmp_path,
         AcceptanceReport(
             passed=5,
-            total=12,
+            total=13,
             ok=False,
             lines=[
                 AcceptanceLine(
@@ -412,4 +412,4 @@ def test_authorship_only_cannot_claim_store_green(tmp_path):
         Level.FOUNDING_CUSTOMER_READY.value,
     }
     assert grade["pilot_ready"] is False
-    assert any("acceptance is 5/12" in b for b in grade["blockers"])
+    assert any("acceptance is 5/13" in b for b in grade["blockers"])

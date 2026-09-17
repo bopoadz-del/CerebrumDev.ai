@@ -124,7 +124,8 @@ def test_dispatch_empty_cli_harvest_emits_generate_persist_not_openrouter(
     persist = (
         tmp_path / "build" / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in persist
+    assert "_persist_record(" not in persist
+    assert "def handle" in persist
     assert FACTORY_GROUNDED_PERSIST_SOURCE in persist
     assert "FACTORY_CODE_CLI" not in persist
     assert "deterministic contract template" not in persist
@@ -227,7 +228,8 @@ def test_event_bus_unkeepable_handle_is_not_never_wrote(tmp_path, monkeypatch):
     persist = (
         tmp_path / "build" / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in persist
+    assert "_persist_record(" not in persist
+    assert "def handle" in persist
     assert FACTORY_GROUNDED_PERSIST_SOURCE in persist
     assert "{'block': 'event_bus', 'input': payload}" not in persist
 
@@ -286,7 +288,8 @@ def test_writer_deepseek_ready_empty_cli_stages_generate_persist(
     handler = (
         out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in handler
+    assert "_persist_record(" not in handler
+    assert "def handle" in handler
     assert FACTORY_GROUNDED_PERSIST_SOURCE in handler
     assert "deterministic contract template" not in handler
     assert "FACTORY_CODE_CLI" not in handler

@@ -1,4 +1,4 @@
-"""Store-green is scripts/acceptance.py k/12 — not authorship, not ok:true."""
+"""Store-green is scripts/acceptance.py k/13 — not authorship, not ok:true."""
 
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ def _kk_output() -> str:
 
 
 def test_harness_defines_twelve_named_checks_authorship_last():
-    assert len(ACCEPTANCE_CHECK_NAMES) >= 12
+    assert len(ACCEPTANCE_CHECK_NAMES) >= 13
     assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
     assert "no_token_401" in ACCEPTANCE_CHECK_NAMES
     script = render_acceptance_script()
@@ -69,13 +69,14 @@ def test_parse_counts_skip_as_satisfied_but_fail_is_not_kk():
             "PASS handler_bodies_distinct — 4",
             "PASS health_fail_closed — 503",
             "PASS openapi_committed — 3.0.3",
+            "PASS cross_tenant_404 — HTTP 404",
             "PASS docker_health_200 — 200",
             "PASS authorship_floor — need≥5",
-            "ACCEPTANCE: 12/12",
+            "ACCEPTANCE: 13/13",
         ]
     )
     report = parse_acceptance_output(text)
-    assert report.passed == 12
+    assert report.passed == 13
     assert report.ok is True
     assert acceptance_is_kk(report)
     rag = next(line for line in report.lines if line.name == "rag_roundtrip_hit")
@@ -94,9 +95,10 @@ def test_parse_does_not_pass_on_ok_true_or_partial():
         "PASS handler_bodies_distinct — 2\n"
         "PASS health_fail_closed — 503\n"
         "FAIL openapi_committed — missing\n"
+        "FAIL cross_tenant_404 — HTTP 200\n"
         "FAIL docker_health_200 — STORE_DOCKER_HEALTH=''\n"
         "PASS authorship_floor — need≥5\n"
-        "ACCEPTANCE: 4/12\n"
+        "ACCEPTANCE: 4/13\n"
     )
     report = parse_acceptance_output(text)
     assert report.passed == 4
@@ -128,13 +130,13 @@ def test_export_blocker_refuses_authorship_only_green(tmp_path):
     blocked = acceptance_export_blocker(status, tmp_path)
     assert blocked is not None
     assert "STORE_ACCEPTANCE" in blocked
-    assert "0/12" in blocked
+    assert "0/13" in blocked
 
     write_acceptance_report(
         tmp_path,
         AcceptanceReport(
-            passed=12,
-            total=12,
+            passed=13,
+            total=13,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),
@@ -169,7 +171,7 @@ def test_store_gate_runs_acceptance_inside_docker_argv(tmp_path):
     assert res.ok, res.detail
     assert any(argv[:2] == ["docker", "build"] for argv in calls)
     assert any("scripts/acceptance.py" in " ".join(argv) for argv in calls)
-    assert "12/12" in res.detail
+    assert "13/13" in res.detail
     assert "acceptance" in GATE_SCOPES["STORE"].lower() or "scripts/acceptance.py" in GATE_SCOPES["STORE"]
 
 
@@ -178,7 +180,7 @@ def test_store_gate_fails_when_image_is_not_kk(tmp_path):
 
     def runner(argv, *, cwd=None, timeout=None):
         if "acceptance.py" in " ".join(argv):
-            return _Proc(1, "FAIL no_token_401 — HTTP 200 ok:False\nACCEPTANCE: 0/12\n")
+            return _Proc(1, "FAIL no_token_401 — HTTP 200 ok:False\nACCEPTANCE: 0/13\n")
         if "-c" in argv:
             return _Proc(0, "200\n")
         return _Proc(0, "ok")
@@ -191,7 +193,7 @@ def test_store_gate_fails_when_image_is_not_kk(tmp_path):
     )
     res = gate_store_acceptance(ctx)
     assert not res.ok
-    assert "0/12" in res.detail
+    assert "0/13" in res.detail
 
 
 def test_store_gate_fails_closed_without_stamp(tmp_path):
@@ -208,24 +210,24 @@ def test_store_gate_fails_closed_without_stamp(tmp_path):
 
 def test_read_report_prefers_workspace_file_over_stale_missing_status(tmp_path):
     stale = {
-        "acceptance": {"missing": True, "passed": 0, "total": 12, "ok": False},
+        "acceptance": {"missing": True, "passed": 0, "total": 13, "ok": False},
         "level_grade": {
-            "acceptance": {"missing": True, "passed": 0, "total": 12, "ok": False},
+            "acceptance": {"missing": True, "passed": 0, "total": 13, "ok": False},
         },
     }
     assert not workspace_acceptance_is_kk(tmp_path, stale)
     write_acceptance_report(
         tmp_path,
         AcceptanceReport(
-            passed=12,
-            total=12,
+            passed=13,
+            total=13,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),
     )
     report = read_acceptance_report(tmp_path, stale)
     assert report.missing is False
-    assert report.passed == 12
+    assert report.passed == 13
     assert workspace_acceptance_is_kk(tmp_path, stale)
     status = {
         "cycle": "pilot",
@@ -237,7 +239,7 @@ def test_read_report_prefers_workspace_file_over_stale_missing_status(tmp_path):
 
 
 def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
-    """Live after a first Store miss: measured 0/12 (not missing) must not hide k/k."""
+    """Live after a first Store miss: measured 0/13 (not missing) must not hide k/k."""
     stale_lines = [
         {"name": n, "status": "FAIL", "detail": "not measured"} for n in ACCEPTANCE_CHECK_NAMES
     ]
@@ -245,7 +247,7 @@ def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
         "acceptance": {
             "missing": False,
             "passed": 0,
-            "total": 12,
+            "total": 13,
             "ok": False,
             "lines": stale_lines,
         },
@@ -253,7 +255,7 @@ def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
             "acceptance": {
                 "missing": False,
                 "passed": 0,
-                "total": 12,
+                "total": 13,
                 "ok": False,
                 "lines": stale_lines,
             },
@@ -263,15 +265,15 @@ def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
     write_acceptance_report(
         tmp_path,
         AcceptanceReport(
-            passed=12,
-            total=12,
+            passed=13,
+            total=13,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),
     )
     report = read_acceptance_report(tmp_path, stale)
     assert report.missing is False
-    assert report.passed == 12
+    assert report.passed == 13
     assert workspace_acceptance_is_kk(tmp_path, stale)
     assert acceptance_export_blocker(
         {
@@ -284,8 +286,8 @@ def test_read_report_prefers_workspace_file_over_stale_measured_zero(tmp_path):
     ) is None
 
 
-def test_store_gate_replaces_live_0_of_12_missing_with_measured_kk(tmp_path):
-    """Live sess_4591d5cc shape: missing 0/12, then Store eval persists 12/12."""
+def test_store_gate_replaces_live_0_of_13_missing_with_measured_kk(tmp_path):
+    """Live sess_4591d5cc shape: missing 0/13, then Store eval persists 13/13."""
     from app.factory.build_jobs import build_status
     from app.factory.build.ledger import BuildLedger, EventKind
     from app.factory.build.level_grade import attach_level_grade
@@ -313,7 +315,7 @@ def test_store_gate_replaces_live_0_of_12_missing_with_measured_kk(tmp_path):
     )
     before = build_status(tmp_path)
     assert before["acceptance"]["passed"] == 0
-    assert before["acceptance"]["total"] == 12
+    assert before["acceptance"]["total"] == 13
     assert acceptance_export_blocker(before, tmp_path) is not None
 
     def runner(argv, *, cwd=None, timeout=None):
@@ -333,17 +335,17 @@ def test_store_gate_replaces_live_0_of_12_missing_with_measured_kk(tmp_path):
     res = gate_store_acceptance(ctx)
     assert res.ok, res.detail
     after = attach_level_grade(dict(before), tmp_path)
-    assert after["acceptance"]["passed"] == 12
+    assert after["acceptance"]["passed"] == 13
     assert after["acceptance"]["ok"] is True
     assert after["acceptance"]["missing"] is not True
     assert acceptance_export_blocker(after, tmp_path) is None
     reread = build_status(tmp_path)
-    assert reread["acceptance"]["passed"] == 12
+    assert reread["acceptance"]["passed"] == 13
     assert acceptance_export_blocker(reread, tmp_path) is None
 
 
 def test_store_gate_persists_kk_over_stale_measured_zero_after_pilot(tmp_path):
-    """Pilot cycle wrote 12/12; a leftover measured 0/12 status must not stick."""
+    """Pilot cycle wrote 13/13; a leftover measured 0/13 status must not stick."""
     from app.factory.build_jobs import build_status
     from app.factory.build.ledger import BuildLedger, EventKind
     from app.factory.build.level_grade import attach_level_grade
@@ -372,7 +374,7 @@ def test_store_gate_persists_kk_over_stale_measured_zero_after_pilot(tmp_path):
     stale_zero = {
         "missing": False,
         "passed": 0,
-        "total": 12,
+        "total": 13,
         "ok": False,
         "lines": [
             {"name": n, "status": "FAIL", "detail": "not measured"}
@@ -410,12 +412,12 @@ def test_store_gate_persists_kk_over_stale_measured_zero_after_pilot(tmp_path):
     res = gate_store_acceptance(ctx)
     assert res.ok, res.detail
     after = attach_level_grade(dict(before), tmp_path)
-    assert after["acceptance"]["passed"] == 12
+    assert after["acceptance"]["passed"] == 13
     assert after["acceptance"]["ok"] is True
     assert after["acceptance"]["missing"] is not True
     assert acceptance_export_blocker(after, tmp_path) is None
     reread = build_status(tmp_path)
-    assert reread["acceptance"]["passed"] == 12
+    assert reread["acceptance"]["passed"] == 13
     assert acceptance_export_blocker(reread, tmp_path) is None
 
 
@@ -460,8 +462,8 @@ def test_store_gate_persists_score_onto_build_status(tmp_path):
         payload={"cycle": "pilot", "pilot_ready": True, "outcome": "SUCCESS"},
     )
     status = build_status(tmp_path)
-    assert status["acceptance"]["passed"] == 12
-    assert status["acceptance"]["total"] == 12
+    assert status["acceptance"]["passed"] == 13
+    assert status["acceptance"]["total"] == 13
     assert status["acceptance"]["ok"] is True
     assert acceptance_export_blocker(status, tmp_path) is None
 

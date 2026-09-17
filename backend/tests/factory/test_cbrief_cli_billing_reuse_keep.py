@@ -134,7 +134,8 @@ def test_writer_empty_gap_billing_fail_allows_product_round_trip(
         ("pet_records_management", FACTORY_GROUNDED_PERSIST_SOURCE),
     ):
         text = (out / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        assert "_persist_record(" in text, cid
+        assert "_persist_record(" not in text, cid
+        assert "def handle" in text, cid
         assert want in text, (cid, want)
         assert "deterministic contract template" not in text
     # CI has no CEREBRUM_BLOCKS_ROOT / CLONER shims, so Store execute()
@@ -208,7 +209,8 @@ def test_writer_nonempty_gaps_billing_fail_stays_fail_closed(tmp_path, monkeypat
     handler = (tmp_path / "gap" / "app" / "actions" / "novel_clinic_ai.py").read_text(
         encoding="utf-8"
     )
-    assert "_persist_record(" in handler
+    assert "_persist_record(" not in handler
+    assert "def handle" in handler
     assert "deterministic contract template" not in handler
     assert "FACTORY_CODE_CLI" not in handler
     assert "pilot_zip" not in str(exc.value).lower()

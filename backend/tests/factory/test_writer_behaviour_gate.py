@@ -93,10 +93,10 @@ def _write_workspace(root: Path, route_body: str) -> None:
         "    root = Path(os.getenv('STORAGE_PATH', './data'))\n"
         "    root.mkdir(parents=True, exist_ok=True)\n"
         "    return root / (entity + '.json')\n\n"
-        "def list_all(entity):\n"
+        "def list_all(entity, tenant_id=None):\n"
         "    p = _f(entity)\n"
         "    return json.loads(p.read_text()) if p.is_file() else []\n\n"
-        "def save(entity, record):\n"
+        "def save(entity, record, tenant_id=None):\n"
         "    rows = list_all(entity)\n"
         "    rows.append(record)\n"
         "    _f(entity).write_text(json.dumps(rows))\n"
@@ -314,6 +314,23 @@ def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
         + _DISHONEST_HANDLER,
         encoding="utf-8",
     )
+    (app / "tenancy.py").write_text(
+        "class TenantRefused(Exception):\n"
+        "    pass\n\n"
+        "class _Tenant:\n"
+        "    def __init__(self, tenant_id):\n"
+        "        self.tenant_id = tenant_id\n"
+        "        self.roles = []\n\n"
+        "TENANT_TOKENS = {'dev-local-token': 'local'}\n\n"
+        "def resolve_tenant(headers):\n"
+        "    auth = (headers or {}).get('authorization', '')\n"
+        "    token = auth[7:].strip() if auth.startswith('Bearer ') else ''\n"
+        "    tid = TENANT_TOKENS.get(token)\n"
+        "    if tid is None:\n"
+        "        raise TenantRefused(token)\n"
+        "    return _Tenant(tid)\n",
+        encoding="utf-8",
+    )
     (app / "kernel_bridge.py").write_text(_render_kernel_bridge(), encoding="utf-8")
     kernel_src = Path(__file__).resolve().parents[2] / "app" / "cerebrum_product_kernel"
     shutil.copytree(kernel_src, app / "cerebrum_product_kernel")
@@ -325,10 +342,13 @@ def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
         "\n"
         "saved = []\n"
         "\n"
-        "async def _route(payload, run_capability, save, CAPABILITY_ID='invoice_management'):\n"
+        "async def _route(payload, run_capability, save, request, CAPABILITY_ID='invoice_management'):\n"
         f"{route_body}\n"
         "\n"
-        "out = asyncio.run(_route({'reference': 'INV-1'}, run_capability, saved.append))\n"
+        "class _Req:\n"
+        "    headers = {'authorization': 'Bearer dev-local-token'}\n"
+        "\n"
+        "out = asyncio.run(_route({'reference': 'INV-1'}, run_capability, saved.append, _Req()))\n"
         "print(out)\n"
         "print('SAVED', saved)\n"
         "assert out.get('ok') is False, out\n"
@@ -574,6 +594,23 @@ def test_kernel_templated_route_with_failing_blocks_does_not_halt_as_schema(tmp_
         "            'error': 'sample payload rejected by block'}\n",
         encoding="utf-8",
     )
+    (app / "tenancy.py").write_text(
+        "class TenantRefused(Exception):\n"
+        "    pass\n\n"
+        "class _Tenant:\n"
+        "    def __init__(self, tenant_id):\n"
+        "        self.tenant_id = tenant_id\n"
+        "        self.roles = []\n\n"
+        "TENANT_TOKENS = {'dev-local-token': 'local'}\n\n"
+        "def resolve_tenant(headers):\n"
+        "    auth = (headers or {}).get('authorization', '')\n"
+        "    token = auth[7:].strip() if auth.startswith('Bearer ') else ''\n"
+        "    tid = TENANT_TOKENS.get(token)\n"
+        "    if tid is None:\n"
+        "        raise TenantRefused(token)\n"
+        "    return _Tenant(tid)\n",
+        encoding="utf-8",
+    )
     (app / "kernel_bridge.py").write_text(_render_kernel_bridge(), encoding="utf-8")
     kernel_src = Path(__file__).resolve().parents[2] / "app" / "cerebrum_product_kernel"
     shutil.copytree(kernel_src, app / "cerebrum_product_kernel")
@@ -581,14 +618,16 @@ def test_kernel_templated_route_with_failing_blocks_does_not_halt_as_schema(tmp_
     route_body = _templated_route_body({"fields": []})
     (app / "routes.py").write_text(
         "from typing import Any, Dict\n"
-        "from fastapi import APIRouter\n"
+        "from fastapi import APIRouter, Request\n"
         "from app import store\n"
-        "from app.kernel_bridge import run_capability\n\n"
+        "from app.kernel_bridge import run_capability\n"
+        "from app.tenancy import resolve_tenant\n\n"
         "router = APIRouter()\n\n"
         '@router.post("/widget_intake")\n'
-        "async def widget_intake_create(payload: Dict[str, Any]) -> Dict[str, Any]:\n"
+        "async def widget_intake_create(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:\n"
         '    CAPABILITY_ID = "widget_intake"\n'
-        "    save = lambda record: store.save(\"widget\", record)\n"
+        "    tenant = resolve_tenant(request.headers)\n"
+        '    save = lambda record: store.save("widget", record, tenant_id=tenant.tenant_id)\n'
         f"{route_body}\n",
         encoding="utf-8",
     )
@@ -955,11 +994,13 @@ def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) ->
         "    result = _action.handle(payload)\n"
         '    if isinstance(result, dict) and result.get("ok") is False:\n'
         "        return result\n"
-        '    saved = store.save("appointment", payload)\n'
+        '    save = lambda record: store.save("appointment", record, tenant_id="local")\n'
+        '    saved = save(payload)\n'
         '    return {"ok": True, "capability": CAPABILITY_ID, "stored": saved}\n\n'
         '@router.get("/end_to_end_appointment_workflow")\n'
         "def appointment_list() -> Dict[str, Any]:\n"
-        '    items = store.list_all("appointment")\n'
+        '    list_all = lambda: store.list_all("appointment", tenant_id="local")\n'
+        '    items = list_all()\n'
         '    return {"items": items, "total": len(items)}\n',
         encoding="utf-8",
     )

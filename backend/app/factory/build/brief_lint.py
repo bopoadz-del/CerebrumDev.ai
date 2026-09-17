@@ -34,7 +34,7 @@ EXECUTABLE_ACCEPTANCE = (
     ("round-trip per capability", "round_trip"),
     ("did not remember a record", "round_trip"),
     ("no such table", "round_trip"),
-    ("store.save(ENTITY, payload)", "round_trip"),
+    ("tenant-scoped save(payload)", "round_trip"),
     ("factory-grounded persist", "round_trip"),
     ("alembic entity", "round_trip"),
     ("writer_behaviour", "writer_behaviour"),
@@ -154,7 +154,7 @@ TEMPLATE_STATIC_NEEDLES = (
     "one-record round-trip",
     "did not remember a record",
     "no such table",
-    "store.save(entity, payload)",
+    "tenant-scoped save(payload)",
     "factory-grounded persist",
     "alembic entity",
     "0001_baseline",
@@ -463,7 +463,7 @@ def lint_brief(
     if missing_persist:
         errors.append(
             "brief dropped PRODUCT one-record persist contract "
-            "(alembic entity / store.save): "
+            "(alembic entity / tenant-scoped save): "
             + ", ".join(missing_persist[:4])
         )
     n_required = None

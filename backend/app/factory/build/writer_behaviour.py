@@ -194,7 +194,7 @@ def _rows(entity):
     green while never having run.
     """
     try:
-        return len(store.list_all(entity))
+        return len(store.list_all(entity, tenant_id="local"))
     except Exception:
         return None
 
@@ -436,7 +436,7 @@ def _check_round_trip(cap_id, cls, body):
             % (cap_id, entity)
         )
         return
-    stored = store.list_all(entity)
+    stored = store.list_all(entity, tenant_id="local")
     if not any(_record_matches(r, body) for r in stored):
         roundtrip_misses.append(
             "%s: %s grew to %d row(s) but none carries a value the POST "

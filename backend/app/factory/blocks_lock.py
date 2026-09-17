@@ -17,7 +17,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 SCHEMA = "factory.blocks.lock.v1"
 STORE_REPO = "https://github.com/bopoadz-del/Cerebrum-Blocks"
@@ -50,16 +50,57 @@ def consumed_block_ids(factory_shelf: Optional[Path] = None) -> list[str]:
     return sorted(load_factory_shelf(factory_shelf))
 
 
+def _tracked_relpaths(source: Path) -> Optional[List[str]]:
+    """Repo-relative posix paths under ``source``, or None when not a git tree.
+
+    The lock must describe the COMMITTED store tree at the recorded sha —
+    untracked working-tree files must never leak into a content hash.
+    """
+    root = Path(source)
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--", "."],
+            cwd=root,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listed.returncode != 0:
+        return None
+    rel = [p for p in listed.stdout.decode("utf-8", "replace").split("\0") if p]
+    # An empty list is meaningful: a git tree whose block dir has no
+    # committed files (e.g. untracked working-tree leftovers). None is
+    # reserved for "not a git tree at all".
+    return rel
+
+
 def block_content_hash(source: Path) -> str:
-    """Stable sha256 of a block directory (path + bytes, skip __pycache__)."""
+    """Stable sha256 of a block directory (path + bytes, skip __pycache__).
+
+    Deterministic across platforms: only git-tracked files count (the
+    lock pins the committed tree at the recorded store sha), files are
+    ordered by posix relative path (WindowsPath sorts
+    case-insensitively, PosixPath case-sensitively), and bytes are
+    normalized CRLF → LF so a core.autocrlf working tree hashes like
+    the LF blobs CI checks out.
+    """
     digest = hashlib.sha256()
     root = Path(source)
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or "__pycache__" in path.parts:
-            continue
-        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+    tracked = _tracked_relpaths(root)
+    if tracked is not None:
+        rels = [p for p in tracked if "__pycache__" not in p.split("/")]
+    else:
+        rels = [
+            p.relative_to(root).as_posix()
+            for p in sorted(root.rglob("*"), key=lambda q: q.relative_to(root).as_posix())
+            if p.is_file() and "__pycache__" not in p.parts
+        ]
+    for rel in sorted(rels):
+        digest.update(rel.encode("utf-8"))
         digest.update(b"\0")
-        digest.update(path.read_bytes())
+        digest.update((root / rel).read_bytes().replace(b"\r\n", b"\n"))
         digest.update(b"\0")
     return "sha256:" + digest.hexdigest()
 
@@ -97,6 +138,15 @@ def _git_head(repo: Path) -> Optional[str]:
 
 def _block_dir_in_store(blocks_root: Path, block_id: str) -> Optional[Path]:
     candidate = Path(blocks_root) / "block_registry" / block_id
+    if not candidate.is_dir():
+        return None
+    tracked = _tracked_relpaths(candidate)
+    if tracked is not None:
+        # The lock must pin the COMMITTED store tree; an untracked
+        # block dir in the working tree is not part of the pinned sha.
+        if any(p in ("block.py", "block.json") for p in tracked):
+            return candidate
+        return None
     if (candidate / "block.py").is_file() or (candidate / "block.json").is_file():
         return candidate
     return None

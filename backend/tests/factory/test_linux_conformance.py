@@ -69,13 +69,15 @@ def test_templated_route_does_not_pass_on_kernel_refusal():
 
     body = _templated_route_body({"fields": []})
     ns: dict = {}
+    # Phase 2 §0.2: the templated body calls run_capability(CAPABILITY_ID,
+    # payload, request) — the probe threads a request stub through.
     exec(
-        "async def _route(payload, run_capability, save, CAPABILITY_ID='cap'):\n" + body,
+        "async def _route(payload, run_capability, save, request=None, CAPABILITY_ID='cap'):\n" + body,
         ns,
     )
     saved = []
 
-    async def refuse(cap, payload):
+    async def refuse(cap, payload, request=None):
         return {"status": "error", "error_message": "block refused"}
 
     out = asyncio.run(ns["_route"]({"n": 1}, refuse, saved.append))
@@ -91,13 +93,15 @@ def test_templated_route_persists_only_after_kernel_success():
 
     body = _templated_route_body({"fields": []})
     ns: dict = {}
+    # Phase 2 §0.2: the templated body calls run_capability(CAPABILITY_ID,
+    # payload, request) — the probe threads a request stub through.
     exec(
-        "async def _route(payload, run_capability, save, CAPABILITY_ID='cap'):\n" + body,
+        "async def _route(payload, run_capability, save, request=None, CAPABILITY_ID='cap'):\n" + body,
         ns,
     )
     saved = []
 
-    async def ok(cap, payload):
+    async def ok(cap, payload, request=None):
         return {"status": "success", "output": {"n": 1}}
 
     out = asyncio.run(ns["_route"]({"n": 1}, ok, saved.append))

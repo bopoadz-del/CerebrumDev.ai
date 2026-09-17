@@ -373,7 +373,7 @@ def test_rollback_drill_is_performed(built, tmp_path):
                 [
                     "from app import store",
                     "saved = store.save('analytics_surface', "
-                    "{'reference': 's11-keep', 'status': 'open', 'quantity': 7})",
+                    "{'reference': 's11-keep', 'status': 'open', 'quantity': 7}, tenant_id='local')",
                     "result = saved",
                 ]
             ),
@@ -404,7 +404,7 @@ def test_rollback_drill_is_performed(built, tmp_path):
             "\n".join(
                 [
                     "from app import store",
-                    f"fetched = store.get('analytics_surface', {row['id']!r})",
+                    f"fetched = store.get('analytics_surface', {row['id']!r}, tenant_id='local')",
                     "result = fetched",
                 ]
             ),
@@ -443,7 +443,7 @@ def test_rollback_drill_is_performed(built, tmp_path):
             "\n".join(
                 [
                     "from app import store",
-                    f"fetched = store.get('analytics_surface', {row['id']!r})",
+                    f"fetched = store.get('analytics_surface', {row['id']!r}, tenant_id='local')",
                     "result = fetched",
                 ]
             ),

@@ -562,9 +562,9 @@ def grounded_event_bus_handler_body(
         'f"{b}: {e}" for b, e in sorted(errors.items())),\n'
         '            "results": results,\n'
         "        }\n"
-        "    stored = _persist_record(payload)\n"
-        '    return {"ok": True, "capability": CAPABILITY_ID, '
-        '"results": results, "stored": stored}'
+        # Phase 2 §0.2: persistence is the ROUTE's job (tenant-scoped
+        # save(payload)); the handler reports dispatch results only.
+        '    return {"ok": True, "capability": CAPABILITY_ID, "results": results}'
     )
 
 

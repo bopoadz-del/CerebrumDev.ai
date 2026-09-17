@@ -498,7 +498,7 @@ def _round_trip_flow(rows, listed, get_status=200, entity="unit"):
 
     class _Store:
         @staticmethod
-        def list_all(name):
+        def list_all(name, tenant_id=None):
             if rows is None:
                 raise RuntimeError("no such table: %s" % name)
             return list(rows)

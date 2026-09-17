@@ -1,4 +1,4 @@
-"""N3 store-gate ingest: 12/12 success, red, timeout, no Continue-into-WRITER."""
+"""N3 store-gate ingest: 13/13 success, red, timeout, no Continue-into-WRITER."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ class StatusOpener:
         self,
         *,
         state: str = "success",
-        description: str = "acceptance.py in Docker 12/12",
+        description: str = "acceptance.py in Docker 13/13",
         statuses=None,
         refs=None,
         commit_sha: str = SHA,
@@ -202,14 +202,14 @@ def test_handoff_is_awaiting_not_terminal(tmp_path):
     assert platform_chat_flow.is_generation_complete(state) is False
 
 
-def test_fetch_store_gate_success_12_12():
+def test_fetch_store_gate_success_13_13():
     target = BuildsTarget(
         owner="bopoadz-del", repo="cerebrum-builds", sha=SHA, branch=BRANCH
     )
     snap = fetch_store_gate_status(target, env=ENV, opener=StatusOpener())
     assert snap.is_12_of_12 is True
     assert snap.state == "success"
-    assert snap.score == "12/12"
+    assert snap.score == "13/13"
 
 
 def test_fetch_store_gate_red_is_not_green():
@@ -220,13 +220,13 @@ def test_fetch_store_gate_red_is_not_green():
         target,
         env=ENV,
         opener=StatusOpener(
-            state="failure", description="acceptance.py in Docker 3/12"
+            state="failure", description="acceptance.py in Docker 3/13"
         ),
     )
     assert snap.is_12_of_12 is False
     assert snap.state == "failure"
     assert snap.pending is False
-    assert snap.score == "3/12"
+    assert snap.score == "3/13"
 
 
 def test_fetch_store_gate_success_wrong_score_fail_closed():
@@ -237,7 +237,7 @@ def test_fetch_store_gate_success_wrong_score_fail_closed():
         target,
         env=ENV,
         opener=StatusOpener(
-            state="success", description="acceptance.py in Docker 11/12"
+            state="success", description="acceptance.py in Docker 11/13"
         ),
     )
     assert snap.state == "success"
@@ -313,7 +313,7 @@ def test_ingest_red_gate_fail_closed(tmp_path):
         wait=False,
         env=ENV,
         opener=StatusOpener(
-            state="failure", description="acceptance.py in Docker 0/12"
+            state="failure", description="acceptance.py in Docker 0/13"
         ),
     )
     assert result.ok is False
@@ -441,9 +441,9 @@ def test_start_runner_build_does_not_fresh_workspace_on_handoff(tmp_path, monkey
 def test_report_maps_n3_floor_aliases():
     raw = {
         "ok": True,
-        "passed": 12,
-        "total": 12,
-        "score": "12/12",
+        "passed": 13,
+        "total": 13,
+        "score": "13/13",
         "lines": [
             {"name": "no_token_401", "status": "PASS", "detail": ""},
             {"name": "missing_field_422", "status": "PASS", "detail": ""},
@@ -455,6 +455,7 @@ def test_report_maps_n3_floor_aliases():
             {"name": "handler_bodies_distinct", "status": "PASS", "detail": ""},
             {"name": "health_fail_closed", "status": "PASS", "detail": ""},
             {"name": "openapi_committed", "status": "PASS", "detail": ""},
+            {"name": "cross_tenant_404", "status": "PASS", "detail": ""},
             {"name": "docker_health_200", "status": "PASS", "detail": ""},
             {"name": "authorship==receipt", "status": "PASS", "detail": ""},
         ],

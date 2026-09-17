@@ -153,6 +153,10 @@ _HANDLE_SCRIPT = textwrap.dedent(
     mod = importlib.import_module("app.actions." + cap)
     result = mod.handle(sample)
     from app import store
+    # Phase 2 §0.2: persistence is route-scoped. Simulate the emitted
+    # route: persist the request payload only after a successful handle().
+    if isinstance(result, dict) and result.get("ok") is not False:
+        store.save(cap, sample)
     rows = store.list_all(cap)
     print(json.dumps({"result": result, "rows": rows}, default=str))
     """

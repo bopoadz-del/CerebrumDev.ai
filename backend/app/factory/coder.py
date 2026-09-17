@@ -1592,9 +1592,9 @@ Rules:
    "input": {"topic": "<str>", "payload": {}, "message": "<str>",
    "channel": "mcp", "tool": "event_bus"}}.
 - PRODUCT one-record round-trip then POSTs that sample and re-reads
-  store.list_all(entity). Every capability must persist via
-  store.save(ENTITY, payload) to the alembic 0001 table (factory-grounded
-  persist). POST raised OperationalError: no such table: <entity> is a
+  store.list_all(entity). Handlers return ok:true; the ROUTE persists via
+  the tenant-scoped save(payload) to the alembic 0001 table — handlers
+  must NOT call store.save directly (they have no tenant, Phase 2 §0.2). POST raised OperationalError: no such table: <entity> is a
   miss. Do not treat a leftover ./data/platform.db as migrated.
 """
 
