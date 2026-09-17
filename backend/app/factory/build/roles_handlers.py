@@ -1944,7 +1944,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
 def _render_main(product_name: str, vertical: str = "") -> str:
     from app.factory.build.deploy import render_main
 
-    return render_main(product_name)
+    # Pass vertical through: the ingestion mount is gated on the
+    # inventory exclusion set (Phase 2 §1).
+    return render_main(product_name, vertical)
 
 
 #: Distributions the factory's own runtime lane declares. Named so the
