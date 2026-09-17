@@ -178,8 +178,9 @@ def persist_accept_rules_text() -> str:
             "- every capability has an alembic 0001 table named spec.entity",
             "  (capability_id with '-' → '_' when the spec omits entity)",
             "- store.COLUMNS and store.save use that same entity",
-            "- handle() persists via store.save(ENTITY, payload) after blocks",
-            "  succeed (GENERATE with no blocks still persists)",
+            "- handle() returns ok:true with its result; persistence is the",
+            "  ROUTE's job (tenant-scoped save(payload)) \u2014 handlers must not",
+            "  call store.save directly: they have no tenant (Phase 2 \u00a70.2)",
             "- the route save(payload) writes the request, not handle()'s envelope",
             "- do not persist to 'records' or a capability id that is not the entity",
             "- do not rely on a leftover ./data/platform.db; PRODUCT isolates",
@@ -225,7 +226,7 @@ def persist_accept_forbidden_lines() -> str:
             "- leaving PRODUCT on a leftover ./data/platform.db stamped at "
             "0001_baseline after the factory rewrote 0001 (upgrade_head no-op)",
             "- execute(block_id, payload) or no_block_bound stubs that never "
-            "store.save(ENTITY, payload) (keyword-fallback audit / dashboard / "
+            "reach the route's tenant-scoped save(payload) (keyword-fallback "
             "{vertical}_core class)",
             "- persist to table=records or to the capability id when spec.entity "
             "is a different name",
@@ -241,8 +242,8 @@ def persist_accept_brief_contract() -> str:
         "PRODUCT one-record round-trip POSTs a schema-sample payload then "
         "re-reads store.list_all(entity) and GET /v1/{capability_id}. A miss "
         f"is {PRODUCT_ROUND_TRIP_HALT!r}. Every capability must persist that "
-        "record to its alembic entity via store.save(ENTITY, payload) "
-        "(factory-grounded persist). "
+        "record to its alembic entity via the ROUTE's tenant-scoped "
+        "save(payload) \u2014 handlers must not persist directly (no tenant). "
         f"POST {PRODUCT_POST_RAISED_HALT} "
         f"OperationalError: {PRODUCT_NO_SUCH_TABLE_HALT}: <entity> is a miss. "
         "WRITER isolates STORAGE_PATH; PRODUCT must too — a leftover "

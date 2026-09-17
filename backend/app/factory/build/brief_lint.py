@@ -34,7 +34,7 @@ EXECUTABLE_ACCEPTANCE = (
     ("round-trip per capability", "round_trip"),
     ("did not remember a record", "round_trip"),
     ("no such table", "round_trip"),
-    ("store.save(ENTITY, payload)", "round_trip"),
+    ("tenant-scoped save(payload)", "round_trip"),
     ("factory-grounded persist", "round_trip"),
     ("alembic entity", "round_trip"),
     ("writer_behaviour", "writer_behaviour"),
