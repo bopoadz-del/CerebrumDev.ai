@@ -492,27 +492,6 @@ def render_tenancy_module() -> str:
     ]
     return "\n".join(lines)
 
-def platform_token() -> str:
-    return (os.environ.get(PLATFORM_TOKEN_ENV) or DEFAULT_PLATFORM_TOKEN).strip()
-
-
-def require_platform_token(request: Request) -> Any:
-    """Resolve the caller's tenant from the presented bearer token.
-
-    Delegates to app.tenancy.resolve_tenant — the single resolution path
-    shared with rag_routes and kernel_bridge. A missing, unknown, or
-    client-named tenant is refused with 401 by name, never mapped to a
-    default.
-    """
-    import app.tenancy as tenancy
-
-    try:
-        return tenancy.resolve_tenant(request.headers)
-    except tenancy.TenantRefused:
-        raise HTTPException(status_code=401, detail="authentication_required")
-
-
-
 
 def render_github_ci() -> str:
     return (
