@@ -154,7 +154,7 @@ TEMPLATE_STATIC_NEEDLES = (
     "one-record round-trip",
     "did not remember a record",
     "no such table",
-    "store.save(entity, payload)",
+    "tenant-scoped save(payload)",
     "factory-grounded persist",
     "alembic entity",
     "0001_baseline",
@@ -463,7 +463,7 @@ def lint_brief(
     if missing_persist:
         errors.append(
             "brief dropped PRODUCT one-record persist contract "
-            "(alembic entity / store.save): "
+            "(alembic entity / tenant-scoped save): "
             + ", ".join(missing_persist[:4])
         )
     n_required = None

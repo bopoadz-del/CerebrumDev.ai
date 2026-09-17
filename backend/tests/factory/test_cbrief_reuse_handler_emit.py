@@ -211,7 +211,7 @@ def test_staged_keep_path_commit_copies_reuse_handlers(tmp_path):
     for cid in VETCARE_REUSE_CAPS:
         assert (dest / "app" / "actions" / f"{cid}.py").is_file(), cid
         text = (dest / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        assert "_persist_record(" in text, cid
+        assert "_persist_record(" not in text, cid
         assert "def handle(" in text, cid
 
 
@@ -265,7 +265,8 @@ def test_writer_staged_vetcare_reuse_emits_importable_handlers(
         path = dest / "app" / "actions" / f"{cid}.py"
         assert path.is_file(), cid
         text = path.read_text(encoding="utf-8")
-        assert "_persist_record(" in text, cid
+        assert "_persist_record(" not in text, cid
+        assert "def handle(" in text, cid
         assert "deterministic contract template" not in text
     _assert_handlers_importable(dest)
     _assert_writer_behaviour_posts_without_modulenotfound(dest)

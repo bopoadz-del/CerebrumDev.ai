@@ -113,19 +113,19 @@ def test_schema_change_on_populated_v1_is_performed_and_rolls_back(built, tmp_pa
                 "from app.migrations import current_revision, downgrade, upgrade_head, upgrade_to",
                 f"v1 = upgrade_to({REVISION_0001!r})",
                 "row = store.save('analytics_surface', "
-                "{'reference': 's10-v1', 'status': 'open', 'quantity': 2})",
+                "{'reference': 's10-v1', 'status': 'open', 'quantity': 2}, tenant_id='local')",
                 "conn = store.connect()",
                 "tables_v1 = {r[0] for r in conn.execute("
                 "\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()}",
                 "conn.close()",
                 "v2 = upgrade_head()",
-                "after = store.get('analytics_surface', row['id'])",
+                "after = store.get('analytics_surface', row['id'], tenant_id='local')",
                 "conn = store.connect()",
                 "tables_v2 = {r[0] for r in conn.execute("
                 "\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()}",
                 "conn.close()",
                 f"back = downgrade({REVISION_0001!r})",
-                "rolled = store.get('analytics_surface', row['id'])",
+                "rolled = store.get('analytics_surface', row['id'], tenant_id='local')",
                 "conn = store.connect()",
                 "tables_down = {r[0] for r in conn.execute("
                 "\"SELECT name FROM sqlite_master WHERE type='table'\").fetchall()}",
@@ -165,7 +165,7 @@ def test_restore_drill_is_performed(built, tmp_path):
                 "from app.migrations import upgrade_head",
                 "upgrade_head()",
                 "rows = [store.save('analytics_surface', "
-                "{'reference': f'keep-{i}', 'status': 'open', 'quantity': i}) "
+                "{'reference': f'keep-{i}', 'status': 'open', 'quantity': i}, tenant_id='local') "
                 "for i in range(5)]",
                 "ids = [r['id'] for r in rows]",
                 "archive = backup.create_backup()",
@@ -173,8 +173,8 @@ def test_restore_drill_is_performed(built, tmp_path):
                 "backup.wipe_database()",
                 "wiped = not Path(store.db_path()).exists()",
                 "backup.restore_backup(archive)",
-                "restored = [r['id'] for r in store.list_all('analytics_surface')]",
-                "refs = [r['reference'] for r in store.list_all('analytics_surface')]",
+                "restored = [r['id'] for r in store.list_all('analytics_surface', tenant_id='local')]",
+                "refs = [r['reference'] for r in store.list_all('analytics_surface', tenant_id='local')]",
                 "result = {",
                 "    'ids': ids,",
                 "    'restored': restored,",
@@ -207,11 +207,11 @@ def test_parallel_writes_at_fastapi_threadpool_are_performed(built, tmp_path):
                 "workers = store.FASTAPI_SYNC_THREADPOOL",
                 "def _write(i):",
                 "    return store.save('analytics_surface', "
-                "{'reference': f'p-{i}', 'status': 'open', 'quantity': i})",
+                "{'reference': f'p-{i}', 'status': 'open', 'quantity': i}, tenant_id='local')",
                 "with ThreadPoolExecutor(max_workers=workers) as pool:",
                 "    futs = [pool.submit(_write, i) for i in range(workers)]",
                 "    written = [f.result() for f in as_completed(futs)]",
-                "persisted = store.list_all('analytics_surface')",
+                "persisted = store.list_all('analytics_surface', tenant_id='local')",
                 "conn = store.connect()",
                 "mode = conn.execute('PRAGMA journal_mode').fetchone()[0]",
                 "timeout = conn.execute('PRAGMA busy_timeout').fetchone()[0]",

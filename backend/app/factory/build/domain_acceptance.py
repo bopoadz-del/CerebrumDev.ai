@@ -181,14 +181,16 @@ def enqueue(
     payload: Dict[str, Any],
     *,
     idempotency_key: str | None = None,
+    tenant_id: str,
 ) -> Dict[str, Any]:
     conn = connect()
     try:
         cur = conn.execute(
-            f"INSERT INTO {{TABLE}} (capability_id, payload, status, result, "
-            "idempotency_key) VALUES (?, ?, ?, ?, ?)",
+            f"INSERT INTO {{TABLE}} (capability_id, tenant_id, payload, status, result, "
+            "idempotency_key) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 capability_id,
+                tenant_id,
                 json.dumps(payload, sort_keys=True),
                 PENDING,
                 None,
@@ -602,6 +604,7 @@ async def _handle_enqueue(_context: ActionContext, arguments: Dict[str, Any]) ->
         capability_id,
         payload,
         idempotency_key=arguments.get("idempotency_key"),
+        tenant_id=_context.tenant_id,
     )
     if item.get("status") != work_queue.PENDING:
         return ActionOutcome(
@@ -629,12 +632,31 @@ async def _handle_process(_context: ActionContext, arguments: Dict[str, Any]) ->
             error_message="queue item is not pending",
             output={{"item": item}},
         )
-    from app.kernel_bridge import product_context, spec_for
+    from app.kernel_bridge import spec_for
 
     payload = claimed.get("payload") if isinstance(claimed.get("payload"), dict) else {{}}
+    # Phase 2 §0.2: the queue item carries its own tenant (stored at
+    # enqueue from the authenticated principal). Processing runs the
+    # capability as that tenant -- never as the caller, and never
+    # through the HTTP-only product_context(request) helper.
+    tenant_id = str(claimed.get("tenant_id") or "")
+    if not tenant_id:
+        return ActionOutcome(
+            status=ActionStatus.EXECUTION_ERROR,
+            error_code="tenantless_queue_item",
+            error_message="queue item has no tenant_id",
+        )
+    process_context = ActionContext(
+        user_id=tenant_id,
+        tenant_id=tenant_id,
+        organisation_id=tenant_id,
+        project_id=tenant_id,
+        permissions=[PROCESS_PERMISSION],
+        allowed_domains=["product"],
+    )
     result = await execute_action(
         spec_for(claimed["capability_id"]),
-        product_context(),
+        process_context,
         payload,
     )
     status = (

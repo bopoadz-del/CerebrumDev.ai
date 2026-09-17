@@ -1545,13 +1545,15 @@ def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
     sched = (
         tmp_path / "build" / "app" / "actions" / "appointment_scheduling.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in sched
+    assert "_persist_record(" not in sched
+    assert "def handle" in sched
     assert "event_bus" in sched
     assert "factory-grounded" in sched
     dash = (tmp_path / "build" / "app" / "actions" / "clinic_dashboard.py").read_text(
         encoding="utf-8"
     )
-    assert "_persist_record(" in dash
+    assert "_persist_record(" not in dash
+    assert "def handle" in dash
     assert "FACTORY_BRIEF_HTTP_ONESHOT" not in sched
 
 
@@ -1620,7 +1622,8 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     persist = (
         tmp_path / "build" / "app" / "actions" / "novel_clinic_ai.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in persist
+    assert "_persist_record(" not in persist
+    assert "def handle" in persist
     assert "factory-grounded persist" in persist
     assert "deterministic contract template" not in persist
 

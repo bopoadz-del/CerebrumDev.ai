@@ -199,7 +199,8 @@ def test_writer_generate_gap_billing_lands_factory_llm_handler(tmp_path, monkeyp
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    assert "_persist_record(" in handler
+    assert "_persist_record(" not in handler
+    assert "def handle" in handler
 
 
 def test_writer_mixed_reuse_and_generate_after_billing(tmp_path, monkeypatch):
@@ -244,7 +245,8 @@ def test_writer_mixed_reuse_and_generate_after_billing(tmp_path, monkeypatch):
         encoding="utf-8"
     )
     assert FACTORY_GROUNDED_PERSIST_SOURCE in dash
-    assert "_persist_record(" in dash
+    assert "_persist_record(" not in dash
+    assert "def handle" in dash
     assert "coder LLM (openrouter/free)" in core
     assert '"agent": True' in core
     assert "deterministic contract template" not in core
@@ -263,7 +265,8 @@ def test_writer_mixed_reuse_and_generate_after_billing(tmp_path, monkeypatch):
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    assert "_persist_record(" in core
+    assert "_persist_record(" not in core
+    assert "def handle" in core
 
 
 def test_writer_photograph_vetcare_generate_round_trip_after_billing(
@@ -321,7 +324,8 @@ def test_writer_photograph_vetcare_generate_round_trip_after_billing(
     assert_persist_round_trip_ready(out, specs)
     for cid in KEYWORD_FALLBACK_VETCARE_CAPS:
         text = (out / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        assert "_persist_record(" in text, cid
+        assert "_persist_record(" not in text, cid
+        assert "def handle" in text, cid
     core = (out / "app" / "actions" / "veterinary_care_core.py").read_text(
         encoding="utf-8"
     )
@@ -371,7 +375,8 @@ def test_writer_generate_llm_empty_still_emits_persist_keep_path(
     core = (out / "app" / "actions" / "veterinary_care_core.py").read_text(
         encoding="utf-8"
     )
-    assert "_persist_record(" in core
+    assert "_persist_record(" not in core
+    assert "def handle" in core
     assert FACTORY_GROUNDED_PERSIST_SOURCE in core
     assert "deterministic contract template" not in core
     assert "FACTORY_CODE_CLI" not in core
@@ -445,7 +450,8 @@ def test_writer_staging_leftover_destination_still_emits_generate_persist(
     core = (staging / "app" / "actions" / "veterinary_care_core.py").read_text(
         encoding="utf-8"
     )
-    assert "_persist_record(" in core
+    assert "_persist_record(" not in core
+    assert "def handle" in core
     assert "coder LLM (openrouter/free)" in core
 
 
@@ -512,7 +518,8 @@ def test_writer_sess_336246_alias_llm_key_round_trip_after_billing(
     handler = (
         out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in handler
+    assert "_persist_record(" not in handler
+    assert "def handle" in handler
     assert "coder LLM (openrouter/free)" in handler
     assert '"agent": True' in handler
     assert "deterministic contract template" not in handler
@@ -578,7 +585,8 @@ def test_writer_sess_336246_empty_llm_still_round_trips_after_billing(
     handler = (
         out / "app" / "actions" / "vetcare_hub_veterinary_core.py"
     ).read_text(encoding="utf-8")
-    assert "_persist_record(" in handler
+    assert "_persist_record(" not in handler
+    assert "def handle" in handler
     assert FACTORY_GROUNDED_PERSIST_SOURCE in handler
     assert "deterministic contract template" not in handler
     assert "FACTORY_CODE_CLI" not in handler

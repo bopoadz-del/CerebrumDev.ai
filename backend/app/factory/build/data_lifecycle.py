@@ -615,6 +615,7 @@ def render_revision_0001(specs: Dict[str, Dict[str, Any]]) -> str:
         '        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),'
     )
     upgrade_lines.append('        sa.Column("capability_id", sa.Text(), nullable=False),')
+    upgrade_lines.append('        sa.Column("tenant_id", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("payload", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("status", sa.Text(), nullable=False),')
     upgrade_lines.append('        sa.Column("result", sa.Text(), nullable=True),')

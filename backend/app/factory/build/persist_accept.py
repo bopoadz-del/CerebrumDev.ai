@@ -193,8 +193,8 @@ def persist_accept_rules_text() -> str:
             "or no_block_bound without store.save is not done.",
             "",
             "GENERATE-gap factory-LLM fallthrough (after CLI billing/auth miss):",
-            "- write app/actions/{capability}.py through the same persist",
-            "  envelope as REUSE keep-path (_persist_record / store.save)",
+            "- write app/actions/{capability}.py through the same pure-",
+            "  dispatch envelope as REUSE keep-path (the ROUTE persists)",
             "- alembic 0001 and store.COLUMNS still use spec.entity",
             "- bind factory-LLM keys onto inventory GENERATE ids (exact,",
             "  normalize, unique leftover) so vetcare_hub_veterinary_core",
@@ -259,7 +259,7 @@ def persist_accept_needles() -> Sequence[str]:
         "one-record round-trip",
         PRODUCT_ROUND_TRIP_HALT,
         PRODUCT_NO_SUCH_TABLE_HALT,
-        "store.save(ENTITY, payload)",
+        "tenant-scoped save(payload)",
         "factory-grounded persist",
         "STORAGE_PATH",
         "0001_baseline",
@@ -314,13 +314,18 @@ def persist_handler_rel(capability_id: str) -> Path:
 
 
 def handler_declares_persist(text: str, entity: str) -> bool:
-    """True when the handler body persists to the capability entity."""
+    """True when the handler body persists directly (a Phase 2 §0.2 violation).
+
+    Persistence is route-scoped: the ROUTE's tenant-scoped save(payload)
+    writes the request after ActionStatus.SUCCESS. A handler that still
+    calls _persist_record / store.save / save(payload) has no tenant and
+    must be regenerated through the pure-dispatch envelope.
+    """
     blob = text or ""
     return (
         "_persist_record(" in blob
-        or "store.save(ENTITY" in blob
-        or f'store.save("{entity}"' in blob
-        or f"store.save('{entity}'" in blob
+        or "store.save(" in blob
+        or "save(payload)" in blob
     )
 
 
@@ -377,15 +382,15 @@ def persist_round_trip_errors(
         except OSError as exc:
             errors.append(f"handler {cid} unreadable: {exc}")
             continue
-        if not handler_declares_persist(text, entity):
-            errors.append(
-                f"{cid}: handler does not store.save persist entity {entity}"
-            )
-        wrong = re.findall(r"store\.save\(\s*['\"]([^'\"]+)['\"]", text)
-        for table in wrong:
-            if table not in {entity, "ENTITY"} and table not in _SKIP_ALEMBIC_TABLES:
+        if handler_declares_persist(text, entity):
+            wrong = re.findall(r"store\.save\(\s*['\"]([^'\"]+)['\"]", text)
+            tables = sorted({t for t in wrong if t not in _SKIP_ALEMBIC_TABLES})
+            if not tables:
+                tables = [entity]
+            for table in tables:
                 errors.append(
-                    f"{cid}: persists to {table!r}, alembic entity is {entity!r}"
+                    f"{cid}: handler persists directly to {table!r}; "
+                    f"persistence is route-scoped to entity {entity!r}"
                 )
     return errors
 
@@ -402,8 +407,8 @@ def assert_persist_round_trip_ready(
 
 
 def grounded_persist_assign() -> str:
-    """One line: persist the request to the capability entity."""
-    return "    stored = _persist_record(payload)"
+    """One line: the ROUTE persists the request (tenant-scoped save)."""
+    return "    stored = save(payload)"
 
 
 def emit_factory_grounded_generate_persist(
@@ -417,8 +422,9 @@ def emit_factory_grounded_generate_persist(
 ) -> List[str]:
     """Write persist-capable GENERATE handlers after factory-LLM fallthrough.
 
-    Same ``_handler_module`` / ``_persist_record`` envelope as REUSE
-    keep-path. LLM bodies are remapped onto inventory GENERATE ids and
+    Same ``_handler_module`` pure-dispatch envelope as REUSE keep-path
+    (the ROUTE owns persistence via its tenant-scoped save). LLM bodies are
+    remapped onto inventory GENERATE ids and
     wrapped when present. Empty / mismatched LLM still emits the persist
     envelope (factory-grounded persist) so WRITER ``[check:round_trip]``
     does not HALT for a missing handler — not a deterministic contract
@@ -486,9 +492,10 @@ def emit_factory_grounded_generate_persist(
                 existing = path.read_text(encoding="utf-8")
             except OSError:
                 existing = ""
-            if handler_declares_persist(existing, entity):
-                # Keep a persist-capable handler (WRITER ratchet / sentinel /
-                # leftover LLM wrap). Only fill holes.
+            if not handler_declares_persist(existing, entity):
+                # Keep a pure-dispatch handler (route owns persist). A
+                # leftover direct-persist body has no tenant and is
+                # overwritten with the new envelope. Only fill holes.
                 written.append(cid)
                 continue
         defaults = harvest_block_default_actions(bids, root)

@@ -2486,8 +2486,9 @@ def apply_factory_llm_generate_gaps(
 
     Receipt stays ``ok=false`` with the CLI billing/auth blocker. Not
     ``FACTORY_BRIEF_HTTP_ONESHOT`` and not a ≥2h CLI session. GENERATE
-    handlers are persist-grounded on disk (alembic entity +
-    ``_persist_record``) even when the factory LLM is empty, raises, or
+    handlers are dispatch-grounded on disk (alembic entity + the pure-
+    dispatch envelope; the ROUTE owns tenant-scoped persistence) even when
+    the factory LLM is empty, raises, or
     keys a body under an alias (sess_336246 ``veterinary_care_core`` vs
     ``vetcare_hub_veterinary_core``).
     """

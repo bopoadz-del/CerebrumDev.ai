@@ -1239,14 +1239,12 @@ def _ensure_handler_fails_closed(body: str) -> str:
         "        }\n"
         "    if isinstance(result, dict) and result.get('ok') is False:\n"
         "        return result\n"
-        "    stored = _persist_record(payload)\n"
         "    if isinstance(result, dict):\n"
         "        result = dict(result)\n"
         "        result.setdefault('ok', True)\n"
-        "        result['stored'] = stored\n"
         "        return result\n"
         "    return {'ok': True, 'capability': CAPABILITY_ID, "
-        "'stored': stored, 'result': result}"
+        "'result': result}"
     )
 
 
@@ -1331,6 +1329,10 @@ def _handler_module(
 
 Written by the factory WRITER role ({source}). Blocks are invoked through the
 local dispatch runtime -- this module makes no network call.
+
+Persistence is route-scoped (factory-grounded persist envelope): the ROUTE's
+tenant-scoped save writes the request after SUCCESS; handle() is pure
+dispatch and must not persist directly (Phase 2 §0.2).
 """
 
 from __future__ import annotations
@@ -1350,21 +1352,6 @@ BLOCK_DEFAULT_ACTIONS = {dict(default_actions or {})!r}
 #: is the obvious one for construction) would be deleted before handle() ever
 #: saw it. Declaring the names here tells the kernel they are domain data.
 CAPABILITY_FIELDS = {list(field_names or [])!r}
-
-
-def _persist_record(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Factory-grounded one-record persist. PRODUCT re-reads this entity.
-
-    Store is imported here, not at module load: isolated contract probes
-    exec this file against the factory ``app`` package (no product
-    ``app.store``). A generated workspace still has ``app/store.py``.
-    """
-    record = dict(payload) if isinstance(payload, dict) else {{}}
-    try:
-        from app import store as _store
-    except ImportError:
-        return record
-    return _store.save(ENTITY, record)
 
 
 def handle(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -1418,11 +1405,9 @@ def _capability_handler_body(
 
 def _templated_body(block_ids: Sequence[str]) -> str:
     if not block_ids:
-        return (
-            "    stored = _persist_record(payload)\n"
-            '    return {"ok": True, "capability": CAPABILITY_ID, '
-            '"stored": stored}'
-        )
+        # Phase 2 §0.2: handlers are pure dispatch. The ROUTE persists the
+        # request via its tenant-scoped save(payload) after SUCCESS.
+        return '    return {"ok": True, "capability": CAPABILITY_ID}'
     # Domain JSON is not block-acceptable JSON. prepare_block_input (invoked
     # inside the fail-closed execute wrapper, and explicitly here so the
     # template documents the contract) builds channel/message, steps, team
@@ -1450,9 +1435,9 @@ def _templated_body(block_ids: Sequence[str]) -> str:
         '            "error": "; ".join(f"{b}: {e}" for b, e in sorted(errors.items())),\n'
         '            "results": results,\n'
         "        }\n"
-        "    stored = _persist_record(payload)\n"
-        '    return {"ok": True, "capability": CAPABILITY_ID, '
-        '"results": results, "stored": stored}'
+        # Phase 2 §0.2: persistence is the ROUTE's job (tenant-scoped
+        # save(payload)); the handler reports dispatch results only.
+        '    return {"ok": True, "capability": CAPABILITY_ID, "results": results}'
     )
 
 
@@ -3419,10 +3404,11 @@ def run_writer(
                 )
             ):
                 authored = None
-            elif "_persist_record(" not in kept_text and "store.save(" not in kept_text:
-                # Live keyword-fallback audit/dashboard/{vertical}_core:
-                # keepable CLI stubs executed blocks but never persisted,
-                # then PRODUCT raised no such table / remembered nothing.
+            elif "_persist_record(" in kept_text or "store.save(" in kept_text or "save(payload)" in kept_text:
+                # Phase 2 §0.2: persistence is route-scoped. A keepable CLI
+                # handler that still persists directly collides with the
+                # tenant-required store signature (handler has no tenant);
+                # regenerate the pure-dispatch envelope.
                 authored = None
             else:
                 # FACTORY_CODE_CLI / oneshot harvest already wrote a PREPARED

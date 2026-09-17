@@ -1,151 +1,151 @@
 {
   "blocks": {
     "analytics": {
-      "content_hash": "sha256:9e32f35a3cc485bd8805db453d42069138bd9bd77fdb2b55af7807be01ceeb44",
+      "content_hash": "sha256:0756d0d98d8b4556984fe5d69a88926083e513c748a74a11d80871ce8106ccd6",
       "id": "analytics",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "audit": {
-      "content_hash": "sha256:cb7874c89d6a7d99058d3a97a8741d2a7959fd6b164464eaccfd4001aa52da68",
+      "content_hash": "sha256:0ea8f90f9acd05e60b3e6560f3022e9a7bd12064d6762627163698446b5d0379",
       "id": "audit",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "capture": {
-      "content_hash": "sha256:2ed2292d2846b85d6e3845b4e7fee830c119e878b6b7fe2323392e711026e0cf",
+      "content_hash": "sha256:8176ba0e6f007387687bc8facb3a91eed87141d0de9d0b1a257051d5aeee6d55",
       "id": "capture",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "dashboard": {
-      "content_hash": "sha256:9ba3c4f4fccf3edb294b3baba04119c0848bcdf5037c8f33dbe75af7b85d044b",
+      "content_hash": "sha256:7e81da129807f7847893fb6c659f7829b82ceaad5a4cb6b00c38fb95ec947b57",
       "id": "dashboard",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "database": {
-      "content_hash": "sha256:e6e7febab1244eb897e039dc2d5f8bc72d709ae2aa5c83e5c15ac099f7ba1e79",
+      "content_hash": "sha256:a5fb952e74cc6aad89c4882d959e061ce77dcb970b1d8470927fff79d6209648",
       "id": "database",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "document_engine": {
-      "content_hash": "sha256:82d9b6c20912fb4e1e7372921a3c5ad03741304a67877c7de2099d4f752a8ce1",
+      "content_hash": "sha256:7cce6196254fa1892016bfb0834d34e84d36a1a78e4e777e0f7787f20dacb892",
       "id": "document_engine",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "estate_maintenance": {
-      "content_hash": "sha256:05e93faf4aa313d1802ea7adbecec8a98d5eebc59ea8c17f47194381b727597a",
+      "content_hash": "sha256:099874c0394d46a4522922e1b333b2bcc2ab3944dab3da70cfa844fa05de47a5",
       "id": "estate_maintenance",
-      "source": "factory-vendor-mirror",
+      "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "estate_registry": {
-      "content_hash": "sha256:51a10b356889a7c588530c7d597af02fdeb277e43db35904deb6679586b9bfd9",
+      "content_hash": "sha256:ea58a051943b47497ca76f42056d512423271252e55c5b418ab1a58178cc7958",
       "id": "estate_registry",
-      "source": "factory-vendor-mirror",
+      "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "event_bus": {
-      "content_hash": "sha256:142973f88255895731898d5dffe12c7f3d35f4f5048be313472461e143f0c357",
+      "content_hash": "sha256:7237b02363b8dc663d56f6d7f76f4d53f1157719b2f02178099a7cb17f2d5882",
       "id": "event_bus",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "evidence_verifier": {
-      "content_hash": "sha256:dff2d59de0c5fd1a20ccb6b0ac36d70e60323af2614ca7f363e52628884f47af",
+      "content_hash": "sha256:e988bfcc6a71905f957a83dd49dbf832a7705ff4c1f38a1fef3ea6080e6dcf56",
       "id": "evidence_verifier",
-      "source": "factory-vendor-mirror",
+      "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "file_hasher": {
-      "content_hash": "sha256:dbdd9bb16c7aa746af2f48734504f87ebdf10805f90b64b508e63ae04be2d7a6",
+      "content_hash": "sha256:0f628b5b21ab7705c1db2088122d8901594911d3458bc7dd541f8c2679c17695",
       "id": "file_hasher",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "formula_executor": {
-      "content_hash": "sha256:b719b8d0701f9780cd932fe6c05621885166c10bc958d9ac5b5a3387d29e9492",
+      "content_hash": "sha256:10733090c96b5e464ad168110f38a2a3d06e735327238dabc46e0139a9a06440",
       "id": "formula_executor",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "knowledge": {
-      "content_hash": "sha256:6b6fdd5c38440281a01aa199d22a1bfbdeedb28f002b62713df19daa82b17830",
+      "content_hash": "sha256:10e6bd3c05e49b6cdee362593dd28c154eec7beee5218cf81e227f412d354306",
       "id": "knowledge",
       "source": "cerebrum-blocks",
       "version": "2.0.0"
     },
     "memory": {
-      "content_hash": "sha256:944c32ecde782ba3237602ed9bb1c9fef9d7dd3ead9a23893e6848d598880402",
+      "content_hash": "sha256:77155d21ed8697eb73344dd9b5bbc62c76a0579bb2ce7d2bc4d0d9ac45b83756",
       "id": "memory",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "notification": {
-      "content_hash": "sha256:d2789907a07da9e633aaf9226e4947ad0895eba4019b088fa8fd41e4e3872f3c",
+      "content_hash": "sha256:60284cacc1ece3288eac186037f362129fe90c242cc98a05feb91f1a8315c455",
       "id": "notification",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "portfolio_rollup": {
-      "content_hash": "sha256:7d96a0002fbe7abb8ee023fc1a87735b9164c3c83a2b3636a63b484b1fe32b24",
+      "content_hash": "sha256:213290f2ba7b28651c6ad2cefd34f06c6a35a2700125e380c85da455b594f4d4",
       "id": "portfolio_rollup",
-      "source": "factory-vendor-mirror",
+      "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "queue": {
-      "content_hash": "sha256:8ee99176752045d1e77bdc18d908962b2af78d082e710b6a28b03cf47bb22043",
+      "content_hash": "sha256:a766fb6b08a1af2d5616f2cf4f45cd1690e0601081c0f515e776a64059612a87",
       "id": "queue",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "readiness_engine": {
-      "content_hash": "sha256:b6d37c168f2773db713e785c4f4dab69d6ce1f7925bb39699e74fe03d9c8dab8",
+      "content_hash": "sha256:d3d648aaea6f4547ade4c4160ecba54bcd6e6c1596527b4fc22ac8d941c0d3d0",
       "id": "readiness_engine",
-      "source": "factory-vendor-mirror",
+      "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "recommendation_template": {
-      "content_hash": "sha256:7f083391255c89f15b3a30e20d95c3f19fc3668f9811eecfbdb22469927b6a7f",
+      "content_hash": "sha256:f7b69b829374ca8c1161e2a8362f70ac3153abdec98519f392791857fa200a3c",
       "id": "recommendation_template",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "spec_analyzer": {
-      "content_hash": "sha256:f61844798ee8d5678a50250fe59710944a7dbd2b2d9550205282d7b779c74d4e",
+      "content_hash": "sha256:5bc03ddc5c0bdcf20ca9c5edb36dd1782b0579a6b7f8e8e88373debae6689728",
       "id": "spec_analyzer",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "storage": {
-      "content_hash": "sha256:e54cefab329958353fd9c7e6768e99af5cb9199dce4054c8c8d70a7d213eecfe",
+      "content_hash": "sha256:2efccfd28d0fe39d0bb1096f406dc7e624004291a73ecfe49422dfb4b7b08100",
       "id": "storage",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "team": {
-      "content_hash": "sha256:690166bee50d3002d71013962bd8884ca620668565e64f4e3402d486b1295e33",
+      "content_hash": "sha256:d66e6b8efa4dabffcca9c6a07930f14249b496e3c2d63a97c84536ef7d37ec95",
       "id": "team",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
     "validation": {
-      "content_hash": "sha256:a5cad0ccc3be339c72e92279d53d2cc4040eb8baf507f43b3e1445c466422820",
+      "content_hash": "sha256:824554b366c1fee540567cbea34ee0b8bc7e3d07881f4509fab68ba1e14998c6",
       "id": "validation",
       "source": "cerebrum-blocks",
       "version": "1.1.0"
     },
     "vector_search": {
-      "content_hash": "sha256:0a57443a9fdde6ed8b69fd736d6f30362fee4d38929c84b6efbbd6cbc6da9c49",
+      "content_hash": "sha256:bd06ec41dba9b95f136959565e14dcb7588a0a733af1c361e02595d696841d32",
       "id": "vector_search",
       "source": "cerebrum-blocks",
       "version": "2.0"
     },
     "workflow": {
-      "content_hash": "sha256:5cd2a3b68b652c0c32a872df433f2fc653da454ef11e71b411bf0e5770a2d080",
+      "content_hash": "sha256:a6929374903c1050f494bf3ae03883f0d681eb12ec9c738fa29ef6d4898f192d",
       "id": "workflow",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
@@ -154,6 +154,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "a372e769e05e47dc4dbc274f7d83eebf29a836f1"
+    "sha": "a198eba6655fabc68df06e3fab4f9c8089065b50"
   }
 }
