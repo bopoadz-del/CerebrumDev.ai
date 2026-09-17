@@ -1941,7 +1941,7 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
     return "\n".join(out)
 
 
-def _render_main(product_name: str) -> str:
+def _render_main(product_name: str, vertical: str = "") -> str:
     from app.factory.build.deploy import render_main
 
     return render_main(product_name)
@@ -3834,7 +3834,8 @@ def run_writer(
 
     # --- run scaffold ------------------------------------------------------
     product_name = getattr(ctx.blueprint, "product_name", "Generated Platform")
-    ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name))
+    vertical = getattr(ctx.blueprint, "vertical", "")
+    ctx.workspace.write_text(Path("app") / "main.py", _render_main(product_name, vertical))
     # Platform preconditions as CODE, not as prose in a coder prompt (R1c).
     # The prompt told every handler to create the team first; on
     # residential-lettings three of four did not, and the one that used the
