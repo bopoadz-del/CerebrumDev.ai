@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from app.factory.build.authority import BuildRole
@@ -527,3 +528,84 @@ def test_openapi_render_is_openapi3_with_health(tmp_path):
     assert '"openapi": "3.0.3"' in text
     assert "/health" in text
     assert "/v1/estate_registry" in text
+
+
+class _EchoResp:
+    """Simulates an endpoint that echoes its own request instead of doing
+    real retrieval -- exactly the live failure mode found in a generated
+    product (app/rag_routes.py's response always carries "query": query).
+    """
+
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    @property
+    def text(self):
+        return json.dumps(self._payload)
+
+
+class _EchoOnlyHttp:
+    """No corpus, no retrieval -- every /rag/ingest 200s, every /rag/query
+    just echoes the request fields back verbatim, the way a naive or
+    disconnected RAG stub would. A correct check must FAIL against this.
+    """
+
+    def request(self, method, path, json=None, headers=None, **_kw):
+        body = json or {}
+        if path in ("/v1/rag/ingest", "/v1/steward/rag/ingest"):
+            return _EchoResp(200, {"ok": True})
+        if path in ("/v1/rag/query", "/v1/steward/rag/query"):
+            return _EchoResp(200, {"ok": True, "query": body.get("query"), "hits": []})
+        return _EchoResp(404, {})
+
+
+class _RealRetrievalHttp:
+    """A genuine plant->retrieve implementation: only the planted nonce
+    comes back as a hit; an unplanted nonce never does. A correct check
+    must PASS against this.
+    """
+
+    def __init__(self):
+        self.corpus = []
+
+    def request(self, method, path, json=None, headers=None, **_kw):
+        body = json or {}
+        if path == "/v1/rag/ingest":
+            self.corpus.append(body.get("text", ""))
+            return _EchoResp(200, {"ok": True})
+        if path == "/v1/rag/query":
+            q = str(body.get("query") or "")
+            hits = [doc for doc in self.corpus if q and q in doc]
+            return _EchoResp(200, {"ok": True, "hits": hits})
+        return _EchoResp(404, {})
+
+
+def _load_check_rag_roundtrip_hit(tmp_path):
+    script = render_acceptance_script()
+    ns: dict = {"__file__": str(tmp_path / "scripts" / "acceptance.py"), "__name__": "acceptance_under_test"}
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    exec(compile(script, "acceptance.py", "exec"), ns)
+    return ns["check_rag_roundtrip_hit"], ns
+
+
+def test_rag_roundtrip_hit_fails_closed_against_an_echo_only_stub(tmp_path):
+    """The check the owner and an audit fork both found vacuous: it must not
+    be satisfiable by an endpoint that merely echoes its own request. This
+    executes the check AS RENDERED (not a hand-copied duplicate), so it can
+    never silently drift from what every generated product actually ships.
+    """
+    check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
+    ns["_has_rag_surface"] = lambda: True
+    status, detail = check_fn(_EchoOnlyHttp())
+    assert status == "FAIL", f"echo-only stub must not pass rag_roundtrip_hit, got: {status} {detail}"
+
+
+def test_rag_roundtrip_hit_passes_against_real_retrieval(tmp_path):
+    check_fn, ns = _load_check_rag_roundtrip_hit(tmp_path)
+    ns["_has_rag_surface"] = lambda: True
+    status, detail = check_fn(_RealRetrievalHttp())
+    assert status == "PASS", f"genuine plant->retrieve must pass, got: {status} {detail}"
