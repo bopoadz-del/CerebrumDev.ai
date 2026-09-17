@@ -730,7 +730,16 @@ def check_ui_served_200(http: _Http) -> Tuple[str, str]:
 def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     if not _has_rag_surface():
         return "SKIP", "no-rag-surface"
-    marker = "ACCEPTANCE-PLANT-%s copper kettle ordinance" % uuid.uuid4().hex[:8]
+    # The nonce identifies the planted content and MUST NEVER be sent as part
+    # of the query request itself -- a prior version queried the exact phrase
+    # it POSTed (and even resent the planted "text" in the query body), so any
+    # endpoint that echoed its own request back (idiomatic REST design, not a
+    # bug) satisfied this check regardless of whether retrieval ran at all.
+    # A second, never-planted nonce is the negative control: a query for it
+    # must come back EMPTY, or the "hit" mechanism is proven to be an echo.
+    nonce = uuid.uuid4().hex[:12]
+    absent_nonce = uuid.uuid4().hex[:12]
+    marker = "ACCEPTANCE-PLANT-%s the reorder threshold procedure" % nonce
     ingest_paths = (
         "/v1/rag/ingest",
         "/v1/steward/rag/ingest",
@@ -742,7 +751,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
         resp = http.request(
             "post",
             path,
-            json={{"text": marker, "content": marker, "paragraph": marker, "query": marker}},
+            json={{"text": marker, "content": marker, "paragraph": marker}},
             headers=_auth(),
         )
         if resp.status_code in (200, 201, 202):
@@ -756,30 +765,46 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
         "/v1/rag/dual",
         "/v1/dual_rag_sop",
     )
-    for path in query_paths:
-        resp = http.request(
-            "post",
-            path,
-            json={{"q": "copper kettle ordinance", "query": "copper kettle ordinance", "text": marker}},
-            headers=_auth(),
-        )
+
+    def _content_hit(resp: Any, needle: str) -> bool:
+        # Only fields that are supposed to carry RETRIEVED content count --
+        # never the raw response text (which can just be a request echo) and
+        # never a field named "query"/"q" (which IS the request echoed back).
         if resp.status_code != 200:
-            continue
-        blob = (getattr(resp, "text", "") or "").lower()
-        if "copper kettle" in blob or marker.lower() in blob:
-            return "PASS", "plant+query hit via %s" % path
+            return False
         try:
             data = resp.json()
         except Exception:
-            data = {{}}
-        hits = []
-        if isinstance(data, dict):
-            for key in ("hits", "results", "items", "matches", "chunks"):
-                val = data.get(key)
-                if isinstance(val, list) and val:
-                    hits = val
-        if hits:
-            return "PASS", "plant+query returned %d hit(s) via %s" % (len(hits), path)
+            return False
+        if not isinstance(data, dict):
+            return False
+        for key in ("hits", "results", "items", "matches", "chunks", "answer", "citations"):
+            val = data.get(key)
+            if val is None:
+                continue
+            if needle in json.dumps(val).lower():
+                return True
+        return False
+
+    positive_hit = False
+    negative_leak = False
+    for path in query_paths:
+        pos_resp = http.request(
+            "post", path, json={{"q": marker, "query": marker}}, headers=_auth(),
+        )
+        if _content_hit(pos_resp, nonce.lower()):
+            positive_hit = True
+        neg_resp = http.request(
+            "post", path, json={{"q": absent_nonce, "query": absent_nonce}}, headers=_auth(),
+        )
+        if _content_hit(neg_resp, absent_nonce.lower()):
+            negative_leak = True
+        if positive_hit or negative_leak:
+            break
+    if negative_leak:
+        return "FAIL", "query for a never-planted term still came back as a hit (echo, not retrieval)"
+    if positive_hit:
+        return "PASS", "plant->retrieve round trip confirmed in a content field, not a request echo"
     return "FAIL", "RAG surface present but query missed"
 
 
