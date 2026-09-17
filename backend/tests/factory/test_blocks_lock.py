@@ -141,9 +141,10 @@ def test_generator_refuses_mismatched_store_hash(tmp_path):
 # Live sess_5782f226 CLONER computed this hash from Store pin a372e76 and
 # then died because the production image had no lock file to read. The lock
 # is regenerated against the pinned Store (a198eba6) after each Store change;
-# this constant pins the database block hash for that snapshot.
+# this constant pins the database block hash for that snapshot. The hash is
+# platform-deterministic (posix-path ordering + LF-normalized bytes).
 STEWARD_DATABASE_STORE_HASH = (
-    "sha256:a5fb952e74cc6aad89c4882d959e061ce77dcb970b1d8470927fff79d6209648"
+    "sha256:e6e7febab1244eb897e039dc2d5f8bc72d709ae2aa5c83e5c15ac099f7ba1e79"
 )
 
 

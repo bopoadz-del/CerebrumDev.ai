@@ -1423,12 +1423,11 @@ export default function {component}() {{
         dest = out / "vendor" / "blocks"
         dest.mkdir(parents=True, exist_ok=True)
         mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
-        registry = Path(self.blocks_root) / "block_registry" if self.blocks_root else None
-        from app.factory.blocks_lock import enforce_store_lock
+        from app.factory.blocks_lock import _block_dir_in_store, enforce_store_lock
 
         for bid in self.plan.dual_registered_blocks:
-            src = registry / bid if registry else None
-            if src and src.exists():
+            src = _block_dir_in_store(self.blocks_root, bid) if self.blocks_root else None
+            if src is not None:
                 enforce_store_lock(bid, src, self.blocks_root, self.blocks_lock)
                 shutil.copytree(src, dest / bid, dirs_exist_ok=True)
                 continue

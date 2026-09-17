@@ -277,10 +277,18 @@ def _vendor_mirror_dir(block_id: str) -> Optional[Path]:
 
 
 def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Path]:
-    """Real Store checkout first, factory vendor mirror second."""
+    """Real Store checkout first, factory vendor mirror second.
+
+    A block dir counts as store-sourced only when the pinned store sha
+    actually commits it — untracked working-tree leftovers in the local
+    checkout must not shadow the vendor mirror (Phase 2 §0.2 lock
+    determinism).
+    """
     if blocks_root:
-        candidate = Path(blocks_root) / "block_registry" / block_id
-        if (candidate / "block.py").is_file():
+        from app.factory.blocks_lock import _block_dir_in_store
+
+        candidate = _block_dir_in_store(Path(blocks_root), block_id)
+        if candidate is not None:
             return candidate
     return _vendor_mirror_dir(block_id)
 

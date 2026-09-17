@@ -68,8 +68,18 @@ def _load_registry_dir(registry_dir: Path, source: str) -> Dict[str, BlockRef]:
     out: Dict[str, BlockRef] = {}
     if not registry_dir.exists():
         return out
+    from app.factory.blocks_lock import _tracked_relpaths
+
     for entry in sorted(registry_dir.iterdir()):
         if not entry.is_dir():
+            continue
+        # Tracked-only: an untracked working-tree block dir is not part
+        # of the pinned store sha and must not shadow the vendor mirror
+        # (Phase 2 §0.2 lock determinism).
+        tracked = _tracked_relpaths(entry)
+        if tracked is not None and not any(
+            p in ("block.py", "block.json") for p in tracked
+        ):
             continue
         meta = entry / "block.json"
         if not meta.exists():
