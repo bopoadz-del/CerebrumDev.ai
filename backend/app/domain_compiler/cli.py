@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from .generator import CandidatePackGenerator
-from .publisher import PublishRefusedError, install, package, publish
+from .publisher import install, package, publish
 from .scout import DonorScout, ScoutReport
 from .validator import validate_pack
 

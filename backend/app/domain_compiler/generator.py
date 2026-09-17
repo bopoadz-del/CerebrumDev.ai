@@ -214,8 +214,6 @@ class CandidatePackGenerator:
                         "provenance": prov,
                     }
                 )
-        duplicates = self.detect_duplicates(report)
-        contradictions = self.detect_contradictions(report)
         return {
             "manifest": {
                 "domain_id": self.domain_id,
