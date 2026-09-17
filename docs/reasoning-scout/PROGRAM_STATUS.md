@@ -79,14 +79,21 @@ provenance (donor repo/commit/path/symbol/notes):
   inspection -> deterministic rules -> risk score -> action -> approval
   level -> correct-role approval -> approved transition -> unsupported
   transition refused -> explanation -> XLSX/PDF -> verified audit chain.
-- 17 tests green locally (SQLite); PostgreSQL test runs in CI against
-  postgres:16; Dockerfile + compose + GitHub Actions workflow
-  (`neutral-platform.yml`: kernel suite, E2E SQLite, E2E PostgreSQL,
-  docker build + live smoke). CI evidence: see workflow run history.
+- CI evidence (workflow `neutral-platform`, branch
+  feat/cerebrum-reasoning-kernel):
+  - kernel suite: 54 passed
+  - E2E on SQLite: 17 passed
+  - E2E on PostgreSQL (postgres:16 service): 1 passed — real run, not
+    skipped
+  - docker job: image build + live smoke against postgres:16 (health,
+    login, inspection) — success
+  - first run caught a real defect: flat `neutral_app` imports broke the
+    Docker layout; fixed with package-relative imports (commit 05e8f1a8).
 
-## Phase 8 — IN PROGRESS
+## Phase 8 — DONE
 
-- Final structured report pending CI results (PostgreSQL + Docker runs).
+- Final structured report: `docs/reasoning-scout/FINAL_REPORT.md` and
+  delivered in the session report.
 
 ## Branches (no auto-merge anywhere)
 
