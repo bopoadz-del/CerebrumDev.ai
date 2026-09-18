@@ -3931,12 +3931,6 @@ def run_writer(
     if converged.get("ok"):
         sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
 
-    from app.factory.build.converge import converge_writer_emitters
-
-    converged = converge_writer_emitters(ctx)
-    if converged.get("ok"):
-        sources["emitter_parity"] = "ProductGenerator class emitters (converge)"
-
     from app.factory.build.coder_session import BRIEF_REL
     from app.factory.build.writer_phases import phase_acceptance_errors
 
@@ -4051,6 +4045,23 @@ def run_writer(
         )
         + "\n",
     )
+
+    # The provenance manifest is part of WRITER's contract, not a nicety: the
+    # generated product's own Dockerfile runs scripts/release_gate.py, which
+    # FAILS the image build when docs/build_provenance.json is missing. When
+    # that happened the Store gate reported 0/12 on a platform whose own suite
+    # passed 46 tests -- the gate measuring an absent artifact rather than the
+    # product. Verify the write landed instead of assuming it did; a WRITER
+    # that cannot emit provenance must fail by name here, not ten minutes
+    # later inside Docker with an unattributable 0/12.
+    WRITER_PROVENANCE_MISSING = "writer_provenance_missing"
+    if not ctx.workspace.exists(Path("docs") / "build_provenance.json"):
+        raise RoleError(
+            f"{WRITER_PROVENANCE_MISSING}: docs/build_provenance.json was not "
+            "written to the workspace -- the product image cannot build "
+            "without it (scripts/release_gate.py refuses at Dockerfile:20)"
+        )
+
     from app.factory.build.network_posture import PostureError, assert_workspace_posture
 
     try:
