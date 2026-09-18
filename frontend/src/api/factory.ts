@@ -431,6 +431,13 @@ export type BuildFailure = {
   detail?: string
 }
 
+/** One line of the coding agent's own narration. */
+export interface BuildActivityLine {
+  ts?: string | null
+  role?: string | null
+  text: string
+}
+
 export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled' | 'waiting'
   detail?: string
@@ -469,6 +476,10 @@ export type BuildStatus = {
   delivery_format?: string
   repo_url?: string
   last_event?: string | null
+  /** Tail of the agent's own narration, newest last. The Floor renders
+   *  it as a live log: a single replaced sentence cannot distinguish a
+   *  working agent from a wedged one. */
+  activity_log?: BuildActivityLine[]
   last_event_at?: string | null
   last_event_age_s?: number
   next_phase?: BuildPhaseRef | null

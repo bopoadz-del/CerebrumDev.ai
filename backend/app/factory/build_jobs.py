@@ -72,6 +72,11 @@ _DEEPSEEK_LEFTOVER_WALL_MAX_S = 600.0
 #: ``model_call_in_progress``. Overdue calls use ``_model_call_overdue``.
 _STALL_AFTER_S = 1800.0
 
+#: How many recent activity NOTEs the Floor renders as the live log.
+#: The tail, not the whole ledger: a long build writes hundreds and the
+#: status payload is polled every few seconds.
+_ACTIVITY_LOG_LINES = 15
+
 #: Honesty when a model_call NOTE outlived the worker that wrote it.
 #: sess_05914670d8f34533 (estate-management, tip d4a4029 / #382 deploy)
 #: sat Building / model_call_in_progress for the leftover 7230s wall
@@ -524,11 +529,26 @@ def _phase_trail(
         if entry is None:
             continue
         if kind_name == "PHASE_STARTED":
+            # A re-opened phase starts clean. Carrying the previous round's
+            # failure text forward would render a running phase next to the
+            # sentence that ended its last attempt.
             entry["outcome"] = "running"
             entry["timestamp"] = event.ts
+            entry["reason"] = ""
+            entry["location"] = ""
+            entry["detail"] = ""
         elif kind_name == "GATE_PASSED":
+            # A phase that failed, was reworked and then passed must carry
+            # the PASSING verdict. Leaving the earlier round's reason and
+            # detail in place made the trail read "TESTER passed" beside
+            # "the round-trip check decided nothing, which is not a pass" --
+            # a green phase wearing a red sentence, which is exactly the
+            # shape of report this trail exists to replace.
             entry["outcome"] = "passed"
             entry["timestamp"] = event.ts
+            entry["reason"] = ""
+            entry["location"] = ""
+            entry["detail"] = sanitize_for_status(event.detail) or ""
         elif kind_name in ("GATE_FAILED", "PHASE_ABORTED"):
             payload = event.payload or {}
             entry["outcome"] = "failed" if kind_name == "GATE_FAILED" else "aborted"
@@ -697,6 +717,26 @@ def build_status(
         "last_event_at": last_any.ts if last_any else None,
         "last_event_age_s": round(idle_s, 1),
         "stale": idle_s > _STALE_AFTER_S,
+        # The writer narrates its pass (STEP lines relayed from
+        # docs/writer_progress.log) and every line already lands here as a
+        # NOTE -- but only the newest one used to reach the Floor, so the
+        # operator saw a single sentence replaced every few minutes and
+        # could not tell a working agent from a wedged one. Ship the tail
+        # so the pass reads as a live log. Sanitized like last_event: keys
+        # and auth headers are never rendered (F5).
+        "activity_log": [
+            {
+                "ts": note.ts,
+                "role": (
+                    note.role.value
+                    if getattr(note.role, "value", None)
+                    else str(note.role or "")
+                ),
+                "text": sanitize_for_status(note.detail) or "",
+            }
+            for note in activity_notes[-_ACTIVITY_LOG_LINES:]
+            if sanitize_for_status(note.detail)
+        ],
         **_model_call_fields(calling_note or last_note, worker_live=worker_live),
     }
     if last_note is not None:

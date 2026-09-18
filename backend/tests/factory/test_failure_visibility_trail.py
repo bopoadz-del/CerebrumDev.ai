@@ -211,3 +211,89 @@ class TestRoleFailureShape:
         res = RoleResult(ok=False, detail="nope")
         assert res.reason == ""
         assert res.location == ""
+
+
+class TestReworkedPhaseCarriesItsOwnVerdict:
+    """A phase that failed, was reworked, and then passed reads as passed.
+
+    Observed on a live build: TESTER and STORE_MANAGER both rendered
+    ``outcome: passed`` beside the failure sentence that had re-opened
+    them -- "the round-trip check ran and decided nothing, which is not a
+    pass" sitting next to a green phase. The gates were fail-closed and
+    working; the trail was reporting the wrong round.
+    """
+
+    def test_a_reworked_phase_drops_the_failure_that_reopened_it(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.TESTER,
+            detail=(
+                "PRODUCT (one-record round-trip): no capability was judgeable "
+                "- the round-trip check ran and decided nothing, which is "
+                "not a pass"
+            ),
+            payload={
+                "gate": "product_round_trip",
+                "reason": "round_trip_unjudged",
+                "location": "TESTER",
+            },
+        )
+        # WRITER reworks, TESTER re-opens and passes.
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_PASSED,
+            role=BuildRole.TESTER,
+            detail="PRODUCT: every capability round-tripped a record",
+        )
+
+        trail, _ = _phase_trail(ledger.events())
+        tester = next(row for row in trail if row["phase"] == "TESTER")
+
+        assert tester["outcome"] == "passed"
+        assert tester["reason"] == "", tester
+        assert tester["location"] == "", tester
+        assert "not a pass" not in tester["detail"], tester["detail"]
+        assert "round_trip_unjudged" not in tester["detail"], tester["detail"]
+        assert "round-tripped a record" in tester["detail"], tester["detail"]
+
+    def test_the_first_failure_is_still_reported_after_a_later_pass(self, tmp_path):
+        """Clearing the row must not cost failure visibility."""
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.TESTER,
+            detail="suite is red",
+            payload={"reason": "suite_red", "location": "TESTER"},
+        )
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(EventKind.GATE_PASSED, role=BuildRole.TESTER, detail="suite green")
+
+        trail, failure = _phase_trail(ledger.events())
+
+        assert failure is not None, "the failure that happened must still be reported"
+        assert failure["reason"] == "suite_red"
+        assert failure["phase"] == "TESTER"
+        tester = next(row for row in trail if row["phase"] == "TESTER")
+        assert tester["outcome"] == "passed"
+
+    def test_a_running_phase_does_not_wear_its_previous_failure(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.WRITER,
+            detail="writer_no_output: zero agent-authored artifacts",
+            payload={"reason": "writer_no_output", "location": "WRITER"},
+        )
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+
+        trail, failure = _phase_trail(ledger.events())
+        writer = next(row for row in trail if row["phase"] == "WRITER")
+
+        assert writer["outcome"] == "running"
+        assert writer["reason"] == "", writer
+        assert writer["detail"] == "", writer
+        assert failure is not None and failure["reason"] == "writer_no_output"
