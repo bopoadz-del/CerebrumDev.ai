@@ -132,6 +132,23 @@ for cap_id, cls in MODELS.items():
         # Not this gate's finding: the writer gate judges acceptance.
         continue
     written[cap_id] = entity
+
+# The tenant the writes actually landed under. The route resolves this from
+# the Authorization header (app/tenancy.py), so the read-back MUST use the
+# same value -- a hardcoded tenant reads an empty scope and reports a
+# durability failure against data that persisted perfectly well.
+PROBE_TENANT = ""
+try:
+    from app import tenancy as _tenancy
+
+    PROBE_TENANT = str(
+        _tenancy.resolve_tenant(
+            {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
+        ).tenant_id
+    )
+except Exception:
+    PROBE_TENANT = ""
+
 try:
     client_cm.__exit__(None, None, None)
 except Exception:
@@ -146,7 +163,7 @@ READBACK = (
     "import json, os, sys\n"
     "sys.path.insert(0, os.getcwd())\n"
     "from app import store\n"
-    "TENANT = \"test-tenant\"\n"
+    "TENANT = os.environ.get('PILOT_TENANT') or ''\n"
     "out = {}\n"
     "for cap, ent in json.loads(os.environ['PILOT_ENTITIES']).items():\n"
     "    try:\n"
@@ -159,6 +176,7 @@ READBACK = (
 env = dict(os.environ)
 env["STORAGE_PATH"] = STORAGE
 env["PILOT_ENTITIES"] = json.dumps(written)
+env["PILOT_TENANT"] = PROBE_TENANT
 env["PYTHONUTF8"] = "1"
 env["PYTHONIOENCODING"] = "utf-8"
 
