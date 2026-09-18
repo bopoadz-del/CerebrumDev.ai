@@ -13,7 +13,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 GOLD_PATH = ROOT / "docs" / "REASONING_KERNEL.md"
-GOLD_SHA256 = "d025eb5cebf4efda6d13260a9381f5214ada0d87914134017b0bbc628ce0b359"
+# Re-ratified 2026-09-17 (owner directive, commit bb0247ec): Kimi framing
+# removed, neutral kernel framing + Universal Kernel noted as in place.
+GOLD_SHA256 = "f75d5f532899f5e459e1b485abbe6c96b455c2357a95d8fefd370dd88e1da747"
 
 
 def test_reasoning_kernel_gold_is_immutable():

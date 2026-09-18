@@ -231,9 +231,9 @@ Understand request
 
 That is the actual **Cerebrum reasoning layer**.
 
-# The one Kimi mission prompt
+# The Reasoning Kernel mission
 
-Do not send this while Kimi is still modifying the same repositories for FinanceOps. Use it immediately after the FinanceOps completion report and audit.
+The mission below is the current execution program for the Cerebrum ecosystem.
 
 ```text
 You are the principal domain architect, reasoning-systems engineer, formal-rules engineer, workflow architect and repository archaeologist for the Cerebrum ecosystem.
@@ -776,7 +776,7 @@ Stop only for repository access, destructive operations or genuine domain-author
 
 ## The key correction to our earlier vision
 
-The next platform should not ask Kimi:
+The next platform should not ask the coding agent:
 
 > “Build the domain reasoning.”
 
@@ -788,7 +788,8 @@ Universal Kernel
 + Certified Domain Pack
 ```
 
-Kimi then only configures:
+(The Universal Kernel is already in place across the products.)
+The coding agent then only configures:
 
 * Which modules appear
 * Which roles apply
