@@ -218,27 +218,35 @@ def handoff_awaiting_n3(output_dir: Path | str) -> bool:
         events = ledger.events()
     except Exception:  # noqa: BLE001
         return False
-    saw_handoff = False
-    for event in events:
+    # Judge from the LAST handoff onward, not from the start of the ledger.
+    #
+    # Walking from the beginning meant ANY historical N3_STORE_GATE_FAILED
+    # short-circuited to False forever, so a build could never be re-opened
+    # after one gate failure -- including a failure the gate itself caused.
+    # Live case: a hospitality build sat at a genuine 12/12 on its branch and
+    # could not be ingested, because the poller had recorded a FAILED from a
+    # bogus 0/12 produced by a harness bug that was fixed minutes later.
+    # reseed_handoff_ledger appends a fresh HANDOFF precisely to re-open a
+    # build; the old verdict must not outrank it.
+    last_handoff = -1
+    for i, event in enumerate(events):
+        if _event_honesty(event) == HANDOFF_TO_N3 or _event_outcome(event) == HANDOFF_TO_N3:
+            last_handoff = i
+    if last_handoff < 0:
+        return False
+    # Only events AFTER the newest handoff can settle it.
+    for event in events[last_handoff + 1:]:
         honesty = _event_honesty(event)
         outcome = _event_outcome(event)
-        if honesty == N3_STORE_GATE_GREEN or (
-            event.kind is EventKind.RUN_SUCCEEDED
-            and honesty == N3_STORE_GATE_GREEN
-        ):
-            return False
+        if honesty == N3_STORE_GATE_GREEN:
+            return False          # already ingested green
         if honesty in N3_FAIL_HONESTY:
-            return False
+            return False          # this handoff was already judged and failed
         if honesty == HANDOFF_TO_N3 or outcome == HANDOFF_TO_N3:
-            saw_handoff = True
             continue
         if event.kind is EventKind.RUN_SUCCEEDED:
             return False
-        if event.kind is EventKind.RUN_FAILED and saw_handoff:
-            if honesty == HANDOFF_TO_N3 or outcome == HANDOFF_TO_N3:
-                continue
-            return False
-    return saw_handoff
+    return True
 
 
 def n3_ingest_live(output_dir: Path | str) -> bool:
