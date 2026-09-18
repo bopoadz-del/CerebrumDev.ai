@@ -1266,4 +1266,38 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       'WRITER failed — writer_no_output: zero agent-authored artifacts in the workspace',
     )
   })
+
+  it('streams the coding agent narration as a live log, not one sentence', async () => {
+    // One replaced sentence cannot tell a working agent from a wedged one.
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        phase_index: 3,
+        phase_total: 5,
+        last_event: 'writer: STEP 25: final pass on the staged tree',
+        last_event_age_s: 9,
+        stale: false,
+        activity_log: [
+          { ts: '2026-09-19T10:00:00Z', role: 'WRITER', text: 'writer: STEP 0: inventory read' },
+          { ts: '2026-09-19T10:04:00Z', role: 'WRITER', text: 'writer: STEP 10: rework round 1' },
+          { ts: '2026-09-19T10:09:00Z', role: 'WRITER', text: 'writer: STEP 25: final pass on the staged tree' },
+        ],
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_activity" goPlatforms={() => {}} />)
+
+    const log = await screen.findByTestId('floor-activity-log')
+    // The whole pass is visible, not just the newest line.
+    expect(log).toHaveTextContent('STEP 0: inventory read')
+    expect(log).toHaveTextContent('STEP 10: rework round 1')
+    expect(log).toHaveTextContent('STEP 25: final pass on the staged tree')
+    // The single-line fallback is replaced, not doubled up.
+    expect(screen.queryByText(/^Last: /)).not.toBeInTheDocument()
+  })
 })

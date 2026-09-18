@@ -574,6 +574,47 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .coder-next {
   margin-left: 8px;
 }
+/* The coding agent's live narration. A single replaced sentence could not
+   tell a working agent from a wedged one; this is the tail of its own STEP
+   lines, newest last and highlighted. Scrolls inside itself so a long pass
+   never grows the panel. */
+.coder-activity {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  list-style: none;
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #0a120e;
+  border: 1px solid #1e3328;
+  border-radius: 6px;
+}
+.coder-activity li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dim);
+}
+.coder-activity-role {
+  flex: 0 0 auto;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6f8a78;
+}
+.coder-activity-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.coder-activity-now .coder-activity-text {
+  color: var(--text, #e8efe9);
+}
+
 .coder-session-log {
   margin: 8px 0 0;
   max-height: 220px;

@@ -249,6 +249,9 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
   const counts = formatPhaseCounts(build)
   const heartbeat = formatHeartbeat(build, nowMs)
   const last = build.last_event || build.activity
+  // The agent narrates its own pass; show the tail, not just the newest
+  // sentence, so a working agent is visibly distinct from a wedged one.
+  const activity = build.activity_log ?? []
   const next = build.next_phase?.id
   const fraction = phaseBarFraction(build)
   return (
@@ -273,7 +276,21 @@ function CoderProgress({ build, nowMs }: { build: BuildStatus; nowMs: number }) 
         </div>
       )}
       {counts && <p className="coder-counts">{counts}</p>}
-      {last && <p className="coder-last">Last: {last}</p>}
+      {activity.length > 0 ? (
+        <ol className="coder-activity" data-testid="floor-activity-log">
+          {activity.map((line, i) => (
+            <li
+              key={(line.ts ?? '') + ':' + i}
+              className={i === activity.length - 1 ? 'coder-activity-now' : undefined}
+            >
+              {line.role ? <span className="coder-activity-role">{line.role}</span> : null}
+              <span className="coder-activity-text">{line.text}</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        last && <p className="coder-last">Last: {last}</p>
+      )}
       {heartbeat && <p className="coder-heartbeat">{heartbeat}</p>}
       {(build.coder_log || build.coder_log_present) && (
         <pre className="coder-session-log" data-testid="floor-coder-log">
