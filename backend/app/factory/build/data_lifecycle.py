@@ -840,7 +840,11 @@ def test_schema_change_applies_to_populated_v1_and_rolls_back(isolated_db):
     assert ENTITY in _tables()
     assert AUDIT not in _tables()
 
-    assert upgrade_head() == REV_V2
+    # Upgrade to V2 explicitly, not to head: this test is about the
+    # v1 -> v2 transition over populated data, and pinning the absolute
+    # head would make the product unextendable -- any migration the
+    # agent later authors for its own capability would fail this suite.
+    assert upgrade_to(REV_V2) == REV_V2
     fetched = store.get(ENTITY, saved["id"], tenant_id=TENANT)
     assert fetched is not None, "v1 row did not survive upgrade to v2"
     for key, value in SAMPLE.items():
