@@ -110,7 +110,9 @@ jobs:
         # the default summary, so a platform-guarded test that quietly stops
         # running on the Linux runner would read as coverage it is not
         # providing. Reporting only; it cannot change a result.
-        run: python -m pytest -rs
+        # f as well as s: a red run must NAME its failures in the summary, or the
+        # only way to find them is to read thousands of log lines.
+        run: python -m pytest -rfs
 
       # U2: production enables the coder when a key is set. The job above
       # is ENV=test only; this step is the keyed-path fixture — stub keys,
