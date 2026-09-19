@@ -31,7 +31,12 @@ from app.core.session_store import update_session
 from app.core.trial_limits import require_remaining, require_within_limit
 
 logger = logging.getLogger(__name__)
-from app.factory.build.builds_push import FACTORY_INTERNAL_NAMES
+from app.factory.build.builds_push import (
+    EXPORT_SKIP_DIR_NAMES,
+    EXPORT_SKIP_SUFFIXES,
+    FACTORY_INTERNAL_NAMES,
+    is_exported,
+)
 from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
@@ -212,16 +217,9 @@ def _consume_generation_on_start(account_id: Optional[str]) -> None:
     require_within_limit(account_id, "generation")
 
 
-_EXPORT_SKIP_DIR_NAMES = {
-    "__pycache__",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".venv",
-    "venv",
-    ".git",
-}
-_EXPORT_SKIP_SUFFIXES = {".pyc", ".pyo"}
+# One rule set for the zip and the cerebrum-builds push (builds_push.is_exported).
+_EXPORT_SKIP_DIR_NAMES = EXPORT_SKIP_DIR_NAMES
+_EXPORT_SKIP_SUFFIXES = EXPORT_SKIP_SUFFIXES
 # ZIP spec rejects DOS timestamps before 1980. Copied kit/kernel files in
 # this environment (and some git checkouts) have mtime 0.
 _ZIP_MIN_EPOCH = 315532800  # 1980-01-01 UTC
@@ -278,11 +276,7 @@ def zip_generated_product(out: Path, archive_base: Path) -> Path:
         _maybe_write_prototype_marker(zf, out)
         for path in sorted(out.rglob("*")):
             rel = path.relative_to(out)
-            if any(part in _EXPORT_SKIP_DIR_NAMES for part in rel.parts):
-                continue
-            if any(part in FACTORY_INTERNAL_NAMES for part in rel.parts):
-                continue
-            if path.suffix in _EXPORT_SKIP_SUFFIXES:
+            if not is_exported(rel):
                 continue
             if not path.is_file():
                 continue
