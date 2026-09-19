@@ -33,6 +33,8 @@ __all__ = (
     "full_pilot_authorship_needles",
     "full_pilot_authorship_rules_text",
     "is_action_artifact_id",
+    "action_artifact_id",
+    "action_artifact_ids",
     "n_required_capabilities_from",
     "persist_required_capability_inputs",
     "thin_store_green_export_blocker",
@@ -576,6 +578,42 @@ def is_action_artifact_id(artifact_id: str) -> bool:
     return True
 
 
+#: ``app/actions/<capability>.py`` -- the file spelling of an action-handler
+#: artifact key. Both the factory's own CodeWhale manifest and coding agents
+#: key ``artifact_sources`` this way, but the grader accepted only the bare
+#: capability id, so every path-keyed handler was rejected: live build
+#: sess_617f60024df24a4e went 13/13 with 8 agent-written handlers on disk and
+#: graded action_py=0, which demoted it to a code-cycle prototype.
+_ACTION_HANDLER_PATH_RE = re.compile(r"^app/actions/([A-Za-z_][A-Za-z0-9_]*)\.py$")
+
+
+def action_artifact_id(key: Any) -> Optional[str]:
+    """The capability id an artifact key names, or None if it is no handler.
+
+    Accepts both spellings in use -- the bare capability id
+    (``record_checkin``) and the handler's path
+    (``app/actions/record_checkin.py``). Package plumbing such as
+    ``app/actions/__init__.py`` is not a capability.
+    """
+    text = str(key or "").strip().replace("\\", "/")
+    match = _ACTION_HANDLER_PATH_RE.match(text)
+    if match:
+        text = match.group(1)
+        if text.startswith("__"):
+            return None
+    return text if is_action_artifact_id(text) else None
+
+
+def action_artifact_ids(keys: Iterable[Any]) -> List[str]:
+    """Capability ids of the handler artifacts in *keys*, deduplicated, in order."""
+    ids: List[str] = []
+    for key in keys or ():
+        cid = action_artifact_id(key)
+        if cid and cid not in ids:
+            ids.append(cid)
+    return ids
+
+
 def _as_nonneg_int(value: Any) -> Optional[int]:
     if isinstance(value, bool) or value is None:
         return None
@@ -669,7 +707,7 @@ def full_pilot_authorship_from(
     measured_actions = False
     artifacts = authorship.get("agent_artifacts")
     if isinstance(artifacts, list):
-        action_ids = [cid for cid in _unique_ids(artifacts) if is_action_artifact_id(cid)]
+        action_ids = action_artifact_ids(artifacts)
         measured_actions = True
     explicit_action_py = _as_nonneg_int(authorship.get("action_py"))
     if explicit_action_py is not None and not measured_actions:

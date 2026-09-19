@@ -397,7 +397,7 @@ def _authorship(
     from app.factory.build.authorship import (
         cli_authored_ids_from,
         coding_agent_artifact_ids,
-        is_action_artifact_id,
+        action_artifact_ids,
         kept_handler_ids_from,
         n_required_capabilities_from,
         writer_authorship_counts,
@@ -406,7 +406,7 @@ def _authorship(
     sources = prov.get("artifact_sources") or {}
     counts = writer_authorship_counts(sources)
     agent = coding_agent_artifact_ids(sources)
-    action_ids = [cid for cid in agent if is_action_artifact_id(cid)]
+    action_ids = action_artifact_ids(agent)
     dispatch = prov.get("brief_dispatch") or {}
     cli_ids = cli_authored_ids_from(dispatch)
     failures = prov.get("coder_failures") or {}
