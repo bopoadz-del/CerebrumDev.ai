@@ -3014,6 +3014,24 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             source="factory",
         )
 
+    # Same early return, the other half of the contract: run_writer converges
+    # the ProductGenerator classes (app/agents/manifests, app/workflows,
+    # app/connectors, product-dna, docs/blueprint, docs/provenance,
+    # docs/certification) far below the CodeWhale branch, so production never
+    # ran it and every CodeWhale build graded "missing founding files"
+    # (FinOps, sess_065fc3eac75c4f62). Gaps only: this converge also owns the
+    # frontend tree, and the agent writes its own App.tsx.
+    from app.factory.build.converge import converge_writer_emitters
+
+    converged = converge_writer_emitters(ctx, fill_gaps_only=True)
+    if converged.get("copied"):
+        ctx.note(
+            "founding classes filled by the factory: "
+            + ", ".join(sorted(converged["copied"])[:12]),
+            stage="converge",
+            source="factory",
+        )
+
     # The worker subprocess writes into the staging tree directly, so its
     # files are not in the workspace's tracked ``written`` list — commit()
     # would drop every authored handler (live-factory

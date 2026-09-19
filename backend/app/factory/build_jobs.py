@@ -407,6 +407,13 @@ def _authorship(
     counts = writer_authorship_counts(sources)
     agent = coding_agent_artifact_ids(sources)
     action_ids = action_artifact_ids(agent)
+    # Capability work, counted apart from the factory's own plumbing. The
+    # templated-majority rule compared ALL artifacts, so the substrate the
+    # factory is supposed to write (alembic, authority, block_inputs, the
+    # backfilled lifecycle files) counted against the agent: FinOps
+    # (sess_065fc3eac75c4f62) graded "overwhelmingly templated" at 13 vs 13
+    # with every one of its 8 handlers agent-written.
+    all_action_ids = action_artifact_ids(sources.keys())
     dispatch = prov.get("brief_dispatch") or {}
     cli_ids = cli_authored_ids_from(dispatch)
     failures = prov.get("coder_failures") or {}
@@ -417,6 +424,8 @@ def _authorship(
         **counts,
         "agent_artifacts": agent,
         "action_py": len(action_ids),
+        "action_artifacts": len(all_action_ids),
+        "templated_actions": max(0, len(all_action_ids) - len(action_ids)),
         "cli_authored_ids": list(cli_ids or []),
         "kept_handler_ids": kept_handler_ids_from(dispatch),
         # Named, not counted: "3 stubs" tells the customer nothing about

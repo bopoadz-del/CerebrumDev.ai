@@ -15,7 +15,7 @@ import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.planner import ProductPlan
@@ -86,11 +86,34 @@ def missing_classes(root: Path) -> Tuple[str, ...]:
     return tuple(rel for rel, ok in present_classes(root).items() if not ok)
 
 
-def converge_writer_emitters(ctx: Any) -> Dict[str, Any]:
+def _copy_missing(workspace: Any, src_root: Path, rel_root: str) -> List[str]:
+    """Copy only the files the workspace does not already have."""
+    written: List[str] = []
+    for item in sorted(src_root.rglob("*")):
+        if not item.is_file():
+            continue
+        rel = Path(rel_root) / item.relative_to(src_root)
+        if workspace.exists(rel):
+            continue
+        workspace.copy_file(item, rel)
+        written.append(rel.as_posix())
+    return written
+
+
+def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[str, Any]:
     """Emit the eight dropped classes via ProductGenerator methods.
 
     No-ops on unit-test stubs that are not a real ``ProductBlueprint`` /
     ``ProductPlan`` so ratchet tests keep a narrow workspace.
+
+    ``fill_gaps_only`` writes only what the workspace is missing. The
+    CodeWhale writer authors its own frontend, and this function's
+    ``frontend`` tree would otherwise overwrite the agent's App.tsx with
+    the generator's stub. run_writer reaches its normal (overwriting)
+    call only on the in-process path; production returns at the CodeWhale
+    branch long before it, so every CodeWhale build shipped without
+    app/agents/manifests, app/workflows, app/connectors, product-dna,
+    docs/provenance and docs/certification (FinOps, sess_065fc3eac75c4f62).
     """
     blueprint = getattr(ctx, "blueprint", None)
     plan = getattr(ctx, "plan", None)
@@ -144,12 +167,16 @@ def converge_writer_emitters(ctx: Any) -> Dict[str, Any]:
         workspace = ctx.workspace
         for rel in CONVERGED_TREES:
             src = scratch / rel
-            if src.is_dir():
+            if not src.is_dir():
+                continue
+            if fill_gaps_only:
+                copied.extend(_copy_missing(workspace, src, rel))
+            else:
                 workspace.copy_tree(src, rel)
                 copied.append(rel)
         for rel in CONVERGED_FILES:
             src = scratch / rel
-            if src.is_file():
+            if src.is_file() and not (fill_gaps_only and workspace.exists(rel)):
                 workspace.copy_file(src, rel)
                 copied.append(rel)
 
@@ -169,9 +196,10 @@ def converge_writer_emitters(ctx: Any) -> Dict[str, Any]:
     # two identical builds must byte-match, and coder variance must stay
     # inside app/actions/. The field remains; the value is the input hash.
     prov["generated_at"] = f"blueprint:{inputs_hash}"
-    ctx.workspace.write_text(
-        Path("docs") / "provenance" / "provenance.json",
-        json.dumps(prov, indent=2, sort_keys=True) + "\n",
-    )
-    copied.append("docs/provenance/provenance.json")
+    prov_rel = Path("docs") / "provenance" / "provenance.json"
+    if not (fill_gaps_only and ctx.workspace.exists(prov_rel)):
+        ctx.workspace.write_text(
+            prov_rel, json.dumps(prov, indent=2, sort_keys=True) + "\n"
+        )
+        copied.append("docs/provenance/provenance.json")
     return {"ok": True, "copied": copied, "skipped": ""}
