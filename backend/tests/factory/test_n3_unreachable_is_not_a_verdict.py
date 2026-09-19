@@ -1,0 +1,84 @@
+"""Not being able to ask GitHub is not an answer about the build.
+
+Live 2026-09-19: the Factory's GitHub token was revoked. The boot waiter asked
+for a session's build branch, got "GitHub API down: matching-refs HTTP 401",
+and wrote N3_STORE_GATE_MISSING -- a terminal failure -- on a platform whose
+branch had passed.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.factory.build import n3_store_gate as n3
+from app.factory.build.authority import BuildRole
+from app.factory.build.builds_push import BuildsPushError
+from app.factory.build.ledger import BuildLedger, EventKind
+
+
+def _awaiting(tmp_path):
+    out = tmp_path / "product"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="p", inputs_hash="h")
+    ledger.append(
+        EventKind.NOTE, role=BuildRole.STORE_MANAGER, detail="handed off",
+        payload={"honesty": n3.HANDOFF_TO_N3},
+    )
+    assert n3.handoff_awaiting_n3(out)
+    return out
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "GitHub API down: matching-refs HTTP 401",
+        "GitHub API down: matching-refs HTTP 503",
+        f"{n3.BUILDS_TOKEN_ENV} missing — fail-closed; cannot poll store-gate",
+    ],
+)
+def test_an_unreachable_github_leaves_the_handoff_open(tmp_path, monkeypatch, message):
+    out = _awaiting(tmp_path)
+
+    def boom(*a, **k):
+        raise BuildsPushError(message)
+
+    monkeypatch.setattr(n3, "resolve_builds_target", boom)
+
+    result = n3.ingest_n3_store_gate(out, wait=False)
+
+    assert result.pending is True and result.ok is False
+    assert result.honesty == n3.HANDOFF_TO_N3
+    assert n3.handoff_awaiting_n3(out), "the build must still be waiting, not failed"
+
+
+def test_a_401_on_the_status_read_is_not_a_verdict_either(tmp_path, monkeypatch):
+    out = _awaiting(tmp_path)
+    monkeypatch.setattr(
+        n3, "resolve_builds_target",
+        lambda *a, **k: n3.BuildsTarget(owner="o", repo="r", sha="a" * 40, branch="build/x"),
+    )
+    monkeypatch.setattr(
+        n3, "fetch_store_gate_status",
+        lambda *a, **k: n3.StoreGateSnapshot(missing=True, detail="GitHub statuses HTTP 401"),
+    )
+
+    result = n3.ingest_n3_store_gate(out, wait=False)
+
+    assert result.pending is True
+    assert n3.handoff_awaiting_n3(out)
+
+
+def test_a_session_with_no_build_branch_is_still_a_real_missing(tmp_path, monkeypatch):
+    """GitHub answered; there is nothing there. That IS a verdict."""
+    out = _awaiting(tmp_path)
+
+    def none_there(*a, **k):
+        raise BuildsPushError("N3 store-gate: no build/sess_x-* branch on o/r")
+
+    monkeypatch.setattr(n3, "resolve_builds_target", none_there)
+
+    result = n3.ingest_n3_store_gate(out, wait=False)
+
+    assert result.honesty == n3.N3_STORE_GATE_MISSING
+    assert not n3.handoff_awaiting_n3(out)

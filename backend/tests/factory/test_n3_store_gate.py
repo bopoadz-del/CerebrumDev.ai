@@ -12,7 +12,6 @@ from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.n3_store_gate import (
     N3_STORE_GATE_FAILED,
     N3_STORE_GATE_GREEN,
-    N3_STORE_GATE_MISSING,
     N3_STORE_GATE_TIMEOUT,
     BuildsTarget,
     fetch_store_gate_status,
@@ -348,8 +347,15 @@ def test_ingest_missing_token_fail_closed(tmp_path, monkeypatch):
     out = _handoff_ledger(tmp_path)
     monkeypatch.delenv("CEREBRUM_BUILDS_GITHUB_TOKEN", raising=False)
     result = ingest_n3_store_gate(out, wait=False, env={})
+    # Still fail-closed: with no token the build can never read green. But
+    # "we cannot ask GitHub" is not "GitHub says there is no gate result" --
+    # the handoff stays open instead of being branded a failed build.
     assert result.ok is False
-    assert result.honesty == N3_STORE_GATE_MISSING
+    assert result.pending is True
+    assert result.honesty == HANDOFF_TO_N3
+    from app.factory.build.n3_store_gate import handoff_awaiting_n3
+
+    assert handoff_awaiting_n3(out)
 
 
 def test_continue_ingests_and_does_not_start_writer(tmp_path, monkeypatch):
