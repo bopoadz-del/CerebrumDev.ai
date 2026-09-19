@@ -29,7 +29,7 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
 
 # Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
 # Must stay aligned with blocks.lock.json store.sha (Factory S07 pin).
-DEFAULT_CEREBRUM_BLOCKS_REF = "a198eba6655fabc68df06e3fab4f9c8089065b50"
+DEFAULT_CEREBRUM_BLOCKS_REF = "d8987205f8fc6804526f4bc0165d036f4dc20c55"
 
 
 class EngineDiscoveryError(Exception):
