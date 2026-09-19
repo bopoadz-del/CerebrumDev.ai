@@ -12,7 +12,6 @@ from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.n3_store_gate import (
     N3_STORE_GATE_FAILED,
     N3_STORE_GATE_GREEN,
-    N3_STORE_GATE_MISSING,
     N3_STORE_GATE_TIMEOUT,
     BuildsTarget,
     fetch_store_gate_status,
