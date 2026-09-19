@@ -31,7 +31,7 @@ import {
   withResolvedNRequired,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
-import { displayProductName, humanizeProductId } from './productDisplay'
+import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
   id: string
@@ -758,7 +758,7 @@ export function Floor({
     | { product_name?: string; name?: string }
     | null
     | undefined
-  const cardBp = latestProductCard(msgs)?.blueprint
+  const cardBp = latestBlueprintIn(msgs)
   const productTitle = displayProductName({
     productName: designBp?.product_name ?? cardBp?.product_name,
     altName: designBp?.name,
@@ -890,6 +890,16 @@ export function Floor({
               </strong>
               {liveCoderBuild.failure.reason ? ` — ${liveCoderBuild.failure.reason}` : ''}
               {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
+            </p>
+          )}
+          {!liveCoderBuild?.failure && liveCoderBuild?.recovered_failure && (
+            <p className="coder-recovered-line" data-testid="floor-recovered-line">
+              Recovered in rework —{' '}
+              {liveCoderBuild.recovered_failure.location ||
+                liveCoderBuild.recovered_failure.phase ||
+                'a phase'}{' '}
+              failed once ({liveCoderBuild.recovered_failure.reason || 'unknown'}) and the
+              agent fixed it.
             </p>
           )}
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (

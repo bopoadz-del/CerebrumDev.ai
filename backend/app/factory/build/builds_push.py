@@ -57,6 +57,39 @@ FACTORY_INTERNAL_NAMES = frozenset(
     {".codewhale", ".generation_quota_account", "build_ledger.jsonl.lock"}
 )
 
+#: Never product source, at any depth -- bytecode and tool caches the
+#: factory's own pytest runs leave behind.
+EXPORT_SKIP_DIR_NAMES = frozenset(
+    {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".venv", "venv", ".git"}
+)
+EXPORT_SKIP_SUFFIXES = frozenset({".pyc", ".pyo"})
+#: Top-level runtime state. Every generated platform defaults STORAGE_PATH
+#: to ./data and its own .dockerignore excludes data/; the factory's TESTER
+#: probes write their databases and sample uploads there. Top level only --
+#: a product may well have app/data/ or frontend/src/data/ as real source.
+EXPORT_SKIP_TOP_LEVEL = frozenset({"data"})
+
+
+def is_exported(rel: Path) -> bool:
+    """Whether a workspace-relative path ships -- in the zip AND the repo.
+
+    One rule set for both exporters. They used to differ: the zip skipped
+    bytecode and caches at any depth, while the cerebrum-builds push ignored
+    only ``.git``, so build sess_065fc3eac75c4f62 (FinOps) pushed 131
+    ``.pyc`` files and a data/ tree (an empty cerebrum.db plus the probes'
+    sample uploads) that its zip would never have carried.
+    """
+    parts = Path(rel).parts
+    if not parts:
+        return False
+    if parts[0] in EXPORT_SKIP_TOP_LEVEL:
+        return False
+    if any(part in EXPORT_SKIP_DIR_NAMES for part in parts):
+        return False
+    if any(part in FACTORY_INTERNAL_NAMES for part in parts):
+        return False
+    return Path(rel).suffix not in EXPORT_SKIP_SUFFIXES
+
 
 class BuildsPushError(RuntimeError):
     """Token/repo missing or push/collect failed before a usable branch tip."""
@@ -175,8 +208,12 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     if not src.is_dir():
         raise BuildsPushError(f"workspace is not a directory: {src}")
+    def _not_exported(dirpath: str, names: list) -> list:
+        base = Path(dirpath).relative_to(src)
+        return [n for n in names if not is_exported(base / n)]
+
     for item in src.iterdir():
-        if item.name in {".git", ".github"} or item.name in FACTORY_INTERNAL_NAMES:
+        if item.name == ".github" or not is_exported(Path(item.name)):
             continue
         target = dest / item.name
         if target.exists() or target.is_symlink():
@@ -185,7 +222,7 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
             else:
                 target.unlink()
         if item.is_dir():
-            shutil.copytree(item, target, ignore=shutil.ignore_patterns(".git"))
+            shutil.copytree(item, target, ignore=_not_exported)
         else:
             shutil.copy2(item, target)
 

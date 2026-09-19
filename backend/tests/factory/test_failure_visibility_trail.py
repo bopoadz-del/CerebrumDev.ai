@@ -361,3 +361,68 @@ class TestADesignedHandoffIsNotAFailure:
         _, failure = _phase_trail(ledger.events())
 
         assert failure is not None and failure["reason"] == "suite_red"
+
+
+class TestARecoveredFailureIsNotAnAlert:
+    """A run whose verdict is SUCCESS has no current failure.
+
+    sess_617f60024df24a4e showed a red "TESTER failed -- KeyError" line
+    under a 13/13, CODE/PRODUCT/STORE PASS header: the first failure,
+    kept for visibility while the build ran, was still reported as THE
+    failure after the agent fixed it in rework and the run succeeded.
+    """
+
+    def _failed_then_passed(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.TESTER,
+            detail="suite is red: KeyError: 'branch_and_consolidated_operations'",
+            payload={"reason": "suite_red", "location": "TESTER"},
+        )
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(EventKind.GATE_PASSED, role=BuildRole.TESTER, detail="suite green")
+        return ledger
+
+    def test_a_succeeded_run_reports_the_failure_as_recovered(self, tmp_path):
+        ledger = self._failed_then_passed(tmp_path)
+        ledger.append(EventKind.RUN_SUCCEEDED, detail="SUCCESS", payload={"cycle": "code"})
+
+        status = build_status(tmp_path / "build")
+
+        assert status["state"] == "succeeded"
+        assert status["failure"] is None, status["failure"]
+        assert status["recovered_failure"]["phase"] == "TESTER"
+        assert status["recovered_failure"]["reason"] == "suite_red"
+
+    def test_a_running_pilot_cycle_keeps_its_failure_live(self, tmp_path):
+        """terminal_event() is None once PILOT_OPENED reopens the run."""
+        ledger = self._failed_then_passed(tmp_path)
+        ledger.append(EventKind.RUN_SUCCEEDED, detail="SUCCESS", payload={"cycle": "code"})
+        ledger.open_pilot_cycle(reason="code-phase SUCCESS; opening Store-green cycle")
+
+        status = build_status(tmp_path / "build")
+
+        assert status["failure"] is not None, "a live run must keep its failure"
+        assert status["recovered_failure"] is None
+
+    def test_a_failed_run_keeps_its_failure_as_the_alert(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.TESTER,
+            detail="suite is red",
+            payload={"reason": "suite_red", "location": "TESTER"},
+        )
+        ledger.append(
+            EventKind.RUN_FAILED,
+            detail="tester failed",
+            payload={"reason": "suite_red", "location": "TESTER"},
+        )
+
+        status = build_status(tmp_path / "build")
+
+        assert status["failure"]["reason"] == "suite_red"
+        assert status["recovered_failure"] is None

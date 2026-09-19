@@ -478,6 +478,8 @@ export type BuildStatus = {
   phase_trail?: PhaseTrailEntry[]
   /** F3: exact location + named reason of the failure, if any. */
   failure?: BuildFailure | null
+  /** The first failure of a run that went on to SUCCEED -- history, not an alert. */
+  recovered_failure?: BuildFailure | null
   /** Client's delivery choice + repo URL when github_repo was delivered. */
   delivery_format?: string
   repo_url?: string

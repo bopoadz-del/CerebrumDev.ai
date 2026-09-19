@@ -212,41 +212,56 @@ def _as_item_id(item_id: Any) -> int:
     return int(item_id)
 
 
-def get(item_id: int) -> Dict[str, Any] | None:
+def get(item_id: int, *, tenant_id: str | None = None) -> Dict[str, Any] | None:
+    """One queue item. With ``tenant_id``, only that tenant's: another
+    tenant's item reads as absent -- a 404, never someone else's work."""
     item_id = _as_item_id(item_id)
     conn = connect()
     try:
-        row = conn.execute(
-            f"SELECT * FROM {{TABLE}} WHERE id = ?", (item_id,)
-        ).fetchone()
+        if tenant_id is None:
+            row = conn.execute(
+                f"SELECT * FROM {{TABLE}} WHERE id = ?", (item_id,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                f"SELECT * FROM {{TABLE}} WHERE id = ? AND tenant_id = ?",
+                (item_id, tenant_id),
+            ).fetchone()
         return _row(row) if row else None
     finally:
         conn.close()
 
 
-def list_all() -> List[Dict[str, Any]]:
+def list_all(*, tenant_id: str) -> List[Dict[str, Any]]:
+    """The caller's queue. Required, never defaulted: an unscoped list
+    returned every tenant's items to any authenticated caller."""
     conn = connect()
     try:
-        rows = conn.execute(f"SELECT * FROM {{TABLE}} ORDER BY id").fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM {{TABLE}} WHERE tenant_id = ? ORDER BY id", (tenant_id,)
+        ).fetchall()
         return [_row(r) for r in rows]
     finally:
         conn.close()
 
 
-def claim_pending(item_id: int) -> Dict[str, Any] | None:
+def claim_pending(item_id: int, *, tenant_id: str) -> Dict[str, Any] | None:
+    """Claim a pending item the caller's tenant owns. Another tenant's id
+    claims nothing -- it used to claim anything, and processing then ran
+    that item as its owner on a stranger's request."""
     item_id = _as_item_id(item_id)
     conn = connect()
     try:
         cur = conn.execute(
-            f"UPDATE {{TABLE}} SET status = ? WHERE id = ? AND status = ?",
-            (PROCESSING, item_id, PENDING),
+            f"UPDATE {{TABLE}} SET status = ? WHERE id = ? AND status = ? AND tenant_id = ?",
+            (PROCESSING, item_id, PENDING, tenant_id),
         )
         conn.commit()
         if cur.rowcount == 0:
             return None
     finally:
         conn.close()
-    return get(item_id)
+    return get(item_id, tenant_id=tenant_id)
 
 
 def mark(
@@ -617,9 +632,9 @@ async def _handle_enqueue(_context: ActionContext, arguments: Dict[str, Any]) ->
 
 async def _handle_process(_context: ActionContext, arguments: Dict[str, Any]) -> ActionOutcome:
     item_id = int(arguments["id"])
-    claimed = work_queue.claim_pending(item_id)
+    claimed = work_queue.claim_pending(item_id, tenant_id=_context.tenant_id)
     if claimed is None:
-        item = work_queue.get(item_id)
+        item = work_queue.get(item_id, tenant_id=_context.tenant_id)
         if item is None:
             return ActionOutcome(
                 status=ActionStatus.VALIDATION_ERROR,

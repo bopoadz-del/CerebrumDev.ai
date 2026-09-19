@@ -560,6 +560,70 @@ def emit_result_key_access(text: str) -> str:
     return rewritten
 
 
+def insert_after_future_imports(text: str, block: str) -> str:
+    """Insert *block* where a module may legally start running code.
+
+    The vendoring helpers used to be PREPENDED at byte 0. A Store module that
+    opens with ``from __future__ import annotations`` then has code before
+    its future-import, which Python refuses: app/blocks/video_anomaly_trigger.py
+    shipped unparseable exactly this way. Place the block after the module
+    docstring and any ``from __future__`` imports; with neither, prepend as
+    before.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return block + text
+    last = 0
+    for node in tree.body:
+        is_docstring = (
+            isinstance(node, ast.Expr)
+            and isinstance(getattr(node, "value", None), ast.Constant)
+            and isinstance(node.value.value, str)
+            and node is tree.body[0]
+        )
+        is_future = isinstance(node, ast.ImportFrom) and node.module == "__future__"
+        if is_docstring or is_future:
+            last = node.end_lineno or last
+            continue
+        break
+    if not last:
+        return block + text
+    lines = text.splitlines(keepends=True)
+    head = "".join(lines[:last])
+    if not head.endswith("\n"):
+        head += "\n"
+    return head + block + "".join(lines[last:])
+
+
+def _strip_unless_guarded(match: "re.Match[str]") -> str:
+    """Drop the host import -- unless the Store already guards it.
+
+    The Store now wraps this import in its own ``try: ... except
+    ImportError:`` and defines a plain-construction fallback in the except
+    branch, precisely for vendored runtimes. Deleting the line there left
+    ``try:`` with an empty body, so the vendored module did not parse:
+    notification.py shipped broken on build sess_065fc3eac75c4f62 (FinOps),
+    every notification silently fell back to a local outbox, and the build
+    still went 13/13 because nothing exercised the block. A guarded import
+    is left in place so the Store's own fallback runs.
+    """
+    text = match.string
+    indent = match.group(1)
+    before = text[: match.start()].rstrip("\n").rsplit("\n", 1)[-1]
+    after = text[match.end():].lstrip("\n").split("\n", 1)[0]
+    if (
+        before.strip() == "try:"
+        and len(before) - len(before.lstrip()) < len(indent)
+        and after.strip().startswith(("except ImportError", "except (ImportError"))
+        and len(after) - len(after.lstrip()) == len(before) - len(before.lstrip())
+    ):
+        return match.group(0)
+    return ""
+
+
 def emit_store_host_di(text: str) -> str:
     """Map Store-host ``_create_block_instance`` onto factory HAL construct.
 
@@ -571,13 +635,15 @@ def emit_store_host_di(text: str) -> str:
     """
     if not text or "app.dependencies" not in text:
         return text
-    stripped = _DEPENDENCIES_IMPORT.sub("", text)
+    stripped = _DEPENDENCIES_IMPORT.sub(_strip_unless_guarded, text)
     if "def _create_block_instance" in stripped:
         return stripped
     from app.factory.build.roles_constants import _INSTANTIATE_HELPER
 
     if "def _instantiate_store_block" not in stripped:
-        stripped = _INSTANTIATE_HELPER.lstrip("\n") + "\n" + stripped
+        stripped = insert_after_future_imports(
+            stripped, _INSTANTIATE_HELPER.lstrip("\n") + "\n"
+        )
     return stripped
 
 
