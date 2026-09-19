@@ -558,6 +558,27 @@ def _phase_trail(
             entry["detail"] = sanitize_for_status(event.detail) or ""
             if failure is None:
                 failure = dict(entry)
+        elif kind_name == "NOTE" and (event.payload or {}).get("handoff"):
+            # A designed handoff is not a failure. On a host without docker
+            # the STORE gate refuses ("will not pass on a host-side skip")
+            # and the runner hands the workspace to cerebrum-builds, where
+            # the 13 checks run in real Docker. The ledger records that as
+            # GATE_FAILED(docker_unavailable) followed by this NOTE, and the
+            # trail used to stop at the first half: the Floor showed a red
+            # "STORE_MANAGER failed" for the whole CI wait on a build that
+            # went on to pass 13/13 -- read by the owner as a dead build.
+            if entry.get("reason") == "docker_unavailable":
+                was_the_failure = (
+                    failure is not None and failure.get("phase") == role_name
+                    and failure.get("reason") == "docker_unavailable"
+                )
+                entry["outcome"] = "handed_off"
+                entry["reason"] = ""
+                entry["location"] = ""
+                entry["timestamp"] = event.ts
+                entry["detail"] = sanitize_for_status(event.detail) or ""
+                if was_the_failure:
+                    failure = None
     return [state[p] for p in phases], failure
 
 
@@ -831,8 +852,10 @@ def build_status(
             waiting = {
                 "state": "building",
                 "detail": (
-                    "HANDOFF_TO_N3: waiting for cerebrum-builds "
-                    "store-gate 12/12"
+                    "Handed off to the Store gate: this host has no Docker, so "
+                    "the acceptance checks are running in Docker on "
+                    "cerebrum-builds. Nothing has failed; this takes a few "
+                    "minutes."
                 ),
                 "cycle": payload.get("cycle") or "code",
                 "outcome": "HANDOFF_TO_N3",

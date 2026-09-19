@@ -297,3 +297,67 @@ class TestReworkedPhaseCarriesItsOwnVerdict:
         assert writer["reason"] == "", writer
         assert writer["detail"] == "", writer
         assert failure is not None and failure["reason"] == "writer_no_output"
+
+
+class TestADesignedHandoffIsNotAFailure:
+    """Owner, watching a build that went on to pass 13/13: "STORE_MANAGER
+    failed -- docker_unavailable ... fix this thing, endless looping".
+
+    On a host without docker the STORE gate refuses and the runner hands the
+    workspace to cerebrum-builds. The ledger records GATE_FAILED then a
+    handoff NOTE; the trail stopped at the first half and the Floor stayed
+    red for the whole CI wait.
+    """
+
+    def _handoff_ledger(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.STORE_MANAGER, detail="STORE_MANAGER")
+        ledger.append(
+            EventKind.GATE_FAILED,
+            role=BuildRole.STORE_MANAGER,
+            detail="STORE (acceptance): docker is not available; will not pass on a host-side skip",
+            payload={"reason": "docker_unavailable", "location": "STORE_MANAGER"},
+        )
+        return ledger
+
+    def test_the_handoff_clears_the_red(self, tmp_path):
+        ledger = self._handoff_ledger(tmp_path)
+        ledger.append(
+            EventKind.NOTE,
+            role=BuildRole.STORE_MANAGER,
+            detail="docker unavailable - workspace handed off to cerebrum-builds; N3 store-gate is next",
+            payload={"handoff": "HANDOFF_TO_N3"},
+        )
+
+        trail, failure = _phase_trail(ledger.events())
+        store = next(r for r in trail if r["phase"] == "STORE_MANAGER")
+
+        assert failure is None, "a designed handoff must not be reported as THE failure"
+        assert store["outcome"] == "handed_off"
+        assert store["reason"] == ""
+        assert "handed off" in store["detail"]
+
+    def test_without_the_handoff_it_is_still_a_failure(self, tmp_path):
+        """No CI armed, or the push failed: that IS red."""
+        ledger = self._handoff_ledger(tmp_path)
+
+        trail, failure = _phase_trail(ledger.events())
+
+        assert failure is not None and failure["reason"] == "docker_unavailable"
+        assert next(r for r in trail if r["phase"] == "STORE_MANAGER")["outcome"] == "failed"
+
+    def test_a_handoff_never_hides_a_different_failure(self, tmp_path):
+        ledger = _started_ledger(tmp_path)
+        ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+        ledger.append(
+            EventKind.GATE_FAILED, role=BuildRole.TESTER, detail="suite is red",
+            payload={"reason": "suite_red", "location": "TESTER"},
+        )
+        ledger.append(
+            EventKind.NOTE, role=BuildRole.TESTER, detail="unrelated",
+            payload={"handoff": "HANDOFF_TO_N3"},
+        )
+
+        _, failure = _phase_trail(ledger.events())
+
+        assert failure is not None and failure["reason"] == "suite_red"
