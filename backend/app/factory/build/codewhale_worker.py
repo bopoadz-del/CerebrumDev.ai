@@ -703,11 +703,14 @@ def run_worker_job(
             progress_handle = None
         stdout_lines: List[str] = []
         relay_queue: "queue.Queue[str]" = queue.Queue()
+        quiet_clock = {"last": time.monotonic()}
 
         def _relay(raw: str) -> None:
             line = sanitize_for_status(raw)[:400]
             if not line.strip():
                 return
+            if not line.startswith(HEARTBEAT_PREFIX):
+                quiet_clock["last"] = time.monotonic()
             if progress_handle is not None:
                 try:
                     progress_handle.write(
@@ -771,6 +774,32 @@ def run_worker_job(
         prompt_log_path = cwd / "docs" / "writer_progress.log"
         prompt_log_offset = 0
 
+        narration = {"steps": 0, "last_said": time.monotonic()}
+        # The factory writes its own audit files (prompt, argv) into the
+        # checkout before the CLI starts; only growth past this baseline is
+        # the agent's output.
+        files_at_start = count_authored_files(cwd)
+        started_at = time.monotonic()
+
+        def _heartbeat() -> None:
+            """Speak for the agent when it has said nothing for a while.
+
+            Runs inside the wait loop, so a heartbeat is itself proof the
+            CLI process is alive and inside its deadline.
+            """
+            now = time.monotonic()
+            since = now - max(narration["last_said"], quiet_clock["last"])
+            if since < HEARTBEAT_EVERY_S:
+                return
+            narration["last_said"] = now
+            _relay(
+                heartbeat_line(
+                    now - started_at,
+                    max(0, count_authored_files(cwd) - files_at_start),
+                    narration["steps"],
+                )
+            )
+
         def _pump_prompt_progress() -> None:
             nonlocal prompt_log_offset
             try:
@@ -792,6 +821,7 @@ def run_worker_job(
                 return
             for raw in chunk.splitlines():
                 if raw.strip():
+                    narration["steps"] += 1
                     _relay("writer: " + raw)
 
         stdout_reader.start()
@@ -855,6 +885,7 @@ def run_worker_job(
                             break
                     tailer.pump(_relay)
                     _pump_prompt_progress()
+                    _heartbeat()
         finally:
             # Drain the remainder so no authored evidence is lost.
             stdout_reader.join(timeout=5)
@@ -945,6 +976,59 @@ def _tool_hint(line: str) -> str:
         if name in text:
             return name
     return ""
+
+
+#: Seconds of silence before the factory speaks for a quiet agent.
+HEARTBEAT_EVERY_S = 60.0
+HEARTBEAT_PREFIX = "writer working"
+_STEP_PREFIX = "writer: STEP"
+
+
+def is_narration_line(line: str) -> bool:
+    """Lines that ARE the narration: never throttled away by the relay."""
+    text = str(line or "")
+    return text.startswith(_STEP_PREFIX) or text.startswith(HEARTBEAT_PREFIX)
+
+
+def count_authored_files(root: Path) -> int:
+    """Files the pass has put on disk so far, the factory's own view.
+
+    Vendored blocks, VCS internals and the progress logs themselves are not
+    the agent's output. Best-effort: an unreadable tree counts as zero.
+    """
+    skip = {"vendor", ".git", "node_modules", "__pycache__"}
+    total = 0
+    try:
+        for path in Path(root).rglob("*"):
+            if not path.is_file():
+                continue
+            parts = set(path.relative_to(root).parts)
+            if parts & skip or path.name.startswith("writer_progress"):
+                continue
+            total += 1
+    except OSError:
+        return total
+    return total
+
+
+def heartbeat_line(elapsed_s: float, files: int, steps_seen: int) -> str:
+    """What the factory can honestly say about a quiet agent.
+
+    Observed facts only -- elapsed time, files on disk, steps reported. It
+    never claims a step the agent did not report.
+    """
+    minutes, seconds = divmod(int(elapsed_s), 60)
+    clock = f"{minutes}m{seconds:02d}s"
+    if steps_seen == 0 and files == 0:
+        return (
+            f"{HEARTBEAT_PREFIX} \u2014 {clock} in, still on its first pass: reading "
+            "the brief and the cloned blocks. No files yet; the first steps "
+            "usually land around the 10 minute mark."
+        )
+    return (
+        f"{HEARTBEAT_PREFIX} \u2014 {clock} in, {files} file(s) on disk, "
+        f"{steps_seen} step(s) reported so far."
+    )
 
 
 class _CliLogTailer:
