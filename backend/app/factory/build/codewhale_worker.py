@@ -772,7 +772,12 @@ def run_worker_job(
         # so the Floor narrates the pass even when the CLI's own logs are
         # not visible from the container.
         prompt_log_path = cwd / "docs" / "writer_progress.log"
-        prompt_log_offset = 0
+        # On a resumed pass the log already holds the interrupted pass's
+        # steps; stream only what is written from now on, not the history.
+        try:
+            prompt_log_offset = prompt_log_path.stat().st_size
+        except OSError:
+            prompt_log_offset = 0
 
         narration = {"steps": 0, "last_said": time.monotonic()}
         # The factory writes its own audit files (prompt, argv) into the

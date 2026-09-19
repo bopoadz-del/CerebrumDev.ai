@@ -122,11 +122,25 @@ its module docstring:
 """
 
 
+_RESUME_PREFACE = """RESUME -- READ THIS FIRST.
+A previous pass of yours on THIS checkout was interrupted: the factory
+restarted underneath you. Your files are still here. Do NOT start over.
+1. Read docs/writer_progress.log -- it is your own record of the steps done.
+2. Check what is actually on disk against it (a step may have been cut off
+   mid-write: verify the last file you were writing parses).
+3. Continue from the first step that is not done, and keep numbering STEP
+   lines upward from the last number in the log.
+Everything below is the original brief, unchanged.
+
+"""
+
+
 def render_writer_prompt(
     blueprint: Any,
     *,
     brief: str = "",
     version: str = PROMPT_VERSION,
+    resume: bool = False,
 ) -> str:
     """Fill the template from the brief. Deterministic by construction.
 
@@ -145,4 +159,6 @@ def render_writer_prompt(
         summary=summary,
         brief=(brief or "").strip(),
     )
+    if resume:
+        body = _RESUME_PREFACE + body
     return f"<!-- {version} -->\n" + body

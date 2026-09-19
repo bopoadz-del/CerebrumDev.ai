@@ -2857,7 +2857,9 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
 
     dest = persist_workspace_root(ctx.workspace)
     prompt = render_writer_prompt(
-        ctx.blueprint, brief=_compiled_writer_brief(ctx)
+        ctx.blueprint,
+        brief=_compiled_writer_brief(ctx),
+        resume=bool(ctx.state.get("writer_resumed")),
     )
     try:
         # The writer narrates itself on the Floor: CLI progress lines
@@ -2875,7 +2877,19 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             # bursts, and a 3s window kept the first line of each burst and
             # DISCARDED the rest (live: STEP 1 then STEP 21 -- nineteen steps
             # that happened and were never shown).
-            if not is_narration_line(line):
+            # The worker's "CLI started -- model call in flight" note carries
+            # {model_call, deadline_s, provider}. This relay used to keep the
+            # text and drop the payload, and the payload is the ONLY thing
+            # boot recovery (orphan_recovery) and the Floor's in-flight copy
+            # look at: every CodeWhale build read "model_call: none", so a
+            # server restart mid-WRITER was never auto-resumed (live:
+            # FleetOps sat dead for 20+ minutes). Never throttle it either.
+            call = {
+                key: info[key]
+                for key in ("model_call", "deadline_s", "provider")
+                if isinstance(info, dict) and info.get(key) is not None
+            }
+            if not is_narration_line(line) and not call:
                 if now - throttle["last"] < 3.0:
                     return
                 throttle["last"] = now
@@ -2883,6 +2897,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 line[:200],
                 stage=str(info.get("tool") or "writer-cli"),
                 source="codewhale_worker",
+                **call,
             )
 
         receipt = run_worker_job(
