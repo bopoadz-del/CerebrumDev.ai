@@ -2908,6 +2908,26 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     except OSError:
         logger.exception("writer receipt persistence failed")
 
+    # run_writer() returns at its CodeWhale branch, so emit_writer_artifacts
+    # -- further down that function -- never runs in production, while
+    # run_tester() still stamps tests/test_data_lifecycle.py, which opens
+    # ``from app import backup, store``. The suite then imports a module no
+    # production path wrote (sess_b6d51f9089e14176: "ImportError: cannot
+    # import name 'backup' from 'app'"). Without this the agent has to
+    # reverse-engineer the substrate contract from red tests, one rework
+    # round per missing file. Fills gaps only: anything the agent wrote is
+    # left exactly as it wrote it.
+    from app.factory.build.data_lifecycle import backfill_platform_substrate
+
+    substrate = backfill_platform_substrate(ctx.workspace)
+    if substrate["written"]:
+        ctx.note(
+            "platform substrate written by the factory (the agent is not "
+            "asked for these): " + ", ".join(substrate["written"]),
+            stage="substrate",
+            source="factory",
+        )
+
     # The worker subprocess writes into the staging tree directly, so its
     # files are not in the workspace's tracked ``written`` list — commit()
     # would drop every authored handler (live-factory
@@ -2927,23 +2947,40 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     )
 
     authored = agent_written_handler_ids_in_workspace(Path(dest))
+    # ``dest`` is the STAGING root, and staging is rmtree'd fresh at every
+    # phase start -- so this counts handlers written in THIS round only. A
+    # rework round legitimately writes no new handler: it fixes
+    # app/dispatch.py, a route, a migration. Judging staging alone reads
+    # "no new handler this round" as "the writer produced nothing" and
+    # kills a build that already carries stamped handlers. Live
+    # sess_b6d51f9089e14176: status='completed' tools=123 authored=0, on a
+    # round whose own narration was "block availability made honest --
+    # app.dispatch.block_is_available now resolves the wrapped Store".
+    # The refusal is about a writer that produced nothing AT ALL, which is
+    # a build-level property, so fall back to what is already committed.
+    carried_over: List[str] = []
+    if not authored:
+        destination = getattr(ctx.workspace, "destination", None)
+        if destination is not None and Path(destination) != Path(dest):
+            carried_over = agent_written_handler_ids_in_workspace(Path(destination))
     logger.info(
-        "codewhale writer result: status=%s tools=%d authored=%d",
+        "codewhale writer result: status=%s tools=%d authored=%d carried=%d",
         receipt.status,
         len(receipt.tools),
         len(authored),
+        len(carried_over),
     )
     if (
         receipt.status != "completed"
         or not receipt.tools
-        or not authored
+        or not (authored or carried_over)
     ):
         return RoleResult(
             ok=False,
             detail=(
                 "codewhale_worker_failed: writer_no_output: "
                 f"status={receipt.status!r} tools={len(receipt.tools)} "
-                f"authored={len(authored)}"
+                f"authored={len(authored)} carried={len(carried_over)}"
             ),
             reason="writer_no_output",
             location="WRITER",
