@@ -1942,8 +1942,10 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "async def work_queue_enqueue(payload: Dict[str, Any], request: Request) -> Dict[str, Any]:",
         "    from app.auth import require_platform_token",
         "    require_platform_token(request)",
+        "    from app.kernel_bridge import product_context",
         "    result = await perform_domain(",
-        '        "enqueue", str((payload or {}).get("capability_id") or ""), payload or {}',
+        '        "enqueue", str((payload or {}).get("capability_id") or ""), payload or {},',
+        "        context=product_context(request),",
         "    )",
         "    if result.get('status') != 'success':",
         "        return {'ok': False,",
@@ -1956,7 +1958,8 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         "async def work_queue_process(item_id: int, request: Request) -> Dict[str, Any]:",
         "    from app.auth import require_platform_token",
         "    require_platform_token(request)",
-        '    result = await perform_domain("process", "", {"id": item_id})',
+        "    from app.kernel_bridge import product_context",
+        '    result = await perform_domain("process", "", {"id": item_id}, context=product_context(request))',
         "    if result.get('status') != 'success':",
         "        return {'ok': False,",
         "                'error': result.get('error_message') or result.get('status'),",
@@ -1967,9 +1970,9 @@ def _render_routes(entries: List[Dict[str, Any]]) -> str:
         '@router.get("/work_queue")',
         "def work_queue_list(request: Request) -> Dict[str, Any]:",
         "    from app.auth import require_platform_token",
-        "    require_platform_token(request)",
+        "    tenant = require_platform_token(request)",
         "    from app import work_queue as _work_queue",
-        '    return {"items": _work_queue.list_all()}',
+        '    return {"items": _work_queue.list_all(tenant_id=tenant.tenant_id)}',
         "",
         "",
     ]
@@ -2668,7 +2671,7 @@ Persistence stays in the HTTP route after ActionStatus.SUCCESS.
 from __future__ import annotations
 
 import importlib
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 from app.cerebrum_product_kernel.contract.models import (
     ActionContext,
@@ -2761,6 +2764,28 @@ def spec_for(capability_id: str) -> ActionSpec:
     )
 
 
+#: Tenancy speaks in roles; the kernel checks permissions. A role name is not
+#: a permission: passing roles straight through left every caller holding
+#: ["admin"] against operation specs that require product.write, so every
+#: PUT and DELETE in every generated platform answered permission_denied
+#: (FinOps, sess_065fc3eac75c4f62, 13/13 in Docker -- no check wrote twice).
+#: Unknown roles grant nothing.
+ROLE_PERMISSIONS: Dict[str, Tuple[str, ...]] = {
+    "admin": ("product.read", "product.write", "product.process"),
+    "writer": ("product.read", "product.write"),
+    "reader": ("product.read",),
+}
+
+
+def permissions_for_roles(roles) -> List[str]:
+    granted: List[str] = []
+    for role in roles or ():
+        for permission in ROLE_PERMISSIONS.get(str(role), ()):
+            if permission not in granted:
+                granted.append(permission)
+    return granted
+
+
 def product_context(request) -> ActionContext:
     """Build the kernel ActionContext from the authenticated principal.
 
@@ -2781,7 +2806,7 @@ def product_context(request) -> ActionContext:
         tenant_id=tenant.tenant_id,
         organisation_id=tenant.tenant_id,
         project_id=tenant.tenant_id,
-        permissions=list(getattr(tenant, "roles", ())),
+        permissions=permissions_for_roles(getattr(tenant, "roles", ())),
         allowed_domains=["product"],
     )
 
