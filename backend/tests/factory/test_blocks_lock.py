@@ -140,11 +140,11 @@ def test_generator_refuses_mismatched_store_hash(tmp_path):
 
 # Live sess_5782f226 CLONER computed this hash from Store pin a372e76 and
 # then died because the production image had no lock file to read. The lock
-# is regenerated against the pinned Store (a198eba6) after each Store change;
+# is regenerated against the pinned Store (d8987205) after each Store change;
 # this constant pins the database block hash for that snapshot. The hash is
 # platform-deterministic (posix-path ordering + LF-normalized bytes).
 STEWARD_DATABASE_STORE_HASH = (
-    "sha256:e6e7febab1244eb897e039dc2d5f8bc72d709ae2aa5c83e5c15ac099f7ba1e79"
+    "sha256:74ea4ee982ada02f97d9cb2ee2af9c70d2ed5fc84ee61f528fb6f45feafd89c9"
 )
 
 
@@ -153,7 +153,7 @@ def test_committed_lock_lists_every_consumed_block():
 
     lock = load_lock(default_lock_path())
     assert lock["schema"] == "factory.blocks.lock.v1"
-    assert lock["store"]["sha"].startswith("a198eba6")
+    assert lock["store"]["sha"].startswith("d8987205")
     ids = consumed_block_ids()
     assert ids, "factory shelf is empty"
     missing = [bid for bid in ids if bid not in lock["blocks"]]
