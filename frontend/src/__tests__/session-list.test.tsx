@@ -17,7 +17,7 @@ describe('SessionList', () => {
     expect(screen.getByRole('region', { name: 'Your sessions' })).toBeInTheDocument()
     expect(screen.getByText('Bakery Chain Operations')).toBeInTheDocument()
     expect(screen.getByText('i run a vet clinic')).toBeInTheDocument()
-    expect(screen.getByText('New session')).toBeInTheDocument()
+    expect(screen.getByText('Untitled session')).toBeInTheDocument()
   })
 
   it('opens the session that was left behind', () => {

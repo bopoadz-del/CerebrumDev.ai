@@ -201,7 +201,7 @@ export function SessionList({
                 onClick={() => onOpen(s.session_id)}
                 title={s.title || s.session_id}
               >
-                <span className="rail-session-title">{s.title || 'New session'}</span>
+                <span className="rail-session-title">{s.title || 'Untitled session'}</span>
                 <span className="rail-session-meta">
                   {STAGE_LABEL[s.stage ?? ''] ?? s.session_id.slice(5, 13)}
                 </span>
