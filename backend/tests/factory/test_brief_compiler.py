@@ -452,7 +452,28 @@ def test_reuse_http_l2_fields_appear_in_brief_when_declared(monkeypatch):
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
-def test_preflip_block_json_says_scopes_not_declared():
+@pytest.fixture
+def preflip_store(tmp_path, monkeypatch):
+    """A Store whose estate_registry declares NO L2 scopes.
+
+    The pre-flip honesty path ("not declared on block.json -- do not invent
+    scopes") used to be proven on the Factory's estate stub, which had no L2
+    keys. That stub is gone and the Store's real block declares its scopes,
+    so the premise is rebuilt explicitly instead of borrowed from a fake.
+    """
+    import json as _json
+
+    block = tmp_path / "block_registry" / "estate_registry"
+    block.mkdir(parents=True)
+    (block / "block.json").write_text(
+        _json.dumps({"id": "estate_registry", "version": "1.0.0"}), encoding="utf-8"
+    )
+    (block / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
+    return tmp_path
+
+
+def test_preflip_block_json_says_scopes_not_declared(preflip_store):
     """Estate lock-era pins have no L2.2 keys — brief must say so, not invent.
 
     Store-sourced pins (notification, event_bus, …) now harvest reads/writes
@@ -476,7 +497,7 @@ def test_preflip_block_json_says_scopes_not_declared():
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
-def test_compiler_does_not_invent_scopes_when_http_omits_l2(monkeypatch):
+def test_compiler_does_not_invent_scopes_when_http_omits_l2(monkeypatch, preflip_store):
     from app.factory.build.reuse_lookup import ReuseRecord
 
     monkeypatch.delenv("CEREBRUM_API_URL", raising=False)

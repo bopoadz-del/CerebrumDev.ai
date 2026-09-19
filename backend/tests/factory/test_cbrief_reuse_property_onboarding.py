@@ -23,7 +23,6 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from app.factory.build.reuse_accept import (
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
@@ -43,6 +42,7 @@ from app.factory.build.roles_handlers import (
 )
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.authority import BuildRole
+from tests.factory.store_paths import store_block  # noqa: E402
 
 LIVE_SESS = "sess_5782f2264e0e4ff4"
 LIVE_ONBOARDING_CAP = "property_onboarding"
@@ -53,19 +53,12 @@ LIVE_ONBOARDING_BLOCKS = (
 )
 LIVE_SPEC_ANALYZER_KEYWORD = "analyze"
 LIVE_RECOMMENDATION_KEYWORD = "apply_template"
-LIVE_READINESS_KEYWORD = "score"
+LIVE_READINESS_KEYWORD = "evaluate"  # the Store's real default
 LIVE_SPEC_ANALYZER_MISS = (
     "property_onboarding: spec_analyzer: reuse/accept miss — "
     "no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)"
 )
-_FACTORY_SPEC_ANALYZER_PY = (
-    Path(__file__).resolve().parents[2]
-    / "app"
-    / "factory"
-    / "vendor_blocks_mirror"
-    / "spec_analyzer"
-    / "block.py"
-)
+_FACTORY_SPEC_ANALYZER_PY = (store_block("spec_analyzer") / "block.py")
 _REGISTRY_SHAPED_SPEC_ANALYZER = {
     "id": "spec_analyzer",
     "inputs": [

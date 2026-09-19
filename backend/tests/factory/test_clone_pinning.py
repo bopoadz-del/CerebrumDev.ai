@@ -23,10 +23,11 @@ from app.factory.blueprint import load_blueprint
 from app.factory.build.ledger import EventKind
 from app.factory.build.roles import _content_digest, _pin_source
 from app.factory.build.runner import RoleRunner
+from tests.factory.store_paths import store_registry  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
-MIRROR = ROOT / "backend/app/factory/vendor_blocks_mirror"
+MIRROR = store_registry()
 
 
 @pytest.fixture(autouse=True)

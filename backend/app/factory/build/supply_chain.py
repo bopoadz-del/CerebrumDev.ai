@@ -147,16 +147,17 @@ def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
 
 def known_factory_block_ids(*, extra_roots: Sequence[Optional[Path]] = ()) -> frozenset:
     ids: set[str] = set()
-    # Known blocks are the Store's, read from the checkout the build clones
-    # from. There is no Factory-local mirror any more.
-    roots: list = list(extra_roots)
+    # "Known to the Factory" is the SHELF -- the ids the Factory is allowed to
+    # consume -- not every block the Store happens to publish (chat, for one,
+    # is upstream and deliberately not ours). The shelf is a manifest of ids,
+    # not blocks; there is no Factory-local mirror any more.
     try:
-        from app.factory.blocks_source import resolve_blocks_root
+        from app.factory.dual_registry import load_factory_shelf
 
-        roots.append(resolve_blocks_root())
-    except Exception:  # noqa: BLE001
+        ids.update(load_factory_shelf())
+    except Exception:  # noqa: BLE001 -- an unreadable shelf knows nothing
         pass
-    for root in roots:
+    for root in extra_roots:
         if not root:
             continue
         base = Path(root)

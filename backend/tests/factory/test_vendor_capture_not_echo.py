@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from tests.factory.store_paths import store_block  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
-MIRROR_CAPTURE = ROOT / "backend/app/factory/vendor_blocks_mirror/capture/block.py"
+MIRROR_CAPTURE = store_block("capture") / "block.py"
 
 
 def test_vendor_mirror_capture_is_real_adapter():

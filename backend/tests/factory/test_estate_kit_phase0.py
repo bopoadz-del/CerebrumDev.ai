@@ -13,6 +13,7 @@ from app.factory.planner import CapabilityPlanner
 from app.product_dna.emit import verify_checksum_manifest
 
 from tests.factory.blocks_root import real_blocks_root
+from tests.factory.store_paths import store_block  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 # Prefer a live Blocks checkout when present; CI relies on vendor_blocks_mirror.
@@ -192,8 +193,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
 def test_kit_manifest_version():
     manifest = json.loads(
         (
-            ROOT
-            / "backend/app/factory/vendor_blocks_mirror/private_estate_operations_kit/manifest.json"
+            store_block("private_estate_operations_kit") / "manifest.json"
         ).read_text()
     )
     assert manifest["version"] == "1.3.0"

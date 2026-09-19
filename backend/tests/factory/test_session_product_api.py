@@ -15,7 +15,7 @@ from tests.factory.blocks_root import real_blocks_root
 
 
 ROOT = Path(__file__).resolve().parents[3]
-BLOCKS = real_blocks_root() or ROOT / "vendor_blocks_mirror"
+BLOCKS = real_blocks_root()
 
 
 @pytest.fixture()
