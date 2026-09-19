@@ -43,3 +43,22 @@ export function displayProductName(input: {
   const id = typeof input.productId === 'string' ? input.productId : null
   return platformCardTitle(null, id) || 'Untitled platform'
 }
+
+/**
+ * The newest blueprint anywhere in the conversation.
+ *
+ * The Floor loads the session's design once, on mount -- for a session
+ * started on the Floor that snapshot predates the blueprint. After approve,
+ * the newest product card is the generation card, which carries no
+ * blueprint. Reading only that card titled every freshly drafted build
+ * "Untitled platform" the moment it started (bakery-operations, whose
+ * session stored "Bakery Branch Operations Platform" all along).
+ */
+export function latestBlueprintIn<T extends { blueprint?: unknown }>(
+  msgs: readonly T[],
+): T['blueprint'] | undefined {
+  for (let i = msgs.length - 1; i >= 0; i -= 1) {
+    if (msgs[i].blueprint) return msgs[i].blueprint
+  }
+  return undefined
+}

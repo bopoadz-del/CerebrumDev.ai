@@ -1334,4 +1334,47 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByTestId('floor-failure-line')).not.toBeInTheDocument()
     expect(screen.queryByTestId('floor-phase-failed-TESTER')).not.toBeInTheDocument()
   })
+
+  it('keeps the drafted name on the build header after approve', async () => {
+    // The name is shown in the finished header ("<name> 13/13 -- ...").
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        cycle: 'pilot',
+        pilot_ready: true,
+        completed: ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER'],
+        acceptance: { passed: 13, total: 13, ok: true },
+      })
+    })
+    // bakery-operations: a session started on the Floor loads its design on
+    // mount (empty), and after approve the newest card is the generation
+    // card, which carries no blueprint -- the header read "Untitled platform".
+    chatStreamMock.mockImplementation(async (_sid: string, message: string, onEvent: (ev: { event: string; data: unknown }) => void) => {
+      if (message === 'approve') {
+        onEvent({
+          event: 'generation',
+          data: {
+            summary: 'Build started for vineyard.',
+            triggered_by: 'chat_llm',
+            generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+          },
+        })
+        return
+      }
+      onEvent({ event: 'blueprint', data: { summary: 'Blueprint drafted.', blueprint: LLM_BLUEPRINT } })
+    })
+    render(<Floor sessionId="sess_title" goPlatforms={() => {}} />)
+    fireEvent.change(screen.getByPlaceholderText(/Try:/), {
+      target: { value: 'Build me a vineyard management platform' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Approve & build' })).toBeEnabled(),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & build' }))
+
+    const title = await screen.findByTestId('floor-product-title')
+    expect(title).toHaveTextContent('Vineyard Platform')
+    expect(title).not.toHaveTextContent('Untitled platform')
+  })
 })

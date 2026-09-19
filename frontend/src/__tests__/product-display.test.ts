@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { displayProductName, humanizeProductId, platformCardTitle } from '../productDisplay'
+import {
+  displayProductName,
+  humanizeProductId,
+  latestBlueprintIn,
+  platformCardTitle,
+} from '../productDisplay'
 
 describe('displayProductName', () => {
   it('prefers blueprint.product_name over a generic product_id slug', () => {
@@ -46,5 +51,45 @@ describe('humanizeProductId', () => {
   it('title-cases hyphen and underscore slugs', () => {
     expect(humanizeProductId('product')).toBe('Product')
     expect(humanizeProductId('finance-ops')).toBe('Finance Ops')
+  })
+})
+
+describe('latestBlueprintIn', () => {
+  type Msg = {
+    role: string
+    card?: string
+    engine?: string
+    blueprint?: { product_name?: string }
+  }
+  // bakery-operations: drafted on the Floor, approved, and titled
+  // "Untitled platform" once the generation card became the newest card.
+  const drafted: Msg = {
+    role: 'factory',
+    card: 'blueprint',
+    blueprint: { product_name: 'Bakery Branch Operations Platform' },
+  }
+  const generation: Msg = { role: 'factory', card: 'generation', engine: 'runner' }
+
+  it('finds the blueprint behind a newer generation card', () => {
+    const user: Msg = { role: 'user' }
+    expect(latestBlueprintIn([drafted, user, generation])).toEqual({
+      product_name: 'Bakery Branch Operations Platform',
+    })
+  })
+
+  it('prefers the newest blueprint when the brief was redrafted', () => {
+    const redraft: Msg = { role: 'factory', card: 'blueprint', blueprint: { product_name: 'Bakery v2' } }
+    expect(latestBlueprintIn([drafted, redraft, generation])?.product_name).toBe('Bakery v2')
+  })
+
+  it('titles a freshly approved build by its name, not Untitled platform', () => {
+    const bp = latestBlueprintIn([drafted, generation])
+    expect(displayProductName({ productName: bp?.product_name })).toBe(
+      'Bakery Branch Operations Platform',
+    )
+  })
+
+  it('returns undefined when nothing was drafted', () => {
+    expect(latestBlueprintIn([generation])).toBeUndefined()
   })
 })

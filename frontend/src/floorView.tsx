@@ -31,7 +31,7 @@ import {
   withResolvedNRequired,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
-import { displayProductName, humanizeProductId } from './productDisplay'
+import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
 
 interface Capability {
   id: string
@@ -758,7 +758,7 @@ export function Floor({
     | { product_name?: string; name?: string }
     | null
     | undefined
-  const cardBp = latestProductCard(msgs)?.blueprint
+  const cardBp = latestBlueprintIn(msgs)
   const productTitle = displayProductName({
     productName: designBp?.product_name ?? cardBp?.product_name,
     altName: designBp?.name,
