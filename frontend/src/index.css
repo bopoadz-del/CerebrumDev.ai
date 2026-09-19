@@ -237,6 +237,28 @@ h3 { margin: 0 0 10px; }
   flex-direction: column;
   gap: 1px;
 }
+.rail-session-row { position: relative; }
+.rail-session-row .rail-session { padding-right: 30px; }
+.rail-session-delete {
+  position: absolute; top: 50%; right: 4px; transform: translateY(-50%);
+  width: 22px; height: 22px; border-radius: 6px;
+  background: transparent; color: var(--dim);
+  font-size: 15px; line-height: 1; opacity: 0;
+}
+.rail-session-row:hover .rail-session-delete,
+.rail-session-delete:focus-visible { opacity: 1; }
+.rail-session-delete:hover { background: var(--panel-2); color: #e5867a; }
+.rail-session-delete:focus-visible { outline: 2px solid var(--gold); }
+.rail-session-confirm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 8px; background: var(--panel);
+}
+.rail-session-confirm-q { font-size: 12px; color: var(--text); flex: 1 1 100%; }
+.rail-session-yes, .rail-session-no { font-size: 12px; padding: 3px 10px; border-radius: 6px; }
+.rail-session-yes { background: #6e2a23; color: #fbe3df; }
+.rail-session-yes:disabled { opacity: 0.6; }
+.rail-session-no { background: var(--panel-2); color: var(--text); }
+.rail-session-error { flex: 1 1 100%; margin: 0; font-size: 11px; color: #e5867a; }
 .rail-session:hover { background: var(--panel-2); color: var(--text); }
 .rail-session.active { background: var(--panel); color: var(--text); }
 .rail-session:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }

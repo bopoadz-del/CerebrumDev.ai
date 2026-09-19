@@ -270,6 +270,60 @@ def _structural_residue() -> List[Dict[str, str]]:
     ]
 
 
+def purge_session(session_id: str) -> Dict[str, Any]:
+    """Erase one session: what the owner's Delete in the session list does.
+
+    The same steps, helpers and order as :func:`purge_account`, for a single
+    id -- vectors first (the resurrection path), then the on-disk trees, then
+    the in-process cache, and the ownership row LAST, so a partial failure
+    leaves the session still listed and deletable again rather than orphaned.
+    The generated platform's workspace under ``factory_outputs`` goes too:
+    a deleted session must not keep eating the persistent disk.
+
+    Returns a report; never raises for a partial purge.
+    """
+    safe_ids, unsafe_ids = _partition_session_ids([session_id])
+    roots = _storage_roots()
+    categories: Dict[str, Any] = {}
+    categories["vector_index"] = _purge_vector_index([session_id])
+
+    paths: List[Path] = []
+    for sid in safe_ids:
+        for root in roots:
+            paths += [
+                root / "sessions" / sid,
+                root / "google_drive" / sid,
+                root / "workbench" / "sessions" / sid,
+            ]
+    output_roots = list(roots)
+    try:
+        from app.factory.paths import factory_outputs_root
+
+        outputs = factory_outputs_root().resolve()
+        output_roots.append(outputs)
+        paths += [outputs / "sessions" / sid for sid in safe_ids]
+    except Exception as exc:  # noqa: BLE001 -- never let a delete die on an import
+        logger.warning("purge_session: factory outputs root unavailable: %s", exc)
+    categories["session_storage"] = _purge_trees(paths, output_roots)
+    categories["session_cache"] = _evict_in_memory([session_id])
+    if unsafe_ids:
+        categories["unsafe_session_ids"] = {
+            "status": FAILED,
+            "errors": [f"{session_id!r}: not a single path segment; on-disk content not purged"],
+        }
+
+    content_ok = all(info["status"] in _CLEAN_STATUSES for info in categories.values())
+    if content_ok:
+        try:
+            removed = accounts_store.forget_session_owner(session_id)
+            categories["ownership"] = {"status": PURGED if removed else ABSENT, "errors": []}
+        except Exception as exc:  # noqa: BLE001
+            categories["ownership"] = {"status": FAILED, "errors": [str(exc)]}
+            logger.exception("Failed to forget owner of %s: %s", session_id, exc)
+    ok = all(info["status"] in _CLEAN_STATUSES for info in categories.values())
+    return {"ok": ok, "session_id": session_id, "categories": categories}
+
+
 def purge_account(account_id: str) -> Dict[str, Any]:
     """Erase everything this platform holds for ``account_id``.
 

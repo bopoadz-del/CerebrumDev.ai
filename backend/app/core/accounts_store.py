@@ -751,6 +751,17 @@ def session_owner(session_id: str) -> Optional[str]:
     return row._mapping["account_id"] if row else None
 
 
+def forget_session_owner(session_id: str) -> bool:
+    """Remove one session's ownership row. True when a row was removed."""
+    with _LOCK, _engine().begin() as conn:
+        result = conn.execute(
+            sa.delete(_t_session_owners).where(
+                _t_session_owners.c.session_id == session_id
+            )
+        )
+    return bool(result.rowcount)
+
+
 def sessions_for_owner(account_id: str) -> List[str]:
     with _LOCK, _engine().begin() as conn:
         rows = conn.execute(

@@ -72,6 +72,12 @@ _DEEPSEEK_LEFTOVER_WALL_MAX_S = 600.0
 #: ``model_call_in_progress``. Overdue calls use ``_model_call_overdue``.
 _STALL_AFTER_S = 1800.0
 
+#: A build with no runner thread in this process is an orphan once the ledger
+#: has been quiet this long. Threads only die with the process, so this is a
+#: fact, not a guess -- unlike _STALL_AFTER_S, which has to guess.
+_ORPHAN_AFTER_S = 120.0
+BUILD_THREAD_ORPHANED = "BUILD_THREAD_ORPHANED"
+
 #: How many recent activity NOTEs the Floor renders as the live log.
 #: The tail, not the whole ledger: a long build writes hundreds and the
 #: status payload is polled every few seconds.
@@ -961,6 +967,29 @@ def build_status(
     in_flight_call = bool(
         _model_call_fields(calling_note or last_note, worker_live=worker_live)
     )
+    # No build thread in this process and the ledger has gone quiet: the
+    # server restarted under the build. Say so now. Waiting out the 30 min
+    # below left the owner locked out of a dead build -- the Floor disables
+    # its message box while a build reads "building", so "continue" could not
+    # even be typed (live: FleetOps, server exited 09:54, still "building"
+    # 20 minutes later). The grace period covers the gap between the code
+    # cycle's thread ending and the pilot cycle's thread starting.
+    if not worker_live and idle_s > _ORPHAN_AFTER_S:
+        return _with_level_grade(
+            {
+                "state": "stalled",
+                "detail": (
+                    "the factory server restarted while this build was running, "
+                    "so nothing is working on it. Your progress up to the last "
+                    "finished phase is saved -- reply 'continue' to resume"
+                ),
+                "pilot_ready": False,
+                "honesty": BUILD_THREAD_ORPHANED,
+                **progress,
+                **activity,
+            },
+            output_dir,
+        )
     if idle_s > _STALL_AFTER_S and not in_flight_call:
         return _with_level_grade(
             {
