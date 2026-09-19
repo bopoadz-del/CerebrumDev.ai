@@ -298,3 +298,51 @@ def test_the_prompt_forbids_killing_processes_the_agent_did_not_start():
     for phrase in ("pkill", "killall", "uvicorn", "exact PID", "$PORT"):
         assert phrase in prompt, phrase
     assert PROMPT_VERSION.endswith(".v4") or int(PROMPT_VERSION.rsplit(".v", 1)[1]) >= 4
+
+
+class TestProvenanceOnTheProductionPath:
+    """The product's Dockerfile runs scripts/release_gate.py, which fails the
+    image build without docs/build_provenance.json. run_writer() writes it far
+    below its CodeWhale early return, so production only had one when the agent
+    happened to write it. Live: a dental platform passed four phases and died
+    in Docker, 0/13, on 'docs/build_provenance.json: MISSING'."""
+
+    def _run(self, tmp_path, monkeypatch, *, agent_wrote=None):
+        import json as _json
+
+        from app.factory.build.roles_handlers import _run_writer_via_codewhale_worker
+        from tests.factory.test_codewhale_writer_dispatch import (
+            _ctx,
+            _plant_authored_handler,
+            _receipt,
+        )
+
+        ctx = _ctx(tmp_path)
+        _plant_authored_handler(tmp_path / "build")
+        if agent_wrote is not None:
+            (tmp_path / "build" / "docs").mkdir(parents=True, exist_ok=True)
+            (tmp_path / "build" / "docs" / "build_provenance.json").write_text(
+                _json.dumps(agent_wrote), encoding="utf-8"
+            )
+        monkeypatch.setattr(
+            "app.factory.build.codewhale_worker.run_worker_job",
+            lambda *a, **k: _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}]),
+        )
+        assert _run_writer_via_codewhale_worker(ctx).ok is True
+        return _json.loads(
+            (tmp_path / "build" / "docs" / "build_provenance.json").read_text(encoding="utf-8")
+        )
+
+    def test_the_manifest_exists_after_a_codewhale_pass(self, tmp_path, monkeypatch):
+        prov = self._run(tmp_path, monkeypatch)
+
+        assert prov["engine"] == "codewhale_worker"
+        sources = prov["artifact_sources"]
+        assert sources, "release_gate counts agent artifacts from this map"
+        # release_gate.py credits the agent by this exact prefix.
+        assert all(str(v).startswith("coder CLI") for v in sources.values())
+
+    def test_an_agent_written_manifest_is_left_alone(self, tmp_path, monkeypatch):
+        mine = {"schema_version": "build_provenance.v1", "artifact_sources": {"x": "coder CLI"}, "by": "agent"}
+
+        assert self._run(tmp_path, monkeypatch, agent_wrote=mine) == mine
