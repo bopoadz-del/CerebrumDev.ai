@@ -136,7 +136,7 @@ def test_status_surfaces_the_current_activity(tmp_path):
     assert status["stale"] is False
 
 
-def test_status_names_cloner_and_marks_a_quiet_build_stale(tmp_path):
+def test_status_names_cloner_and_marks_a_quiet_build_stale(tmp_path, monkeypatch):
     """2/5 on the Floor is completed phases. The customer needs the current
     name (CLONER) plus whether the last event is recent or the job went quiet.
     """
@@ -164,7 +164,12 @@ def test_status_names_cloner_and_marks_a_quiet_build_stale(tmp_path):
     assert status["last_event"] == "cloned audit"
     assert status["stale"] is False
 
+    from app.factory import build_jobs
     from app.factory.build_jobs import _STALE_AFTER_S
+
+    # "Quiet" is only a building state while a thread is behind it; with no
+    # thread the same silence is an orphan (covered below).
+    monkeypatch.setattr(build_jobs, "_live_runner_thread", lambda product_id: True)
 
     stale_ts = (
         datetime.now(timezone.utc) - timedelta(seconds=_STALE_AFTER_S + 20)
@@ -205,7 +210,9 @@ def test_a_build_with_no_process_behind_it_reports_stalled(tmp_path):
 
     status = build_status(out)
     assert status["state"] == "stalled", status
-    assert "generate again" in status["detail"]
+    # No thread in this process: named as an orphan, with the way out.
+    assert "continue" in status["detail"]
+    assert status["honesty"] == "BUILD_THREAD_ORPHANED"
     # A stalled build is not downloadable either.
     from app.factory.build_jobs import is_build_complete
 
@@ -494,3 +501,37 @@ def test_phase_wall_clock_caps_the_writer_deadline(tmp_path, stub_coder):
     # 30s phase cap, not the 7200s build wall.
     assert seen["deadline"] - started < 600
     assert seen["deadline"] - seen["now"] <= 30.0 + 2.0
+
+
+def test_a_restarted_server_frees_the_floor_in_minutes_not_half_an_hour(tmp_path, monkeypatch):
+    """Live: the factory server exited mid-WRITER (FleetOps, 09:54). The
+    build read "building" for 20+ minutes, and while it does the Floor
+    disables the message box -- the owner could not even type 'continue'."""
+    from app.factory import build_jobs
+
+    out = tmp_path / "product"
+    out.mkdir(parents=True)
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="fleetops", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    old = time.time() - (build_jobs._ORPHAN_AFTER_S + 60)
+    os.utime(out / "build_ledger.jsonl", (old, old))
+    lines = []
+    ts = (datetime.now(timezone.utc) - timedelta(seconds=build_jobs._ORPHAN_AFTER_S + 60)).isoformat(timespec="seconds")
+    for line in (out / "build_ledger.jsonl").read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            payload = json.loads(line)
+            payload["ts"] = ts
+            lines.append(json.dumps(payload, sort_keys=True))
+    (out / "build_ledger.jsonl").write_text(chr(10).join(lines) + chr(10), encoding="utf-8")
+    os.utime(out / "build_ledger.jsonl", (old, old))
+
+    # The thread is alive: quiet, but still building.
+    monkeypatch.setattr(build_jobs, "_live_runner_thread", lambda product_id: True)
+    assert build_status(out)["state"] == "building"
+
+    # The thread is gone: an orphan, said at once.
+    monkeypatch.setattr(build_jobs, "_live_runner_thread", lambda product_id: False)
+    status = build_status(out)
+    assert status["state"] == "stalled"
+    assert "restarted" in status["detail"] and "continue" in status["detail"]

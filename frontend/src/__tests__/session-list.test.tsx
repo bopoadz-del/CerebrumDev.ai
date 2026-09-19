@@ -45,3 +45,42 @@ describe('SessionList', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe('SessionList delete', () => {
+  const items = [
+    { session_id: 'sess_a00000000000', title: 'FleetOps Back-Office Platform', stage: 'build' as const },
+    { session_id: 'sess_b00000000000', title: 'Bakery Chain Operations', stage: 'build' as const },
+  ]
+
+  it('asks first, and deletes only on the second click', async () => {
+    const onDelete = vi.fn().mockResolvedValue(undefined)
+    render(<SessionList items={items} currentId={null} onOpen={() => {}} onDelete={onDelete} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session: FleetOps Back-Office Platform' }))
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(screen.getByText('Delete for good?')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await vi.waitFor(() => expect(onDelete).toHaveBeenCalledWith('sess_a00000000000'))
+  })
+
+  it('"Keep" backs out without deleting', () => {
+    const onDelete = vi.fn()
+    render(<SessionList items={items} currentId={null} onOpen={() => {}} onDelete={onDelete} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session: Bakery Chain Operations' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Keep' }))
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(screen.queryByText('Delete for good?')).not.toBeInTheDocument()
+  })
+
+  it('shows why a delete was refused (a build is running)', async () => {
+    const onDelete = vi.fn().mockRejectedValue(new Error('a build is running in this session'))
+    render(<SessionList items={items} currentId={null} onOpen={() => {}} onDelete={onDelete} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete session: FleetOps Back-Office Platform' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('a build is running')
+  })
+
+  it('offers no delete control when no handler is given', () => {
+    render(<SessionList items={items} currentId={null} onOpen={() => {}} />)
+    expect(screen.queryByRole('button', { name: /Delete session/ })).not.toBeInTheDocument()
+  })
+})

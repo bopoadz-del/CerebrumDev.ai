@@ -179,11 +179,19 @@ export function SessionList({
   items,
   currentId,
   onOpen,
+  onDelete,
 }: {
   items: SessionListItem[]
   currentId: string | null
   onOpen: (id: string) => void
+  /** Resolves when the session is gone; rejects with a message to show. */
+  onDelete?: (id: string) => Promise<void>
 }) {
+  // Two-step, inline: a browser confirm() blocks the page, and a one-click
+  // delete of a session holding a generated platform is too easy to misfire.
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const rows = items.filter((s): s is SessionListItem & { session_id: string } => !!s.session_id)
   if (rows.length === 0) return null
   return (
@@ -193,9 +201,59 @@ export function SessionList({
         {rows.map((s) => {
           const current = s.session_id === currentId
           return (
-            <li key={s.session_id}>
+            <li key={s.session_id} className="rail-session-row">
+              {confirming === s.session_id ? (
+                <div className="rail-session-confirm" role="group" aria-label={`Delete ${s.title || 'session'}?`}>
+                  <span className="rail-session-confirm-q">Delete for good?</span>
+                  <button
+                    type="button"
+                    className="rail-session-yes"
+                    disabled={deleting === s.session_id}
+                    onClick={async () => {
+                      if (!onDelete) return
+                      setDeleting(s.session_id)
+                      setError(null)
+                      try {
+                        await onDelete(s.session_id)
+                        setConfirming(null)
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : 'Could not delete this session.')
+                      } finally {
+                        setDeleting(null)
+                      }
+                    }}
+                  >
+                    {deleting === s.session_id ? 'Deleting…' : 'Delete'}
+                  </button>
+                  <button
+                    type="button"
+                    className="rail-session-no"
+                    onClick={() => {
+                      setConfirming(null)
+                      setError(null)
+                    }}
+                  >
+                    Keep
+                  </button>
+                  {error ? <p className="rail-session-error" role="alert">{error}</p> : null}
+                </div>
+              ) : null}
+              {confirming === s.session_id ? null : onDelete ? (
+                <button
+                  type="button"
+                  className="rail-session-delete"
+                  aria-label={`Delete session: ${s.title || 'Untitled session'}`}
+                  onClick={() => {
+                    setConfirming(s.session_id)
+                    setError(null)
+                  }}
+                >
+                  ×
+                </button>
+              ) : null}
               <button
                 type="button"
+                hidden={confirming === s.session_id}
                 className={'rail-session' + (current ? ' active' : '')}
                 aria-current={current ? 'page' : undefined}
                 onClick={() => onOpen(s.session_id)}
@@ -622,6 +680,24 @@ export default function App() {
           items={sessionList}
           currentId={sessionId}
           onOpen={(id) => go('floor', id)}
+          onDelete={async (id) => {
+            await sessions.remove(id)
+            const next = sessionListRef.current.filter((s) => s.session_id !== id)
+            sessionListRef.current = next
+            setSessionList(next)
+            if (id !== sessionId) return
+            // The open session is the one deleted: land on another, or a fresh one.
+            const fallback = next.find((s) => s.session_id)?.session_id
+            if (fallback) {
+              go('floor', fallback)
+              return
+            }
+            const created = await sessions.create()
+            if (created.session_id) {
+              rememberSession(created.session_id)
+              go('floor', created.session_id)
+            }
+          }}
         />
         <div className="rail-foot">
           <span className="dot" aria-hidden="true" />

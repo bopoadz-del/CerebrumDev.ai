@@ -283,3 +283,18 @@ class TestWriterPromptNamesTheRealContract:
         used = set(re.findall(r"\bstore\.([A-Za-z_]+)", suite))
         missing = sorted(a for a in used if a not in prompt)
         assert not missing, f"the suite calls store.{missing} but the prompt never asks for it"
+
+
+def test_the_prompt_forbids_killing_processes_the_agent_did_not_start():
+    """The agent shares a container with the factory's server. A name-based
+    kill (pkill uvicorn) after its own probe run is the prime suspect for the
+    factory receiving a clean SIGTERM mid-build, twice."""
+    from app.factory.build.writer_prompt import PROMPT_VERSION, render_writer_prompt
+
+    class _Bp:
+        product_id = product_name = vertical = summary = "probe"
+
+    prompt = " ".join(render_writer_prompt(_Bp(), brief="x").split())
+    for phrase in ("pkill", "killall", "uvicorn", "exact PID", "$PORT"):
+        assert phrase in prompt, phrase
+    assert PROMPT_VERSION.endswith(".v4") or int(PROMPT_VERSION.rsplit(".v", 1)[1]) >= 4

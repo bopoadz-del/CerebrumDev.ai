@@ -263,6 +263,8 @@ export interface SessionInfo {
 export const sessions = {
   create: () => req<SessionInfo>('POST', '/v1/sessions/', {}),
   list: () => req<SessionInfo[] | { sessions?: SessionInfo[] }>('GET', '/v1/sessions/'),
+  /** Deletes the session for good: chat, uploads and its generated workspace. */
+  remove: (sid: string) => req<{ ok: boolean }>('DELETE', `/v1/sessions/${sid}`),
 }
 
 export interface ChatEvent {

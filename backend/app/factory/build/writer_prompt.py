@@ -11,6 +11,12 @@ from __future__ import annotations
 from typing import Any
 
 #: Version log.
+#: v4 -- PROCESSES section. The agent has a shell in the factory's own
+#:   container. Live: the factory server received a clean SIGTERM 25s after
+#:   the agent "ran the writer behaviour probe end to end" (FleetOps, no deploy,
+#:   no OOM; same signature the evening before) and the build died with it.
+#:   The agent is now told the factory is a uvicorn process on its machine and
+#:   may only stop PIDs it started.
 #: v3 -- PERSISTENCE section. v2 asked for an ``app/migrations/`` package and
 #:   never mentioned store/backup/alembic, while the data-lifecycle suite
 #:   TESTER stamps imports ``app.backup``, ``app.store`` and the
@@ -18,7 +24,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v3"
+PROMPT_VERSION = "writer_worker_prompt.v4"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -84,6 +90,17 @@ You own the two files that carry the entity schema:
   ``get(entity, record_id, tenant_id)``, ``list_all(entity, tenant_id)``.
   connect() sets ``PRAGMA journal_mode=WAL`` and a busy_timeout and never
   issues CREATE TABLE -- schema belongs to alembic, not connect time.
+
+PROCESSES (you share this machine with the factory that is running you):
+- NEVER stop processes by name or pattern: no pkill, killall, "kill -9 -1",
+  "fuser -k", and no killing of uvicorn / python / gunicorn / node in general.
+  The factory's own server is a uvicorn process on this machine; a name-based
+  kill stops the factory, and your build dies with it.
+- Stop ONLY processes you started yourself, by the exact PID you captured when
+  you started them. If you did not record a PID, leave the process alone.
+- Never bind or probe the port in $PORT -- it belongs to the factory. Prefer
+  in-process test clients (FastAPI TestClient) over starting a server at all;
+  if you must start one, use a high port of your own and stop it by PID.
 
 PROGRESS LOG (the operator watches this file live):
 After EVERY completed step — before starting the next — append exactly

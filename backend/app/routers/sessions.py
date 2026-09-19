@@ -103,6 +103,41 @@ async def list_sessions(principal: Principal = Depends(require_api_key)) -> List
     return out
 
 
+@router.delete("/{session_id}")
+async def delete_session(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    """Delete one of the caller's sessions, for good.
+
+    Refused while a build thread is actually running in it: deleting the
+    workspace out from under a live WRITER would corrupt the run. A dead or
+    stalled build does not block the delete.
+    """
+    from fastapi import HTTPException
+
+    from ..core.data_rights import purge_session
+
+    state = owned_session_or_404(session_id, principal)
+    try:
+        from app.factory.platform_chat_flow import _live_build_thread
+
+        blueprint = getattr(state.product_design, "blueprint", None) or {}
+        product_id = str(blueprint.get("product_id") or "")
+        if product_id and _live_build_thread(product_id) is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="a build is running in this session -- stop it first, then delete",
+            )
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 -- a broken probe must not make sessions undeletable
+        pass
+    report = purge_session(session_id)
+    if not report["ok"]:
+        raise HTTPException(status_code=500, detail=report)
+    return report
+
+
 @router.get("/{session_id}", response_model=SessionState)
 async def get_session_state(
     session_id: str, principal: Principal = Depends(require_api_key)
