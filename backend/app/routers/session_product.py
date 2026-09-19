@@ -421,7 +421,33 @@ def download_product_package(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     engine_present = (out / ENGINE_FILE).is_file()
-    seam_present = (out / "app" / "steward" / "tenant_store.py").is_file()
+    # Tenancy is what the delivered platform DOES, not which kit it came from.
+    # The old test looked only for the estate kit's app/steward/tenant_store.py,
+    # so every other platform was labelled single_tenant_only -- including ones
+    # that had just passed the gate's cross_tenant_404 check. A platform that
+    # ships app/tenancy.py and passed that check partitions by tenant.
+    acceptance_lines = (status.get("acceptance") or {}).get("lines") or []
+    cross_tenant_passed = any(
+        isinstance(line, dict)
+        and line.get("name") == "cross_tenant_404"
+        and line.get("status") == "PASS"
+        for line in acceptance_lines
+    )
+    seam_present = (out / "app" / "steward" / "tenant_store.py").is_file() or (
+        (out / "app" / "tenancy.py").is_file() and cross_tenant_passed
+    )
+    # The prompt version that BUILT this platform, read from the prompt the
+    # worker persisted -- not whatever version the server runs at download time.
+    built_prompt_version = PROMPT_VERSION
+    try:
+        import re as _re
+
+        head = (out / "docs" / "writer_prompt.txt").read_text(encoding="utf-8")[:200]
+        found = _re.match(r"<!-- ([A-Za-z0-9_.]+) -->", head)
+        if found:
+            built_prompt_version = found.group(1)
+    except OSError:
+        pass
     manifest = build_manifest(
         product_id=gen.get("product_id") or out.name,
         tenant_id=status.get("tenant_id"),
@@ -433,7 +459,7 @@ def download_product_package(
         embedder=("provider-configured" if engine_present else "none"),
         vector_store=("chroma_tenant_collection" if engine_present else "none"),
         engine_version="retrieval_engine.v1" if engine_present else "none",
-        prompt_version=PROMPT_VERSION,
+        prompt_version=built_prompt_version,
         # A fresh build ships layer 1 (certified kernel definitions);
         # client layers 2-4 are zero until client content lands â€” honest
         # zeros, never invented counts.

@@ -69,7 +69,6 @@ _OUTBOUND_MARKERS = (
     "api.anthropic.com",
 )
 
-_VENDOR_MIRROR = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror"
 
 SBOM_REL = Path("docs") / "sbom.cdx.json"
 PERMISSIONS_REL = Path("docs") / "permissions.json"
@@ -148,10 +147,16 @@ def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
 
 def known_factory_block_ids(*, extra_roots: Sequence[Optional[Path]] = ()) -> frozenset:
     ids: set[str] = set()
-    if _VENDOR_MIRROR.is_dir():
-        for path in _VENDOR_MIRROR.iterdir():
-            if path.is_dir() and (path / "block.py").is_file():
-                ids.add(path.name)
+    # "Known to the Factory" is the SHELF -- the ids the Factory is allowed to
+    # consume -- not every block the Store happens to publish (chat, for one,
+    # is upstream and deliberately not ours). The shelf is a manifest of ids,
+    # not blocks; there is no Factory-local mirror any more.
+    try:
+        from app.factory.dual_registry import load_factory_shelf
+
+        ids.update(load_factory_shelf())
+    except Exception:  # noqa: BLE001 -- an unreadable shelf knows nothing
+        pass
     for root in extra_roots:
         if not root:
             continue

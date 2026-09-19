@@ -225,15 +225,20 @@ STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
     #: run() only). Same class as formula_executor / vector_search / capture.
     "spec_analyzer": "analyze",
     "recommendation_template": "apply_template",
-    "readiness_engine": "score",
+    "readiness_engine": "evaluate",
+    #: The five estate entries below are the Store's REAL default actions
+    #: (block_registry/<id>/block.json, inputs[name=action].default). They were
+    #: first written against the Factory's always-ok stubs, which accepted any
+    #: action, and named ones the real blocks do not have: register, plan_work,
+    #: score, and verify-as-default.
     #: sess_5782f2264e0e4ff4 run3: Steward estate_registry binds storage.
     #: Factory vendor mirrors have no inputs[].name == action (adapter
     #: run() only). Same class as formula_executor / vector_search /
     #: capture / spec_analyzer.
     "storage": "store",
-    "estate_registry": "register",
-    "estate_maintenance": "plan_work",
-    "evidence_verifier": "verify",
+    "estate_registry": "create",
+    "estate_maintenance": "create",
+    "evidence_verifier": "store",
     "portfolio_rollup": "aggregate",
     "knowledge": "search",
 }

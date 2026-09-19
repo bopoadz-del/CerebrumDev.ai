@@ -82,12 +82,37 @@ jobs:
       - name: Lint (ruff, pyflakes)
         run: python -m ruff check .
 
+      # The Factory holds no blocks -- the Store does. Tests that build a
+      # product must clone from the real Store at the SAME commit production
+      # uses, read from the one place that pin lives. Before this, CI ran
+      # entirely off Factory-local copies, which is how five always-ok estate
+      # stubs shipped inside customer platforms without a single red test.
+      - name: Check out the Store at the pinned commit
+        working-directory: .
+        run: |
+          PIN=$(python - <<'PYPIN'
+          import re, pathlib
+          src = pathlib.Path("backend/app/core/engine_discovery.py").read_text(encoding="utf-8")
+          print(re.search(r'DEFAULT_CEREBRUM_BLOCKS_REF\s*=\s*"([0-9a-f]{40})"', src).group(1))
+          PYPIN
+          )
+          echo "Store pin: $PIN"
+          git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
+          cd "$RUNNER_TEMP/Cerebrum-Blocks"
+          git remote add origin https://github.com/bopoadz-del/Cerebrum-Blocks.git
+          git fetch -q --depth 1 origin "$PIN"
+          git checkout -q FETCH_HEAD
+          test -d block_registry
+          echo "CEREBRUM_BLOCKS_ROOT=$RUNNER_TEMP/Cerebrum-Blocks" >> "$GITHUB_ENV"
+
       - name: Run pytest suite
         # -rs names every skipped test and its reason. A skip is invisible in
         # the default summary, so a platform-guarded test that quietly stops
         # running on the Linux runner would read as coverage it is not
         # providing. Reporting only; it cannot change a result.
-        run: python -m pytest -rs
+        # f as well as s: a red run must NAME its failures in the summary, or the
+        # only way to find them is to read thousands of log lines.
+        run: python -m pytest -rfs
 
       # U2: production enables the coder when a key is set. The job above
       # is ENV=test only; this step is the keyed-path fixture — stub keys,

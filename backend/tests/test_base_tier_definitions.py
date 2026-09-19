@@ -25,6 +25,7 @@ from app.cerebrum_product_kernel.formulas import (
     load_base_definitions,
     resolve_definitions,
 )
+from tests.factory.store_paths import store_block  # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[1]
 REPO = Path(__file__).resolve().parents[2]
@@ -348,7 +349,7 @@ def test_formulas_are_not_routed_through_dead_tiers():
     assert not (kits_root / "universal_kernel").exists()
     assert not (kits_root / "formulas").exists()
 
-    vendor = BACKEND / "app" / "factory" / "vendor_blocks_mirror" / "formula_executor"
+    vendor = store_block("formula_executor")
     vendor_py = (vendor / "block.py").read_text(encoding="utf-8")
     assert "universal_definitions" not in vendor_py
     assert "answer_definition" not in vendor_py

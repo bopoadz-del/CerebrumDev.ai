@@ -16,6 +16,7 @@ from app.factory.build.authority import BuildRole
 from app.factory.build.roles import RoleContext, run_cloner
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.kit_pack import kits_for_blocks, stock_kits
+from tests.factory.store_paths import store_root
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -49,7 +50,7 @@ def test_cloner_stocks_kit_packs_next_to_vendored_blocks(tmp_path):
         workspace=ws,
         blueprint=None,
         plan=None,
-        blocks_root=None,
+        blocks_root=store_root(),
         state={"resolved_blocks": ("estate_registry", "estate_maintenance")},
     )
     result = run_cloner(ctx)
@@ -83,7 +84,7 @@ def test_generator_copies_kits_and_export_zip_lists_them(tmp_path):
     bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
     out = tmp_path / "basic-factory-smoke"
     ProductGenerator(
-        bp, blocks_root=None, factory_commit="t", blocks_commit="t"
+        bp, blocks_root=store_root(), factory_commit="t", blocks_commit="t"
     ).generate(out)
 
     assert (out / "app" / "main.py").is_file()

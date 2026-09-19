@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -25,7 +26,6 @@ if str(BACKEND) not in sys.path:
 from app.factory.blocks_lock import (  # noqa: E402
     block_content_hash,
     default_lock_path,
-    vendor_mirror_root,
 )
 
 COLUMNS = (
@@ -145,7 +145,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     lock_path = Path(args.lock) if args.lock else default_lock_path()
-    mirror_root = Path(args.mirror) if args.mirror else vendor_mirror_root()
+    # The Factory holds no blocks, so there is no local mirror to compare
+    # against. What the lock must match is the STORE at the pinned commit --
+    # the tree production's CLONER actually copies from. Fail closed when no
+    # Store checkout is available: an unverifiable lock is not a verified one.
+    if args.mirror:
+        mirror_root = Path(args.mirror)
+    else:
+        store = args.blocks_root or os.environ.get("CEREBRUM_BLOCKS_ROOT") or ""
+        if not store or not (Path(store) / "block_registry").is_dir():
+            print(
+                "verify_vendor_parity: FAIL no Store checkout to verify the lock "
+                "against (set CEREBRUM_BLOCKS_ROOT or pass --blocks-root)",
+                file=sys.stderr,
+            )
+            return 1
+        mirror_root = Path(store) / "block_registry"
+        if args.blocks_root is None:
+            args.blocks_root = Path(store)
     rows, ok = compare(
         lock_path=lock_path,
         mirror_root=mirror_root,
@@ -155,11 +172,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not ok:
         bad = [row["id"] for row in rows if not row["match"]]
         print(
-            "verify_vendor_parity: FAIL lock/mirror hash mismatch: " + ", ".join(bad),
+            "verify_vendor_parity: FAIL lock does not match the Store: " + ", ".join(bad),
             file=sys.stderr,
         )
         return 1
-    print("ok: vendor_blocks_mirror matches blocks.lock.json")
+    print("ok: blocks.lock.json matches the pinned Store")
     return 0
 
 

@@ -141,3 +141,95 @@ def test_a_silent_cli_gets_a_heartbeat_and_a_talking_one_does_not(tmp_path, monk
     beats = [ln for ln in relayed if ln.startswith(HEARTBEAT_PREFIX)]
     assert len(beats) >= 2, relayed
     assert "No files yet" in beats[0]
+
+
+# -- surviving a server restart mid-WRITER -------------------------------------
+
+
+def test_the_model_call_payload_reaches_the_ledger(tmp_path, monkeypatch):
+    """Boot recovery and the Floor look ONLY at this payload. The relay used
+    to keep the text and drop it, so no CodeWhale build was ever auto-resumed
+    after a restart (live: FleetOps sat dead 20+ minutes)."""
+    ctx = _ctx(tmp_path)
+    _plant_authored_handler(tmp_path / "build")
+    seen: list[tuple[str, dict]] = []
+    ctx.progress = lambda detail, payload: seen.append((detail, dict(payload)))
+
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
+        progress("engine turn noise", {})
+        progress(
+            "codewhale writer CLI started -- model call in flight",
+            {"model_call": True, "deadline_s": 2400, "provider": "deepseek"},
+        )
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr("app.factory.build.codewhale_worker.run_worker_job", fake_run)
+    assert _run_writer_via_codewhale_worker(ctx).ok is True
+
+    started = [p for d, p in seen if "CLI started" in d]
+    assert started, "the CLI-start note was throttled away behind a noise line"
+    assert started[0]["model_call"] is True
+    assert started[0]["deadline_s"] == 2400
+
+
+def test_boot_recovery_can_see_a_codewhale_build(tmp_path):
+    """End of the chain: a ledger written with that payload IS an orphan."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger, EventKind
+    from app.factory.build.orphan_recovery import is_orphaned_inflight_workspace
+
+    out = tmp_path / "product"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="fleetops", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    assert is_orphaned_inflight_workspace(out) is False, "no payload, invisible (the old state)"
+
+    ledger.append(
+        EventKind.NOTE, role=BuildRole.WRITER,
+        detail="codewhale writer CLI started -- model call in flight",
+        payload={"model_call": True, "deadline_s": 2400},
+    )
+    assert is_orphaned_inflight_workspace(out) is True
+
+
+def _runner(tmp_path):
+    from pathlib import Path
+
+    from app.factory.blueprint import load_blueprint
+    from app.factory.build.runner import RoleRunner
+
+    smoke = Path(__file__).resolve().parents[3] / "blueprints/examples/runner_smoke.yaml"
+    return RoleRunner(load_blueprint(smoke), tmp_path / "build")
+
+
+def test_an_interrupted_codewhale_pass_is_resumable_only_with_its_log(tmp_path, monkeypatch):
+    runner = _runner(tmp_path)
+    staging = tmp_path / ".build.staging-writer"
+    (staging / "docs").mkdir(parents=True)
+
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "1")
+    assert runner._writer_can_resume(staging) is False, "no progress log: nothing to resume from"
+
+    (staging / "docs" / "writer_progress.log").write_text("STEP 1: inventory\n", encoding="utf-8")
+    assert runner._writer_can_resume(staging) is True
+
+    # The in-process coder rewrites app/ wholesale: its leftovers are still wiped.
+    monkeypatch.setenv("FACTORY_CODEWHALE_WRITER", "0")
+    assert runner._writer_can_resume(staging) is False
+
+
+def test_the_resumed_agent_is_told_to_continue_not_restart():
+    from app.factory.build.writer_prompt import PROMPT_VERSION, render_writer_prompt
+
+    class _Bp:
+        product_id = product_name = vertical = summary = "probe"
+
+    fresh = render_writer_prompt(_Bp(), brief="x")
+    resumed = render_writer_prompt(_Bp(), brief="x", resume=True)
+
+    assert "RESUME" not in fresh
+    assert resumed.startswith(f"<!-- {PROMPT_VERSION} -->")
+    for phrase in ("Do NOT start over", "docs/writer_progress.log", "keep numbering STEP"):
+        assert phrase in resumed
+    assert resumed.endswith(fresh.split("-->\n", 1)[1]), "the original brief must follow unchanged"

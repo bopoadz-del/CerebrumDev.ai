@@ -103,6 +103,8 @@ def load_blocks_registry(blocks_root: Optional[Path] = None) -> Dict[str, BlockR
     """
     root = blocks_root or _default_blocks_root()
     out = _load_registry_dir(root / "block_registry", "cerebrum-blocks")
+    # Kept only so an old checkout that still has the directory behaves; the
+    # Factory holds no blocks and this path no longer exists in the repo.
     mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
     # Mirror dirs that look like blocks (contain block.json)
     for entry in sorted(mirror.iterdir()) if mirror.exists() else []:

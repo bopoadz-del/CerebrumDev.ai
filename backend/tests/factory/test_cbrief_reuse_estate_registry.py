@@ -55,26 +55,20 @@ from app.factory.build.roles_handlers import (
 from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.authority import BuildRole
 from app.factory.build.block_obligations import RESOURCE_OBLIGATIONS
+from tests.factory.store_paths import store_block  # noqa: E402
 
 LIVE_SESS = "sess_5782f2264e0e4ff4"
 LIVE_STORAGE_KEYWORD = "store"
-LIVE_ESTATE_REGISTRY_KEYWORD = "register"
-LIVE_ESTATE_MAINTENANCE_KEYWORD = "plan_work"
-LIVE_EVIDENCE_VERIFIER_KEYWORD = "verify"
+LIVE_ESTATE_REGISTRY_KEYWORD = "create"  # the Store's real default
+LIVE_ESTATE_MAINTENANCE_KEYWORD = "create"  # the Store's real default
+LIVE_EVIDENCE_VERIFIER_KEYWORD = "store"  # the Store's real default
 LIVE_PORTFOLIO_ROLLUP_KEYWORD = "aggregate"
 LIVE_KNOWLEDGE_KEYWORD = "search"
 LIVE_STORAGE_MISS = (
     "estate_registry: storage: reuse/accept miss — "
     "no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)"
 )
-_FACTORY_STORAGE_PY = (
-    Path(__file__).resolve().parents[2]
-    / "app"
-    / "factory"
-    / "vendor_blocks_mirror"
-    / "storage"
-    / "block.py"
-)
+_FACTORY_STORAGE_PY = (store_block("storage") / "block.py")
 _STEWARD_BP = (
     Path(__file__).resolve().parents[3] / "blueprints" / "steward" / "steward.v1.yaml"
 )

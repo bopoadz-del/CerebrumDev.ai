@@ -15,6 +15,7 @@ from app.factory.build.reuse_lookup import (
     resolve_store_presence,
     reuse_payload_for,
 )
+import pytest
 
 
 def test_parse_always_200_present_true_pulls_scope():
@@ -192,8 +193,29 @@ def test_case_sensitive_id_is_not_folded():
     assert exact.present is True
 
 
-def test_vendor_mirror_estate_stub_does_not_invent_scopes():
-    """Estate lock-era pins have no L2.2 keys — lookup must not invent them."""
+@pytest.fixture
+def preflip_store(tmp_path, monkeypatch):
+    """A Store whose estate_registry declares NO L2 scopes.
+
+    The pre-flip honesty path ("not declared on block.json -- do not invent
+    scopes") used to be proven on the Factory's estate stub, which had no L2
+    keys. That stub is gone and the Store's real block declares its scopes,
+    so the premise is rebuilt explicitly instead of borrowed from a fake.
+    """
+    import json as _json
+
+    block = tmp_path / "block_registry" / "estate_registry"
+    block.mkdir(parents=True)
+    (block / "block.json").write_text(
+        _json.dumps({"id": "estate_registry", "version": "1.0.0"}), encoding="utf-8"
+    )
+    (block / "block.py").write_text("def run(**kw):\n    return {}\n", encoding="utf-8")
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
+    return tmp_path
+
+
+def test_a_block_with_no_l2_keys_does_not_get_invented_scopes(preflip_store):
+    """A pin with no L2.2 keys — lookup must not invent them."""
     rec = lookup_reuse("estate_registry", local_ids={"estate_registry"}, base_url="")
     assert rec.present is True
     assert rec.scope_declared is False

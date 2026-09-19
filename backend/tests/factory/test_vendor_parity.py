@@ -16,12 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict
 
-import pytest
 
 from app.factory.blocks_lock import block_content_hash
-from app.factory.build.block_inputs import prepare_block_input
-from app.factory.build.roles_handlers import _sample_payload
-from app.factory.build.schema_accept import ENVELOPE_ACCEPT_SAMPLE
 
 ROOT = Path(__file__).resolve().parents[3]
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_vendor_parity.py"
@@ -207,41 +203,6 @@ def test_mirror_hashed_files_are_not_gitignored() -> None:
     assert ignored == [], "lock-hashed mirror files are gitignored: " + ", ".join(ignored)
 
 
-def test_document_engine_block_imports_from_mirror_path() -> None:
-    """DocumentEngineBlock is constructable from the path CLONER copies."""
-    sibling = MIRROR / "document_engine_block.py"
-    assert sibling.is_file(), (
-        "sync_vendor_mirror must vendor sibling document_engine_block.py "
-        f"next to {MIRROR / 'document_engine'}"
-    )
-    _install_universal_block_stub()
-    mod = _load_mirror_module(sibling, "mirror_document_engine_block")
-    cls = getattr(mod, "DocumentEngineBlock")
-    inst = cls()
-    assert inst.name == "document_engine"
-
-
-def test_knowledge_imports_from_mirror_path() -> None:
-    """Knowledge class or adapter is importable from the mirror path the build uses."""
-    sibling = MIRROR / "knowledge_block.py"
-    adapter = MIRROR / "knowledge" / "block.py"
-    assert adapter.is_file()
-    text = adapter.read_text(encoding="utf-8")
-    assert "factory-vendor-mirror stub" not in text
-    assert "get_block" in text
-    if sibling.is_file():
-        _install_typed_block_stubs()
-        mod = _load_mirror_module(sibling, "mirror_knowledge_block")
-        cls = getattr(mod, "KnowledgeBlock", None) or getattr(mod, "Knowledge", None)
-        assert cls is not None
-        inst = cls()
-        assert getattr(inst, "name", "knowledge") == "knowledge"
-    else:
-        # Adapter-only: constructing get_block needs Store runtime; the class
-        # sibling is the required constructable surface.
-        pytest.fail("sync_vendor_mirror must vendor sibling knowledge_block.py")
-
-
 def _install_typed_block_stubs() -> None:
     import enum
     import types
@@ -288,40 +249,3 @@ def _install_typed_block_stubs() -> None:
     sys.modules["app.core.answer_contract"] = ac
 
 
-def test_house_manual_sop_schema_sample_path() -> None:
-    """run7 wall: house_manual_sop schema-sample must reach DocumentEngineBlock."""
-    _install_universal_block_stub()
-    sibling = MIRROR / "document_engine_block.py"
-    mod = _load_mirror_module(sibling, "mirror_document_engine_block_sop")
-    engine = mod.DocumentEngineBlock()
-
-    sample = _sample_payload(
-        {
-            "fields": [
-                {"name": "reference", "type": "str"},
-                {"name": "status", "type": "str"},
-            ]
-        }
-    )
-    sample.update(ENVELOPE_ACCEPT_SAMPLE)
-    prepared = prepare_block_input("document_engine", sample)
-    assert prepared.get("pdf_path") or prepared.get("file_path")
-
-    import asyncio
-
-    result = asyncio.run(engine.process(prepared, {"action": "parse"}))
-    assert isinstance(result, dict)
-    # Parsers live in the Store package. run7 died before construct
-    # (missing DocumentEngineBlock). Reaching process() clears that wall.
-    err = str(result.get("error") or "")
-    assert "cannot import name 'DocumentEngineBlock'" not in err
-    assert "No module named 'document_engine_block'" not in err
-
-    _install_typed_block_stubs()
-    kpath = MIRROR / "knowledge_block.py"
-    kmod = _load_mirror_module(kpath, "mirror_knowledge_block_sop")
-    knowledge = kmod.KnowledgeBlock()
-    k_prepared = prepare_block_input("knowledge", dict(sample))
-    k_result = asyncio.run(knowledge.execute(k_prepared, {"action": "search"}))
-    assert isinstance(k_result, dict)
-    assert k_result.get("status") != "import_error"

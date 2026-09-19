@@ -23,7 +23,6 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -44,6 +43,7 @@ from app.factory.build.reuse_accept import (
 )
 from app.factory.build.reuse_lookup import load_local_block_json
 from app.factory.build.workspace import RoleWorkspace
+from tests.factory.store_paths import store_block  # noqa: E402
 
 LIVE_SESS = "sess_e8e4ab66e6dd4765"
 LIVE_INSURE_SESS = "sess_d10dfc28"
@@ -56,14 +56,7 @@ LIVE_CAPTURE_MISS = (
     "maintenance_and_work_order_management: capture: reuse/accept miss — "
     "no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)"
 )
-_FACTORY_CAPTURE_PY = (
-    Path(__file__).resolve().parents[2]
-    / "app"
-    / "factory"
-    / "vendor_blocks_mirror"
-    / "capture"
-    / "block.py"
-)
+_FACTORY_CAPTURE_PY = (store_block("capture") / "block.py")
 #: Live Store vendor / InsureDistribute zip: OCR config only, no action input.
 _REGISTRY_SHAPED_CAPTURE = {
     "id": "capture",

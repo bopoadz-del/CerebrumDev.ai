@@ -192,8 +192,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
 def test_kit_manifest_version():
     manifest = json.loads(
         (
-            ROOT
-            / "backend/app/factory/vendor_blocks_mirror/private_estate_operations_kit/manifest.json"
+            ROOT / "backend/app/factory/kits/private_estate_operations/manifest.json"
         ).read_text()
     )
     assert manifest["version"] == "1.3.0"

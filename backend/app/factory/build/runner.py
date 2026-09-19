@@ -304,6 +304,15 @@ class RoleRunner:
 
         self.blueprint = blueprint
         self.workspace = Path(workspace).resolve()
+        # The Factory holds no blocks -- the Store does. A runner handed no
+        # explicit root resolves the Store exactly as production does
+        # (CEREBRUM_BLOCKS_ROOT, then the pinned Store clone). It used to stay
+        # None, which meant "vendor mirror only": every test that built a
+        # product ran off Factory-local copies and never touched the Store.
+        if not blocks_root:
+            from app.factory.blocks_source import resolve_blocks_root
+
+            blocks_root = resolve_blocks_root()
         self.blocks_root = Path(blocks_root) if blocks_root else None
         self.store_root = Path(store_root) if store_root else None
         self.plan = (
@@ -466,6 +475,18 @@ class RoleRunner:
 
     # -- one phase -------------------------------------------------------
 
+    def _writer_can_resume(self, staging: Path) -> bool:
+        """An interrupted CodeWhale pass that left a progress log to read."""
+        try:
+            from app.factory.build.roles_handlers import writer_uses_codewhale
+
+            if not writer_uses_codewhale(os.environ):
+                return False
+            log = Path(staging) / "docs" / "writer_progress.log"
+            return log.is_file() and log.stat().st_size > 0
+        except Exception:  # noqa: BLE001 -- when unsure, the old safe wipe
+            return False
+
     def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
         """Run the role then its gate. Raises RoleError / AuthorityError up."""
         self.ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
@@ -482,7 +503,28 @@ class RoleRunner:
             else None
         )
         if staging is not None and staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+            # A staging tree at phase start means the previous WRITER pass
+            # died mid-way (a committed pass removes its own staging). It
+            # used to be wiped unconditionally -- right for the in-process
+            # coder, which rewrites app/ wholesale and picks new entity names
+            # each call. The CodeWhale agent is different: it narrates every
+            # step to docs/writer_progress.log, so it can read where it got
+            # to and carry on. Wiping threw away a finished 17-step pass
+            # because the server restarted 25 seconds after it (live).
+            if self._writer_can_resume(staging):
+                self.state["writer_resumed"] = True
+                self.ledger.append(
+                    EventKind.NOTE,
+                    role=role,
+                    detail=(
+                        "resuming the interrupted writer pass -- its files and "
+                        "progress log are kept; the agent continues, it does "
+                        "not start over"
+                    ),
+                    payload={"writer_resumed": True},
+                )
+            else:
+                shutil.rmtree(staging, ignore_errors=True)
         sealed = (
             SEALED_AFTER_CLONER
             if role is not BuildRole.CLONER

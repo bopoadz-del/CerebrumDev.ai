@@ -23,13 +23,14 @@ from app.factory.build.network_posture import (
 from app.factory.build.roles import RoleContext, _CONFTEST, run_cloner
 from app.factory.build.runner import RoleRunner
 from app.factory.build.workspace import RoleWorkspace
+from tests.factory.store_paths import store_block  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 SMOKE = ROOT / "blueprints/examples/runner_smoke.yaml"
 MIRROR_CAPTURE_JSON = (
-    ROOT / "backend/app/factory/vendor_blocks_mirror/capture/block.json"
+    store_block("capture") / "block.json"
 )
-MIRROR_CAPTURE_PY = ROOT / "backend/app/factory/vendor_blocks_mirror/capture/block.py"
+MIRROR_CAPTURE_PY = store_block("capture") / "block.py"
 
 
 def test_chosen_posture_is_p1():
