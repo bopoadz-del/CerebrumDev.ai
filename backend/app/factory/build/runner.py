@@ -304,6 +304,15 @@ class RoleRunner:
 
         self.blueprint = blueprint
         self.workspace = Path(workspace).resolve()
+        # The Factory holds no blocks -- the Store does. A runner handed no
+        # explicit root resolves the Store exactly as production does
+        # (CEREBRUM_BLOCKS_ROOT, then the pinned Store clone). It used to stay
+        # None, which meant "vendor mirror only": every test that built a
+        # product ran off Factory-local copies and never touched the Store.
+        if not blocks_root:
+            from app.factory.blocks_source import resolve_blocks_root
+
+            blocks_root = resolve_blocks_root()
         self.blocks_root = Path(blocks_root) if blocks_root else None
         self.store_root = Path(store_root) if store_root else None
         self.plan = (
