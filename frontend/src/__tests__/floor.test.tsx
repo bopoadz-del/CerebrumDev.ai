@@ -1300,4 +1300,38 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     // The single-line fallback is replaced, not doubled up.
     expect(screen.queryByText(/^Last: /)).not.toBeInTheDocument()
   })
+
+  it('shows a failure the run recovered from as history, not a red alert', async () => {
+    // sess_617f60024df24a4e: a 13/13 build showed "TESTER failed -- KeyError"
+    // in red for a KeyError the agent had already fixed in rework.
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'succeeded',
+        cycle: 'pilot',
+        pilot_ready: true,
+        completed: ['COLLECTOR', 'CLONER', 'WRITER', 'TESTER', 'STORE_MANAGER'],
+        acceptance: { passed: 13, total: 13, ok: true },
+        failure: null,
+        recovered_failure: {
+          phase: 'TESTER',
+          location: 'TESTER',
+          reason: 'suite_red',
+          detail: "suite is red: KeyError: 'branch_and_consolidated_operations'",
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'bakery', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_recovered" goPlatforms={() => {}} />)
+
+    const note = await screen.findByTestId('floor-recovered-line')
+    expect(note).toHaveTextContent('Recovered in rework')
+    expect(note).toHaveTextContent('TESTER')
+    // No red alert, no red phase chip, on a build that succeeded.
+    expect(screen.queryByTestId('floor-failure-line')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('floor-phase-failed-TESTER')).not.toBeInTheDocument()
+  })
 })

@@ -892,6 +892,16 @@ export function Floor({
               {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
             </p>
           )}
+          {!liveCoderBuild?.failure && liveCoderBuild?.recovered_failure && (
+            <p className="coder-recovered-line" data-testid="floor-recovered-line">
+              Recovered in rework —{' '}
+              {liveCoderBuild.recovered_failure.location ||
+                liveCoderBuild.recovered_failure.phase ||
+                'a phase'}{' '}
+              failed once ({liveCoderBuild.recovered_failure.reason || 'unknown'}) and the
+              agent fixed it.
+            </p>
+          )}
           {liveCoderBuild && liveCoderBuild.state === 'building' ? (
             <>
               <CoderProgress build={liveCoderBuild} nowMs={nowMs} />

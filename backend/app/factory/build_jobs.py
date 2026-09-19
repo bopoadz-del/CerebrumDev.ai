@@ -792,6 +792,22 @@ def build_status(
                 failure["detail"] = sanitize_for_status(terminal.detail) or (
                     failure.get("detail") or ""
                 )
+    # A run whose verdict is SUCCESS has no current failure. _phase_trail
+    # keeps the FIRST failure on purpose -- while the build runs, what went
+    # wrong in round 1 is what the operator needs -- but once the run ends
+    # green that entry is history, and the Floor rendered it as a red
+    # role="alert" line with the phase painted red. sess_617f60024df24a4e
+    # showed "TESTER failed -- KeyError" under a 13/13, CODE/PRODUCT/STORE
+    # PASS header, for a KeyError the agent had fixed in rework ten minutes
+    # earlier. Keep it, named for what it is. terminal_event() is None while
+    # a pilot cycle is open, so a live failure is never moved here.
+    recovered_failure = None
+    if (
+        failure is not None
+        and terminal is not None
+        and terminal.kind is EventKind.RUN_SUCCEEDED
+    ):
+        recovered_failure, failure = failure, None
     progress = {
         "phases": phases,
         "completed": [p for p in phases if p in completed],
@@ -801,6 +817,7 @@ def build_status(
         # F3: per-phase outcome trail + the failure's exact location, named.
         "phase_trail": phase_trail,
         "failure": failure,
+        "recovered_failure": recovered_failure,
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),

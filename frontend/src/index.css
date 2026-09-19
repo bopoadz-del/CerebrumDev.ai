@@ -617,6 +617,14 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   background: #1f1010;
   font-weight: 600;
 }
+/* A failure the run recovered from. History, not an alert: muted, no red,
+   so a green build never reads as a dead one. */
+.coder-recovered-line {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 .coder-failure-line {
   color: #ff8f8f;
   background: #1f1010;
