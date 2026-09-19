@@ -157,7 +157,62 @@ export function sessionQueryParam(search: string): string | null {
   return trimmed || null
 }
 
-export type SessionListItem = { session_id?: string }
+export type SessionListItem = {
+  session_id?: string
+  title?: string
+  stage?: 'empty' | 'talking' | 'blueprint' | 'build'
+  updated_at?: string | null
+}
+
+const STAGE_LABEL: Record<string, string> = {
+  empty: 'new',
+  talking: 'talking',
+  blueprint: 'blueprint',
+  build: 'build',
+}
+
+/** The sessions a person has, reachable. They were always kept server-side;
+ *  the rail showed only the current one's id, so starting a new session made
+ *  the previous one -- and any build running in it -- impossible to get back
+ *  to. */
+export function SessionList({
+  items,
+  currentId,
+  onOpen,
+}: {
+  items: SessionListItem[]
+  currentId: string | null
+  onOpen: (id: string) => void
+}) {
+  const rows = items.filter((s): s is SessionListItem & { session_id: string } => !!s.session_id)
+  if (rows.length === 0) return null
+  return (
+    <section className="rail-sessions" aria-label="Your sessions">
+      <h2 className="rail-sessions-head">Sessions</h2>
+      <ul>
+        {rows.map((s) => {
+          const current = s.session_id === currentId
+          return (
+            <li key={s.session_id}>
+              <button
+                type="button"
+                className={'rail-session' + (current ? ' active' : '')}
+                aria-current={current ? 'page' : undefined}
+                onClick={() => onOpen(s.session_id)}
+                title={s.title || s.session_id}
+              >
+                <span className="rail-session-title">{s.title || 'Untitled session'}</span>
+                <span className="rail-session-meta">
+                  {STAGE_LABEL[s.stage ?? ''] ?? s.session_id.slice(5, 13)}
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
+  )
+}
 
 export type BootSessionResult =
   | { status: 'selected'; sessionId: string }
@@ -215,6 +270,32 @@ export default function App() {
   const [locationEpoch, setLocationEpoch] = useState(0)
   const sessionListRef = useRef<SessionListItem[]>([])
   sessionListRef.current = sessionList
+
+  // Titles and stages move as a conversation does; the boot-time list would
+  // leave a session reading "New session" long after it has a blueprint.
+  // Refresh on every switch. A failed refresh keeps the list already shown.
+  useEffect(() => {
+    if (!authed || !sessionId) return
+    let cancelled = false
+    sessions
+      .list()
+      .then((list) => {
+        if (cancelled) return
+        const arr = Array.isArray(list) ? list : list.sessions ?? []
+        if (arr.length === 0) return
+        const known = new Set(arr.map((s) => s.session_id))
+        const unsynced = sessionListRef.current.filter(
+          (s) => s.session_id && !known.has(s.session_id),
+        )
+        const next = [...unsynced, ...arr]
+        sessionListRef.current = next
+        setSessionList(next)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [authed, sessionId])
 
   function rememberSession(id: string) {
     const next = [{ session_id: id }, ...sessionListRef.current.filter((s) => s.session_id !== id)]
@@ -537,6 +618,11 @@ export default function App() {
             />
           ))}
         </nav>
+        <SessionList
+          items={sessionList}
+          currentId={sessionId}
+          onOpen={(id) => go('floor', id)}
+        />
         <div className="rail-foot">
           <span className="dot" aria-hidden="true" />
           <span className="rail-foot-text">session {sessionId.slice(0, 12)}…</span>

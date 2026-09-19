@@ -253,6 +253,10 @@ export const auth = {
 
 export interface SessionInfo {
   session_id: string
+  /** Product name once drafted, else the user's first real message. */
+  title?: string
+  stage?: 'empty' | 'talking' | 'blueprint' | 'build'
+  updated_at?: string | null
   [k: string]: unknown
 }
 
