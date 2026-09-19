@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 from types import SimpleNamespace
 from unittest import mock
 
@@ -35,10 +36,11 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     prompt = "write the platform"
     captured: dict = {}
 
-    def fake_popen(argv, *, cwd, stdout, stderr, text, bufsize, env):
+    def fake_popen(argv, *, cwd, stdout, stderr, text, bufsize, env, stdin):
         captured["argv"] = argv
         captured["cwd"] = cwd
         captured["env"] = env
+        captured["stdin"] = stdin
         return _FakeProc(
             argv,
             json.dumps({"status": "completed", "termination_reason": "resolved"}),
@@ -72,6 +74,10 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
         )
 
     assert receipt.status == "completed"
+    # The child's stdin is DEVNULL: an interactive CLI prompt after the
+    # banner must never be able to block the writer on unanswerable stdin
+    # (live-factory silent hang, sess_e4bcf26ec19c4d04).
+    assert captured["stdin"] is subprocess.DEVNULL
     # The slot was really taken and really given back.
     assert codewhale_worker.worker_slots_snapshot() == {"total": 0, "by_tenant": {}}
     # The child runs under an explicit per-job environment, never the live

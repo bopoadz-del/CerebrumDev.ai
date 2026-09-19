@@ -561,7 +561,7 @@ def _require_bound_tenant(tenant_store: Any) -> None:
         )
 
 
-def _child_env(session_id: Optional[str]) -> Dict[str, str]:
+def _child_env(session_id: Optional[str], cli_home: Optional[str] = None) -> Dict[str, str]:
     """The environment ONE writer child runs under.
 
     Every child used to inherit the live process environment by reference
@@ -574,12 +574,18 @@ def _child_env(session_id: Optional[str]) -> Dict[str, str]:
     The snapshot is taken ONCE, here, at job start, and the build-scoped
     keys are stamped from THIS job's own identity rather than inherited
     from whatever the process global happens to hold at fork time.
+
+    ``cli_home`` pins CODWHALE_HOME so the CLI writes its agent-loop log
+    where the worker's tailer reads it — Render's HOME is not where the
+    CLI writes, and an invisible log makes a live writer look dead.
     """
     env = dict(os.environ)
     sid = str(session_id or "").strip()
     if sid:
         env["FACTORY_SESSION_ID"] = sid
         env["FACTORY_CLI_PIVOT_SESSION_ID"] = sid
+    if cli_home:
+        env["CODWHALE_HOME"] = cli_home
     return env
 
 
@@ -656,6 +662,27 @@ def run_worker_job(
             str(session_id or "")[:12] or "-",
             timeout,
         )
+        # E3 part 0: pre-flight probe — a broken binary or a config prompt
+        # must fail in seconds, not sit silent for the full worker wall.
+        # Skipped when the cli path is a test double that does not exist.
+        if Path(cli).exists():
+            try:
+                probe = subprocess.run(
+                    [cli, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10.0,
+                    stdin=subprocess.DEVNULL,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise WorkerError(
+                    f"{WORKER_EXEC_FAILED}: pre-flight probe failed for {cli}: {exc}"
+                ) from exc
+            if probe.returncode != 0:
+                raise WorkerError(
+                    f"{WORKER_EXEC_FAILED}: pre-flight probe exited "
+                    f"{probe.returncode}: {(probe.stderr or '')[-300:]}"
+                )
         from app.factory.build.sanitize import sanitize_for_status
 
         # The writer pass narrates itself: the CLI's agent-loop progress
@@ -666,7 +693,8 @@ def run_worker_job(
         # stdout stays RAW and separate: it carries the final JSON summary
         # (merging stderr in broke the parse — live run4
         # sess_620b8581fb224bea).
-        tailer = _cli_log_tailer()
+        cli_home = os.getenv("CODWHALE_HOME") or str(cwd / ".codewhale-home")
+        tailer = _cli_log_tailer(home=Path(cli_home))
         progress_path = cwd / "docs" / "writer_progress.jsonl"
         try:
             progress_path.parent.mkdir(parents=True, exist_ok=True)
@@ -724,9 +752,10 @@ def run_worker_job(
                 cwd=str(cwd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 text=True,
                 bufsize=1,
-                env=_child_env(session_id),
+                env=_child_env(session_id, cli_home),
             )
         except OSError as exc:
             raise WorkerError(
@@ -767,6 +796,42 @@ def run_worker_job(
 
         stdout_reader.start()
         stderr_reader.start()
+
+        # E3 part 1b: the CLI path never emitted a model_call NOTE (that
+        # NOTE belonged to the factory-coder route), so a live-but-silent
+        # CLI writer looked identical to a dead one on the Floor. Open the
+        # call here with the worker wall as its deadline; the dispatch
+        # layer's "FACTORY_CODE_CLI session finished" note closes it.
+        def _note_cli_started() -> None:
+            if progress_handle is not None:
+                try:
+                    progress_handle.write(
+                        json.dumps(
+                            {
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                                "line": "codewhale writer CLI started",
+                                "model_call": True,
+                            }
+                        )
+                        + "\n"
+                    )
+                    progress_handle.flush()
+                except OSError:
+                    pass
+            if progress is not None:
+                try:
+                    progress(
+                        "codewhale writer CLI started — model call in flight",
+                        {
+                            "model_call": True,
+                            "deadline_s": timeout,
+                            "provider": worker_provider(),
+                        },
+                    )
+                except Exception:  # noqa: BLE001 — telemetry never fails the build
+                    pass
+
+        _note_cli_started()
         deadline = time.monotonic() + timeout
         try:
             while True:
@@ -854,9 +919,9 @@ def run_worker_job(
         return receipt
 
 
-def _cli_log_tailer() -> Any:
+def _cli_log_tailer(home: Optional[Path] = None) -> Any:
     """A fresh tailer for one worker pass."""
-    return _CliLogTailer()
+    return _CliLogTailer(home=home)
 
 
 def _tool_hint(line: str) -> str:
@@ -891,15 +956,21 @@ class _CliLogTailer:
     of named steps. Best-effort: no log dir is never an error.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, home: Optional[Path] = None) -> None:
         self._dir: Optional[Path] = None
         self._file: Optional[Path] = None
         self._offset = 0
         self._last: Optional[float] = None
-        for candidate in (
-            Path.home() / ".codewhale" / "logs",
-            Path(os.getenv("CODWHALE_HOME", "") or "") / "logs",
-        ):
+        candidates = []
+        if home:
+            candidates.append(home / "logs")
+        candidates.extend(
+            [
+                Path.home() / ".codewhale" / "logs",
+                Path(os.getenv("CODWHALE_HOME", "") or "") / "logs",
+            ]
+        )
+        for candidate in candidates:
             try:
                 if candidate.is_dir():
                     self._dir = candidate
