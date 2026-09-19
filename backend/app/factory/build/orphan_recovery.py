@@ -452,3 +452,47 @@ def recover_orphaned_model_calls(
         [(r.get("action"), r.get("output_dir")) for r in results],
     )
     return results
+
+
+def recover_stranded_n3_handoffs(
+    *, outputs_root: Optional[Path] = None
+) -> List[Dict[str, Any]]:
+    """Boot hook: restart the Store-gate waiter for every handed-off build.
+
+    After a handoff the verdict is collected by ``wait_and_ingest_n3`` -- a
+    daemon thread inside this process. Any restart during the CI wait (a
+    deploy is enough) kills it, and nothing started it again: the platform
+    passed in Docker on cerebrum-builds and the Factory went on saying
+    "building / HANDOFF_TO_N3" until someone typed 'continue' in that exact
+    session. Audit 2026-09-19: 8 of 31 build branches were green on
+    cerebrum-builds and never ingested.
+
+    Unlike WRITER recovery this is not limited to one: a waiter is a cheap
+    poll that ends on a verdict or its own wall, and an old branch whose gate
+    already finished is ingested on the first fetch.
+    """
+    from app.factory.build.n3_store_gate import (
+        handoff_awaiting_n3,
+        n3_ingest_live,
+        start_n3_ingest_job,
+    )
+
+    results: List[Dict[str, Any]] = []
+    for output_dir in iter_session_build_dirs(outputs_root):
+        try:
+            if is_superseded_workspace(output_dir):
+                continue
+            if not handoff_awaiting_n3(output_dir) or n3_ingest_live(output_dir):
+                continue
+            started = start_n3_ingest_job(
+                output_dir, session_id=session_id_from_output(output_dir)
+            )
+            results.append(
+                {"action": "n3_waiter_restarted" if started else "already_live",
+                 "output_dir": str(output_dir)}
+            )
+        except Exception:  # noqa: BLE001 -- one torn workspace must not stop the scan
+            logger.warning("n3 handoff recovery failed at %s", output_dir, exc_info=True)
+    if results:
+        logger.info("n3 handoff recovery: restarted %d waiter(s)", len(results))
+    return results

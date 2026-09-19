@@ -206,6 +206,14 @@ async def _lifespan(app: FastAPI):
             "orphaned FACTORY_CODE_CLI recovery failed"
         )
     try:
+        from app.factory.build.orphan_recovery import recover_stranded_n3_handoffs
+
+        recover_stranded_n3_handoffs()
+    except Exception:  # noqa: BLE001 — boot must not die on the handoff scan
+        logging.getLogger("cerebrumdev.factory.orphan_recovery").exception(
+            "stranded N3 handoff recovery failed"
+        )
+    try:
         yield
     finally:
         task = getattr(app.state, "backup_task", None)
