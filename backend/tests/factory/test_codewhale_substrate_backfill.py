@@ -342,6 +342,16 @@ class TestProvenanceOnTheProductionPath:
         # release_gate.py credits the agent by this exact prefix.
         assert all(str(v).startswith("coder CLI") for v in sources.values())
 
+    def test_the_manifest_lets_the_products_own_floor_check_pass(self, tmp_path, monkeypatch):
+        """acceptance.py's authorship_floor (check 13) merges this manifest and
+        calls full_pilot_authorship_from. Building the image is not enough."""
+        from app.factory.build.authorship import full_pilot_authorship_from
+
+        prov = self._run(tmp_path, monkeypatch)
+
+        floor = full_pilot_authorship_from(prov, tmp_path / "build")
+        assert floor.meets_floor, (floor.need, floor.action_py, floor.cli_authored_ids)
+
     def test_an_agent_written_manifest_is_left_alone(self, tmp_path, monkeypatch):
         mine = {"schema_version": "build_provenance.v1", "artifact_sources": {"x": "coder CLI"}, "by": "agent"}
 

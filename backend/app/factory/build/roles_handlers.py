@@ -3026,6 +3026,18 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                         f"app/actions/{hid}.py": "coder CLI (codewhale exec)"
                         for hid in handler_ids
                     },
+                    # Read by the product's own acceptance.py (authorship_floor,
+                    # the 13th check) via full_pilot_authorship_from: without
+                    # these the image builds and then fails the floor.
+                    "authorship": {
+                        "action_py": len(handler_ids),
+                        "agent_artifacts": list(handler_ids),
+                        "cli_authored_ids": list(handler_ids),
+                    },
+                    "n_required": len(
+                        list(getattr(ctx.blueprint, "capabilities", None) or [])
+                    )
+                    or len(handler_ids),
                     "written_by": "factory (the agent did not emit a manifest)",
                     "worker": {
                         "status": receipt.status,
