@@ -390,21 +390,64 @@ def _rewrite_shim_constructors(text: str) -> str:
     if text == original:
         return text
     if "def _instantiate_store_block" not in text:
-        text = _INSTANTIATE_HELPER.lstrip("\n") + "\n" + text
+        from app.factory.build.offline_adapters import insert_after_future_imports
+
+        text = insert_after_future_imports(
+            text, _INSTANTIATE_HELPER.lstrip("\n") + "\n"
+        )
     return text
 
 
-def _prepare_cloned_python(text: str) -> str:
-    """HAL DI + result-key access on every vendored .py (shim or runtime)."""
+#: A vendoring transform turned Store source that parsed into source that
+#: does not. Named at CLONER so the build stops where the damage happened.
+VENDOR_TRANSFORM_BROKE_SOURCE = "vendor_transform_broke_source"
+
+
+def _parses(text: str) -> bool:
+    try:
+        compile(text.lstrip("\ufeff"), "<vendored>", "exec")
+    except SyntaxError:
+        return False
+    return True
+
+
+def _prepare_cloned_python(text: str, *, label: str = "vendored module") -> str:
+    """HAL DI + result-key access on every vendored .py (shim or runtime).
+
+    These are regex rewrites of someone else's source, written against the
+    Store's shape at the time. When the Store changes shape they can break
+    it silently: FinOps (sess_065fc3eac75c4f62) shipped a notification.py
+    that did not parse and still went 13/13, because nothing exercised the
+    block. So the output must parse whenever the input did -- otherwise
+    CLONER refuses by name instead of shipping the damage.
+    """
     from app.factory.build.offline_adapters import (
         emit_result_key_access,
         emit_store_host_di,
     )
 
+    # A leading BOM means nothing to Python, but the helper injection below
+    # PREPENDS text and would bury it mid-file, where it is a SyntaxError
+    # (caught by this guard on its first run). Drop it before rewriting.
+    text = text.lstrip("\ufeff")
+    original = text
     text = _rewrite_shim_constructors(text)
     text = emit_result_key_access(text)
     text = emit_store_host_di(text)
-    return emit_instantiate_ready(text)
+    text = emit_instantiate_ready(text)
+    if not _parses(text) and _parses(original):
+        try:
+            compile(text.lstrip("\ufeff"), label, "exec")
+        except SyntaxError as exc:
+            where = f"line {exc.lineno}: {exc.msg}"
+        raise RoleError(
+            f"{VENDOR_TRANSFORM_BROKE_SOURCE}: {label} parsed as the Store "
+            f"published it and does not after the factory's vendoring "
+            f"rewrites ({where})",
+            reason=VENDOR_TRANSFORM_BROKE_SOURCE,
+            location="CLONER",
+        )
+    return text
 
 
 def _store_block_defs(blocks_root: Path) -> Dict[str, tuple]:
@@ -783,7 +826,8 @@ def _vendor_runtime_slice(
 
     def _emit_store_module(mod: str, source: str) -> str:
         return _prepare_cloned_python(
-            emit_runtime_module(mod, _rewrite_runtime_imports(source))
+            emit_runtime_module(mod, _rewrite_runtime_imports(source)),
+            label=f"vendor/cerebrum/blocks/{mod.rsplit('.', 1)[-1]}.py",
         )
 
     base = Path("vendor") / "cerebrum"
@@ -884,7 +928,8 @@ def _vendor_runtime_slice(
                 continue
             rel = shim_dir / py.relative_to(ctx.workspace.workspace / shim_dir)
             text = _prepare_cloned_python(
-                _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace"))
+                _rewrite_runtime_imports(py.read_text(encoding="utf-8", errors="replace")),
+                label=rel.as_posix(),
             )
             lazy_foreign.extend(_check_foreign_app_imports(rel.as_posix(), text))
             ctx.workspace.write_text(rel, text)
