@@ -340,6 +340,9 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
                 decision = platform_chat_llm.coerce_explicit_approval(
                     decision, state, user_message
                 )
+                decision = platform_chat_llm.enforce_elicitation_cap(
+                    decision, state, user_message
+                )
                 if decision.get("action") == "start_coder":
                     try:
                         require_remaining(getattr(state, "user_id", None), "generation")

@@ -49,6 +49,13 @@ class ProductDesignState(BaseModel):
     generation: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
     brief_lint: Optional[Dict[str, Any]] = None
+    #: What the user has said so far while the Floor chat is still asking
+    #: about the platform -- first brief included, verbatim. Folded into the
+    #: brief the architect drafts from, then cleared.
+    elicitation_turns: List[str] = Field(default_factory=list)
+    #: How many times the Floor chat has asked. Capped in code, not by the
+    #: model: a chat that can ask forever is a chat that never builds.
+    elicitation_rounds: int = 0
 
 
 class SessionState(BaseModel):
