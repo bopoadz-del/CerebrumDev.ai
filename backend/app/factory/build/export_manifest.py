@@ -51,6 +51,50 @@ def ci_run_id(env: Optional[Dict[str, str]] = None) -> str:
     return str(source.get("FACTORY_CI_RUN_ID") or source.get("GITHUB_RUN_ID") or "").strip()
 
 
+#: How the Store gate's verdict reaches the ledger when it ran in CI.
+_COMMIT_STATUS_VIA = "github-commit-status:"
+
+
+def ci_evidence(status: Dict[str, Any], env: Optional[Dict[str, str]] = None) -> str:
+    """The CI run that greened THIS build, from where that fact is recorded.
+
+    ``ci_run_id`` reads GITHUB_RUN_ID / FACTORY_CI_RUN_ID from the process
+    environment -- but the process serving the download is the API server,
+    which never runs inside the CI job. In production that variable does not
+    exist, so every runner-built platform was refused with "the build was not
+    greened by CI", including one whose Store gate had passed 13/13 in Docker
+    (live: sess_b4fcca22b6204b68, HTTP 500 on the Floor's Export button).
+
+    The build's own ledger is where the CI verdict lands: the N3 ingest
+    records the acceptance result, that it came from a GitHub commit status,
+    and the exact cerebrum-builds sha it was measured on. That is stronger
+    evidence than an ambient env var -- it is bound to this build, not to
+    whatever process happens to be asking.
+
+    Fail-closed: the acceptance must be ok, complete (k == k > 0), sourced
+    from a commit status, and pinned to a sha. Anything less is no evidence.
+    """
+    run = ci_run_id(env)
+    if run:
+        return run
+    acceptance = status.get("acceptance") or {}
+    sha = str(status.get("builds_sha") or "").strip()
+    via = str(acceptance.get("via") or "")
+    try:
+        passed, total = int(acceptance.get("passed") or 0), int(acceptance.get("total") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if (
+        acceptance.get("ok") is True
+        and total > 0
+        and passed == total
+        and via.startswith(_COMMIT_STATUS_VIA)
+        and sha
+    ):
+        return f"{via}@{sha}"
+    return ""
+
+
 def assert_zip_eligibility(status: Dict[str, Any], run_id: str) -> None:
     """6.3: a zip is produced ONLY after CI is green AND the artifact gate
     (Phase 0.5) passed. Anything else refuses with the named reason."""
