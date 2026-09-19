@@ -155,7 +155,11 @@ def test_the_registrar_reads_a_real_build(tmp_path, stub_coder):
         (r.block_id, r.origin) for r in inv.records
     ]
 
+    # Store-sourced clones carry the Store commit, so staleness is DECIDABLE --
+    # a mirror-sourced build could only ever answer "unknown".
     reports = check_staleness(inv, store_head=HEAD)
-    assert {r.status for r in reports} == {"unknown"}, (
-        "a mirror-sourced build cannot be judged against a Store commit"
-    )
+    assert {r.status for r in reports} == {"stale"}, [(r.block_id, r.status) for r in reports]
+    pinned = {r.revision for r in inv.records}
+    assert len(pinned) == 1, pinned
+    current = check_staleness(inv, store_head=pinned.pop())
+    assert {r.status for r in current} == {"current"}

@@ -84,7 +84,6 @@ _PRE_SPLIT_SYMBOLS = (
     "_templated_readme",
     "_templated_route_body",
     "_tester_agent_cases",
-    "_vendor_mirror_dir",
     "_vendor_product_kernel",
     "_vendor_runtime_slice",
     "run_cloner",

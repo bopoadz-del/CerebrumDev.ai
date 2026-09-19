@@ -35,6 +35,7 @@ def invoking_handler_body(marker: Optional[Dict[str, Any]] = None) -> str:
     # be good enough for the Store's.
     return (
         "    import json as _json\n"
+        "    import uuid as _uuid\n"
         "    from pathlib import Path as _Path\n"
         "\n"
         "    def _for_block(block_id):\n"
@@ -61,8 +62,11 @@ def invoking_handler_body(marker: Optional[Dict[str, Any]] = None) -> str:
         "            if name in payload:\n"
         "                shaped[name] = payload[name]\n"
         "            elif spec.get('required'):\n"
+        "                # Unique per call: the real estate_registry rejects a\n"
+        "                # duplicate record id, which the always-ok fake never did.\n"
         "                shaped[name] = (\n"
-        "                    dict(payload) if spec.get('type') == 'json' else 'sample'\n"
+        "                    dict(payload) if spec.get('type') == 'json'\n"
+        "                    else 'sample-' + _uuid.uuid4().hex[:10]\n"
         "                )\n"
         "        return shaped\n"
         "\n"

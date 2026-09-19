@@ -181,7 +181,7 @@ def test_steward_generate(tmp_path):
     assert "estate_registry" in catalog
 
 
-def test_steward_blocks_come_from_the_mirror_not_the_store(tmp_path):
+def test_steward_blocks_come_from_the_store(tmp_path):
     """Pin where the steward blocks actually come from.
 
     ``estate_registry`` and ``portfolio_rollup`` are absent from the real
@@ -199,7 +199,7 @@ def test_steward_blocks_come_from_the_mirror_not_the_store(tmp_path):
     registry = load_blocks_registry(real_blocks_root())
     for block_id in ("estate_registry", "portfolio_rollup"):
         assert block_id in registry, f"{block_id} vanished from both store and mirror"
-        assert registry[block_id].source == "factory-vendor-mirror", (
-            f"{block_id} now resolves from {registry[block_id].source} — if it "
-            "landed in the real Store, remove it from vendor_blocks_mirror"
+        assert registry[block_id].source == "cerebrum-blocks", (
+            f"{block_id} resolves from {registry[block_id].source} — the Factory "
+            "holds no blocks; every block must come from the Store"
         )

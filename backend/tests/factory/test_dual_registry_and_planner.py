@@ -60,15 +60,3 @@ capabilities:
         CapabilityPlanner(BLOCKS).plan(bp)
 
 
-def test_vendor_mirror_covers_estate_blocks_without_blocks_checkout(tmp_path):
-    empty = tmp_path / "empty_blocks"
-    empty.mkdir()
-    (empty / "block_registry").mkdir()
-    ids = [
-        "estate_registry",
-        "estate_maintenance",
-        "evidence_verifier",
-        "readiness_engine",
-        "portfolio_rollup",
-    ]
-    assert assert_dual_registered(ids, empty) == sorted(ids)

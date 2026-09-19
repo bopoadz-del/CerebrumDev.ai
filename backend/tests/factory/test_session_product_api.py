@@ -334,7 +334,7 @@ def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
     bp = load_blueprint(ROOT / "blueprints/examples/basic_product.yaml")
     out = tmp_path / "winery-shaped"
     ProductGenerator(
-        bp, blocks_root=None, factory_commit="t", blocks_commit="t"
+        bp, blocks_root=BLOCKS, factory_commit="t", blocks_commit="t"
     ).generate(out)
     zpath = zip_generated_product(out, tmp_path / "winery-hospitality-export")
     names = zipfile.ZipFile(zpath).namelist()
