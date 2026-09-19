@@ -67,7 +67,8 @@ def test_the_emitted_suite_calls_the_store_with_the_capability_id():
 
 
 def test_the_version_was_bumped_for_the_contract_change():
-    assert PROMPT_VERSION == "writer_worker_prompt.v5"
+    # The entity rule arrived in v5; later versions must keep it.
+    assert int(PROMPT_VERSION.rsplit(".v", 1)[1]) >= 5
     assert _prompt().startswith(f"<!-- {PROMPT_VERSION} -->")
 
 

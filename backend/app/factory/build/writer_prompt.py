@@ -11,6 +11,11 @@ from __future__ import annotations
 from typing import Any
 
 #: Version log.
+#: v6 -- MONEY. The agent hardcoded UK VAT (0.2) and GBP into a finance platform
+#:   for a Dubai business whose brief named no country (FinOps,
+#:   sess_065fc3eac75c4f62): every net/VAT split was wrong for the UAE (5%,
+#:   AED). Country, currency and tax rates now come from the brief; when the
+#:   brief gives none they are operator settings, never a silent default.
 #: v5 -- an entity's name IS its capability id. v3/v4 told the agent to write
 #:   ``save(entity, ...)`` and ``op.create_table("<entity>")`` but never said
 #:   what an entity is called, while TESTER defaults every entity to the
@@ -32,7 +37,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v5"
+PROMPT_VERSION = "writer_worker_prompt.v6"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -105,6 +110,14 @@ and the suite calls store.save("<capability>", ...), store.get("<capability>",
 ...) and store.list_all("<capability>", ...) with exactly that name. A table
 called anything else is a KeyError in the suite, not a style choice; if you
 want a friendlier label, make it a column.
+
+MONEY (country, currency, tax):
+- Country, currency and every tax rate (VAT, sales tax, withholding) come
+  from the BRIEF. When the brief names them, use exactly those.
+- When the brief does not, do not choose one. Never hardcode a country's tax
+  rate or currency the brief did not give: make currency and each rate a
+  named setting read from the environment, with no default value, and list
+  every such setting in README.md as a value the operator must set before use.
 
 PROCESSES (you share this machine with the factory that is running you):
 - NEVER stop processes by name or pattern: no pkill, killall, "kill -9 -1",
