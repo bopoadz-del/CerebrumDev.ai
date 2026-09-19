@@ -47,6 +47,17 @@ _URL_CREDENTIAL_RE = re.compile(r"(https?://)[^/\s@]+@")
 _SESSION_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
+#: Files the factory keeps in a workspace for its OWN bookkeeping. They are
+#: not the product and must not ship -- neither to cerebrum-builds nor in the
+#: customer's zip. A delivered platform was found carrying the owner's
+#: internal account id (.generation_quota_account) and the coding agent's
+#: lock directory (.codewhale). build_ledger.jsonl itself stays: the receipt
+#: and the authorship floor are verified against it.
+FACTORY_INTERNAL_NAMES = frozenset(
+    {".codewhale", ".generation_quota_account", "build_ledger.jsonl.lock"}
+)
+
+
 class BuildsPushError(RuntimeError):
     """Token/repo missing or push/collect failed before a usable branch tip."""
 
@@ -138,7 +149,7 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
     if not src.is_dir():
         raise BuildsPushError(f"workspace is not a directory: {src}")
     for item in src.iterdir():
-        if item.name in {".git", ".github"}:
+        if item.name in {".git", ".github"} or item.name in FACTORY_INTERNAL_NAMES:
             continue
         target = dest / item.name
         if target.exists() or target.is_symlink():

@@ -31,6 +31,7 @@ from app.core.session_store import update_session
 from app.core.trial_limits import require_remaining, require_within_limit
 
 logger = logging.getLogger(__name__)
+from app.factory.build.builds_push import FACTORY_INTERNAL_NAMES
 from app.factory.blocks_source import resolve_blocks_root
 from app.factory.blueprint import BlueprintError, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError
@@ -279,6 +280,8 @@ def zip_generated_product(out: Path, archive_base: Path) -> Path:
             rel = path.relative_to(out)
             if any(part in _EXPORT_SKIP_DIR_NAMES for part in rel.parts):
                 continue
+            if any(part in FACTORY_INTERNAL_NAMES for part in rel.parts):
+                continue
             if path.suffix in _EXPORT_SKIP_SUFFIXES:
                 continue
             if not path.is_file():
@@ -394,9 +397,10 @@ def download_product_package(
     from app.factory.build.authorship import thin_store_green_export_blocker
     from app.factory.build.export_manifest import (
         ENGINE_FILE,
+        ExportManifestError,
         assert_zip_eligibility,
         build_manifest,
-        ci_run_id,
+        ci_evidence,
         verify_manifest,
         write_export_manifest,
     )
@@ -407,15 +411,21 @@ def download_product_package(
     # The template engine has no ledger (state "unknown") and its zip carries
     # the prototype marker declaring it unfinished â€” the gate applies to
     # runner builds, which are the ones claiming a governed product.
+    # A refusal here is an answer, not a crash: it used to escape as a bare
+    # HTTP 500, so the Floor's Export button failed with nothing to read.
+    ci_run = ci_evidence(status)
     if status.get("state") != "unknown":
-        assert_zip_eligibility(status, ci_run_id())
+        try:
+            assert_zip_eligibility(status, ci_run)
+        except ExportManifestError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     engine_present = (out / ENGINE_FILE).is_file()
     seam_present = (out / "app" / "steward" / "tenant_store.py").is_file()
     manifest = build_manifest(
         product_id=gen.get("product_id") or out.name,
         tenant_id=status.get("tenant_id"),
-        ci_run=ci_run_id(),
+        ci_run=ci_run,
         retrieval_mode="vector_rag" if engine_present else "keyword_lexical",
         tenancy_mode=(
             "multi_tenant_partition" if seam_present else "single_tenant_only"
