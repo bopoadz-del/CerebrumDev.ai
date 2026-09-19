@@ -34,6 +34,46 @@ async def create_new_session(
     return state
 
 
+_TITLE_CHARS = 48
+
+
+def session_card(state: Any) -> Dict[str, Any]:
+    """What the Floor's session list shows: a title, a stage, a time.
+
+    A bare ``sess_0ca5413f`` id is not something a person can find their
+    bakery platform by. The title is the product name once one is drafted,
+    otherwise the first thing the user actually said. Read from session
+    state only -- no ledger or disk access, this runs once per listed
+    session.
+    """
+    pd = getattr(state, "product_design", None)
+    blueprint = getattr(pd, "blueprint", None) or {}
+    title = str(blueprint.get("product_name") or "").strip()
+    if not title:
+        for turn in getattr(state, "chat_history", None) or []:
+            if isinstance(turn, dict) and turn.get("role") == "user":
+                text = " ".join(str(turn.get("content") or "").split())
+                if len(text) > 3:  # skip "hi"
+                    title = text
+                    break
+    if len(title) > _TITLE_CHARS:
+        title = title[: _TITLE_CHARS - 1].rstrip() + "\u2026"
+    if getattr(pd, "generation", None):
+        stage = "build"
+    elif blueprint:
+        stage = "blueprint"
+    elif getattr(state, "chat_history", None):
+        stage = "talking"
+    else:
+        stage = "empty"
+    updated = getattr(state, "updated_at", None)
+    return {
+        "title": title,
+        "stage": stage,
+        "updated_at": updated.isoformat() if hasattr(updated, "isoformat") else None,
+    }
+
+
 @router.get("/")
 async def list_sessions(principal: Principal = Depends(require_api_key)) -> List[Dict[str, Any]]:
     """List sessions owned by the caller (admin/dev see all recorded sessions)."""
@@ -57,6 +97,7 @@ async def list_sessions(principal: Principal = Depends(require_api_key)) -> List
                 "user_id": state.user_id,
                 "phase": getattr(state, "phase", None),
                 "phase_status": getattr(state, "phase_status", None),
+                **session_card(state),
             }
         )
     return out
