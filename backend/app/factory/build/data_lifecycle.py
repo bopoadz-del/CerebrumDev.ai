@@ -968,6 +968,59 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
     )
 
 
+#: The spec-independent half of :func:`emit_writer_artifacts`.
+#:
+#: ``run_writer`` returns at its CodeWhale branch long before
+#: ``emit_writer_artifacts`` is reached, and ``FACTORY_CODEWHALE_WRITER=1``
+#: makes that the only path production takes -- so none of this substrate was
+#: written, while ``run_tester`` still stamped ``tests/test_data_lifecycle.py``,
+#: which opens ``from app import backup, store``. Live build
+#: sess_b6d51f9089e14176 died on exactly that:
+#: ``ImportError: cannot import name 'backup' from 'app'``.
+#:
+#: ``app/store.py`` and ``0001_baseline`` are deliberately absent: they carry
+#: the entity schema, the agent authors them, and overwriting them would
+#: destroy the capability work this backfill exists to protect.
+def platform_substrate() -> List[Tuple[str, str]]:
+    """(relpath, content) for every substrate file that needs no specs."""
+    return [
+        ("app/migrations.py", render_migrations()),
+        ("app/backup.py", render_backup()),
+        ("alembic.ini", render_alembic_ini()),
+        ("alembic/env.py", render_alembic_env()),
+        ("alembic/script.py.mako", render_script_mako()),
+        (f"alembic/versions/{REVISION_0002}.py", render_revision_0002()),
+        ("scripts/entrypoint.sh", render_entrypoint()),
+        ("docs/data_lifecycle.json", render_lifecycle_doc()),
+    ]
+
+
+def backfill_platform_substrate(workspace: Any) -> Dict[str, List[str]]:
+    """Write substrate the agent was never asked for. Never overwrites.
+
+    Anything already on disk is left exactly as the agent wrote it -- this
+    fills gaps, it does not converge. Returns what was written and what was
+    skipped so the pass is visible on the Floor rather than silent.
+    """
+    written: List[str] = []
+    skipped: List[str] = []
+    for rel, content in platform_substrate():
+        if workspace.exists(rel):
+            skipped.append(rel)
+            continue
+        # A module must not shadow a package the agent already wrote. The
+        # writer prompt asks for ``app/migrations/``; this module is
+        # ``app/migrations.py``. With both present the package wins and
+        # ``from app.migrations import upgrade_head`` fails in a way that
+        # reads as the agent's bug. Leave it alone and say so.
+        if rel.endswith(".py") and workspace.exists(rel[:-3]):
+            skipped.append(f"{rel} (a package of the same name exists)")
+            continue
+        write_workspace_text(workspace, Path(rel), content)
+        written.append(rel)
+    return {"written": written, "skipped": skipped}
+
+
 def assert_no_connect_time_ddl(store_source: str) -> None:
     if "CREATE TABLE" in store_source:
         raise ValueError("store.py still emits CREATE TABLE (schema belongs in Alembic)")
