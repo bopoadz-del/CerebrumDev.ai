@@ -139,6 +139,33 @@ def _default_run_git(args: Sequence[str], *, cwd: Path) -> subprocess.CompletedP
     )
 
 
+#: The only things a build branch takes from ``main``: the repo itself and the
+#: Store gate's workflows. Everything else must come from the workspace.
+_INHERITED_FROM_MAIN = frozenset({".git", ".github"})
+
+
+def _drop_inherited_product(tree: Path) -> None:
+    """Remove whatever product ``main`` happens to carry before the overlay.
+
+    A build branch is cut from ``main`` so it inherits the Store gate. But the
+    overlay only REPLACES top-level entries the workspace has; anything else
+    on ``main`` survives into the customer's branch. On 2026-09-14 a whole
+    build branch was merged into cerebrum-builds ``main`` (a hospitality
+    platform from another account), and from then on every new platform's
+    branch carried that one's leftovers -- its kits/, its receipt.json, its
+    .generation_quota_account -- and the Docker gate measured workspace +
+    leftovers rather than what the zip ships. Whatever ``main`` contains,
+    a branch is the workspace plus the gate, nothing else.
+    """
+    for item in tree.iterdir():
+        if item.name in _INHERITED_FROM_MAIN:
+            continue
+        if item.is_dir() and not item.is_symlink():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+
 def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
     """Overlay product files onto a cloned ``main`` tree.
 
@@ -194,6 +221,7 @@ def push_workspace(
         if not parent_sha:
             raise BuildsPushError("push failed: empty seed parent sha")
         _require_git(git, ["checkout", "-B", branch], cwd=tmp, token=token)
+        _drop_inherited_product(tmp)
         _sync_workspace_onto_tree(Path(workspace), tmp)
         _require_git(git, ["add", "-A"], cwd=tmp, token=token)
         commit = git(

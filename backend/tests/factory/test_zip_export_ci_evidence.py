@@ -124,3 +124,34 @@ def test_factory_bookkeeping_does_not_ship_in_the_customers_zip(tmp_path):
     assert "app/main.py" in names
     leaked = {n for n in names if any(part in FACTORY_INTERNAL_NAMES for part in n.split("/"))}
     assert not leaked, leaked
+
+
+def test_a_build_branch_inherits_only_the_gate_from_main(tmp_path):
+    """cerebrum-builds main carried a whole platform (a build branch was merged
+    into it on 2026-09-14). The overlay only replaces what the workspace has,
+    so another customer's kits/, receipt.json and account file rode along in
+    every later platform's branch."""
+    from app.factory.build.builds_push import _drop_inherited_product, _sync_workspace_onto_tree
+
+    main = tmp_path / "clone"
+    (main / ".git").mkdir(parents=True)
+    (main / ".git" / "HEAD").write_text("ref", encoding="utf-8")
+    (main / ".github" / "workflows").mkdir(parents=True)
+    (main / ".github" / "workflows" / "store-gate.yml").write_text("gate", encoding="utf-8")
+    # someone else's platform, sitting on main
+    (main / "kits" / "hotel").mkdir(parents=True)
+    (main / "kits" / "hotel" / "k.json").write_text("{}", encoding="utf-8")
+    (main / "receipt.json").write_text('{"session_id": "sess_other"}', encoding="utf-8")
+    (main / ".generation_quota_account").write_text("acct_other", encoding="utf-8")
+    (main / "app").mkdir()
+    (main / "app" / "old.py").write_text("old", encoding="utf-8")
+
+    ws = tmp_path / "ws"
+    (ws / "app").mkdir(parents=True)
+    (ws / "app" / "main.py").write_text("new", encoding="utf-8")
+
+    _drop_inherited_product(main)
+    _sync_workspace_onto_tree(ws, main)
+
+    names = {p.relative_to(main).as_posix() for p in main.rglob("*") if p.is_file()}
+    assert names == {".git/HEAD", ".github/workflows/store-gate.yml", "app/main.py"}, names
