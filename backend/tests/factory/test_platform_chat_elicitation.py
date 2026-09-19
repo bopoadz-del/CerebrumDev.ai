@@ -87,7 +87,8 @@ def test_a_first_brief_can_be_answered_with_questions_not_a_blueprint(monkeypatc
 
     result = _say(state, BRIEF)
 
-    assert result["summary"] == "How many vets and front-desk staff will use it?"
+    # No kit covers a vet clinic, so the factory's notice leads the question.
+    assert result["summary"].endswith("How many vets and front-desk staff will use it?")
     assert result["sse"] == "info" and result.get("elicitation") is True
     assert briefs == [], "asking must not draft"
     assert state.product_design.blueprint is None
@@ -366,14 +367,18 @@ def test_the_models_words_survive_an_immediate_draft(monkeypatch):
 
     result = _say(state, "falconry school platform, just build it")
 
-    assert result["summary"].startswith("We do not have a top-notch falconry kit")
-    assert "Blueprint drafted." in result["summary"]
+    s = result["summary"]
+    assert "We do not have a top-notch falconry kit; we can build a simple one." in s
+    assert s.index("simple one.") < s.index("Blueprint drafted."), "model's words come first"
 
 
 def test_the_system_prompt_teaches_kit_honesty_and_connector_choice():
     prompt = " ".join(platform_chat_llm._SYSTEM.split())
-    assert "top-notch kit" in prompt
-    assert "take longer" in prompt and "cost more" in prompt
+    assert '"kit_match"' in prompt
+    assert "never imply a kit exists when it does not" in prompt
+    # The sentence itself is the factory's, so the model cannot skip it.
+    for phrase in ("top-notch kit", "take longer", "cost more"):
+        assert phrase in platform_chat_llm.KIT_NOTICE
     assert "which outside systems they already use" in prompt
     assert '"connectors"' in prompt and '"missing_connectors"' in prompt
     assert "marked placeholder" in prompt
@@ -410,3 +415,94 @@ def test_the_catalog_is_derived_from_manifests_not_names(tmp_path, monkeypatch):
     assert sc.offerable_connector_ids(cat) == ["pager", "toolbus"]
     text = sc.render_for_chat(cat)
     assert "NOT CLEARED FOR FACTORY BUILDS" in text and "gdrive: gdrive part" in text
+
+
+# -- the kit notice is the factory's sentence, not the model's -----------------
+
+
+def _kits(monkeypatch, kits):
+    from app.factory import store_catalog as sc
+
+    monkeypatch.setattr(
+        sc, "store_catalog",
+        lambda *a, **k: {"blocks": [], "connectors": [], "mcp": [], "not_cleared": [], "kits": list(kits)},
+    )
+
+
+def test_no_kit_for_the_business_is_said_by_the_factory_not_left_to_the_model(monkeypatch):
+    """First live run: the model was told to mention it, and did not."""
+    state = _fresh_state()
+    _capture_draft(monkeypatch)
+    _kits(monkeypatch, ["private_estate_operations"])
+    _script(monkeypatch, [{"action": "ask_user", "message": "How many birds?", "kit_match": ""}])
+
+    result = _say(state, "falconry school platform")
+
+    assert result["summary"].startswith(platform_chat_llm.KIT_NOTICE)
+    assert result["summary"].endswith("How many birds?")
+    for phrase in ("top-notch kit", "take longer", "cost more"):
+        assert phrase in result["summary"]
+
+
+def test_the_notice_is_said_once(monkeypatch):
+    state = _fresh_state()
+    _capture_draft(monkeypatch)
+    _kits(monkeypatch, ["private_estate_operations"])
+    _script(monkeypatch, [{"action": "ask_user", "message": "q1"}, {"action": "draft_platform", "brief": "b"}])
+
+    first = _say(state, "falconry school")
+    second = _say(state, "40 birds")
+
+    assert platform_chat_llm.KIT_NOTICE in first["summary"]
+    assert platform_chat_llm.KIT_NOTICE not in second["summary"]
+
+
+def test_a_real_kit_match_suppresses_the_notice(monkeypatch):
+    state = _fresh_state()
+    _capture_draft(monkeypatch)
+    _kits(monkeypatch, ["private_estate_operations"])
+    _script(monkeypatch, [{"action": "ask_user", "message": "q", "kit_match": "private_estate_operations"}])
+
+    result = _say(state, "a platform to run my family's estates")
+
+    assert platform_chat_llm.KIT_NOTICE not in result["summary"]
+    assert state.product_design.kit_notice_given is False
+
+
+def test_the_model_cannot_talk_the_notice_away_with_a_kit_that_does_not_exist(monkeypatch):
+    state = _fresh_state()
+    _capture_draft(monkeypatch)
+    _kits(monkeypatch, ["private_estate_operations"])
+    _script(monkeypatch, [{"action": "draft_platform", "brief": "b", "kit_match": "falconry_pro_kit"}])
+
+    result = _say(state, "falconry school, just build it")
+
+    assert result["summary"].startswith(platform_chat_llm.KIT_NOTICE)
+
+
+def test_the_generic_base_is_not_offered_as_a_domain_kit(tmp_path, monkeypatch):
+    from app.factory import dual_registry, kit_pack, store_catalog as sc
+
+    monkeypatch.setattr(dual_registry, "load_factory_shelf", lambda *a, **k: {})
+    monkeypatch.setattr(dual_registry, "load_blocks_registry", lambda *a, **k: {})
+    monkeypatch.setattr(
+        kit_pack, "load_shelf_kit_map", lambda *a, **k: {"a": "platform", "b": "private_estate_operations"}
+    )
+
+    assert sc.build_store_catalog(tmp_path)["kits"] == ["private_estate_operations"]
+
+
+def test_an_unreadable_shelf_neither_claims_nor_denies_a_kit(monkeypatch):
+    state = _fresh_state()
+    _capture_draft(monkeypatch)
+    from app.factory import store_catalog as sc
+
+    def boom(*a, **k):
+        raise RuntimeError("shelf unreadable")
+
+    monkeypatch.setattr(sc, "store_catalog", boom)
+    _script(monkeypatch, [{"action": "ask_user", "message": "q"}])
+
+    result = _say(state, "falconry school")
+
+    assert result["summary"] == "q"

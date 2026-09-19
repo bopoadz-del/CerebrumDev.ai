@@ -27,6 +27,11 @@ CONNECTOR_TAGS = frozenset({"integration", "connector", "connector-infra"})
 MCP_TAGS = frozenset({"mcp"})
 _DESCRIPTION_CHARS = 110
 
+#: The base every build stands on. It is on the kit shelf, but it is not
+#: domain depth -- offering it as "we have a kit for that" would be the
+#: exact overclaim the kit notice exists to prevent.
+BASE_KITS = frozenset({"platform"})
+
 #: The registry walk shells out to git once per block directory (tracked-only
 #: determinism), which is seconds on a 100+ block Store -- and the chat reads
 #: the catalog on every turn. The Store only changes on a deploy or a clone
@@ -114,7 +119,7 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
             not_cleared.append(entry)
 
     try:
-        kits = sorted(set(load_shelf_kit_map().values()))
+        kits = sorted(set(load_shelf_kit_map().values()) - BASE_KITS)
     except Exception:  # noqa: BLE001
         logger.warning("store catalog: kit shelf unreadable", exc_info=True)
         kits = []
