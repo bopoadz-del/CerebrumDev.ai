@@ -269,13 +269,6 @@ def _collector_agent_review(ctx: RoleContext) -> tuple:
 # -- CLONER --------------------------------------------------------------
 
 
-def _vendor_mirror_dir(block_id: str) -> Optional[Path]:
-    mirror = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror" / block_id
-    if (mirror / "block.py").is_file():
-        return mirror
-    return None
-
-
 def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Path]:
     """Real Store checkout first, factory vendor mirror second.
 
@@ -290,7 +283,9 @@ def _block_source_dir(block_id: str, blocks_root: Optional[Path]) -> Optional[Pa
         candidate = _block_dir_in_store(Path(blocks_root), block_id)
         if candidate is not None:
             return candidate
-    return _vendor_mirror_dir(block_id)
+    # No Factory-local fallback: the Store is the only source of blocks. A
+    # miss is reported by the CLONER as "no source found -- do not invent".
+    return None
 
 
 def _content_digest(source: Path) -> str:
@@ -932,7 +927,6 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
     vendored: List[str] = []
     missing: List[str] = []
     runtime_blocks: List[str] = []
-    defs = _store_block_defs(Path(ctx.blocks_root)) if ctx.blocks_root else {}
     ctx.note(
         f"cloning {len(block_ids)} block(s)",
         stage="blocks",
@@ -956,16 +950,12 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
             enforce_store_lock(bid, source, ctx.blocks_root, factory_lock)
         except BlocksLockError as exc:
             raise RoleError(str(exc)) from exc
+        # This used to swap in a Factory-local stub when the Store's runtime
+        # did not register a block ("the factory stub runs offline") -- the
+        # origin of the always-ok estate blocks that shipped inside customer
+        # platforms. The Factory holds no blocks: a Store block whose runtime
+        # is missing fails CLONER honestly instead of being replaced by a fake.
         needs_rt = _shim_needs_runtime(source)
-        if needs_rt and ctx.blocks_root:
-            if _resolve_store_def(bid, defs, Path(ctx.blocks_root)) is None:
-                mirror = _vendor_mirror_dir(bid)
-                if mirror is not None and not _shim_needs_runtime(mirror):
-                    # Kit-shelf shim exists in Blocks but the Store runtime
-                    # never registered it (and no ``_v2`` alias). Shipping
-                    # that shim fails CLONER; the factory stub runs offline.
-                    source = mirror
-                    needs_rt = False
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
         from app.factory.build.network_posture import apply_p1_cloned_block
 

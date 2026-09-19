@@ -45,11 +45,7 @@ def clear_cache() -> None:
 
 
 def _manifest(block_id: str, blocks_root: Path) -> Dict[str, Any]:
-    mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
-    for candidate in (
-        blocks_root / "block_registry" / block_id / "block.json",
-        mirror / block_id / "block.json",
-    ):
+    for candidate in (blocks_root / "block_registry" / block_id / "block.json",):
         try:
             if candidate.is_file():
                 data = json.loads(candidate.read_text(encoding="utf-8"))

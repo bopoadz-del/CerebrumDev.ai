@@ -1422,7 +1422,6 @@ export default function {component}() {{
     def _copy_referenced_blocks(self, out: Path) -> None:
         dest = out / "vendor" / "blocks"
         dest.mkdir(parents=True, exist_ok=True)
-        mirror = Path(__file__).resolve().parent / "vendor_blocks_mirror"
         from app.factory.blocks_lock import _block_dir_in_store, enforce_store_lock
 
         for bid in self.plan.dual_registered_blocks:
@@ -1431,10 +1430,8 @@ export default function {component}() {{
                 enforce_store_lock(bid, src, self.blocks_root, self.blocks_lock)
                 shutil.copytree(src, dest / bid, dirs_exist_ok=True)
                 continue
-            # Fall back to the vendor mirror when the external registry is unavailable
-            mirror_src = mirror / bid
-            if mirror_src.exists():
-                shutil.copytree(mirror_src, dest / bid, dirs_exist_ok=True)
+            # No fallback: the Factory holds no blocks. A block the Store does
+            # not have is not shipped -- never a Factory-local stand-in.
 
     def _copy_referenced_kits(self, out: Path) -> None:
         from app.factory.kit_pack import stock_kits

@@ -196,10 +196,22 @@ def local_block_json_candidates(
         if key not in seen:
             seen.add(key)
             out.append(path)
-    mirror = (
-        Path(__file__).resolve().parents[1] / "vendor_blocks_mirror" / bid / "block.json"
-    )
-    out.append(mirror)
+    # The Factory holds no blocks. The last resort is the Store the build
+    # itself clones from (the pinned checkout), not a Factory-local copy: in
+    # production CEREBRUM_BLOCKS_ROOT is unset, so this used to fall through
+    # to vendor_blocks_mirror and the agent's brief was written from block
+    # contracts 45 Store commits stale.
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        resolved = resolve_blocks_root()
+        if resolved is not None:
+            path = (Path(resolved) / "block_registry" / bid / "block.json").resolve()
+            if str(path) not in seen:
+                seen.add(str(path))
+                out.append(path)
+    except Exception:  # noqa: BLE001 -- no Store means "absent", never a crash
+        pass
     return out
 
 

@@ -20,7 +20,6 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 _FACTORY_DIR = Path(__file__).resolve().parent
 _FACTORY_KITS = _FACTORY_DIR / "kits"
 _FACTORY_SHELF = _FACTORY_DIR / "shelves" / "factory_blocks.json"
-_VENDOR_MIRROR = _FACTORY_DIR / "vendor_blocks_mirror"
 
 _SKIP_DIR_NAMES = {
     "__pycache__",
@@ -72,7 +71,6 @@ def _kit_source_candidates(
 ) -> List[Path]:
     candidates = [
         _FACTORY_KITS / kit_id,
-        _VENDOR_MIRROR / f"{kit_id}_kit",
     ]
     if blocks_root:
         root = Path(blocks_root)
@@ -237,8 +235,6 @@ def _classify_source(path: Path) -> str:
     resolved = path.resolve()
     if _FACTORY_KITS in resolved.parents or resolved == _FACTORY_KITS:
         return "factory-kits"
-    if _VENDOR_MIRROR in resolved.parents or resolved == _VENDOR_MIRROR:
-        return "factory-vendor-mirror"
     if "block_store" in resolved.parts:
         return "cerebrum-blocks"
     return "kit-source"

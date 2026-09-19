@@ -69,7 +69,6 @@ _OUTBOUND_MARKERS = (
     "api.anthropic.com",
 )
 
-_VENDOR_MIRROR = Path(__file__).resolve().parents[1] / "vendor_blocks_mirror"
 
 SBOM_REL = Path("docs") / "sbom.cdx.json"
 PERMISSIONS_REL = Path("docs") / "permissions.json"
@@ -148,11 +147,16 @@ def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
 
 def known_factory_block_ids(*, extra_roots: Sequence[Optional[Path]] = ()) -> frozenset:
     ids: set[str] = set()
-    if _VENDOR_MIRROR.is_dir():
-        for path in _VENDOR_MIRROR.iterdir():
-            if path.is_dir() and (path / "block.py").is_file():
-                ids.add(path.name)
-    for root in extra_roots:
+    # Known blocks are the Store's, read from the checkout the build clones
+    # from. There is no Factory-local mirror any more.
+    roots: list = list(extra_roots)
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        roots.append(resolve_blocks_root())
+    except Exception:  # noqa: BLE001
+        pass
+    for root in roots:
         if not root:
             continue
         base = Path(root)
