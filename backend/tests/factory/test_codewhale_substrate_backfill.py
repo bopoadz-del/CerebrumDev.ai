@@ -240,3 +240,46 @@ class TestReworkRoundIsNotJudgedEmpty:
 
         assert agent_written_handler_ids_in_workspace(staging) == []
         assert agent_written_handler_ids_in_workspace(destination) == []
+
+
+class TestWriterPromptNamesTheRealContract:
+    """The prompt, the substrate and the emitted suite are one contract.
+
+    v2 of the prompt asked for an ``app/migrations/`` package and never
+    mentioned store/backup/alembic, so the agent learned the persistence
+    contract from red tests. These bind the three together.
+    """
+
+    def _prompt(self) -> str:
+        from app.factory.build.writer_prompt import render_writer_prompt
+
+        class _Bp:
+            product_id = "probe"
+            product_name = "Probe"
+            vertical = "probe"
+            summary = "probe"
+
+        return render_writer_prompt(_Bp(), brief="x")
+
+    def test_the_prompt_no_longer_asks_for_the_shadowing_package(self):
+        prompt = self._prompt()
+        assert "- app/block_inputs.py, app/migrations/" not in prompt
+        assert "Do not\ncreate an app/migrations/ package" in prompt
+
+    def test_every_python_substrate_module_is_named_as_factory_written(self):
+        prompt = " ".join(self._prompt().split())
+        for rel, _ in platform_substrate():
+            if rel.endswith(".py") or rel.endswith(".sh") or rel == "alembic.ini":
+                assert rel in prompt, f"{rel} is backfilled but the prompt never says so"
+
+    def test_the_agent_owned_files_are_named_with_their_surface(self):
+        prompt = " ".join(self._prompt().split())
+        for rel in AGENT_OWNED | {"alembic/versions/0001_baseline.py"}:
+            assert rel in prompt, rel
+        # Every store attribute the emitted suite touches is in the prompt.
+        import re
+
+        suite = render_product_tests(SPECS)
+        used = set(re.findall(r"\bstore\.([A-Za-z_]+)", suite))
+        missing = sorted(a for a in used if a not in prompt)
+        assert not missing, f"the suite calls store.{missing} but the prompt never asks for it"

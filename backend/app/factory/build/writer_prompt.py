@@ -10,7 +10,15 @@ from __future__ import annotations
 
 from typing import Any
 
-PROMPT_VERSION = "writer_worker_prompt.v2"
+#: Version log.
+#: v3 -- PERSISTENCE section. v2 asked for an ``app/migrations/`` package and
+#:   never mentioned store/backup/alembic, while the data-lifecycle suite
+#:   TESTER stamps imports ``app.backup``, ``app.store`` and the
+#:   ``app/migrations.py`` module -- the agent had to reverse-engineer that
+#:   contract from red tests, one rework round per file. v3 names what the
+#:   factory backfills (data_lifecycle.platform_substrate) and what the agent
+#:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
+PROMPT_VERSION = "writer_worker_prompt.v3"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -50,10 +58,32 @@ missing file is a missing gate, so write it all under this checkout root:
 - app/routers/ — HTTP routes over the actions
 - app/tenancy.py, app/security.py, app/authority.py (precedence.v1),
   app/retrieval.py, app/formulas.py, app/llm.py
-- app/block_inputs.py, app/migrations/ (versioned schema revisions)
+- app/block_inputs.py
+- app/store.py and alembic/versions/0001_baseline.py (see PERSISTENCE)
 - tests/ — pytest suite, runnable from the checkout root
 - frontend/src/App.tsx, Dockerfile, README.md, requirements.txt
 - scripts/release_gate.py
+
+PERSISTENCE (the factory's data-lifecycle suite grades this contract):
+The factory writes the schema-independent substrate itself, after your
+pass, wherever you have not: app/migrations.py (alembic wrappers:
+upgrade_head, upgrade_to, downgrade, current_revision), app/backup.py,
+alembic.ini, alembic/env.py, alembic/script.py.mako,
+alembic/versions/0002_lifecycle_audit.py, scripts/entrypoint.sh. Do not
+create an app/migrations/ package -- it would shadow app/migrations.py.
+You own the two files that carry the entity schema:
+
+- alembic/versions/0001_baseline.py with ``revision = "0001_baseline"``
+  and ``down_revision = None``; one literal op.create_table("<entity>")
+  call per entity, each table carrying a ``tenant_id`` column.
+  0002_lifecycle_audit revises 0001_baseline; stack any further revision
+  of yours on top of 0002_lifecycle_audit.
+- app/store.py over SQLite at STORAGE_PATH, exposing
+  ``SQLITE_BUSY_TIMEOUT_MS``, ``FASTAPI_SYNC_THREADPOOL``, ``db_path()``,
+  ``connect()``, ``save(entity, record, tenant_id)``,
+  ``get(entity, record_id, tenant_id)``, ``list_all(entity, tenant_id)``.
+  connect() sets ``PRAGMA journal_mode=WAL`` and a busy_timeout and never
+  issues CREATE TABLE -- schema belongs to alembic, not connect time.
 
 PROGRESS LOG (the operator watches this file live):
 After EVERY completed step — before starting the next — append exactly
