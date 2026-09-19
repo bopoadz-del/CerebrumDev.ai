@@ -11,6 +11,14 @@ from __future__ import annotations
 from typing import Any
 
 #: Version log.
+#: v5 -- an entity's name IS its capability id. v3/v4 told the agent to write
+#:   ``save(entity, ...)`` and ``op.create_table("<entity>")`` but never said
+#:   what an entity is called, while TESTER defaults every entity to the
+#:   capability id (``spec["entity"] = cid.replace("-", "_")``) and the
+#:   emitted suite calls ``store.save("<capability>", ...)``. Agents named
+#:   tables their own way and round 1 went red on a KeyError every time --
+#:   ``'report_namemetric_name'`` (vet), ``'branch_and_consolidated_operations'``
+#:   (bakery, on v4) -- costing a rework round per build.
 #: v4 -- PROCESSES section. The agent has a shell in the factory's own
 #:   container. Live: the factory server received a clean SIGTERM 25s after
 #:   the agent "ran the writer behaviour probe end to end" (FleetOps, no deploy,
@@ -24,7 +32,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v4"
+PROMPT_VERSION = "writer_worker_prompt.v5"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -90,6 +98,13 @@ You own the two files that carry the entity schema:
   ``get(entity, record_id, tenant_id)``, ``list_all(entity, tenant_id)``.
   connect() sets ``PRAGMA journal_mode=WAL`` and a busy_timeout and never
   issues CREATE TABLE -- schema belongs to alembic, not connect time.
+
+An entity's name IS its capability id -- the stem of its handler module.
+The table for app/actions/<capability>.py is op.create_table("<capability>"),
+and the suite calls store.save("<capability>", ...), store.get("<capability>",
+...) and store.list_all("<capability>", ...) with exactly that name. A table
+called anything else is a KeyError in the suite, not a style choice; if you
+want a friendlier label, make it a column.
 
 PROCESSES (you share this machine with the factory that is running you):
 - NEVER stop processes by name or pattern: no pkill, killall, "kill -9 -1",
