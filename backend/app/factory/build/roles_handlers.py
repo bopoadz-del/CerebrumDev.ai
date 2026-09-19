@@ -2848,7 +2848,11 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     authored handler, so the disk-level agent count applies to worker
     output exactly as it applies to the in-process coder.
     """
-    from app.factory.build.codewhale_worker import WorkerError, run_worker_job
+    from app.factory.build.codewhale_worker import (
+        WorkerError,
+        is_narration_line,
+        run_worker_job,
+    )
     from app.factory.build.writer_prompt import render_writer_prompt
 
     dest = persist_workspace_root(ctx.workspace)
@@ -2865,9 +2869,16 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             import time as _time
 
             now = _time.monotonic()
-            if now - throttle["last"] < 3.0:
-                return
-            throttle["last"] = now
+            # The throttle exists for chatty CLI log lines. The agent's own
+            # STEP lines and the factory heartbeat are the narration itself
+            # and are never dropped: the agent writes its progress log in
+            # bursts, and a 3s window kept the first line of each burst and
+            # DISCARDED the rest (live: STEP 1 then STEP 21 -- nineteen steps
+            # that happened and were never shown).
+            if not is_narration_line(line):
+                if now - throttle["last"] < 3.0:
+                    return
+                throttle["last"] = now
             ctx.note(
                 line[:200],
                 stage=str(info.get("tool") or "writer-cli"),
