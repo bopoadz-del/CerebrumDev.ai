@@ -704,6 +704,20 @@ def _failure_honesty(snap: StoreGateSnapshot) -> str:
     return N3_STORE_GATE_FAILED
 
 
+def is_infrastructure_error(exc: BaseException) -> bool:
+    """GitHub could not be asked (no token, 401/403, API down) -- as opposed to
+    GitHub answering that there is nothing there."""
+    text = str(exc)
+    return (
+        "GitHub API down" in text
+        or "fail-closed; cannot poll store-gate" in text
+        or "HTTP 401" in text
+        or "HTTP 403" in text
+        or "HTTP 5" in text
+        or f"{BUILDS_TOKEN_ENV} missing" in text
+    )
+
+
 def ingest_n3_store_gate(
     output_dir: Path | str,
     *,
@@ -760,6 +774,20 @@ def ingest_n3_store_gate(
             root, env=blob, session_id=session_id, opener=opener
         )
     except BuildsPushError as exc:
+        # Not being able to ASK GitHub is not an answer about the build. A
+        # revoked token (live 2026-09-19: "GitHub API down: matching-refs HTTP
+        # 401") was being written to the ledger as N3_STORE_GATE_MISSING -- a
+        # terminal failure -- on a platform whose branch had passed. Leave the
+        # handoff open and say why; only "this session has no build branch"
+        # is a verdict.
+        if is_infrastructure_error(exc):
+            logger.warning("n3 store-gate unreachable for %s: %s", root, exc)
+            return IngestResult(
+                honesty=HANDOFF_TO_N3,
+                ok=False,
+                pending=True,
+                detail=f"store-gate not reachable, still waiting: {exc}",
+            )
         snap = StoreGateSnapshot(missing=True, detail=str(exc))
         apply_store_gate_failure(root, snap, honesty=N3_STORE_GATE_MISSING)
         return IngestResult(
@@ -796,6 +824,17 @@ def ingest_n3_store_gate(
             ok=False,
             pending=True,
             detail=snap.detail or "store-gate still pending",
+            snapshot=snap,
+        )
+    # "GitHub statuses HTTP 401" / a missing token is the gate being
+    # unreachable, not the gate saying no. Never write that as a verdict.
+    if snap.missing and is_infrastructure_error(RuntimeError(snap.detail or "")):
+        logger.warning("n3 store-gate unreadable for %s: %s", root, snap.detail)
+        return IngestResult(
+            honesty=HANDOFF_TO_N3,
+            ok=False,
+            pending=True,
+            detail=f"store-gate not reachable, still waiting: {snap.detail}",
             snapshot=snap,
         )
     honesty = _failure_honesty(snap)
