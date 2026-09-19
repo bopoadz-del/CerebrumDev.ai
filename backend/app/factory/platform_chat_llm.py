@@ -104,12 +104,11 @@ The session facts carry the STORE: ready-made blocks, CONNECTORS and MCP \
 parts that are attachable, parts that are in the store but NOT cleared for \
 factory builds, and the KITS (deep, certified domain packs). Be honest about \
 all of it and never invent an id.
-- Kits: when no kit covers the user's business, say so in your own words \
-along the lines of: we do not have a top-notch kit for that in the store \
-today, but we can build a simple one for you now; it will take longer and \
-may cost more than a platform built on a ready kit. Say it once, early, \
-in the "message" of your first ask_user or reply. Never imply a kit exists \
-when it does not.
+- Kits: on ask_user and draft_platform, set "kit_match" to the id of the KIT \
+that genuinely covers the user's business, or "" when none does. A kit for a \
+different domain is not a match. The factory itself tells the user when \
+there is no ready kit (a simple one is built, slower and possibly costlier), \
+so do not repeat that and never imply a kit exists when it does not.
 - Connectors and MCP: ask which outside systems they already use (accounting, \
 booking / PMS, ERP, drives, email, messaging) when the brief does not say. On \
 draft_platform, put the ids of attachable CONNECTORS / MCP parts the platform \
@@ -118,7 +117,7 @@ user named that is NOT attachable (not in the store, or not cleared) in \
 "missing_connectors" by its plain name, and tell the user plainly that it \
 will ship as a marked placeholder until it is built — never as working.
 
-Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message": "", "connectors": [], "missing_connectors": []}.
+Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message": "", "connectors": [], "missing_connectors": [], "kit_match": ""}.
 """
 
 
@@ -320,6 +319,7 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
         "message": str(data.get("message") or "").strip(),
         "connectors": _str_list(data.get("connectors")),
         "missing_connectors": _str_list(data.get("missing_connectors")),
+        "kit_match": str(data.get("kit_match") or "").strip(),
     }
 
 
@@ -405,6 +405,7 @@ def enforce_elicitation_cap(
         "message": "",
         "connectors": list(decision.get("connectors") or []),
         "missing_connectors": list(decision.get("missing_connectors") or []),
+        "kit_match": decision.get("kit_match") or "",
         "coerced": True,
     }
 
@@ -505,6 +506,38 @@ def _attach_connectors(
         result["summary"] = result["summary"].rstrip() + " " + " ".join(notes)
 
 
+#: Said by the factory, not left to the model: a prose instruction to mention
+#: it was simply ignored in the first live conversation.
+KIT_NOTICE = (
+    "Heads up: we don't have a top-notch kit for this in the store today, but "
+    "we can build a simple one for you now \u2014 it will take longer and may cost "
+    "more than a platform built on a ready kit."
+)
+
+
+def _kit_notice(state: Any, decision: Dict[str, Any]) -> str:
+    """The once-per-session notice, when no real kit covers the business.
+
+    ``kit_match`` is the model's explicit claim and is checked against the
+    shelf: an id that is not a domain kit there counts as no match, so the
+    model cannot talk the notice away by naming a kit that does not exist.
+    """
+    pd = getattr(state, "product_design", None)
+    if pd is None or getattr(pd, "kit_notice_given", False):
+        return ""
+    try:
+        from app.factory.store_catalog import store_catalog
+
+        kits = set(store_catalog().get("kits") or [])
+    except Exception:  # noqa: BLE001 -- never claim or deny a kit we cannot see
+        logger.warning("Floor chat: kit shelf unavailable; no kit notice", exc_info=True)
+        return ""
+    if str(decision.get("kit_match") or "") in kits:
+        return ""
+    pd.kit_notice_given = True
+    return KIT_NOTICE
+
+
 def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[str, Any]:
     """Execute a decided Floor action against the session product state."""
     action = decision.get("action")
@@ -523,10 +556,11 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         if (message or "").strip():
             pd.elicitation_turns = [*pd.elicitation_turns, message.strip()]
         pd.elicitation_rounds = int(pd.elicitation_rounds or 0) + 1
+        notice = _kit_notice(state, decision)
         return {
             "sse": "info",
             "ok": True,
-            "summary": decision.get("message") or "",
+            "summary": (notice + " " if notice else "") + (decision.get("message") or ""),
             "stream_delta": True,
             "elicitation": True,
         }
@@ -545,7 +579,9 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         # The model's own words ride along with the draft: that is where it
         # says "no top-notch kit for this, a simple one takes longer and may
         # cost more". Dropping them made a draft look like a silent switch.
-        said = str(decision.get("message") or "").strip()
+        said = " ".join(
+            s for s in (_kit_notice(state, decision), str(decision.get("message") or "").strip()) if s
+        )
         if said and isinstance(result.get("summary"), str):
             result["summary"] = said + " " + result["summary"]
         result["sse"] = "blueprint"

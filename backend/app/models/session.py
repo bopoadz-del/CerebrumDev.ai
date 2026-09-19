@@ -56,6 +56,8 @@ class ProductDesignState(BaseModel):
     #: How many times the Floor chat has asked. Capped in code, not by the
     #: model: a chat that can ask forever is a chat that never builds.
     elicitation_rounds: int = 0
+    #: The "no ready kit for this" notice is said once per session.
+    kit_notice_given: bool = False
 
 
 class SessionState(BaseModel):
