@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 from app.factory.build.builds_push import (
     EXPORT_SKIP_DIR_NAMES,
     EXPORT_SKIP_SUFFIXES,
-    FACTORY_INTERNAL_NAMES,
     is_exported,
 )
 from app.factory.blocks_source import resolve_blocks_root
