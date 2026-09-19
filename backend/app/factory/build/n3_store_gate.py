@@ -828,7 +828,12 @@ def ingest_n3_store_gate(
         )
     # "GitHub statuses HTTP 401" / a missing token is the gate being
     # unreachable, not the gate saying no. Never write that as a verdict.
-    if snap.missing and is_infrastructure_error(RuntimeError(snap.detail or "")):
+    # A poll that TIMED OUT while every read was a 401 is the same thing: the
+    # waiter never once saw the gate. (Live: three handoffs were branded
+    # N3_STORE_GATE_TIMEOUT by an hour of 401s from a revoked token.)
+    if (snap.missing or snap.timeout) and is_infrastructure_error(
+        RuntimeError(snap.detail or "")
+    ):
         logger.warning("n3 store-gate unreadable for %s: %s", root, snap.detail)
         return IngestResult(
             honesty=HANDOFF_TO_N3,

@@ -82,3 +82,43 @@ def test_a_session_with_no_build_branch_is_still_a_real_missing(tmp_path, monkey
 
     assert result.honesty == n3.N3_STORE_GATE_MISSING
     assert not n3.handoff_awaiting_n3(out)
+
+
+def test_a_timeout_made_entirely_of_401s_is_not_a_verdict(tmp_path, monkeypatch):
+    out = _awaiting(tmp_path)
+    monkeypatch.setattr(
+        n3, "resolve_builds_target",
+        lambda *a, **k: n3.BuildsTarget(owner="o", repo="r", sha="a" * 40, branch="build/x"),
+    )
+    monkeypatch.setattr(
+        n3, "wait_for_store_gate",
+        lambda *a, **k: n3.StoreGateSnapshot(
+            timeout=True, missing=False,
+            detail="GitHub statuses HTTP 401; N3 store-gate poll timed out",
+        ),
+    )
+
+    result = n3.ingest_n3_store_gate(out, wait=True)
+
+    assert result.pending is True
+    assert n3.handoff_awaiting_n3(out)
+
+
+def test_a_real_timeout_is_still_a_timeout(tmp_path, monkeypatch):
+    """The gate was reachable and simply never finished: that IS a verdict."""
+    out = _awaiting(tmp_path)
+    monkeypatch.setattr(
+        n3, "resolve_builds_target",
+        lambda *a, **k: n3.BuildsTarget(owner="o", repo="r", sha="a" * 40, branch="build/x"),
+    )
+    monkeypatch.setattr(
+        n3, "wait_for_store_gate",
+        lambda *a, **k: n3.StoreGateSnapshot(
+            timeout=True, pending=True, missing=False, detail="store-gate still pending; poll timed out",
+        ),
+    )
+
+    result = n3.ingest_n3_store_gate(out, wait=True)
+
+    assert result.honesty == n3.N3_STORE_GATE_TIMEOUT
+    assert not n3.handoff_awaiting_n3(out)

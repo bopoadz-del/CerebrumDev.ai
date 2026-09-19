@@ -42,6 +42,20 @@ def _default_blocks_root() -> Path:
     for c in candidates:
         if c.exists():
             return c
+    # Production has neither the env var nor a sibling checkout: it builds
+    # from the pinned Store clone (engine_discovery). This function never
+    # looked there -- the vendor mirror silently covered for it -- so once
+    # the mirror was deleted the architect saw an EMPTY Store and drafted
+    # every capability as GENERATE with no blocks (live, 2026-09-19). CI
+    # could not see it because CI sets CEREBRUM_BLOCKS_ROOT.
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        resolved = resolve_blocks_root()
+        if resolved is not None and (Path(resolved) / "block_registry").is_dir():
+            return Path(resolved)
+    except Exception:  # noqa: BLE001 -- no Store is reported by the caller, not here
+        pass
     return candidates[0]
 
 
