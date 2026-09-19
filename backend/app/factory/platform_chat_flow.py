@@ -1575,6 +1575,38 @@ def resume_pilot_cycle(
     }
 
 
+def _adopt_green_build(
+    state: Any, output_root: Optional[Path], triggered_by: str
+) -> Optional[Dict[str, Any]]:
+    """Reseed + ingest a passing, identical build branch. None = nothing adopted."""
+    try:
+        from app.factory.build.adopt_green import cli_authored_ids, find_adoptable_branch
+
+        out = _generation_output_dir(state, output_root)
+        if out is None or not Path(out).is_dir():
+            return None
+        found = find_adoptable_branch(out, str(getattr(state, "session_id", "") or ""))
+        if found is None:
+            return None
+        ids = list(cli_authored_ids(out))
+        if not ids:
+            return None
+        logger.info("adopting green build branch %s for %s", found["branch"], state.session_id)
+        return reseed_and_ingest_n3(
+            state,
+            builds_sha=found["sha"],
+            builds_branch=found["branch"],
+            cli_authored_ids=ids,
+            builds_owner=found["owner"],
+            builds_repo=found["repo"],
+            output_root=output_root,
+            triggered_by="adopt_green:" + str(triggered_by),
+        )
+    except Exception:  # noqa: BLE001 -- adoption is an optimisation; never block a resume
+        logger.warning("green build adoption failed; falling through", exc_info=True)
+        return None
+
+
 def start_or_resume_coder(
     state: Any,
     output_root: Optional[Path] = None,
@@ -1606,6 +1638,14 @@ def start_or_resume_coder(
         return resume_pilot_cycle(
             state, output_root=output_root, triggered_by=resume_by
         )
+    # Before rebuilding or resuming: did a build of this session ALREADY pass
+    # the Store gate? Audit 2026-09-19 found sessions marked failed / stalled
+    # whose cerebrum-builds branch was green in Docker. Adopt it -- but only
+    # when the branch's files are byte-identical to the workspace the zip is
+    # cut from (adopt_green verifies; anything unverifiable adopts nothing).
+    adopted = _adopt_green_build(state, output_root, triggered_by)
+    if adopted is not None:
+        return adopted
     if is_generation_terminal_failure(state, output_root):
         fresh_by = (
             "chat_llm" if triggered_by == "chat_llm" else "regex_fresh"
