@@ -15,6 +15,8 @@ either consumer grows its own copy, this goes red.
 
 from __future__ import annotations
 
+import pathlib
+
 from app.factory.build.acceptance_floor import (
     check_ids,
     checks,
@@ -163,20 +165,63 @@ class TestTheFloorIsProductAgnostic:
     describe any one of them.
 
     ``negative_floor`` shipped asking for the boundary case "closed exactly
-    at due_at". ``due_at`` is a column in one facility-management build --
-    carried in verbatim from an audit of that export. Every other product
-    would have been handed a rule naming a field it does not have, and the
-    Factory has already had to delete one set of product-specific gates for
-    exactly this reason.
+    at due_at". ``due_at`` is a column in one facility-management build,
+    carried in verbatim from an audit of that export -- so every other
+    product would have been handed a rule naming a field it does not have.
+
+    The first guard for this was a list of domain nouns I typed out, which
+    is the same mistake one level up: a hand-kept list that goes stale the
+    day a new vertical ships. Both halves are derived instead. A DOMAIN is
+    whatever the Factory already calls one -- the ``vertical`` of its own
+    blueprints, and the Store's ``<domain>_v2`` registry entries. A FIELD is
+    caught by shape, not by name, so a column nobody has seen yet is caught
+    on the first build that mentions it.
     """
 
-    #: Domain vocabulary from products this Factory has actually built. The
-    #: realistic way a leak happens is copying a sentence out of an audit of
-    #: one export, so the list is the domains that have been audited.
-    DOMAIN_WORDS = (
-        "due_at", "complaint", "facility", "school", "invoice", "vat",
-        "booking", "workforce", "bakery", "veterinary", "lettings",
-        "estate", "aviation", "hotel", "insurance", "primavera",
+    @staticmethod
+    def _factory_domains() -> set:
+        """Domains as WHOLE names, never split into words.
+
+        Splitting on "_" turned real_estate into "real", which then matched
+        "a real outbound delivery" and "real DDL" -- a guard that fires on
+        ordinary English is a guard that gets deleted. A domain is the whole
+        name, in both the underscore and spaced spellings.
+        """
+        import re as _re
+
+        here = pathlib.Path(__file__).resolve()
+        repo = here.parents[3]
+        names = set()
+        for yaml_path in (repo / "blueprints").rglob("*.yaml"):
+            for line in yaml_path.read_text(
+                encoding="utf-8", errors="ignore"
+            ).splitlines():
+                m = _re.match(r"\s*vertical:\s*['\"]?([a-z_]+)", line)
+                if m:
+                    names.add(m.group(1))
+        try:
+            from app.factory.dual_registry import _default_blocks_root
+
+            registry = _default_blocks_root() / "block_registry"
+            for entry in registry.iterdir() if registry.is_dir() else []:
+                if entry.is_dir() and entry.name.endswith("_v2"):
+                    names.add(entry.name[: -len("_v2")])
+        except Exception:
+            pass
+        names -= {"product", "field_operations"}  # too generic to mean a domain
+        out = set()
+        for name in names:
+            if len(name) > 3:
+                out.add(name)
+                out.add(name.replace("_", " "))
+        return out
+
+    #: A domain column, by shape: the suffixes a generated entity uses.
+    FIELD_SHAPE = r"(?<![a-z0-9_])[a-z]+_(?:at|id|no|ref|code|date|url)(?![a-z0-9_])"
+
+    #: Platform vocabulary the floor is entitled to name.
+    PLATFORM_WORDS = frozenset(
+        {"database_url", "redis_url", "storage_path", "blocks_unavailable"}
     )
 
     def _floor_text(self) -> str:
@@ -185,16 +230,40 @@ class TestTheFloorIsProductAgnostic:
             for c in checks()
         ).lower()
 
-    def test_no_product_vocabulary_in_the_floor(self):
+    def test_no_domain_the_factory_knows_appears_in_the_floor(self):
+        domains = self._factory_domains()
+        assert domains, "could not derive the Factory's domains; the guard is blind"
         text = self._floor_text()
-        found = [w for w in self.DOMAIN_WORDS if w in text]
+        found = sorted(w for w in domains if w in text)
         assert not found, (
-            "the floor names one product's vocabulary: "
+            "the floor names a domain the Factory builds for: "
             + ", ".join(found)
             + " -- every product is graded against this file"
         )
 
+    def test_no_domain_column_shape_appears_in_the_floor(self):
+        """Catches due_at, invoice_no, tenant_ref without knowing them."""
+        import re as _re
+
+        found = {
+            m.group(0)
+            for m in _re.finditer(self.FIELD_SHAPE, self._floor_text())
+            if m.group(0) not in self.PLATFORM_WORDS
+        }
+        assert not found, f"the floor names a product's columns: {sorted(found)}"
+
     def test_the_floor_reaches_the_prompt_without_naming_a_product(self):
+        import re as _re
+
         text = render_for_prompt().lower()
-        found = [w for w in self.DOMAIN_WORDS if w in text]
-        assert not found, f"product vocabulary reaches the coder's prompt: {found}"
+        domains = sorted(w for w in self._factory_domains() if w in text)
+        columns = sorted(
+            {
+                m.group(0)
+                for m in _re.finditer(self.FIELD_SHAPE, text)
+                if m.group(0) not in self.PLATFORM_WORDS
+            }
+        )
+        assert not domains and not columns, (
+            f"product vocabulary reaches the coder's prompt: {domains} {columns}"
+        )
