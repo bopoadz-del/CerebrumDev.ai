@@ -103,10 +103,10 @@
     },
     {
       "id": "postgres_boot_200",
-      "requirement_text": "DATABASE_URL present means Postgres, absent means SQLite for development. A DATABASE_URL that is read and then ignored is worse than none: the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk. If you cannot honour it, refuse at boot naming the variable.",
-      "brief_render": "- postgres_boot_200: DATABASE_URL present means Postgres, absent means SQLite for development. A DATABASE_URL that is read and then ignored is worse than none: the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk. If you cannot honour it, refuse at boot naming the variable.",
+      "requirement_text": "app/store.py MUST obtain its connection from app.db and MUST NOT open its own database. The Factory ships app/db.py: DATABASE_URL present means Postgres, absent means SQLite under STORAGE_PATH, and one place decides so the two cannot disagree. A DATABASE_URL that is read and then ignored is a FAIL -- the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk, which is worse than not supporting it at all.",
+      "brief_render": "- postgres_boot_200: app/store.py MUST obtain its connection from app.db and MUST NOT open its own database. The Factory ships app/db.py: DATABASE_URL present means Postgres, absent means SQLite under STORAGE_PATH, and one place decides so the two cannot disagree. A DATABASE_URL that is read and then ignored is a FAIL -- the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk, which is worse than not supporting it at all.",
       "gate_fn": "check_postgres_boot_200",
-      "check": "with DATABASE_URL set the product boots on Postgres and answers /health 200"
+      "check": "store.py takes its connection from app.db, and a set DATABASE_URL is honoured"
     },
     {
       "id": "one_live_connector",
@@ -117,10 +117,10 @@
     },
     {
       "id": "metrics_served",
-      "requirement_text": "GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
-      "brief_render": "- metrics_served: GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
+      "requirement_text": "GET /metrics answers 200 with a request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. This is measured on the booted container, not by the module being present: no mount, no pass.",
+      "brief_render": "- metrics_served: GET /metrics answers 200 with a request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. This is measured on the booted container, not by the module being present: no mount, no pass.",
       "gate_fn": "check_metrics_served",
-      "check": "GET /metrics answers 200 with request count and latency"
+      "check": "GET /metrics on the booted container answers 200 with a request count"
     },
     {
       "id": "backup_restore_roundtrip",

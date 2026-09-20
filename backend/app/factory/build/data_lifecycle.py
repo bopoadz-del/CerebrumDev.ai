@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from app.factory.build.engine_switch import render_db_module
 from app.factory.build.observability import (
     render_backup_script,
     render_bench_script,
@@ -976,6 +977,7 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
     # that took the in-process writer got tests/test_backup_restore.py from
     # TESTER -- which is emitted unconditionally -- with no scripts/backup.sh
     # for it to run. "scripts/backup.sh is missing" in CI, and it was right.
+    write_workspace_text(workspace, Path("app") / "db.py", render_db_module())
     write_workspace_text(
         workspace, Path("app") / "observability.py", render_observability()
     )
@@ -1015,6 +1017,7 @@ def platform_substrate() -> List[Tuple[str, str]]:
         # a backup nobody has restored is a file. None of it is
         # domain-specific: it counts requests and seconds, and restores
         # whatever the platform stores on.
+        ("app/db.py", render_db_module()),
         ("app/observability.py", render_observability()),
         ("scripts/backup.sh", render_backup_script()),
         ("scripts/bench.py", render_bench_script()),
