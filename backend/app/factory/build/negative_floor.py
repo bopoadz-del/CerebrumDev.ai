@@ -111,6 +111,22 @@ def render_negative_tests(
 
         lines.append("\n\n# -- %s %s" % (name, "-" * max(4, 60 - len(name))))
 
+        if not required:
+            # A spec with no declared fields still owes four counter-cases,
+            # and an empty payload is the one question that needs no field
+            # name to ask. Without this the capability scores 3 and fails
+            # the floor for a reason its author cannot act on.
+            lines += [
+                "",
+                "",
+                "def test_%s_refuses_an_empty_payload():" % name,
+                "    # Nothing at all is not a record.",
+                '    resp = client.post("%s", json={}, headers=AUTH)' % route,
+                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                '        "%s accepted an empty payload: " + resp.text[:200]' % name,
+                "    )",
+            ]
+
         if required:
             short = {k: v for k, v in sample.items() if k != required}
             lines += [
