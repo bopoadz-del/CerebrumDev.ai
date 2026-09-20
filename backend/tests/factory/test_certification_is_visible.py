@@ -88,3 +88,39 @@ class TestTheCatalogCarriesIt:
         text = render_for_chat({"blocks": ["a"], "certified": []})
 
         assert "(none yet)" in text
+
+
+class TestTheArchitectIsToldWhichBlocksAreProven:
+    def _block_list(self, monkeypatch, dual, proven):
+        from app.factory import product_architect
+
+        monkeypatch.setattr(product_architect, "dual_registered_ids", lambda: dual)
+        monkeypatch.setattr(product_architect, "_certified_ids", lambda: proven)
+        captured = {}
+
+        def _capture(messages):
+            captured["system"] = messages[0]["content"]
+            raise RuntimeError("stop after the prompt is built")
+
+        monkeypatch.setattr(product_architect, "_llm_json_call", _capture)
+        try:
+            product_architect._draft_with_llm("a brief")
+        except RuntimeError:
+            pass
+        return captured["system"]
+
+    def test_certified_blocks_are_marked(self, monkeypatch):
+        text = self._block_list(monkeypatch, ["proven", "unproven"], {"proven"})
+
+        assert "- proven  [certified]" in text
+        assert "- unproven\n" in text
+
+    def test_the_mark_is_explained_so_it_is_a_preference_not_a_filter(self, monkeypatch):
+        text = self._block_list(monkeypatch, ["proven", "unproven"], {"proven"})
+
+        assert "unproven, not unusable" in text
+
+    def test_nothing_certified_means_no_marks_and_no_note(self, monkeypatch):
+        text = self._block_list(monkeypatch, ["a", "b"], set())
+
+        assert "[certified]" not in text
