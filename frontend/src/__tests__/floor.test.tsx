@@ -140,7 +140,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
     expect(await screen.findByText('COLLECTOR')).toBeInTheDocument()
     expect(screen.getByText('Binding surveyor')).toBeInTheDocument()
-    expect(screen.getByText('WRITER')).toBeInTheDocument()
+    expect(screen.getByText('WORKERS')).toBeInTheDocument()
     expect(screen.getByText('Platform manufacturer')).toBeInTheDocument()
     expect(screen.getByText('TESTER')).toBeInTheDocument()
     expect(screen.getByText('Acceptance inspector')).toBeInTheDocument()
