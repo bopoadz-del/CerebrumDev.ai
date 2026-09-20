@@ -96,8 +96,8 @@
     },
     {
       "id": "negative_floor",
-      "requirement_text": "Every capability ships at least four counter-cases: a wrong enum value rejected, a cross-tenant write blocked, the boundary value of any breach rule exercised exactly on the line (closed exactly at due_at), and one malformed-payload fuzz. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
-      "brief_render": "- negative_floor: Every capability ships at least four counter-cases: a wrong enum value rejected, a cross-tenant write blocked, the boundary value of any breach rule exercised exactly on the line (closed exactly at due_at), and one malformed-payload fuzz. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
+      "requirement_text": "Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
+      "brief_render": "- negative_floor: Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
       "gate_fn": "check_negative_floor",
       "check": "each capability's tests carry >=4 pytest.raises or 4xx assertions"
     },

@@ -156,3 +156,45 @@ class TestNeitherConsumerCanDriftFromTheFile:
         text = floor_path().read_text(encoding="utf-8")
         for cid in check_ids():
             assert cid in text
+
+
+class TestTheFloorIsProductAgnostic:
+    """The floor grades every product the Factory makes, so it may not
+    describe any one of them.
+
+    ``negative_floor`` shipped asking for the boundary case "closed exactly
+    at due_at". ``due_at`` is a column in one facility-management build --
+    carried in verbatim from an audit of that export. Every other product
+    would have been handed a rule naming a field it does not have, and the
+    Factory has already had to delete one set of product-specific gates for
+    exactly this reason.
+    """
+
+    #: Domain vocabulary from products this Factory has actually built. The
+    #: realistic way a leak happens is copying a sentence out of an audit of
+    #: one export, so the list is the domains that have been audited.
+    DOMAIN_WORDS = (
+        "due_at", "complaint", "facility", "school", "invoice", "vat",
+        "booking", "workforce", "bakery", "veterinary", "lettings",
+        "estate", "aviation", "hotel", "insurance", "primavera",
+    )
+
+    def _floor_text(self) -> str:
+        return " ".join(
+            f"{c['requirement_text']} {c['brief_render']} {c['check']}"
+            for c in checks()
+        ).lower()
+
+    def test_no_product_vocabulary_in_the_floor(self):
+        text = self._floor_text()
+        found = [w for w in self.DOMAIN_WORDS if w in text]
+        assert not found, (
+            "the floor names one product's vocabulary: "
+            + ", ".join(found)
+            + " -- every product is graded against this file"
+        )
+
+    def test_the_floor_reaches_the_prompt_without_naming_a_product(self):
+        text = render_for_prompt().lower()
+        found = [w for w in self.DOMAIN_WORDS if w in text]
+        assert not found, f"product vocabulary reaches the coder's prompt: {found}"
