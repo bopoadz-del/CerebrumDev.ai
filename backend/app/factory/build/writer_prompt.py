@@ -10,7 +10,21 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.factory.build.acceptance_floor import (
+    render_for_prompt as render_acceptance_floor,
+)
+
 #: Version log.
+#: v10 -- THE FLOOR, TOLD. The Store gate graded every build against thirteen
+#:   checks the agent was never shown: grepping this template and the C-BRIEF
+#:   for `no_token_401` returned zero, and the same for the other twelve. So
+#:   the agent found the floor by failing it, one full writer pass per
+#:   discovery, which is most of the token bill on a build. The floor now
+#:   lives in app/factory/acceptance_floor.json and BOTH sides read it -- the
+#:   prompt renders `requirement`, the gate takes its checklist from the same
+#:   ids, and test_acceptance_floor_is_one_source goes red if either grows
+#:   its own copy. Putting the rules only in the prompt would have moved the
+#:   trust back to the author, which is the thing the gate exists to remove.
 #: v9 -- SPECIALISTS. One undifferentiated pass shipped backends with no
 #:   deployment story and no threat model: nothing in the prompt asked for
 #:   infra, frontend, devops or security as work in their own right, so the
@@ -60,7 +74,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v9"
+PROMPT_VERSION = "writer_worker_prompt.v10"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -164,6 +178,8 @@ UI (a pilot is deployed and tested, so what it serves must work):
   app/formulas.
 - An answer the UI asks for carries its authority label, so an operator can
   see which layer it came from.
+
+{acceptance_floor}
 
 DEPTH (the gates are the bar, and you can reach them yourself):
 - Run them before you yield. The code-phase suite is
@@ -283,6 +299,10 @@ def render_writer_prompt(
         summary=summary,
         brief=(brief or "").strip(),
         specialist_workers=max(1, int(specialist_workers or 1)),
+        # The Store gate's own checklist, rendered from the file the gate
+        # grades against. The agent used to be judged on thirteen checks it
+        # was never shown, and discovered them one rework round at a time.
+        acceptance_floor=render_acceptance_floor(),
     )
     if resume:
         body = _RESUME_PREFACE + body

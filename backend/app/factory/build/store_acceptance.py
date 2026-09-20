@@ -33,21 +33,13 @@ GITHUB_CI_REL = Path(".github") / "workflows" / "ci.yml"
 UI_INDEX_REL = Path("app") / "static" / "index.html"
 AUTH_REL = Path("app") / "auth.py"
 
-ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = (
-    "no_token_401",
-    "missing_field_422",
-    "enum_422",
-    "ui_served_200",
-    "rag_roundtrip_hit",
-    "single_persistence_root",
-    "ci_present_and_full_suite",
-    "handler_bodies_distinct",
-    "health_fail_closed",
-    "openapi_committed",
-    "docker_health_200",
-    "cross_tenant_404",
-    "authorship_floor",
-)
+#: The checklist, read from the same file the writer's prompt is rendered
+#: from. It used to be written out here, which is how the coder came to be
+#: graded on thirteen checks nothing ever told it about -- see
+#: app/factory/build/acceptance_floor.py.
+from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
+
+ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
 
 assert len(ACCEPTANCE_CHECK_NAMES) >= ACCEPTANCE_REQUIRED
 assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
