@@ -229,6 +229,47 @@ def load_blocks_registry(blocks_root: Optional[Path] = None) -> Dict[str, BlockR
     return out
 
 
+#: Where the Store records which blocks survived its three bars: not a stub,
+#: resolves to one importable implementation, and -- the one that costs
+#: something -- a control-delete of the entry method turns the block's tests
+#: RED. The Factory holds no copy of this; it is read from the Store clone.
+CERTIFICATIONS_FILE = "block_certifications.json"
+
+
+def load_block_certifications(
+    blocks_root: Optional[Path] = None,
+) -> Dict[str, Dict[str, object]]:
+    """block_id -> the Store's certification entry, for certified blocks only.
+
+    Every block.json in the Store carries ``trust_tier: "platform"`` -- all
+    164 of them, which is why the tier tells the Factory nothing about whether
+    anyone has actually vouched for a block. The evidence lives in a separate
+    file the Factory never read, where 6 blocks are certified. This reads it.
+
+    An unreadable or absent file returns ``{}``: no claim, rather than a
+    guessed one. Callers must treat "not certified" as "no evidence", never
+    as "known bad" -- the Store ships pilots from the whole shelf.
+    """
+    root = blocks_root or _default_blocks_root()
+    path = Path(root) / CERTIFICATIONS_FILE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- absence is reported as "no evidence"
+        logger.debug("no block certifications at %s", path)
+        return {}
+    out: Dict[str, Dict[str, object]] = {}
+    for entry in data.get("blocks") or []:
+        bid = str(entry.get("block") or "").strip()
+        if bid and entry.get("certified"):
+            out[bid] = entry
+    return out
+
+
+def certified_ids(blocks_root: Optional[Path] = None) -> Set[str]:
+    """Ids the Store has certified. Empty when the record is unreadable."""
+    return set(load_block_certifications(blocks_root))
+
+
 def dual_registered_ids(
     blocks_root: Optional[Path] = None,
     factory_shelf: Optional[Path] = None,

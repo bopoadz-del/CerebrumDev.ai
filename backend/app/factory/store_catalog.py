@@ -134,6 +134,18 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
         logger.warning("store catalog: store inventory unreadable", exc_info=True)
         store_blocks, store_kits = [], []
 
+    # Which of those blocks anyone has actually vouched for. Every block.json
+    # in the Store says trust_tier "platform", so the tier separates nothing;
+    # the evidence is the Store's certification record, and a product that
+    # labels a layer "certified" has to be able to point at it.
+    from app.factory.dual_registry import certified_ids
+
+    try:
+        certified = sorted(certified_ids(blocks_root) & registry)
+    except Exception:  # noqa: BLE001 -- no evidence is context, never a blocker
+        logger.warning("store catalog: certification record unreadable", exc_info=True)
+        certified = []
+
     return {
         "blocks": ids,
         "connectors": connectors,
@@ -142,6 +154,7 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
         "kits": kits,
         "store_blocks": store_blocks,
         "store_kits": store_kits,
+        "certified": certified,
     }
 
 
@@ -175,6 +188,13 @@ def render_for_chat(catalog: Dict[str, Any]) -> str:
             _lines(catalog.get("mcp") or []),
             "IN THE STORE BUT NOT CLEARED FOR FACTORY BUILDS (cannot be attached):",
             _lines(catalog.get("not_cleared") or []),
+            # The one line here that is evidence rather than inventory. Prefer
+            # these when a capability can be served either way, and never call
+            # a layer certified on the strength of a block that is not listed.
+            "CERTIFIED (survived the Store's control-delete: gut the entry "
+            "method and the tests go red): "
+            + (", ".join(catalog.get("certified") or []) or "(none yet)")
+            + ". Every other block is unproven, not unusable.",
             "KITS (deep, certified domain packs): "
             + (", ".join(catalog.get("kits") or []) or "(none)")
             + ".",
