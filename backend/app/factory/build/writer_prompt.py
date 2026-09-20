@@ -20,8 +20,8 @@ from app.factory.build.acceptance_floor import (
 #:   for `no_token_401` returned zero, and the same for the other twelve. So
 #:   the agent found the floor by failing it, one full writer pass per
 #:   discovery, which is most of the token bill on a build. The floor now
-#:   lives in app/factory/acceptance_floor.json and BOTH sides read it -- the
-#:   prompt renders `requirement`, the gate takes its checklist from the same
+#:   lives in app/factory/acceptance_floor.v2.json and BOTH sides read it -- the
+#:   prompt renders `brief_render`, the gate takes its checklist from the same
 #:   ids, and test_acceptance_floor_is_one_source goes red if either grows
 #:   its own copy. Putting the rules only in the prompt would have moved the
 #:   trust back to the author, which is the thing the gate exists to remove.
