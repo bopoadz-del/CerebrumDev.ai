@@ -445,27 +445,30 @@ def test_start_runner_build_does_not_fresh_workspace_on_handoff(tmp_path, monkey
 
 
 def test_report_maps_n3_floor_aliases():
+    """N3 reports two lines under older names; both must map home.
+
+    The payload is built FROM the floor rather than typed out, so adding a
+    check does not silently turn this into a partial-floor fixture asserted
+    to be green -- which is what it became when the floor went 13 -> 14.
+    """
+    from app.factory.build.store_acceptance import ACCEPTANCE_CHECK_NAMES
+
+    ALIASES = {
+        "ci_present_and_full_suite": "ci_present_full_suite",
+        "authorship_floor": "authorship==receipt",
+    }
+    lines = []
+    for name in ACCEPTANCE_CHECK_NAMES:
+        reported = ALIASES.get(name, name)
+        status = "SKIP" if name == "rag_roundtrip_hit" else "PASS"
+        detail = "no-rag" if status == "SKIP" else ""
+        lines.append({"name": reported, "status": status, "detail": detail})
     raw = {
         "ok": True,
         "passed": ACCEPTANCE_REQUIRED,
         "total": ACCEPTANCE_REQUIRED,
         "score": f"{ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}",
-        "lines": [
-            {"name": "no_token_401", "status": "PASS", "detail": ""},
-            {"name": "missing_field_422", "status": "PASS", "detail": ""},
-            {"name": "enum_422", "status": "PASS", "detail": ""},
-            {"name": "ui_served_200", "status": "PASS", "detail": ""},
-            {"name": "rag_roundtrip_hit", "status": "SKIP", "detail": "no-rag"},
-            {"name": "single_persistence_root", "status": "PASS", "detail": ""},
-            {"name": "ci_present_full_suite", "status": "PASS", "detail": ""},
-            {"name": "handler_bodies_distinct", "status": "PASS", "detail": ""},
-            {"name": "health_fail_closed", "status": "PASS", "detail": ""},
-            {"name": "openapi_committed", "status": "PASS", "detail": ""},
-            {"name": "cross_tenant_404", "status": "PASS", "detail": ""},
-            {"name": "docker_health_200", "status": "PASS", "detail": ""},
-            {"name": "migration_no_create_all", "status": "PASS", "detail": ""},
-            {"name": "authorship==receipt", "status": "PASS", "detail": ""},
-        ],
+        "lines": lines,
     }
     report = report_from_store_gate_payload(raw)
     names = [line.name for line in report.lines]

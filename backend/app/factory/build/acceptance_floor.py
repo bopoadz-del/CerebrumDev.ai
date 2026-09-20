@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 logger = logging.getLogger(__name__)
 
-FLOOR_REL = "acceptance_floor.json"
+FLOOR_REL = "acceptance_floor.v2.json"
 SCHEMA = "acceptance_floor.v2"
 
 
@@ -56,7 +56,7 @@ def _load() -> Dict[str, Any]:
         if cid in seen:
             raise ValueError(f"{FLOOR_REL}: duplicate check id {cid!r}")
         seen.add(cid)
-        for field in ("requirement", "check"):
+        for field in ("requirement_text", "brief_render", "gate_fn", "check"):
             if not str(check.get(field) or "").strip():
                 raise ValueError(f"{FLOOR_REL}: {cid} has no {field}")
     return data
@@ -79,7 +79,7 @@ def check_ids() -> Tuple[str, ...]:
 
 def requirements() -> List[str]:
     """What the coder is told, in the same order the gate reports."""
-    return [str(c["requirement"]).strip() for c in checks()]
+    return [str(c["requirement_text"]).strip() for c in checks()]
 
 
 def render_for_prompt() -> str:
@@ -93,5 +93,24 @@ def render_for_prompt() -> str:
         "build against exactly these, in this order; they are not advice):",
     ]
     for check in checks():
-        lines.append(f"- {check['id']}: {str(check['requirement']).strip()}")
+        lines.append(str(check["brief_render"]).strip())
     return "\n".join(lines)
+
+
+def floor_hash() -> str:
+    """The bytes both consumers must be reading.
+
+    P3's drift lock: the brief render test and the gate render test both pin
+    this, so a change to the floor that reaches only one of them is a red
+    build rather than a silent divergence.
+    """
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(
+        floor_path().read_bytes()
+    ).hexdigest()
+
+
+def gate_fns() -> Tuple[str, ...]:
+    """The check function each entry expects the harness to define."""
+    return tuple(str(c["gate_fn"]) for c in checks())

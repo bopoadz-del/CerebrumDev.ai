@@ -1203,6 +1203,176 @@ def check_migration_no_create_all() -> Tuple[str, str]:
     return "PASS", "%d revision(s), real DDL, no create_all" % len(revisions)
 
 
+def _capability_stems() -> List[str]:
+    actions = ROOT / "app" / "actions"
+    if not actions.is_dir():
+        return []
+    return sorted(
+        f.stem for f in actions.glob("*.py") if not f.stem.startswith("_")
+    )
+
+
+NEGATIVE_STATUS = re.compile(r"status_code\\s*==\\s*4\\d\\d")
+NEGATIVE_CODE = re.compile(r"\\b(?:400|401|403|404|409|422|429)\\b")
+
+
+def _negative_hits(text: str) -> int:
+    """Count counter-case ASSERTIONS, not every mention of a number.
+
+    Counting bare 4xx anywhere in a file made a 27KB shared route test hand
+    its hits to every capability named in it, and a suite with nine
+    counter-cases in total scored four-per-capability. A gate that passes
+    what it exists to refuse is worse than no gate.
+    """
+    hits = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "pytest.raises" in stripped:
+            hits += 1
+            continue
+        if NEGATIVE_STATUS.search(stripped):
+            hits += 1
+            continue
+        if stripped.startswith("assert") and NEGATIVE_CODE.search(stripped):
+            hits += 1
+    return hits
+
+
+def check_negative_floor() -> Tuple[str, str]:
+    """Four counter-cases per capability, attributed per TEST FUNCTION.
+
+    Attribution is the whole difficulty. Counting hits in any file that
+    merely mentions a capability credited every capability with the two big
+    shared test files, so a suite with nine counter-cases in total scored
+    four-per-capability and passed the gate that exists to refuse it. A
+    counter-case counts for a capability only when the test that makes the
+    assertion is the test that exercises the capability.
+    """
+    stems = _capability_stems()
+    if not stems:
+        return "FAIL", "no app/actions/: nothing to count against"
+    tests = ROOT / "tests"
+    if not tests.is_dir():
+        return "FAIL", "no tests/"
+    per = dict((stem, 0) for stem in stems)
+    for path in sorted(tests.rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            segment = ast.get_source_segment(text, node) or ""
+            if not segment:
+                continue
+            hits = _negative_hits(segment)
+            if not hits:
+                continue
+            for stem in stems:
+                if stem in segment or stem in node.name:
+                    per[stem] += hits
+    thin = ["%s=%d" % (s, per[s]) for s in stems if per[s] < 4]
+    if thin:
+        return "FAIL", "under 4 counter-cases: " + ", ".join(thin)
+    return "PASS", "%d capabilities, each with >=4 counter-cases" % len(stems)
+
+
+def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
+    """A DATABASE_URL read and then ignored is worse than absent."""
+    declared = ""
+    cfg = ROOT / "app" / "cerebrum_product_kernel" / "config.py"
+    for rel in ("app/store.py", "app/db.py"):
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "DATABASE_URL" in text or "database_url" in text:
+            declared = rel
+            break
+    if not declared:
+        reads = cfg.is_file() and "DATABASE_URL" in cfg.read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        if reads:
+            return (
+                "FAIL",
+                "DATABASE_URL is read in config but the store never uses it: "
+                "the operator believes Postgres, the platform writes SQLite",
+            )
+        return "FAIL", "no DATABASE_URL path: the product cannot leave SQLite"
+    measured = (os.environ.get("STORE_POSTGRES_BOOT") or "").strip()
+    if measured != "200":
+        return "FAIL", "STORE_POSTGRES_BOOT=%r (gate must boot it on Postgres)" % measured
+    resp = http.request("get", "/health")
+    if resp.status_code != 200:
+        return "FAIL", "postgres boot env=200 but /health is %s" % resp.status_code
+    return "PASS", "boots on Postgres via %s" % declared
+
+
+def check_one_live_connector() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_LIVE_CONNECTOR") or "").strip()
+    if not measured:
+        return "FAIL", "STORE_LIVE_CONNECTOR unset: no real delivery was observed"
+    if measured.lower() in ("0", "false", "mocked", "no"):
+        return "FAIL", "the only observed delivery was mocked (%s)" % measured
+    return "PASS", "live delivery observed: %s" % measured
+
+
+def check_metrics_served(http: _Http) -> Tuple[str, str]:
+    resp = http.request("get", "/metrics")
+    if resp.status_code != 200:
+        return "FAIL", "GET /metrics is %s" % resp.status_code
+    body = ""
+    try:
+        body = resp.text
+    except Exception:
+        body = ""
+    low = body.lower()
+    if not any(k in low for k in ("count", "total", "requests")):
+        return "FAIL", "/metrics answers 200 but reports no request count"
+    if not any(k in low for k in ("latency", "duration", "seconds")):
+        return "FAIL", "/metrics reports no latency"
+    return "PASS", "/metrics serves count and latency"
+
+
+def check_backup_restore_roundtrip() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_BACKUP_RESTORE") or "").strip().lower()
+    if measured in ("ok", "pass", "1", "true"):
+        return "PASS", "backup restored with rows intact"
+    if not (ROOT / "app" / "backup.py").is_file():
+        return "FAIL", "no app/backup.py"
+    return "FAIL", "STORE_BACKUP_RESTORE=%r: a backup nobody restored is a file" % measured
+
+
+def check_bench_p95() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_BENCH_P95_MS") or "").strip()
+    if not measured:
+        return "FAIL", "STORE_BENCH_P95_MS unset: p95 was not measured"
+    try:
+        value = float(measured)
+    except ValueError:
+        return "FAIL", "STORE_BENCH_P95_MS=%r is not a number" % measured
+    if value >= 500.0:
+        return "FAIL", "p95 %.0fms over the 500ms budget" % value
+    return "PASS", "p95 %.0fms under 500ms" % value
+
+
+def check_audit_clean() -> Tuple[str, str]:
+    ci = ROOT / ".github" / "workflows" / "ci.yml"
+    if not ci.is_file():
+        return "FAIL", ".github/workflows/ci.yml missing"
+    text = ci.read_text(encoding="utf-8", errors="ignore").lower()
+    missing = [t for t in ("pip-audit", "bandit") if t not in text]
+    if missing:
+        return "FAIL", "CI does not run " + ", ".join(missing)
+    measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
+    if measured in ("0", "false", "dirty"):
+        return "FAIL", "pip-audit/bandit reported findings"
+    return "PASS", "CI runs pip-audit and bandit"
+
+
 def check_openapi_committed() -> Tuple[str, str]:
     path = ROOT / "docs" / "openapi.json"
     if not path.is_file():
@@ -1336,22 +1506,24 @@ def main() -> int:
     http, cm = _client()
     results: List[Tuple[str, str, str]] = []
     try:
-        runners = [
-            ("no_token_401", lambda: check_no_token_401(http)),
-            ("missing_field_422", lambda: check_missing_field_422(http)),
-            ("enum_422", lambda: check_enum_422(http)),
-            ("ui_served_200", lambda: check_ui_served_200(http)),
-            ("rag_roundtrip_hit", lambda: check_rag_roundtrip_hit(http)),
-            ("single_persistence_root", check_single_persistence_root),
-            ("ci_present_and_full_suite", check_ci_present_and_full_suite),
-            ("handler_bodies_distinct", check_handler_bodies_distinct),
-            ("health_fail_closed", check_health_fail_closed),
-            ("openapi_committed", check_openapi_committed),
-            ("docker_health_200", lambda: check_docker_health_200(http)),
-            ("cross_tenant_404", lambda: check_cross_tenant_404(http)),
-            ("migration_no_create_all", check_migration_no_create_all),
-            ("authorship_floor", check_authorship_floor),
-        ]
+        # Generated from the floor, not written out here. A hand-kept list
+        # is the second copy the floor file exists to abolish: it drifts the
+        # moment a check is added, and the build is then graded against a
+        # roster nobody updated. Order is the floor's order.
+        import inspect as _inspect
+
+        runners = []
+        for _name in CHECKS:
+            _fn = globals().get("check_" + _name)
+            if _fn is None:
+                runners.append(
+                    (_name, (lambda n=_name: ("FAIL", "no check_%s in the harness" % n)))
+                )
+                continue
+            if "http" in _inspect.signature(_fn).parameters:
+                runners.append((_name, (lambda f=_fn: f(http))))
+            else:
+                runners.append((_name, _fn))
         for name, fn in runners:
             try:
                 status, detail = fn()

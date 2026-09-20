@@ -18,7 +18,10 @@ from __future__ import annotations
 from app.factory.build.acceptance_floor import (
     check_ids,
     checks,
+    floor_hash,
+    floor_path,
     floor_version,
+    gate_fns,
     render_for_prompt,
     requirements,
 )
@@ -79,14 +82,77 @@ class TestTheCoderIsToldTheFloor:
 class TestTheSpecIsWellFormed:
     def test_every_check_says_both_what_to_build_and_what_is_verified(self):
         for check in checks():
-            assert check["requirement"].strip(), check["id"]
+            assert check["requirement_text"].strip(), check["id"]
             assert check["check"].strip(), check["id"]
 
     def test_requirements_are_written_for_the_builder_not_the_grader(self):
         """A requirement that only restates the check teaches the coder
         nothing it could not have guessed from the failure message."""
         for check in checks():
-            assert check["requirement"].strip() != check["check"].strip(), check["id"]
+            assert check["requirement_text"].strip() != check["check"].strip(), check["id"]
 
     def test_ids_are_unique(self):
         assert len(set(check_ids())) == len(check_ids())
+
+
+# --- P3: the drift lock ------------------------------------------------------
+
+
+class TestNeitherConsumerCanDriftFromTheFile:
+    def test_both_renders_are_pinned_to_the_same_floor_bytes(self):
+        """A change that reaches one consumer and not the other is red.
+
+        Both renders are derived here from the same hash, so this cannot be
+        satisfied by updating one side.
+        """
+        digest = floor_hash()
+        assert digest.startswith("sha256:")
+        brief = render_for_prompt()
+        from app.factory.build.store_acceptance import render_acceptance_script
+
+        gate = render_acceptance_script()
+        for cid in check_ids():
+            assert cid in brief, f"{cid} missing from the brief render"
+            assert cid in gate, f"{cid} missing from the gate render"
+        assert floor_hash() == digest, "the floor changed mid-test"
+
+    def test_the_harness_defines_every_gate_fn_the_floor_names(self):
+        from app.factory.build.store_acceptance import render_acceptance_script
+
+        gate = render_acceptance_script()
+        missing = [fn for fn in gate_fns() if f"def {fn}(" not in gate]
+        assert not missing, f"floor names gate fns the harness does not define: {missing}"
+
+    def test_no_hand_kept_check_id_list_outside_the_floor(self):
+        """The grep gate, as a test.
+
+        A second roster is the thing the floor file abolishes: it drifts the
+        moment a check is added, and the build is then graded against a list
+        nobody updated. Defining check_<id> is not enumerating -- the
+        implementations have to live somewhere. Quoting five or more ids as
+        string literals in one file is.
+        """
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parents[2] / "app"
+        ids = set(check_ids())
+        offenders = []
+        for path in root.rglob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            quoted = {
+                cid
+                for cid in ids
+                if re.search(r"[\"']" + re.escape(cid) + r"[\"']", text)
+            }
+            if len(quoted) >= 5:
+                offenders.append(f"{path.relative_to(root)} ({len(quoted)} ids)")
+        assert offenders == [], (
+            "check ids enumerated outside acceptance_floor.v2.json: "
+            + ", ".join(offenders)
+        )
+
+    def test_the_floor_file_is_where_the_ids_live(self):
+        text = floor_path().read_text(encoding="utf-8")
+        for cid in check_ids():
+            assert cid in text
