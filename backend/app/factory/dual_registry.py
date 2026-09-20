@@ -138,22 +138,29 @@ def store_shelf_file(blocks_root: Optional[Path] = None) -> Optional[Path]:
     return None
 
 
-def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
-    """What the Factory has CLEARED to attach -- not what the Store holds.
+#: The only thing the Factory asserts about clearance. Everything else the
+#: Store holds is attachable, because the Store is where blocks live and it
+#: changes constantly -- 25, then 148, then 198 in one day. A block here needs
+#: a reason and a test; a list of what IS cleared needs a commit every time
+#: the Store moves, and is therefore wrong by the time it lands.
+NOT_CLEARED_BLOCK_IDS: Dict[str, str] = {
+    "chat": (
+        "upstream: the generated platform serves its own chat surface; the "
+        "Store's chat block is not a part the Factory attaches"
+    ),
+    "formula_executor_v2": (
+        "a Store runtime alias, not a Factory kit -- shelving it revives a "
+        "dead kit expectation (see test_base_tier_definitions)"
+    ),
+}
 
-    These are two different questions and they used to share one file. The
-    Store publishes 136 blocks, all trust_tier "platform"; nothing in it says
-    which are cleared for a customer build, so clearance stays the Factory's
-    statement until the Store publishes one. ``shelf_from_store`` answers the
-    other question -- what exists -- and the catalog reports both, so the chat
-    can say "it is in the Store, it is not cleared" instead of pretending it
-    does not exist.
-    """
-    p = path or store_shelf_file() or _factory_shelf_path()
+
+def _shelf_from_file(path: Path) -> Dict[str, BlockRef]:
+    """Read a shelf manifest: {"blocks": [{id, version, trust_tier, ...}]}."""
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        logger.warning("shelf unreadable at %s; falling back", p, exc_info=True)
+        logger.warning("shelf unreadable at %s; falling back", path, exc_info=True)
         data = json.loads(_factory_shelf_path().read_text(encoding="utf-8"))
     out: Dict[str, BlockRef] = {}
     for item in data.get("blocks", []):
@@ -165,6 +172,36 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
             trust_tier=(item.get("trust_tier") or "").strip(),
         )
     return out
+
+
+def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
+    """What the Factory has CLEARED to attach, resolved live.
+
+    Order: an explicit path, then the shelf the STORE publishes, then the
+    Store's registry read directly, and only then the Factory's own committed
+    copy -- which exists for an environment that cannot reach the Store, not
+    as a second opinion.
+
+    Deriving from the registry is the point. Clearance used to be a file in
+    this repo listing 25 ids, so every block the Store added was invisible to
+    the Factory until someone opened a pull request to re-list it; the Store
+    went 25 -> 148 -> 198 in a single day and the shelf was stale at each
+    step. The Factory holds no blocks, so it should not hold a copy of their
+    names either. What it does hold is NOT_CLEARED_BLOCK_IDS: the short,
+    reasoned list of what it refuses, which is the only part that is genuinely
+    the Factory's own statement.
+    """
+    if path is not None:
+        return _shelf_from_file(path)
+    published = store_shelf_file()
+    if published is not None:
+        return _shelf_from_file(published)
+    live = shelf_from_store()
+    if live:
+        return {
+            bid: ref for bid, ref in live.items() if bid not in NOT_CLEARED_BLOCK_IDS
+        }
+    return _shelf_from_file(_factory_shelf_path())
 
 
 def _load_registry_dir(registry_dir: Path, source: str) -> Dict[str, BlockRef]:

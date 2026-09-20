@@ -1,8 +1,80 @@
 {
   "blocks": {
+    "action_contract": {
+      "content_hash": "sha256:6dfdec95532ed531710005aa9761d1a55e4fc4bf0a310b52a0be203d0991104a",
+      "id": "action_contract",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "adaptive_router": {
+      "content_hash": "sha256:4211dbe962fd105c55f68c71f2bb42eec037869dfacb621e37180a1facf3e9ee",
+      "id": "adaptive_router",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "agency_commission_engine": {
+      "content_hash": "sha256:79f4a4e9740f5b0476b2cf8ba7006da23f29d5da5f84e6d05ee39a09a060823d",
+      "id": "agency_commission_engine",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "agency_hierarchy": {
+      "content_hash": "sha256:4b3aa0c86bb7f9f75640d18424bc30008ed7d32f0afc19e4ef6787f90aba9c10",
+      "id": "agency_hierarchy",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "agent_state_sync": {
+      "content_hash": "sha256:ec7f853119d02ca8a2f1f8b4babc8bcaa8f4e2a6e1d696b97213d2c6a95120b5",
+      "id": "agent_state_sync",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "agent_swarm": {
+      "content_hash": "sha256:c8766f2f6aa280c5ad4f2d6e6b6d8bece601f3d1c9f7ea0cbd07ce09bf1ba2d8",
+      "id": "agent_swarm",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "agriculture_v2": {
+      "content_hash": "sha256:6b56105367e2a4636c58e8c9556b6ef3e23445cf5a29071e6e24ece2bbe7cd11",
+      "id": "agriculture_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "analytics": {
       "content_hash": "sha256:032abddc129aa02589eaf7705935d3828f3c425594dda6273b4413af202d2887",
       "id": "analytics",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "android_drive": {
+      "content_hash": "sha256:215236fcea68bfd6c6bd3e8fd17877f32ef5f3578241a380ff35237b9e859628",
+      "id": "android_drive",
+      "source": "cerebrum-blocks",
+      "version": "1.0"
+    },
+    "answer_quality_scorer": {
+      "content_hash": "sha256:c3948dcc20a1f1e01acb4687b5bf648ab6028857956c0253ec3ece893420fe68",
+      "id": "answer_quality_scorer",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "approval_rules": {
+      "content_hash": "sha256:7000e5174e3e27889f252222e319c818307b27ab43ab7f0cc154205b1c6c0e9b",
+      "id": "approval_rules",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "async_processor": {
+      "content_hash": "sha256:494db9e233afa30f8fb1ec12506301082bbae967e8192723b61f1b232a888c09",
+      "id": "async_processor",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "attrition_scorer": {
+      "content_hash": "sha256:e7f9ed7d6cbe6afe8447d91fd138f490e6a1607d231a267194aceea15c2a1a20",
+      "id": "attrition_scorer",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -12,9 +84,201 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "audit_chain": {
+      "content_hash": "sha256:029bc0b7846a930dfd640cfd45a3b2173124ad10d8b881e1bd7e1ab244e1ff4f",
+      "id": "audit_chain",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "audit_fail_closed": {
+      "content_hash": "sha256:8e603fda839325b20d477e304c1b75c008c2a0ab048c980c0533e4c450c8cafc",
+      "id": "audit_fail_closed",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "auth": {
+      "content_hash": "sha256:6d7868bd1ea28e6fcd57990d720ac844d6237b59fd56ba2c27d75ce8ea6dbc2b",
+      "id": "auth",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "automotive_v2": {
+      "content_hash": "sha256:14273d7a616d710c61ff53122e3290912c03e92685eabb5a58c3aafe6ec80a38",
+      "id": "automotive_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_cargo_kit": {
+      "content_hash": "sha256:48bb22241a766916bf76e7b4817879bb83318bd0abc50a60b17a7c66e2a1a697",
+      "id": "aviation_cargo_kit",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_chat_server": {
+      "content_hash": "sha256:966452efe48f21811958d114c8d191c99a1bdd90369cb85990c9b51d4f49eca0",
+      "id": "aviation_chat_server",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_cx_kit": {
+      "content_hash": "sha256:87a88b73da8296d949fed2a8611d4923f99be06a778b05dc6fc4639e6c618ffb",
+      "id": "aviation_cx_kit",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_grounding_gate": {
+      "content_hash": "sha256:fc94b0295cf54ec19504a20054963534c1111b3fbb01c31259e7047643c1bc8a",
+      "id": "aviation_grounding_gate",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_loyalty_kit": {
+      "content_hash": "sha256:9b2f338bff7a9aaa79460c4a7f85734593f2fb585f92fbd9b47ed1d4c33a6d5c",
+      "id": "aviation_loyalty_kit",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_pss_kit": {
+      "content_hash": "sha256:561571defd46a407ff776d884b949f6751045367bdccdc38afd6a7fd1cd4845d",
+      "id": "aviation_pss_kit",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_revenue_kit": {
+      "content_hash": "sha256:7667c4878a00d075b5f8a4f7480ec1a02fa3ca99b3b066c5523f313207d51e5e",
+      "id": "aviation_revenue_kit",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "aviation_v2": {
+      "content_hash": "sha256:412c7d3f5d313479da334a7eb4fa2198da6d97e7b2f24f0992b6e5649332bc3d",
+      "id": "aviation_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "bcf_export": {
+      "content_hash": "sha256:00c83349baefb965132911dc68b210f9b8e4a09919ff51b38b7f0175d4e58a7d",
+      "id": "bcf_export",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "billing": {
+      "content_hash": "sha256:f6bf41c003e46ffff4c49d54bce57636ba316f3d2bdae779382f986f0587db74",
+      "id": "billing",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "bim": {
+      "content_hash": "sha256:eada17654655291c64fa7ec457a49b4fb6f9eea1fa4c78a637f859c1541140f7",
+      "id": "bim",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "bim_extractor": {
+      "content_hash": "sha256:f7a121b6bbe63a58336944927642a79f49c9fa764a176b77f6bc43a783fa4550",
+      "id": "bim_extractor",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "boq_processor": {
+      "content_hash": "sha256:165a7948e67a22cfb03be751188cb028cf17d39e7739b93775199fd62aef76b6",
+      "id": "boq_processor",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "bordereaux_ingest": {
+      "content_hash": "sha256:f83f8f53393faf75074bdbbab5b4c6dd1df05c7732cf78d70b534f5a0aff7ec1",
+      "id": "bordereaux_ingest",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "cache_manager": {
+      "content_hash": "sha256:e53aa87004e9f1f2d39d71842123d11854f73b7f78a3a9b4abfd53b57c2e391d",
+      "id": "cache_manager",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "capture": {
       "content_hash": "sha256:2cd753a3737b80f73dd9b5ce2ead84281f665f442cc2c3225bad51935b867863",
       "id": "capture",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "cerebrum_self_healing": {
+      "content_hash": "sha256:5c867f6c4471551ba7a3874b565daf5fced58aa89191e033076f9a73ab6db565",
+      "id": "cerebrum_self_healing",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "channel_router": {
+      "content_hash": "sha256:d8a0578951fa0092795cd1a49a597a295bf87876a5b0c2d11e1fc10885902e58",
+      "id": "channel_router",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "clash_resolver": {
+      "content_hash": "sha256:f6dbf9ee593e77e2bc239b7a9215ecd8484e7b568895fdbfa52f5d8d42d3dd0e",
+      "id": "clash_resolver",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "clash_triage": {
+      "content_hash": "sha256:347e2f3344fbb1754747955a6cc73ceeefec7f40e7f43c8466e604c6e651c70d",
+      "id": "clash_triage",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "clearance_rules": {
+      "content_hash": "sha256:8b6cf074664b4fc39846b924accec60a0b0a179a509d301ad898fe20f9f81bda",
+      "id": "clearance_rules",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "code": {
+      "content_hash": "sha256:6c2fa5287a9d6b008ccf97a0adb27a24f5648a1b9b6f27697d758918f6d2b4e1",
+      "id": "code",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "config": {
+      "content_hash": "sha256:e02e5ce7bf20bf6cd7dd46749bdd85943109778ae59564f44a259f60e5ffdb1d",
+      "id": "config",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "construction": {
+      "content_hash": "sha256:0ffbec30622807475af2ee2a79df4ecabb4993be382feb86a3e7e212ebdbebeb",
+      "id": "construction",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "construction_advisor": {
+      "content_hash": "sha256:df69993c3a3b70aa191ef60d7684a2cd8d68190006ad5b813f2b25d817a1d0dd",
+      "id": "construction_advisor",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "construction_v2": {
+      "content_hash": "sha256:07af51552c94e457a8faf9c1c54671840778fd23636d18bbb496255a757cfbc8",
+      "id": "construction_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "context_broker": {
+      "content_hash": "sha256:66a350e7f9c90ef62d555fdc05fdd52db6272546cd791c68e93c7ee3b7d39ecb",
+      "id": "context_broker",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "contract_retrieval": {
+      "content_hash": "sha256:7e502c27fe647482c1607108595a7ab3b6393970b4f7d5c1f7fe978d6fdca216",
+      "id": "contract_retrieval",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "cpm_engine": {
+      "content_hash": "sha256:b594d8343a9f6bbcea7840b3d8d4ea5f3f9a49a1cf765c26df6f4e4c3cfac8a2",
+      "id": "cpm_engine",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -30,9 +294,69 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "dexpi_ingest": {
+      "content_hash": "sha256:4ea8fa016b65370491e8fcb5ff4977cfb227f4a8fc1c1f93ed33771635e3dfa3",
+      "id": "dexpi_ingest",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "discovery": {
+      "content_hash": "sha256:d3827ce9ca4192c93047402c36bf17660036043ecb0357d18619b03a491bb72e",
+      "id": "discovery",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "distribution_analytics": {
+      "content_hash": "sha256:1a205497002aea113933e027d0d74e68bb6453c701814bd568eb9cd77a64d52c",
+      "id": "distribution_analytics",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "document_engine": {
       "content_hash": "sha256:a37c41b16599c43561ebb2183d5a68068ed81212aeee928cb99ae33872e813c3",
       "id": "document_engine",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "documentation": {
+      "content_hash": "sha256:7b01db88b23d0dcb47765ca5f3f109b6f9e2b5d86f71314eb29d681da3616dfb",
+      "id": "documentation",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "domain_kit_compiler": {
+      "content_hash": "sha256:89b35b0e64c2256adea0694705b9ba6261b9eb8e61bb4989358dc6a48b2fbb1a",
+      "id": "domain_kit_compiler",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "drawing_qto": {
+      "content_hash": "sha256:6c65cad047b38eb92dedcdd503497ab3a8516b2f43b61f29ec555a42fdef17a2",
+      "id": "drawing_qto",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "education_v2": {
+      "content_hash": "sha256:5ed34ff442196dbe3ebc307ff9bf8d3e8a62fc369cd36052ff02ed691c4dc200",
+      "id": "education_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "email": {
+      "content_hash": "sha256:c7d6171abc756032f21aad2874ac36ee9911d2e9940f0e8f35d181573849d01a",
+      "id": "email",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "error_tracking": {
+      "content_hash": "sha256:0a20d65d0bc09ef6cd6280fc9c13e4a626773db21f8f45865e395f5c7280338c",
+      "id": "error_tracking",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "estate_bearer_auth": {
+      "content_hash": "sha256:7e282bfd102402641ad367b25d727b81426f7f689a421bf70026ce2963df79f1",
+      "id": "estate_bearer_auth",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -54,9 +378,33 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "evidence_chain": {
+      "content_hash": "sha256:594e53a4119c6aeadde0779b452a0ba0389ce4a967347a72fd1851350858b02b",
+      "id": "evidence_chain",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "evidence_classifier": {
+      "content_hash": "sha256:9d1bb0b89d8746b879dcf22e9112469fcbf80dc8df2c9dca38226c46687b7b08",
+      "id": "evidence_classifier",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "evidence_or_refuse": {
+      "content_hash": "sha256:2242918d944d525f8a14a458486c906c55260383b285c77620d724a7b6b79450",
+      "id": "evidence_or_refuse",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "evidence_verifier": {
       "content_hash": "sha256:14d1ceacf2692486c11ba95c7e4d6ce27ab1c5ba08ced9f32b79a5f9c937dcf0",
       "id": "evidence_verifier",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "failover": {
+      "content_hash": "sha256:ecb403832351af942fae846d791908fa9e0275fcfafc657f01d43378605b632b",
+      "id": "failover",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -66,9 +414,195 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "finance_canonical_model": {
+      "content_hash": "sha256:b1f8fb1b0b44c1cc2b4065e6febd5943c2098ea4507b312e1bf235c8f5cd7a10",
+      "id": "finance_canonical_model",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_coa_governance": {
+      "content_hash": "sha256:52d27e020b022d0e786c8a9a5e009b9e1e5293f4674cec9c63315323f7468d5a",
+      "id": "finance_coa_governance",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_data_quality": {
+      "content_hash": "sha256:6e5dc65af6dc7d994aa9881459db15fcb7b14620c981360f56051c5754e41bbd",
+      "id": "finance_data_quality",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_import": {
+      "content_hash": "sha256:983a241c5a5ce217179039e58f8ec502d52d1f06ddd8c94df4901e06b13beba2",
+      "id": "finance_import",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_ops": {
+      "content_hash": "sha256:4384e899545ffdf33119fe342408a34ac43cde78a5107f89e93b72d4b6056993",
+      "id": "finance_ops",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_planning": {
+      "content_hash": "sha256:fd79cf1541f8d6d1bc8eeab3d92dffce8548d070b235a676af6962a9d2995fea",
+      "id": "finance_planning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_reconciliation": {
+      "content_hash": "sha256:bc6c571f5a6963ede2707145303577297ccfc9934ff0a8d7fa69e9f57ce5eb0e",
+      "id": "finance_reconciliation",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_reconciliation_workflow": {
+      "content_hash": "sha256:cb3c6b3f5f51e1e64d3a6f34a7d1c3fee68dd5e1122040a6ee3bbeb8c598585c",
+      "id": "finance_reconciliation_workflow",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_saas_metrics": {
+      "content_hash": "sha256:0451b7e401561daed420b33456ca1c639e8c7b1b04c5ac7b59977715bf2f6ff5",
+      "id": "finance_saas_metrics",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "finance_v2": {
+      "content_hash": "sha256:ef3b6f0a38c96f9193b579dd7a6d5e1cf21611d0047a7651acb68d8bcbe8e8bd",
+      "id": "finance_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
     "formula_executor": {
       "content_hash": "sha256:9050b0b0c5fe032ce0e6051c00cce0ce4071ca7cb896db980b5dd4f19ab3885f",
       "id": "formula_executor",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "geometry_engine": {
+      "content_hash": "sha256:d292a94db2d4fd4c464c68e079ada885dc88b97fea45f617c248f7fead64f4f9",
+      "id": "geometry_engine",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "google_drive": {
+      "content_hash": "sha256:921455f305efb435a98e6a1092257d979b3ce1b22c96baeefaadea61266b74c2",
+      "id": "google_drive",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "governance_gate": {
+      "content_hash": "sha256:ce07a8b858c1bd68455a9b42e576f1be6463ca123611d4777e3e8e5631616737",
+      "id": "governance_gate",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "guest_rfm_segmentation": {
+      "content_hash": "sha256:c287dc87534b0863c90a25ca92911d02255a16ea2657640dc067bf5eff80c8b8",
+      "id": "guest_rfm_segmentation",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "hat_framework": {
+      "content_hash": "sha256:a13aaccea24a3f13418905097586ff07c4bfef66a9735f17640ae96eba5b2086",
+      "id": "hat_framework",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "heal_approval": {
+      "content_hash": "sha256:79d5dc259d5e05546ff209a9f7edd7e92f9ea4fdc8f289eed67450f002999f4e",
+      "id": "heal_approval",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "health_check": {
+      "content_hash": "sha256:a365ec4fe54d63cb877ebf99d907fb0075a9729eda4ed11417c7c6a350e6ba34",
+      "id": "health_check",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "historical_benchmark": {
+      "content_hash": "sha256:5bbc136a75fdf03d6b69202886fdd2db4b43029a1113de11a587df691f2da9aa",
+      "id": "historical_benchmark",
+      "source": "cerebrum-blocks",
+      "version": "1.1"
+    },
+    "hkia_gn16_rules": {
+      "content_hash": "sha256:e0be9cd22355538ffd8c58342e2ae659dcb4d4771045b75a9cf9dcedc3980917",
+      "id": "hkia_gn16_rules",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "hmac_webhook_receiver": {
+      "content_hash": "sha256:820461b57abd800d35dae7a42016bfb4c1191757d6f467b02430ffbc8ec21552",
+      "id": "hmac_webhook_receiver",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "hospitality_connectors": {
+      "content_hash": "sha256:1b70898219773c53a620a35c76ef95cc189e1109b1dd77f454985bf8cf443d59",
+      "id": "hospitality_connectors",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "hotel_v2": {
+      "content_hash": "sha256:4292a48126961bbeb5828ed98c7beb113fa9c8aeb86601649ba4f39b176f6d77",
+      "id": "hotel_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "hr_v2": {
+      "content_hash": "sha256:9a33b5eaffc97338530798954f665d75b204faccf9002a5aae5bddf5b9711723",
+      "id": "hr_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "ibm_maximo_connector": {
+      "content_hash": "sha256:f66e5704aa49a326438b008a03317820e7dad37506aac406dad968dbc6031a12",
+      "id": "ibm_maximo_connector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "image": {
+      "content_hash": "sha256:59af19157d2e259fbd4b68548d2894a8d15d6b6a2b1f94b6570ea6941ced1236",
+      "id": "image",
+      "source": "cerebrum-blocks",
+      "version": "3.0"
+    },
+    "inbound_webhook": {
+      "content_hash": "sha256:abcf7e962e57e8532538058c0ad8679116609b1370f1974344d401e773441c47",
+      "id": "inbound_webhook",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "incentive_targeting": {
+      "content_hash": "sha256:4b87482acc17040991373946a9e6c3d6cf48dc4092a95d37da72b2674651c9f0",
+      "id": "incentive_targeting",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "ingestion_provenance": {
+      "content_hash": "sha256:61ba3748b4a69149401fd161cef1e6806d105f9e95833f28a93319074c2c42d0",
+      "id": "ingestion_provenance",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "insurance": {
+      "content_hash": "sha256:cf1b1037288a62aee91fdf5d49606ffb9f09036d31cd0ac0f50f0d25ca9dec82",
+      "id": "insurance",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
+    "insurance_v2": {
+      "content_hash": "sha256:01ab1a14e1358ef61e3bdefd8c26ed0e08b03d2c86fe3316ad26eb36dcb12074",
+      "id": "insurance_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "jetson_gateway": {
+      "content_hash": "sha256:925f784ec9985b088cca8aad29e1925f97c93de74a958ed9375473f24b7f439e",
+      "id": "jetson_gateway",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -78,9 +612,135 @@
       "source": "cerebrum-blocks",
       "version": "2.0.0"
     },
+    "learning_engine": {
+      "content_hash": "sha256:72ab9fe0e1deba04c283ee3e807d08baf6ffb41b9f0c31a05879be8de5ae00aa",
+      "id": "learning_engine",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "legal_v2": {
+      "content_hash": "sha256:e756940e431617beb9cbf6adf9bbc919e59a7b432d790896c964089fa0317ec8",
+      "id": "legal_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
+    "level_certifier": {
+      "content_hash": "sha256:418b7928fb2790ab68e8aad557e0ee8d4adad50fcaa2c0e165dae32cb268ee3d",
+      "id": "level_certifier",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "library_container": {
+      "content_hash": "sha256:dae7a49a10b2df4d97ad50b6e0dbae699607fe3e778359afb87eeadf1e5d3369",
+      "id": "library_container",
+      "source": "cerebrum-blocks",
+      "version": "1.0"
+    },
+    "llm_enhancer": {
+      "content_hash": "sha256:8a3882ef5212a20a47379335fa2d8eab835c0e3b4b7e326f5d6d947434e9d440",
+      "id": "llm_enhancer",
+      "source": "cerebrum-blocks",
+      "version": "1.0"
+    },
+    "local_drive": {
+      "content_hash": "sha256:6745e752527bbbcb1fa18aa78002bddf0e496137abefb11c7ac3cb39171b959c",
+      "id": "local_drive",
+      "source": "cerebrum-blocks",
+      "version": "1.1"
+    },
+    "manufacturing_v2": {
+      "content_hash": "sha256:63b2bc92d50c2673da33ff60cb76fca9ffeea87f0451ee37cefb401b20a008d8",
+      "id": "manufacturing_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "marker": {
+      "content_hash": "sha256:fda90a15d32475b5ef5b2c4c2ad892bf6e8155e5472a85bd872860f81f9ad0b5",
+      "id": "marker",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "market_data": {
+      "content_hash": "sha256:9db9ff72772b3b9407bae4b4056bbb51319f15283753c35cc70f9cb5ec7385f1",
+      "id": "market_data",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "mcp_adapter": {
+      "content_hash": "sha256:7e42cb673e93629de9b74bb8ff2c73427cf36a5aa74a8a60c1e9c34c524e2687",
+      "id": "mcp_adapter",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "medical_ehr_connector": {
+      "content_hash": "sha256:554f3ff76f08362cf762e074d0edb173db79734b6ac025bbefeb5646424898b1",
+      "id": "medical_ehr_connector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "medical_v2": {
+      "content_hash": "sha256:1d218ad964ed1c5f9a329c6ec6f5759a0b51f2086e8e04a4db1caea77bdd3b76",
+      "id": "medical_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "memory": {
       "content_hash": "sha256:97bd42166b51ccfe836dc6ed76ac0ffef747cb36ae4c6aeb82ec2014e632e402",
       "id": "memory",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "mep_review_ledger": {
+      "content_hash": "sha256:b702402071469760c11df673b088214cf4c52acef1b14098f43e66467b30f1c9",
+      "id": "mep_review_ledger",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "mep_zoning": {
+      "content_hash": "sha256:c1a8066dce474aa0e08748e281c2895e64548d05c84f38618106e11ae1ba4c51",
+      "id": "mep_zoning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "microsoft_365": {
+      "content_hash": "sha256:2fd6be4d7ff5d41c0682570ab07c4755090d225c9259935df940f3532777cd2e",
+      "id": "microsoft_365",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "migration": {
+      "content_hash": "sha256:d109d7d35097e7da42ea5709a5fd9ada566d72ae638548a38a8f619a3bfc0e44",
+      "id": "migration",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "mock_connector_bus": {
+      "content_hash": "sha256:c8310e2a55e6031909eceaaf5b61f7cc8da30a6ff5e2162e43f77c2bd0aaa828",
+      "id": "mock_connector_bus",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "model_clone": {
+      "content_hash": "sha256:afea8463f81c7ff32e61bf3c055d36705c6dd9d1d146fd4ffe9bc52a9b015894",
+      "id": "model_clone",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "model_governance": {
+      "content_hash": "sha256:ec8a68b1a41558cec204f3c1a6f83615caa6ac938ff1d73b16dafb7755182b9d",
+      "id": "model_governance",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "monitoring": {
+      "content_hash": "sha256:c6b47876cbf1ac8476bc2a1f00b494070b919b997a40ad90f406d97217ef5679",
+      "id": "monitoring",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "multi_tenant_rbac": {
+      "content_hash": "sha256:7a71b055ac009d2536ebb98dbb7cbf5fd3691781153ffba1f5d7866ce4c4d582",
+      "id": "multi_tenant_rbac",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -90,9 +750,129 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "ocr": {
+      "content_hash": "sha256:a4bc2be8b13fe46f973f54e0a675e408090f2df9563912b7eec4335a85cd869b",
+      "id": "ocr",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
+    "ocr_v2": {
+      "content_hash": "sha256:13fd54f61fb8617066ae724bc969323ed49fa7f423a18d6741251dacdd333420",
+      "id": "ocr_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "oil_gas_v2": {
+      "content_hash": "sha256:21c8b9a3273ecc4b0bd83486b6f603e3bc918ef682b0b6084f73c8a92f1adb36",
+      "id": "oil_gas_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "onedrive": {
+      "content_hash": "sha256:a20237fcf8a992b305b98027a67104a876c47ab89de8d91cde555e538c14ba27",
+      "id": "onedrive",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "openbox_scoring": {
+      "content_hash": "sha256:2e36e8d87978c8ddf941d871ab7c24140b525b18d4adafde81887eed15d8b1bb",
+      "id": "openbox_scoring",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "orchestrator": {
+      "content_hash": "sha256:558c925785602016501b0df354f313d7a9c6cd79835be390b2cac1e7c4a5a333",
+      "id": "orchestrator",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
+    "payment_split": {
+      "content_hash": "sha256:6e3ab906a59e1ce787377669db11af43616feaa19c1d2c29cf47966487ee54ee",
+      "id": "payment_split",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "pdf": {
+      "content_hash": "sha256:eea5842d44af0570e35d09d521053b52eaf264812d99ca9a8fdb9b4e22b6de4e",
+      "id": "pdf",
+      "source": "cerebrum-blocks",
+      "version": "2.0.0"
+    },
+    "pdf_v2": {
+      "content_hash": "sha256:340b20521df2c332fdef010d339535a05dd0ffb59eab46813916737cbcdc4085",
+      "id": "pdf_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "pharma_v2": {
+      "content_hash": "sha256:21de813e4540bdbef2a99e0607cac7769a40641270d74a3ec4575996f0e5c48b",
+      "id": "pharma_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "pint_validation": {
+      "content_hash": "sha256:e85edc3d9f41b92f007b1e7a7d8f6f1e9878a03fa83b9f384441c3fa505499de",
+      "id": "pint_validation",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "piping_digital_thread": {
+      "content_hash": "sha256:f291d3fd94ae10b1557ebc8226367b37f1d3e7c4137426fc977ff45fa43fdd86",
+      "id": "piping_digital_thread",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "portfolio_rollup": {
       "content_hash": "sha256:4c0846d3ed3c90b76ddc341bad260f9e66b388601ad193784ab12918cd7701b4",
       "id": "portfolio_rollup",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "power_bi_connector": {
+      "content_hash": "sha256:f07b301fb8fa1e01204310b9c713947b66aeefbaa499678a59054511b0769ce7",
+      "id": "power_bi_connector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "ppm_licensing_resolver": {
+      "content_hash": "sha256:86a877c3772009c383a027fed662157d82e8d4fb00f25bf2afa17bb72e10c482",
+      "id": "ppm_licensing_resolver",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "prediction_accuracy_tracker": {
+      "content_hash": "sha256:f8d4b62a83ce718b0b3dbe4071f1e45d6c26433e54671c47cb361ba90dac6f62",
+      "id": "prediction_accuracy_tracker",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "primavera_cloud_connector": {
+      "content_hash": "sha256:85119fcd4918388db9a5e6ec8c1b6a7b81efd4c3ebe4a3591985c602b9d9bc2a",
+      "id": "primavera_cloud_connector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "primavera_parser": {
+      "content_hash": "sha256:c44488c0e91a4cdc1cbe9a536c4dd07f9b7bc897ce0066a9a0d03c7de80e3027",
+      "id": "primavera_parser",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "procore_cde_client": {
+      "content_hash": "sha256:e9170cb45fb8921b5bab153f5aa005ab0887661e2b5b57b32c7193bc48e9e0e3",
+      "id": "procore_cde_client",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "producer_record": {
+      "content_hash": "sha256:acb375b5ba1235e913c428628cd614c7272fa7c292e0b1158ebe45b1e167d7f2",
+      "id": "producer_record",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "project_reasoner": {
+      "content_hash": "sha256:c9b8b49565c0d5e5f1e96f95828cbb1dc98c1e255a6f57b3f6106510af1f0506",
+      "id": "project_reasoner",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -102,9 +882,27 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "rag_tenant_isolation": {
+      "content_hash": "sha256:2147976bb3d684f6cc3895d932bef2c85f5ec2e2ad3bfec2d8cea9103e6d1b35",
+      "id": "rag_tenant_isolation",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "rate_limiter": {
+      "content_hash": "sha256:fbb3828978e54083c48cc756b1be39ba670981dba5a94beb0187e3f468509cc1",
+      "id": "rate_limiter",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "readiness_engine": {
       "content_hash": "sha256:899550d0425b5c177d1073107328949d0d003320dccfba33875d424de9701aba",
       "id": "readiness_engine",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "real_estate_v2": {
+      "content_hash": "sha256:5cf24a3a73d493baaea8eb294c7477d0fdbf54a9cb9817bc3f259a260fda600a",
+      "id": "real_estate_v2",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -114,9 +912,93 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "regulatory_chunker": {
+      "content_hash": "sha256:be3ffd085401340c0d8ac548010142bccf9c94aa0be2dd74cf3b25919cffd56f",
+      "id": "regulatory_chunker",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "retail_connectors": {
+      "content_hash": "sha256:9b2889db03f5e2b1d5493b5107df4f7da420d80e6b8b0a7aa39f06d9c3003eb3",
+      "id": "retail_connectors",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "retail_v2": {
+      "content_hash": "sha256:80437ff3a74831eec182903a883e6aa252b51e4b7da55165d5c3c06966f4eb01",
+      "id": "retail_v2",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "review": {
+      "content_hash": "sha256:72bf1f4c0ba7f6d99bfc81098940bc647a56995a14d51c3a197d2067c9092053",
+      "id": "review",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "rule_intent_router": {
+      "content_hash": "sha256:3c2fd0f37f4a86912a0c775cde63f9e80a8747aa3304707556040133370786cc",
+      "id": "rule_intent_router",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "safety_world_detector": {
+      "content_hash": "sha256:de22ada5900bfd0dd30f1b2d0bd958c3c63c8822e8684edd9f564c254ce3fed9",
+      "id": "safety_world_detector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "sandbox": {
+      "content_hash": "sha256:bc0211b49a56b0aa47ec49b53e8c0596978d1ab09e3fe19d764a89e7c43fe388",
+      "id": "sandbox",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "sap_odata_connector": {
+      "content_hash": "sha256:4ca379663cba8433796d1db458a5d684a1f3587bc2bf8371f7716ecb89145e9b",
+      "id": "sap_odata_connector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "scim_provisioning": {
+      "content_hash": "sha256:d2bf8aee4246a8bbc81115d86a1860031eea4c9f618c89ab3c09884e9ff050ec",
+      "id": "scim_provisioning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "search": {
+      "content_hash": "sha256:9ed5c72d1e31506d3c758cb0ca3f6ac2d5fdca2d08f25e893dc485da6f3d852e",
+      "id": "search",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "secrets": {
+      "content_hash": "sha256:095c7bf2b5308e254affbe5080c97342f91c2122310cd21f2ae4aea8d47b1c98",
+      "id": "secrets",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "skills": {
+      "content_hash": "sha256:76d4a812415867d2e04306185cbde2fd54c1b2f998e59c867357a8f43cdc34e3",
+      "id": "skills",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "smart_orchestrator": {
+      "content_hash": "sha256:6d4e25f2cb214d22291566750790b89b613a203e7cd99914b4f8f6749c0b0c4e",
+      "id": "smart_orchestrator",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "spec_analyzer": {
       "content_hash": "sha256:5ac35028fbcb13523057ae6fafb974ef10db95684947ed15ca2d92e74bc048ac",
       "id": "spec_analyzer",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "sso_saml": {
+      "content_hash": "sha256:56ef7b4133578b146f8c6702b1b963852aa16e87497084a17eb2e0354bb54b57",
+      "id": "sso_saml",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -126,9 +1008,57 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "sub_agent_runtime": {
+      "content_hash": "sha256:6d464bae962e698d28f2efb20d45796281cd74356feea5e3c5da8cf8f9b33f18",
+      "id": "sub_agent_runtime",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "subprocess_env_guard": {
+      "content_hash": "sha256:f5ff8fe9042294fbcfae5d9227c8e4e74aa60e5376aca512c7c377c9c033305e",
+      "id": "subprocess_env_guard",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "supply_chain_v2": {
+      "content_hash": "sha256:7b43522be9db1b44267b52513886da232153cbbc8a69eed50aa62e3c873b0af0",
+      "id": "supply_chain_v2",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "sympy_reasoning": {
+      "content_hash": "sha256:2c4bd0018d2c0108045a7b420288d9cce5da245edad8624905d83b0634e6274e",
+      "id": "sympy_reasoning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "team": {
       "content_hash": "sha256:eba47a087fc89ba0d2d74c93edd73ccf91b5f57a260fd908a010afaf6e34ee50",
       "id": "team",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "ticker_ocr_fuzzy": {
+      "content_hash": "sha256:ddec388c557508b1fab53ffd636209c6a50ec4f54497d98ffb8a4614fd1cfd95",
+      "id": "ticker_ocr_fuzzy",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "traffic_manager": {
+      "content_hash": "sha256:49d8f5069f52421936c509b3c1a1e67f5731e4ff37c9eafb970ab108611d89af",
+      "id": "traffic_manager",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "translate": {
+      "content_hash": "sha256:f5438ae3b0c0eed00f451f6ef222a8cf0e043086a129e7ef08afe6b5926548a6",
+      "id": "translate",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "user_auth": {
+      "content_hash": "sha256:acc511412f433c47f29c2ba065ed061160bb1053afb5ab024d26a598e815f6a8",
+      "id": "user_auth",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -138,15 +1068,111 @@
       "source": "cerebrum-blocks",
       "version": "1.1.0"
     },
+    "validation_pipeline_fork": {
+      "content_hash": "sha256:94352fcf529dc8c8e8eebe483e23e2dd45f16e5765aa827b116272c5cb51a87e",
+      "id": "validation_pipeline_fork",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "vdc_bcf_export": {
+      "content_hash": "sha256:368b45b53c7a5997f19c67c2fa1910beb39affbfc45784c30b4f17a42dcb2bec",
+      "id": "vdc_bcf_export",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "vdc_clash_detection": {
+      "content_hash": "sha256:685e1a9052046e7dd130ef735d6f27b6f1e9756ecd925b267ffcd7bfde344e7e",
+      "id": "vdc_clash_detection",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "vector": {
+      "content_hash": "sha256:d03cf5744ae308f9b0d6defe45103df6ad991d8fc15fca4847ab6c816be61729",
+      "id": "vector",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "vector_search": {
       "content_hash": "sha256:74e60368afdcb15b4e5a7aba61daacfc9e6af7772e2c5db5815640b6e61fe257",
       "id": "vector_search",
       "source": "cerebrum-blocks",
       "version": "2.0"
     },
+    "verified_outcome_learning": {
+      "content_hash": "sha256:b6b407848017b90f7c29cee59609651697c5f75c6f93ec7e938fe336dbf3cd26",
+      "id": "verified_outcome_learning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "version": {
+      "content_hash": "sha256:a58c67b4368634c3fbf7159a4f31d8e5fbcaeabf54d049be0954f069dfe85380",
+      "id": "version",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "version_diff": {
+      "content_hash": "sha256:f78ed5b4764b2bff2967403ed6a372f746a0a41131781540b39f94dd2cd7558d",
+      "id": "version_diff",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "video_anomaly_trigger": {
+      "content_hash": "sha256:0453f6faba72f930664d62517ce92bc98e50b69ef24a246043cf44ca7957fd46",
+      "id": "video_anomaly_trigger",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "video_metadata_ingest": {
+      "content_hash": "sha256:c3d7f75e3fd39098bbd2bd477dc58d23eff7a6c28742c03b26f132895dbc1f1a",
+      "id": "video_metadata_ingest",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "voice": {
+      "content_hash": "sha256:8c224ab2dbeb9b568f685b478a148422b7df1e06df184832c6eb48614f8985b4",
+      "id": "voice",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "web": {
+      "content_hash": "sha256:2cd60def4dd8fcd1ec288bab9ded56f30f4e47bccc13e2b03c31c7c9c0671bee",
+      "id": "web",
+      "source": "cerebrum-blocks",
+      "version": "2.0"
+    },
+    "webhook": {
+      "content_hash": "sha256:e85e2d788bd1e2d64124988a8902fd8da7adc15b68d593a53bcad5f895fe35b7",
+      "id": "webhook",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "whatsapp_webhook": {
+      "content_hash": "sha256:cbb568b2963af6c6d2687d797d533534fd69fd6aeb0186c11cf108dc8b5ef12f",
+      "id": "whatsapp_webhook",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "workbench": {
+      "content_hash": "sha256:3c28f090300af9e132c7a48a1adfc0beb62f801dea5d61f29fd7c13358de8dac",
+      "id": "workbench",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "workflow": {
       "content_hash": "sha256:66b0e9f70cfeed6fb42a9506ea72e30f7b168f9287152d322c4b877804e637fd",
       "id": "workflow",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "zone_arbitration": {
+      "content_hash": "sha256:d7c4291790b871a2a455411fe944bbc2916239b7b59b7f6e786550289298afb6",
+      "id": "zone_arbitration",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
+    "zone_resolver": {
+      "content_hash": "sha256:9b9a05631be148655e71a32dc38ea2e4c319ca82fdaa6264fb47c1896a60d5f3",
+      "id": "zone_resolver",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     }
@@ -154,6 +1180,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "d8987205f8fc6804526f4bc0165d036f4dc20c55"
+    "sha": "08c2724b85be1d8b07968818d35221775d15b6dd"
   }
 }

@@ -108,11 +108,14 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
         elif tags & CONNECTOR_TAGS:
             connectors.append(entry)
 
-    not_cleared: List[Dict[str, Any]] = []
-    for bid in sorted(registry - set(ids)):
-        entry = _entry(bid, _manifest(bid, root))
-        if set(entry["tags"]) & (CONNECTOR_TAGS | MCP_TAGS):
-            not_cleared.append(entry)
+    # Everything the Store holds that the Factory refuses -- not only the
+    # connector-tagged ones. That filter made sense when clearance was a
+    # 25-entry allow-list and the remainder was most of the Store; now the
+    # shelf resolves live and the remainder IS the refusal list, so naming
+    # only part of it would hide the rest from the chat.
+    not_cleared: List[Dict[str, Any]] = [
+        _entry(bid, _manifest(bid, root)) for bid in sorted(registry - set(ids))
+    ]
 
     try:
         kits = sorted(set(load_shelf_kit_map().values()) - BASE_KITS)

@@ -102,15 +102,42 @@ class TestClearanceIsStillTheFactorysStatement:
         assert catalog["store_kits"], "the Store's kits must be visible"
         assert set(catalog["blocks"]) <= set(catalog["store_blocks"])
 
-    def test_nothing_uncleared_became_attachable(self):
-        """The regression this nearly shipped: every connector in the Store
-        reading as cleared, including the drives that are not."""
+    def test_nothing_the_factory_refuses_became_attachable(self):
+        """The guard, re-aimed at what the Factory actually decides.
+
+        It used to assert that most of the Store read as uncleared, which
+        was true while clearance was a 25-entry file in this repo. The owner
+        moved clearance to the Store itself -- a block the Store publishes is
+        attachable, because the Store is where blocks live and it changes
+        daily. That deliberately clears the drives, which is the point: a
+        pilot is meant to reach Google Drive.
+
+        What survives is the part that is genuinely the Factory's call: the
+        named refusals. Nothing on that list may be attachable, and the chat
+        must still be able to name it rather than pretend it does not exist.
+        """
+        from app.factory.dual_registry import NOT_CLEARED_BLOCK_IDS
+
         catalog = store_catalog()
 
-        assert catalog["not_cleared"], "uncleared parts must still be named"
+        refused = set(NOT_CLEARED_BLOCK_IDS)
+        assert refused, "the Factory must still be able to refuse a block"
+        assert not (refused & set(catalog["blocks"])), (
+            "a refused block is attachable"
+        )
         cleared_ids = {c["id"] for c in catalog["connectors"]}
         uncleared_ids = {c["id"] for c in catalog["not_cleared"]}
         assert not (cleared_ids & uncleared_ids)
+        assert refused <= uncleared_ids, (
+            "the chat must be able to name what the Factory refuses"
+        )
+
+    def test_every_refusal_carries_its_reason(self):
+        """A deny-list without reasons grows silently and is never revisited."""
+        from app.factory.dual_registry import NOT_CLEARED_BLOCK_IDS
+
+        for bid, reason in NOT_CLEARED_BLOCK_IDS.items():
+            assert reason and len(reason) > 20, bid
 
 
 class TestThePublishedShelfIsTheOneThatCounts:
