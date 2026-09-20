@@ -23,7 +23,7 @@ asked about their own fields.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, List, Mapping, Optional
 
 HEADER = '''"""Counter-cases: what each capability REFUSES.
 
