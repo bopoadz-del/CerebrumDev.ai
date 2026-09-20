@@ -219,7 +219,7 @@ brief for a software platform, draft a product blueprint as JSON.
 
 Return ONLY a JSON object with this shape:
 {
-  "product_name": "<human-readable product name>",
+  "product_name": "<the name the user gave, or their own words for it>",
   "vertical": "<one or two word vertical slug, e.g. fleet_management>",
   "summary": "<one paragraph: what the product does and who it serves>",
   "capabilities": [
@@ -233,6 +233,10 @@ Return ONLY a JSON object with this shape:
 }
 
 Rules:
+- product_name is the customer's, not yours. If they named the platform, use
+  that name exactly. If they did not, name it from their own words -- what
+  they called the work and who it is for -- and keep it plain. Never invent a
+  brand, a product line, or a word the user did not use.
 - 3 to 8 capabilities, ordered by importance.
 - block_ids may ONLY contain ids from the AVAILABLE BLOCKS list. Never invent ids.
 - If no available block fits a capability, use "block_ids": [] and

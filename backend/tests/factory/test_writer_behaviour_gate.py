@@ -15,6 +15,24 @@ from pathlib import Path
 import pytest
 
 from app.factory.build.gates import GateContext, gate_writer_contract
+
+CAPABILITIES_ROUTE = """
+@app.get("/v1/capabilities")
+def capabilities():
+    from pathlib import Path
+    here = Path(__file__).parent / "actions"
+    ids = sorted(p.stem for p in here.glob("*.py") if p.stem != "__init__")
+    return {"items": ids}
+"""
+
+#: Discovers capabilities and builds every route from them, as the
+#: factory's own default console does.
+CONSOLE = (
+    "<!doctype html><html><body><script>"
+    "fetch('/v1/capabilities');"
+    'const url = "/v1/" + cap;'
+    "</script></body></html>"
+)
 from app.factory.build.authority import BuildRole
 from app.factory.build import writer_behaviour as writer_behaviour_mod
 from app.factory.build.writer_behaviour import (
@@ -147,6 +165,14 @@ def _write_workspace(root: Path, route_body: str) -> None:
         '    return {"status": "ok"}\n',
         encoding="utf-8",
     )
+
+    # A product lists its capabilities and serves a console that drives
+    # them: the writer contract now includes ui_end_to_end.
+    with (app / "main.py").open("a", encoding="utf-8") as handle:
+        handle.write(CAPABILITIES_ROUTE)
+    static = app / "static"
+    static.mkdir(parents=True, exist_ok=True)
+    (static / "index.html").write_text(CONSOLE, encoding="utf-8")
 
 
 def _run_gate(workspace: Path):
@@ -1014,6 +1040,12 @@ def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) ->
         '    return {"status": "ok"}\n',
         encoding="utf-8",
     )
+
+    with (app / "main.py").open("a", encoding="utf-8") as handle:
+        handle.write(CAPABILITIES_ROUTE)
+    static = app / "static"
+    static.mkdir(parents=True, exist_ok=True)
+    (static / "index.html").write_text(CONSOLE, encoding="utf-8")
 
 
 def test_gate_passes_appointment_shaped_sqlite_workspace(tmp_path):

@@ -49,7 +49,13 @@ _ACTIONS = frozenset(
 #: How many times the Floor may ask before it must draft. Enforced in
 #: ``enforce_elicitation_cap`` -- the model is told the number but is not
 #: trusted with it: a chat that can ask forever never builds.
-MAX_ELICITATION_ROUNDS = 2
+#: How many rounds of questions the chat may ask before it must draft.
+#: Two was a cap on curiosity: the chat drafted while the customer was still
+#: willing to talk, and the writer then invented what nobody had said (FinOps
+#: got no country, no approval limits, and guessed both). What the customer
+#: tells us here is free; what the agent assumes costs a rework round or a
+#: wrong platform. The customer ends it by saying build now -- not the clock.
+MAX_ELICITATION_ROUNDS = 6
 
 #: Conversation the model is shown. The router used to send the current
 #: message alone, so the chat could not hold a dialogue even in principle.
@@ -73,8 +79,7 @@ automatically, or a specialist assistant they want; where they operate \
 (the country) and the currency they work in -- these decide tax, VAT, \
 payroll and regulatory rules, so never assume them for anything that \
 touches money; their own formulas or \
-rules of thumb. If the brief is already specific, or the user says just \
-build it / skip / you decide, do NOT ask — call draft_platform. Never \
+rules of thumb. Keep drawing the brief out while they are still answering: each round goes deeper than the last, never repeats what they have told you, and stops guessing on their behalf. Do NOT stop because the brief reads well -- a platform built on your assumptions is their rework. The customer ends the questions, not you: the moment they say build now / just build it / go / start / skip / you decide / enough, call draft_platform on that turn and ask nothing more. Never \
 ask_user when a blueprint is pending or a coding run exists. The session \
 facts say how many rounds of questions remain; at zero you must draft.
 - draft_platform: the user wants a new platform / product. Set "brief" to a \

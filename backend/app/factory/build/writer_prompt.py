@@ -11,6 +11,18 @@ from __future__ import annotations
 from typing import Any
 
 #: Version log.
+#: v8 -- UI. A pilot is handed to a DevOps team to deploy and test, and the UI
+#:   it serves was a facade: FinOps (sess_065fc3eac75c4f62) served a console
+#:   driving ONE capability, with no authority label on any answer, beside a
+#:   React app nothing builds (no node step in its Dockerfile). The gate
+#:   ui_end_to_end now refuses that, and the bar is stated here so the agent
+#:   knows it before it writes, not after a rework round.
+#: v7 -- DEPTH. The writer stopped early: live passes finished in 10-15 minutes
+#:   against a 25-minute wall and handed over thin work (FinOps shipped an
+#:   approval workflow that routed by invented tiers with no approve/reject
+#:   step, and round 1 red on a contract the agent could have run itself).
+#:   Nothing told the agent it may run the gates, research a domain fact, or
+#:   revise. The bar is the gates, and it can reach them before yielding.
 #: v6 -- MONEY. The agent hardcoded UK VAT (0.2) and GBP into a finance platform
 #:   for a Dubai business whose brief named no country (FinOps,
 #:   sess_065fc3eac75c4f62): every net/VAT split was wrong for the UAE (5%,
@@ -37,7 +49,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v6"
+PROMPT_VERSION = "writer_worker_prompt.v8"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -129,6 +141,35 @@ PROCESSES (you share this machine with the factory that is running you):
 - Never bind or probe the port in $PORT -- it belongs to the factory. Prefer
   in-process test clients (FastAPI TestClient) over starting a server at all;
   if you must start one, use a high port of your own and stop it by PID.
+
+UI (a pilot is deployed and tested, so what it serves must work):
+- The platform serves ONE UI. You ship frontend/ and the Dockerfile; either
+  the image builds the frontend and serves it, or you do not ship a frontend
+  at all. A UI nothing builds is decoration, and the gate refuses it.
+- What it serves reaches the platform: at least two capabilities driven from
+  the UI, not one. Every route the UI calls must answer -- the gate boots the
+  product and calls them.
+- The formulas you ship are reachable from it: a capability the UI drives uses
+  app/formulas.
+- An answer the UI asks for carries its authority label, so an operator can
+  see which layer it came from.
+
+DEPTH (the gates are the bar, and you can reach them yourself):
+- Run them before you yield. The code-phase suite is
+  ``python -m pytest -m "not pilot" -q`` from this checkout root. Fix what it
+  reports and run it again. Then exercise each capability the way the harness
+  will: POST a record, GET it back, confirm it persisted for the caller's
+  tenant. A failure you find is a failure you fix; a failure you leave costs a
+  whole rework round.
+- Do not stop at the first thing that compiles. Read the brief capability by
+  capability and ask whether the customer would call it done. A handler that
+  stores a row where they asked for a decision, a routing, a check or a
+  calculation is not finished work.
+- Research what you do not know. A domain fact you need -- a rule, a formula,
+  a standard, how a trade actually works -- is yours to find out. Say in your
+  report where it came from. A value the customer owns (a rate, a threshold, a
+  limit) stays a named setting they can change, whatever you learn about it.
+- You have the wall. Use it: a shallow pass that ends early is sent back.
 
 PROGRESS LOG (the operator watches this file live):
 After EVERY completed step — before starting the next — append exactly

@@ -162,17 +162,19 @@ def test_the_question_cap_is_enforced_in_code_not_by_the_model(monkeypatch):
 def test_the_model_is_told_how_many_rounds_remain(monkeypatch):
     state = _fresh_state()
     _capture_draft(monkeypatch)
+    rounds = platform_chat_llm.MAX_ELICITATION_ROUNDS
     sent = _script(
         monkeypatch,
-        [{"action": "ask_user", "message": "q1"}, {"action": "ask_user", "message": "q2"},
-         {"action": "draft_platform", "brief": "b"}],
+        [{"action": "ask_user", "message": f"q{n}"} for n in range(rounds)]
+        + [{"action": "draft_platform", "brief": "b"}],
     )
 
-    _say(state, "a"), _say(state, "b"), _say(state, "c")
+    for turn in range(rounds + 1):
+        _say(state, "m%d" % turn)
 
-    assert "Question rounds remaining: 2." in sent[0]
-    assert "Question rounds remaining: 1." in sent[1]
-    assert "ask_user is forbidden" in sent[2]
+    assert f"Question rounds remaining: {rounds}." in sent[0]
+    assert f"Question rounds remaining: {rounds - 1}." in sent[1]
+    assert "ask_user is forbidden" in sent[rounds]
 
 
 def test_drafting_resets_the_elicitation(monkeypatch):
