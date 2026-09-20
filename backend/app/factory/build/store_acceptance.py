@@ -985,6 +985,57 @@ def check_ui_served_200(http: _Http) -> Tuple[str, str]:
     return "FAIL", "GET / was 200 but not served UI (content-type=%s)" % ctype
 
 
+def _declared_v1_paths(match) -> List[str]:
+    """POST-able /v1 paths the PRODUCT declares, filtered by ``match``.
+
+    The plant/query paths used to be a hand-kept list, and four of the eight
+    named one product's routes (/v1/steward/rag/*, /v1/dual_rag_estate_docs).
+    Any product that calls its retrieval surface something else -- which is
+    every product with a different brief -- failed with "plant did not
+    accept" while having working retrieval. openapi.json is committed and
+    current (the floor requires it), so the product declares its own routes
+    and this reads them.
+    """
+    doc_path = ROOT / "docs" / "openapi.json"
+    try:
+        doc = json.loads(doc_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for path, ops in (doc.get("paths") or {{}}).items():
+        name = str(path)
+        if not name.startswith("/v1/"):
+            continue
+        if not isinstance(ops, dict) or "post" not in {{k.lower() for k in ops}}:
+            continue
+        if match(name.lower()):
+            out.append(name)
+    return out
+
+
+def _rag_ingest_paths() -> List[str]:
+    declared = _declared_v1_paths(
+        lambda n: ("ingest" in n or "upload" in n or "index" in n or "add" in n)
+        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "ingest" in n)
+    )
+    known = [
+        "/v1/rag/ingest",
+        "/v1/steward/rag/ingest",
+        "/v1/dual_rag_sop",
+        "/v1/dual_rag_estate_docs",
+    ]
+    return declared + [k for k in known if k not in declared]
+
+
+def _rag_query_paths() -> List[str]:
+    declared = _declared_v1_paths(
+        lambda n: ("query" in n or "search" in n or "ask" in n or "retriev" in n)
+        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "query" in n)
+    )
+    known = ["/v1/rag/query", "/v1/steward/rag/query", "/v1/rag/dual", "/v1/dual_rag_sop"]
+    return declared + [k for k in known if k not in declared]
+
+
 def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     if not _has_rag_surface():
         return "SKIP", "no-rag-surface"
@@ -998,12 +1049,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     nonce = uuid.uuid4().hex[:12]
     absent_nonce = uuid.uuid4().hex[:12]
     marker = "ACCEPTANCE-PLANT-%s the reorder threshold procedure" % nonce
-    ingest_paths = (
-        "/v1/rag/ingest",
-        "/v1/steward/rag/ingest",
-        "/v1/dual_rag_sop",
-        "/v1/dual_rag_estate_docs",
-    )
+    ingest_paths = _rag_ingest_paths()
     planted = False
     for path in ingest_paths:
         resp = http.request(
@@ -1017,12 +1063,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
             break
     if not planted:
         return "FAIL", "RAG surface present but plant did not accept"
-    query_paths = (
-        "/v1/rag/query",
-        "/v1/steward/rag/query",
-        "/v1/rag/dual",
-        "/v1/dual_rag_sop",
-    )
+    query_paths = _rag_query_paths()
 
     def _content_hit(resp: Any, needle: str) -> bool:
         # Only fields that are supposed to carry RETRIEVED content count --
