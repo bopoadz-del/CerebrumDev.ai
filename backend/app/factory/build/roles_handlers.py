@@ -2999,6 +2999,18 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     except OSError:
         logger.exception("writer receipt persistence failed")
 
+    # Which writer run produced app/actions/, recorded where converge can
+    # stamp it into the product's provenance. The receipt carries no id of
+    # its own, so its canonical hash is the identifier.
+    try:
+        from app.factory.build.build_provenance import receipt_hash
+
+        digest = receipt_hash(receipt)
+        if digest:
+            ctx.state["writer_receipt"] = digest
+    except Exception:  # noqa: BLE001 -- provenance never breaks a build
+        logger.warning("could not hash the writer receipt", exc_info=True)
+
     # run_writer() returns at its CodeWhale branch, so emit_writer_artifacts
     # -- further down that function -- never runs in production, while
     # run_tester() still stamps tests/test_data_lifecycle.py, which opens

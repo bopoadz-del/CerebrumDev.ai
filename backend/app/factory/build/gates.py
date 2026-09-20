@@ -16,6 +16,7 @@ for another pass. Only a gate that cannot run at all raises.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -609,6 +610,59 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     )
 
 
+def gate_provenance_complete(ctx: GateContext) -> GateResult:
+    """The delivered product can say which Factory and which Store made it.
+
+    Every export shipped ``factory_commit`` and ``blocks_commit`` as
+    "unknown": ``converge`` read them from ``ctx.state`` and nothing ever put
+    them there. A buyer's IT team opening the zip found two fields that
+    answer "which code made this?" with "no idea", and a build that
+    misbehaves cannot be traced to the code that produced it.
+
+    Judged on the artifact, not the process -- this reads the provenance
+    document the product actually ships.
+    """
+    from app.factory.build.build_provenance import missing_provenance
+
+    rel = Path("docs") / "provenance" / "provenance.json"
+    path = Path(ctx.workspace) / rel
+    if not path.is_file():
+        return GateResult(
+            ok=False,
+            gate="provenance_complete",
+            reason="provenance_missing",
+            detail=f"the product ships no {rel.as_posix()}",
+            findings=[f"write {rel.as_posix()}"],
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return GateResult(
+            ok=False,
+            gate="provenance_complete",
+            reason="provenance_unreadable",
+            detail=f"{rel.as_posix()}: {exc}",
+        )
+    missing = missing_provenance(payload)
+    if missing:
+        return GateResult(
+            ok=False,
+            gate="provenance_complete",
+            reason="provenance_unknown",
+            detail=(
+                "the product cannot say what produced it: "
+                + ", ".join(f"{f}=unknown" for f in missing)
+            ),
+            findings=list(missing),
+        )
+    return GateResult(
+        ok=True,
+        gate="provenance_complete",
+        detail="factory_commit and blocks_commit both resolved",
+        payload={f: str(payload.get(f)) for f in ("factory_commit", "blocks_commit")},
+    )
+
+
 def gate_store_manager_contract(ctx: GateContext) -> GateResult:
     """STORE_MANAGER: store ops authorised, and on pilot, data that survives.
 
@@ -622,7 +676,11 @@ def gate_store_manager_contract(ctx: GateContext) -> GateResult:
     durable = gate_pilot_outcome_survives_restart(ctx)
     if not durable.ok:
         return durable
+    traceable = gate_provenance_complete(ctx)
+    if not traceable.ok:
+        return traceable
     payload = dict(authorised.payload)
+    payload["provenance"] = dict(traceable.payload)
     if (ctx.cycle or "code").strip().lower() == "pilot":
         from app.factory.build.store_acceptance import gate_store_acceptance
 
