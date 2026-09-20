@@ -148,6 +148,20 @@ def _thin_templated_authorship(status: Mapping[str, Any]) -> bool:
         return False
     if written <= 1:
         return True
+    # Judge the CAPABILITY work when it is counted. The whole-artifact
+    # comparison below counts the factory's own substrate as "templated"
+    # against the agent, and the factory writes more of it every release:
+    # FinOps (sess_065fc3eac75c4f62) graded thin at 13 vs 13 while the agent
+    # had written all 8 of its handlers. A pass is thin when it authored no
+    # handler, or when most handlers are templates -- not when the platform
+    # it was given is well equipped.
+    action_artifacts = _as_nonneg_int(authorship.get("action_artifacts"))
+    agent_actions = _as_nonneg_int(authorship.get("action_py"))
+    templated_actions = _as_nonneg_int(authorship.get("templated_actions"))
+    if action_artifacts is not None and action_artifacts > 0 and agent_actions is not None:
+        if agent_actions == 0:
+            return True
+        return templated_actions is not None and templated_actions >= agent_actions
     if templated is not None and templated >= written:
         return True
     if artifacts is not None and artifacts > 0 and written * 2 <= artifacts:
