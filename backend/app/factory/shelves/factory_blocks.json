@@ -178,6 +178,867 @@
       "kit": "platform",
       "description": "Chain blocks into pipelines with variable interpolation and scheduling",
       "trust_tier": "platform"
+    },
+    {
+      "id": "action_contract",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Domain-neutral runtime for registering, discovering, and executing actions exposed by domain kits. Includes typed models, registry, execution engine, schema validation, audit helper, and config.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "adaptive_router",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "agency_commission_engine",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Deterministic insurance agency commission engine for life FYC, P&C new business, renewals, hierarchy overrides, chargebacks, and effective dating.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "agency_hierarchy",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Insurance agency hierarchy Store block for agent, agency, MGA/FMO, and carrier distribution trees",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "agent_swarm",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Multi-agent task orchestration with dependency resolution and LLM routing",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "agriculture_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Agriculture domain analysis: deterministic document-type detection and entity extraction for the agriculture vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "android_drive",
+      "version": "1.0",
+      "kit": "platform",
+      "description": "Android device storage access \u2014 HONEST STUB: not implemented, refuses by name; needs net-new ADB/bridge integration (no donor)",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "async_processor",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Celery-style task dispatcher with in-process fallback queue",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "attrition_scorer",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Heuristic insurance producer attrition risk scoring with transparent factor contributions.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "audit_chain",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Tamper-evident evidence chain (FinanceOps port): every record links to its predecessor and verify_chain full-walks the chain naming each violation.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "auth",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "automotive_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Automotive domain analysis: deterministic document-type detection and entity extraction for the automotive vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_cargo_kit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only cargo intelligence: weights, dimensions, limits, and handling rules grounded in project documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_chat_server",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "WebSocket transport for the aviation agent. Routes every message through the orchestrator and streams frames back.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_cx_kit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only customer-experience intelligence: policies, feedback, and service standards grounded in project documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_grounding_gate",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Safety-critical grounding gate: every figure must trace to a retrieved chunk with matching unit/currency semantics.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_loyalty_kit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only loyalty intelligence: points, miles, tiers, and benefits grounded in project documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_pss_kit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only passenger service system (PSS) intelligence: fares, availability, and booking policy grounded in project documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_revenue_kit",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only revenue management intelligence: yield, load factor, and pricing analysis grounded in project documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "aviation_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Aviation domain analysis: deterministic regex+math document intelligence for the aviation vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "bcf_export",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Exports findings to a BCF 2.1 zip (markup XML + viewpoints when provided) and validates a produced zip.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "billing",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "bim",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "bim_extractor",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Extract building elements, quantities, and clash report from IFC BIM models",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "boq_processor",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Parse Excel/CSV Bills of Quantities into structured quantities and cost breakdown",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "bordereaux_ingest",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Parse, validate, and normalize simulated insurance bordereaux CSV/JSON rows.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "cache_manager",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Redis wrapper with get/set/delete/stats actions",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "channel_router",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Explainable insurance channel routing for agency, direct, MGA, and partner channels.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "chat",
+      "version": "3.0.0",
+      "kit": "platform",
+      "description": "AI chat completions \u2014 DeepSeek primary, local LLM fallback",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "clash_resolver",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Proposes collision-free moves for clash items, preserving fall direction; batch verification against zone elements.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "clash_triage",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Ranks clash findings into a build order: resolution rank, zone congestion, workflow-noise filtering, programme CSV loading.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "clearance_rules",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Clearance rule table loader and evaluator: category pairs + axes with precedent resolution; rules must carry a citation.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "code",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Execute Python or JavaScript code; analyze code for issues",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "config",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "construction",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Construction domain container adapter.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "construction_advisor",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Natural-language access to the construction knowledge base.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "construction_v2",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Construction document analysis with typed input/output",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "context_broker",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Memory coordinator for cross-block session state",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "discovery",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "distribution_analytics",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Deterministic insurance distribution analytics for GWP, commission, productivity, and retention proxy metrics.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "documentation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "drawing_qto",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Extract measurements, areas, and volumes from DXF/DWG construction drawings",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "education_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Education domain analysis: deterministic document-type detection and entity extraction for the education vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "email",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "error_tracking",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "estate_bearer_auth",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Estate-scoped bearer auth (Cerebrum-Steward port): HMAC-SHA256 pepper-hashed tokens with an estate scope check. In-process token store; no DB, no demo bypass.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "failover",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_canonical_model",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Governed FinanceOps dimensions, fact types, normalization, and validation.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_coa_governance",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Chart of Accounts hierarchy, mapping, effective dating, and impact controls.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_data_quality",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Finance-side data quality and journal-balance controls.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_import",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Normalize tabular ERP, CRM, HCM, budget, forecast, and project-cost rows.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_ops",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Corporate Finance transformation and FP&A foundation container.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_reconciliation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Decimal-safe grouped reconciliation with exception evidence.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_saas_metrics",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "MRR, ARR, ACV, TCV, NRR, GRR, renewals, and ARR bridges.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_v2",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Typed financial document analysis for statements, audit reports, KYC/AML, formulas, regulatory flags, and risk scoring.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "formula_executor_v2",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "LLM-assisted formula drafting with a deterministic validation gate and RestrictedPython sandbox execution; never authorizes on its own.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "geometry_engine",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Exact clash and clearance measurement from one pass over IFC meshes: AABB pre-filter, then triangle-mesh judgement (CLASH vs CLEARANCE).",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "google_drive",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Google Drive file operations \u2014 set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET or GOOGLE_ACCESS_TOKEN",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "governance_gate",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Fail-closed approval governance (FinanceOps port): an action with no approved request is refused; approve/reject only from pending with a recorded reviewer and evidence.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "health_check",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "historical_benchmark",
+      "version": "1.1",
+      "kit": "platform",
+      "description": "RS Means-style benchmark unit costs, cost ranges, and market data for construction items",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hkia_gn16_rules",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Deterministic HKIA GN16/GL16 Layer-1 compliance rule checks for insurance evidence packages. Rule checks only; no live HKIA filing submission.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hotel_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Hotel domain analysis: keyword-based document-type detection across 8 hotel document types with ADR/RevPAR/GOPPAR/risk extraction.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hr_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "HR domain analysis: deterministic document-type detection and entity extraction for the HR vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "image",
+      "version": "3.0",
+      "kit": "platform",
+      "description": "Local image analysis \u2014 metadata + OCR (no cloud vision)",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "inbound_webhook",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "HMAC-SHA256 inbound webhook verification (ported from the Cerebrum donor's webhook security layer, Django coupling removed). Names refusals: malformed_header, stale_timestamp, invalid_signature, unknown_source. Never stores payloads or secrets on its own.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "incentive_targeting",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Heuristic insurance producer incentive targeting and budget simulation.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "insurance",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Insurance domain container adapter.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "insurance_v2",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Insurance document analysis with typed input/output",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "jetson_gateway",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Edge computing gateway: dispatch construction actions to NVIDIA Jetson fleet with OTA, health monitoring, parallel execution",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "learning_engine",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Tier promotion + coefficient tuning: learns from user corrections to improve formula accuracy",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "legal_v2",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Legal document analysis with typed input/output \u2014 extracts entities, clauses, risks, and compliance flags from contracts and pleadings",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "library_container",
+      "version": "1.0",
+      "kit": "platform",
+      "description": "Formula backend registry: SymPy, Pint, CoolProp, QuantLib",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "llm_enhancer",
+      "version": "1.0",
+      "kit": "platform",
+      "description": "LLM-augmented enhancement of construction quantities/risks/RFIs",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "local_drive",
+      "version": "1.1",
+      "kit": "platform",
+      "description": "Sandboxed local filesystem access: list, read, write files",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "manufacturing_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Manufacturing domain analysis: deterministic document-type detection and entity extraction for the manufacturing vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "marker",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "High-quality PDF to Markdown extraction using Marker",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "mcp_adapter",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Exposes every registered Cerebrum block as MCP-style tool descriptions to MCP-aware agents. Read-only catalog: list_tools and describe only \u2014 it never executes a block on behalf of a client.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "medical_ehr_connector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Fetch FHIR Patient, Observation, and MedicationRequest resources from an EHR",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "medical_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Medical domain analysis: real published equations (2021 CKD-EPI race-free eGFR) plus clearly labelled clinical heuristics.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "migration",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "model_clone",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Applies approved moves to a copy of the IFC model (never the original) via ifc_copy, with optional Speckle streaming.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "monitoring",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "multi_tenant_rbac",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Fail-closed multi-tenant RBAC (Cerebrum-FinanceOps port): permission checks with tenant and project visibility. No DB \u2014 in-process role store.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ocr",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Extract text from images using OCR with preprocessing",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ocr_v2",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Extract text from images using OCR with typed output",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "oil_gas_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Oil & gas domain analysis: deterministic document-type detection and entity extraction for the oil & gas vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "onedrive",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "OneDrive file operations \u2014 set ONEDRIVE_CLIENT_ID + ONEDRIVE_CLIENT_SECRET + ONEDRIVE_REFRESH_TOKEN or ONEDRIVE_ACCESS_TOKEN",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "orchestrator",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Chain execution engine with type validation",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "payment_split",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "pdf",
+      "version": "2.0.0",
+      "kit": "platform",
+      "description": "Extract text from PDF files",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "pdf_v2",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Extract text from PDF files with typed output",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "pharma_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Pharma domain analysis: deterministic document-type detection and entity extraction for the pharma vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "primavera_parser",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Parse Primavera P6 .xer schedule files: critical path, milestones, resource loading",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "procore_cde_client",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Read-only Procore CDE client implementing The_Fork's CdeClient read protocol. Unconfigured calls make no HTTP request; post and download refuse. Not a live certified Procore login.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "producer_record",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Insurance producer record Store block for licenses, agency assignment, status, and carrier appointments",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "project_reasoner",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "LLM agent for project planning and reasoning. The LLM drafts plans and answers; deterministic gates stay in the caller. Missing provider credentials raise by name (tests/blocks/test_project_reasoner_fail_loud.py).",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "rate_limiter",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "real_estate_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Real estate domain analysis: cap rate / GRM / cash-on-cash metrics, compliance and risk scoring for property documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "retail_v2",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Retail document analysis with typed input/output \u2014 deterministic regex + math (entities, metrics, compliance flags, risk scores). No LLM, no external APIs.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "review",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "safety_world_detector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "YOLO-Worldv2 detector surfacing what the model sees (vest, hat, person, crack...) \u2014 class, confidence, box. Deliberately judgment-free: no violation/non-compliance vocabulary; application-layer judgments stay with the operator in the loop. Refuses honestly when SAFETY_WORLD_WEIGHTS is unset.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "sandbox",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Secure code execution isolation with memory limits, CPU limits, and sandbox policies",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "search",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Search the web via DuckDuckGo (no key required) or Serper API",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "secrets",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "skills",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Extended-boot skill knowledge block \u2014 parses CEREBRUM_SKILL.md (domain file configurable via skill_file). Not loaded in virgin boot.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "smart_orchestrator",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Construction semantic router: maps user messages to action queues with TF-IDF similarity scoring",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "supply_chain_v2",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Supply chain domain analysis: deterministic document-type detection and entity extraction for the supply chain vertical.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "sympy_reasoning",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Heavy reasoning engine: symbolic variance analysis + data-driven construction recommendations",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "traffic_manager",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Governance layer between block-to-block calls",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "translate",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Translate text between 20+ languages \u2014 no API key needed",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "user_auth",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "User authentication (StockWisePro port): bcrypt hashes, access token, refresh rotation (single-use), TOTP (RFC 6238). No backtest, no email.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "vdc_bcf_export",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "BCF 2.1 zip export (Cerebrum VDC port): camera offset, zip layout, markup XML. Snapshot bytes only when supplied.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "vdc_clash_detection",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Axis-aligned overlap clash detection (Cerebrum VDC port): overlap volume, center, and penetration depth. No IFC/spatial tree \u2014 AABB boxes only.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "vector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "version",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "version_diff",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Diffs two finding sets (resolved / new / regressed / persisting) and scores proposals against the diff.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "video_anomaly_trigger",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Watch video metadata for anomalies and chain to notification or workflow triggers",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "video_metadata_ingest",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Validate video analytics metadata and persist to the video store",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "voice",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Text-to-speech (gTTS) and speech-to-text (Google STT) \u2014 no API key needed",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "web",
+      "version": "2.0",
+      "kit": "platform",
+      "description": "Fetch and extract content from any URL",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "webhook",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "workbench",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Bounded coding-agent workbench: a brief plus mutable paths, a Kimi CLI run, unified diff, and deterministic safety gates on changed files. The agent edits only the declared paths; gates refuse unsafe changes.",
+      "trust_tier": "platform"
     }
   ]
 }
