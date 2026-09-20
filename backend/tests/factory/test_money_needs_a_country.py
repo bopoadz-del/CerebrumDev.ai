@@ -51,5 +51,6 @@ def test_the_writer_never_invents_a_country_the_brief_did_not_give():
 
 
 def test_the_prompt_version_records_the_money_change():
-    assert PROMPT_VERSION == "writer_worker_prompt.v6"
+    # MONEY arrived in v6; later versions must keep it.
+    assert int(PROMPT_VERSION.rsplit(".v", 1)[1]) >= 6
     assert _writer().startswith(f"<!-- {PROMPT_VERSION} -->")
