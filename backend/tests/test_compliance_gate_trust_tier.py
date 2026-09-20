@@ -67,7 +67,10 @@ def test_the_shelf_json_carries_the_field_not_just_the_dataclass():
 
     raw = json.loads(_factory_shelf_path().read_text(encoding="utf-8"))
     tiers = [b.get("trust_tier") for b in raw["blocks"]]
-    assert len(tiers) == 25
+    # Every entry, however many there are. The count used to be pinned at 25
+    # and the full-shelf publish took it to 196 -- a number that says nothing
+    # about what this test is for, which is that the tier is data on disk.
+    assert len(tiers) == len(raw["blocks"]) and tiers, "shelf is empty"
     assert all(t == "platform" for t in tiers), "shelf entries missing trust_tier in JSON"
 
 
