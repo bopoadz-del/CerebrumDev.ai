@@ -2999,6 +2999,18 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     except OSError:
         logger.exception("writer receipt persistence failed")
 
+    # Which writer run produced app/actions/, recorded where converge can
+    # stamp it into the product's provenance. The receipt carries no id of
+    # its own, so its canonical hash is the identifier.
+    try:
+        from app.factory.build.build_provenance import receipt_hash
+
+        digest = receipt_hash(receipt)
+        if digest:
+            ctx.state["writer_receipt"] = digest
+    except Exception:  # noqa: BLE001 -- provenance never breaks a build
+        logger.warning("could not hash the writer receipt", exc_info=True)
+
     # run_writer() returns at its CodeWhale branch, so emit_writer_artifacts
     # -- further down that function -- never runs in production, while
     # run_tester() still stamps tests/test_data_lifecycle.py, which opens
@@ -4825,6 +4837,30 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     )
     ctx.workspace.write_text(
         Path("tests") / "test_domain_acceptance.py", render_domain_tests(specs)
+    )
+
+    # negative_floor asks each capability for four counter-cases. Asking the
+    # coder and grading it afterwards costs a rework round for the
+    # difference; the Factory knows the shape of all four from the spec, so
+    # it writes the harness and the agent extends it with the domain
+    # judgement only it has.
+    # tests/ is TESTER's lane: the writer may not author the tests that
+    # judge it, so the backup-restore roundtrip is emitted here rather than
+    # with the rest of the ops substrate.
+    from app.factory.build.observability import render_backup_restore_test
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_backup_restore.py", render_backup_restore_test()
+    )
+
+    from app.factory.build.negative_floor import render_negative_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_negative_floor.py",
+        render_negative_tests(
+            specs,
+            {cid: _sample_payload(specs.get(cid) or {}) for cid in specs},
+        ),
     )
 
     # -- routes return their documented shape ------------------------------

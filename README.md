@@ -85,6 +85,20 @@ Error tracking and performance are wired on both tiers and activate by DSN:
 - **Resident Engineer** — each generated platform carries its resident
   engineer charter (observe/diagnose/repair under human authority).
 - **Reasoning layer** — chain generation, rule injection.
+- **The acceptance floor** — every platform must pass
+  [21 measured checks](backend/app/factory/acceptance_floor.v2.json) before
+  export. The file is the single source: the coder's brief renders each
+  `requirement_text` verbatim, and the Store gate executes the same ids, so
+  the agent builds toward the checklist instead of discovering it one
+  rework round at a time. Neither side may keep its own copy — a test fails
+  the build if they drift. Scores per artifact live in
+  [STORE_REGRADE_P.md](STORE_REGRADE_P.md); old builds keep the score they
+  achieved and are never back-dated.
+
+  The nine checks added in v2 cost roughly 2–4 minutes of extra build time
+  and a few cents of coder time per build: the negative-case harness, the
+  Postgres boot, one live connector delivery, a backup restored, a
+  200-request bench and a dependency audit.
 
 ## Development
 

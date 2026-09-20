@@ -17,6 +17,11 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from app.factory.build.observability import (
+    render_backup_script,
+    render_bench_script,
+    render_observability,
+)
 from app.factory.build.workspace import write_workspace_text
 
 # anyio / Starlette default limiter for FastAPI sync def endpoints.
@@ -966,6 +971,16 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
     write_workspace_text(
         workspace, Path("scripts") / "entrypoint.sh", render_entrypoint()
     )
+    # The ops floor, on THIS path too. These were added to
+    # platform_substrate() (the CodeWhale backfill) and not here, so a build
+    # that took the in-process writer got tests/test_backup_restore.py from
+    # TESTER -- which is emitted unconditionally -- with no scripts/backup.sh
+    # for it to run. "scripts/backup.sh is missing" in CI, and it was right.
+    write_workspace_text(
+        workspace, Path("app") / "observability.py", render_observability()
+    )
+    write_workspace_text(workspace, Path("scripts") / "backup.sh", render_backup_script())
+    write_workspace_text(workspace, Path("scripts") / "bench.py", render_bench_script())
 
 
 #: The spec-independent half of :func:`emit_writer_artifacts`.
@@ -981,6 +996,9 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
 #: ``app/store.py`` and ``0001_baseline`` are deliberately absent: they carry
 #: the entity schema, the agent authors them, and overwriting them would
 #: destroy the capability work this backfill exists to protect.
+
+
+
 def platform_substrate() -> List[Tuple[str, str]]:
     """(relpath, content) for every substrate file that needs no specs."""
     return [
@@ -992,6 +1010,14 @@ def platform_substrate() -> List[Tuple[str, str]]:
         (f"alembic/versions/{REVISION_0002}.py", render_revision_0002()),
         ("scripts/entrypoint.sh", render_entrypoint()),
         ("docs/data_lifecycle.json", render_lifecycle_doc()),
+        # The ops floor. A pilot goes to a DevOps team who cannot answer
+        # "is it up, is it slow, is it being hammered" from logs alone, and
+        # a backup nobody has restored is a file. None of it is
+        # domain-specific: it counts requests and seconds, and restores
+        # whatever the platform stores on.
+        ("app/observability.py", render_observability()),
+        ("scripts/backup.sh", render_backup_script()),
+        ("scripts/bench.py", render_bench_script()),
     ]
 
 

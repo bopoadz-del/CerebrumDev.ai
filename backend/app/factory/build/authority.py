@@ -190,6 +190,11 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "scripts/release_gate.py"),
             (LaneRoot.WORKSPACE, "scripts/acceptance.py"),
             (LaneRoot.WORKSPACE, "scripts/entrypoint.sh"),
+            # Operational scripts the platform ships beside entrypoint.sh:
+            # the backup the floor requires to be restorable, and the bench
+            # that measures p95 rather than estimating it.
+            (LaneRoot.WORKSPACE, "scripts/backup.sh"),
+            (LaneRoot.WORKSPACE, "scripts/bench.py"),
             (LaneRoot.WORKSPACE, "scripts/rollback.sh"),
             (LaneRoot.WORKSPACE, ".github/workflows/ci.yml"),
             # Store ships both named OpenAPI files (openapi_committed).

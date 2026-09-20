@@ -229,7 +229,7 @@ test('Floor drafts a feature list and Approve & build starts the coding agent', 
   await expect(page.getByText('coding agent', { exact: true })).toBeVisible()
   await expect(page.getByText('chat LLM', { exact: true })).toBeVisible()
   await expect(page.getByRole('status')).toContainText(/Coding agent has taken over/)
-  await expect(page.getByText('WRITER', { exact: true })).toBeVisible()
+  await expect(page.getByText('WORKERS', { exact: true })).toBeVisible()
   await expect(page.getByPlaceholder(/coding agent has taken over/i)).toBeDisabled()
 })
 
@@ -770,7 +770,7 @@ test('WRITER session A bound → /floor/{B} hydrates finished B, not A', async (
   await page.goto(`/floor/${writerA}`)
   await expect(page.getByRole('heading', { name: 'Factory Floor' })).toBeVisible({ timeout: 20_000 })
   await expect(page.getByText('session sess_d10dfc2…')).toBeVisible()
-  await expect(page.getByText(/WRITER 3\/5/)).toBeVisible()
+  await expect(page.getByText(/WORKERS 3\/5/)).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
 
   await page.evaluate((id) => {
@@ -781,7 +781,7 @@ test('WRITER session A bound → /floor/{B} hydrates finished B, not A', async (
   await expect(page.getByText('session sess_d10dfc2…')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Coding agent finished' })).toBeVisible()
   await expect(page.getByTestId('floor-pilot-ready-pill')).toContainText('Store-green')
-  await expect(page.getByText(/WRITER 3\/5/)).toHaveCount(0)
+  await expect(page.getByText(/WORKERS 3\/5/)).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toHaveCount(0)
 })
 
@@ -1755,7 +1755,7 @@ test('Floor keeps coding chrome after golden lettings Approve before the first s
   await expect(page.getByTestId('floor-coder-takeover')).toBeVisible()
   await expectNoGoldFinished(page)
   releaseStatus?.()
-  await expect(page.getByText('WRITER', { exact: true })).toBeVisible()
+  await expect(page.getByText('WORKERS', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Coding agent has taken over' })).toBeVisible()
   await expectNoGoldFinished(page)
 })

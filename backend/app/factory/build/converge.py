@@ -126,8 +126,13 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     from app.factory.generator import ProductGenerator
     from app.product_dna.emit import emit_product_dna
 
-    factory_commit = str(ctx.state.get("factory_commit") or "unknown")
-    blocks_commit = str(ctx.state.get("blocks_commit") or "unknown")
+    # Resolved, not defaulted. Both of these shipped as "unknown" in every
+    # export because nothing in the pipeline ever put them in ctx.state.
+    from app.factory.build.build_provenance import resolve_provenance
+
+    resolved = resolve_provenance(ctx)
+    factory_commit = resolved["factory_commit"]
+    blocks_commit = resolved["blocks_commit"]
     gen = ProductGenerator(
         blueprint,
         plan=plan,
@@ -196,6 +201,10 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
     # two identical builds must byte-match, and coder variance must stay
     # inside app/actions/. The field remains; the value is the input hash.
     prov["generated_at"] = f"blueprint:{inputs_hash}"
+    # Which writer run produced app/actions/. The receipt has no id of its
+    # own, so its canonical hash is the identifier.
+    if resolved.get("writer_receipt"):
+        prov["writer_receipt"] = resolved["writer_receipt"]
     prov_rel = Path("docs") / "provenance" / "provenance.json"
     if not (fill_gaps_only and ctx.workspace.exists(prov_rel)):
         ctx.workspace.write_text(

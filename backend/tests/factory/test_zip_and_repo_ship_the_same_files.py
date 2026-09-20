@@ -22,10 +22,20 @@ PRODUCT = {
     "app/actions/record.py": "CAPABILITY_ID = 'record'\n",
     "app/data/seed.json": "{}\n",
     "frontend/src/data/labels.ts": "export const x = 1\n",
-    "build_ledger.jsonl": "{}\n",
     "Dockerfile": "FROM python:3.11\n",
 }
 NOT_PRODUCT = {
+    # The Factory's own record of the build, and how it was manufactured.
+    # The customer gets the platform, not the transcript of making it.
+    "build_ledger.jsonl": "{}",
+    "product-dna/generation_manifest.json": "{}",
+    "docs/writer_prompt.txt": "prompt",
+    "docs/coder_brief.md": "brief",
+    "docs/coder_receipt.json": "{}",
+    "docs/writer_argv.json": "{}",
+    "docs/writer_progress.jsonl": "{}",
+    "docs/writer_progress.log": "STEP 1",
+    "docs/build_provenance.json": "{}",
     "app/__pycache__/main.cpython-311.pyc": "x",
     "app/actions/__pycache__/record.cpython-311.pyc": "x",
     "tests/.pytest_cache/v/cache/lastfailed": "{}",

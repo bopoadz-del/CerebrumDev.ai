@@ -29,6 +29,7 @@ import {
   stampBuildObservation,
   withClientStall,
   withResolvedNRequired,
+  kernelName,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
@@ -208,6 +209,7 @@ const KERNEL_JOBS: Record<string, { title: string; agent: boolean }> = {
   STORE_MANAGER: { title: 'Store registrar', agent: false },
 }
 
+
 function KernelStrip({ build }: { build: BuildStatus | null }) {
   const phases = build?.phases?.length
     ? build.phases
@@ -229,12 +231,12 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
             className={[cls, failed ? 'failed' : undefined].filter(Boolean).join(' ')}
             title={
               failed
-                ? `${phase} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
+                ? `${kernelName(phase)} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
                 : undefined
             }
             data-testid={failed ? `floor-phase-failed-${phase}` : undefined}
           >
-            <span className="kernel-id">{phase}</span>
+            <span className="kernel-id">{kernelName(phase)}</span>
             {job ? <span className="kernel-title">{job.title}</span> : null}
             {job?.agent ? <span className="kernel-agent">agent</span> : null}
           </li>
@@ -334,8 +336,9 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
     if (isAcceptancePendingPrototype(build)) {
       const score = formatAcceptanceScore(build)
       const pending =
-        `Acceptance is ${score} — not k/k. Export stays closed until scripts/acceptance.py ` +
-        'passes inside the Store-built image. This is a code-green prototype, not a failed build.'
+        `Acceptance is ${score} — not k/k. Every platform must pass these 21 measured ` +
+        'checks before export, and export stays closed until scripts/acceptance.py passes ' +
+        'inside the Store-built image. This is a code-green prototype, not a failed build.'
       return finished ? `${finished}. ${pending}` : pending
     }
     if (finished) {
@@ -954,7 +957,7 @@ export function Floor({
           ) : (
             <p>
               {coderTakeoverNote(liveCoderBuild) ??
-                'The feature list is approved. The coding agent is starting WRITER now.'}
+                'The feature list is approved. The coding agent is starting WORKERS now.'}
             </p>
           )}
           {coderSucceeded && (

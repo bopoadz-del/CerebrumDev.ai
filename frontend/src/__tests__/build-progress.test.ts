@@ -58,7 +58,7 @@ const cloner: BuildStatus = {
 
 describe('build progress copy', () => {
   it('names the current phase instead of a bare 2/5', () => {
-    expect(formatPhaseHeadline(cloner)).toBe('CLONER 2/5')
+    expect(formatPhaseHeadline(cloner)).toBe('RESEARCHER 2/5')
     expect(formatPhaseCounts(cloner)).toBe('3/7 blocks')
     expect(phaseBarFraction(cloner)).toBeCloseTo(0.429)
     expect(formatHeartbeat(cloner)).toBe('still working · 12s ago')

@@ -128,7 +128,7 @@ describe('Your Platforms — coding-agent build', () => {
       'Vineyard Platform',
     )
     expect(screen.getByText('runner')).toBeInTheDocument()
-    expect(await screen.findByText(/Coding agent at work — WRITER 3\/5/)).toBeInTheDocument()
+    expect(await screen.findByText(/Coding agent at work — WORKERS 3\/5/)).toBeInTheDocument()
     expect(screen.getByText(/2\/4 handlers/)).toBeInTheDocument()
     const building = screen.getByRole('button', { name: 'Building…' })
     expect(building).toBeDisabled()

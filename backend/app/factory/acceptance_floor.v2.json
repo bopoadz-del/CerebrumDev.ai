@@ -1,0 +1,154 @@
+{
+  "schema": "acceptance_floor.v2",
+  "version": 2,
+  "note": "ONE SPEC, TWO CONSUMERS. The C-BRIEF renders `requirement` into the coder's prompt so it builds toward the floor on the first pass; the Store gate executes `check` as its checklist. Neither side is hand-edited and neither may carry its own copy -- test_acceptance_floor_is_one_source fails if they drift. Order is the gate's reporting order and `authorship_floor` stays last.",
+  "checks": [
+    {
+      "id": "no_token_401",
+      "requirement_text": "Every /v1 route refuses an unauthenticated request with HTTP 401. No route is open by accident.",
+      "brief_render": "- no_token_401: Every /v1 route refuses an unauthenticated request with HTTP 401. No route is open by accident.",
+      "gate_fn": "check_no_token_401",
+      "check": "a request with no bearer token answers 401"
+    },
+    {
+      "id": "missing_field_422",
+      "requirement_text": "A payload missing a required field is refused with HTTP 422 naming the field. Never accept a partial record and fill the gap yourself.",
+      "brief_render": "- missing_field_422: A payload missing a required field is refused with HTTP 422 naming the field. Never accept a partial record and fill the gap yourself.",
+      "gate_fn": "check_missing_field_422",
+      "check": "a payload missing a required field answers 422"
+    },
+    {
+      "id": "enum_422",
+      "requirement_text": "A field with a fixed vocabulary refuses a value outside it with HTTP 422. A status column that accepts any string is not a status column.",
+      "brief_render": "- enum_422: A field with a fixed vocabulary refuses a value outside it with HTTP 422. A status column that accepts any string is not a status column.",
+      "gate_fn": "check_enum_422",
+      "check": "a value outside a declared vocabulary answers 422"
+    },
+    {
+      "id": "ui_served_200",
+      "requirement_text": "app/static/index.html is served at / and is a working console: it discovers capabilities from the API and drives at least two of them against the real routes. A page that lists routes it never calls is a facade and fails this.",
+      "brief_render": "- ui_served_200: app/static/index.html is served at / and is a working console: it discovers capabilities from the API and drives at least two of them against the real routes. A page that lists routes it never calls is a facade and fails this.",
+      "gate_fn": "check_ui_served_200",
+      "check": "GET / answers 200 and the page drives real capability routes"
+    },
+    {
+      "id": "rag_roundtrip_hit",
+      "requirement_text": "If the product retrieves, an ingested document is findable again through the retrieval path, and the answer carries its authority label.",
+      "brief_render": "- rag_roundtrip_hit: If the product retrieves, an ingested document is findable again through the retrieval path, and the answer carries its authority label.",
+      "gate_fn": "check_rag_roundtrip_hit",
+      "check": "a document ingested through the product is retrieved back"
+    },
+    {
+      "id": "single_persistence_root",
+      "requirement_text": "One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it.",
+      "brief_render": "- single_persistence_root: One storage root, read from STORAGE_PATH. No second database, no stray sqlite file beside it.",
+      "gate_fn": "check_single_persistence_root",
+      "check": "exactly one persistence root in the tree"
+    },
+    {
+      "id": "ci_present_and_full_suite",
+      "requirement_text": ".github/workflows/ci.yml exists and runs the WHOLE suite, not a chosen subset.",
+      "brief_render": "- ci_present_and_full_suite: .github/workflows/ci.yml exists and runs the WHOLE suite, not a chosen subset.",
+      "gate_fn": "check_ci_present_and_full_suite",
+      "check": "CI is committed and runs the full suite"
+    },
+    {
+      "id": "handler_bodies_distinct",
+      "requirement_text": "Each capability handler does its own work. Copies of one body with the names changed are refused.",
+      "brief_render": "- handler_bodies_distinct: Each capability handler does its own work. Copies of one body with the names changed are refused.",
+      "gate_fn": "check_handler_bodies_distinct",
+      "check": "no two handler bodies are the same work"
+    },
+    {
+      "id": "health_fail_closed",
+      "requirement_text": "/health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none.",
+      "brief_render": "- health_fail_closed: /health reports unhealthy when a dependency it needs is down. A health check that answers 200 regardless is worse than none.",
+      "gate_fn": "check_health_fail_closed",
+      "check": "/health fails closed on a broken dependency"
+    },
+    {
+      "id": "openapi_committed",
+      "requirement_text": "docs/openapi.json is committed and matches the routes actually served.",
+      "brief_render": "- openapi_committed: docs/openapi.json is committed and matches the routes actually served.",
+      "gate_fn": "check_openapi_committed",
+      "check": "openapi.json is present and current"
+    },
+    {
+      "id": "docker_health_200",
+      "requirement_text": "The image builds, boots, and answers its healthcheck before traffic. Build it and start it yourself before you claim this.",
+      "brief_render": "- docker_health_200: The image builds, boots, and answers its healthcheck before traffic. Build it and start it yourself before you claim this.",
+      "gate_fn": "check_docker_health_200",
+      "check": "the built image answers its healthcheck"
+    },
+    {
+      "id": "cross_tenant_404",
+      "requirement_text": "A record belonging to another tenant is invisible: reading it answers 404, never 403 and never the record. Tenancy is resolved from the authenticated principal, never from the payload.",
+      "brief_render": "- cross_tenant_404: A record belonging to another tenant is invisible: reading it answers 404, never 403 and never the record. Tenancy is resolved from the authenticated principal, never from the payload.",
+      "gate_fn": "check_cross_tenant_404",
+      "check": "another tenant's record answers 404"
+    },
+    {
+      "id": "migration_no_create_all",
+      "requirement_text": "The schema lives in alembic revisions as real DDL -- one op.create_table per entity. No create_all() anywhere: a table created at boot means the migration is decoration, and the first deploy against a real database diverges from what the tests ran on.",
+      "brief_render": "- migration_no_create_all: The schema lives in alembic revisions as real DDL -- one op.create_table per entity. No create_all() anywhere: a table created at boot means the migration is decoration, and the first deploy against a real database diverges from what the tests ran on.",
+      "gate_fn": "check_migration_no_create_all",
+      "check": "alembic carries real DDL and no module calls create_all()"
+    },
+    {
+      "id": "negative_floor",
+      "requirement_text": "Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
+      "brief_render": "- negative_floor: Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
+      "gate_fn": "check_negative_floor",
+      "check": "each capability's tests carry >=4 pytest.raises or 4xx assertions"
+    },
+    {
+      "id": "postgres_boot_200",
+      "requirement_text": "DATABASE_URL present means Postgres, absent means SQLite for development. A DATABASE_URL that is read and then ignored is worse than none: the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk. If you cannot honour it, refuse at boot naming the variable.",
+      "brief_render": "- postgres_boot_200: DATABASE_URL present means Postgres, absent means SQLite for development. A DATABASE_URL that is read and then ignored is worse than none: the operator believes they are on Postgres while the platform writes a SQLite file onto the container disk. If you cannot honour it, refuse at boot naming the variable.",
+      "gate_fn": "check_postgres_boot_200",
+      "check": "with DATABASE_URL set the product boots on Postgres and answers /health 200"
+    },
+    {
+      "id": "one_live_connector",
+      "requirement_text": "One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
+      "brief_render": "- one_live_connector: One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
+      "gate_fn": "check_one_live_connector",
+      "check": "a real outbound delivery is observed, not mocked"
+    },
+    {
+      "id": "metrics_served",
+      "requirement_text": "GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
+      "brief_render": "- metrics_served: GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
+      "gate_fn": "check_metrics_served",
+      "check": "GET /metrics answers 200 with request count and latency"
+    },
+    {
+      "id": "backup_restore_roundtrip",
+      "requirement_text": "The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
+      "brief_render": "- backup_restore_roundtrip: The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
+      "gate_fn": "check_backup_restore_roundtrip",
+      "check": "a backup is taken and restored with its rows intact"
+    },
+    {
+      "id": "bench_p95",
+      "requirement_text": "200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
+      "brief_render": "- bench_p95: 200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
+      "gate_fn": "check_bench_p95",
+      "check": "p95 under 500ms over a 200-request concurrent smoke"
+    },
+    {
+      "id": "audit_clean",
+      "requirement_text": "CI runs pip-audit and bandit and both are clean. The Factory ships a .github/workflows/ci.yml with those jobs; keep them. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
+      "brief_render": "- audit_clean: CI runs pip-audit and bandit and both are clean. The Factory ships a .github/workflows/ci.yml with those jobs; keep them. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
+      "gate_fn": "check_audit_clean",
+      "check": "CI runs pip-audit and bandit"
+    },
+    {
+      "id": "authorship_floor",
+      "requirement_text": "Every action handler you author carries the authorship stamp in its module docstring.",
+      "brief_render": "- authorship_floor: Every action handler you author carries the authorship stamp in its module docstring.",
+      "gate_fn": "check_authorship_floor",
+      "check": "authored handlers carry the stamp"
+    }
+  ]
+}

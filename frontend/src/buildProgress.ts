@@ -213,12 +213,30 @@ export function formatFinishedAuthorship(
   return `Code-cycle prototype — ${counts}. Not yet pilot-ready`
 }
 
-/** Named current phase plus 1-based index: "WRITER 3/5", not a bare "2/5". */
+/**
+ * What each kernel is CALLED, as distinct from the id it is recorded under.
+ *
+ * The ids are the wire format: every build_ledger.jsonl ever written, every
+ * stored session and every gate name carries 'CLONER' and 'WRITER' as
+ * literal strings. Renaming those would rewrite history and break the
+ * reading of builds that already happened, so the rename lives here, where
+ * it is a label rather than an identity.
+ */
+const KERNEL_NAMES: Record<string, string> = {
+  CLONER: 'RESEARCHER',
+  WRITER: 'WORKERS',
+}
+
+export function kernelName(phase: string): string {
+  return KERNEL_NAMES[phase] ?? phase
+}
+
+/** Named current phase plus 1-based index: "WORKERS 3/5", not a bare "2/5". */
 export function formatPhaseHeadline(build: BuildStatus): string {
   const id = build.current_phase?.id
   const index = build.phase_index ?? (build.phases_done ?? 0) + 1
   const total = build.phase_total ?? build.phases_total ?? 5
-  return id ? `${id} ${index}/${total}` : `${index}/${total}`
+  return id ? `${kernelName(id)} ${index}/${total}` : `${index}/${total}`
 }
 
 export function formatPhaseCounts(build: BuildStatus): string | null {

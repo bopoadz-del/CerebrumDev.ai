@@ -25,7 +25,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
 GATE_NAME = "store_acceptance"
-ACCEPTANCE_REQUIRED = 13
 ACCEPTANCE_SCRIPT_REL = Path("scripts") / "acceptance.py"
 ACCEPTANCE_REPORT_REL = Path("docs") / "store_acceptance.json"
 OPENAPI_REL = Path("docs") / "openapi.json"
@@ -33,21 +32,17 @@ GITHUB_CI_REL = Path(".github") / "workflows" / "ci.yml"
 UI_INDEX_REL = Path("app") / "static" / "index.html"
 AUTH_REL = Path("app") / "auth.py"
 
-ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = (
-    "no_token_401",
-    "missing_field_422",
-    "enum_422",
-    "ui_served_200",
-    "rag_roundtrip_hit",
-    "single_persistence_root",
-    "ci_present_and_full_suite",
-    "handler_bodies_distinct",
-    "health_fail_closed",
-    "openapi_committed",
-    "docker_health_200",
-    "cross_tenant_404",
-    "authorship_floor",
-)
+#: The checklist, read from the same file the writer's prompt is rendered
+#: from. It used to be written out here, which is how the coder came to be
+#: graded on thirteen checks nothing ever told it about -- see
+#: app/factory/build/acceptance_floor.py.
+from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
+
+ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
+
+#: Every check on the floor must pass. A literal here drifts from the file
+#: the moment a check is added, and a build would be graded 14/13.
+ACCEPTANCE_REQUIRED = len(ACCEPTANCE_CHECK_NAMES)
 
 assert len(ACCEPTANCE_CHECK_NAMES) >= ACCEPTANCE_REQUIRED
 assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
@@ -494,6 +489,13 @@ def render_tenancy_module() -> str:
 
 
 def render_github_ci() -> str:
+    """The product's CI. The ONLY emitter of it.
+
+    ``stamp_acceptance_into_path`` writes this file unconditionally, so a
+    second, richer version gap-filled elsewhere was silently overwritten and
+    ``audit_clean`` would have failed every build while a file containing
+    pip-audit sat in the substrate list. One source, and it is this one.
+    """
     return (
         "# Full suite — python -m pytest tests. Store-green measures this file.\n"
         "name: ci\n"
@@ -510,6 +512,25 @@ def render_github_ci() -> str:
         '          python-version: "3.12"\n'
         "      - run: pip install -r requirements.txt -r requirements-dev.txt\n"
         "      - run: python -m pytest tests\n"
+        "  audit:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        '          python-version: "3.12"\n'
+        "      - run: pip install -r requirements.txt pip-audit bandit\n"
+        "      - run: pip-audit\n"
+        "      - run: bandit -ll -r app\n"
+        "  bench:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        '          python-version: "3.12"\n'
+        "      - run: pip install -r requirements.txt\n"
+        "      - run: python scripts/bench.py\n"
     )
 
 
@@ -990,6 +1011,57 @@ def check_ui_served_200(http: _Http) -> Tuple[str, str]:
     return "FAIL", "GET / was 200 but not served UI (content-type=%s)" % ctype
 
 
+def _declared_v1_paths(match) -> List[str]:
+    """POST-able /v1 paths the PRODUCT declares, filtered by ``match``.
+
+    The plant/query paths used to be a hand-kept list, and four of the eight
+    named one product's routes (/v1/steward/rag/*, /v1/dual_rag_estate_docs).
+    Any product that calls its retrieval surface something else -- which is
+    every product with a different brief -- failed with "plant did not
+    accept" while having working retrieval. openapi.json is committed and
+    current (the floor requires it), so the product declares its own routes
+    and this reads them.
+    """
+    doc_path = ROOT / "docs" / "openapi.json"
+    try:
+        doc = json.loads(doc_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for path, ops in (doc.get("paths") or {{}}).items():
+        name = str(path)
+        if not name.startswith("/v1/"):
+            continue
+        if not isinstance(ops, dict) or "post" not in {{k.lower() for k in ops}}:
+            continue
+        if match(name.lower()):
+            out.append(name)
+    return out
+
+
+def _rag_ingest_paths() -> List[str]:
+    declared = _declared_v1_paths(
+        lambda n: ("ingest" in n or "upload" in n or "index" in n or "add" in n)
+        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "ingest" in n)
+    )
+    known = [
+        "/v1/rag/ingest",
+        "/v1/steward/rag/ingest",
+        "/v1/dual_rag_sop",
+        "/v1/dual_rag_estate_docs",
+    ]
+    return declared + [k for k in known if k not in declared]
+
+
+def _rag_query_paths() -> List[str]:
+    declared = _declared_v1_paths(
+        lambda n: ("query" in n or "search" in n or "ask" in n or "retriev" in n)
+        and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "query" in n)
+    )
+    known = ["/v1/rag/query", "/v1/steward/rag/query", "/v1/rag/dual", "/v1/dual_rag_sop"]
+    return declared + [k for k in known if k not in declared]
+
+
 def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     if not _has_rag_surface():
         return "SKIP", "no-rag-surface"
@@ -1003,12 +1075,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
     nonce = uuid.uuid4().hex[:12]
     absent_nonce = uuid.uuid4().hex[:12]
     marker = "ACCEPTANCE-PLANT-%s the reorder threshold procedure" % nonce
-    ingest_paths = (
-        "/v1/rag/ingest",
-        "/v1/steward/rag/ingest",
-        "/v1/dual_rag_sop",
-        "/v1/dual_rag_estate_docs",
-    )
+    ingest_paths = _rag_ingest_paths()
     planted = False
     for path in ingest_paths:
         resp = http.request(
@@ -1022,12 +1089,7 @@ def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:
             break
     if not planted:
         return "FAIL", "RAG surface present but plant did not accept"
-    query_paths = (
-        "/v1/rag/query",
-        "/v1/steward/rag/query",
-        "/v1/rag/dual",
-        "/v1/dual_rag_sop",
-    )
+    query_paths = _rag_query_paths()
 
     def _content_hit(resp: Any, needle: str) -> bool:
         # Only fields that are supposed to carry RETRIEVED content count --
@@ -1174,6 +1236,210 @@ def check_health_fail_closed() -> Tuple[str, str]:
     return "FAIL", "health code=%s ok=%s" % (code, (body or {{}}).get("ok"))
 
 
+def check_migration_no_create_all() -> Tuple[str, str]:
+    """Schema belongs to alembic, not to boot.
+
+    create_all() builds tables from whatever the models happen to say at
+    start-up, so the migration becomes decoration and the first deploy
+    against a real database diverges from what the tests ran on.
+    """
+    offenders = []
+    for rel in ("app/store.py", "app/main.py", "app/db.py", "app/models.py"):
+        path = ROOT / rel
+        if path.is_file() and "create_all" in path.read_text(
+            encoding="utf-8", errors="ignore"
+        ):
+            offenders.append(rel)
+    versions = ROOT / "alembic" / "versions"
+    if not versions.is_dir():
+        return "FAIL", "alembic/versions missing: the schema is not migrated"
+    revisions = sorted(versions.glob("*.py"))
+    if not revisions:
+        return "FAIL", "no alembic revision: the schema is not migrated"
+    has_ddl = False
+    for revision in revisions:
+        text = revision.read_text(encoding="utf-8", errors="ignore")
+        if "create_all" in text:
+            offenders.append("alembic/versions/" + revision.name)
+        if "op.create_table" in text:
+            has_ddl = True
+    if offenders:
+        return "FAIL", "create_all in " + ", ".join(sorted(set(offenders)))
+    if not has_ddl:
+        return "FAIL", "no op.create_table in any revision: not real DDL"
+    return "PASS", "%d revision(s), real DDL, no create_all" % len(revisions)
+
+
+def _capability_stems() -> List[str]:
+    actions = ROOT / "app" / "actions"
+    if not actions.is_dir():
+        return []
+    return sorted(
+        f.stem for f in actions.glob("*.py") if not f.stem.startswith("_")
+    )
+
+
+NEGATIVE_STATUS = re.compile(r"status_code\\s*==\\s*4\\d\\d")
+NEGATIVE_CODE = re.compile(r"\\b(?:400|401|403|404|409|422|429)\\b")
+
+
+def _negative_hits(text: str) -> int:
+    """Count counter-case ASSERTIONS, not every mention of a number.
+
+    Counting bare 4xx anywhere in a file made a 27KB shared route test hand
+    its hits to every capability named in it, and a suite with nine
+    counter-cases in total scored four-per-capability. A gate that passes
+    what it exists to refuse is worse than no gate.
+    """
+    hits = 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "pytest.raises" in stripped:
+            hits += 1
+            continue
+        if NEGATIVE_STATUS.search(stripped):
+            hits += 1
+            continue
+        if stripped.startswith("assert") and NEGATIVE_CODE.search(stripped):
+            hits += 1
+    return hits
+
+
+def check_negative_floor() -> Tuple[str, str]:
+    """Four counter-cases per capability, attributed per TEST FUNCTION.
+
+    Attribution is the whole difficulty. Counting hits in any file that
+    merely mentions a capability credited every capability with the two big
+    shared test files, so a suite with nine counter-cases in total scored
+    four-per-capability and passed the gate that exists to refuse it. A
+    counter-case counts for a capability only when the test that makes the
+    assertion is the test that exercises the capability.
+    """
+    stems = _capability_stems()
+    if not stems:
+        return "FAIL", "no app/actions/: nothing to count against"
+    tests = ROOT / "tests"
+    if not tests.is_dir():
+        return "FAIL", "no tests/"
+    per = dict((stem, 0) for stem in stems)
+    for path in sorted(tests.rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            segment = ast.get_source_segment(text, node) or ""
+            if not segment:
+                continue
+            hits = _negative_hits(segment)
+            if not hits:
+                continue
+            for stem in stems:
+                if stem in segment or stem in node.name:
+                    per[stem] += hits
+    thin = ["%s=%d" % (s, per[s]) for s in stems if per[s] < 4]
+    if thin:
+        return "FAIL", "under 4 counter-cases: " + ", ".join(thin)
+    return "PASS", "%d capabilities, each with >=4 counter-cases" % len(stems)
+
+
+def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
+    """A DATABASE_URL read and then ignored is worse than absent."""
+    declared = ""
+    cfg = ROOT / "app" / "cerebrum_product_kernel" / "config.py"
+    for rel in ("app/store.py", "app/db.py"):
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        if "DATABASE_URL" in text or "database_url" in text:
+            declared = rel
+            break
+    if not declared:
+        reads = cfg.is_file() and "DATABASE_URL" in cfg.read_text(
+            encoding="utf-8", errors="ignore"
+        )
+        if reads:
+            return (
+                "FAIL",
+                "DATABASE_URL is read in config but the store never uses it: "
+                "the operator believes Postgres, the platform writes SQLite",
+            )
+        return "FAIL", "no DATABASE_URL path: the product cannot leave SQLite"
+    measured = (os.environ.get("STORE_POSTGRES_BOOT") or "").strip()
+    if measured != "200":
+        return "FAIL", "STORE_POSTGRES_BOOT=%r (gate must boot it on Postgres)" % measured
+    resp = http.request("get", "/health")
+    if resp.status_code != 200:
+        return "FAIL", "postgres boot env=200 but /health is %s" % resp.status_code
+    return "PASS", "boots on Postgres via %s" % declared
+
+
+def check_one_live_connector() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_LIVE_CONNECTOR") or "").strip()
+    if not measured:
+        return "FAIL", "STORE_LIVE_CONNECTOR unset: no real delivery was observed"
+    if measured.lower() in ("0", "false", "mocked", "no"):
+        return "FAIL", "the only observed delivery was mocked (%s)" % measured
+    return "PASS", "live delivery observed: %s" % measured
+
+
+def check_metrics_served(http: _Http) -> Tuple[str, str]:
+    resp = http.request("get", "/metrics")
+    if resp.status_code != 200:
+        return "FAIL", "GET /metrics is %s" % resp.status_code
+    body = ""
+    try:
+        body = resp.text
+    except Exception:
+        body = ""
+    low = body.lower()
+    if not any(k in low for k in ("count", "total", "requests")):
+        return "FAIL", "/metrics answers 200 but reports no request count"
+    if not any(k in low for k in ("latency", "duration", "seconds")):
+        return "FAIL", "/metrics reports no latency"
+    return "PASS", "/metrics serves count and latency"
+
+
+def check_backup_restore_roundtrip() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_BACKUP_RESTORE") or "").strip().lower()
+    if measured in ("ok", "pass", "1", "true"):
+        return "PASS", "backup restored with rows intact"
+    if not (ROOT / "app" / "backup.py").is_file():
+        return "FAIL", "no app/backup.py"
+    return "FAIL", "STORE_BACKUP_RESTORE=%r: a backup nobody restored is a file" % measured
+
+
+def check_bench_p95() -> Tuple[str, str]:
+    measured = (os.environ.get("STORE_BENCH_P95_MS") or "").strip()
+    if not measured:
+        return "FAIL", "STORE_BENCH_P95_MS unset: p95 was not measured"
+    try:
+        value = float(measured)
+    except ValueError:
+        return "FAIL", "STORE_BENCH_P95_MS=%r is not a number" % measured
+    if value >= 500.0:
+        return "FAIL", "p95 %.0fms over the 500ms budget" % value
+    return "PASS", "p95 %.0fms under 500ms" % value
+
+
+def check_audit_clean() -> Tuple[str, str]:
+    ci = ROOT / ".github" / "workflows" / "ci.yml"
+    if not ci.is_file():
+        return "FAIL", ".github/workflows/ci.yml missing"
+    text = ci.read_text(encoding="utf-8", errors="ignore").lower()
+    missing = [t for t in ("pip-audit", "bandit") if t not in text]
+    if missing:
+        return "FAIL", "CI does not run " + ", ".join(missing)
+    measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
+    if measured in ("0", "false", "dirty"):
+        return "FAIL", "pip-audit/bandit reported findings"
+    return "PASS", "CI runs pip-audit and bandit"
+
+
 def check_openapi_committed() -> Tuple[str, str]:
     path = ROOT / "docs" / "openapi.json"
     if not path.is_file():
@@ -1270,9 +1536,15 @@ def check_authorship_floor() -> Tuple[str, str]:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
+    # No receipt means no receipt -- not "authored nothing". The factory
+    # record (docs/coder_receipt.json, docs/build_provenance.json) is
+    # internal and does not ship, so asking it here would fail every
+    # delivered product. The stamp in each handler's own docstring is what
+    # this check is ABOUT, it is in the tree, and it is what the floor line
+    # asks the writer for. Judge the product by the product.
     try:
-        floor = full_pilot_authorship_from(receipt, ROOT)
-        if floor.meets_floor:
+        floor = full_pilot_authorship_from(receipt, ROOT) if receipt else None
+        if floor is not None and floor.meets_floor:
             return "PASS", "need≥%s action_py=%s cli=%s" % (
                 floor.need,
                 floor.action_py,
@@ -1307,21 +1579,24 @@ def main() -> int:
     http, cm = _client()
     results: List[Tuple[str, str, str]] = []
     try:
-        runners = [
-            ("no_token_401", lambda: check_no_token_401(http)),
-            ("missing_field_422", lambda: check_missing_field_422(http)),
-            ("enum_422", lambda: check_enum_422(http)),
-            ("ui_served_200", lambda: check_ui_served_200(http)),
-            ("rag_roundtrip_hit", lambda: check_rag_roundtrip_hit(http)),
-            ("single_persistence_root", check_single_persistence_root),
-            ("ci_present_and_full_suite", check_ci_present_and_full_suite),
-            ("handler_bodies_distinct", check_handler_bodies_distinct),
-            ("health_fail_closed", check_health_fail_closed),
-            ("openapi_committed", check_openapi_committed),
-            ("docker_health_200", lambda: check_docker_health_200(http)),
-            ("cross_tenant_404", lambda: check_cross_tenant_404(http)),
-            ("authorship_floor", check_authorship_floor),
-        ]
+        # Generated from the floor, not written out here. A hand-kept list
+        # is the second copy the floor file exists to abolish: it drifts the
+        # moment a check is added, and the build is then graded against a
+        # roster nobody updated. Order is the floor's order.
+        import inspect as _inspect
+
+        runners = []
+        for _name in CHECKS:
+            _fn = globals().get("check_" + _name)
+            if _fn is None:
+                runners.append(
+                    (_name, (lambda n=_name: ("FAIL", "no check_%s in the harness" % n)))
+                )
+                continue
+            if "http" in _inspect.signature(_fn).parameters:
+                runners.append((_name, (lambda f=_fn: f(http))))
+            else:
+                runners.append((_name, _fn))
         for name, fn in runners:
             try:
                 status, detail = fn()
