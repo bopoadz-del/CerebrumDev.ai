@@ -17,6 +17,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from app.factory.build.observability import (
+    render_backup_script,
+    render_bench_script,
+    render_observability,
+    render_product_ci,
+)
 from app.factory.build.workspace import write_workspace_text
 
 # anyio / Starlette default limiter for FastAPI sync def endpoints.
@@ -966,6 +972,16 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
     write_workspace_text(
         workspace, Path("scripts") / "entrypoint.sh", render_entrypoint()
     )
+    # The ops floor, on THIS path too. These were added to
+    # platform_substrate() (the CodeWhale backfill) and not here, so a build
+    # that took the in-process writer got tests/test_backup_restore.py from
+    # TESTER -- which is emitted unconditionally -- with no scripts/backup.sh
+    # for it to run. "scripts/backup.sh is missing" in CI, and it was right.
+    write_workspace_text(
+        workspace, Path("app") / "observability.py", render_observability()
+    )
+    write_workspace_text(workspace, Path("scripts") / "backup.sh", render_backup_script())
+    write_workspace_text(workspace, Path("scripts") / "bench.py", render_bench_script())
 
 
 #: The spec-independent half of :func:`emit_writer_artifacts`.
@@ -981,12 +997,7 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
 #: ``app/store.py`` and ``0001_baseline`` are deliberately absent: they carry
 #: the entity schema, the agent authors them, and overwriting them would
 #: destroy the capability work this backfill exists to protect.
-from app.factory.build.observability import (
-    render_backup_script,
-    render_bench_script,
-    render_observability,
-    render_product_ci,
-)
+
 
 
 def platform_substrate() -> List[Tuple[str, str]]:

@@ -29,6 +29,7 @@ import {
   stampBuildObservation,
   withClientStall,
   withResolvedNRequired,
+  kernelName,
 } from './buildProgress'
 import { LevelGradeStrip } from './levelGradeView'
 import { displayProductName, humanizeProductId, latestBlueprintIn } from './productDisplay'
@@ -208,23 +209,6 @@ const KERNEL_JOBS: Record<string, { title: string; agent: boolean }> = {
   STORE_MANAGER: { title: 'Store registrar', agent: false },
 }
 
-/**
- * What each kernel is CALLED, as distinct from the id it is recorded under.
- *
- * The ids are the wire format: every build_ledger.jsonl ever written, every
- * stored session and every gate name contains 'CLONER' and 'WRITER' as
- * literal strings. Renaming those would rewrite history and break the
- * reading of builds that already happened, so the rename lives here, where
- * it is a label rather than an identity.
- */
-const KERNEL_NAMES: Record<string, string> = {
-  CLONER: 'RESEARCHER',
-  WRITER: 'WORKERS',
-}
-
-export function kernelName(phase: string): string {
-  return KERNEL_NAMES[phase] ?? phase
-}
 
 function KernelStrip({ build }: { build: BuildStatus | null }) {
   const phases = build?.phases?.length

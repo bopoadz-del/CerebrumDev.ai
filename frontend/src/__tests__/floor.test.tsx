@@ -147,7 +147,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText('Block stocker')).toBeInTheDocument()
     expect(screen.getByText('Store registrar')).toBeInTheDocument()
     expect(await screen.findByText(/Writing your platform/)).toBeInTheDocument()
-    expect(screen.getByText('WRITER 3/5')).toBeInTheDocument()
+    expect(screen.getByText('WORKERS 3/5')).toBeInTheDocument()
     expect(screen.getByText(/then TESTER/)).toBeInTheDocument()
     expect(screen.getByText('7/7 handlers')).toBeInTheDocument()
     expect(screen.getByText(/Last: wrote handler payments/)).toBeInTheDocument()
