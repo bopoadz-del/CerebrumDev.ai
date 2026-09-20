@@ -64,6 +64,11 @@
       "check": "another tenant's record answers 404"
     },
     {
+      "id": "migration_no_create_all",
+      "requirement": "The schema lives in alembic revisions as real DDL -- one op.create_table per entity. No create_all() anywhere: a table created at boot means the migration is decoration, and the first deploy against a real database diverges from what the tests ran on.",
+      "check": "alembic carries real DDL and no module calls create_all()"
+    },
+    {
       "id": "authorship_floor",
       "requirement": "Every action handler you author carries the authorship stamp in its module docstring.",
       "check": "authored handlers carry the stamp"

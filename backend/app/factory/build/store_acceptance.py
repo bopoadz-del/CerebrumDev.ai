@@ -25,7 +25,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
 
 GATE_NAME = "store_acceptance"
-ACCEPTANCE_REQUIRED = 13
 ACCEPTANCE_SCRIPT_REL = Path("scripts") / "acceptance.py"
 ACCEPTANCE_REPORT_REL = Path("docs") / "store_acceptance.json"
 OPENAPI_REL = Path("docs") / "openapi.json"
@@ -40,6 +39,10 @@ AUTH_REL = Path("app") / "auth.py"
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
+
+#: Every check on the floor must pass. A literal here drifts from the file
+#: the moment a check is added, and a build would be graded 14/13.
+ACCEPTANCE_REQUIRED = len(ACCEPTANCE_CHECK_NAMES)
 
 assert len(ACCEPTANCE_CHECK_NAMES) >= ACCEPTANCE_REQUIRED
 assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
@@ -1166,6 +1169,40 @@ def check_health_fail_closed() -> Tuple[str, str]:
     return "FAIL", "health code=%s ok=%s" % (code, (body or {{}}).get("ok"))
 
 
+def check_migration_no_create_all() -> Tuple[str, str]:
+    """Schema belongs to alembic, not to boot.
+
+    create_all() builds tables from whatever the models happen to say at
+    start-up, so the migration becomes decoration and the first deploy
+    against a real database diverges from what the tests ran on.
+    """
+    offenders = []
+    for rel in ("app/store.py", "app/main.py", "app/db.py", "app/models.py"):
+        path = ROOT / rel
+        if path.is_file() and "create_all" in path.read_text(
+            encoding="utf-8", errors="ignore"
+        ):
+            offenders.append(rel)
+    versions = ROOT / "alembic" / "versions"
+    if not versions.is_dir():
+        return "FAIL", "alembic/versions missing: the schema is not migrated"
+    revisions = sorted(versions.glob("*.py"))
+    if not revisions:
+        return "FAIL", "no alembic revision: the schema is not migrated"
+    has_ddl = False
+    for revision in revisions:
+        text = revision.read_text(encoding="utf-8", errors="ignore")
+        if "create_all" in text:
+            offenders.append("alembic/versions/" + revision.name)
+        if "op.create_table" in text:
+            has_ddl = True
+    if offenders:
+        return "FAIL", "create_all in " + ", ".join(sorted(set(offenders)))
+    if not has_ddl:
+        return "FAIL", "no op.create_table in any revision: not real DDL"
+    return "PASS", "%d revision(s), real DDL, no create_all" % len(revisions)
+
+
 def check_openapi_committed() -> Tuple[str, str]:
     path = ROOT / "docs" / "openapi.json"
     if not path.is_file():
@@ -1312,6 +1349,7 @@ def main() -> int:
             ("openapi_committed", check_openapi_committed),
             ("docker_health_200", lambda: check_docker_health_200(http)),
             ("cross_tenant_404", lambda: check_cross_tenant_404(http)),
+            ("migration_no_create_all", check_migration_no_create_all),
             ("authorship_floor", check_authorship_floor),
         ]
         for name, fn in runners:
