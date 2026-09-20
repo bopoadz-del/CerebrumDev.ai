@@ -146,6 +146,40 @@ _REQUIRED_ASSIGNMENT = re.compile(
 
 _IDENT_IN_LIST = re.compile(r"""['\"](""" + _FIELD_NAME + r""")['\"]""")
 
+#: Signs the captured text is code the message interpolates, not a listing of
+#: field names: an f-string slot, a call, a subscript, or concatenation.
+_EXPRESSION_MARKERS = re.compile(r"[{}()\[\]+]")
+
+#: ANY name bound to a list/tuple of string literals. The patterns above only
+#: recognise a roster called ``required``/``required_fields``/``needed``, and
+#: only a message that names its field as a literal. A handler that writes
+#:
+#:     REQUIRED_KEYS = ["reference", "site_id"]
+#:     for field in REQUIRED_KEYS:
+#:         if field not in payload:
+#:             raise HTTPException(422, f"missing required field: {field}")
+#:
+#: defeats both: the constant is named something else, and the message names
+#: ``{field}`` rather than a field. Live sess (job_and_site_tracking,
+#: commercials_and_valuations): both capabilities demanded ``reference``, the
+#: spec never learned it, ``_sample_payload`` omitted it, and every retry
+#: handed the writer the same 422 to "fix".
+_LIST_LITERAL_BINDING = re.compile(
+    r"^[ \t]*([A-Za-z_]\w*)\s*(?::[^=\n]*)?=\s*([\[(][^\]\)]*[\]\)])",
+    re.MULTILINE,
+)
+
+#: The two shapes that make a roster a ROSTER rather than a vocabulary: it is
+#: iterated, or it is differenced against the payload's keys. Deliberately NOT
+#: a bare ``x not in CONST`` -- that is ``payload.get("status") not in
+#: ALLOWED_STATUSES``, where the list holds values, not field names, and
+#: mining it would declare "open" and "closed" required fields.
+_ROSTER_ITERATED = r"for\s+[A-Za-z_]\w*\s+in\s+{const}\b"
+_ROSTER_DIFFERENCED = r"(?:set\(\s*{const}\s*\)|\b{const}\b)\s*(?:-\s*set\(|\.difference\()"
+#: Within a few lines of the iteration, the loop must actually consult the
+#: payload -- otherwise it is some unrelated loop over a list of strings.
+_ROSTER_CONSULTS_PAYLOAD = ("not in", ".get(", "missing")
+
 #: payload.get("role") not in ("veterinarian", "technician")
 _GET_NOT_IN = re.compile(
     r"""payload(?:\.get\(\s*|\s*\[\s*)['\"]("""
@@ -1033,7 +1067,16 @@ def _names_from_list_text(raw: str) -> List[str]:
             found.append(name)
     if found:
         return found
-    # Unquoted: pet_name, owner_name, appointment_date
+    # Unquoted: pet_name, owner_name, appointment_date.
+    #
+    # Only for a plain listing. When the text is an EXPRESSION the message
+    # interpolates, stripping its punctuation invents a field that does not
+    # exist: ``f"missing required field: {field}"`` yielded ``field``, and
+    # ``"... " + sorted(missing)[0]`` yielded ``sortedmissing0``. Those went
+    # into the spec, so ``_sample_payload`` sent a junk column -- the miner
+    # fabricating the very thing it exists to discover.
+    if _EXPRESSION_MARKERS.search(raw or ""):
+        return found
     for part in re.split(r"[,;]", raw or ""):
         token = re.sub(r"[^A-Za-z0-9_]+", "", part)
         name = _usable_align_name(token)
@@ -1183,6 +1226,42 @@ def _merge_field_contract(
     return changed
 
 
+def _roster_drives_a_required_check(text: str, const: str) -> bool:
+    """True when ``const`` is read as a roster of required field names.
+
+    Iteration must be followed, within a few lines, by the loop consulting the
+    payload; a set-difference against the payload's keys counts on its own.
+    """
+    escaped = re.escape(const)
+    if re.search(_ROSTER_DIFFERENCED.format(const=escaped), text):
+        return True
+    lines = text.splitlines()
+    iterated = re.compile(_ROSTER_ITERATED.format(const=escaped))
+    for index, line in enumerate(lines):
+        if not iterated.search(line):
+            continue
+        window = "\n".join(lines[index : index + 5])
+        if "payload" in window and any(
+            token in window for token in _ROSTER_CONSULTS_PAYLOAD
+        ):
+            return True
+    return False
+
+
+def required_fields_from_rosters(handler_source: str) -> List[str]:
+    """Field names from a required-roster constant, whatever it is named."""
+    text = handler_source or ""
+    found: List[str] = []
+    for match in _LIST_LITERAL_BINDING.finditer(text):
+        const, literal = match.group(1), match.group(2)
+        names = _names_from_list_text(literal)
+        if not names:
+            continue
+        if _roster_drives_a_required_check(text, const):
+            found.extend(names)
+    return found
+
+
 def handler_required_fields(handler_source: str) -> List[str]:
     """Domain field names a handler body treats as required."""
     found: List[str] = []
@@ -1196,6 +1275,7 @@ def handler_required_fields(handler_source: str) -> List[str]:
         found.extend(_names_from_list_text(match.group(1)))
     for match in _REQUIRED_ASSIGNMENT.finditer(text):
         found.extend(_names_from_list_text(match.group(1)))
+    found.extend(required_fields_from_rosters(text))
     return sorted(set(found))
 
 

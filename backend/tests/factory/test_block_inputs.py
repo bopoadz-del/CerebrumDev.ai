@@ -1416,3 +1416,96 @@ def test_field_ops_role_runner_emits_block_inputs_and_pilot_accepts(
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "passed" in proc.stdout
+
+
+# --- a required-field roster, whatever the constant is called -----------------
+#
+# Live build: job_and_site_tracking and commercials_and_valuations both answered
+# HTTP 422 "missing required field: reference". TESTER mines the handler to
+# learn what the route demands, but it only recognised a roster literally named
+# required/required_fields/needed, and only a message that named its field as a
+# literal. A loop over a differently-named constant, raising an f-string, was
+# invisible -- so model_specs never learned `reference`, _sample_payload never
+# sent it, and every rework round handed the writer the identical 422 to "fix".
+
+
+def test_a_roster_loop_raising_an_f_string_is_mined():
+    body = (
+        'REQUIRED_KEYS = ["reference", "site_id"]\n'
+        "def handle(payload):\n"
+        "    for field in REQUIRED_KEYS:\n"
+        "        if field not in payload:\n"
+        '            raise HTTPException(422, f"missing required field: {field}")\n'
+    )
+
+    assert handler_required_fields(body) == ["reference", "site_id"]
+
+
+def test_a_roster_differenced_against_the_payload_is_mined():
+    body = (
+        'MANDATORY = ("reference", "valuation_date")\n'
+        "def handle(payload):\n"
+        "    missing = set(MANDATORY) - set(payload)\n"
+        "    if missing:\n"
+        '        raise HTTPException(422, "missing required field: " + sorted(missing)[0])\n'
+    )
+
+    assert handler_required_fields(body) == ["reference", "valuation_date"]
+
+
+def test_a_roster_read_in_a_comprehension_is_mined():
+    body = (
+        '_NEEDED_COLUMNS = ["reference"]\n'
+        "def handle(payload):\n"
+        "    gaps = [k for k in _NEEDED_COLUMNS if k not in payload]\n"
+        "    if gaps:\n        raise ValueError(gaps)\n"
+    )
+
+    assert handler_required_fields(body) == ["reference"]
+
+
+def test_a_vocabulary_list_is_not_a_roster():
+    """``payload.get("status") not in ALLOWED`` holds VALUES, not field names.
+
+    Mining it would declare "open" and "closed" required columns and the
+    sample payload would carry two fields the entity does not have.
+    """
+    body = (
+        'ALLOWED_STATUSES = ["open", "closed"]\n'
+        "def handle(payload):\n"
+        '    if payload.get("status") not in ALLOWED_STATUSES:\n'
+        '        raise HTTPException(422, "bad status")\n'
+    )
+
+    assert handler_required_fields(body) == []
+
+
+def test_a_loop_that_never_consults_the_payload_is_not_a_roster():
+    body = (
+        'HEADINGS = ["Ref", "Date"]\n'
+        "def render():\n    for h in HEADINGS:\n        print(h)\n"
+    )
+
+    assert handler_required_fields(body) == []
+
+
+def test_an_interpolated_message_does_not_invent_a_field():
+    """The miner must not fabricate the thing it exists to discover.
+
+    Stripping punctuation off the captured text turned ``{field}`` into a
+    field called ``field`` and ``sorted(missing)[0]`` into ``sortedmissing0``;
+    both reached model_specs, so _sample_payload sent a junk column.
+    """
+    assert handler_required_fields('raise ValueError(f"Missing required field: {field}")') == []
+    assert (
+        handler_required_fields(
+            'raise ValueError("Missing required fields: " + ", ".join(sorted(missing)))'
+        )
+        == []
+    )
+
+
+def test_a_plain_unquoted_listing_still_mines():
+    body = 'raise ValueError("Missing required fields: pet_name, owner_name")'
+
+    assert handler_required_fields(body) == ["owner_name", "pet_name"]
