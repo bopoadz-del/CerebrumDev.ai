@@ -4839,6 +4839,21 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         Path("tests") / "test_domain_acceptance.py", render_domain_tests(specs)
     )
 
+    # negative_floor asks each capability for four counter-cases. Asking the
+    # coder and grading it afterwards costs a rework round for the
+    # difference; the Factory knows the shape of all four from the spec, so
+    # it writes the harness and the agent extends it with the domain
+    # judgement only it has.
+    from app.factory.build.negative_floor import render_negative_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_negative_floor.py",
+        render_negative_tests(
+            specs,
+            {cid: _sample_payload(specs.get(cid) or {}) for cid in specs},
+        ),
+    )
+
     # -- routes return their documented shape ------------------------------
     route_lines = [
         '"""The HTTP surface answers, and what it answers has the right shape."""',

@@ -117,29 +117,29 @@
     },
     {
       "id": "metrics_served",
-      "requirement_text": "GET /metrics answers with request count and latency. An operator cannot run what they cannot see.",
-      "brief_render": "- metrics_served: GET /metrics answers with request count and latency. An operator cannot run what they cannot see.",
+      "requirement_text": "GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
+      "brief_render": "- metrics_served: GET /metrics answers with request count and latency. The Factory ships app/observability.py -- mount it once in app/main.py with mount_observability(app), which also honours SENTRY_DSN and rate limits the auth routes. An operator cannot run what they cannot see.",
       "gate_fn": "check_metrics_served",
       "check": "GET /metrics answers 200 with request count and latency"
     },
     {
       "id": "backup_restore_roundtrip",
-      "requirement_text": "The backup script runs on a schedule AND its output restores into an empty database with the rows intact. A backup nobody has restored is a file, not a backup.",
-      "brief_render": "- backup_restore_roundtrip: The backup script runs on a schedule AND its output restores into an empty database with the rows intact. A backup nobody has restored is a file, not a backup.",
+      "requirement_text": "The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
+      "brief_render": "- backup_restore_roundtrip: The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
       "gate_fn": "check_backup_restore_roundtrip",
       "check": "a backup is taken and restored with its rows intact"
     },
     {
       "id": "bench_p95",
-      "requirement_text": "200 concurrent requests answer with p95 under 500ms on the reference box. Measure it; do not estimate it.",
-      "brief_render": "- bench_p95: 200 concurrent requests answer with p95 under 500ms on the reference box. Measure it; do not estimate it.",
+      "requirement_text": "200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
+      "brief_render": "- bench_p95: 200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
       "gate_fn": "check_bench_p95",
       "check": "p95 under 500ms over a 200-request concurrent smoke"
     },
     {
       "id": "audit_clean",
-      "requirement_text": "CI runs pip-audit and bandit and both are clean. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
-      "brief_render": "- audit_clean: CI runs pip-audit and bandit and both are clean. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
+      "requirement_text": "CI runs pip-audit and bandit and both are clean. The Factory ships a .github/workflows/ci.yml with those jobs; keep them. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
+      "brief_render": "- audit_clean: CI runs pip-audit and bandit and both are clean. The Factory ships a .github/workflows/ci.yml with those jobs; keep them. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
       "gate_fn": "check_audit_clean",
       "check": "CI runs pip-audit and bandit"
     },

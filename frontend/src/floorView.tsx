@@ -334,8 +334,9 @@ function coderTakeoverNote(build: BuildStatus | null): string | null {
     if (isAcceptancePendingPrototype(build)) {
       const score = formatAcceptanceScore(build)
       const pending =
-        `Acceptance is ${score} — not k/k. Export stays closed until scripts/acceptance.py ` +
-        'passes inside the Store-built image. This is a code-green prototype, not a failed build.'
+        `Acceptance is ${score} — not k/k. Every platform must pass these 21 measured ` +
+        'checks before export, and export stays closed until scripts/acceptance.py passes ' +
+        'inside the Store-built image. This is a code-green prototype, not a failed build.'
       return finished ? `${finished}. ${pending}` : pending
     }
     if (finished) {

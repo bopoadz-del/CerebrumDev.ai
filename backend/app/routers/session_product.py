@@ -333,6 +333,26 @@ def get_product_design(
 
 
 @router.get("/{session_id}/product/package")
+
+def _provenance_from_tree(out) -> dict:
+    """factory_commit / blocks_commit / writer_receipt, as the build wrote them.
+
+    Every export shipped these as "unknown" because nothing resolved them;
+    they are resolved at converge time now and land in
+    docs/provenance/provenance.json. Reading them back keeps the MANIFEST and
+    the provenance document from disagreeing.
+    """
+    import json as _json
+
+    path = Path(out) / "docs" / "provenance" / "provenance.json"
+    try:
+        doc = _json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    keys = ("factory_commit", "blocks_commit", "writer_receipt")
+    return {k: str(doc.get(k) or "") for k in keys if doc.get(k)}
+
+
 def download_product_package(
     session_id: str, principal: Principal = Depends(require_api_key)
 ) -> FileResponse:
@@ -458,6 +478,11 @@ def download_product_package(
         # zeros, never invented counts.
         layer_counts={1: 1} if (out / "app" / "cerebrum_product_kernel" / "formulas").is_dir() else {},
         engine_included=engine_present,
+        # Read back out of the tree the build already wrote, rather than
+        # recomputed here: docs/provenance/provenance.json is what the gate
+        # grades and what the buyer opens, so the MANIFEST must agree with
+        # it by construction rather than by coincidence.
+        provenance=_provenance_from_tree(out),
     )
     write_export_manifest(out, manifest)
     tree_contents = {

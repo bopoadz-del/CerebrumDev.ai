@@ -130,6 +130,7 @@ def build_manifest(
     prompt_version: str,
     layer_counts: Dict[int, int],
     engine_included: bool,
+    provenance: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Assemble the versioned manifest. Validated, never a free-form dict."""
     if retrieval_mode not in RETRIEVAL_MODES:
@@ -148,10 +149,20 @@ def build_manifest(
                 f"{MANIFEST_MISMATCH}: layer_counts must be 1-4 -> non-negative, "
                 f"got {layer!r}: {count!r}"
             )
+    # Which Factory and which Store made this, so the artifact can be traced
+    # back to the code that produced it. Absent values are omitted rather
+    # than written as "unknown": a field that says "no idea" is the
+    # reproducibility hole provenance_complete refuses.
+    stamped = {
+        key: str(value).strip()
+        for key, value in (provenance or {}).items()
+        if str(value or "").strip() and str(value).strip().lower() != "unknown"
+    }
     return {
         "schema": MANIFEST_SCHEMA,
         "product_id": product_id,
         "tenant_id": tenant_id,
+        "provenance": stamped,
         "engine": {
             "version": engine_version,
             "included": bool(engine_included),
