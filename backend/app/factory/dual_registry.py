@@ -63,7 +63,58 @@ def _factory_shelf_path() -> Path:
     return Path(__file__).resolve().parent / "shelves" / "factory_blocks.json"
 
 
+def shelf_from_store(blocks_root: Optional[Path] = None) -> Dict[str, BlockRef]:
+    """The shelf, resolved from what the Store publishes about itself.
+
+    Every block_registry/<id>/block.json carries id, version and trust_tier --
+    the Store's own statement about the block. The Factory used to keep a
+    hand-written copy of 25 of them in shelves/factory_blocks.json, so it
+    offered 25 of the Store's 136 blocks and one of its 19 available kits:
+    FinOps was told no finance kit existed while block_store/kits/finance_ops
+    sat there marked available, and the agent invented a chart of accounts
+    that the Store ships a governance block for.
+
+    Nothing is hardwired here. An unreadable Store yields an empty shelf and
+    the caller falls back.
+    """
+    root = Path(blocks_root) if blocks_root else _default_blocks_root()
+    registry = root / "block_registry"
+    out: Dict[str, BlockRef] = {}
+    if not registry.is_dir():
+        return out
+    for entry in sorted(registry.iterdir()):
+        meta = entry / "block.json"
+        if not entry.is_dir() or not meta.is_file():
+            continue
+        try:
+            data = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        bid = str(data.get("id") or entry.name).strip()
+        if not bid:
+            continue
+        out[bid] = BlockRef(
+            block_id=bid,
+            version=str(data.get("version") or "0"),
+            source="cerebrum-blocks",
+            # The Store's own word on who vouches for it. Empty stays empty:
+            # compliance_gate refuses that, and it is not ours to invent.
+            trust_tier=str(data.get("trust_tier") or "").strip(),
+        )
+    return out
+
+
 def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
+    """What the Factory has CLEARED to attach -- not what the Store holds.
+
+    These are two different questions and they used to share one file. The
+    Store publishes 136 blocks, all trust_tier "platform"; nothing in it says
+    which are cleared for a customer build, so clearance stays the Factory's
+    statement until the Store publishes one. ``shelf_from_store`` answers the
+    other question -- what exists -- and the catalog reports both, so the chat
+    can say "it is in the Store, it is not cleared" instead of pretending it
+    does not exist.
+    """
     p = path or _factory_shelf_path()
     data = json.loads(p.read_text(encoding="utf-8"))
     out: Dict[str, BlockRef] = {}

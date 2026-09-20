@@ -33,8 +33,54 @@ _SKIP_DIR_NAMES = {
 _SKIP_SUFFIXES = {".pyc", ".pyo"}
 
 
+def kit_map_from_store(blocks_root: Optional[Path] = None) -> Dict[str, str]:
+    """``block_id -> kit_id`` from the kits the Store marks available.
+
+    Read from block_store/kits/<kit>/manifest.json, which states its own id,
+    status and blocks. The Factory used to take this from its hand-written
+    shelf, which assigned 20 of 25 blocks to "platform" and knew exactly one
+    domain kit -- so a finance build was told no kit existed while
+    kits/finance_ops sat there marked available, carrying a chart-of-accounts
+    governance block the agent then wrote from scratch.
+    """
+    from app.factory.dual_registry import _default_blocks_root
+
+    root = Path(blocks_root) if blocks_root else _default_blocks_root()
+    kits_dir = root / "block_store" / "kits"
+    out: Dict[str, str] = {}
+    if not kits_dir.is_dir():
+        return out
+    for entry in sorted(kits_dir.iterdir()):
+        manifest = entry / "manifest.json"
+        if not entry.is_dir() or entry.name.startswith("_") or not manifest.is_file():
+            continue
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        # The Store's own word on whether a kit may be offered.
+        if str(data.get("status") or "").strip().lower() != "available":
+            continue
+        kit_id = str(data.get("id") or entry.name).strip()
+        for block_id in data.get("blocks") or []:
+            if block_id:
+                out[str(block_id)] = kit_id
+    return out
+
+
 def load_shelf_kit_map(shelf_path: Optional[Path] = None) -> Dict[str, str]:
-    """``block_id -> kit_id`` from the Factory dual-register shelf."""
+    """``block_id -> kit_id`` for every block the Factory may offer.
+
+    The Store answers when it can; a block no kit claims is ``platform``.
+    An explicit ``shelf_path`` is honoured as-is, and the bundled shelf is
+    the fallback for an environment that cannot reach the Store.
+    """
+    # NOT resolved from the Store: kit FILES are vendored from
+    # app/factory/kits/, which holds one kit. Taking the Store's assignment
+    # here would rename a product's kit to one the Factory cannot vendor and
+    # ship an empty kits/. What the Store holds is reported by
+    # kit_map_from_store / store_catalog["store_kits"] instead, until kits
+    # are vendored from the Store the way blocks already are.
     path = shelf_path or _FACTORY_SHELF
     data = json.loads(path.read_text(encoding="utf-8"))
     out: Dict[str, str] = {}

@@ -119,12 +119,29 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         logger.warning("store catalog: kit shelf unreadable", exc_info=True)
         kits = []
+    # What the Store holds, beside what the Factory has cleared. The chat was
+    # told there was one kit while the Store shelved nineteen: a finance build
+    # heard "no ready kit" with kits/finance_ops sitting there marked
+    # available. Reported, never claimed as attachable -- kit files are still
+    # vendored from the Factory's own kits/.
+    from app.factory.dual_registry import shelf_from_store
+    from app.factory.kit_pack import kit_map_from_store
+
+    try:
+        store_blocks = sorted(shelf_from_store(blocks_root))
+        store_kits = sorted(set(kit_map_from_store(blocks_root).values()))
+    except Exception:  # noqa: BLE001 -- inventory is context, never a blocker
+        logger.warning("store catalog: store inventory unreadable", exc_info=True)
+        store_blocks, store_kits = [], []
+
     return {
         "blocks": ids,
         "connectors": connectors,
         "mcp": mcp,
         "not_cleared": not_cleared,
         "kits": kits,
+        "store_blocks": store_blocks,
+        "store_kits": store_kits,
     }
 
 
