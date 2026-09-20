@@ -81,13 +81,23 @@ def load_shelf_kit_map(shelf_path: Optional[Path] = None) -> Dict[str, str]:
     # ship an empty kits/. What the Store holds is reported by
     # kit_map_from_store / store_catalog["store_kits"] instead, until kits
     # are vendored from the Store the way blocks already are.
+    if shelf_path is None:
+        from app.factory.dual_registry import store_shelf_file
+
+        shelf_path = store_shelf_file()
     path = shelf_path or _FACTORY_SHELF
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = json.loads(_FACTORY_SHELF.read_text(encoding="utf-8"))
     out: Dict[str, str] = {}
     for item in data.get("blocks", []):
         bid = item.get("id")
         if not bid:
             continue
+        # The kit a block belongs to names a directory under
+        # block_store/kits/, so find_kit_source vendors its files from the
+        # Store. "platform" is the base every product stands on.
         out[str(bid)] = str(item.get("kit") or "platform")
     return out
 

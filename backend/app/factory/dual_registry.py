@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class DualRegistryError(Exception):
@@ -104,6 +107,37 @@ def shelf_from_store(blocks_root: Optional[Path] = None) -> Dict[str, BlockRef]:
     return out
 
 
+#: Where the Store publishes its shelf -- the list of blocks it has cleared
+#: for customer builds, with the kit each belongs to. First match wins. The
+#: Factory's own shelves/factory_blocks.json is the fallback for an
+#: environment that cannot reach the Store, not a second opinion.
+#:
+#: Contract (same shape as the Factory's own shelf):
+#:     {"schema_version": "...", "blocks": [
+#:        {"id": "finance_reconciliation", "version": "1.0.0",
+#:         "kit": "finance_ops", "trust_tier": "platform",
+#:         "description": "..."}, ...]}
+#:
+#: ``kit`` names a directory under block_store/kits/ so its files vendor
+#: from the Store. ``trust_tier`` is who vouches for the block: empty means
+#: nobody, which compliance_gate refuses.
+STORE_SHELF_PATHS: Tuple[str, ...] = (
+    "shelves/factory_blocks.json",
+    "shelf.json",
+    "shelves/shelf.json",
+)
+
+
+def store_shelf_file(blocks_root: Optional[Path] = None) -> Optional[Path]:
+    """The Store's published shelf, if it has published one."""
+    root = Path(blocks_root) if blocks_root else _default_blocks_root()
+    for rel in STORE_SHELF_PATHS:
+        candidate = root / rel
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
     """What the Factory has CLEARED to attach -- not what the Store holds.
 
@@ -115,8 +149,12 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
     can say "it is in the Store, it is not cleared" instead of pretending it
     does not exist.
     """
-    p = path or _factory_shelf_path()
-    data = json.loads(p.read_text(encoding="utf-8"))
+    p = path or store_shelf_file() or _factory_shelf_path()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        logger.warning("shelf unreadable at %s; falling back", p, exc_info=True)
+        data = json.loads(_factory_shelf_path().read_text(encoding="utf-8"))
     out: Dict[str, BlockRef] = {}
     for item in data.get("blocks", []):
         bid = item["id"]

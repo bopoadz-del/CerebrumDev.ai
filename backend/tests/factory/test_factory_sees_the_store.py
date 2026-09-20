@@ -111,3 +111,74 @@ class TestClearanceIsStillTheFactorysStatement:
         cleared_ids = {c["id"] for c in catalog["connectors"]}
         uncleared_ids = {c["id"] for c in catalog["not_cleared"]}
         assert not (cleared_ids & uncleared_ids)
+
+
+class TestThePublishedShelfIsTheOneThatCounts:
+    """The Store is about to publish its shelf. When it does, the Factory
+    takes it -- no edit here, no second opinion, nothing hardwired."""
+
+    def _published(self, tmp_path, blocks):
+        shelf = tmp_path / "shelves"
+        shelf.mkdir(parents=True)
+        (shelf / "factory_blocks.json").write_text(
+            json.dumps({"schema_version": "factory_shelf.v1", "blocks": blocks}),
+            encoding="utf-8",
+        )
+        return tmp_path
+
+    def test_the_store_shelf_is_found_where_the_store_publishes_it(self, tmp_path):
+        from app.factory.dual_registry import store_shelf_file
+
+        root = self._published(tmp_path, [{"id": "alpha"}])
+
+        assert store_shelf_file(root) == root / "shelves" / "factory_blocks.json"
+
+    def test_nothing_published_yet_means_no_store_shelf(self, tmp_path):
+        from app.factory.dual_registry import store_shelf_file
+
+        assert store_shelf_file(tmp_path) is None
+
+    def test_a_published_block_carries_its_kit_and_tier(self, tmp_path, monkeypatch):
+        import app.factory.dual_registry as dual
+
+        root = self._published(
+            tmp_path,
+            [
+                {
+                    "id": "finance_reconciliation",
+                    "version": "1.0.0",
+                    "kit": "finance_ops",
+                    "trust_tier": "platform",
+                }
+            ],
+        )
+        monkeypatch.setattr(dual, "_default_blocks_root", lambda: root)
+
+        shelf = load_factory_shelf()
+        kits = load_shelf_kit_map()
+
+        assert shelf["finance_reconciliation"].trust_tier == "platform"
+        assert shelf["finance_reconciliation"].version == "1.0.0"
+        assert kits["finance_reconciliation"] == "finance_ops"
+
+    def test_a_kit_named_on_the_shelf_vendors_from_the_store(self, tmp_path):
+        """find_kit_source already looks in the Store: publishing is enough."""
+        from app.factory.kit_pack import find_kit_source
+
+        kit = tmp_path / "block_store" / "kits" / "finance_ops"
+        kit.mkdir(parents=True)
+        (kit / "manifest.json").write_text('{"id": "finance_ops"}', encoding="utf-8")
+
+        assert find_kit_source("finance_ops", tmp_path) == kit
+
+    def test_an_unreadable_published_shelf_falls_back_rather_than_crashing(
+        self, tmp_path, monkeypatch
+    ):
+        import app.factory.dual_registry as dual
+
+        shelf = tmp_path / "shelves"
+        shelf.mkdir(parents=True)
+        (shelf / "factory_blocks.json").write_text("{not json", encoding="utf-8")
+        monkeypatch.setattr(dual, "_default_blocks_root", lambda: tmp_path)
+
+        assert load_factory_shelf(), "a broken publish must not empty the shelf"
