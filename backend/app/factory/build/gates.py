@@ -87,6 +87,10 @@ class GateContext:
     suite_marker: str = FACTORY_SUITE_MARKER_EXPR
     #: ``code`` (factory 5/5) or ``pilot`` (Store-green).
     cycle: str = "code"
+    #: The USER's brief, as typed. A gate that judges domain assumptions
+    #: needs what the customer actually said, not the compiled writer
+    #: prompt (70k characters of factory boilerplate and inventory).
+    brief: str = ""
     #: STORE_MANAGER decisions recorded for this cycle.
     store_ops: tuple = ()
     #: True when CEREBRUM_API_URL is unset — local clone-register reads only.
@@ -567,6 +571,26 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     surface = gate_ui_surface(ctx)
     if not surface.ok:
         return surface
+    # A platform that computes money may not invent the country it computes
+    # for. The writer prompt says so; this is the check behind it, because an
+    # instruction the factory does not verify is a suggestion. FinOps
+    # (sess_065fc3eac75c4f62) hardcoded UK VAT and GBP for a Dubai business
+    # and passed 13/13 -- no gate had ever read a tax rate.
+    from app.factory.build.money_contract import MONEY_ASSUMED, money_findings
+
+    money = money_findings(ctx.workspace, ctx.brief)
+    if money:
+        return GateResult(
+            ok=False,
+            gate="writer_contract",
+            reason=MONEY_ASSUMED,
+            detail=(
+                f"{MONEY_ASSUMED}: the brief names no country or currency and "
+                f"the product decides for it -- {money[0]}"
+            ),
+            findings=list(money),
+            payload={"money_assumptions": len(money)},
+        )
     return GateResult(
         ok=True,
         gate="writer_contract",

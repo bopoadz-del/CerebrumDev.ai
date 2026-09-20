@@ -402,6 +402,7 @@ class RoleRunner:
         kwargs["cycle"] = str(self.state.get("build_cycle") or self.cycle or "code")
         kwargs["store_ops"] = tuple(self.state.get("store_ops") or ())
         kwargs["store_unwired"] = bool(self.state.get("store_unwired"))
+        kwargs["brief"] = str(self.state.get("brief") or "")
         return GateContext(**kwargs)
 
     def _absorb(self, result: RoleResult) -> None:
