@@ -298,6 +298,33 @@ def worker_cap() -> int:
     return worker_process_cap()
 
 
+#: How many specialist agents ONE writer may run at once. The writer delegates
+#: infra / backend / frontend / devops / security, and how many of those can be
+#: in flight together is a property of the BOX, not of the prompt -- so it is
+#: read here and rendered into the prompt, never hardcoded in the template.
+SPECIALIST_WORKERS_ENV = "FACTORY_WRITER_SPECIALIST_WORKERS"
+
+
+def writer_specialist_cap() -> int:
+    """Specialist agents one writer may run concurrently.
+
+    PRECEDENCE, highest first:
+      1. FACTORY_WRITER_SPECIALIST_WORKERS  (explicit operator override)
+      2. the instance's own agent-child budget (worker_process_cap), which is
+         what the box is sized for and moves with FACTORY_WORKER_PROFILE
+
+    The process cap is the right default rather than 1: the per-TENANT cap is
+    normally 1, so a tenant's build is usually the only one in flight and the
+    instance's whole child budget is genuinely available to it. An operator who
+    runs several tenants hot turns this down; an operator on a bigger plan gets
+    more without touching this file.
+    """
+    explicit = _cap_from_env(SPECIALIST_WORKERS_ENV)
+    if explicit is not None:
+        return explicit
+    return max(1, worker_process_cap())
+
+
 def worker_timeout_s() -> float:
     return float(
         os.getenv("FACTORY_CODEWHALE_WORKER_TIMEOUT_S", str(DEFAULT_WORKER_TIMEOUT_S))

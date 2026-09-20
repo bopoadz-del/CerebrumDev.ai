@@ -108,23 +108,56 @@ def build_store_catalog(blocks_root: Optional[Path] = None) -> Dict[str, Any]:
         elif tags & CONNECTOR_TAGS:
             connectors.append(entry)
 
-    not_cleared: List[Dict[str, Any]] = []
-    for bid in sorted(registry - set(ids)):
-        entry = _entry(bid, _manifest(bid, root))
-        if set(entry["tags"]) & (CONNECTOR_TAGS | MCP_TAGS):
-            not_cleared.append(entry)
+    # Everything the Store holds that the Factory refuses -- not only the
+    # connector-tagged ones. That filter made sense when clearance was a
+    # 25-entry allow-list and the remainder was most of the Store; now the
+    # shelf resolves live and the remainder IS the refusal list, so naming
+    # only part of it would hide the rest from the chat.
+    not_cleared: List[Dict[str, Any]] = [
+        _entry(bid, _manifest(bid, root)) for bid in sorted(registry - set(ids))
+    ]
 
     try:
         kits = sorted(set(load_shelf_kit_map().values()) - BASE_KITS)
     except Exception:  # noqa: BLE001
         logger.warning("store catalog: kit shelf unreadable", exc_info=True)
         kits = []
+    # What the Store holds, beside what the Factory has cleared. The chat was
+    # told there was one kit while the Store shelved nineteen: a finance build
+    # heard "no ready kit" with kits/finance_ops sitting there marked
+    # available. Reported, never claimed as attachable -- kit files are still
+    # vendored from the Factory's own kits/.
+    from app.factory.dual_registry import shelf_from_store
+    from app.factory.kit_pack import kit_map_from_store
+
+    try:
+        store_blocks = sorted(shelf_from_store(blocks_root))
+        store_kits = sorted(set(kit_map_from_store(blocks_root).values()))
+    except Exception:  # noqa: BLE001 -- inventory is context, never a blocker
+        logger.warning("store catalog: store inventory unreadable", exc_info=True)
+        store_blocks, store_kits = [], []
+
+    # Which of those blocks anyone has actually vouched for. Every block.json
+    # in the Store says trust_tier "platform", so the tier separates nothing;
+    # the evidence is the Store's certification record, and a product that
+    # labels a layer "certified" has to be able to point at it.
+    from app.factory.dual_registry import certified_ids
+
+    try:
+        certified = sorted(certified_ids(blocks_root) & registry)
+    except Exception:  # noqa: BLE001 -- no evidence is context, never a blocker
+        logger.warning("store catalog: certification record unreadable", exc_info=True)
+        certified = []
+
     return {
         "blocks": ids,
         "connectors": connectors,
         "mcp": mcp,
         "not_cleared": not_cleared,
         "kits": kits,
+        "store_blocks": store_blocks,
+        "store_kits": store_kits,
+        "certified": certified,
     }
 
 
@@ -158,6 +191,13 @@ def render_for_chat(catalog: Dict[str, Any]) -> str:
             _lines(catalog.get("mcp") or []),
             "IN THE STORE BUT NOT CLEARED FOR FACTORY BUILDS (cannot be attached):",
             _lines(catalog.get("not_cleared") or []),
+            # The one line here that is evidence rather than inventory. Prefer
+            # these when a capability can be served either way, and never call
+            # a layer certified on the strength of a block that is not listed.
+            "CERTIFIED (survived the Store's control-delete: gut the entry "
+            "method and the tests go red): "
+            + (", ".join(catalog.get("certified") or []) or "(none yet)")
+            + ". Every other block is unproven, not unusable.",
             "KITS (deep, certified domain packs): "
             + (", ".join(catalog.get("kits") or []) or "(none)")
             + ".",

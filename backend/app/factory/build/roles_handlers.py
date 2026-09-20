@@ -2912,6 +2912,7 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         WorkerError,
         is_narration_line,
         run_worker_job,
+        writer_specialist_cap,
     )
     from app.factory.build.writer_prompt import render_writer_prompt
 
@@ -2920,6 +2921,10 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
         ctx.blueprint,
         brief=_compiled_writer_brief(ctx),
         resume=bool(ctx.state.get("writer_resumed")),
+        # How many specialist agents this instance can carry at once. Read
+        # here, not in the template: it follows the worker profile and the
+        # operator override instead of going stale on the next plan.
+        specialist_workers=writer_specialist_cap(),
     )
     try:
         # The writer narrates itself on the Floor: CLI progress lines

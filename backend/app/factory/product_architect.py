@@ -32,6 +32,7 @@ from app.core.llm_config import (
 )
 from app.factory.blueprint import FactoryScenario, ProductBlueprint, load_blueprint
 from app.factory.dual_registry import DualRegistryError, dual_registered_ids
+from app.factory.dual_registry import certified_ids as _store_certified_ids
 from app.factory.generator import ProductGenerator, git_head
 from app.factory.paths import factory_repo_root
 from app.factory.planner import CapabilityPlanner, ProductPlan
@@ -455,6 +456,15 @@ def _blueprint_from_llm_payload(
     return ProductBlueprint.model_validate(raw)
 
 
+
+def _certified_ids() -> set:
+    """Blocks the Store has certified. An unreadable record means no claim."""
+    try:
+        return _store_certified_ids()
+    except Exception:  # noqa: BLE001 -- absent evidence must not block drafting
+        return set()
+
+
 def _draft_with_llm(
     brief: str,
     *,
@@ -462,7 +472,23 @@ def _draft_with_llm(
 ) -> ProductBlueprint:
     """Draft a blueprint via the configured LLM. Raises on any failure."""
     dual = sorted(dual_registered_ids())
-    block_list = "\n".join(f"- {b}" for b in dual) or "- (none registered)"
+    # Mark the ones the Store has actually proved. Every block.json claims
+    # trust_tier "platform", so without this the architect cannot tell a block
+    # that survived a control-delete from one nobody has ever exercised. The
+    # note matters as much as the mark: an unproven block is still the right
+    # choice when it is the one that fits.
+    proven = _certified_ids()
+    block_list = (
+        "\n".join(f"- {b}" + ("  [certified]" if b in proven else "") for b in dual)
+        or "- (none registered)"
+    )
+    if proven:
+        block_list += (
+            "\n(A [certified] block is one whose tests go red when its entry "
+            "method is gutted -- the Store has proved it does what it claims. "
+            "Prefer one when it fits the capability; the rest are unproven, "
+            "not unusable.)"
+        )
     # The brief is caller-supplied and was previously sent whole.
     bounded_brief = truncate_brief(brief)
     messages = [
