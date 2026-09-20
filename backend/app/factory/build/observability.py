@@ -273,50 +273,6 @@ if __name__ == "__main__":
 '''
 
 
-_PRODUCT_CI = """name: CI
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  suite:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: Run the whole suite
-        run: python -m pytest tests -q
-
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt pip-audit bandit
-      - name: pip-audit
-        run: pip-audit
-      - name: bandit
-        run: bandit -ll -r app
-
-  bench:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt
-      - name: 200 concurrent requests, p95 under 500ms
-        run: python scripts/bench.py
-"""
-
-
 def render_observability() -> str:
     return _OBSERVABILITY
 
@@ -332,6 +288,3 @@ def render_backup_restore_test() -> str:
 def render_bench_script() -> str:
     return _BENCH
 
-
-def render_product_ci() -> str:
-    return _PRODUCT_CI

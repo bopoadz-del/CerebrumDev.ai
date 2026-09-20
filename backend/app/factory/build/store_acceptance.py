@@ -489,6 +489,13 @@ def render_tenancy_module() -> str:
 
 
 def render_github_ci() -> str:
+    """The product's CI. The ONLY emitter of it.
+
+    ``stamp_acceptance_into_path`` writes this file unconditionally, so a
+    second, richer version gap-filled elsewhere was silently overwritten and
+    ``audit_clean`` would have failed every build while a file containing
+    pip-audit sat in the substrate list. One source, and it is this one.
+    """
     return (
         "# Full suite — python -m pytest tests. Store-green measures this file.\n"
         "name: ci\n"
@@ -505,6 +512,25 @@ def render_github_ci() -> str:
         '          python-version: "3.12"\n'
         "      - run: pip install -r requirements.txt -r requirements-dev.txt\n"
         "      - run: python -m pytest tests\n"
+        "  audit:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        '          python-version: "3.12"\n'
+        "      - run: pip install -r requirements.txt pip-audit bandit\n"
+        "      - run: pip-audit\n"
+        "      - run: bandit -ll -r app\n"
+        "  bench:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-python@v5\n"
+        "        with:\n"
+        '          python-version: "3.12"\n'
+        "      - run: pip install -r requirements.txt\n"
+        "      - run: python scripts/bench.py\n"
     )
 
 

@@ -21,7 +21,6 @@ from app.factory.build.observability import (
     render_backup_script,
     render_bench_script,
     render_observability,
-    render_product_ci,
 )
 from app.factory.build.workspace import write_workspace_text
 
@@ -1019,7 +1018,6 @@ def platform_substrate() -> List[Tuple[str, str]]:
         ("app/observability.py", render_observability()),
         ("scripts/backup.sh", render_backup_script()),
         ("scripts/bench.py", render_bench_script()),
-        (".github/workflows/ci.yml", render_product_ci()),
     ]
 
 
