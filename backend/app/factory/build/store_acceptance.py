@@ -545,12 +545,169 @@ def render_openapi(product_name: str, cap_ids: Sequence[str]) -> str:
 
 
 def render_ui_index(product_name: str) -> str:
+    """The console the platform serves. It drives the product, not a banner.
+
+    This used to emit a one-line page ("Generated platform UI.") whose only
+    job was to make ui_served_200 go green -- a facade the factory itself
+    wrote, so no writer could start above it. A pilot is handed to a DevOps
+    team to deploy and test, so what it serves has to reach the platform.
+
+    Written against no product in particular: it discovers capabilities from
+    GET /v1/capabilities and builds every route from what it finds, so it
+    drives whatever the product has. The agent may replace it -- the
+    ui_end_to_end gate judges the result, not the authorship.
+    """
     title = product_name or "Platform"
-    return (
-        "<!doctype html>\n"
-        f"<html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title></head>\n"
-        f"<body><main><h1>{title}</h1><p>Generated platform UI.</p></main></body></html>\n"
-    )
+    return """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+ :root { color-scheme: light dark; --line:#8883; }
+ body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; max-width: 980px; }
+ h1 { font-size: 20px; margin: 0 0 4px; }
+ .dim { opacity: .7; font-size: 13px; }
+ .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+ .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 12px 0; }
+ button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); cursor: pointer; }
+ input, select, textarea { padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); font: inherit; }
+ pre { background: #8881; padding: 8px; border-radius: 6px; overflow: auto; max-height: 260px; font-size: 12px; }
+ .label { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+          border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; margin-left: 6px; }
+ .err { color: #c33; }
+</style>
+</head>
+<body>
+<h1>__TITLE__</h1>
+<p class="dim">Operator console. Paste a platform token, then drive the capabilities this build ships.</p>
+
+<div class="card row">
+  <label for="tok">Bearer token</label>
+  <input id="tok" type="password" size="28" placeholder="platform token">
+  <button onclick="boot()">Connect</button>
+  <span id="who" class="dim"></span>
+</div>
+
+<div id="caps"></div>
+
+<div class="card" id="ask" hidden>
+  <strong>Ask the documents</strong>
+  <p class="dim">Answers carry the authority layer they came from.</p>
+  <div class="row">
+    <input id="q" size="52" placeholder="question">
+    <button onclick="ask()">Ask</button>
+  </div>
+  <div id="answer"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const token = () => $("tok").value.trim();
+const auth = () => ({ "Authorization": "Bearer " + token(), "Content-Type": "application/json" });
+let SCHEMA = {};
+let RAG = "";
+
+async function call(path, init) {
+  const res = await fetch(path, Object.assign({ headers: auth() }, init || {}));
+  const text = await res.text();
+  let body = null;
+  try { body = text ? JSON.parse(text) : null; } catch (e) { body = text; }
+  return { status: res.status, body };
+}
+
+// Every label an answer may carry its authority under.
+const LABEL_KEYS = ["label", "labels", "authority", "precedence", "basis", "layer"];
+function labelsIn(value, found) {
+  found = found || [];
+  if (!value || typeof value !== "object") return found;
+  for (const [k, v] of Object.entries(value)) {
+    if (LABEL_KEYS.includes(k) && v) found.push(typeof v === "string" ? v : JSON.stringify(v));
+    else if (typeof v === "object") labelsIn(v, found);
+  }
+  return found;
+}
+
+async function boot() {
+  $("caps").innerHTML = "";
+  const caps = await call("/v1/capabilities");
+  if (caps.status !== 200) {
+    $("who").innerHTML = '<span class="err">' + caps.status + " — check the token</span>";
+    return;
+  }
+  const items = (caps.body && (caps.body.items || caps.body.capabilities)) || [];
+  const ids = items.map((c) => (typeof c === "string" ? c : c.id || c.capability_id)).filter(Boolean);
+  $("who").textContent = ids.length + " capability(ies)";
+  try {
+    const doc = await (await fetch("/openapi.json")).json();
+    SCHEMA = doc || {};
+  } catch (e) { SCHEMA = {}; }
+  ids.forEach(renderCapability);
+  // Only offer what this product actually declares.
+  const paths = (SCHEMA && SCHEMA.paths) || {};
+  RAG = Object.keys(paths).find((p) => p.indexOf("/rag/") !== -1 && p.indexOf("query") !== -1) || "";
+  $("ask").hidden = !RAG;
+}
+
+function fieldsFor(cap) {
+  const paths = (SCHEMA && SCHEMA.paths) || {};
+  const post = paths["/v1/" + cap] && paths["/v1/" + cap].post;
+  const schema = post && post.requestBody && post.requestBody.content
+    && post.requestBody.content["application/json"]
+    && post.requestBody.content["application/json"].schema;
+  const props = (schema && schema.properties) || {};
+  const names = Object.keys(props);
+  return names.length ? names.slice(0, 8) : ["reference", "status"];
+}
+
+function renderCapability(cap) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const fields = fieldsFor(cap);
+  card.innerHTML =
+    "<strong>" + cap + "</strong>" +
+    '<div class="row" style="margin:8px 0">' +
+    fields.map((f) => '<input data-f="' + f + '" placeholder="' + f + '" size="14">').join("") +
+    ' <button data-act="create">Create</button> <button data-act="list">List</button></div>' +
+    '<pre data-out>—</pre>';
+  const out = card.querySelector("[data-out]");
+  card.querySelector('[data-act="create"]').onclick = async () => {
+    const record = {};
+    card.querySelectorAll("[data-f]").forEach((i) => { if (i.value) record[i.dataset.f] = i.value; });
+    const res = await call("/v1/" + cap, { method: "POST", body: JSON.stringify(record) });
+    show(out, res);
+  };
+  card.querySelector('[data-act="list"]').onclick = async () => show(out, await call("/v1/" + cap));
+  $("caps").appendChild(card);
+}
+
+function show(node, res) {
+  const labels = labelsIn(res.body);
+  node.textContent = res.status + "  " + JSON.stringify(res.body, null, 2);
+  if (labels.length) {
+    const tag = document.createElement("span");
+    tag.className = "label";
+    tag.textContent = labels[0];
+    node.prepend(tag);
+  }
+}
+
+async function ask() {
+  if (!RAG) return;
+  const res = await call(RAG, {
+    method: "POST",
+    body: JSON.stringify({ question: $("q").value, q: $("q").value }),
+  });
+  const labels = labelsIn(res.body);
+  $("answer").innerHTML =
+    "<pre>" + res.status + "  " + JSON.stringify(res.body, null, 2) + "</pre>" +
+    (labels.length ? '<span class="label">' + labels[0] + "</span>" : "");
+}
+</script>
+</body>
+</html>
+""".replace("__TITLE__", title)
 
 
 def render_acceptance_script() -> str:

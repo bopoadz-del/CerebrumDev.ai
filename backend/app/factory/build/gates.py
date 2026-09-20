@@ -571,6 +571,15 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     surface = gate_ui_surface(ctx)
     if not surface.ok:
         return surface
+    # gate_ui_surface checks the files exist. This one checks they work: the
+    # served UI drives more than one capability, every route it calls answers,
+    # the formulas ship reachable, an answer carries its authority label, and
+    # the pilot serves ONE UI rather than a live console beside dead source.
+    from app.factory.build.ui_e2e import gate_ui_end_to_end
+
+    ui_live = gate_ui_end_to_end(ctx)
+    if not ui_live.ok:
+        return ui_live
     # A platform that computes money may not invent the country it computes
     # for. The writer prompt says so; this is the check behind it, because an
     # instruction the factory does not verify is a suggestion. FinOps
