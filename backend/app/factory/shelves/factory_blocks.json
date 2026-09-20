@@ -1039,6 +1039,356 @@
       "kit": "platform",
       "description": "Bounded coding-agent workbench: a brief plus mutable paths, a Kimi CLI run, unified diff, and deterministic safety gates on changed files. The agent edits only the declared paths; gates refuse unsafe changes.",
       "trust_tier": "platform"
+    },
+    {
+      "id": "agent_state_sync",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Agent state sync ported from Me-Agent agent/memory.py: deltas carry (key, origin, vector_clock, operation); a delta applies when its clock dominates the stored one; incomparable clocks on the same key are archived as conflicts, never silently dropped. Store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "answer_quality_scorer",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Silent-failure scorer ported from The_Level level/scorers/silent_failure.py: status-line-as-answer, empty or too-short deliverable, scaffolding leaks, and truncation presented as whole. Runs on every answer; the battery's other scorers are not ported.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "approval_rules",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of bim-manager-agent app/rules/approval.py): extracted clearance-rule candidates are inert until a NAMED reviewer approves them one at a time by id - no approve_all, no approval by count; an anonymous approval is refused and every decision is a ledger row (who, when, against what text). approved_rules() only returns what a person individually approved, in the kit loader's shape. Ledger kept in-process; the donor's SQLAlchemy session is not ported.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "audit_fail_closed",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Fail-closed ASGI audit middleware + principal auth ported from cerebrum-hotelops api/audit_middleware.py + api/auth.py (real): actor attribution only from a verified bearer token (hmac.compare_digest), never from client x-actor/x-role headers; authenticated mutating responses are held until the audit row persists and a persist failure surfaces 503 instead of a silent 2xx. Audit ledger is in-process (the donor sqlite sessionmaker is not ported); unconfigured tokens refuse authentication.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "cerebrum_self_healing",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real \u2014 Cerebrum self-healing + hot-swap state machine ported from C:\\Users\\shimm\\Cerebrum\\backend\\app\\agent\\core_real.py (AgentLayer HOTSWAP/HEALING, AgentAction HEAL_ERROR, move_to_layer) and backend/app/healing/patch_generation.py (SelfHealingEngine confidence gating, auto-heal flag, healing history). LLM calls are not ported: handle_error without a caller-supplied deterministic patch fails closed with a structured refusal.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "contract_retrieval",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of The_Fork app/core/rag/retriever.py + app/core/rag/coverage_honesty.py + app/core/contract_data_chunks.py): named-contract fencing (extract_contract_doc_ids / filename_matches_named_contracts, fail closed to empty) and the answer-bearing-contract election (elect_answer_bearing_contract with its full rescue-predicate closure), plus the coverage-honesty rule: on a partial index the model may not say 'does not exist', only 'not found in the N indexed'. Retrieval corpus/embedder not ported.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "cpm_engine",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of The_Fork app/blocks/cpm_engine.py + app/lib/pm_computations.py): Critical Path Method engine - ES/EF/LS/LF, total/free float, critical path, resource histograms, schedule compression, Primavera P6 XER parsing, look-ahead windowing and schedule Excel export. Circular-dependency detection refuses a cycle instead of computing nonsense; an unknown activity id is refused. Pure computation, no AI, no network.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "dexpi_ingest",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "DEXPI/Proteus XML parser ported from ThreadForge ingest_dexpi.py: namespace-tolerant extraction of Sheet/Drawing, Equipment, Nozzle, Pipeline (+Component children), Instrument, BatteryLimit, DesignVolume and System into a normalized entity list. WALLS carried: full DEXPI XSD certification, Proteus schema namespaces and vendor extensions are NOT implemented.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "domain_kit_compiler",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Domain kit compiler ported from Me-Agent domain-kits/compiler/engine.py: sheet validation (domain required), slugging, table-to-lookup-block conversion, and a failure-mode test per generated block.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "evidence_chain",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Tamper-evident SHA-256 evidence chain ported from Cerebrum-FinanceOps audit/service.py with the missing full-walk verifier added: record, verify (walks every link), get_latest. Chain store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "evidence_classifier",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Commissioning evidence classifier ported from cerebrum-hotelops reasoning/evidence.py: A/B/C/D/Unprovable classes with PASS/FAIL/UNPROVABLE verdicts for fire-pump and fire-life-safety packets (test-line-to-tank, covers/clips obscuring the nameplate, serial mismatch, stale unwitnessed factory test, integrated C&E chain).",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "evidence_or_refuse",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Evidence-or-refuse gate ported from Me-Agent's refusal pattern: every claim in an answer must carry evidence; a claim with no evidence is refused, and the answer is allowed only when all claims are evidenced.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_planning",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Finance planning ported from Cerebrum-FinanceOps planning/service.py: draft budgets lock behind an approved governance request; locked budgets are immutable (edits create version N+1); allocation splits total/count quantized to 0.0001 with the remainder routed to the first member so the total stays exact. Store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "finance_reconciliation_workflow",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: reconciliation run/exception state machine ported from Cerebrum-FinanceOps backend/app/reconciliation/service.py. pending->processing->completed/failed across run_type in {actuals_vs_budget, actuals_vs_forecast, bank_vs_ledger, intercompany}; unsupported run types fail the run honestly; per-scope tolerance rules; Decimal control totals; idempotent open-exception dedup; block-level variances merged from the Store finance_reconciliation block. In-process store.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "guest_rfm_segmentation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "RFM guest segmentation ported from cerebrum-hotelops-v2 guest_intelligence/segmentation.py (real): rfm_score() recency/frequency/monetary bucket ladder (<=30/90 days, >=5/2 stays, >=5000/1500 spend) with champions/loyal/promising/at_risk labels and advisory:true on every result. Deterministic analytics, no trained model; missing or non-numeric inputs are refused, never guessed.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hat_framework",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Hat framework ported from TEKsystems retailops/agents/catalog.py: a manifest contract (kind base|hat, policies, formulas) and a catalog with register/get/bases/hats/compose. Compose overlays a hat onto its base agent and refuses on a missing base or unknown hat. In-process catalog.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "heal_approval",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "TTL'd one-time heal approval ported from Cerebrum-Steward resident_engineer/heal/approval.py: SHA-256 digest over (tenant, action, principal), one-hour TTL, consume-once with replay refusal. Approval store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hmac_webhook_receiver",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real \u2014 per-source HMAC webhook receivers ported from C:\\Users\\shimm\\Cerebrum\\backend\\app\\core\\security\\webhook_security.py (WebhookSignature sign/verify with 5-minute replay window and constant-time compare, WebhookManager.verify_incoming_webhook), plus the documented vendor header schemes for GitHub (X-Hub-Signature-256), Slack (X-Slack-Signature v0), Procore (X-Procore-Signature); Maximo uses the ported donor v1 scheme. Missing signature, missing secret, malformed header, stale timestamp, or mismatched signature is refused.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "hospitality_connectors",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Hospitality enterprise connectors ported from cerebrum-hotelops connectors/base.py + connectors/{opera,micros,maximo,grms,gaming_cms,loyalty_lms}.py + hotelops/event_bus.py (real): connect->fetch->normalise->emit with automatic fixture-vs-live switching, typed HotelEvent topics on an in-process bus, maximo aconex/procore/bim out-of-scope refusal, donor GRMS room-map evidence branch. Live mode is httpx and fails closed when the base URL is unconfigured; fixtures vendored from the donor fixtures/ directory.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ibm_maximo_connector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real \u2014 IBM Maximo CMMS connector ported from C:\\Users\\shimm\\cerebrum-hotelops\\connectors\\maximo.py (normalise, out-of-scope source guard, /os/<resource> live URL, apikey header) and connectors/base.py (live-env gating + fetch_live). Unconfigured fetch and ingest fail closed with a structured refusal \u2014 this store ships no hotelops fixture pack. Assets from Aconex/Procore/BIM are refused.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ingestion_provenance",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Ingestion provenance ported from Cerebrum-Steward cerebrum_product_kernel/provenance.py: factory provenance payloads, SHA-256 content hash trees, and page/sheet/row source labels for ingested documents.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "level_certifier",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of The_Level level/certify/gates.py + level/grader/independence.py + level/battery/canary.py + level/core/taxonomy.py): fraction-exact certification gates with CERTIFIED/PROVISIONAL/NOT_CERTIFIED/VOID tiers and recorded waivers (never floats, never rounded), a grader-independence check that REFUSES a run where grader identity == target fingerprint, content-stable canary minting/detection (a canary hit voids the run), and the 11-class failure taxonomy. Scorer implementations and the harness runner are not ported; the gate action takes explicit counts.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "market_data",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Market data ported from StockWisePro stockPriceService.ts/alertService.ts: dual-provider failover (Twelve Data -> Alpha Vantage -> cached), per-provider quote normalization, alert evaluation (ABOVE/BELOW/EQUALS). Live quotes need provider API keys via env; unconfigured calls are refused by name. NEVER the backtest.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "mep_review_ledger",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: MEP review discipline ported from bim-manager-agent app/review.py (approve/reject/edit rules), app/review_package.py (verification_of / enrich_change_set / annotate_bcf) and app/monitors/base.py (three-valued monitor contract). Approve refuses while unacknowledged unprovable checks remain; reject reopens eligible clashes; edit maps a re-monitored verdict to verified/verified_conditional/escalated. In-process ledger; monitor implementations are the caller's.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "mep_zoning",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: MEP coordination zoning ported from bim-manager-agent app/agents/zoning.py (plan_zones / buffer_gids / neighbours_of) with zone_key ported from the vendored mep_coordination kit vendor/mep_coordination/ifc_loader.py. Deterministic adjacent-cell merging under an element ceiling, dedicated riser/shaft and corridor zones, bbox buffers and buffer-owner neighbour maps. Elements are JSON dicts.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "microsoft_365",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: Microsoft 365 Graph integration (Teams meetings/messages, SharePoint folders/files, Outlook calendar events) ported from Cerebrum backend/app/integrations/microsoft_365.py. The donor SQLAlchemy connection model is held in-process; Graph requests are made only when a connection carries a usable token, and unconfigured calls fail closed with a structured refusal.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "mock_connector_bus",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Fail-closed connector taxonomy ported from cerebrum-hotelops-v2 connectors/base.py + event_bus.py: six enterprise systems (opera, micros, grms, gaming_cms, loyalty_lms, maximo) in mock_unavailable level \u2014 fetch fails closed with a structured refusal and NEVER fabricates operational data; events normalise onto a canonical CRM taxonomy and publish per system topic. In-process bus.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "model_governance",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: AI use-case risk-tier register and model validation records ported from Cerebrum-FinanceOps backend/app/governance/service.py (create_ai_use_case, list_ai_use_cases, create_model_governance_record, approve_model). Validates risk_tier against {low,medium,high} and validation_status against {pending,approved,failed}; records may only reference existing use cases. In-process store (SQLAlchemy not ported).",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "openbox_scoring",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Multi-factor stock scoring ported from stockwisepro-bot openbox/engine.ts: the 9-point Piotroski F-score with safe division (ROA positive/improving, CFO positive and above net income, leverage falling, current ratio rising, share count not rising, margin and turnover improving). NEVER the backtest. No network \u2014 statement dicts only.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "pint_validation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: 5-stage validation pipeline (syntactic/dimensional/physical/empirical/operational) ported from The_Fork app/blocks/validation_pipeline.py with its companion config/empirical_ranges.json. Pint dimensional analysis, file-backed per-material/per-currency empirical bands with slack and strict modes, and fail-loud overall verdicts. Class renamed (PintValidationBlock) because the Store defs already alias validation_pipeline to app.blocks.validation.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "piping_digital_thread",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real: EPC piping digital-thread core ported from ThreadForge src/threadforge/{graph,routing,tables,clash,schedule_4d,generators,cascade,maturity,pcf_reader,pcf_strict,models}.py + exporters/. Topology graph, A* routing with obstacle avoidance, pipe tables (ASME B36.10-style), capsule/AABB/cylinder clash checking (Ericson 5.1.9), 4D co-activity/look-ahead, PCF/GA generation, change cascade (dirty-set) and maturity assessment. DEXPI ingestion stays with the dexpi_ingest block; agent/API layers not ported.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "power_bi_connector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "mock-functional \u2014 Power BI connector ported from C:\\Users\\shimm\\TEKsystems_GlobalRetailMNC\\backend\\app\\retailops\\integrations\\connectors\\power_bi.py (+ mock_data.py, base.py). KPI dataset pull and CSV/XLSX export are real working paths on deterministic fictional rows (never live data); publish_dataset and refresh_semantic_model are honest not-implemented stubs (refused); embed URL is an explicit placeholder. With all RETAILOPS_POWERBI_* configured, test_connection performs a real Azure AD token request and Power BI workspace check.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ppm_licensing_resolver",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "PPM + licensing compliance resolver ported from cerebrum-hotelops reasoning/ppm_resolver.py + licensing.py + market_router.py + guard.py (real): UAE + generic only (KSA refused), Aconex/Procore/BIM sources refused, authoritative generic frequency tables refused, unnamed operator SOP refused (frequencies are never estimated from the sheet), three-valued FAIL > UNPROVABLE > PASS fold over the prerequisite graph with a computed master pacer. Domain data vendored from donor domain_kit licensing/ppm JSON with Class B evidence metadata.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "prediction_accuracy_tracker",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Self-evaluating signal-accuracy tracker ported from stockwisepro-bot src/services/insights.ts (real): predictedDirection (>=70 up, <45 down, mid-band makes no call), time-ordered evaluateSeries over each ticker score/price rows, hitRate null when nothing is evaluable (never fabricated), score trends, top gainers/losers, most-alerted, and the model-ready context pack. Rows arrive as input; the donor SQLite db.ts layer is not ported. NEVER the backtest.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "primavera_cloud_connector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "honest-stub \u2014 Primavera Cloud OAuth2 ETL connector, no donor \u2014 honest stub. No donor adapter exists on disk: no OAuth2 token request and no ETL call is implemented; oauth_token and etl fail closed with a structured refusal (never a fabricated token, never fabricated project rows), whether or not credentials are configured.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "rag_tenant_isolation",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "RAG tenant isolation ported from The_Fork app/core/rag/retriever.py STEP 0: the master/client fallback corpus is structurally unreachable from another project's populated query (disclosed fallback only when the project is empty/thin); the general-knowledge merge never contains the master corpus; a named-contract query keeps only that contract's documents, failing closed to empty rather than filling with another year's contract.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "regulatory_chunker",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Dual-RAG chunking ported from InsureOps rag/chunking.py: regulatory sections never split mid-section (TOC stubs skipped, appendix labels tracked), free-text 800-token windows with 15% overlap, atomic QA pairs.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "retail_connectors",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "honest-stub: enterprise retail connector contract ported from TEKsystems_GlobalRetailMNC backend/app/retailops/integrations/base.py + connectors/*.py. Four mock-functional connectors (pos, inventory_wms, crm_loyalty, supplier_edi) produce deterministic fictional data or use a generic REST endpoint when configured; honest stubs (sap_erp, entra_id, power_bi, store_digital_twin) never fabricate vendor data and raise ConnectorError instead.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "rule_intent_router",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Rule-based intent router ported from stockwisepro-bot src/commands/chat.ts + learning.ts + db.ts nl_logs (real): deterministic $TICKER / uppercase-word extraction, ticker-only detection, the ordered regex intent ladder (help, portfolio, watchlist, simulate, metrics, mimic, alert, watchlist add/remove, news, score, search, default score), pending-flow / expired mimic checks, and the fallback path (web search first, then log + correction keyboard with the donor correct_intent callback data). Command handlers are not executed - route() returns the donor command strings. Company search and DuckDuckGo fallback are injected (wire search/web_search); unwired, the router logs the fallback and refuses to invent an answer. Intent log is in-process. NEVER the backtest.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "sap_odata_connector",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "honest-stub \u2014 SAP OData connector (read-only GL accounts + PO headers), no donor \u2014 honest stub. No donor adapter exists on disk: no OData call is implemented; list_gl_accounts and list_po_headers fail closed with a structured refusal (never fabricated rows, never a mock SAP), whether or not credentials are configured.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "scim_provisioning",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "SCIM 2.0 provider registry ported from Cerebrum enterprise/scim.py: auth_type bearer/oauth, provider tokens stored as SHA-256 hashes (the donor's plaintext column is deliberately not ported), sync status tracking, user upsert attribute mapping. Store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "sso_saml",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "SSO SAML provider registry ported from Cerebrum enterprise/sso_saml.py: provider configuration contract (entity ids, SSO/SLO URLs, X.509 cert required, HTTPS-only endpoints, attribute/role mapping). The python3-saml assertion-validation layer is NOT ported. Store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "sub_agent_runtime",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Sub-agent spawn contract ported from Me-Agent agent/swarm/spawner.py: the child inherits only the scrub allowlist (PATH/PYTHONPATH/AIRGAP/TEST_MODE/DATA_DIR/OLLAMA_*), the process cap is enforced, and the payload validates before any spawn is admitted. In-process bookkeeping.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "subprocess_env_guard",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of The_Fork app/core/subprocess_env.py): the denylist that scrubs SECRET_KEY / DATABASE_URL / *_API_KEY / *_TOKEN / *_PASSWORD / *_DSN / *_KEY family names (case-insensitive) from the environment handed to subprocesses, keeping functional system env (PATH, HOME, LANG, LC_*, TMPDIR, TESSDATA_PREFIX, PYTHON*, NODE_*). Fail-closed hardening: an extra that re-injects a secret-bearing name is refused rather than applied.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "ticker_ocr_fuzzy",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Ticker extraction with domain confusion correction ported from stockwisepro-bot src/services/ocr.ts (real): four-pass extraction ($cashtag, structural ticker-above-company-name, always-on fallback, known-pattern), KNOWN_TICKER_CORRECTIONS and OCR_CONFUSION tables, DP levenshtein fuzzy matching (distance <= 1, donor universe order) and a correction log on every result. VALID_TICKERS vendored from the donor data/stock_universe.json. The Cloud Vision / Tesseract backends and scoreTickers are NOT ported: image input is refused, never faked. NEVER the backtest.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "validation_pipeline_fork",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of The_Fork app/blocks/validation_pipeline.py + config/empirical_ranges.json): runnable 5-stage validation (syntactic / dimensional / physical / empirical / operational) for numeric results, with Pint dimensional analysis and file-backed empirical ranges. Returns per-stage pass/fail plus an overall verdict so the agent can refuse to report numbers that failed validation. Envelope status is ok/failed/refused per the overall verdict - a failed validation is never returned as ok.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "verified_outcome_learning",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Verified outcome learning ported from TEKsystems retailops/learning/engine.py: per-module payload validation, verified-only profile updates (unverified events are stored but never applied), deterministic deduplication keys, tenant scoping. Store is in-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "whatsapp_webhook",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Twilio WhatsApp webhook handler ported from stockwisepro-bot src/web/whatsapp.ts (real): Twilio Body/From/NumMedia/MediaUrl0 form fields, the COMMON_WORDS/GREETINGS ticker + intent parser, score/explain/screenshot reply formatters with the experimental-study disclaimer, and the TwiML envelope. The OpenBox scoring engine, quote feed and OCR are dependency boundaries (wire scorer/quote/ocr); an unwired scorer answers the donor could-not-score text - never a fabricated number. Media downloads use httpx with basic auth when TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN are set. NEVER the backtest.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "zone_arbitration",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "Zone arbitration ported from bim-manager-agent agents/coordinator.py arbitrate(): a shared clash's proposal commits only when every owning zone's monitor passes (double pass). A single pass is refused \u2014 one zone happy and the other unasked is the failure zoning introduced. The monitors themselves are the product's; this block enforces the double-pass contract. In-process.",
+      "trust_tier": "platform"
+    },
+    {
+      "id": "zone_resolver",
+      "version": "1.0.0",
+      "kit": "platform",
+      "description": "real (clone of bim-manager-agent app/agents/zone_resolver.py ZoneResolver): per-zone clash resolution with the donor's discipline - kit resolution order, every candidate runs ALL monitors (a candidate missing a declared monitor's verdict is refused), clean-sweep commit with verified vs verified_conditional separation, three-attempt cap escalating with named objections, and boundary-owned clashes handed to the coordinator, never committed on this zone's branch. The monitors themselves are the product's; this block enforces the resolver contract. In-process.",
+      "trust_tier": "platform"
     }
   ]
 }
