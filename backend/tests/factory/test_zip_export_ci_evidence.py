@@ -101,7 +101,10 @@ def test_factory_bookkeeping_does_not_ship_to_cerebrum_builds(tmp_path):
     _sync_workspace_onto_tree(src, dest)
 
     shipped = {p.name for p in dest.iterdir()}
-    assert shipped == {"app", "build_ledger.jsonl"}, shipped
+    # build_ledger.jsonl used to ship. It is the Factory's record of the
+    # build -- role transitions, gate verdicts, the agent's narration -- and
+    # the customer gets the platform, not the transcript of making it.
+    assert shipped == {"app"}, shipped
     assert not (FACTORY_INTERNAL_NAMES & shipped)
 
 
