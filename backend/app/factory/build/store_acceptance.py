@@ -1510,9 +1510,15 @@ def check_authorship_floor() -> Tuple[str, str]:
                 receipt.update(json.loads(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 pass
+    # No receipt means no receipt -- not "authored nothing". The factory
+    # record (docs/coder_receipt.json, docs/build_provenance.json) is
+    # internal and does not ship, so asking it here would fail every
+    # delivered product. The stamp in each handler's own docstring is what
+    # this check is ABOUT, it is in the tree, and it is what the floor line
+    # asks the writer for. Judge the product by the product.
     try:
-        floor = full_pilot_authorship_from(receipt, ROOT)
-        if floor.meets_floor:
+        floor = full_pilot_authorship_from(receipt, ROOT) if receipt else None
+        if floor is not None and floor.meets_floor:
             return "PASS", "need≥%s action_py=%s cli=%s" % (
                 floor.need,
                 floor.action_py,

@@ -4844,6 +4844,15 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     # difference; the Factory knows the shape of all four from the spec, so
     # it writes the harness and the agent extends it with the domain
     # judgement only it has.
+    # tests/ is TESTER's lane: the writer may not author the tests that
+    # judge it, so the backup-restore roundtrip is emitted here rather than
+    # with the rest of the ops substrate.
+    from app.factory.build.observability import render_backup_restore_test
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_backup_restore.py", render_backup_restore_test()
+    )
+
     from app.factory.build.negative_floor import render_negative_tests
 
     ctx.workspace.write_text(

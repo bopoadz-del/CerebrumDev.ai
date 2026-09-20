@@ -54,7 +54,37 @@ _SESSION_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 #: lock directory (.codewhale). build_ledger.jsonl itself stays: the receipt
 #: and the authorship floor are verified against it.
 FACTORY_INTERNAL_NAMES = frozenset(
-    {".codewhale", ".generation_quota_account", "build_ledger.jsonl.lock"}
+    {
+        ".codewhale",
+        ".generation_quota_account",
+        "build_ledger.jsonl.lock",
+        # The Factory's own record of the build, not the product. The ledger
+        # is 189 events and ~86KB of role transitions, gate verdicts and
+        # agent narration on a live export. The customer gets the platform,
+        # not the transcript of how it was made.
+        "build_ledger.jsonl",
+    }
+)
+
+#: How the platform was manufactured: the prompt the writer was given, the
+#: brief it was compiled from, what the agent reported doing, and the
+#: argv it was invoked with. Internal by nature -- a buyer's IT team has no
+#: use for them, and they describe the Factory rather than the product.
+#:
+#: Exact paths, not names: ``build_provenance.json`` is distinctive, but
+#: excluding by bare name is how an exclusion list starts eating a product's
+#: own files later.
+FACTORY_INTERNAL_PATHS = frozenset(
+    {
+        "product-dna/generation_manifest.json",
+        "docs/writer_prompt.txt",
+        "docs/coder_brief.md",
+        "docs/coder_receipt.json",
+        "docs/writer_argv.json",
+        "docs/writer_progress.jsonl",
+        "docs/writer_progress.log",
+        "docs/build_provenance.json",
+    }
 )
 
 #: Never product source, at any depth -- bytecode and tool caches the
@@ -87,6 +117,8 @@ def is_exported(rel: Path) -> bool:
     if any(part in EXPORT_SKIP_DIR_NAMES for part in parts):
         return False
     if any(part in FACTORY_INTERNAL_NAMES for part in parts):
+        return False
+    if Path(rel).as_posix() in FACTORY_INTERNAL_PATHS:
         return False
     return Path(rel).suffix not in EXPORT_SKIP_SUFFIXES
 

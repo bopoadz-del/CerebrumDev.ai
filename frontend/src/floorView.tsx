@@ -208,6 +208,24 @@ const KERNEL_JOBS: Record<string, { title: string; agent: boolean }> = {
   STORE_MANAGER: { title: 'Store registrar', agent: false },
 }
 
+/**
+ * What each kernel is CALLED, as distinct from the id it is recorded under.
+ *
+ * The ids are the wire format: every build_ledger.jsonl ever written, every
+ * stored session and every gate name contains 'CLONER' and 'WRITER' as
+ * literal strings. Renaming those would rewrite history and break the
+ * reading of builds that already happened, so the rename lives here, where
+ * it is a label rather than an identity.
+ */
+const KERNEL_NAMES: Record<string, string> = {
+  CLONER: 'RESEARCHER',
+  WRITER: 'WORKERS',
+}
+
+export function kernelName(phase: string): string {
+  return KERNEL_NAMES[phase] ?? phase
+}
+
 function KernelStrip({ build }: { build: BuildStatus | null }) {
   const phases = build?.phases?.length
     ? build.phases
@@ -229,12 +247,12 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
             className={[cls, failed ? 'failed' : undefined].filter(Boolean).join(' ')}
             title={
               failed
-                ? `${phase} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
+                ? `${kernelName(phase)} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
                 : undefined
             }
             data-testid={failed ? `floor-phase-failed-${phase}` : undefined}
           >
-            <span className="kernel-id">{phase}</span>
+            <span className="kernel-id">{kernelName(phase)}</span>
             {job ? <span className="kernel-title">{job.title}</span> : null}
             {job?.agent ? <span className="kernel-agent">agent</span> : null}
           </li>
@@ -955,7 +973,7 @@ export function Floor({
           ) : (
             <p>
               {coderTakeoverNote(liveCoderBuild) ??
-                'The feature list is approved. The coding agent is starting WRITER now.'}
+                'The feature list is approved. The coding agent is starting WORKERS now.'}
             </p>
           )}
           {coderSucceeded && (

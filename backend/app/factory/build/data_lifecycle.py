@@ -982,7 +982,6 @@ def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> N
 #: the entity schema, the agent authors them, and overwriting them would
 #: destroy the capability work this backfill exists to protect.
 from app.factory.build.observability import (
-    render_backup_restore_test,
     render_backup_script,
     render_bench_script,
     render_observability,
@@ -1009,7 +1008,6 @@ def platform_substrate() -> List[Tuple[str, str]]:
         ("app/observability.py", render_observability()),
         ("scripts/backup.sh", render_backup_script()),
         ("scripts/bench.py", render_bench_script()),
-        ("tests/test_backup_restore.py", render_backup_restore_test()),
         (".github/workflows/ci.yml", render_product_ci()),
     ]
 

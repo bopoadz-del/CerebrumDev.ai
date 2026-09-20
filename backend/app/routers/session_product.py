@@ -332,8 +332,6 @@ def get_product_design(
     }
 
 
-@router.get("/{session_id}/product/package")
-
 def _provenance_from_tree(out) -> dict:
     """factory_commit / blocks_commit / writer_receipt, as the build wrote them.
 
@@ -353,6 +351,7 @@ def _provenance_from_tree(out) -> dict:
     return {k: str(doc.get(k) or "") for k in keys if doc.get(k)}
 
 
+@router.get("/{session_id}/product/package")
 def download_product_package(
     session_id: str, principal: Principal = Depends(require_api_key)
 ) -> FileResponse:
