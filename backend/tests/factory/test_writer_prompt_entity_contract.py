@@ -74,3 +74,68 @@ def test_the_version_was_bumped_for_the_contract_change():
 
 def test_the_prompt_is_still_deterministic():
     assert _prompt() == _prompt()
+
+
+# --- v9: the five specialists ------------------------------------------------
+#
+# One undifferentiated writer pass shipped backends with no deployment story
+# and no threat model, because nothing asked for infra, frontend, devops or
+# security as work in their own right. The writer delegates each hat to its
+# own agent now -- sequentially, because the box it runs on cannot carry a
+# parallel fan-out.
+
+SPECIALISTS = ("INFRA", "BACKEND", "FRONTEND", "DEVOPS", "SECURITY")
+
+
+def test_every_specialist_is_named_with_its_own_bar():
+    text = _prompt()
+    for hat in SPECIALISTS:
+        assert f"- {hat}:" in text, hat
+
+
+def test_the_writer_is_told_to_delegate_rather_than_wear_the_hats_itself():
+    text = _prompt()
+    assert "Delegate each of the" in text
+    assert "its own agent" in text
+
+
+def test_concurrency_is_rendered_from_the_box_not_hardcoded():
+    """The number is a property of the instance, so it must come from there.
+
+    A literal in the template goes stale the moment the Render plan moves,
+    and then the writer is being told something untrue about its machine.
+    """
+    from app.factory.build.codewhale_worker import writer_specialist_cap
+
+    assert "run at most 4 specialist agents" in render_writer_prompt(
+        _Blueprint(), brief="a bakery", specialist_workers=4
+    )
+    assert "run at most 9 specialist agents" in render_writer_prompt(
+        _Blueprint(), brief="a bakery", specialist_workers=9
+    )
+    # And the live budget is a real number the caller can pass.
+    assert writer_specialist_cap() >= 1
+
+
+def test_the_cap_follows_the_profile_and_an_operator_override(monkeypatch):
+    from app.factory.build import codewhale_worker as worker
+
+    monkeypatch.delenv(worker.SPECIALIST_WORKERS_ENV, raising=False)
+    monkeypatch.setenv(worker.PROFILE_ENV, "2c-4g")
+    on_small = worker.writer_specialist_cap()
+    monkeypatch.setenv(worker.PROFILE_ENV, "8c-32g")
+    assert worker.writer_specialist_cap() > on_small, "a bigger plan must buy more"
+
+    monkeypatch.setenv(worker.SPECIALIST_WORKERS_ENV, "2")
+    assert worker.writer_specialist_cap() == 2, "the operator override wins"
+
+
+def test_devops_and_security_are_pinned_last_whatever_the_budget():
+    """Parallelism is a budget question; ordering is a correctness one.
+
+    DEVOPS packages what the others wrote and SECURITY reviews it, so both
+    need a tree that has stopped moving however many agents are allowed.
+    """
+    text = render_writer_prompt(_Blueprint(), brief="a bakery", specialist_workers=8)
+    assert "run them last and in that order" in text or "last" in text
+    assert "stopped moving" in text

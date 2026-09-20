@@ -11,6 +11,17 @@ from __future__ import annotations
 from typing import Any
 
 #: Version log.
+#: v9 -- SPECIALISTS. One undifferentiated pass shipped backends with no
+#:   deployment story and no threat model: nothing in the prompt asked for
+#:   infra, frontend, devops or security as work in their own right, so the
+#:   agent optimised for the capability handlers and the gates caught the rest
+#:   one rework round at a time. The writer now delegates each hat to its own
+#:   agent (the CLI carries `fleet`, so it can) and runs them in parallel up
+#:   to the instance's agent-child budget -- rendered in from
+#:   codewhale_worker.writer_specialist_cap(), never hardcoded here, so it
+#:   follows FACTORY_WORKER_PROFILE and an operator override instead of
+#:   going stale on the next plan. DEVOPS and SECURITY still run last, in
+#:   that order: they need a tree that has stopped moving.
 #: v8 -- UI. A pilot is handed to a DevOps team to deploy and test, and the UI
 #:   it serves was a facade: FinOps (sess_065fc3eac75c4f62) served a console
 #:   driving ONE capability, with no authority label on any answer, beside a
@@ -49,7 +60,7 @@ from typing import Any
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v8"
+PROMPT_VERSION = "writer_worker_prompt.v9"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -171,6 +182,43 @@ DEPTH (the gates are the bar, and you can reach them yourself):
   limit) stays a named setting they can change, whatever you learn about it.
 - You have the wall. Use it: a shallow pass that ends early is sent back.
 
+SPECIALISTS (five of them, and you have agents — use them):
+A platform is not one job, and a single undifferentiated pass reliably ships
+a backend with no deployment story and no threat model. Delegate each of the
+five below to its own agent, briefed on that hat alone and on what the
+previous agent left. Name the specialist in your progress log
+(``STEP n [BACKEND]: ...``) so the operator can see which one is thin.
+- INFRA: the shape the code runs in. Config and secrets come from the
+  environment, never a literal. Settings are read once and validated at
+  import, so a missing variable fails at boot with its own name in the
+  message, not at 3am inside a request.
+- BACKEND: capabilities, persistence, tenancy, the domain decisions the
+  brief asked for. This is the pass DEPTH above is written about.
+- FRONTEND: the one console at app/static/index.html, driving at least two
+  capabilities against the real routes, showing the authority label on every
+  answer. A page that lists routes it never calls is a facade.
+- DEVOPS: a DevOps team receives this and must deploy it without you. The
+  Dockerfile builds every asset the app serves, the healthcheck answers
+  before traffic, migrations run on boot, and README says how to run it and
+  what to set. Build the image yourself and start it before you believe any
+  of that.
+- SECURITY: go back over what the other four passes wrote and attack it.
+  Authz on every route that touches tenant data, not just authn. No secret
+  in the image, the logs, or an error body. Every external input validated
+  at the edge. Any egress on a URL a caller controls is checked against a
+  private-address guard. Write down what you tried, including what held.
+CONCURRENCY: run at most {specialist_workers} specialist agents at once.
+That number is this instance's agent-child budget, not a style preference —
+exceeding it spends memory the factory has already admitted other builds
+against, and taking the box down mid-build costs those customers their
+builds as well as your pass. Within that budget, parallelise freely:
+INFRA, BACKEND and FRONTEND touch mostly separate trees.
+Two orderings are not negotiable whatever the budget allows: DEVOPS
+packages what the other three wrote, and SECURITY reviews it. Both need a
+tree that has stopped moving, so run them last and in that order. You have
+the wall — use the time the parallelism buys you to go deeper, not to
+finish early.
+
 PROGRESS LOG (the operator watches this file live):
 After EVERY completed step — before starting the next — append exactly
 one line to docs/writer_progress.log in this format:
@@ -210,8 +258,15 @@ def render_writer_prompt(
     brief: str = "",
     version: str = PROMPT_VERSION,
     resume: bool = False,
+    specialist_workers: int = 1,
 ) -> str:
     """Fill the template from the brief. Deterministic by construction.
+
+    ``specialist_workers`` is how many specialist agents the writer may run
+    at once. It is a property of the BOX, so the caller reads it from the
+    worker budget and passes it in -- rendering stays a pure function of its
+    arguments, and the template never hardcodes a number that would be wrong
+    on the next plan.
 
     Brief/summary text is inserted verbatim: str.format interprets braces
     only in the template, never in values, so user/model content passes
@@ -227,6 +282,7 @@ def render_writer_prompt(
         vertical=vertical,
         summary=summary,
         brief=(brief or "").strip(),
+        specialist_workers=max(1, int(specialist_workers or 1)),
     )
     if resume:
         body = _RESUME_PREFACE + body
