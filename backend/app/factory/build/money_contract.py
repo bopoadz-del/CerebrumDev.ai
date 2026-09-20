@@ -75,6 +75,22 @@ def brief_places_the_business(brief: str) -> bool:
     return bool(_COUNTRY_RE.search(text.lower()) or _CODE_RE.search(text))
 
 
+def _reaches_the_environment(source: str, symbol: str) -> bool:
+    """True when *symbol* is wired to an env var in the same module.
+
+    A value the operator can override is configuration, not an assumption,
+    however the agent chose to spell it: ``os.environ['VAT_RATE']``, or a
+    named default handed to ``os.getenv``. The gate judges whether the
+    country was decided for the customer -- not how the code is written.
+    """
+    for line in source.splitlines():
+        if "os.environ" not in line and "os.getenv" not in line:
+            continue
+        if symbol and symbol in line:
+            return True
+    return False
+
+
 def money_findings(workspace: Path, brief: str) -> List[str]:
     """Hardcoded tax rates / currencies in a product whose brief named none."""
     if brief_places_the_business(brief):
@@ -94,6 +110,8 @@ def money_findings(workspace: Path, brief: str) -> List[str]:
                 continue
             rel = path.relative_to(root).as_posix()
             for name, value in _RATE_ASSIGNMENT.findall(source):
+                if _reaches_the_environment(source, name):
+                    continue
                 findings.append(
                     f"{rel}: {name} = {value} is a tax rate frozen into the "
                     "source, and the brief names no country -- read it from "
@@ -104,6 +122,8 @@ def money_findings(workspace: Path, brief: str) -> List[str]:
                 # string is not an assumption (block ids, status codes, keys).
                 if line.lstrip().startswith("#") or "currenc" not in line.lower():
                     continue
+                if "os.environ" in line or "os.getenv" in line:
+                    continue  # operator-overridable: configuration, not an assumption
                 for code in _CURRENCY_LITERAL.findall(line):
                     if code not in CURRENCY_CODES:
                         continue

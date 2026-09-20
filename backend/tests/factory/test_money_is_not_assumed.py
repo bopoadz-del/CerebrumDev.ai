@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 from app.factory.build.money_contract import (
-    MONEY_ASSUMED,
     brief_places_the_business,
     money_findings,
 )
@@ -142,3 +141,43 @@ def test_the_gate_context_carries_the_users_brief():
 
     assert "brief" in GateContext.__dataclass_fields__
     assert 'kwargs["brief"]' in inspect.getsource(runner.RoleRunner._gate_context)
+
+
+class TestTheWriterIsNotToldHowToWriteIt:
+    """The gate judges whether the country was decided for the customer.
+
+    Not how the code is spelled. A value the operator can override is
+    configuration, and the agent picks the shape: a bare env read, an env
+    read with a default, a named default handed to getenv, a settings class.
+    An earlier draft refused the last two -- good engineering, refused.
+    """
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "import os\nVAT_RATE = float(os.environ['VAT_RATE'])\n",
+            "import os\nVAT_RATE = float(os.getenv('VAT_RATE', '0.05'))\n",
+            "import os\nDEFAULT_VAT_RATE = 0.05\nVAT_RATE = float(os.getenv('VAT_RATE', DEFAULT_VAT_RATE))\n",
+            "import os\n\n\nclass Settings:\n    vat_rate = float(os.environ.get('VAT_RATE', 0))\n",
+            "import os\ncurrency = os.getenv('CURRENCY', 'AED')\n",
+            "import os\nCURRENCY = os.environ.get('CURRENCY', 'GBP')\n",
+        ],
+        ids=["env", "env-default", "named-default", "settings-class", "currency-env", "currency-env-default"],
+    )
+    def test_operator_overridable_money_is_allowed(self, tmp_path, source):
+        ws = _product(tmp_path, **{"app/formulas.py": source})
+
+        assert money_findings(ws, SILENT) == [], source
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            "STANDARD_VAT_RATE = 0.2\n",
+            "currency = 'GBP'\n",
+        ],
+        ids=["frozen-rate", "frozen-currency"],
+    )
+    def test_a_value_the_operator_cannot_reach_is_still_refused(self, tmp_path, source):
+        ws = _product(tmp_path, **{"app/formulas.py": source})
+
+        assert money_findings(ws, SILENT), source
