@@ -1347,35 +1347,45 @@ def check_negative_floor() -> Tuple[str, str]:
 
 
 def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
-    """A DATABASE_URL read and then ignored is worse than absent."""
-    declared = ""
-    cfg = ROOT / "app" / "cerebrum_product_kernel" / "config.py"
-    for rel in ("app/store.py", "app/db.py"):
-        path = ROOT / rel
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
-        if "DATABASE_URL" in text or "database_url" in text:
-            declared = rel
-            break
-    if not declared:
-        reads = cfg.is_file() and "DATABASE_URL" in cfg.read_text(
-            encoding="utf-8", errors="ignore"
+    """store.py routes through app.db, and DATABASE_URL is actually honoured.
+
+    The old shape of this defect: DATABASE_URL read in the kernel config and
+    used nowhere, while store.py held its own sqlite3 handle. The operator
+    sets the variable, the platform accepts it without complaint and writes a
+    SQLite file onto the container disk. Reading the variable somewhere is
+    not the bar; the store taking its connection from one place is.
+    """
+    db = ROOT / "app" / "db.py"
+    store = ROOT / "app" / "store.py"
+    if not db.is_file():
+        return "FAIL", "app/db.py missing: nothing decides the backend"
+    db_text = db.read_text(encoding="utf-8", errors="ignore")
+    if "DATABASE_URL" not in db_text:
+        return "FAIL", "app/db.py does not read DATABASE_URL"
+    if not store.is_file():
+        return "FAIL", "app/store.py missing"
+    store_text = store.read_text(encoding="utf-8", errors="ignore")
+    routes = ("from app.db import" in store_text) or ("app.db" in store_text)
+    opens_own = "sqlite3.connect(" in store_text or "create_engine(" in store_text
+    if not routes:
+        return (
+            "FAIL",
+            "app/store.py does not take its connection from app.db, so a set "
+            "DATABASE_URL is read and ignored",
         )
-        if reads:
-            return (
-                "FAIL",
-                "DATABASE_URL is read in config but the store never uses it: "
-                "the operator believes Postgres, the platform writes SQLite",
-            )
-        return "FAIL", "no DATABASE_URL path: the product cannot leave SQLite"
+    if opens_own:
+        return (
+            "FAIL",
+            "app/store.py opens its own database beside app.db; one place must "
+            "decide the backend or the two disagree",
+        )
     measured = (os.environ.get("STORE_POSTGRES_BOOT") or "").strip()
     if measured != "200":
         return "FAIL", "STORE_POSTGRES_BOOT=%r (gate must boot it on Postgres)" % measured
     resp = http.request("get", "/health")
     if resp.status_code != 200:
         return "FAIL", "postgres boot env=200 but /health is %s" % resp.status_code
-    return "PASS", "boots on Postgres via %s" % declared
+    return "PASS", "store.py routes through app.db; boots on Postgres"
 
 
 def check_one_live_connector() -> Tuple[str, str]:
@@ -1388,10 +1398,20 @@ def check_one_live_connector() -> Tuple[str, str]:
 
 
 def check_metrics_served(http: _Http) -> Tuple[str, str]:
+    """Measured on the booted app. Shipping the module is not mounting it."""
     resp = http.request("get", "/metrics")
     if resp.status_code != 200:
-        return "FAIL", "GET /metrics is %s" % resp.status_code
-    body = ""
+        mounted = "mount_observability" in (
+            (ROOT / "app" / "main.py").read_text(encoding="utf-8", errors="ignore")
+            if (ROOT / "app" / "main.py").is_file()
+            else ""
+        )
+        hint = (
+            "app/main.py never calls mount_observability(app)"
+            if not mounted
+            else "mount_observability is called but /metrics does not answer"
+        )
+        return "FAIL", "GET /metrics is %s -- %s" % (resp.status_code, hint)
     try:
         body = resp.text
     except Exception:
@@ -1401,7 +1421,7 @@ def check_metrics_served(http: _Http) -> Tuple[str, str]:
         return "FAIL", "/metrics answers 200 but reports no request count"
     if not any(k in low for k in ("latency", "duration", "seconds")):
         return "FAIL", "/metrics reports no latency"
-    return "PASS", "/metrics serves count and latency"
+    return "PASS", "/metrics serves a request count and latency"
 
 
 def check_backup_restore_roundtrip() -> Tuple[str, str]:
