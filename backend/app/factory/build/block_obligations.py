@@ -723,6 +723,48 @@ def dependency_obligations(files: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+def vendored_source_files(workspace: Any) -> Dict[str, str]:
+    """``{relative path: text}`` for every Python file under ``vendor/``."""
+    from pathlib import Path as _Path
+
+    root = _Path(workspace)
+    vendor = root / "vendor"
+    files: Dict[str, str] = {}
+    if not vendor.is_dir():
+        return files
+    for py in sorted(vendor.rglob("*.py")):
+        if "__pycache__" in py.parts:
+            continue
+        try:
+            files[py.relative_to(root).as_posix()] = py.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            continue
+    return files
+
+
+def dependency_obligations_on_disk(workspace: Any) -> Dict[str, Dict[str, Any]]:
+    """What the vendored source ON DISK obliges the platform to declare.
+
+    Live, a voice-agent platform: 23 vendored blocks, a requirements.txt of
+    seven packages and none of theirs. The clean Docker image had no numpy,
+    ``vector_search`` could not load, a grounding test went red and the image
+    build failed -- while the same suite passed 89/89 on a machine that
+    happened to have numpy installed.
+
+    The CLONER computes these obligations and keeps them in the runner's
+    in-memory state. That state "dies with the process": a build that times
+    out and resumes (this one did) reaches WRITER with the key gone, and
+    requirements.txt is rendered from nothing. ``vendored_blocks`` and the lock
+    were already rehydrated from disk on resume; this never was.
+
+    The vendored bytes are the truth and they are always on disk, so ask
+    them. Same scan, same table, same refusal on an unnameable import.
+    """
+    return dependency_obligations(vendored_source_files(workspace))
+
+
 def render_dependency_lines(
     obligations: Dict[str, Dict[str, Any]], already: Sequence[str] = ()
 ) -> str:

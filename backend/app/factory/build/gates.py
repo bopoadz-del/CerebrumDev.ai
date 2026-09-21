@@ -309,23 +309,11 @@ def _declared_third_party_modules(workspace: Path) -> set:
     """
     from app.factory.build.block_obligations import (
         BlockObligationError,
-        dependency_obligations,
+        dependency_obligations_on_disk,
     )
 
-    files = {}
-    vendor = workspace / "vendor"
-    if vendor.is_dir():
-        for py in vendor.rglob("*.py"):
-            if "__pycache__" in py.parts:
-                continue
-            try:
-                files[py.relative_to(workspace).as_posix()] = py.read_text(
-                    encoding="utf-8", errors="replace"
-                )
-            except OSError:
-                continue
     try:
-        return {row["module"] for row in dependency_obligations(files).values()}
+        return {row["module"] for row in dependency_obligations_on_disk(workspace).values()}
     except BlockObligationError:
         # Undeclarable imports are the CLONER's refusal to make, with its own
         # message. Tolerate nothing here rather than guess.

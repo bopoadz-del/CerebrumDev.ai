@@ -1056,6 +1056,22 @@ def _usable_align_name(name: Optional[str]) -> Optional[str]:
         return None
     if not name.isidentifier() or keyword.iskeyword(name):
         return None
+    # An ALL_CAPS identifier is a constant or a configuration key -- by the
+    # convention every Python file already follows -- and never a record field.
+    #
+    # Live: TESTER failed ``test_every_model_round_trips`` with
+    # ``KeyError: 'GOOGLE_CLIENT_ID'``. A connector checked its own required
+    # SETTINGS with the same loop shape a handler uses to check required
+    # FIELDS, so the roster miner put the operator's credentials into the
+    # entity's spec. The generated test then saved them as a record, the model
+    # had no such column, and ``fetched[key]`` raised -- a whole rework round
+    # spent on the miner fabricating the very thing it exists to discover.
+    #
+    # The shape is the rule; no credential or setting is named here. What a
+    # caller posts is lower snake_case in every spec this factory compiles;
+    # what an operator configures is upper-case.
+    if name.isupper():
+        return None
     return name
 
 
@@ -1262,6 +1278,90 @@ def required_fields_from_rosters(handler_source: str) -> List[str]:
     return found
 
 
+def settings_names(source: str) -> set:
+    """Names this source reads from the ENVIRONMENT -- settings, not fields.
+
+    The rule, whatever the spelling: what code reads from ``os.environ`` is
+    something an operator configures, and is never something a caller posts.
+    ALL_CAPS (see ``_usable_align_name``) is only the conventional shape of
+    that; a handler that reads ``client_id`` from the environment has made it
+    a setting just as surely.
+
+    Two ways a name gets here:
+    * literally -- ``os.environ["X"]``, ``os.environ.get("X")``, ``os.getenv("X")``
+    * through a roster -- ``for key in ROSTER: os.environ.get(key)``, the live
+      shape: a connector listed its credentials in one constant, checked them
+      against the environment in ``configured()``, and listed them AGAIN among
+      its record fields. The miner promoted the second list into the spec.
+
+    AST, so prose and docstrings cannot contribute. Unparseable source
+    contributes nothing, which errs toward mining as before.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(source or "")
+    except (SyntaxError, ValueError):
+        return set()
+
+    def _is_environ(node: ast.AST) -> bool:
+        if isinstance(node, ast.Attribute) and node.attr == "environ":
+            return isinstance(node.value, ast.Name) and node.value.id == "os"
+        return isinstance(node, ast.Name) and node.id == "environ"
+
+    def _env_read_arg(node: ast.AST) -> Optional[ast.AST]:
+        """The key expression of an environment read, else None."""
+        if isinstance(node, ast.Subscript) and _is_environ(node.value):
+            return node.slice
+        if isinstance(node, ast.Call) and node.args:
+            fn = node.func
+            if isinstance(fn, ast.Attribute):
+                if fn.attr in ("get", "pop") and _is_environ(fn.value):
+                    return node.args[0]
+                if fn.attr == "getenv" and isinstance(fn.value, ast.Name) and fn.value.id == "os":
+                    return node.args[0]
+            if isinstance(fn, ast.Name) and fn.id == "getenv":
+                return node.args[0]
+        return None
+
+    rosters: Dict[str, List[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = node.value
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+                names = [
+                    e.value for e in value.elts
+                    if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                ]
+                for target in targets:
+                    if isinstance(target, ast.Name) and names:
+                        rosters[target.id] = names
+
+    found: set = set()
+    loop_vars: Dict[str, str] = {}  # loop variable -> the roster it walks
+    for node in ast.walk(tree):
+        iters = []
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            iters.append((node.target, node.iter))
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            iters.extend((g.target, g.iter) for g in node.generators)
+        for target, iterable in iters:
+            if isinstance(target, ast.Name) and isinstance(iterable, ast.Name):
+                if iterable.id in rosters:
+                    loop_vars[target.id] = iterable.id
+
+    for node in ast.walk(tree):
+        key = _env_read_arg(node)
+        if key is None:
+            continue
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            found.add(key.value)
+        elif isinstance(key, ast.Name) and key.id in loop_vars:
+            found.update(rosters[loop_vars[key.id]])
+    return found
+
+
 def handler_required_fields(handler_source: str) -> List[str]:
     """Domain field names a handler body treats as required."""
     found: List[str] = []
@@ -1276,7 +1376,9 @@ def handler_required_fields(handler_source: str) -> List[str]:
     for match in _REQUIRED_ASSIGNMENT.finditer(text):
         found.extend(_names_from_list_text(match.group(1)))
     found.extend(required_fields_from_rosters(text))
-    return sorted(set(found))
+    # What the handler reads from the environment is a setting, not a field.
+    settings = settings_names(text)
+    return sorted(n for n in set(found) if n not in settings)
 
 
 def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
@@ -1343,6 +1445,8 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
         if slot:
             slot.setdefault("type", "str")
 
+    for _setting in settings_names(handler_source):
+        contracts.pop(_setting, None)
     return contracts
 
 

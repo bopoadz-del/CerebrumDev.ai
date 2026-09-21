@@ -69,6 +69,7 @@ from app.factory.build.block_obligations import (
     assert_feedable,
     augment_model_spec,
     dependency_obligations,
+    dependency_obligations_on_disk,
     describe_resource_obligations,
     ensure_record_envelope,
     render_preconditions_module,
@@ -2429,8 +2430,24 @@ def main() -> int:
         )
         print(f"artifacts: {{len(sources)}} total, {{len(agent)}} written by the coding agent")
     else:
-        print("docs/build_provenance.json: MISSING")
-        ok = False
+        # docs/build_provenance.json is the factory's own record and does not
+        # ship (builds_push.FACTORY_INTERNAL_PATHS), so a delivered platform
+        # never has it. Demanding it here failed the image build of every
+        # platform at Dockerfile's release-gate step -- a suite with 108
+        # passing tests was reported as 0/13 because acceptance never ran.
+        # Report authorship from what IS in the tree: the stamp each handler
+        # carries in its own source. Reported, not judged -- the acceptance
+        # floor's authorship_floor check is the one place that is decided.
+        actions = ROOT / "app" / "actions"
+        handlers = [
+            p for p in sorted(actions.glob("*.py")) if not p.name.startswith("_")
+        ] if actions.is_dir() else []
+        stamped = 0
+        for path in handlers:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if "CODER_MODEL" in text or "coding agent" in text.lower() or "coder CLI" in text:
+                stamped += 1
+        print(f"handlers: {{len(handlers)}} total, {{stamped}} stamped by the coding agent")
 
     print("VERDICT:", "PASS" if ok else "FAIL")
     return 0 if ok else 1
@@ -3370,10 +3387,11 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             location="WRITER",
             notes={"codewhale_worker": receipt.to_dict()},
         )
-    # docs/build_provenance.json is part of WRITER's contract: the product's
-    # own Dockerfile runs scripts/release_gate.py, which FAILS the image build
-    # without it -- so the Store gate reports 0/13 on a platform whose suite
-    # passed. run_writer() writes it, but far below its CodeWhale early
+    # docs/build_provenance.json is part of WRITER's contract. It is the
+    # FACTORY's record and does not ship (builds_push.FACTORY_INTERNAL_PATHS);
+    # scripts/release_gate.py used to fail the image build without it, which
+    # reported 0/13 on platforms whose suite passed, and no longer reads it as
+    # a requirement. run_writer() writes it, but far below its CodeWhale early
     # return, so on the production path it only existed when the agent
     # happened to write one itself (live: the vet build had it and went 13/13;
     # the dental build did not and died in Docker on exactly this line).
@@ -4328,9 +4346,19 @@ def run_writer(
     # A vendored block's imports are a precondition exactly like a schema
     # field: assigned means declared. Derived from the source the CLONER
     # actually wrote, so it cannot drift from what ships.
+    #
+    # Read off the DISK, not ``ctx.state``. The CLONER leaves these in the
+    # runner's memory, which dies with the process: a build that timed out and
+    # resumed rendered this file from None, shipped seven packages for 23
+    # vendored blocks, and failed its Docker image on ``No module named
+    # 'numpy'`` -- see block_obligations.dependency_obligations_on_disk.
+    try:
+        vendored_deps = dependency_obligations_on_disk(ctx.workspace.workspace)
+    except BlockObligationError as exc:
+        raise RoleError(str(exc)) from exc
     ctx.workspace.write_text(
         "requirements.txt",
-        _render_requirements(ctx.state.get("vendored_dependencies")),
+        _render_requirements(vendored_deps),
     )
     ctx.workspace.write_text(
         "requirements-dev.txt", _render_dev_requirements()
@@ -4522,20 +4550,26 @@ def run_writer(
         + "\n",
     )
 
-    # The provenance manifest is part of WRITER's contract, not a nicety: the
-    # generated product's own Dockerfile runs scripts/release_gate.py, which
-    # FAILS the image build when docs/build_provenance.json is missing. When
-    # that happened the Store gate reported 0/12 on a platform whose own suite
-    # passed 46 tests -- the gate measuring an absent artifact rather than the
-    # product. Verify the write landed instead of assuming it did; a WRITER
-    # that cannot emit provenance must fail by name here, not ten minutes
-    # later inside Docker with an unattributable 0/12.
+    # The provenance manifest is part of WRITER's contract, not a nicety: it
+    # is the FACTORY's record of who wrote what (the download route, the
+    # authorship gates and adopt-green all read it). Verify the write landed
+    # instead of assuming it did.
+    #
+    # History, because this guard once protected something else: the product's
+    # release gate used to FAIL the image build without this file, and the
+    # Store gate reported 0/12 on a platform whose suite passed 46 tests. This
+    # guard was the answer -- but it checks the WORKSPACE, and the file is
+    # withheld from what ships (builds_push.FACTORY_INTERNAL_PATHS), so the
+    # same failure came back as 0/13 on a suite passing 108. The release gate
+    # no longer requires the file; tests/factory/
+    # test_release_gate_survives_the_export.py runs it on a tree that has been
+    # through the real export filter, which is the check this never was.
     WRITER_PROVENANCE_MISSING = "writer_provenance_missing"
     if not ctx.workspace.exists(Path("docs") / "build_provenance.json"):
         raise RoleError(
             f"{WRITER_PROVENANCE_MISSING}: docs/build_provenance.json was not "
-            "written to the workspace -- the product image cannot build "
-            "without it (scripts/release_gate.py refuses at Dockerfile:20)"
+            "written to the workspace -- the factory has no record of who "
+            "authored this platform's artifacts"
         )
 
     from app.factory.build.network_posture import PostureError, assert_workspace_posture
