@@ -1,5 +1,5 @@
 fastapi==0.141.1
-uvicorn==0.52.4
+uvicorn==0.53.0
 pydantic==2.13.5
 python-multipart==0.0.32
 httpx==0.28.1
@@ -17,7 +17,7 @@ sqlalchemy==2.0.52
 psycopg[binary]==3.3.5
 
 # Accounts DB migrations (Alembic). Runs at container boot; see backend/alembic/.
-alembic==1.19.2
+alembic==1.20.0
 
 # Billing (P3): Stripe subscription checkout + webhooks. Account state changes
 # only through accounts_store.set_subscription; this SDK is the transport.
@@ -25,7 +25,7 @@ stripe==15.6.1
 
 # Observability: error tracking + performance. Activates when SENTRY_DSN is
 # set; inert otherwise. See backend/.env.example.
-sentry-sdk[fastapi]==2.68.1
+sentry-sdk[fastapi]==2.69.2
 
 # Prometheus /metrics (ops scrape; route is master-key gated in main).
 prometheus-client==0.21.1
@@ -53,7 +53,7 @@ fastembed==0.8.0
 # findings -- a missing test runner masquerading as bad generated code.
 pytest==9.1.1
 
-anyio==4.15.0
+anyio==4.15.1
 click==8.5.0
 numpy==2.4.6
 orjson==3.12.0
