@@ -262,7 +262,10 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
         )
 
     declared = sorted(_declared_third_party_modules(ctx.workspace))
-    probe = _IMPORT_PROBE.replace(_DECLARED_SLOT, repr(",".join(declared)))
+    assert _IMPORT_PROBE.count(_DECLARED_SLOT) == 1, "probe lost its declared-modules slot"
+    probe = _IMPORT_PROBE.replace(
+        _DECLARED_SLOT, "_DECLARED_MODULES = " + repr(",".join(declared))
+    )
     proc = ctx.run([sys.executable, "-c", probe])
     if proc.returncode != 0:
         return GateResult(
@@ -291,7 +294,7 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
     )
 
 
-_DECLARED_SLOT = "__FACTORY_GATE_DECLARED_MODULES__"
+_DECLARED_SLOT = '_DECLARED_MODULES = ""'
 _STOOD_IN_PREFIX = "STOOD_IN:"
 
 
@@ -354,7 +357,10 @@ _IMPORT_PROBE = """
 import importlib.util, os, pathlib, sys, types
 for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
     os.environ.pop(var, None)
-declared = {m for m in __FACTORY_GATE_DECLARED_MODULES__.split(",") if m}
+# Replaced by the gate with the declared set. Left as it is, the probe is
+# still valid Python and tolerates nothing -- the strictest reading.
+_DECLARED_MODULES = ""
+declared = {m for m in _DECLARED_MODULES.split(",") if m}
 stood_in = set()
 
 
