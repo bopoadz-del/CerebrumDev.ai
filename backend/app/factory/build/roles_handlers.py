@@ -69,6 +69,7 @@ from app.factory.build.block_obligations import (
     assert_feedable,
     augment_model_spec,
     dependency_obligations,
+    dependency_obligations_on_disk,
     describe_resource_obligations,
     ensure_record_envelope,
     render_preconditions_module,
@@ -4345,9 +4346,19 @@ def run_writer(
     # A vendored block's imports are a precondition exactly like a schema
     # field: assigned means declared. Derived from the source the CLONER
     # actually wrote, so it cannot drift from what ships.
+    #
+    # Read off the DISK, not ``ctx.state``. The CLONER leaves these in the
+    # runner's memory, which dies with the process: a build that timed out and
+    # resumed rendered this file from None, shipped seven packages for 23
+    # vendored blocks, and failed its Docker image on ``No module named
+    # 'numpy'`` -- see block_obligations.dependency_obligations_on_disk.
+    try:
+        vendored_deps = dependency_obligations_on_disk(ctx.workspace.workspace)
+    except BlockObligationError as exc:
+        raise RoleError(str(exc)) from exc
     ctx.workspace.write_text(
         "requirements.txt",
-        _render_requirements(ctx.state.get("vendored_dependencies")),
+        _render_requirements(vendored_deps),
     )
     ctx.workspace.write_text(
         "requirements-dev.txt", _render_dev_requirements()
