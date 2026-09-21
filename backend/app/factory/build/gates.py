@@ -261,7 +261,12 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
             findings=[f"vendor/blocks/{b}/block.py missing" for b in missing],
         )
 
-    proc = ctx.run([sys.executable, "-c", _IMPORT_PROBE])
+    declared = sorted(_declared_third_party_modules(ctx.workspace))
+    assert _IMPORT_PROBE.count(_DECLARED_SLOT) == 1, "probe lost its declared-modules slot"
+    probe = _IMPORT_PROBE.replace(
+        _DECLARED_SLOT, "_DECLARED_MODULES = " + repr(",".join(declared))
+    )
+    proc = ctx.run([sys.executable, "-c", probe])
     if proc.returncode != 0:
         return GateResult(
             ok=False,
@@ -270,27 +275,168 @@ def gate_blocks_import_offline(ctx: GateContext) -> GateResult:
             detail="a vendored block failed to import offline",
             findings=[ln for ln in (proc.stderr or "").splitlines() if ln.strip()][-10:],
         )
+    stood_in = sorted(
+        ln.split(":", 1)[1].strip()
+        for ln in (proc.stdout or "").splitlines()
+        if ln.startswith(_STOOD_IN_PREFIX)
+    )
+    detail = f"{len(ctx.vendored_blocks)} block(s) import with no store configured"
+    if stood_in:
+        detail += (
+            "; declared package(s) not installed on the build host, stood in "
+            "for the import check: " + ", ".join(stood_in)
+        )
     return GateResult(
         ok=True,
         gate="blocks_import_offline",
-        detail=f"{len(ctx.vendored_blocks)} block(s) import with no store configured",
+        detail=detail,
+        payload={"declared_not_on_build_host": stood_in},
     )
 
 
+_DECLARED_SLOT = '_DECLARED_MODULES = ""'
+_STOOD_IN_PREFIX = "STOOD_IN:"
+
+
+def _declared_third_party_modules(workspace: Path) -> set:
+    """Import names the vendored source declares as pip dependencies.
+
+    Derived by the SAME AST scan that writes them into the product's
+    requirements.txt (block_obligations.dependency_obligations) -- not a list
+    kept here. Anything that scan cannot name a distribution for raises in
+    the CLONER long before this gate, so every name returned is one the
+    product is guaranteed to declare.
+    """
+    from app.factory.build.block_obligations import (
+        BlockObligationError,
+        dependency_obligations,
+    )
+
+    files = {}
+    vendor = workspace / "vendor"
+    if vendor.is_dir():
+        for py in vendor.rglob("*.py"):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                files[py.relative_to(workspace).as_posix()] = py.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                continue
+    try:
+        return {row["module"] for row in dependency_obligations(files).values()}
+    except BlockObligationError:
+        # Undeclarable imports are the CLONER's refusal to make, with its own
+        # message. Tolerate nothing here rather than guess.
+        return set()
+
+
 #: Imports every vendored block by file path, with the store env stripped.
+#:
+#: THE BUILD HOST IS NOT THE PRODUCT. This runs under the Factory's own
+#: interpreter, which carries the Factory's dependencies and not the blocks'.
+#: Live, in a production-like sweep of all 197 Store blocks:
+#:
+#:     construction_advisor: ModuleNotFoundError: No module named 'sympy'
+#:
+#: sympy is a module-level import in that block's runtime, the CLONER already
+#: derives it as a dependency obligation, and the product's requirements.txt
+#: declares it -- the PRODUCT is correct. The gate failed because the Factory
+#: host has no sympy, which says nothing about whether the block needs the
+#: Store. Installing every block's dependencies into the Factory is the wrong
+#: fix: it hard-wires the Store's package set into this repo's lock.
+#:
+#: So a package the vendored source DECLARES, when absent here, gets a
+#: placeholder module and the import is RETRIED -- the rest of the import
+#: still executes, so a real ``No module named 'app'`` hiding behind it is
+#: still caught. Only declared names qualify; an undeclared or Store-local
+#: module fails exactly as before. Placeholders exist in this probe process
+#: only and are reported, never shipped.
 _IMPORT_PROBE = """
-import importlib.util, os, pathlib, sys
+import importlib.util, os, pathlib, sys, types
 for var in ("CEREBRUM_API_URL", "CEREBRUM_API_KEY", "CEREBRUM_API_TOKEN"):
     os.environ.pop(var, None)
+# Replaced by the gate with the declared set. Left as it is, the probe is
+# still valid Python and tolerates nothing -- the strictest reading.
+_DECLARED_MODULES = ""
+declared = {m for m in _DECLARED_MODULES.split(",") if m}
+stood_in = set()
+
+
+class _Anything:
+    def __init__(self, *a, **k):
+        pass
+
+    def __call__(self, *a, **k):
+        return _Anything()
+
+    def __getattr__(self, name):
+        return _Anything()
+
+    def __mro_entries__(self, bases):
+        return (object,)
+
+    def __iter__(self):
+        return iter(())
+
+    def __getitem__(self, key):
+        return _Anything()
+
+
+class _Placeholder(types.ModuleType):
+    __path__ = []
+
+    def __getattr__(self, name):
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(name)
+        return _Anything()
+
+
+class _DeclaredLoader:
+    @staticmethod
+    def create_module(spec):
+        return _Placeholder(spec.name)
+
+    @staticmethod
+    def exec_module(module):
+        pass
+
+
+class _DeclaredFinder:
+    # Submodules of a stood-in package (sympy.parsing...) resolve to it too.
+    @staticmethod
+    def find_spec(name, path=None, target=None):
+        if name.split(".")[0] in stood_in:
+            return importlib.util.spec_from_loader(name, _DeclaredLoader())
+        return None
+
+
+sys.meta_path.append(_DeclaredFinder)
 failed = []
 for mod in sorted(pathlib.Path("vendor/blocks").glob("*/block.py")):
     name = "vendored_" + mod.parent.name
-    spec = importlib.util.spec_from_file_location(name, mod)
-    try:
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except Exception as exc:
-        failed.append(mod.parent.name + ": " + type(exc).__name__ + ": " + str(exc))
+    for _attempt in range(len(declared) + 1):
+        spec = importlib.util.spec_from_file_location(name, mod)
+        try:
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            break
+        except ModuleNotFoundError as exc:
+            top = (exc.name or "").split(".")[0]
+            if top in declared and top not in stood_in:
+                stood_in.add(top)
+                # Half-imported vendored modules would mask the retry.
+                for loaded in [m for m in sys.modules if m.startswith("vendor.")]:
+                    del sys.modules[loaded]
+                continue
+            failed.append(mod.parent.name + ": " + type(exc).__name__ + ": " + str(exc))
+            break
+        except Exception as exc:
+            failed.append(mod.parent.name + ": " + type(exc).__name__ + ": " + str(exc))
+            break
+for top in sorted(stood_in):
+    print("STOOD_IN: " + top)
 if failed:
     sys.stderr.write("\\n".join(failed))
     raise SystemExit(1)
