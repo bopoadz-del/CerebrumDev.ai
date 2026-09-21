@@ -129,3 +129,63 @@ def test_mutation_tester_model_suite_does_not_use_four_type_map():
     src = inspect.getsource(run_tester_impl)
     assert "_model_roundtrip_literal" in src
     assert '''{"str": "'x'", "int": "1", "float": "1.5", "bool": "True"}''' not in src
+
+
+# ── spellings of types TESTER already knows ────────────────────────────────
+#
+# Found by sweeping TESTER for the defect that refused two live clones in one
+# day (block_obligations.DISTRIBUTIONS vs 'bcrypt'): a hand-kept table judged
+# against open-ended input, where a miss refuses the whole build. TESTER has
+# exactly one such table, and it is judged against whatever the writer chose
+# to call a field -- so a miss costs a build the writer has already paid for.
+
+
+@pytest.mark.parametrize(
+    "spelling, canonical",
+    [
+        ("decimal", "float"), ("Decimal", "float"), ("decimal.Decimal", "float"),
+        ("NUMERIC(10, 2)", "float"), ("money", "float"), ("double", "float"),
+        ("bigint", "int"), ("smallint", "int"), ("long", "int"),
+        ("VARCHAR(255)", "str"), ("char", "str"),
+        # Optional[X] was always unwrapped; the newer spelling was not.
+        ("str | None", "str"), ("None | int", "int"), ("datetime | None", "datetime"),
+        ("Optional[decimal]", "float"),
+    ],
+)
+def test_other_spellings_of_known_scalars_resolve(spelling, canonical):
+    from app.factory.build.roles_handlers import _resolve_known_field_type
+
+    assert _resolve_known_field_type(spelling) == canonical
+
+
+def test_a_spec_using_those_spellings_no_longer_refuses_the_build():
+    from app.factory.build.roles_handlers import _assert_fields_sampleable
+
+    _assert_fields_sampleable(
+        {
+            "invoice": {
+                "fields": [
+                    {"name": "total", "type": "decimal"},
+                    {"name": "reference", "type": "VARCHAR(64)"},
+                    {"name": "paid_at", "type": "datetime | None"},
+                ]
+            }
+        }
+    )  # must not raise
+
+
+@pytest.mark.parametrize("structural", ["list", "dict", "json", "list[str]", "str | int"])
+def test_structural_and_ambiguous_types_still_refuse(structural):
+    """The guard on the two tests above: widening the table must not have
+    become "accept anything". The model emitter stores every field as a
+    scalar, so sampling a list would send a payload the generated model
+    cannot hold -- and ``str | int`` has no single right sample."""
+    from app.factory.build.roles import RoleError
+    from app.factory.build.roles_handlers import (
+        _assert_fields_sampleable,
+        _resolve_known_field_type,
+    )
+
+    assert _resolve_known_field_type(structural) is None
+    with pytest.raises(RoleError, match="cannot sample"):
+        _assert_fields_sampleable({"c": {"fields": [{"name": "f", "type": structural}]}})

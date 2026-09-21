@@ -4501,6 +4501,24 @@ _TYPE_ALIASES = {
     "time": "time",
     "uuid": "uuid",
     "email": "email",
+    # Spellings with exactly one right answer. This table is judged against
+    # whatever the writer chose to call a field, and a miss refuses the whole
+    # build AFTER the writer has already spent its pass -- the same shape as
+    # block_obligations.DISTRIBUTIONS refusing a clone over 'bcrypt'. SQL and
+    # annotation spellings of the scalars above are not new types, only new
+    # names for them. Structural types (list, dict, json) are deliberately
+    # NOT here: the model emitter stores every field as a scalar, so sampling
+    # one would send a payload the generated model cannot hold.
+    "varchar": "str",
+    "char": "str",
+    "bigint": "int",
+    "smallint": "int",
+    "long": "int",
+    "double": "float",
+    "decimal": "float",
+    "numeric": "float",
+    "money": "float",
+    "currency": "float",
 }
 
 _TEMPORAL_SAMPLES = {
@@ -4521,9 +4539,17 @@ def _resolve_known_field_type(raw: Any) -> Optional[str]:
     kind = (
         kind.replace("datetime.", "")
         .replace("uuid.", "")
+        .replace("decimal.", "")
         .replace("optional[", "")
         .replace("]", "")
     )
+    # ``str | None`` is ``Optional[str]`` in the newer spelling; only the
+    # older one was unwrapped, so the modern annotation refused the build.
+    kind = " | ".join(
+        part for part in (p.strip() for p in kind.split("|")) if part and part != "none"
+    )
+    # VARCHAR(255) / NUMERIC(10, 2): the width is not part of the type.
+    kind = kind.split("(", 1)[0].strip()
     if not kind:
         return "str"
     return _TYPE_ALIASES.get(kind)
