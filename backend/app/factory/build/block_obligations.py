@@ -528,7 +528,18 @@ import sys as _sys
 _STDLIB = frozenset(_sys.stdlib_module_names) | {"__future__"}
 
 #: Modules that ship with the platform itself, or that are the platform.
-_LOCAL_ROOTS = frozenset({"app", "vendor", "kits", "tests", "scripts", "alembic"})
+#:
+#: The last three are the STORE's own local roots, not PyPI distributions:
+#: ``block`` is the sibling block.py that block_registry/run.py imports,
+#: ``block_store`` is the Store's top-level kit package, ``level`` is a local
+#: certifier package. They must never reach DISTRIBUTIONS -- ``block`` and
+#: ``level`` are real, unrelated projects on PyPI, so mapping them would make a
+#: customer's Dockerfile ``pip install`` strangers. Every one is a lazy import;
+#: what they cost is one feature, which is not a requirements.txt matter.
+_LOCAL_ROOTS = frozenset(
+    {"app", "vendor", "kits", "tests", "scripts", "alembic",
+     "block", "block_store", "level"}
+)
 
 #: import name -> PyPI distribution, for every third-party import present in
 #: the Store's block roster. Recorded explicitly because the import name and
@@ -578,6 +589,25 @@ DISTRIBUTIONS: Dict[str, str] = {
     "sympy": "sympy",
     "ultralytics": "ultralytics",
     "yaml": "PyYAML",
+    # Live: "CLONER failed: vendored source imports 'bcrypt' and the factory
+    # has no PyPI distribution recorded for it". bcrypt was only the first one
+    # the build tripped over -- moving the Store pin brought twelve import
+    # names this table had never seen. Names are the Store's own pins where it
+    # pins them. tests/factory/test_block_obligations_cover_the_store.py now
+    # sweeps the pinned Store, so the next one fails in CI and not in a
+    # customer's build.
+    "Levenshtein": "Levenshtein",
+    "RestrictedPython": "RestrictedPython",
+    "asyncpg": "asyncpg",
+    "bcrypt": "bcrypt",
+    "manifold3d": "manifold3d",
+    "mlflow": "mlflow",
+    "psutil": "psutil",
+    "redis": "redis",
+    "requests": "requests",
+    "sentry_sdk": "sentry-sdk",
+    "specklepy": "specklepy",
+    "trimesh": "trimesh",
     # Runtime floor packages. Present so a vendored module that imports one
     # is not reported as unknown; _render_requirements dedupes them.
     "fastapi": "fastapi",
