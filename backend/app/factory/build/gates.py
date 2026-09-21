@@ -538,7 +538,10 @@ def _verdict_from_junit(
             ok=False,
             gate=gate_name,
             reason="environment_fault",
-            detail="pytest is not installed on the build host -- an environment fault, not a failing test",
+            detail=(
+                "the suite could not be RUN: pytest is not installed on the build "
+                "host -- an environment fault, not a failing test"
+            ),
             findings=["No module named pytest"],
             payload={"returncode": returncode, "infrastructure": True},
         )
@@ -550,7 +553,10 @@ def _verdict_from_junit(
             ok=False,
             gate=gate_name,
             reason="environment_fault",
-            detail=f"pytest exited {returncode} without running the suite -- an environment fault",
+            detail=(
+                f"the suite could not be RUN: pytest exited {returncode} without "
+                "running it -- an environment fault, not a failing test"
+            ),
             findings=[ln for ln in raw.splitlines() if ln.strip()][-8:] or ["pytest produced no output"],
             payload={"returncode": returncode, "infrastructure": True},
         )
