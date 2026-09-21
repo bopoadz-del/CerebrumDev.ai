@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.factory.blueprint import CapabilitySpec, CapabilityStrategyHint, ProductBlueprint
 from app.factory.dual_registry import DualRegistryError, assert_dual_registered, dual_registered_ids
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -31,6 +34,9 @@ class ProductPlan:
     #: Capabilities that resolved to blocks, but none domain-relevant for
     #: the vertical's kit (the vet-clinic generic-plumbing substitution).
     inventory_domain_gaps: List[Dict[str, Any]] = field(default_factory=list)
+    #: Blocks a blueprint named that its vertical may not attach, each with
+    #: the reason. See app.factory.vertical_scope: dropped, never silently.
+    vertical_scoped_out: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -40,6 +46,7 @@ class ProductPlan:
             "product_id": self.product_id,
             "unsupported": list(self.unsupported),
             "inventory_domain_gaps": list(self.inventory_domain_gaps),
+            "vertical_scoped_out": list(self.vertical_scoped_out),
         }
 
 
@@ -68,20 +75,52 @@ class CapabilityPlanner:
         self.blocks_root = blocks_root
         self.factory_shelf = factory_shelf
         self._dual = dual_registered_ids(blocks_root, factory_shelf)
+        self._vertical_scopes: Optional[Dict[str, Any]] = None
 
     def _resolve(self, blueprint: ProductBlueprint):
         planned: List[PlannedCapability] = []
         unsupported: List[str] = []
         used_blocks: List[str] = []
+        scoped_out: List[Dict[str, Any]] = []
+        vertical = getattr(blueprint, "vertical", "")
 
         for cap in blueprint.capabilities:
+            cap, dropped = self._scope_to_vertical(cap, vertical)
+            scoped_out.extend(dropped)
             item = self._plan_one(cap)
             planned.append(item)
             used_blocks.extend(item.block_ids)
             if item.strategy == CapabilityStrategyHint.UNSUPPORTED.value:
                 unsupported.append(cap.id)
 
+        self._last_scoped_out = scoped_out
         return planned, unsupported, used_blocks
+
+    def _scope_to_vertical(self, cap: CapabilitySpec, vertical: Any):
+        """Drop blocks this vertical may not attach. The one chokepoint.
+
+        COLLECTOR reads block ids from the plan and CLONER reads them from
+        COLLECTOR, so a block removed here is never cloned. The capability is
+        copied, never mutated: the blueprint is the architect's document.
+        """
+        if not cap.block_ids:
+            return cap, []
+        from app.factory.dual_registry import _default_blocks_root
+        from app.factory.vertical_scope import block_verticals, scope_blocks
+
+        if self._vertical_scopes is None:
+            try:
+                root = self.blocks_root or _default_blocks_root()
+            except Exception:  # noqa: BLE001 — no Store, so nothing is scoped
+                root = None
+            self._vertical_scopes = block_verticals(root)
+        kept, dropped = scope_blocks(cap.block_ids, vertical, self._vertical_scopes)
+        if not dropped:
+            return cap, []
+        for row in dropped:
+            row["capability_id"] = cap.id
+            logger.info("vertical scope: %s", row["reason"])
+        return cap.model_copy(update={"block_ids": list(kept)}), dropped
 
     def plan(self, blueprint: ProductBlueprint) -> ProductPlan:
         """Resolve a blueprint, refusing any UNSUPPORTED capability.
@@ -115,6 +154,7 @@ class CapabilityPlanner:
             dual_registered_blocks=sorted(set(used_blocks)),
             fail_closed=True,
             inventory_domain_gaps=self._domain_gaps(blueprint, planned),
+            vertical_scoped_out=list(getattr(self, "_last_scoped_out", [])),
         )
 
     def survey(self, blueprint: ProductBlueprint) -> ProductPlan:
@@ -139,6 +179,7 @@ class CapabilityPlanner:
             dual_registered_blocks=sorted(set(used_blocks)),
             fail_closed=False,
             inventory_domain_gaps=self._domain_gaps(blueprint, planned),
+            vertical_scoped_out=list(getattr(self, "_last_scoped_out", [])),
         )
 
     @staticmethod
