@@ -5289,6 +5289,17 @@ def run_tester(ctx: RoleContext) -> RoleResult:
                 "        else:",
                 "            if not isinstance(body, dict):",
                 f"                failures.append('{name}: JSON body is not a dict')",
+                "            # A connector with no credentials answers as a DECLARED",
+                "            # STUB -- ok:true, naming what is unavailable. That IS the",
+                "            # right answer before the operator configures it.",
+                "            elif 'blocks_unavailable' in body or 'blocks_unavailable' in"
+                " str(body.get('result')):",
+                "                unavailable = body.get('blocks_unavailable') or (",
+                "                    (body.get('result') or {}).get('blocks_unavailable')",
+                "                    if isinstance(body.get('result'), dict) else None)",
+                "                if body.get('ok') is not True or not unavailable:",
+                f"                    failures.append('{name}: declared stub must be ok:true'"
+                " + ' and name blocks_unavailable')",
                 f'            listed = client.get("/v1/{name}", headers=AUTH)',
                 "            if listed.status_code != 200:",
                 f"                failures.append('{name} list: HTTP '"
