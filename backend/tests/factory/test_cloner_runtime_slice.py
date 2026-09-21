@@ -1191,3 +1191,119 @@ def test_a_genuinely_missing_core_module_still_fails_the_clone(tmp_path):
 
     with pytest.raises(RoleError, match=r"app/core/redline\.py"):
         _clone(tmp_path, store)
+
+
+# ── a block the Store registers with a manifest and no adapter ─────────────
+#
+# Live: "CLONER failed -- registered_block_missing: 3 block(s) registered but
+# not on disk". Twenty Store blocks, the domain containers among them, are
+# registered with a signed block.json and NO block.py. The CLONER copied the
+# manifest, recorded the block as vendored, and its own gate then demanded a
+# file that had never existed anywhere.
+
+
+def _manifest_only_store(tmp_path, *, with_runtime=True):
+    """The faux Store plus ``farewell``: registered, signed-shaped, no block.py."""
+    store = _faux_store(tmp_path)
+    # The generated adapter the Store ships for its other blocks -- the ONLY
+    # place the adapter's shape exists; the Factory derives it from here.
+    (store / "block_registry" / "greeting" / "block.py").write_text(
+        '"""\nAuto-generated adapter for Cerebrum block: greeting\n"""\n'
+        "import asyncio\nfrom app.blocks import get_block\n\n\n"
+        "def run(**kwargs):\n"
+        '    block_cls = get_block("greeting")\n'
+        "    envelope = asyncio.run(block_cls().execute(kwargs.get('input', kwargs), {}))\n"
+        "    return envelope.get('result', envelope)\n",
+        encoding="utf-8",
+    )
+    reg = store / "block_registry" / "farewell"
+    reg.mkdir(parents=True)
+    (reg / "block.json").write_text(json.dumps({"id": "farewell"}), encoding="utf-8")
+    if with_runtime:
+        (store / "app" / "blocks" / "farewell.py").write_text(
+            _GREETING.replace("GreetingBlock", "FarewellBlock").replace("hello", "goodbye"),
+            encoding="utf-8",
+        )
+    return store
+
+
+def test_a_manifest_only_block_clones_and_passes_the_cloners_own_gate(tmp_path):
+    store = _manifest_only_store(tmp_path)
+
+    ws, result = _clone(tmp_path, store, block_ids=("farewell",))
+    assert result.ok, result.detail
+
+    gate = gate_blocks_import_offline(
+        GateContext(workspace=ws.destination, role=BuildRole.CLONER, vendored_blocks=("farewell",))
+    )
+    assert gate.ok, f"{gate.reason}: {gate.findings}"
+
+
+def test_the_emitted_adapter_runs_the_real_store_block_not_a_stub(tmp_path):
+    """The line this repo drew after the always-ok estate blocks: a stub
+    answers on its own. This one can only answer with what the Store's
+    runtime returned -- "goodbye", which exists nowhere but farewell.py."""
+    store = _manifest_only_store(tmp_path)
+    ws, result = _clone(tmp_path, store, block_ids=("farewell",))
+    assert result.ok, result.detail
+
+    probe = textwrap.dedent(
+        """
+        import importlib.util, json, pathlib
+        spec = importlib.util.spec_from_file_location("a", pathlib.Path("vendor/blocks/farewell/block.py"))
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        print(json.dumps(mod.run(input={"name": "x"})))
+        """
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", probe], cwd=str(ws.destination),
+        capture_output=True, text=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "goodbye x" in proc.stdout
+
+
+def test_the_adapter_is_derived_from_the_store_and_written_down_nowhere(tmp_path):
+    """Owner: "dont hard wire anything". The Factory holds no adapter text.
+    Change the adapter the Store ships and the emitted one changes with it."""
+    from app.factory.build.roles_handlers import _adapter_shape_cache
+
+    store = _manifest_only_store(tmp_path)
+    shipped = store / "block_registry" / "greeting" / "block.py"
+    shipped.write_text(
+        shipped.read_text(encoding="utf-8") + "\nSTORE_GENERATOR_VERSION = 'next'\n",
+        encoding="utf-8",
+    )
+    _adapter_shape_cache.clear()
+
+    ws, result = _clone(tmp_path, store, block_ids=("farewell",))
+    assert result.ok, result.detail
+
+    emitted = (ws.destination / "vendor" / "blocks" / "farewell" / "block.py").read_text(encoding="utf-8")
+    assert "STORE_GENERATOR_VERSION = 'next'" in emitted
+    assert 'get_block("farewell")' in emitted and "greeting" not in emitted
+
+
+def test_a_manifest_only_block_with_no_runtime_is_refused_by_name(tmp_path):
+    """An adapter around nothing is worse than a refusal. The live pair:
+    action_contract and finance_ops have a manifest and no runtime entry."""
+    store = _manifest_only_store(tmp_path, with_runtime=False)
+    init = store / "app" / "blocks" / "__init__.py"
+    init.write_text(
+        init.read_text(encoding="utf-8").replace(
+            '    "farewell": ("app.blocks.farewell", "FarewellBlock"),\n', ""
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RoleError, match=r"farewell.*manifest only"):
+        _clone(tmp_path, store, block_ids=("farewell",))
+
+
+def test_a_block_that_ships_its_own_adapter_is_left_exactly_as_the_store_wrote_it(tmp_path):
+    store = _faux_store(tmp_path)
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+
+    vendored = (ws.destination / "vendor" / "blocks" / "greeting" / "block.py").read_text(encoding="utf-8")
+    assert "Auto-generated adapter for Cerebrum block: greeting" in vendored

@@ -1111,6 +1111,105 @@ def _runtime_pin(blocks_root: Path) -> str:
     return _content_digest(Path(blocks_root) / "app")
 
 
+#: Stands in for the block id while adapter shapes are compared.
+_ADAPTER_ID_SLOT = "<<CEREBRUM_BLOCK_ID>>"
+_ADAPTER_MARKER = "Auto-generated adapter for Cerebrum block"
+_adapter_shape_cache: Dict[str, str] = {}
+
+
+def _store_adapter_shape(blocks_root: Path) -> str:
+    """The adapter the pinned Store generates, with the block id slotted out.
+
+    NOTHING ABOUT THE ADAPTER IS WRITTEN DOWN HERE. The Store ships one
+    generated block.py per block, identical but for its id. Read them all,
+    slot the id out of each, and the most common result IS the Store's
+    adapter -- at whatever commit the Factory is pinned to. When the Store
+    changes its generator, the next pin bump changes what is emitted, with no
+    edit in this repo and no template here to drift.
+
+    The MODAL shape rather than the first one found: a few adapters are
+    hand-edited, and a short id ("pdf", "chat") can collide with ordinary
+    text when slotted out. Neither can be the majority.
+    """
+    key = str(blocks_root)
+    if key in _adapter_shape_cache:
+        return _adapter_shape_cache[key]
+    shapes: Dict[str, int] = {}
+    for adapter in sorted((blocks_root / "block_registry").glob("*/block.py")):
+        try:
+            text = adapter.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        bid = adapter.parent.name
+        if _ADAPTER_MARKER not in text or bid not in text:
+            continue
+        shape = text.replace(bid, _ADAPTER_ID_SLOT)
+        shapes[shape] = shapes.get(shape, 0) + 1
+    if not shapes:
+        raise RoleError(
+            "the Store checkout ships no generated block.py adapter to derive "
+            "one from, so a manifest-only block cannot be given one"
+        )
+    shape = max(sorted(shapes), key=lambda candidate: shapes[candidate])
+    _adapter_shape_cache[key] = shape
+    return shape
+
+
+def _emit_adapter_for_manifest_only_block(
+    ctx: RoleContext, bid: str, source: Path
+) -> bool:
+    """Write the Store's standard adapter for a block registered without one.
+
+    Live: "CLONER failed -- registered_block_missing: 3 block(s) registered
+    but not on disk". Twenty Store blocks -- the domain containers among them
+    (construction, insurance, finance_v2, legal_v2) -- are registered with a
+    signed block.json and NO block.py. The CLONER copied the manifest,
+    recorded the block as vendored, and its own gate then demanded a
+    vendor/blocks/<id>/block.py that had never existed anywhere.
+
+    The adapter cannot be added in the Store: block.py sits inside the signed
+    file set and the operator's key is not in either repo. It does not need
+    to be. The Store's adapter is generated boilerplate, identical for every
+    block but its id, and holds no logic -- so it is DERIVED from the adapters
+    the pinned Store already ships (see _store_adapter_shape), never written
+    down here.
+
+    NOT A STUB, which is the line this repo drew after the always-ok estate
+    blocks: a stub answers on its own; this cannot. It only calls
+    get_block(), so the runtime slice resolver still requires the Store
+    runtime to exist and still fails the clone when it does not. A
+    manifest-only block with NO runtime entry is refused here by name rather
+    than shipped as an adapter around nothing.
+
+    Returns True when an adapter was written.
+    """
+    if (source / "block.py").is_file():
+        return False
+    if not ctx.blocks_root:
+        raise RoleError(
+            f"{bid} is registered in the Store with a manifest and no "
+            "block.py, and no Store checkout is available to find its runtime "
+            "in. Set CEREBRUM_BLOCKS_ROOT."
+        )
+    blocks_root = Path(ctx.blocks_root)
+    resolved = _resolve_store_def(bid, _store_block_defs(blocks_root), blocks_root)
+    if resolved is None:
+        raise RoleError(
+            f"{bid} is registered in the Store with a manifest only: it has no "
+            "block.py adapter AND no entry in the Store runtime registry "
+            "(app/blocks/__init__.py), so there is nothing for an adapter to "
+            "call. It cannot be attached until the Store gives it a runtime."
+        )
+    # The id the RUNTIME knows it by, which is not always the registry's:
+    # the ``construction`` manifest is served by ``construction_v2``.
+    store_key = resolved[0]
+    ctx.workspace.write_text(
+        Path("vendor") / "blocks" / bid / "block.py",
+        _store_adapter_shape(blocks_root).replace(_ADAPTER_ID_SLOT, store_key),
+    )
+    return True
+
+
 def run_cloner(ctx: RoleContext) -> RoleResult:
     """Block stocker: vendor each resolved block's real source into the workspace.
 
@@ -1160,6 +1259,12 @@ def run_cloner(ctx: RoleContext) -> RoleResult:
         # is missing fails CLONER honestly instead of being replaced by a fake.
         needs_rt = _shim_needs_runtime(source)
         ctx.workspace.copy_tree(source, Path("vendor") / "blocks" / bid)
+        if _emit_adapter_for_manifest_only_block(ctx, bid, source):
+            # The adapter imports app.blocks, so it needs the runtime slice
+            # exactly as a Store-written shim does.
+            needs_rt = _shim_needs_runtime(
+                ctx.workspace.workspace / "vendor" / "blocks" / bid
+            )
         from app.factory.build.network_posture import apply_p1_cloned_block
 
         if apply_p1_cloned_block(ctx.workspace, bid):
