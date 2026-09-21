@@ -63,7 +63,12 @@ jobs:
   backend:
     name: Backend (pytest)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25, not 15. The suite alone is ~9.5 min (3,279 tests) before checkout,
+    # pip install and the Store clone; at 15 the job was CANCELLED at 15m16s
+    # on #547 with no test red, which reads as a failure and blocks the merge.
+    # A limit the healthy suite cannot fit inside measures the runner, not
+    # the code. Still bounded, so a genuine hang is still killed.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend

@@ -271,7 +271,7 @@
       "version": "1.0.0"
     },
     "contract_retrieval": {
-      "content_hash": "sha256:7e502c27fe647482c1607108595a7ab3b6393970b4f7d5c1f7fe978d6fdca216",
+      "content_hash": "sha256:6bcf290661c2709f2b44607b3a028bf21d4ab683db7ae97f7060d84a8181ef08",
       "id": "contract_retrieval",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
@@ -337,7 +337,7 @@
       "version": "1.0.0"
     },
     "drawing_qto": {
-      "content_hash": "sha256:6c65cad047b38eb92dedcdd503497ab3a8516b2f43b61f29ec555a42fdef17a2",
+      "content_hash": "sha256:e6b2220f1e6a51fd3ee55483fb8738c17ea39643797daecdc72eff803e6c9545",
       "id": "drawing_qto",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
@@ -1186,6 +1186,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "ba5810f56b930d88f2933d0c2fa88fffb4e2e6e3"
+    "sha": "930519e090281cfe859aafb830c725eece24f98b"
   }
 }
