@@ -142,3 +142,18 @@ def test_product_ci_imports_the_app_with_an_empty_environment():
     runs = [str(s.get("run")) for j in doc["jobs"].values() for s in j.get("steps", [])]
 
     assert any("env -i" in r and 'import app.main' in r for r in runs), runs
+
+
+def test_f3_judges_only_a_top_level_declared_stub():
+    """Live: TESTER red on "project_knowledge_grounding: declared stub must be
+    ok:true and name blocks_unavailable". A capability whose result merely
+    CONTAINS a stubbed block (nested in its block list) was held to the
+    declared-stub shape. Only a response that declares itself a stub at the
+    top level is judged; nested stubs and ok:false stay allowed here."""
+    import inspect
+
+    from app.factory.build import roles_handlers
+
+    src = inspect.getsource(roles_handlers)
+    assert "elif 'blocks_unavailable' in body:" in src
+    assert "str(body.get('result'))" not in src
