@@ -46,7 +46,7 @@ def _store():
         # pipeline and must not read as a pass.
         if os.getenv("CI"):
             pytest.fail(message)
-        pytest.skip(message)
+        pytest.skip(reason=message)
     return root
 
 
