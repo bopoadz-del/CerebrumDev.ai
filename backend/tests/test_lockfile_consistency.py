@@ -252,3 +252,65 @@ def test_automerge_does_not_inspect_lockfiles():
             assert "package-lock.json" not in run_code
             assert "check_lockfile_consistency" not in run_code
             assert "actions/checkout" not in str(step.get("uses") or "")
+
+
+# ── the dependabot exemption ───────────────────────────────────────────────
+
+
+_DEPENDABOT = "dependabot[bot]"
+
+
+def _lockfile_steps():
+    """Every ci.yml step that runs the checker, plus its ``if`` expression."""
+    found = []
+    for job_id, job in (_ci_doc().get("jobs") or {}).items():
+        for step in job.get("steps") or []:
+            if "check_lockfile_consistency.py" in str(step.get("run") or ""):
+                found.append((job_id, step))
+    return found
+
+
+def test_the_exemption_is_narrow_and_keyed_to_the_pr_author():
+    """dependabot bumps a manifest and cannot write the lock, so every bump PR
+    was red on this step alone. The exemption is the owner's call; this test
+    is the fence around it -- widening that ``if`` to skip the gate for
+    everyone is the failure mode, and would otherwise pass unnoticed.
+
+    Keyed to the PR AUTHOR, not ``github.actor``: actor is whoever triggered
+    the latest event, so a human clicking "re-run failed checks" on a
+    dependabot PR would turn it red again.
+    """
+    steps = _lockfile_steps()
+    assert steps, "ci.yml no longer runs check_lockfile_consistency.py at all"
+
+    for job_id, step in steps:
+        condition = str(step.get("if") or "").strip()
+        assert condition, (
+            f"{job_id}: the lockfile step lost its condition; it now runs for "
+            "dependabot too and every bump PR goes red again"
+        )
+        assert condition == (
+            f"github.event.pull_request.user.login != '{_DEPENDABOT}'"
+        ), f"{job_id}: unexpected condition on the lockfile gate: {condition!r}"
+
+
+def test_a_human_pr_is_still_gated():
+    """The exemption must not have become a skip for everybody. Evaluated, not
+    eyeballed: the condition is exactly one inequality on one login, so any
+    author that is not dependabot still runs the checker."""
+    for job_id, step in _lockfile_steps():
+        condition = str(step.get("if") or "")
+        login = condition.split("!=")[-1].strip().strip("'\"")
+        assert login == _DEPENDABOT, f"{job_id}: exempts {login!r}, not dependabot"
+        # A second exempted actor would need a second clause.
+        assert "||" not in condition and "&&" not in condition, (
+            f"{job_id}: the exemption grew a clause: {condition!r}"
+        )
+
+
+def test_both_gate_sites_carry_the_exemption():
+    """The checker runs in two places -- its own job and a step inside the
+    already-required "Backend (pytest)" check. Exempting one leaves the bump
+    PR red on the other, which is how this was first noticed."""
+    jobs = {job_id for job_id, _ in _lockfile_steps()}
+    assert {"lockfile-consistency", "backend"} <= jobs, jobs
