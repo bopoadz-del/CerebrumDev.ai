@@ -294,6 +294,12 @@
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
+    "datacentre_reasoning": {
+      "content_hash": "sha256:375ae090675821faca0a5038d5dbf38c3e9449aad00326ae00d893a9b72d3208",
+      "id": "datacentre_reasoning",
+      "source": "cerebrum-blocks",
+      "version": "1.0.0"
+    },
     "dexpi_ingest": {
       "content_hash": "sha256:4ea8fa016b65370491e8fcb5ff4977cfb227f4a8fc1c1f93ed33771635e3dfa3",
       "id": "dexpi_ingest",
@@ -1180,6 +1186,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "08c2724b85be1d8b07968818d35221775d15b6dd"
+    "sha": "ba5810f56b930d88f2933d0c2fa88fffb4e2e6e3"
   }
 }

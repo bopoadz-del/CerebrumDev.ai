@@ -17,6 +17,22 @@ jobs:
   # bump with no lock delta. Automerge arms `gh pr merge --auto` and does
   # not inspect lockfiles — a red CI check is what blocks the merge.
   # Lock-only and manifest+lock are OK. This job is not continue-on-error.
+  #
+  # EXEMPTION (owner's call, 2026-09-21): dependabot cannot satisfy this gate.
+  # It bumps the manifest and never writes the lock, so every bump PR was red
+  # by construction -- #533 #534 #537 #538 all failed on this step alone, 8
+  # other checks green. The exemption is deliberately narrow -- one login --
+  # so a human PR moving a manifest without its lock still fails, which is the
+  # case the gate was written for.
+  #
+  # The predicate is the PR AUTHOR, not github.actor: actor is whoever
+  # triggered the latest event, so a human clicking "re-run failed checks" on
+  # a dependabot PR would have turned it red again.
+  #
+  # WHAT IT COSTS: a merged bump can now leave requirements.txt and
+  # requirements.lock disagreeing, and the install resolves from the lock --
+  # so the bump may not take effect. Regenerating the lock after a batch of
+  # bumps is a manual step that nothing here enforces.
   lockfile-consistency:
     name: Lockfile consistency
     runs-on: ubuntu-latest
@@ -27,12 +43,22 @@ jobs:
           fetch-depth: 0
 
       - name: Fail if a manifest moved without its lockfile
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         run: |
           set -euo pipefail
           git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
           python3 scripts/check_lockfile_consistency.py \
             --base "${{ github.event.pull_request.base.sha }}" \
             --head HEAD
+
+      # Says so out loud rather than reporting a silent green: a reviewer
+      # looking at why this passed sees that it was skipped, not that it held.
+      - name: Lockfile gate exempted for dependabot
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: |
+          echo "SKIPPED: dependabot bumps the manifest and cannot write the lock."
+          echo "requirements.txt and requirements.lock may disagree on this PR."
+          echo "Regenerate the lock after merging a batch of bumps."
 
   backend:
     name: Backend (pytest)
@@ -55,7 +81,11 @@ jobs:
       # newly named job is not the only gate while branch protection catches up.
       # Git-based, not the pulls API: GITHUB_TOKEN gets
       # "Resource not accessible by integration" (403) on that endpoint here.
+      # Exempted for dependabot in step with the standalone job above; see the
+      # EXEMPTION note there for what it costs. Both sites must carry it or the
+      # bump PR stays red on whichever one does not.
       - name: Fail if a manifest moved without its lockfile
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         working-directory: .
         run: |
           set -euo pipefail

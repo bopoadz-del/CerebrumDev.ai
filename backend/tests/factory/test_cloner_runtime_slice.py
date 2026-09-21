@@ -1044,3 +1044,150 @@ def test_cloner_rewrites_workflow_child_constructors_and_result_key(tmp_path):
     assert body["results"][0]["block"] == "database"
     assert "hal_block" not in str(body)
 
+
+
+# ── what the slice scan counts as a dependency ─────────────────────────────
+#
+# All four below come from one live CLONER refusal against the real Store:
+#
+#     CLONER failed: runtime slice needs app/core/redline.py which does not
+#     exist in the Store checkout
+#
+# That one was true -- app/blocks/ocr.py had been copied into the Store
+# without the two app/core modules it imports, so the block could not read a
+# single pixel and the clone was right to refuse. Walking the whole 136-block
+# registry afterwards turned up three MORE refusals that were not true, each a
+# different way of mis-reading what a dependency is.
+
+
+def test_a_core_dependency_may_be_a_package_not_only_a_module(tmp_path):
+    """``app.core.rag`` is app/core/rag/{__init__,retriever}.py in the real
+    Store. The core loop demanded rag.py and failed the clone of every block
+    that touches retrieval, while the block loop directly above it had always
+    accepted a package. One resolver disagreeing with the other about what a
+    module is IS the defect."""
+    store = _faux_store(tmp_path)
+    rag = store / "app" / "core" / "rag"
+    (rag / "sub").mkdir(parents=True)
+    (rag / "__init__.py").write_text(
+        "from .retriever import retrieve\n", encoding="utf-8"
+    )
+    (rag / "retriever.py").write_text(
+        "def retrieve(q):\n    return [q]\n", encoding="utf-8"
+    )
+    (rag / "sub" / "__init__.py").write_text("DEPTH = 2\n", encoding="utf-8")
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        _GREETING
+        + textwrap.dedent(
+            """
+            def search(q):
+                from app.core.rag.retriever import retrieve
+                return retrieve(q)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+
+    # Copied as a PACKAGE. Written as a flat "rag.py" it would be an empty
+    # file, turning a resolved slice back into a ModuleNotFoundError on the
+    # customer's machine -- a worse failure than refusing the clone.
+    vendored = ws.destination / "vendor" / "cerebrum" / "core" / "rag"
+    assert (vendored / "__init__.py").is_file()
+    assert (vendored / "retriever.py").is_file()
+    assert (vendored / "sub" / "__init__.py").is_file(), "nested package dropped"
+    assert not (vendored.parent / "rag.py").exists()
+
+    probe = "from vendor.cerebrum.core.rag import retrieve; assert retrieve('x') == ['x']"
+    proc = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(ws.destination),
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_a_submodule_imported_from_app_blocks_is_vendored_not_looked_up(tmp_path):
+    """``from app.blocks import _knowledge as kb`` imports a SUBMODULE.
+
+    app/blocks/_knowledge.py is a shared helper no registry entry points at,
+    so the class lookup refused construction_advisor with "the Store registry
+    maps no block to that class". Two bugs in one line: the alias was never
+    stripped, so the lookup key was the whole string ``_knowledge as kb``.
+    """
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "_knowledge.py").write_text(
+        "def search_knowledge(q, top_k=5):\n    return [q] * top_k\n", encoding="utf-8"
+    )
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        "from app.blocks import _knowledge as kb\n"
+        + _GREETING
+        + textwrap.dedent(
+            """
+            def lookup(q):
+                return kb.search_knowledge(q, top_k=2)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    ws, result = _clone(tmp_path, store)
+    assert result.ok, result.detail
+    assert (
+        ws.destination / "vendor" / "cerebrum" / "blocks" / "_knowledge.py"
+    ).is_file()
+
+
+def test_a_module_named_only_in_a_comment_or_a_string_is_not_a_dependency(tmp_path):
+    """The real one: action_contract/registry.py documents an OPTIONAL plugin
+    namespace in a comment and names it in a constant --
+
+        DOMAINS_PACKAGE = "app.blocks.domains"
+
+    -- which pkgutil discovers when present. The scan demanded the package
+    exist and failed medical_ehr_connector's clone over prose.
+    """
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        _GREETING
+        + textwrap.dedent(
+            '''
+            # optional, discovered at runtime: app.blocks.domains.<kit>
+            DOMAINS_PACKAGE = "app.blocks.domains"
+            HELP = """see app.core.nonexistent for details"""
+            '''
+        ),
+        encoding="utf-8",
+    )
+
+    ws, result = _clone(tmp_path, store)
+
+    assert result.ok, result.detail
+    assert not (ws.destination / "vendor" / "cerebrum" / "core" / "nonexistent.py").exists()
+
+
+def test_a_genuinely_missing_core_module_still_fails_the_clone(tmp_path):
+    """The guard on the three tests above: they must not have taught the scan
+    to shrug. A real import of a module the Store does not have is the live
+    app.core.redline case, and vendoring around it would ship a latent
+    ImportError to the customer instead of failing here, where it is cheap.
+    """
+    store = _faux_store(tmp_path)
+    (store / "app" / "blocks" / "greeting.py").write_text(
+        _GREETING
+        + textwrap.dedent(
+            """
+            def markup(path):
+                from app.core.redline import detect_redlines
+                return detect_redlines(path)
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RoleError, match=r"app/core/redline\.py"):
+        _clone(tmp_path, store)
