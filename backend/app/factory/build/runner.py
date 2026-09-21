@@ -172,6 +172,47 @@ def checkpoint_landed_capability(ctx: Any, capability_id: str) -> None:
         )
 
 
+_SPECS_DUMP = """
+import json, sys, typing
+sys.path.insert(0, ".")
+from app.models import MODELS
+kinds = {int: "int", float: "float", bool: "bool"}
+out = {}
+for cap, cls in MODELS.items():
+    try:
+        hints = typing.get_type_hints(cls)
+    except Exception:
+        hints = {}
+    c = dict(getattr(cls, "CONSTRAINTS", {}) or {})
+    out[cap] = {"entity": getattr(cls, "ENTITY", cap),
+                "fields": [{"name": n, "type": kinds.get(hints.get(n, str), "str"), **c.get(n, {})}
+                           for n in getattr(cls, "FIELDS", [])]}
+print(json.dumps(out))
+"""
+
+
+def _specs_from_product_models(workspace: Path) -> Dict[str, Any]:
+    """``model_specs`` read back off the product's ``app/models.py``.
+
+    In a subprocess, because the product's package is also called ``app``.
+    Empty on any failure: re-entry then behaves as it always did.
+    """
+    import subprocess
+    import sys
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _SPECS_DUMP],
+            cwd=str(workspace), capture_output=True, text=True, timeout=180,
+        )
+        if proc.returncode != 0:
+            return {}
+        lines = (proc.stdout or "").strip().splitlines()
+        return json.loads(lines[-1]) if lines else {}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+
 def blueprint_hash(blueprint: Any) -> str:
     """Stable hash of the build's *inputs*.
 
@@ -441,6 +482,21 @@ class RoleRunner:
             )
             if blocks:
                 self.state.setdefault("vendored_blocks", blocks)
+        # An attached cerebrum-builds branch travels in the ledger's RESUMED
+        # note; every checkpoint and the Docker gate go back to that branch.
+        if self.ledger.exists() and "attached_branch" not in self.state:
+            for event in reversed(list(self.ledger.events())):
+                branch = (event.payload or {}).get("attached_branch")
+                if branch:
+                    self.state["attached_branch"] = str(branch)
+                    break
+        # Specs are in-memory state and die with the process. A re-entered run
+        # reads them back off the product's own models, so TESTER samples the
+        # contract WRITER actually shipped rather than an empty spec.
+        if not self.state.get("model_specs") and (self.workspace / "app" / "models.py").is_file():
+            specs = _specs_from_product_models(self.workspace)
+            if specs:
+                self.state["model_specs"] = specs
         lock_path = self.workspace / "blocks.lock.json"
         if lock_path.is_file() and "lock" not in self.state:
             try:
@@ -487,6 +543,40 @@ class RoleRunner:
             return log.is_file() and log.stat().st_size > 0
         except Exception:  # noqa: BLE001 -- when unsure, the old safe wipe
             return False
+
+    def _cycle_events(self) -> list:
+        """Ledger events since the current cycle opened."""
+        events = list(self.ledger.events()) if self.ledger.exists() else []
+        for index in range(len(events) - 1, -1, -1):
+            if events[index].kind is EventKind.PILOT_OPENED:
+                return events[index + 1 :]
+        return events
+
+    def _rework_rounds_this_cycle(self) -> int:
+        return sum(1 for e in self._cycle_events() if e.kind is EventKind.REWORK)
+
+    def _last_rework_failures(self) -> list:
+        """Failure names that triggered the most recent rework round."""
+        for event in reversed(self._cycle_events()):
+            if event.kind is EventKind.REWORK:
+                return list((event.payload or {}).get("failure_names") or [])
+        return []
+
+    def _factory_test_files(self) -> list:
+        """Test files TESTER itself wrote -- the tests the WRITER may not edit.
+
+        From this run's state, else the ledger (a resume, or a pilot cycle
+        that kept the suite), so ownership survives a process restart.
+        """
+        files = self.state.get("factory_test_files")
+        if files:
+            return list(files)
+        events = list(self.ledger.events()) if self.ledger.exists() else []
+        for event in reversed(events):
+            recorded = (event.payload or {}).get("factory_test_files")
+            if recorded:
+                return list(recorded)
+        return []
 
     def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
         """Run the role then its gate. Raises RoleError / AuthorityError up."""
@@ -621,6 +711,23 @@ class RoleRunner:
                 )
             shutil.rmtree(staging, ignore_errors=True)
         self._absorb(result)
+
+        if role is BuildRole.TESTER:
+            # G1: remember which test files the FACTORY wrote, so a failure in
+            # one of them is routed to the Factory and not to a writer rework.
+            written = sorted(
+                str(rel).replace("\\", "/")
+                for rel in (getattr(ws, "written", None) or [])
+                if str(rel).replace("\\", "/").startswith("tests/")
+            )
+            if written:
+                self.state["factory_test_files"] = written
+                self.ledger.append(
+                    EventKind.NOTE,
+                    role=role,
+                    detail=f"TESTER wrote {len(written)} test file(s)",
+                    payload={"factory_test_files": written},
+                )
 
         if role is BuildRole.CLONER:
             for bid in result.vendored_blocks:
@@ -1163,7 +1270,10 @@ class RoleRunner:
                 )
 
         done = self.ledger.completed_roles()
-        rework_used = 0
+        # G2: a resume does NOT reset the rework counter. Rounds already spent
+        # in this cycle stay spent, so a re-entered run cannot buy a fresh
+        # budget to repeat what already failed.
+        rework_used = self._rework_rounds_this_cycle()
         work_list: Sequence[str] = ()
         collected: list[str] = []
 
@@ -1303,6 +1413,30 @@ class RoleRunner:
                     )
 
                 if verdict.ok:
+                    # R3: an attached branch is checkpointed after every
+                    # passed phase -- phase-forward commits only -- so the
+                    # branch never lags the run it belongs to.
+                    attached = str(self.state.get("attached_branch") or "")
+                    if attached:
+                        from app.factory.build.branch_attach import checkpoint
+
+                        try:
+                            sha = checkpoint(
+                                self.workspace, attached, f"factory: {role.value} passed"
+                            )
+                        except Exception as exc:  # noqa: BLE001 -- named, never silent
+                            return self._finish(
+                                Outcome.FAILED_GATE,
+                                f"CHECKPOINT_FAILED after {role.value}: {exc}",
+                                phase=role,
+                                rework=rework_used,
+                            )
+                        self.ledger.append(
+                            EventKind.NOTE,
+                            role=role,
+                            detail=f"CHECKPOINT {role.value} -> {attached}@{sha[:7]}",
+                            payload={"checkpoint": sha, "attached_branch": attached},
+                        )
                     done.add(role)
                     work_list = ()
                     index += 1
@@ -1355,15 +1489,24 @@ class RoleRunner:
                             dispatch_store_gate,
                         )
 
-                        pushed = push_workspace(
-                            self.workspace,
-                            env=os.environ,
-                            session_id=str(self.state.get("session_id") or ""),
-                        )
+                        attached = str(self.state.get("attached_branch") or "")
+                        if attached:
+                            # R3: an attached build's Docker gate runs on its
+                            # OWN branch, never a new sibling.
+                            from app.factory.build.branch_attach import checkpoint
+
+                            checkpoint(self.workspace, attached, "factory: hand off to store-gate")
+                            gate_branch = attached
+                        else:
+                            gate_branch = push_workspace(
+                                self.workspace,
+                                env=os.environ,
+                                session_id=str(self.state.get("session_id") or ""),
+                            ).branch
                         # App-token pushes do not trigger workflow runs;
                         # dispatch the store-gate explicitly or the handoff
                         # waits forever.
-                        dispatch_store_gate(pushed.branch, env=os.environ)
+                        dispatch_store_gate(gate_branch, env=os.environ)
                         self.ledger.append(
                             EventKind.NOTE,
                             role=role,
@@ -1415,6 +1558,52 @@ class RoleRunner:
                         findings=verdict.findings,
                     )
 
+                # G1: route by OWNER. Only a product-code failure can be fixed
+                # by a WRITER rework; the writer is forbidden to edit tests/.
+                from app.factory.build import failure_owner
+
+                owned = failure_owner.classify(verdict, self._factory_test_files())
+                if owned["owner"] != failure_owner.PRODUCT:
+                    label = (
+                        "FACTORY_FAULT"
+                        if owned["owner"] == failure_owner.FACTORY
+                        else "ENVIRONMENT_FAULT"
+                    )
+                    names = ", ".join(owned["tests"]) or verdict.detail
+                    where = f" (generator {owned['generator']})" if owned["generator"] else ""
+                    self.ledger.append(
+                        EventKind.NOTE,
+                        role=role,
+                        detail=f"{label}: {names}{where}",
+                        payload={
+                            "owner": owned["owner"],
+                            "tests": owned["tests"],
+                            "generator": owned["generator"],
+                            "rework": rework_used,
+                            "writer_dispatched": False,
+                        },
+                    )
+                    return self._finish(
+                        Outcome.FAILED_GATE,
+                        f"{label}: {names}{where}",
+                        phase=role,
+                        rework=rework_used,
+                        findings=verdict.findings,
+                    )
+
+                # G5: the same failing check/test on two consecutive rounds
+                # stops the run. Never a third attempt at the same thing.
+                current = failure_owner.failure_names(verdict)
+                again = failure_owner.repeated(self._last_rework_failures(), current)
+                if again:
+                    return self._finish(
+                        Outcome.FAILED_GATE,
+                        "SAME_FAILURE_TWICE: " + ", ".join(again),
+                        phase=role,
+                        rework=rework_used,
+                        findings=verdict.findings,
+                    )
+
                 if rework_used >= self.budget.max_rework:
                     return self._finish(
                         Outcome.FAILED_BUDGET_SPENT,
@@ -1431,7 +1620,7 @@ class RoleRunner:
                     EventKind.REWORK,
                     role=REWORK_TARGET,
                     detail=f"round {rework_used}: {verdict.detail}",
-                    payload={"findings": list(verdict.findings)},
+                    payload={"findings": list(verdict.findings), "failure_names": current},
                 )
                 # Send the WRITER back round. Its earlier pass no longer counts.
                 done.discard(REWORK_TARGET)

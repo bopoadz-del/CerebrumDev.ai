@@ -247,6 +247,18 @@ async def _stream_response(session_id: str, user_message: str) -> AsyncGenerator
         # ("Blueprint drafted... Blueprint drafted..."). `info` has no card
         # renderer, so info replies stream as deltas only.
 
+        # R1: a pasted cerebrum-builds session link resumes THAT build, from
+        # where it stopped. Checked first so it can never fall through to a
+        # fresh generation or a new draft.
+        attached = platform_chat_flow.attach_from_link(state, user_message)
+        if attached is not None:
+            state.chat_history.append({"role": "assistant", "content": attached["summary"]})
+            state.updated_at = datetime.utcnow()
+            update_session(session_id, state)
+            async for ev in _yield_platform_result(attached):
+                yield ev
+            return
+
         # Feature-list edits stay deterministic (checkbox exclusions send
         # "remove capability X") so the Approve button cannot depend on the
         # model understanding a refinement command.

@@ -17,6 +17,8 @@ for another pass. Only a gate that cannot run at all raises.
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -461,6 +463,133 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
     return GateResult(ok=True, gate="workspace_compiles", detail="app/ compiles")
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+#: A collection error naming one of these is the build box missing a
+#: dependency, not the product being wrong.
+_MISSING_DEP = re.compile(r"No module named ['\"]?([A-Za-z0-9_.]+)")
+#: ``path/to/file.py:123:`` -- a traceback frame in pytest's long format.
+_FRAME = re.compile(r"(?m)^([^\s:][^:\n]*\.py):\d+:")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI.sub("", text or "")
+
+
+def _nodeid(workspace: Path, classname: str, name: str) -> tuple:
+    """(``tests/test_x.py::[Class::]name``, ``tests/test_x.py``) from JUnit."""
+    parts = [p for p in (classname or "").split(".") if p]
+    for cut in range(len(parts), 0, -1):
+        rel = "/".join(parts[:cut]) + ".py"
+        if (workspace / rel).is_file():
+            inner = parts[cut:] + [name]
+            return rel + "::" + "::".join(inner), rel
+    rel = "/".join(parts) + ".py" if parts else ""
+    return (rel + "::" + name) if rel else name, rel
+
+
+def failing_tests_from_junit(workspace: Path, junit_path: Path) -> Optional[List[Dict[str, str]]]:
+    """Every failed/errored test case in a JUnit report, or None if unreadable."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        root = ET.parse(str(junit_path)).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    out: List[Dict[str, str]] = []
+    for case in root.iter("testcase"):
+        problem = case.find("failure")
+        kind = "failure"
+        if problem is None:
+            problem = case.find("error")
+            kind = "error"
+        if problem is None:
+            continue
+        nodeid, rel = _nodeid(workspace, case.get("classname") or "", case.get("name") or "")
+        message = (problem.get("message") or problem.text or "").strip().splitlines()
+        frames = _FRAME.findall(problem.text or "")
+        out.append(
+            {
+                "nodeid": nodeid,
+                "file": rel,
+                "name": case.get("name") or "",
+                "kind": kind,
+                "message": (message[0] if message else "")[:300],
+                # The innermost frame of the traceback: where it actually broke.
+                "innermost": frames[-1].replace("\\", "/") if frames else "",
+                "text": (problem.text or "")[:4000],
+            }
+        )
+    return out
+
+
+def _verdict_from_junit(
+    workspace: Path, returncode: int, junit_path: Path, raw: str, gate_name: str
+) -> Optional[GateResult]:
+    """Classify a suite run from exit code + JUnit. None = fall back to stdout.
+
+    pytest exit codes: 0 passed, 1 tests failed, 2 interrupted (collection
+    errors), 3 internal error, 4 usage error, 5 no tests collected.
+    """
+    if returncode == 0:
+        return None  # the green path below reports the summary line
+    if "No module named pytest" in raw or "No module named 'pytest'" in raw:
+        return GateResult(
+            ok=False,
+            gate=gate_name,
+            reason="environment_fault",
+            detail="pytest is not installed on the build host -- an environment fault, not a failing test",
+            findings=["No module named pytest"],
+            payload={"returncode": returncode, "infrastructure": True},
+        )
+    failing = failing_tests_from_junit(workspace, junit_path)
+    if failing is None:
+        return None
+    if returncode in (3, 4) or (returncode == 2 and not failing):
+        return GateResult(
+            ok=False,
+            gate=gate_name,
+            reason="environment_fault",
+            detail=f"pytest exited {returncode} without running the suite -- an environment fault",
+            findings=[ln for ln in raw.splitlines() if ln.strip()][-8:] or ["pytest produced no output"],
+            payload={"returncode": returncode, "infrastructure": True},
+        )
+    # A collection error whose only cause is a third-party module missing on
+    # the build box is the environment, not the product.
+    if failing and all(f["kind"] == "error" for f in failing):
+        matches = [_MISSING_DEP.search(f["text"] or f["message"]) for f in failing]
+        missing = {m.group(1).split(".")[0] for m in matches if m}
+        local = {"app", "tests", "vendor", "scripts"}
+        if all(matches) and not (missing & local):
+            return GateResult(
+                ok=False,
+                gate=gate_name,
+                reason="environment_fault",
+                detail="missing dependency on the build host: " + ", ".join(sorted(missing)),
+                findings=[f"ERROR {f['nodeid']} - {f['message']}" for f in failing][:20],
+                payload={"returncode": returncode, "infrastructure": True,
+                         "missing_modules": sorted(missing)},
+            )
+    if not failing:
+        return None
+    findings = [f"FAILED {f['nodeid']} - {f['message']}" for f in failing][:20]
+    return GateResult(
+        ok=False,
+        gate=gate_name,
+        reason="suite_red",
+        detail=classify_suite_red(findings, raw),
+        findings=findings,
+        payload={
+            "returncode": returncode,
+            "failing_tests": [
+                {k: f[k] for k in ("nodeid", "file", "name", "kind", "message", "innermost")}
+                for f in failing
+            ],
+            "assertion_classes": suite_assertion_classes(findings, raw),
+        },
+    )
+
+
 def gate_suite_green(ctx: GateContext) -> GateResult:
     """TESTER: the code-phase suite runs and passes.
 
@@ -514,6 +643,15 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
 
     marker = (ctx.suite_marker or FACTORY_SUITE_MARKER_EXPR).strip() or FACTORY_SUITE_MARKER_EXPR
     gate_name = "pilot_green" if marker == "pilot" else "suite_green"
+    # G4: read RESULTS, never colours. Coloured summary lines ("\x1b[31mFAILED")
+    # defeated the startswith("FAILED") scrape below, so a genuinely failing
+    # test was reported as "the suite could not be RUN ... environment fault".
+    # Classification comes from the exit code + a JUnit report; stdout is only
+    # a fallback, and even then with escape codes stripped.
+    import tempfile
+
+    junit_dir = Path(tempfile.mkdtemp(prefix="suite-junit-"))
+    junit_path = junit_dir / "junit.xml"
     proc = ctx.run(
         [
             sys.executable,
@@ -522,12 +660,20 @@ def gate_suite_green(ctx: GateContext) -> GateResult:
             "tests",
             "-q",
             "--no-header",
+            "--color=no",
+            "-p",
+            "no:cacheprovider",
+            f"--junitxml={junit_path}",
             "-m",
             marker,
         ]
     )
-    raw = (proc.stdout or "") + (proc.stderr or "")
+    raw = _strip_ansi((proc.stdout or "") + (proc.stderr or ""))
     output = raw.splitlines()
+    verdict = _verdict_from_junit(ctx.workspace, proc.returncode, junit_path, raw, gate_name)
+    shutil.rmtree(junit_dir, ignore_errors=True)
+    if verdict is not None:
+        return verdict
     if proc.returncode != 0:
         findings = [
             ln for ln in output if ln.startswith(("FAILED", "ERROR", "E "))

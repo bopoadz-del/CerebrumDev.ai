@@ -1303,11 +1303,15 @@ def start_fresh_generation(
             "build": st,
         }
 
-    from app.factory.build_jobs import next_fresh_output
+    from app.factory.build_jobs import next_fresh_output, reattach_point
 
     prior = _generation_output_dir(state, output_root)
     base = prior or _session_output(state.session_id, bp.product_id, output_root)
-    out = next_fresh_output(base)
+    # G2: a failed run whose workspace is intact and whose COLLECTOR/CLONER/
+    # WRITER passed is RE-ENTERED, not rebuilt. start_runner_build records
+    # "RESUMED workspace=... phase=..." in that ledger.
+    phase, _why = reattach_point(base) if prior else (None, "no prior run")
+    out = Path(base) if phase is not None else next_fresh_output(base)
     prior_hash = (pd.generation or {}).get("inputs_hash")
     try:
         result = generate_product(
@@ -1357,6 +1361,83 @@ def start_fresh_generation(
         "stream_delta": False,
         "summary": summary,
         "build": result.get("build"),
+    }
+
+
+def attach_from_link(
+    state: Any,
+    message: str,
+    output_root: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    """R1-R3: a pasted cerebrum-builds session link resumes THAT build.
+
+    ``None`` when the message is not a build link at all -- normal chat
+    handling continues. A link to any other repo, or one naming no
+    ``build/sess_*`` branch, is refused with no state change. Never reaches
+    ``start_fresh_generation``: the branch is the workspace, and the run
+    starts at the first phase the branch does not prove done.
+    """
+    from app.factory.build.branch_attach import AttachError, attach, parse_build_link
+
+    try:
+        branch, refusal = parse_build_link(message)
+    except Exception as exc:  # noqa: BLE001 -- a lookup failure is a reply, not a crash
+        return {"ok": False, "sse": "info", "summary": f"Could not resolve that session: {exc}",
+                "stream_delta": True}
+    if refusal:
+        return {"ok": False, "sse": "info", "summary": refusal, "stream_delta": True}
+    if not branch:
+        return None
+
+    session_id = branch.split("/", 1)[1].split("-", 1)[0]
+    parent = (
+        Path(output_root) / "attached"
+        if output_root is not None
+        else factory_outputs_root() / "sessions" / session_id / "attached"
+    )
+    try:
+        got = attach(branch, parent)
+    except AttachError as exc:
+        return {"ok": False, "sse": "info", "summary": str(exc), "stream_delta": True}
+
+    bp = ProductBlueprint.model_validate(got.blueprint)
+    pd = state.product_design
+    pd.blueprint = got.blueprint
+    pd.blueprint_approved = True
+    if got.plan:
+        pd.plan = got.plan
+
+    from app.factory.build_jobs import start_runner_build
+
+    try:
+        result = start_runner_build(
+            bp,
+            got.workspace,
+            blocks_root=_blocks_root(),
+            cycle="code",
+            quota_account_id=getattr(state, "user_id", None),
+            tenant_identity=getattr(state, "user_id", None),
+            brief=str(getattr(pd, "brief", "") or "").strip(),
+            attach_branch=got.branch,
+            attach_sha=got.sha,
+            attach_passed=got.passed,
+        )
+    except CodeCliUnavailable as exc:
+        return _cli_unavailable_reply(pd, exc)
+    _record_generation(pd, result, triggered_by="build_link", resumed=True)
+    phase = (pd.generation or {}).get("resume_point") or "the next phase"
+    summary = f"Attached {session_id} @ {got.sha[:7]} — resuming at {phase}"
+    if result.get("already_running"):
+        summary = f"Attached {session_id} @ {got.sha[:7]} — already running at {phase}"
+    return {
+        "ok": True,
+        "sse": "generation",
+        "generation": pd.generation,
+        "plan": pd.plan,
+        "triggered_by": "build_link",
+        "resumed": True,
+        "stream_delta": False,
+        "summary": summary,
     }
 
 
