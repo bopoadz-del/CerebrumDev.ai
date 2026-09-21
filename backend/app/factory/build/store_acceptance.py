@@ -511,6 +511,10 @@ def render_github_ci() -> str:
         "        with:\n"
         '          python-version: "3.12"\n'
         "      - run: pip install -r requirements.txt -r requirements-dev.txt\n"
+        "      # Boot-clean: the platform imports with NO environment set. A\n"
+        "      # credential the operator supplies at deploy is never read at import.\n"
+        "      - name: import app.main with an empty environment\n"
+        '        run: env -i PATH="$PATH" HOME="$HOME" python -c "import app.main"\n'
         "      - run: python -m pytest tests\n"
         "  audit:\n"
         "    runs-on: ubuntu-latest\n"

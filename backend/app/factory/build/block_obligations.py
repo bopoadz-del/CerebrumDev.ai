@@ -189,10 +189,20 @@ def ensure_record_envelope(
     """
     if not spec:
         return spec, []
-    fields = [dict(f) for f in (spec.get("fields") or []) if isinstance(f, dict)]
+    raw_fields = [dict(f) for f in (spec.get("fields") or []) if isinstance(f, dict)]
+    # Credentials are ENV configuration, never request payload fields. A
+    # connector's settings reached a spec as fields and the generated route
+    # answered ``HTTP 422: Missing required field: <credential>`` on every
+    # POST. Every spec passes through here -- WRITER's routes and models,
+    # TESTER's samples -- so this is the one place to drop them. An ALL_CAPS
+    # name is a constant or configuration key by convention and never a
+    # record column; the miners additionally exclude anything the source
+    # reads from the environment (block_inputs.settings_names).
+    fields = [f for f in raw_fields if not str(f.get("name") or "").isupper()]
+    settings_dropped = len(fields) != len(raw_fields)
     have = {str(f.get("name")) for f in fields if f.get("name")}
     added: List[str] = []
-    status_changed = False
+    status_changed = settings_dropped
     if "reference" not in have:
         fields.append(dict(ENVELOPE_REFERENCE_FIELD))
         added.append("reference")

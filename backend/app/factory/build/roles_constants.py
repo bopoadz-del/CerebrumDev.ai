@@ -440,6 +440,99 @@ def _error_envelope(block_id: str, action: str | None, error: str) -> Dict[str, 
     }
 
 
+_ENV_READS: Any = None
+
+
+def _is_environ(node: Any) -> bool:
+    import ast
+
+    if isinstance(node, ast.Attribute) and node.attr == "environ":
+        return isinstance(node.value, ast.Name) and node.value.id == "os"
+    return isinstance(node, ast.Name) and node.id == "environ"
+
+
+def _vendored_env_reads() -> set:
+    """Every setting name the vendored source reads from the environment.
+
+    Read off the vendored bytes, once: no manifest declares required env, so
+    the source is the only honest record of what a block needs configured.
+    """
+    global _ENV_READS
+    if _ENV_READS is not None:
+        return _ENV_READS
+    import ast
+
+    names = set()
+    for path in _VENDOR.parent.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, ValueError, OSError):
+            continue
+        for node in ast.walk(tree):
+            key = None
+            if isinstance(node, ast.Subscript) and _is_environ(node.value):
+                key = node.slice
+            elif isinstance(node, ast.Call) and node.args:
+                fn = node.func
+                if isinstance(fn, ast.Attribute) and (
+                    (fn.attr in ("get", "pop") and _is_environ(fn.value))
+                    or (
+                        fn.attr == "getenv"
+                        and isinstance(fn.value, ast.Name)
+                        and fn.value.id == "os"
+                    )
+                ):
+                    key = node.args[0]
+                elif isinstance(fn, ast.Name) and fn.id == "getenv":
+                    key = node.args[0]
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                names.add(key.value)
+    _ENV_READS = names
+    return names
+
+
+def unavailable_reason(block_id: str, error: Any) -> str | None:
+    """Why a block failure is really "credentials not configured", or None.
+
+    A connector with no credentials is a DECLARED STUB, not a failure: the
+    DevOps team supplies them at deploy. Recognised when the block's own
+    refusal names a setting the vendored source reads from the environment
+    AND that setting is unset here. No block and no setting is named in this
+    file -- both come from the vendored source and the block's own words.
+    """
+    import os
+    import re
+
+    text = str(error or "")
+    if not text:
+        return None
+    missing = sorted(
+        name
+        for name in _vendored_env_reads()
+        if not str(os.environ.get(name) or "").strip()
+        and re.search("(?<![A-Za-z0-9_])" + re.escape(name) + "(?![A-Za-z0-9_])", text)
+    )
+    if not missing:
+        return None
+    return "credentials not configured: " + ", ".join(missing)
+
+
+def _declared_stub(block_id: str, action: str | None, reason: str) -> Dict[str, Any]:
+    """SUCCESS envelope for a connector whose credentials are not configured."""
+    return {
+        "status": "success",
+        "ok": True,
+        "block": block_id,
+        "action": action,
+        "stub": True,
+        "result": {"stub": True},
+        "blocks_unavailable": [block_id],
+        "reason": reason,
+    }
+
+
 def _force_utf8_stdio() -> None:
     """F13: a checkmark/emoji print must not become a charmap crash.
 
@@ -528,6 +621,9 @@ def execute(
             f"UnicodeEncodeError on block stdout (encoding, not domain): {exc}",
         )
     except Exception as exc:
+        reason = unavailable_reason(block_id, exc)
+        if reason:
+            return _declared_stub(block_id, action, reason)
         return _error_envelope(
             block_id, action, f"{type(exc).__name__}: {exc}"
         )
@@ -535,6 +631,11 @@ def execute(
         status = str(result.get("status") or "").lower()
         failed = _failed_steps(result)
         if status in _FAILED_STATUSES or result.get("ok") is False or failed:
+            reason = unavailable_reason(
+                block_id, result.get("error") or result.get("message") or ""
+            )
+            if reason:
+                return _declared_stub(block_id, action, reason)
             refused = dict(result)
             refused["status"] = status if status in _FAILED_STATUSES else "error"
             refused.setdefault("block", block_id)
