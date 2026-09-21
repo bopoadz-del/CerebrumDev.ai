@@ -317,6 +317,45 @@ def _product_id_of(events: Any, output_dir: Path | str) -> str:
 _RUN_SUFFIX_RE = re.compile(r"__run(\d+)$")
 
 
+#: What a failed run must already have finished for its workspace to be
+#: re-entered rather than rebuilt.
+_REATTACH_NEEDS = ("COLLECTOR", "CLONER", "WRITER")
+_REATTACH_FILES = ("app", "vendor/blocks", "blocks.lock.json")
+
+
+def reattach_point(output_dir: Path | str) -> tuple:
+    """``(phase, "")`` when a failed run can be RE-ENTERED, else ``(None, why)``.
+
+    G2: a resume continues, it never restarts. The old rule sent every
+    RUN_FAILED to ``next_fresh_output`` -- a new ``__runN`` workspace and a full
+    COLLECTOR -> CLONER -> WRITER pass -- so four resumes cost four builds. A
+    failed run whose ledger shows COLLECTOR, CLONER and WRITER passed, and whose
+    workspace is intact, is re-entered at its first non-passed phase instead.
+    Fresh only when the workspace is missing or the ledger is unreadable.
+    """
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger
+
+    out = Path(output_dir)
+    try:
+        ledger = BuildLedger(_ledger_path(out))
+        if not ledger.exists():
+            return None, "no ledger"
+        done = {role.value for role in ledger.completed_roles()}
+        point = ledger.resume_point()
+    except Exception as exc:  # noqa: BLE001 -- a torn ledger is not a resume source
+        return None, f"ledger unreadable: {type(exc).__name__}"
+    missing_phases = [p for p in _REATTACH_NEEDS if p not in done]
+    if missing_phases:
+        return None, "not passed: " + ", ".join(missing_phases)
+    missing_files = [rel for rel in _REATTACH_FILES if not (out / rel).exists()]
+    if missing_files:
+        return None, "workspace incomplete: missing " + ", ".join(missing_files)
+    if point is None:
+        return None, "nothing left to run"
+    return (point.value if isinstance(point, BuildRole) else str(point)), ""
+
+
 def next_fresh_output(requested: Path | str) -> Path:
     """Sibling workspace that does not reuse a terminal-failed ledger.
 
@@ -1235,8 +1274,16 @@ def start_runner_build(
     quota_account_id: Optional[str] = None,
     tenant_identity: Optional[str] = None,
     brief: str = "",
+    attach_branch: Optional[str] = None,
+    attach_sha: Optional[str] = None,
+    attach_passed: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Start a background runner build and return immediately.
+
+    ``attach_branch``/``attach_sha``: the workspace is a checkout of that
+    cerebrum-builds branch (branch_attach.attach). A new ledger records
+    COLLECTOR/CLONER/WRITER as passed on the branch's evidence, so the run
+    starts at the first phase the branch does not prove done.
 
     Returns the same keys the template path returns (``output_dir``,
     ``product_id``, ``inputs_hash``) so callers and stored session state do
@@ -1268,6 +1315,8 @@ def start_runner_build(
     # inputs_hash and resumes into it rather than starting a second run.
     ledger = BuildLedger(_ledger_path(out))
     fresh_workspace = False
+    fresh_reason = ""
+    had_ledger = ledger.exists()
     if ledger.exists():
         status = build_status(out)
         if status.get("state") == "building":
@@ -1330,19 +1379,33 @@ def start_runner_build(
                 out,
             )
         if status.get("state") == "failed":
-            # A terminal RUN_FAILED / rework-exhausted ledger is not a
-            # resume source. Same-hash generate would otherwise attach to
-            # the dead run and the Floor would stay CODING AGENT STOPPED.
-            fresh = next_fresh_output(out)
-            logger.info(
-                "terminal ledger at %s; starting fresh workspace at %s",
-                out,
-                fresh,
-            )
-            out = fresh
-            out.mkdir(parents=True, exist_ok=True)
-            ledger = BuildLedger(_ledger_path(out))
-            fresh_workspace = True
+            # G2: re-enter the SAME workspace when it is intact and its
+            # ledger shows COLLECTOR/CLONER/WRITER passed; fresh only when it
+            # is not, and the new ledger says why.
+            from app.factory.build.ledger import EventKind
+
+            phase, why = reattach_point(out)
+            if phase is not None:
+                ledger.append(
+                    EventKind.NOTE,
+                    detail=f"RESUMED workspace={out.name} phase={phase}",
+                    payload={"resumed": True, "workspace": out.name, "phase": phase},
+                )
+                logger.info("re-entering failed run at %s, phase %s", out, phase)
+            else:
+                prior = out.name
+                fresh = next_fresh_output(out)
+                logger.info(
+                    "terminal ledger at %s not re-enterable (%s); fresh workspace at %s",
+                    out,
+                    why,
+                    fresh,
+                )
+                out = fresh
+                out.mkdir(parents=True, exist_ok=True)
+                ledger = BuildLedger(_ledger_path(out))
+                fresh_workspace = True
+                fresh_reason = f"FRESH: prior workspace {prior} not re-enterable: {why}"
 
     try:
         raise_if_cli_session_unready()
@@ -1354,6 +1417,32 @@ def start_runner_build(
         ledger.start_run(
             product_id=getattr(blueprint, "product_id", "unknown"),
             inputs_hash=inputs_hash,
+        )
+        if fresh_workspace and fresh_reason:
+            from app.factory.build.ledger import EventKind
+
+            ledger.append(EventKind.NOTE, detail=fresh_reason, payload={"fresh": True})
+
+    if attach_branch:
+        from app.factory.build.authority import BuildRole
+        from app.factory.build.branch_attach import DERIVED_DONE
+        from app.factory.build.ledger import EventKind
+
+        short = (attach_sha or "")[:7]
+        if not had_ledger:
+            for name in tuple(attach_passed or DERIVED_DONE):
+                ledger.append(
+                    EventKind.GATE_PASSED,
+                    role=BuildRole[name],
+                    detail=f"derived from {attach_branch}@{short}: the branch tree proves it done",
+                    payload={"gate": "branch_evidence", "attached_branch": attach_branch, "sha": attach_sha},
+                )
+        point = ledger.resume_point()
+        phase = point.value if point is not None else "done"
+        ledger.append(
+            EventKind.NOTE,
+            detail=f"RESUMED branch={attach_branch} sha={short} phase={phase}",
+            payload={"resumed": True, "attached_branch": attach_branch, "sha": attach_sha, "phase": phase},
         )
 
     _write_quota_marker(out, quota_account_id)

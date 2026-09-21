@@ -741,6 +741,26 @@ def _offline_connect(self, address):
 socket.socket.connect = _offline_connect
 
 
+import pytest as _pytest  # noqa: E402
+
+
+@_pytest.fixture
+def client():
+    """A TestClient on the platform, shipped WITH the suite.
+
+    Any test that asks for ``client`` finds it here, so "fixture 'client' not
+    found" cannot happen whatever module the test lives in. A test module that
+    defines or imports its own ``client`` still wins -- pytest resolves the
+    nearest one first.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+
 def pytest_configure(config):
     """Register the factory vs pilot split. TESTER's lane is tests/** so
     this cannot live in a repo-root pytest.ini."""

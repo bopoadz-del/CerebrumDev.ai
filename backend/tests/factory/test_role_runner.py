@@ -353,8 +353,19 @@ def test_the_writer_still_cannot_write_the_tests_after_the_lane_widened(
 # -- failure is a failure ------------------------------------------------
 
 
-def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder):
-    """A tester that never goes green must end FAILED, never SUCCESS."""
+def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder, monkeypatch):
+    """A tester that never goes green must end FAILED, never SUCCESS.
+
+    Each round fails under a DIFFERENT name here: an identical failure twice
+    is stopped earlier by G5 (see the test below), and this one is about the
+    budget itself running out.
+    """
+    from itertools import count
+
+    from app.factory.build import failure_owner
+
+    rounds = count(1)
+    monkeypatch.setattr(failure_owner, "failure_names", lambda verdict: [f"round-{next(rounds)}"])
 
     def barren_tester(ctx):
         # Writes no tests at all; gate_suite_green fails this for real.
@@ -385,6 +396,27 @@ def test_rework_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder)
     assert status["state"] == "failed"
     assert status.get("pilot_ready") is False
     assert status.get("outcome") == Outcome.FAILED_BUDGET_SPENT.value
+
+
+def test_the_same_failure_twice_stops_before_the_budget_runs_out(blueprint, tmp_path, stub_coder):
+    """G5, through the real runner: an identical failure on two consecutive
+    rounds stops the run after ONE rework, naming it -- never a third attempt."""
+
+    def barren_tester(ctx):
+        return RoleResult(ok=True, detail="wrote nothing")
+
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.TESTER] = barren_tester
+
+    runner = RoleRunner(
+        blueprint, tmp_path / "build", roles=roles, budget=BuildBudget(max_rework=3)
+    )
+    outcome = runner.run()
+
+    assert not outcome.ok
+    assert outcome.detail.startswith("SAME_FAILURE_TWICE: ")
+    assert outcome.rework_used == 1
+    assert _phase_starts(runner.ledger, BuildRole.WRITER) == 2
 
 
 def test_wall_clock_budget_exhaustion_fails_the_run(blueprint, tmp_path, stub_coder):
