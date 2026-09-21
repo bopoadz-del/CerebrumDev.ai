@@ -731,10 +731,24 @@ async function ask() {
 """.replace("__TITLE__", title)
 
 
+def _with_deploy_time_settings(script: str) -> str:
+    """Paste the shared deploy-time-settings snippet into the rendered script.
+
+    After formatting, not inside the f-string: the snippet is full of braces.
+    The SAME text goes into tests/conftest.py (roles_constants._CONFTEST), so
+    the two places the Factory boots a product cannot come to disagree.
+    """
+    from app.factory.build.deploy_time_settings import SNIPPET
+
+    slot = "#<<DEPLOY_TIME_SETTINGS>>"
+    assert script.count(slot) == 1, "acceptance script lost its deploy-time slot"
+    return script.replace(slot, SNIPPET.strip("\n"))
+
+
 def render_acceptance_script() -> str:
     """Self-contained harness stamped into every pilot zip."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
-    return f'''#!/usr/bin/env python3
+    return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
 Authorship floor is the LAST line. HTTP 200 ok:false is not a pass.
@@ -1593,9 +1607,16 @@ def check_authorship_floor() -> Tuple[str, str]:
     return "FAIL", "authored=%s below need≥%s" % (authored, need)
 
 
+#<<DEPLOY_TIME_SETTINGS>>
+
+
 def main() -> int:
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
+    # Before anything imports ``app``: a credential the operator supplies at
+    # deploy time must not fail acceptance on the build box. Shared, word for
+    # word, with tests/conftest.py.
+    _stand_in_for_deploy_time_settings(ROOT)
     http, cm = _client()
     results: List[Tuple[str, str, str]] = []
     try:
@@ -1642,7 +1663,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-'''
+''')
 
 
 def stamp_acceptance_artifacts(

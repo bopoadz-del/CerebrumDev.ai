@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import re
 
+from app.factory.build.deploy_time_settings import (
+    SNIPPET as _DEPLOY_TIME_SETTINGS_SNIPPET,
+)
 
 #: Any reference to the Store's runtime packages, in code or import strings.
 _STORE_RUNTIME_RE = re.compile(r"\bapp\.(blocks|core)\b")
@@ -573,7 +576,7 @@ _SAMPLE_VALUES = {
     "email": "guest@example.com",
 }
 
-_CONFTEST = '''"""Test bootstrap for the generated platform.
+_CONFTEST_TEMPLATE = '''"""Test bootstrap for the generated platform.
 
 Puts the platform root on sys.path and points persistence at a scratch
 directory, so running the suite never touches a real data file.
@@ -600,6 +603,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
+
+# Settings the operator supplies at deploy time are not a build failure. This
+# must run BEFORE the first import of ``app`` below: a product that reads a
+# required credential at import would otherwise KeyError inside the factory's
+# own tests. Shared, word for word, with scripts/acceptance.py.
+#<<DEPLOY_TIME_SETTINGS>>
+_stand_in_for_deploy_time_settings(Path(__file__).resolve().parents[1])
 
 # Schema is versioned. connect() does not CREATE TABLE. Apply head so
 # model/route tests have tables; a missing revision fails the suite.
@@ -638,3 +648,12 @@ def pytest_configure(config):
         "pilot: Store-backed execute-all; excluded from the factory code-phase gate",
     )
 '''
+
+# The deploy-time-settings snippet is substituted in, not pasted into the
+# literal above: it carries quotes of its own, and it is the SAME text that
+# goes into scripts/acceptance.py -- one source, two consumers.
+_DEPLOY_TIME_SLOT = "#<<DEPLOY_TIME_SETTINGS>>"
+assert _CONFTEST_TEMPLATE.count(_DEPLOY_TIME_SLOT) == 1
+_CONFTEST = _CONFTEST_TEMPLATE.replace(
+    _DEPLOY_TIME_SLOT, _DEPLOY_TIME_SETTINGS_SNIPPET.strip("\n")
+)
