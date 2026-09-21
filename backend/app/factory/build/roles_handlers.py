@@ -339,6 +339,64 @@ def _pin_source(source: Path, blocks_root: Optional[Path]) -> tuple:
 # source is mechanically rewritten to the vendored name.
 
 
+def _code_only(text: str) -> str:
+    """``text`` with comments and string literals blanked out.
+
+    The slice scan below looks for ``app.core.X`` / ``app.blocks.X`` with a
+    regex, and a regex cannot tell an import from prose. Live:
+    ``app/blocks/core/action_contract/registry.py`` documents an OPTIONAL
+    plugin namespace in a comment and names it in a constant --
+
+        # ... discovered under this package as ``app.blocks.domains.<kit>``
+        DOMAINS_PACKAGE = "app.blocks.domains"
+
+    -- and the scan demanded ``app/blocks/domains/`` exist, failing the clone
+    of medical_ehr_connector over a package that is discovered with pkgutil
+    when present and simply absent otherwise.
+
+    Blanking rather than deleting keeps every line and column where it was, so
+    any message that quotes a line number still points at the right line.
+    """
+    try:
+        import io
+        import tokenize
+
+        pieces: List[str] = []
+        prev_end = (1, 0)
+        lines = text.splitlines(keepends=True)
+
+        def _line(row: int) -> str:
+            # tokenize emits a trailing NEWLINE/ENDMARKER on the row AFTER the
+            # last line of a file, so row-1 can run off the end.
+            return lines[row - 1] if 1 <= row <= len(lines) else ""
+
+        def _slice(start, end) -> str:
+            (sr, sc), (er, ec) = start, end
+            if sr == er:
+                return _line(sr)[sc:ec]
+            out = [_line(sr)[sc:]]
+            out.extend(_line(r + 1) for r in range(sr, er - 1))
+            out.append(_line(er)[:ec])
+            return "".join(out)
+
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.start > prev_end:
+                pieces.append(_slice(prev_end, tok.start))
+            raw = _slice(tok.start, tok.end)
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                # Keep newlines so line numbering survives a multi-line
+                # docstring; blank everything else.
+                pieces.append("".join(c if c == "\n" else " " for c in raw))
+            else:
+                pieces.append(raw)
+            prev_end = tok.end
+        return "".join(pieces)
+    except Exception:
+        # A file the tokenizer cannot read is not a reason to skip the scan;
+        # fall back to the raw text, which is what this always did.
+        return text
+
+
 def _rewrite_runtime_imports(text: str) -> str:
     text = re.sub(r"\bapp\.blocks\b", "vendor.cerebrum.blocks", text)
     return re.sub(r"\bapp\.core\b", "vendor.cerebrum.core", text)
@@ -624,10 +682,30 @@ def _closure_over_runtime(
 ) -> tuple:
     """(block modules, core modules) the vendored blocks transitively need.
 
-    Every referenced module must exist; a reference the closure cannot
+    A module reached by real code must exist; a reference the closure cannot
     resolve fails the clone here, with the module named, rather than passing
     the clone and surfacing as a ModuleNotFoundError on the customer's
     machine.
+
+    HARD vs SOFT references
+    -----------------------
+    The scan is textual, so it cannot simply trust every ``app.core.X`` it
+    sees -- nor simply ignore the ones inside strings. Both kinds are real in
+    the live Store:
+
+        _BLOCK_MODULE_NAME = "app.blocks.document_engine_block"  # load-bearing
+        DOMAINS_PACKAGE     = "app.blocks.domains"               # optional
+
+    The first is a synthetic name importlib-loads a sibling wrapper under; the
+    second is a pkgutil discovery namespace that is simply absent in this
+    checkout. Nothing about the strings tells them apart -- what tells them
+    apart is whether anything is there.
+
+    So a name reached by real code is HARD: it must resolve or the clone
+    fails. A name that appears only in a comment or a string literal is SOFT:
+    it is followed when it resolves and skipped when it does not. A SOFT
+    reference that is absent was refusing clones over prose; a HARD one that
+    is absent is the app.core.redline case and must still refuse.
     """
     blocks_dir = blocks_root / "app" / "blocks"
     core_dir = blocks_root / "app" / "core"
@@ -635,6 +713,8 @@ def _closure_over_runtime(
 
     block_mods: Dict[str, None] = {}
     core_mods: Dict[str, None] = {}
+    hard_blocks: set = set()
+    hard_cores: set = set()
     todo: List[str] = []
 
     for bid in block_ids:
@@ -649,6 +729,8 @@ def _closure_over_runtime(
                 f"({blocks_dir / '__init__.py'}) has no entry for it{extra}"
             )
         _store_key, (mod, _cls) = resolved
+        # A block the build asked for is hard by definition.
+        hard_blocks.add(mod)
         todo.append(mod)
 
     while todo:
@@ -674,6 +756,10 @@ def _closure_over_runtime(
             sources.append(path.read_text(encoding="utf-8", errors="replace"))
         elif shadow is not None:
             sources.append(shadow.read_text(encoding="utf-8", errors="replace"))
+        elif mod not in hard_blocks:
+            # Named only in a comment or a string and not on disk -- an
+            # optional discovery namespace, not a dependency. See the docstring.
+            continue
         else:
             raise RoleError(
                 f"runtime slice needs app/blocks/{mod}.py or "
@@ -681,20 +767,47 @@ def _closure_over_runtime(
                 "the Store checkout"
             )
         block_mods[mod] = None
-        for text in sources:
-            core_mods.update(dict.fromkeys(re.findall(r"\bapp\.core\.(\w+)\b", text)))
-            todo.extend(re.findall(r"\bapp\.blocks\.(\w+)\b", text))
+        for raw_text in sources:
+            # Reached by real code == HARD; named only in a comment or string
+            # literal == SOFT. See the docstring for why both are followed and
+            # only the first is fatal when absent.
+            text = _code_only(raw_text)
+            code_cores = re.findall(r"\bapp\.core\.(\w+)\b", text)
+            code_blocks = re.findall(r"\bapp\.blocks\.(\w+)\b", text)
+            hard_cores.update(code_cores)
+            hard_blocks.update(code_blocks)
+            all_cores = re.findall(r"\bapp\.core\.(\w+)\b", raw_text)
+            all_blocks = re.findall(r"\bapp\.blocks\.(\w+)\b", raw_text)
+            core_mods.update(dict.fromkeys(all_cores))
+            todo.extend(all_blocks)
             # Line-bounded on purpose: ``[\w,\s]+`` would swallow the next line.
             for cls in re.findall(r"from\s+app\.blocks\s+import\s+([^\n(#]+)", text):
-                for name in (c.strip() for c in cls.split(",")):
+                for imported in (c.strip() for c in cls.split(",")):
+                    # ``import X as Y`` binds Y; the thing to resolve is X.
+                    # Unstripped, the lookup key was the whole "X as Y" and
+                    # never matched anything.
+                    name = re.split(r"\s+as\s+", imported)[0].strip()
                     if not name or name in _REGISTRY_API_NAMES:
+                        continue
+                    # ``from app.blocks import _knowledge`` imports a SUBMODULE,
+                    # not a block class -- app/blocks/_knowledge.py is a shared
+                    # helper no registry entry points at. Vendor it as a module;
+                    # only fall through to the class lookup when no such file
+                    # exists.
+                    if (blocks_dir / f"{name}.py").is_file() or (
+                        blocks_dir / name / "__init__.py"
+                    ).is_file():
+                        hard_blocks.add(name)
+                        todo.append(name)
                         continue
                     ref = class_to_name.get(name)
                     if ref is None:
                         raise RoleError(
                             f"app/blocks/{mod} imports {name} from app.blocks "
-                            "but the Store registry maps no block to that class"
+                            "but the Store registry maps no block to that "
+                            f"class and app/blocks/{name}.py does not exist"
                         )
+                    hard_blocks.add(defs[ref][0])
                     todo.append(defs[ref][0])
 
     seen_core: Dict[str, None] = {}
@@ -703,16 +816,46 @@ def _closure_over_runtime(
         name = core_todo.pop()
         if name in seen_core:
             continue
+        # A core dependency may be a flat module OR a package -- app.core.rag
+        # is app/core/rag/{__init__,retriever}.py, and demanding rag.py failed
+        # the clone of every block that touches retrieval. The block loop above
+        # has always accepted both; this loop did not, and one resolver
+        # disagreeing with the other about what a module is IS the defect.
+        pkg_dir = core_dir / name
+        pkg_init = pkg_dir / "__init__.py"
         path = core_dir / f"{name}.py"
-        if not path.is_file():
+        is_pkg = pkg_init.is_file()
+        if is_pkg:
+            sources = [
+                py.read_text(encoding="utf-8", errors="replace")
+                for py in sorted(pkg_dir.rglob("*.py"))
+                if "__pycache__" not in py.parts
+            ]
+        elif path.is_file():
+            sources = [path.read_text(encoding="utf-8", errors="replace")]
+        elif name not in hard_cores:
+            continue  # SOFT and absent -- see the docstring.
+        else:
             raise RoleError(
-                f"runtime slice needs app/core/{name}.py which does not "
-                "exist in the Store checkout"
+                f"runtime slice needs app/core/{name}.py or "
+                f"app/core/{name}/__init__.py which does not exist in the "
+                "Store checkout"
             )
         seen_core[name] = None
-        text = path.read_text(encoding="utf-8", errors="replace")
-        core_todo.extend(re.findall(r"\bapp\.core\.(\w+)\b", text))
-        core_todo.extend(re.findall(r"^\s*from\s+\.(\w+)\s+import", text, re.MULTILINE))
+        for raw_text in sources:
+            text = _code_only(raw_text)
+            hard_cores.update(re.findall(r"\bapp\.core\.(\w+)\b", text))
+            core_todo.extend(re.findall(r"\bapp\.core\.(\w+)\b", raw_text))
+            # ``from .x import`` inside a PACKAGE names a sibling within that
+            # package, which the package copy already carries. Following it as
+            # a top-level app/core/x.py would demand a file that need not
+            # exist. Only a flat module's relative import means app.core.x.
+            if not is_pkg:
+                relative = re.findall(
+                    r"^\s*from\s+\.(\w+)\s+import", text, re.MULTILINE
+                )
+                hard_cores.update(relative)  # a real import statement
+                core_todo.extend(relative)
 
     return tuple(block_mods), tuple(seen_core)
 
@@ -839,8 +982,23 @@ def _vendor_runtime_slice(
         base / "core" / "__init__.py",
         '"""Vendored slice of the Store\'s app.core. Deliberately minimal."""\n',
     )
+    core_src_dir = blocks_root / "app" / "core"
     for name in sorted(core_mods):
-        source = (blocks_root / "app" / "core" / f"{name}.py").read_text(
+        # Packages as well as flat modules -- see _closure_over_runtime. A
+        # package copied as "<name>.py" would ship an empty file and turn a
+        # resolved slice back into a ModuleNotFoundError on the customer's box.
+        pkg_dir = core_src_dir / name
+        if (pkg_dir / "__init__.py").is_file():
+            for py in sorted(pkg_dir.rglob("*.py")):
+                if "__pycache__" in py.parts:
+                    continue
+                source = py.read_text(encoding="utf-8", errors="replace")
+                _write(
+                    base / "core" / name / py.relative_to(pkg_dir),
+                    _rewrite_runtime_imports(source),
+                )
+            continue
+        source = (core_src_dir / f"{name}.py").read_text(
             encoding="utf-8", errors="replace"
         )
         _write(base / "core" / f"{name}.py", _rewrite_runtime_imports(source))
