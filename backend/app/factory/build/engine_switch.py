@@ -53,8 +53,17 @@ _ENGINE: Optional[Any] = None
 
 
 def database_url() -> str:
-    """The operator's choice, or empty for the SQLite development default."""
-    return (os.environ.get("DATABASE_URL") or "").strip()
+    """The operator's choice, or empty for the SQLite development default.
+
+    Hosts hand out ``postgres://`` or ``postgresql://``. SQLAlchemy reads a
+    bare scheme as the psycopg2 driver, which this platform does not ship;
+    it declares psycopg (v3), so the scheme is pinned to that driver here.
+    """
+    url = (os.environ.get("DATABASE_URL") or "").strip()
+    for bare in ("postgres://", "postgresql://"):
+        if url.startswith(bare):
+            return "postgresql+psycopg://" + url[len(bare):]
+    return url
 
 
 def is_postgres() -> bool:

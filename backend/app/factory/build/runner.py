@@ -562,6 +562,30 @@ class RoleRunner:
                 return list((event.payload or {}).get("failure_names") or [])
         return []
 
+    def _refresh_factory_files(self) -> None:
+        from app.factory.build.factory_refresh import refresh_factory_files
+
+        name = str(
+            getattr(self.blueprint, "product_name", "")
+            or getattr(self.blueprint, "product_id", "")
+            or "Platform"
+        )
+        try:
+            changed = refresh_factory_files(self.workspace, name)
+        except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
+            self.ledger.append(
+                EventKind.NOTE,
+                detail=f"factory file refresh failed: {type(exc).__name__}: {exc}",
+                payload={"refresh_failed": True},
+            )
+            return
+        if changed:
+            self.ledger.append(
+                EventKind.NOTE,
+                detail="REFRESHED factory files from current templates: " + ", ".join(changed),
+                payload={"refreshed": changed},
+            )
+
     def _factory_test_files(self) -> list:
         """Test files TESTER itself wrote -- the tests the WRITER may not edit.
 
@@ -1276,6 +1300,13 @@ class RoleRunner:
         rework_used = self._rework_rounds_this_cycle()
         work_list: Sequence[str] = ()
         collected: list[str] = []
+
+        # A re-entered run (resume, or a pasted build link) carries the
+        # Factory files of the Factory that first built it. Re-render them
+        # from the current templates before TESTER judges the build, so a
+        # fixed Factory rule reaches every old branch. Coder files untouched.
+        if BuildRole.WRITER in done and BuildRole.TESTER not in done:
+            self._refresh_factory_files()
 
         index = 0
         while True:

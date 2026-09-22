@@ -2255,7 +2255,7 @@ def _render_main(product_name: str, vertical: str = "") -> str:
 #: vendored-dependency pass can dedupe against them instead of emitting a
 #: second, conflicting line for the same package.
 _RUNTIME_DISTRIBUTIONS = (
-    "fastapi", "uvicorn", "pydantic", "alembic", "sqlalchemy", "starlette",
+    "fastapi", "uvicorn", "pydantic", "alembic", "sqlalchemy", "starlette", "psycopg",
 )
 
 
@@ -2278,6 +2278,10 @@ def _render_requirements(vendored_deps: Optional[Dict[str, Any]] = None) -> str:
         "alembic>=1.13\n"
         "sqlalchemy>=2.0\n"
         "starlette>=0.37\n"
+        "# The Postgres driver app/db.py uses when the operator sets DATABASE_URL.\n"
+        "# Without it the variable is accepted and then cannot be dialled --\n"
+        "# postgres_boot_200 on the acceptance floor measures exactly that.\n"
+        "psycopg[binary]>=3.1\n"
     ) + render_dependency_lines(
         vendored_deps or {}, already=_RUNTIME_DISTRIBUTIONS
     )
