@@ -36,6 +36,7 @@ from app.factory.build.builds_push import (
 )
 
 NOT_A_BUILD_LINK = "Not a cerebrum-builds session link"
+STORE_GATE_PATH = ".github/workflows/store-gate.yml"
 DERIVED_DONE = ("COLLECTOR", "CLONER", "WRITER")
 
 _TREE_LINK = re.compile(
@@ -246,6 +247,17 @@ def checkpoint(workspace: Path, branch: str, message: str, env: Mapping[str, str
         if proc.returncode != 0:
             raise BuildsPushError(f"checkpoint clone failed: {(proc.stderr or '')[-300:]}")
         _sync_workspace_onto_tree(Path(workspace), tmp)
+        # The Store gate belongs to cerebrum-builds `main`, and a branch runs
+        # the copy IN ITS OWN TREE. Carry main's current gate onto every
+        # checkpoint, so a branch built under an older gate is judged by
+        # today's -- one gate for every build, not one per branch age.
+        fetched = _git(["fetch", "--quiet", "--depth=1", "origin", "main"], tmp)
+        if fetched.returncode == 0:
+            gate = _git(["show", "FETCH_HEAD:" + STORE_GATE_PATH], tmp)
+            if gate.returncode == 0 and gate.stdout:
+                target = tmp / STORE_GATE_PATH
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(gate.stdout.replace("\r\n", "\n").encode("utf-8"))
         _git(["add", "-A"], tmp)
         _git(["-c", f"user.email={GIT_EMAIL}", "-c", f"user.name={GIT_NAME}",
               "commit", "--allow-empty", "-q", "-m", message], tmp)
