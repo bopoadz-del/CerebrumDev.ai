@@ -122,22 +122,25 @@ jobs:
       # uses, read from the one place that pin lives. Before this, CI ran
       # entirely off Factory-local copies, which is how five always-ok estate
       # stubs shipped inside customer platforms without a single red test.
-      - name: Check out the Store at the pinned commit
+      # CI checks out the Store the same way the Factory resolves it: by
+      # asking the Store, not by reading a SHA out of a Factory source file.
+      # That regex was a fourth committed copy of the Store's identity -- it
+      # went stale with the constant, and it broke the moment the constant
+      # stopped being a literal. The branch is overridable so a release can
+      # still test against a fixed ref.
+      - name: Check out the Store
         working-directory: .
+        env:
+          STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
         run: |
-          PIN=$(python - <<'PYPIN'
-          import re, pathlib
-          src = pathlib.Path("backend/app/core/engine_discovery.py").read_text(encoding="utf-8")
-          print(re.search(r'DEFAULT_CEREBRUM_BLOCKS_REF\s*=\s*"([0-9a-f]{40})"', src).group(1))
-          PYPIN
-          )
-          echo "Store pin: $PIN"
+          echo "Store ref: $STORE_REF"
           git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
           cd "$RUNNER_TEMP/Cerebrum-Blocks"
           git remote add origin https://github.com/bopoadz-del/Cerebrum-Blocks.git
-          git fetch -q --depth 1 origin "$PIN"
+          git fetch -q --depth 1 origin "$STORE_REF"
           git checkout -q FETCH_HEAD
           test -d block_registry
+          echo "Store head: $(git rev-parse HEAD)  ($(ls block_registry | wc -l) blocks)"
           echo "CEREBRUM_BLOCKS_ROOT=$RUNNER_TEMP/Cerebrum-Blocks" >> "$GITHUB_ENV"
 
       - name: Run pytest suite
