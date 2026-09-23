@@ -15,7 +15,9 @@ from app.core.trial_limits import (
     TrialLimitExceeded,
     consume,
     quota_snapshot,
+    remaining_ok,
     require_within_limit,
+    trials_enforced,
 )
 
 
@@ -23,6 +25,10 @@ from app.core.trial_limits import (
 def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setenv("ACCOUNTS_DATABASE_URL", f"sqlite:///{tmp_path}/accounts.db")
     monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    # Quotas bind only where billing is configured -- a cap that says
+    # "subscribe to continue" with no checkout is a wall with no door. These
+    # tests are ABOUT the cap, so this deployment enforces it.
+    monkeypatch.setenv("TRIAL_LIMITS_ENFORCED", "1")
     yield
 
 
@@ -98,3 +104,45 @@ class TestExportGuard:
         with pytest.raises(HTTPException) as exc:
             _enforce_export_quota(account_id)
         assert exc.value.status_code == 429
+
+
+class TestTrialsBindOnlyWhereBillingExists:
+    """A quota says "subscribe to continue". With Stripe unconfigured there is
+    nothing to subscribe TO -- checkout answers 503 stripe_not_configured and
+    the webhook that marks an account active is inert -- so the owner's own
+    account ran out of generations with no way to buy more. The cap binds
+    where billing is configured, and an explicit env decides either way.
+    """
+
+    def _account(self):
+        return _trial_account()
+
+    def test_with_no_stripe_the_cap_does_not_bind(self, monkeypatch):
+        monkeypatch.delenv("TRIAL_LIMITS_ENFORCED", raising=False)
+        monkeypatch.setattr("app.core.stripe_billing.stripe_configured", lambda: False)
+        monkeypatch.setenv("TRIAL_GENERATION_LIMIT", "1")
+        account_id = self._account()
+
+        for _ in range(5):
+            require_within_limit(account_id, "generation")  # must not raise
+
+        assert remaining_ok(account_id, "generation") is True
+
+    def test_with_stripe_configured_the_cap_binds_again(self, monkeypatch):
+        monkeypatch.delenv("TRIAL_LIMITS_ENFORCED", raising=False)
+        monkeypatch.setattr("app.core.stripe_billing.stripe_configured", lambda: True)
+        monkeypatch.setenv("TRIAL_GENERATION_LIMIT", "1")
+        account_id = self._account()
+
+        require_within_limit(account_id, "generation")
+        with pytest.raises(TrialLimitExceeded):
+            require_within_limit(account_id, "generation")
+
+    def test_the_env_override_wins_in_both_directions(self, monkeypatch):
+        monkeypatch.setattr("app.core.stripe_billing.stripe_configured", lambda: False)
+        monkeypatch.setenv("TRIAL_LIMITS_ENFORCED", "1")
+        assert trials_enforced() is True
+
+        monkeypatch.setattr("app.core.stripe_billing.stripe_configured", lambda: True)
+        monkeypatch.setenv("TRIAL_LIMITS_ENFORCED", "0")
+        assert trials_enforced() is False

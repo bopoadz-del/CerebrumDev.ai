@@ -75,9 +75,37 @@ def _period(scope: str) -> str:
     return "lifetime"
 
 
+def trials_enforced() -> bool:
+    """Whether the free-trial quotas bind at all on this deployment.
+
+    A quota says "subscribe to continue". With Stripe unconfigured there is
+    nothing to subscribe TO -- checkout and portal answer 503
+    ``stripe_not_configured`` and the webhook that would mark an account
+    active is inert -- so the cap is a wall with no door: the owner's own
+    account runs out of generations and cannot buy more. Quotas therefore
+    bind only where billing is actually configured.
+
+    ``TRIAL_LIMITS_ENFORCED`` overrides either way (``1`` to enforce anyway,
+    ``0`` to keep them off even once Stripe is live).
+    """
+    override = (os.getenv("TRIAL_LIMITS_ENFORCED") or "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    try:
+        from .stripe_billing import stripe_configured
+
+        return bool(stripe_configured())
+    except Exception:  # noqa: BLE001 -- unreadable billing config is not a paywall
+        return False
+
+
 def _is_limited_account(account_id: Optional[str]) -> bool:
     """Quotas bind real accounts without an active subscription only."""
     if not account_id:
+        return False
+    if not trials_enforced():
         return False
     fields = accounts_store.subscription_fields(account_id)
     if fields is None:

@@ -60,6 +60,9 @@ def trial_client(tmp_path, monkeypatch):
     # Billing is a separate gate (402); keep it out of the way so a quota
     # regression cannot hide behind it.
     monkeypatch.setenv("BILLING_ENFORCEMENT", "0")
+    # Quotas bind only where billing is configured; these tests are about the
+    # quota itself, so this deployment enforces it.
+    monkeypatch.setenv("TRIAL_LIMITS_ENFORCED", "1")
     monkeypatch.setenv("ACCOUNTS_REQUIRE_VERIFIED_EMAIL", "0")
     monkeypatch.setenv("ARCHITECT_LLM_DRAFTING_ENABLED", "0")
 
