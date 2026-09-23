@@ -5,9 +5,18 @@ Supports two resolution paths:
 1. Local checkout via ``CEREBRUM_BLOCKS_ROOT`` or a sibling ``Cerebrum-Blocks``
    directory.
 2. Fetch-on-demand: when no local checkout exists, clone
-   ``CEREBRUM_BLOCKS_REPO`` at the pinned ref ``CEREBRUM_BLOCKS_REF`` into a
-   temp cache. The cache is keyed by ref so repeated packagings reuse the
-   checkout.
+   ``CEREBRUM_BLOCKS_REPO`` at the effective ref into a temp cache. The cache
+   is keyed by ref so repeated packagings reuse the checkout.
+
+The effective ref FOLLOWS THE STORE. The Factory is not a warehouse: what the
+Store publishes is what the Factory can build from, with no commit in between.
+So the default is the Store's live head, not a SHA typed into this file --
+that constant is only the floor for an environment that cannot reach the Store,
+and it goes stale by definition (it sat four days behind ``main`` while the
+shelf could not offer a pack the Store had already certified).
+
+``CEREBRUM_BLOCKS_REF`` still pins when a build must be reproducible, and
+``CEREBRUM_BLOCKS_TRACK=0`` makes the lock authoritative instead.
 """
 
 from __future__ import annotations
@@ -27,25 +36,102 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
     "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
 )
 
-# Pinned, known-good engine ref used when CEREBRUM_BLOCKS_REF is unset.
-# Must stay aligned with blocks.lock.json store.sha (Factory S07 pin).
-DEFAULT_CEREBRUM_BLOCKS_REF = "930519e090281cfe859aafb830c725eece24f98b"
+# The Store branch the Factory follows when nothing pins it.
+CEREBRUM_BLOCKS_BRANCH = os.getenv("CEREBRUM_BLOCKS_BRANCH", "main").strip() or "main"
+
+# Last-resort ref for an environment that cannot reach the Store at all: no
+# network, no git, and no lock to read. It is a floor, NOT the pin -- a commit
+# SHA typed into a source file is stale the moment the Store moves, and the
+# Factory then cannot see blocks the Store has already published. Live: this
+# constant sat four days behind `main` and the shelf could not offer the
+# marketplace_ops pack the Store had certified and signed.
+FALLBACK_CEREBRUM_BLOCKS_REF = "930519e090281cfe859aafb830c725eece24f98b"
+
+#: Kept for callers that import the old name. Same value, honest meaning.
+DEFAULT_CEREBRUM_BLOCKS_REF = FALLBACK_CEREBRUM_BLOCKS_REF
+
+#: Seconds a resolved Store head is reused before it is looked up again. The
+#: Store moves several times a day, not several times a second; without this
+#: every shelf read would be a network round trip.
+STORE_HEAD_TTL_SECONDS = 300.0
+
+_head_cache: dict = {"ref": None, "sha": None, "at": 0.0}
 
 
 class EngineDiscoveryError(Exception):
     """Raised when the engine checkout cannot be discovered or fetched."""
 
 
+def store_head_sha(branch: Optional[str] = None) -> Optional[str]:
+    """The Store's current head on *branch*, or ``None`` when unreachable.
+
+    ``git ls-remote`` against the Store, cached for ``STORE_HEAD_TTL_SECONDS``.
+    This is what makes the Factory follow the Store instead of a number
+    somebody has to remember to bump: the Store publishes, the Factory sees it.
+
+    Never raises and never blocks for long. An unreachable Store, a missing
+    git, a timeout -- all return ``None``, and the caller falls back to the
+    lock and then to the constant.
+    """
+    import time
+
+    ref = (branch or CEREBRUM_BLOCKS_BRANCH).strip()
+    now = time.monotonic()
+    if _head_cache["ref"] == ref and now - float(_head_cache["at"]) < STORE_HEAD_TTL_SECONDS:
+        return _head_cache["sha"]
+    sha: Optional[str] = None
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", _authenticated_repo_url(CEREBRUM_BLOCKS_REPO), f"refs/heads/{ref}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if result.returncode == 0:
+            first = (result.stdout or "").split()
+            if first and len(first[0]) == 40:
+                sha = first[0]
+        else:
+            logger.info(
+                "store head lookup failed for %s: %s",
+                ref,
+                _sanitize_stderr(result.stderr or "")[-200:],
+            )
+    except (OSError, subprocess.SubprocessError) as exc:  # no git, no network, timeout
+        logger.info("store head lookup unavailable (%s); falling back", type(exc).__name__)
+    _head_cache.update({"ref": ref, "sha": sha, "at": now})
+    return sha
+
+
+def tracking_enabled() -> bool:
+    """Whether the Factory follows the Store's head. ``CEREBRUM_BLOCKS_TRACK=0``
+    turns it off for a build that must resolve exactly what the lock records."""
+    flag = (os.getenv("CEREBRUM_BLOCKS_TRACK") or "").strip().lower()
+    return flag not in {"0", "false", "no", "off"}
+
+
 def _effective_ref() -> str:
     """Return the engine ref to use when fetching.
 
-    Prefers ``CEREBRUM_BLOCKS_REF``; then the Factory ``blocks.lock.json``
-    store SHA so a fetch cannot silently land on a different pin; then the
-    module default.
+    Order, most explicit first:
+
+    1. ``CEREBRUM_BLOCKS_REF`` -- an operator pinning a ref on purpose.
+    2. The Store's live head, unless ``CEREBRUM_BLOCKS_TRACK=0``. This is the
+       normal path: what the Store publishes is what the Factory builds from,
+       with no commit in between.
+    3. ``blocks.lock.json`` store SHA -- the last Store the Factory recorded,
+       for an environment that cannot reach it now.
+    4. The module fallback constant.
     """
     explicit = os.getenv("CEREBRUM_BLOCKS_REF")
     if explicit:
         return explicit
+    if tracking_enabled():
+        head = store_head_sha()
+        if head:
+            return head
     try:
         from app.factory.blocks_lock import load_lock_if_present
 
@@ -55,7 +141,7 @@ def _effective_ref() -> str:
             return sha
     except Exception:  # noqa: BLE001 — discovery must still have a default
         pass
-    return DEFAULT_CEREBRUM_BLOCKS_REF
+    return FALLBACK_CEREBRUM_BLOCKS_REF
 
 
 def _cache_dir() -> Path:

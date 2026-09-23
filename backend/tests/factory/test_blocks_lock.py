@@ -153,11 +153,12 @@ def test_committed_lock_lists_every_consumed_block():
 
     lock = load_lock(default_lock_path())
     assert lock["schema"] == "factory.blocks.lock.v1"
-    assert lock["store"]["sha"].startswith("930519e0")
-    ids = consumed_block_ids()
-    assert ids, "factory shelf is empty"
-    missing = [bid for bid in ids if bid not in lock["blocks"]]
-    assert not missing, f"consumed block(s) missing from lock: {missing}"
+    # Shape, not value: the lock records WHICH Store it was built from, and
+    # the Factory now follows the Store's head rather than this number. Naming
+    # a literal here made every Store move a code change in the Factory.
+    sha = lock["store"]["sha"]
+    assert len(sha) == 40 and set(sha) <= set("0123456789abcdef"), sha
+    assert consumed_block_ids(), "factory shelf is empty"
     for bid, rec in lock["blocks"].items():
         assert rec["id"] == bid
         assert rec["version"]
@@ -248,3 +249,83 @@ def test_update_lock_refresh_is_mechanical(tmp_path):
     assert lock["blocks"]["dashboard"]["content_hash"] == block_content_hash(
         store / "block_registry" / "dashboard"
     )
+
+
+class TestTheInventoryIsTheStores:
+    """The Factory reads what the Store publishes.
+
+    The committed lock is a snapshot of INTEGRITY, not the inventory. Treating
+    it as the membership list meant a block the Store had certified was
+    unbuildable until somebody regenerated and committed the lock -- live, the
+    twelve marketplace_ops blocks plus ``vendor_catalog``.
+    """
+
+    def test_a_store_block_the_lock_never_saw_is_locked_from_the_store(self, tmp_path):
+        from app.factory.blocks_lock import top_up_from_store
+
+        store = _store_with(tmp_path, "vendor_catalog", "CATALOG = []\n")
+        lock = {"schema": "factory.blocks.lock.v1", "blocks": {}}
+
+        merged = top_up_from_store(lock, store, consumed=["vendor_catalog"])
+
+        assert "vendor_catalog" in merged["blocks"]
+        entry = merged["blocks"]["vendor_catalog"]
+        assert entry["content_hash"] == block_content_hash(
+            store / "block_registry" / "vendor_catalog"
+        )
+        assert entry["source"] == "cerebrum-blocks"
+        assert merged["topped_up"] == ["vendor_catalog"]
+
+    def test_a_recorded_block_is_never_overwritten(self, tmp_path):
+        """Tamper detection is unchanged: only 'never met this block' moves."""
+        from app.factory.blocks_lock import top_up_from_store
+
+        store = _store_with(tmp_path, "analytics", "VALUE = 1\n")
+        recorded = "sha256:" + ("0" * 64)
+        lock = {
+            "schema": "factory.blocks.lock.v1",
+            "blocks": {
+                "analytics": {"id": "analytics", "version": "1.0.0", "content_hash": recorded}
+            },
+        }
+
+        merged = top_up_from_store(lock, store, consumed=["analytics"])
+
+        assert merged["blocks"]["analytics"]["content_hash"] == recorded
+        assert "topped_up" not in merged
+
+    def test_a_tampered_store_tree_still_fails_hard_after_a_top_up(self, tmp_path):
+        """The whole point of the lock survives: a changed tree is refused."""
+        from app.factory.blocks_lock import top_up_from_store
+
+        store = _store_with(tmp_path, "audit", "REAL = True\n")
+        lock = top_up_from_store(
+            {"schema": "factory.blocks.lock.v1", "blocks": {}}, store, consumed=["audit"]
+        )
+        assert "audit" in lock["blocks"]
+
+        (store / "block_registry" / "audit" / "block.py").write_text(
+            "REAL = False  # swapped\n", encoding="utf-8"
+        )
+
+        with pytest.raises(BlocksLockError, match="audit"):
+            assert_block_matches_lock("audit", store / "block_registry" / "audit", lock)
+
+    def test_a_block_in_neither_store_nor_mirror_is_left_for_the_gate_to_name(self, tmp_path):
+        from app.factory.blocks_lock import top_up_from_store
+
+        store = _store_with(tmp_path, "present", "X = 1\n")
+
+        merged = top_up_from_store(
+            {"schema": "factory.blocks.lock.v1", "blocks": {}},
+            store,
+            consumed=["present", "no_such_block"],
+        )
+
+        assert "present" in merged["blocks"]
+        assert "no_such_block" not in merged["blocks"]
+
+    def test_no_lock_at_all_stays_none(self):
+        from app.factory.blocks_lock import top_up_from_store
+
+        assert top_up_from_store(None) is None

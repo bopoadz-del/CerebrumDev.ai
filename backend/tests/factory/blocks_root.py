@@ -51,22 +51,31 @@ def _head_sha(repo: Path) -> str | None:
 
 
 def real_blocks_root():
-    """A sibling checkout, but only when it matches the declared store sha.
+    """The Store checkout these tests may assert against.
 
-    Returns None when no candidate exists, when it lacks ``block_registry``,
-    or when it has drifted off the declared sha - so tests never assert
-    against undeclared content.
+    An **explicitly named** checkout (``CEREBRUM_BLOCKS_ROOT`` /
+    ``CEREBRUM_BLOCKS_PATH``) is honoured as given. Somebody said which Store
+    to test against -- CI says it, and the Factory follows the Store's head, so
+    requiring that head to equal ``blocks.lock.json``'s sha made every Store
+    move a red pipeline: CI checked the Store out at ``main``, this resolver
+    called it undeclared, and the suite reported "no Store checkout at the
+    declared pin" while a perfectly good Store sat in ``$RUNNER_TEMP``.
+
+    An **accidental** sibling ``../Cerebrum-Blocks`` still has to match the
+    declared sha. That is the case this guard was written for: a developer's
+    checkout floating at some other revision, silently changing what the same
+    test asserts. Naming it is deliberate; finding it is not.
     """
     env = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
-    candidates = [Path(env)] if env else []
-    candidates.append(ROOT.parent / "Cerebrum-Blocks")
+    if env:
+        named = Path(env)
+        return named if (named / "block_registry").is_dir() else None
 
+    sibling = ROOT.parent / "Cerebrum-Blocks"
+    if not (sibling / "block_registry").is_dir():
+        return None
     declared = declared_store_sha()
-    for candidate in candidates:
-        if not candidate or not (candidate / "block_registry").is_dir():
-            continue
-        if declared and _head_sha(candidate) != declared:
-            # Present but undeclared: ignore it rather than test against it.
-            continue
-        return candidate
-    return None
+    if declared and _head_sha(sibling) != declared:
+        # Found, not named, and drifted: ignore rather than test against it.
+        return None
+    return sibling

@@ -226,16 +226,81 @@ def load_lock_if_present(path: Optional[Path] = None) -> Optional[Dict[str, Any]
     return load_lock(dest)
 
 
+def top_up_from_store(
+    lock: Optional[Mapping[str, Any]],
+    blocks_root: Optional[Path] = None,
+    *,
+    consumed: Optional[Sequence[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Lock the Store blocks this lock has never seen. Existing entries stand.
+
+    The committed lock is a SNAPSHOT of integrity, not the inventory. The
+    inventory is the Store's: the Factory reads what the Store publishes
+    (``dual_registry.shelf_from_store``) and must be able to build from it.
+    Treating the committed file as the membership list meant every block the
+    Store published was "missing from the lock" until somebody regenerated and
+    committed it -- live, thirteen certified blocks (the marketplace_ops pack
+    and ``vendor_catalog``) were unbuildable for exactly that reason.
+
+    So a consumed block the lock does not carry is hashed from the Store and
+    added now. A block the lock DOES carry is never touched, so a tree that
+    changed under a recorded hash still fails hard: tamper detection is
+    unchanged, only the "I have not met this block before" case moves.
+    """
+    if lock is None:
+        return None
+    merged = dict(lock)
+    blocks = dict(merged.get("blocks") or {})
+    try:
+        ids = list(consumed) if consumed is not None else consumed_block_ids()
+    except Exception:  # noqa: BLE001 -- an unreadable shelf tops up nothing
+        return merged
+    unseen = [bid for bid in ids if bid not in blocks]
+    if not unseen:
+        return merged
+    root = Path(blocks_root) if blocks_root else None
+    if root is None:
+        try:
+            from app.factory.blocks_source import resolve_blocks_root
+
+            resolved = resolve_blocks_root()
+            root = Path(resolved) if resolved else None
+        except Exception:  # noqa: BLE001 -- no Store, nothing to top up from
+            root = None
+    added = []
+    for bid in unseen:
+        source = _block_dir_in_store(root, bid) if root else None
+        origin = "cerebrum-blocks"
+        if source is None:
+            source = _block_dir_in_mirror(bid)
+            origin = "factory-vendor-mirror"
+        if source is None:
+            # Still absent: enforce_store_lock reports it, naming the block.
+            continue
+        blocks[bid] = {
+            "id": bid,
+            "version": _read_block_version(source, bid),
+            "content_hash": block_content_hash(source),
+            "source": origin,
+        }
+        added.append(bid)
+    if added:
+        merged["blocks"] = blocks
+        merged["topped_up"] = sorted(added)
+    return merged
+
+
 def resolve_lock(
     explicit: Optional[Mapping[str, Any]] = None,
     *,
     lock_path: Optional[Path] = None,
+    blocks_root: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
     if explicit is not None:
         return dict(explicit)
     if lock_path is not None:
-        return load_lock(lock_path)
-    return load_lock_if_present()
+        return top_up_from_store(load_lock(lock_path), blocks_root)
+    return top_up_from_store(load_lock_if_present(), blocks_root)
 
 
 def assert_block_matches_lock(
