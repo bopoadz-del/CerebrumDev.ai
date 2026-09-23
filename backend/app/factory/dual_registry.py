@@ -201,7 +201,18 @@ def load_factory_shelf(path: Optional[Path] = None) -> Dict[str, BlockRef]:
         return {
             bid: ref for bid, ref in live.items() if bid not in NOT_CLEARED_BLOCK_IDS
         }
-    return _shelf_from_file(_factory_shelf_path())
+    # Nothing but the committed copy left, and it is a floor, not an answer:
+    # it carries 25 ids against a Store of 212, so a build that lands here is
+    # offered a twelfth of the inventory and told nothing. Say it out loud --
+    # a silent fallback looks exactly like a small Store.
+    fallback = _shelf_from_file(_factory_shelf_path())
+    logger.warning(
+        "SHELF DEGRADED: the Store could not be read; falling back to the "
+        "Factory's committed copy (%d blocks). This is not the inventory -- "
+        "set CEREBRUM_BLOCKS_ROOT or make the Store reachable.",
+        len(fallback),
+    )
+    return fallback
 
 
 def _load_registry_dir(registry_dir: Path, source: str) -> Dict[str, BlockRef]:
