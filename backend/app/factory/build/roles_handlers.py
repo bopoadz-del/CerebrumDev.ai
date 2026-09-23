@@ -2259,9 +2259,31 @@ _RUNTIME_DISTRIBUTIONS = (
 )
 
 
-def _render_requirements(vendored_deps: Optional[Dict[str, Any]] = None) -> str:
+def _requirement_name(line: str) -> str:
+    """``python-multipart>=0.0.9`` -> ``python-multipart``."""
+    return re.split(r"[<>=!~\[; ]", line.strip(), 1)[0].strip().lower().replace("_", "-")
+
+
+def _render_requirements(
+    vendored_deps: Optional[Dict[str, Any]] = None,
+    root: Optional[Path] = None,
+) -> str:
+    """The product's runtime declarations.
+
+    ``root`` is the product tree. Given it, the framework features the code
+    actually uses are declared too -- form parsing, templates, session cookies.
+    FastAPI does not declare their backing packages and nothing imports them by
+    name, so without this scan they are absent in the image and the feature
+    fails at the first request rather than at install.
+    """
+    from app.factory.build.framework_extras import framework_lines
     from app.factory.build.network_posture import POSTURE_ID
 
+    extras = framework_lines(Path(root)) if root is not None else []
+    extra_block = ("\n".join(extras) + "\n") if extras else ""
+    already = _RUNTIME_DISTRIBUTIONS + tuple(
+        _requirement_name(line) for line in extras if not line.startswith("#")
+    )
     return (
         "# Runtime dependencies. Persistence is stdlib sqlite3 on purpose --\n"
         f"# the platform runs with no database server and no network ({POSTURE_ID}).\n"
@@ -2282,8 +2304,9 @@ def _render_requirements(vendored_deps: Optional[Dict[str, Any]] = None) -> str:
         "# Without it the variable is accepted and then cannot be dialled --\n"
         "# postgres_boot_200 on the acceptance floor measures exactly that.\n"
         "psycopg[binary]>=3.1\n"
+        + extra_block
     ) + render_dependency_lines(
-        vendored_deps or {}, already=_RUNTIME_DISTRIBUTIONS
+        vendored_deps or {}, already=already
     )
 
 
@@ -4360,9 +4383,11 @@ def run_writer(
         vendored_deps = dependency_obligations_on_disk(ctx.workspace.workspace)
     except BlockObligationError as exc:
         raise RoleError(str(exc)) from exc
+    # Scanned against the tree the coder just wrote: a route that parses a form
+    # needs python-multipart declared, and FastAPI does not declare it.
     ctx.workspace.write_text(
         "requirements.txt",
-        _render_requirements(vendored_deps),
+        _render_requirements(vendored_deps, root=ctx.workspace.workspace),
     )
     ctx.workspace.write_text(
         "requirements-dev.txt", _render_dev_requirements()

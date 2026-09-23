@@ -45,7 +45,14 @@ def _write_if_changed(root: Path, rel: str, text: str, changed: List[str]) -> No
 
 
 def merged_requirements(root: Path) -> str:
-    """The build's requirements.txt plus the vendored blocks' missing packages."""
+    """The build's requirements.txt plus every package the tree needs and lacks.
+
+    Two sources of missing packages: the vendored blocks' own imports, and the
+    framework features the coder used whose backing distribution FastAPI does
+    not declare (form parsing, templates, session cookies). Both are read off
+    the tree, so a branch built before the Factory learned about either gets
+    them on the resume that re-enters it.
+    """
     from app.factory.build.block_obligations import dependency_obligations_on_disk
     from app.factory.build.roles_handlers import _render_requirements
 
@@ -53,7 +60,7 @@ def merged_requirements(root: Path) -> str:
     existing = path.read_bytes().decode("utf-8").replace("\r\n", _LF) if path.is_file() else ""
     have = {d for d in (_dist(line) for line in existing.split(_LF)) if d}
     extra = []
-    for line in _render_requirements(dependency_obligations_on_disk(root)).split(_LF):
+    for line in _render_requirements(dependency_obligations_on_disk(root), root=root).split(_LF):
         dist = _dist(line)
         if dist and dist not in have:
             extra.append(line)
@@ -63,7 +70,9 @@ def merged_requirements(root: Path) -> str:
     return (
         existing.rstrip(_LF)
         + _LF + _LF
-        + "# Vendored block dependencies (refreshed by the factory)."
+        + "# Packages this tree needs and did not declare: vendored block\n"
+        + "# imports, and framework features FastAPI does not declare\n"
+        + "# (refreshed by the factory)."
         + _LF + _LF.join(extra) + _LF
     )
 
