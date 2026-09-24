@@ -10,9 +10,12 @@ Emitted into a product:
 
     app/reasoning/kernel.py        the socket. Identical everywhere.
     app/reasoning/host.py          the four functions the PRODUCT fills in
+    app/reasoning/pending.py       the unanswered interview questions
+    app/reasoning/routes.py        where an answer arrives after the build
     app/reasoning/kit/manifest.yaml     vendored from the Store
     app/reasoning/kit/invariants.yaml   vendored from the Store
-    app/reasoning/pending.py       the unanswered interview questions
+    app/reasoning/kit/questions.yaml    the domain owner's own question sheet,
+                                        where the Store kit carries one
 
 Five hook points, from the portable spec's routing map:
 
@@ -52,6 +55,10 @@ ROUTES_PATH = "app/reasoning/routes.py"
 INIT_PATH = "app/reasoning/__init__.py"
 KIT_MANIFEST = "app/reasoning/kit/manifest.yaml"
 KIT_INVARIANTS = "app/reasoning/kit/invariants.yaml"
+#: The domain owner's own question sheet. Optional: two Store kits have no sheet
+#: yet, and a platform built on one of those runs on the kit's derived questions
+#: and SAYS SO rather than reporting an un-interviewed domain as ready.
+KIT_QUESTIONS = "app/reasoning/kit/questions.yaml"
 
 
 def render_init() -> str:
@@ -234,6 +241,9 @@ class ReasoningKernel:
         self.disabled_reason: Optional[str] = None
         self.manifest: Dict[str, Any] = {}
         self.invariants: List[Dict[str, Any]] = []
+        #: The domain owner's question sheet, or {} when the kit ships without
+        #: one. Empty is NOT "nothing left to ask" -- see interview().
+        self.sheet: Dict[str, Any] = {}
         self._load()
 
     # -- loading -----------------------------------------------------------
@@ -255,6 +265,27 @@ class ReasoningKernel:
             self.disabled_reason = f"kit did not load: {type(exc).__name__}: {exc}"
             logger.error("REASONING KIT DISABLED: %s", self.disabled_reason)
             return
+        # The question sheet. Absent is fine and is reported as such; PRESENT BUT
+        # BROKEN disables the kit, because a sheet that will not parse would
+        # otherwise leave zero outstanding questions -- which reads as a finished
+        # interview, the most misleading thing this file could report.
+        sheet_path = self.kit_dir / "questions.yaml"
+        if sheet_path.is_file():
+            try:
+                self.sheet = yaml.safe_load(sheet_path.read_text(encoding="utf-8")) or {}
+                if not (self.sheet.get("questions") or []):
+                    raise ValueError("the sheet declares no questions")
+                if not (self.sheet.get("answer_format") or []):
+                    raise ValueError(
+                        "the sheet declares no answer_format, so nothing knows which "
+                        "fields an answer must carry and every answer would pass bare")
+            except Exception as exc:  # noqa: BLE001
+                self.disabled_reason = (
+                    f"the kit's question sheet did not load: {type(exc).__name__}: {exc}. "
+                    f"An unreadable sheet leaves nothing outstanding, which reads as a "
+                    f"completed interview")
+                logger.error("REASONING KIT DISABLED: %s", self.disabled_reason)
+                return
         if not self.invariants:
             self.disabled_reason = (
                 "the kit declares no invariants; it gates nothing and is disabled "
@@ -281,28 +312,75 @@ class ReasoningKernel:
     # platform built from the same kit would be the provenance failure this whole
     # layer exists to prevent, arriving signed.
 
-    def _answers_path(self) -> pathlib.Path:
-        root = os.getenv("STORAGE_PATH") or "."
-        return pathlib.Path(root) / "reasoning_answers.json"
+    #: Env vars that say where this platform's durable storage is, in order.
+    STORAGE_VARS = ("STORAGE_PATH", "DATA_DIR")
 
-    def answers(self) -> Dict[str, Dict[str, Any]]:
-        """What this platform has been told, read fresh.
+    def _answers_root(self) -> Optional[pathlib.Path]:
+        for var in self.STORAGE_VARS:
+            value = (os.getenv(var) or "").strip()
+            if value:
+                return pathlib.Path(value)
+        return None
+
+    def _answers_path(self) -> Optional[pathlib.Path]:
+        """Where answers live, or None when this platform has no durable storage
+        configured.
+
+        It used to fall back to ``.``, the process working directory. That reads
+        as working -- answers save, come back, and the route reports them
+        recorded -- and then a restart under a different working directory, or a
+        second worker started elsewhere, silently has none of them. An answer that
+        is reported recorded and is not durable is the same defect as an answer
+        that is reported recorded and was never written; the fallback only made it
+        harder to see. Reads now return nothing (so the platform REFUSES, which is
+        correct) and writes raise, naming the variable to set.
+        """
+        root = self._answers_root()
+        return None if root is None else root / "reasoning_answers.json"
+
+    def _read_store(self) -> Dict[str, Dict[str, Any]]:
+        """The whole answer store, read fresh, in two namespaces.
+
+        ``figures`` are keyed by the kit's quantity names; ``questions`` by the
+        owner sheet's own ids (B.1, 9.5.2). Two namespaces rather than one flat
+        map because a sheet id and a quantity name are different kinds of key and
+        a collision between them would silently answer the wrong thing.
 
         Read from disk every time rather than cached: an answer posted by one
         worker must be visible to the next request on another, and a cache here
         would make a recorded answer look unrecorded.
         """
         path = self._answers_path()
-        if not path.is_file():
-            return {}
+        if path is None or not path.is_file():
+            return {"figures": {}, "questions": {}}
         try:
             import json
 
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8")) or {}
         except (OSError, ValueError):
             logger.error("reasoning answers unreadable at %s; treating as none", path)
-            return {}
-        return {str(k): v for k, v in (data or {}).items() if isinstance(v, dict)}
+            return {"figures": {}, "questions": {}}
+        if "figures" not in data and "questions" not in data:
+            # Written before the sheet existed: the whole file was figure answers.
+            # Read it rather than discarding answers a platform already holds.
+            return {
+                "figures": {str(k): v for k, v in data.items() if isinstance(v, dict)},
+                "questions": {},
+            }
+        return {
+            "figures": {str(k): v for k, v in (data.get("figures") or {}).items()
+                        if isinstance(v, dict)},
+            "questions": {str(k): v for k, v in (data.get("questions") or {}).items()
+                          if isinstance(v, dict)},
+        }
+
+    def answers(self) -> Dict[str, Dict[str, Any]]:
+        """Figure answers this platform has been given."""
+        return self._read_store()["figures"]
+
+    def question_answers(self) -> Dict[str, Dict[str, Any]]:
+        """Answers to the owner sheet's questions, keyed by sheet id."""
+        return self._read_store()["questions"]
 
     def record_answer(self, figure: str, value: Any, *, answered_by: str,
                       answered_at: str, source: str) -> Dict[str, Any]:
@@ -320,30 +398,14 @@ class ReasoningKernel:
         if figure not in (self.manifest.get("figures") or {}):
             raise KeyError(f"{figure} is not a figure this kit asks about")
 
-        record = {
+        store = self._read_store()
+        store["figures"][figure] = {
             "value": value,
             "answered_by": answered_by,
             "answered_at": answered_at,
             "source": source,
         }
-        import json
-        import os as _os
-        import tempfile as _tempfile
-
-        path = self._answers_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        current = self.answers()
-        current[figure] = record
-        # Atomic: a crash mid-write must not leave a half-written answer file that
-        # reads as "no answers at all".
-        handle, temporary = _tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
-        try:
-            with _os.fdopen(handle, "w", encoding="utf-8") as stream:
-                json.dump(current, stream, indent=2, sort_keys=True)
-            _os.replace(temporary, path)
-        except BaseException:
-            _os.unlink(temporary)
-            raise
+        self._write_store(store)
 
         stored = self.answers().get(figure)
         if not stored or stored.get("value") != value:
@@ -351,6 +413,145 @@ class ReasoningKernel:
                 f"{figure} did not persist: the answer is not readable back, so it "
                 f"has not been recorded and must not be reported as recorded")
         return dict(stored, figure=figure)
+
+    def _write_store(self, store: Dict[str, Dict[str, Any]]) -> None:
+        """Atomic: a crash mid-write must not leave a half-written answer file
+        that reads as "no answers at all"."""
+        import json
+        import os as _os
+        import tempfile as _tempfile
+
+        path = self._answers_path()
+        if path is None:
+            raise RuntimeError(
+                "this platform has no durable storage configured, so an answer cannot "
+                "be recorded: set " + " or ".join(self.STORAGE_VARS) + ". Writing to the "
+                "working directory would report the answer as recorded and lose it on "
+                "the next restart")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = _tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with _os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(store, stream, indent=2, sort_keys=True)
+            _os.replace(temporary, path)
+        except BaseException:
+            _os.unlink(temporary)
+            raise
+
+    # -- the owner's question sheet ----------------------------------------
+
+    def required_answer_fields(self) -> List[str]:
+        """The fields an answer must arrive with IN THIS DOMAIN, from the sheet's
+        own 'Answer format:' line.
+
+        Fit-out wants quality band and market; fire protection wants the code
+        edition; dental wants adult-or-paediatric and the protocol version. The
+        kernel holds no list of its own -- one definition of a complete answer per
+        domain, and it is the domain owner's.
+        """
+        return [
+            str(entry).strip().lower().replace(" ", "_")
+            for entry in (self.sheet.get("answer_format") or ())
+            if str(entry).strip().lower() != "value"
+        ]
+
+    def sheet_questions(self) -> List[Dict[str, Any]]:
+        return [q for q in (self.sheet.get("questions") or []) if isinstance(q, dict)]
+
+    @staticmethod
+    def _gates(question: Dict[str, Any]) -> bool:
+        """[GATE] gates. UNMARKED also gates: a question whose class cannot be
+        read must block rather than pass. Only an explicit [GAP] does not."""
+        return question.get("gate") is not False
+
+    def interview(self) -> Dict[str, Any]:
+        """What the domain owner's sheet still wants answered on this platform.
+
+        ``questions_source`` is why this method is not just a count. A kit with no
+        sheet and a kit whose sheet is fully answered both have nothing
+        outstanding, and reporting them alike would call a domain nobody has
+        interviewed ready to gate.
+        """
+        if not self.sheet:
+            return {
+                "questions_source": "derived",
+                "sheet_supplied": False,
+                "ready": False,
+                "note": (
+                    "This kit ships without the domain owner's question sheet. Its "
+                    "questions are DERIVED from its quantity names, one per quantity. "
+                    "Treat readiness as unknown, not met."),
+                "outstanding": len(self.pending_questions()),
+            }
+        answered = self.question_answers()
+        questions = self.sheet_questions()
+        gating = [q for q in questions if self._gates(q)]
+        outstanding = [q for q in gating if str(q.get("id")) not in answered]
+        gaps = [q for q in questions
+                if not self._gates(q) and str(q.get("id")) not in answered]
+        sections = self.sheet.get("sections") or {}
+        return {
+            "questions_source": "owner_sheet",
+            "sheet_supplied": True,
+            "title": self.sheet.get("title") or "",
+            "source_document": self.sheet.get("source_document") or "",
+            "questions": len(questions),
+            "gating": len(gating),
+            "answered": len([q for q in questions if str(q.get("id")) in answered]),
+            "outstanding": len(outstanding),
+            "gaps_outstanding": len(gaps),
+            "ready": not outstanding,
+            "required_fields": self.required_answer_fields(),
+            # Sheet order, not sorted: the owner grouped these from rates through
+            # to incidents, and out of that order the interview reads as a quiz.
+            "next": [
+                {
+                    "id": str(q.get("id")),
+                    "section": str(q.get("section") or ""),
+                    "section_title": str(
+                        (sections.get(str(q.get("section") or "")) or {}).get("title") or ""),
+                    "marked": ("GATE" if q.get("gate") is True
+                               else ("GAP" if q.get("gate") is False else "unmarked")),
+                    "text": str(q.get("text") or ""),
+                    "covers": list(q.get("covers") or []),
+                }
+                for q in outstanding
+            ],
+        }
+
+    def record_question_answer(self, question_id: str, answer: Any,
+                               fields: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Persist one answer to one sheet question, then READ IT BACK.
+
+        Refuses an id the sheet does not ask, and refuses an answer missing any
+        field this domain's answer format requires -- an answer without its market
+        and quality band is not an answer to "cost per m² by quality band", it is a
+        number that will be cited as one.
+        """
+        if not self.sheet:
+            raise KeyError(
+                "this kit ships without a question sheet; there are no sheet questions "
+                "to answer")
+        known = {str(q.get("id")) for q in self.sheet_questions()}
+        if question_id not in known:
+            raise KeyError(f"{question_id} is not a question this kit's sheet asks")
+        fields = dict(fields or {})
+        missing = [f for f in self.required_answer_fields() if not fields.get(f)]
+        if missing:
+            raise ValueError(
+                f"{question_id} needs {', '.join(missing)} — this domain's answer format "
+                f"requires them, and without them the answer cannot be cited")
+
+        store = self._read_store()
+        store["questions"][question_id] = {"answer": answer, "fields": fields}
+        self._write_store(store)
+
+        stored = self.question_answers().get(question_id)
+        if not stored or stored.get("answer") != answer:
+            raise RuntimeError(
+                f"{question_id} did not persist: the answer is not readable back, so it "
+                f"has not been recorded and must not be reported as recorded")
+        return dict(stored, id=question_id)
 
     # -- the unanswered interview -----------------------------------------
 
@@ -367,11 +568,43 @@ class ReasoningKernel:
             if str(name) in answered:
                 continue
             if not isinstance(entry, dict) or entry.get("value") is None:
-                question = ""
-                if isinstance(entry, dict):
+                question = self._sheet_wording(str(name))
+                if not question and isinstance(entry, dict):
                     question = str(entry.get("question") or entry.get("interview_id") or "")
                 out[str(name)] = question or "unanswered: no interview question recorded"
         return out
+
+    def _sheet_wording(self, figure: str) -> str:
+        """The owner's own wording for a figure, where the sheet names it.
+
+        Precedence, not duplication: the derived question stays in the manifest as
+        the fallback for a quantity no sheet question names, and for the two kits
+        that ship without a sheet at all. Where the owner asked it themselves,
+        theirs is the question -- "your rate per package: partitions, ceilings,
+        raised floor..." rather than the derived "what is the rate?", which was one
+        number for a whole domain.
+        """
+        # The sheet's `covers` names QUANTITIES; the figures block is keyed by
+        # figure. In today's Store kits those are the same string, because the
+        # figures were generated one per quantity -- but a figure is properly an
+        # INSTANCE of a quantity, so a figure may name its own. Matching on the key
+        # alone would silently fall back to the derived question for every
+        # instance-named figure, which is what a per-asset figure always is.
+        entry = (self.manifest.get("figures") or {}).get(figure)
+        quantity = str((entry or {}).get("quantity") or figure) if isinstance(entry, dict) \
+            else figure
+        asks = [
+            q for q in self.sheet_questions()
+            if quantity in [str(c) for c in (q.get("covers") or ())] and self._gates(q)
+        ]
+        if not asks:
+            return ""
+        lead = asks[0]
+        text = f"[{lead.get('id')}] {lead.get('text')}"
+        if len(asks) > 1:
+            also = ", ".join(str(q.get("id")) for q in asks[1:])
+            text += f" (also asked by {also})"
+        return text
 
     def figure_value(self, name: str) -> Tuple[Any, Optional[str]]:
         """``(value, refusal)``. A null figure yields a refusal, never a default.
@@ -855,21 +1088,59 @@ def answer(figure: str, value: Any, *, answered_by: str, answered_at: str,
 def answered() -> Dict[str, Dict[str, Any]]:
     """Every answer this platform holds, with who gave it, when and from where."""
     return kernel.answers()
+
+
+def interview() -> Dict[str, Any]:
+    """The domain owner's own question sheet, and what is still outstanding.
+
+    Read ``questions_source`` before reading ``ready``. A kit that ships without a
+    sheet reports ``derived`` and is never ready: nothing has interviewed that
+    domain, and reporting it the same way as a completed interview would be the
+    loudest untruth this module could tell.
+    """
+    return kernel.interview()
+
+
+def answer_question(question_id: str, answer: Any, **fields: Any) -> Dict[str, Any]:
+    """Answer one sheet question, with every field this domain's format requires.
+
+    The required fields come from the sheet's own 'Answer format:' line, not from
+    a list held here -- fit-out requires quality band and market, dental requires
+    adult-or-paediatric and the protocol version. Persisted and read back before
+    success is reported.
+    """
+    return kernel.record_question_answer(question_id, answer, fields)
 '''
 
 
 def emit(ctx: Any) -> list:
-    """Write the socket into the product under build. Returns the paths written.
+    """Write the socket into the product under build, AND vendor its kit.
 
-    The kit itself is vendored by the CLONER from the Store, exactly as a block
-    is. When no kit has been resolved for this vertical the socket is still
-    emitted with an EMPTY kit directory -- and the kernel then refuses every
-    statement, naming the missing kit. That is deliberate: a platform with a
-    reasoning socket and no kit must refuse, not run ungated, because "no kit
-    found" silently becoming "no invariants" is the failure the whole layer
-    exists to prevent.
+    The socket without its kit is a socket that refuses everything. Emitting the
+    five code files and leaving the kit directory empty was the state this was in:
+    correct by the fail-closed rule, and useless, because the built platform gated
+    nothing and could answer nothing either. So the kit is vendored here, from the
+    Store, exactly as a block is.
+
+    Three outcomes, all of them stated rather than silent:
+
+      * a vertical with no kit          -> no kit vendored. The platform runs; the
+                                          kernel refuses any figure. Logged as a
+                                          warning, because it is a real limitation
+                                          and not an error in this build.
+      * a kit named, Store unreachable  -> no kit vendored, logged as an ERROR. A
+                                          platform that refuses every figure
+                                          because of an environment problem must
+                                          not be quiet about it.
+      * a kit named and found, broken   -> RAISES. Shipping a product whose gate is
+                                          disabled by a typo in the Store is worse
+                                          than failing the build that would ship
+                                          it.
     """
+    import logging
     import pathlib
+
+    logger = logging.getLogger(__name__)
 
     written = []
     for relative, body in (
@@ -881,7 +1152,96 @@ def emit(ctx: Any) -> list:
     ):
         ctx.workspace.write_text(pathlib.Path(relative), body)
         written.append(relative)
+    written.extend(vendor_kit(ctx))
     return written
+
+
+def vendor_kit(ctx: Any) -> list:
+    """Copy this vertical's kit out of the Store and into the product.
+
+    Returns the paths written, which is empty when there is no kit to vendor --
+    and an empty return is a platform whose reasoning layer refuses every figure,
+    which the caller logs.
+    """
+    import logging
+    import pathlib
+
+    import yaml
+
+    logger = logging.getLogger(__name__)
+
+    plan = getattr(ctx, "plan", None)
+    kit = kit_for_vertical(
+        getattr(ctx, "blueprint", None),
+        getattr(plan, "__dict__", None) if plan is not None else None,
+    )
+    if not kit:
+        logger.warning(
+            "reasoning socket: no kit for this vertical. The platform will refuse "
+            "every figure its rules need — that is fail-closed, not a gate.")
+        return []
+
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        root = resolve_blocks_root()
+    except Exception as exc:  # noqa: BLE001 -- an unreachable Store is not a crash
+        logger.error("reasoning socket: Store unreachable (%s); kit '%s' NOT vendored, "
+                     "so this platform will refuse every figure", exc, kit)
+        return []
+    if root is None:
+        logger.error(
+            "reasoning socket: Store unreachable; kit '%s' NOT vendored, so this "
+            "platform will refuse every figure it needs", kit)
+        return []
+
+    source = pathlib.Path(root) / "app" / "blocks" / kit
+    required = {"manifest.yaml": KIT_MANIFEST, "invariants.yaml": KIT_INVARIANTS}
+    #: The domain owner's question sheet. Optional -- two Store kits have none, and
+    #: a platform built on one of those runs on the kit's derived questions and says
+    #: so, rather than reporting an un-interviewed domain as ready.
+    optional = {"questions.yaml": KIT_QUESTIONS}
+
+    for name in required:
+        if not (source / name).is_file():
+            raise FileNotFoundError(
+                f"reasoning kit '{kit}' is missing {name} at {source}. The product "
+                f"would ship with its reasoning gate disabled, which is worse than "
+                f"failing this build")
+
+    # Parse before vendoring. A kit that does not load disables the kernel, and a
+    # product that refuses every figure because of a typo in the Store must not be
+    # something we discover after deployment.
+    manifest = yaml.safe_load((source / "manifest.yaml").read_text(encoding="utf-8")) or {}
+    records = yaml.safe_load((source / "invariants.yaml").read_text(encoding="utf-8")) or {}
+    if not (records.get("invariants") if isinstance(records, dict) else records):
+        raise ValueError(
+            f"reasoning kit '{kit}' declares no invariants; it would gate nothing and "
+            f"disable the kernel in the built product")
+    if str(manifest.get("kit") or "") != kit:
+        raise ValueError(
+            f"reasoning kit at {source} names kit '{manifest.get('kit')}', not '{kit}'. "
+            f"Vendoring it would give this platform one domain's vocabulary under "
+            f"another domain's name")
+
+    paths = []
+    for name, destination in list(required.items()) + list(optional.items()):
+        if not (source / name).is_file():
+            continue
+        ctx.workspace.write_text(
+            pathlib.Path(destination), (source / name).read_text(encoding="utf-8"))
+        paths.append(destination)
+
+    sheet = source / "questions.yaml"
+    if sheet.is_file():
+        logger.info("reasoning socket: vendored kit '%s' with the domain owner's "
+                    "question sheet", kit)
+    else:
+        logger.warning(
+            "reasoning socket: vendored kit '%s', but it has NO owner question sheet. "
+            "Its questions are derived from its quantity names; the platform reports "
+            "them as derived and never as an interview that has been done.", kit)
+    return paths
 
 
 def kit_for_vertical(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> Optional[str]:
@@ -954,8 +1314,12 @@ def render_routes() -> str:
     """
     return '''"""Reasoning-layer figures: what is still unanswered, and how to answer it.
 
-GET  /v1/reasoning/pending   the questions this platform cannot answer yet
-POST /v1/reasoning/answer    record one answer, with its provenance
+GET  /v1/reasoning/pending     figures with no value, and the question for each
+POST /v1/reasoning/answer      record one figure answer, with its provenance
+GET  /v1/reasoning/interview   the domain owner's own question sheet, and what is
+                               still outstanding on this platform
+POST /v1/reasoning/interview   answer one sheet question, with every field this
+                               domain's answer format requires
 
 Until a figure is answered the kernel REFUSES every statement needing it and
 names this question. That is not a stub: a stub is a fake value that ships
@@ -1035,6 +1399,61 @@ async def reasoning_answer(request: Request) -> Dict[str, Any]:
         "ok": True,
         "recorded": recorded,
         "still_unanswered": len(pending.unanswered()),
+    }
+
+
+@router.get("/v1/reasoning/interview")
+async def reasoning_interview(request: Request) -> Dict[str, Any]:
+    """The domain owner's own question sheet, and what is still outstanding.
+
+    ``questions_source`` must be read before ``ready``. ``owner_sheet`` means these
+    are the owner's questions in their own words. ``derived`` means this kit ships
+    without a sheet and its questions were derived from its quantity names -- then
+    readiness is unknown, not met.
+    """
+    tenant = await _principal(request)
+    state = pending.interview()
+    state["kit_enabled"] = kernel.enabled
+    state["kit_disabled_reason"] = kernel.disabled_reason
+    return state
+
+
+@router.post("/v1/reasoning/interview")
+async def reasoning_answer_question(request: Request) -> Dict[str, Any]:
+    """Answer one sheet question, with every field this domain's format requires.
+
+    ``GET /v1/reasoning/interview`` lists ``required_fields`` for this domain. An
+    answer short of any of them is refused rather than stored partially: a cost
+    without its market and quality band is not an answer to "cost per m² by
+    quality band", it is a number that will be cited as one.
+    """
+    tenant = await _principal(request)
+    auth.require_permission(tenant, "write")
+    body = await _json(request)
+    question_id = str(body.get("id") or body.get("question_id") or "").strip()
+    if not question_id:
+        raise HTTPException(status_code=422, detail="id is required")
+    fields = dict(body.get("fields") or {})
+    for name in kernel.required_answer_fields():
+        if name in body and name not in fields:
+            fields[name] = body[name]
+    try:
+        recorded = pending.answer_question(question_id, body.get("answer"), **fields)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # It did not persist. ok here would be a success report over an operation
+        # that did nothing -- the defect class this layer exists to catch.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    state = pending.interview()
+    recorded["tenant_id"] = getattr(tenant, "tenant_id", None)
+    return {
+        "ok": True,
+        "recorded": recorded,
+        "outstanding": state.get("outstanding"),
+        "ready": state.get("ready"),
     }
 
 

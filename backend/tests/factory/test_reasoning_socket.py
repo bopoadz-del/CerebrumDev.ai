@@ -53,8 +53,14 @@ KIT_MANIFEST = {
          "authority": "the aerodrome operator"},
     ],
     "figures": {
-        "runway_13l_tora": {"value": None, "question": "Q5.3: what is the TORA for 13L?"},
-        "pavement_pcn": {"value": 80, "question": "Q5.6: what is the PCN?"},
+        # A figure is an INSTANCE of a quantity, and names which one. Today's Store
+        # kits happen to key their figures by quantity name, so this probe uses the
+        # instance shape deliberately -- matching on the key alone would pass here
+        # and be wrong for any real per-runway or per-berth figure.
+        "runway_13l_tora": {"value": None, "quantity": "declared_distance",
+                            "question": "Q5.3: what is the TORA for 13L?"},
+        "pavement_pcn": {"value": 80, "quantity": "pcn",
+                         "question": "Q5.6: what is the PCN?"},
     },
 }
 
@@ -99,10 +105,23 @@ def platform(tmp_path, monkeypatch):
     (pkg / "reasoning" / "kit" / "invariants.yaml").write_text(
         yaml.safe_dump(KIT_INVARIANTS), encoding="utf-8")
 
+    # Answers go to this platform's durable storage. Without this the suite wrote
+    # reasoning_answers.json into the repository working directory and the NEXT run
+    # read it back, so tests passed or failed depending on what a previous run had
+    # left behind -- and `25 passed` meant only "on a clean directory".
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+
     # The emitted files import as `app.reasoning.*` inside a product, so the temp
     # package is mounted under that name for the duration of the test.
     monkeypatch.syspath_prepend(str(tmp_path))
-    for name in [n for n in list(sys.modules) if n == "app" or n.startswith("app.reasoning")]:
+    # Evict BOTH names. `builtapp.*` was left cached, so every test after the first
+    # imported the FIRST test's temp platform and exercised its files -- invisible
+    # while all the tests wrote identical content, and silently ignoring any
+    # per-test variation of the kit, which is exactly what a kit test varies.
+    for name in [n for n in list(sys.modules)
+                 if n in ("app", "builtapp")
+                 or n.startswith("app.reasoning")
+                 or n.startswith("builtapp.")]:
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setitem(sys.modules, "app", importlib.import_module("builtapp"))
     sys.modules["app"].__path__ = [str(pkg)]

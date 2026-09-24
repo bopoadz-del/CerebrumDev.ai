@@ -2975,10 +2975,21 @@ def _emit_reasoning_socket(ctx) -> None:
     written = reasoning_socket.emit(ctx)
     kit = reasoning_socket.kit_for_vertical(
         ctx.blueprint, getattr(ctx, "plan", None) and getattr(ctx.plan, "__dict__", None))
-    logger.info(
-        "reasoning socket emitted (%d files); kit for this vertical: %s",
-        len(written), kit or "none — the socket will refuse until a kit is vendored",
-    )
+    vendored = [p for p in written if "/kit/" in p]
+    if vendored:
+        logger.info(
+            "reasoning socket emitted (%d files); kit '%s' vendored: %s",
+            len(written), kit, ", ".join(sorted(p.rsplit("/", 1)[-1] for p in vendored)),
+        )
+    else:
+        # Said at ERROR, not info. A platform whose reasoning layer refuses every
+        # figure is fail-closed and correct, and also gates nothing — that is not
+        # something a build log should mention in passing.
+        logger.error(
+            "reasoning socket emitted (%d files) with NO KIT (%s). This platform will "
+            "refuse every figure its rules need.",
+            len(written), kit or "no kit maps to this vertical",
+        )
 
 
 def _render_kernel_bridge() -> str:

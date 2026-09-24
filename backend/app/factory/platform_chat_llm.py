@@ -287,8 +287,16 @@ def _reasoning_kit_facts(state: Any) -> str:
     The Floor already has a bounded number of question rounds. What it did not
     have is anything to ask ABOUT: each reasoning kit ships with every figure
     empty and each empty figure carrying the question that fills it, and the model
-    could not see them. So they are listed here, derived from the kit on disk --
-    the model asks them, it does not invent them.
+    could not see them. So they are listed here, read from the kit on disk -- the
+    model asks them, it does not invent them.
+
+    Two sources, in this order. Where the kit carries the DOMAIN OWNER'S OWN
+    question sheet (``questions.yaml``), that is what the model asks from, in the
+    owner's words, with the owner's [GATE] / [GAP] mark and the fields that domain
+    requires with an answer. Where it does not, the per-quantity questions derived
+    from the manifest are the fallback AND THE PROMPT SAYS THEY ARE DERIVED -- a
+    model that presents "what is the rate?" as the domain's own question invites an
+    answer that no rule can then use.
 
     Unanswered is not a blocker. The platform is built either way, the kernel
     refuses anything needing an unanswered figure and names the question, and the
@@ -315,10 +323,45 @@ def _reasoning_kit_facts(state: Any) -> str:
 
         import yaml as _yaml
 
+        kit_dir = _pathlib.Path(root) / "app" / "blocks" / kit
         manifest = _yaml.safe_load(
-            (_pathlib.Path(root) / "app" / "blocks" / kit / "manifest.yaml")
-            .read_text(encoding="utf-8")
+            (kit_dir / "manifest.yaml").read_text(encoding="utf-8")
         ) or {}
+
+        # The domain owner's own question sheet, where one exists. It beats the
+        # derived per-quantity questions below, which asked "what is the rate?" --
+        # one number for a whole domain. The sheet asks for the rate per package,
+        # and marks each question [GATE] (blocks) or [GAP] (worth having). The
+        # model asks from the sheet; it does not paraphrase it.
+        sheet_path = kit_dir / "questions.yaml"
+        if sheet_path.is_file():
+            sheet = _yaml.safe_load(sheet_path.read_text(encoding="utf-8")) or {}
+            questions = [q for q in (sheet.get("questions") or []) if isinstance(q, dict)]
+            # UNMARKED gates: a question whose class cannot be read must block.
+            gating = [q for q in questions if q.get("gate") is not False]
+            fields = [
+                str(f).strip().lower().replace(" ", "_")
+                for f in (sheet.get("answer_format") or ())
+                if str(f).strip().lower() != "value"
+            ]
+            listed = "; ".join(
+                f"[{q.get('id')}] {str(q.get('text') or '')[:220]}" for q in gating[:10]
+            )
+            return (
+                f"REASONING KIT: {kit}. It carries the DOMAIN OWNER'S OWN question "
+                f"sheet ({sheet.get('source_document') or 'questions.yaml'}): "
+                f"{len(questions)} questions, {len(gating)} of them gating. Every "
+                f"answer must arrive with {', '.join(fields)} — an answer short of "
+                f"any of those cannot be cited and will be refused. Ask these in the "
+                f"sheet's own words, never a paraphrase, and ask ONLY the ones that "
+                f"change the DESIGN; the rest are operational and the platform "
+                f"collects them after the build at /v1/reasoning/interview. The first "
+                f"gating questions are: {listed}. An unanswered question is not a "
+                f"blocker and not a stub: the platform refuses anything needing it and "
+                f"names the question, so NEVER invent a value to fill one, and never "
+                f"tell the user a figure is in hand because the question was asked."
+            )
+
         open_questions = [
             str((entry or {}).get("question") or name)
             for name, entry in (manifest.get("figures") or {}).items()
@@ -340,6 +383,9 @@ def _reasoning_kit_facts(state: Any) -> str:
         listed = "; ".join(open_questions[:12])
         return (
             f"REASONING KIT: {kit}, with {len(open_questions)} unanswered figure(s). "
+            f"This kit has NO owner question sheet, so the questions below are DERIVED "
+            f"from its quantity names and are not the domain owner's own wording — say "
+            f"so if the user asks where they come from. "
             f"These are the questions the kit itself asks: {listed}. Ask only the ones "
             f"that change the DESIGN; the rest are operational and the platform "
             f"collects them later at /v1/reasoning/pending. An unanswered figure is "
