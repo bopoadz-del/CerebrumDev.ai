@@ -16,6 +16,11 @@ Emitted into a product:
     app/reasoning/kit/invariants.yaml   vendored from the Store
     app/reasoning/kit/questions.yaml    the domain owner's own question sheet,
                                         where the Store kit carries one
+    app/reasoning/kit/design_basis.yaml the kit's OWN figure register, where it
+                                        has one. Six Store kits do, and ONE of
+                                        those is already answered -- so a platform
+                                        built on it arrives holding real figures
+                                        rather than an empty interview.
 
 Five hook points, from the portable spec's routing map:
 
@@ -59,6 +64,11 @@ KIT_INVARIANTS = "app/reasoning/kit/invariants.yaml"
 #: yet, and a platform built on one of those runs on the kit's derived questions
 #: and SAYS SO rather than reporting an un-interviewed domain as ready.
 KIT_QUESTIONS = "app/reasoning/kit/questions.yaml"
+#: The kit's OWN figure register, where it has one: domain figure names, the
+#: qualifiers each is meaningless without, and its own declared scope. Six Store
+#: kits have one and one of those is filled in, so a platform built on it starts
+#: with real answers rather than an empty interview.
+KIT_DESIGN_BASIS = "app/reasoning/kit/design_basis.yaml"
 
 
 def render_init() -> str:
@@ -244,6 +254,10 @@ class ReasoningKernel:
         #: The domain owner's question sheet, or {} when the kit ships without
         #: one. Empty is NOT "nothing left to ask" -- see interview().
         self.sheet: Dict[str, Any] = {}
+        #: The kit's OWN figure register (design_basis / operating_basis), or {}.
+        #: This is the only source that can arrive ALREADY ANSWERED.
+        self.register: Dict[str, Any] = {}
+        self.register_meta: Dict[str, Any] = {}
         self._load()
 
     # -- loading -----------------------------------------------------------
@@ -284,6 +298,38 @@ class ReasoningKernel:
                     f"the kit's question sheet did not load: {type(exc).__name__}: {exc}. "
                     f"An unreadable sheet leaves nothing outstanding, which reads as a "
                     f"completed interview")
+                logger.error("REASONING KIT DISABLED: %s", self.disabled_reason)
+                return
+
+        # The kit's own figure register. Absent is fine; PRESENT BUT BROKEN
+        # disables, for the same reason as the sheet -- and more sharply here,
+        # because a register can arrive already answered and losing it would turn
+        # a platform that holds real figures into one that refuses everything.
+        register_path = self.kit_dir / "design_basis.yaml"
+        if register_path.is_file():
+            try:
+                raw = yaml.safe_load(register_path.read_text(encoding="utf-8")) or {}
+                # Named for what it IS: a data centre has a design basis, an
+                # operating plant an operating basis. Enumerated, not guessed.
+                block = next((n for n in ("design_basis", "operating_basis") if n in raw), None)
+                if block is None:
+                    raise ValueError(
+                        "no figure register block (expected design_basis or operating_basis)")
+                figures = raw.get(block)
+                if not isinstance(figures, dict) or not figures:
+                    raise ValueError(f"{block} is empty or not a mapping")
+                self.register = {str(k): (v or {}) for k, v in figures.items()}
+                self.register_meta = {
+                    "block": block,
+                    "source": str(raw.get("source") or ""),
+                    "scope": str(raw.get("scope") or ""),
+                    "facility": str(raw.get("facility") or ""),
+                }
+            except Exception as exc:  # noqa: BLE001
+                self.disabled_reason = (
+                    f"the kit's figure register did not load: {type(exc).__name__}: "
+                    f"{exc}. A register can arrive already answered, and losing it turns "
+                    f"a platform that holds real figures into one that refuses them")
                 logger.error("REASONING KIT DISABLED: %s", self.disabled_reason)
                 return
         if not self.invariants:
@@ -472,10 +518,49 @@ class ReasoningKernel:
         outstanding, and reporting them alike would call a domain nobody has
         interviewed ready to gate.
         """
+        register_state = None
+        if self.register:
+            answered_here = self.answers()
+            filled = [n for n, spec in self.register.items()
+                      if (spec or {}).get("value") is not None or n in answered_here]
+            register_state = {
+                "block": self.register_meta.get("block"),
+                "source": self.register_meta.get("source"),
+                "scope": self.register_meta.get("scope"),
+                "facility": self.register_meta.get("facility"),
+                "figures": len(self.register),
+                "answered": len(filled),
+                "open": len(self.register) - len(filled),
+                "open_figures": sorted(set(self.register) - set(filled)),
+                # Whether anyone has actually put values in. One Store register is
+                # filled; reporting it as un-interviewed calls an answered domain
+                # an empty one.
+                "interview_ran": bool(filled),
+            }
+
         if not self.sheet:
+            if register_state is not None:
+                return {
+                    "questions_source": "design_basis",
+                    "sheet_supplied": False,
+                    "design_basis_supplied": True,
+                    "design_basis": register_state,
+                    "interview_ran": register_state["interview_ran"],
+                    "outstanding": register_state["open"],
+                    "ready": register_state["interview_ran"] and not register_state["open"],
+                    "note": (
+                        f"Answered from this kit's own figure register: "
+                        f"{register_state['answered']} of {register_state['figures']} "
+                        f"figures. {register_state['scope']}"
+                        if register_state["interview_ran"] else
+                        "This kit's figure register is declared and EMPTY -- no interview "
+                        "has run, every value is null. Nothing needing one of these "
+                        "figures can be answered."),
+                }
             return {
                 "questions_source": "derived",
                 "sheet_supplied": False,
+                "design_basis_supplied": False,
                 "ready": False,
                 "note": (
                     "This kit ships without the domain owner's question sheet. Its "
@@ -491,8 +576,11 @@ class ReasoningKernel:
                 if not self._gates(q) and str(q.get("id")) not in answered]
         sections = self.sheet.get("sections") or {}
         return {
-            "questions_source": "owner_sheet",
+            "questions_source": ("design_basis+owner_sheet" if register_state
+                                 else "owner_sheet"),
             "sheet_supplied": True,
+            "design_basis_supplied": register_state is not None,
+            **({"design_basis": register_state} if register_state else {}),
             "title": self.sheet.get("title") or "",
             "source_document": self.sheet.get("source_document") or "",
             "questions": len(questions),
@@ -564,6 +652,12 @@ class ReasoningKernel:
         """
         out: Dict[str, str] = {}
         answered = self.answers()
+        for name, entry in self.register.items():
+            if str(name) in answered or (entry or {}).get("value") is not None:
+                continue
+            out[str(name)] = (
+                f"declared in this kit's figure register with no value. "
+                f"{self.register_meta.get('scope') or ''}".strip())
         for name, entry in (self.manifest.get("figures") or {}).items():
             if str(name) in answered:
                 continue
@@ -616,6 +710,17 @@ class ReasoningKernel:
         answered = self.answers().get(name)
         if answered and answered.get("value") is not None:
             return answered["value"], None
+        # The kit's own register, where it has one. An operator answer on THIS
+        # platform still wins: the register is the facility it was written for, and
+        # the operator is telling us about this one.
+        if name in self.register:
+            value = (self.register.get(name) or {}).get("value")
+            if value is not None:
+                return value, None
+            return None, (
+                f"{name} is declared in this kit's figure register with no value: "
+                f"{self.register_meta.get('scope') or 'scope not stated'}. Nothing can "
+                f"be stated about it until it is answered")
         entry = (self.manifest.get("figures") or {}).get(name)
         if not isinstance(entry, dict) or entry.get("value") is None:
             question = self.pending_questions().get(name, "")
@@ -1200,7 +1305,8 @@ def vendor_kit(ctx: Any) -> list:
     #: The domain owner's question sheet. Optional -- two Store kits have none, and
     #: a platform built on one of those runs on the kit's derived questions and says
     #: so, rather than reporting an un-interviewed domain as ready.
-    optional = {"questions.yaml": KIT_QUESTIONS}
+    optional = {"questions.yaml": KIT_QUESTIONS,
+                "design_basis.yaml": KIT_DESIGN_BASIS}
 
     for name in required:
         if not (source / name).is_file():

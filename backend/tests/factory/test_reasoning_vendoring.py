@@ -240,3 +240,129 @@ def test_a_real_store_kit_vendors_and_the_emitted_kernel_gates_with_it(
     kit_dir = inner / "reasoning" / "kit"
     assert sorted(p.name for p in kit_dir.iterdir()) == [
         "invariants.yaml", "manifest.yaml", "questions.yaml"]
+
+
+# ── the kit's own figure register ──────────────────────────────────────────
+
+def test_a_real_datacentre_build_arrives_holding_its_answers(tmp_path, store_root, monkeypatch):
+    """datacentre has no question sheet and needs none: its own register,
+    design_basis.yaml, is filled in from the completed encoding sheet for
+    facility_01. A platform built on it must arrive with those 17 figures in hand.
+    Reporting it as an un-interviewed domain, which an earlier version did, called
+    the one answered domain in the Store an empty one."""
+    store = pathlib.Path("C:/Users/shimm/Cerebrum-Blocks")
+    if not (store / "app" / "blocks" / "datacentre" / "design_basis.yaml").is_file():
+        pytest.skip("the Store checkout is not beside this worktree")
+    store_root["root"] = store
+
+    product = tmp_path / "product"
+    ctx = FakeCtx(product, vertical="datacentre")
+    written = reasoning_socket.emit(ctx)
+    assert reasoning_socket.KIT_DESIGN_BASIS in written
+    assert reasoning_socket.KIT_QUESTIONS not in written, "datacentre has no sheet"
+
+    inner = product / "app"
+    (inner / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.syspath_prepend(str(product))
+    for name in [n for n in list(sys.modules)
+                 if n in ("app", "builtapp") or n.startswith("app.")
+                 or n.startswith("builtapp.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    kernel_mod = importlib.import_module("app.reasoning.kernel")
+    kernel = kernel_mod.kernel
+    assert kernel.enabled, f"the vendored kit did not load: {kernel.disabled_reason}"
+
+    state = kernel.interview()
+    assert state["questions_source"] == "design_basis"
+    assert state["interview_ran"] is True
+    assert state["design_basis"]["answered"] == 17
+    assert state["design_basis"]["figures"] == 18
+    assert state["design_basis"]["open_figures"] == ["pue_guaranteed"]
+    assert state["design_basis"]["facility"] == "facility_01"
+    assert "facility_01" not in state["note"] or "17 of 18" in state["note"]
+
+    # The answered figures are usable, by their own names, with no refusal.
+    value, refusal = kernel.figure_value("generator_fuel_autonomy_hours")
+    assert value == 120 and refusal is None
+    value, refusal = kernel.figure_value("pue_design")
+    assert value == 1.4 and refusal is None
+
+    # The one open figure refuses, and names the register's scope rather than
+    # offering a plausible number.
+    value, refusal = kernel.figure_value("pue_guaranteed")
+    assert value is None
+    assert refusal and "figure register" in refusal
+    assert "never carry to another site" in refusal
+
+    pending = importlib.import_module("app.reasoning.pending")
+    assert list(pending.unanswered()) == ["pue_guaranteed"]
+
+
+def test_an_empty_register_vendors_and_every_figure_refuses(tmp_path, store_root, monkeypatch):
+    """Five of the six registers are declared and empty. Empty is not "nothing to
+    ask" -- it is everything still to ask, and every one of those figures refuses."""
+    store = pathlib.Path("C:/Users/shimm/Cerebrum-Blocks")
+    if not (store / "app" / "blocks" / "rail" / "design_basis.yaml").is_file():
+        pytest.skip("the Store checkout is not beside this worktree")
+    store_root["root"] = store
+
+    product = tmp_path / "product"
+    ctx = FakeCtx(product, vertical="rail")
+    written = reasoning_socket.emit(ctx)
+    # rail has BOTH: its own register and the owner's question sheet.
+    assert reasoning_socket.KIT_DESIGN_BASIS in written
+    assert reasoning_socket.KIT_QUESTIONS in written
+
+    inner = product / "app"
+    (inner / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.syspath_prepend(str(product))
+    for name in [n for n in list(sys.modules)
+                 if n in ("app", "builtapp") or n.startswith("app.")
+                 or n.startswith("builtapp.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    kernel = importlib.import_module("app.reasoning.kernel").kernel
+    assert kernel.enabled, kernel.disabled_reason
+
+    state = kernel.interview()
+    assert state["questions_source"] == "design_basis+owner_sheet", (
+        "they are not alternatives: the register holds this route's figures, the "
+        "sheet asks the organisation's rules"
+    )
+    assert state["design_basis"]["interview_ran"] is False
+    assert state["design_basis"]["answered"] == 0
+    assert state["questions"] == 82 and state["gating"] == 61
+
+    for name in state["design_basis"]["open_figures"]:
+        value, refusal = kernel.figure_value(name)
+        assert value is None and refusal, f"{name} returned a value from an empty register"
+
+
+def test_a_broken_register_disables_rather_than_losing_the_answers(tmp_path, store_root):
+    """A register can arrive already answered. Treating an unreadable one as
+    "no register" turns a platform that holds real figures into one that refuses
+    them while reporting nothing wrong."""
+    root = _store(tmp_path, "datacentre")
+    (root / "app" / "blocks" / "datacentre" / "design_basis.yaml").write_text(
+        "source: x\nscope: y\n", encoding="utf-8")
+    store_root["root"] = root
+    ctx = FakeCtx(tmp_path / "product", vertical="datacentre")
+    reasoning_socket.emit(ctx)
+
+    from app.factory.build.reasoning_socket import render_kernel
+
+    # Drive the emitted kernel against the broken register directly. It must be a
+    # real registered module, not a bare exec namespace: it resolves KIT_DIR from
+    # __file__, and its dataclasses resolve their field types through sys.modules.
+    emitted = tmp_path / "product" / "app" / "reasoning" / "kernel.py"
+    module = types.ModuleType("emitted_kernel_probe")
+    module.__file__ = str(emitted)
+    sys.modules[module.__name__] = module
+    try:
+        exec(compile(render_kernel(), str(emitted), "exec"), module.__dict__)
+        kernel = module.ReasoningKernel(kit_dir=emitted.parent / "kit")
+    finally:
+        sys.modules.pop(module.__name__, None)
+    assert kernel.enabled is False
+    assert "figure register" in kernel.disabled_reason

@@ -169,3 +169,67 @@ def test_the_facts_never_raise_into_the_chat_turn(store, monkeypatch):
     monkeypatch.setattr(module, "resolve_blocks_root", boom)
     facts = platform_chat_llm._reasoning_kit_facts(_state("fitout"))
     assert "unavailable" in facts
+
+
+# ── the kit's own figure register ──────────────────────────────────────────
+
+FILLED_REGISTER = {
+    "facility": "facility_01",
+    "source": "domain encoding sheet, facility_01",
+    "scope": "facility-specific — never carry to another site",
+    "design_basis": {
+        "pue_design": {"value": 1.4, "unit": None},
+        "generator_fuel_autonomy_hours": {"value": 120, "unit": "hours"},
+        "pue_guaranteed": {"value": None, "unit": None},
+    },
+}
+
+
+def _put_register(store, kit, manifest, register, questions=None):
+    where = store(kit, manifest, questions)
+    import yaml as _y
+    (where / "design_basis.yaml").write_text(
+        _y.safe_dump(register, allow_unicode=True), encoding="utf-8")
+
+
+def test_the_model_is_told_which_figures_the_platform_already_holds(store):
+    """datacentre's register is filled in. Asking the user for figures on file
+    wastes a bounded question round and invites them to restate what is recorded."""
+    _put_register(store, "datacentre", DERIVED_MANIFEST, FILLED_REGISTER)
+    facts = platform_chat_llm._reasoning_kit_facts(_state("datacentre"))
+    assert "ALREADY HOLDS 2 of 3 figures" in facts
+    assert "facility_01" in facts
+    assert "do not ask for those again" in facts
+    assert "pue_guaranteed" in facts, "the one open figure must still be named"
+
+
+def test_an_empty_register_is_reported_as_nothing_answered_not_nothing_to_ask(store):
+    empty = dict(FILLED_REGISTER, design_basis={
+        "twist_limit_mm": {"value": None, "unit": "mm"},
+        "sft_degrees_c": {"value": None, "unit": "degC"},
+    })
+    _put_register(store, "rail", DERIVED_MANIFEST, empty)
+    facts = platform_chat_llm._reasoning_kit_facts(_state("rail"))
+    assert "EVERY ONE IS EMPTY" in facts
+    assert "no interview has run" in facts
+    assert "ALREADY HOLDS" not in facts
+
+
+def test_the_register_is_reported_alongside_the_owner_sheet_not_instead_of_it(store):
+    _put_register(store, "rail", DERIVED_MANIFEST, FILLED_REGISTER,
+                  questions=dict(OWNER_SHEET, kit="rail"))
+    facts = platform_chat_llm._reasoning_kit_facts(_state("rail"))
+    assert "DOMAIN OWNER'S OWN question sheet" in facts
+    assert "ALREADY HOLDS" in facts
+
+
+def test_a_filled_register_is_never_reported_as_a_kit_that_can_answer_nothing(store):
+    """The manifest declares no figures AND the register is full. The old "declares
+    NO question list, will refuse every figure" line would be flatly false."""
+    _put_register(store, "datacentre", {
+        "kit": "datacentre", "version": 1,
+        "quantities": {"pue": {}},
+    }, FILLED_REGISTER)
+    facts = platform_chat_llm._reasoning_kit_facts(_state("datacentre"))
+    assert "ALREADY HOLDS" in facts
+    assert "refuse every figure it needs" not in facts

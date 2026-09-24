@@ -328,6 +328,36 @@ def _reasoning_kit_facts(state: Any) -> str:
             (kit_dir / "manifest.yaml").read_text(encoding="utf-8")
         ) or {}
 
+        # The kit's OWN figure register, where it has one. Reported FIRST because
+        # it is the only source that can already hold answers: one of the six is
+        # filled in from a completed encoding sheet, and telling the model to go
+        # and ask for figures a platform already holds wastes a bounded question
+        # round and invites the user to restate what is on file.
+        register_note = ""
+        register_path = kit_dir / "design_basis.yaml"
+        if register_path.is_file():
+            register = _yaml.safe_load(register_path.read_text(encoding="utf-8")) or {}
+            block = next((n for n in ("design_basis", "operating_basis")
+                          if n in register), None)
+            entries = (register.get(block) or {}) if block else {}
+            answered = [n for n, spec in entries.items()
+                        if (spec or {}).get("value") is not None]
+            still_open = [n for n in entries if n not in answered]
+            if answered:
+                register_note = (
+                    f" This kit ALREADY HOLDS {len(answered)} of {len(entries)} figures "
+                    f"in its own register for "
+                    f"{register.get('facility') or 'its declared scope'} "
+                    f"({register.get('scope') or 'scope not stated'}) — do not ask for "
+                    f"those again. Still open: {', '.join(sorted(still_open)) or 'none'}."
+                )
+            else:
+                register_note = (
+                    f" This kit declares a figure register of {len(entries)} figures and "
+                    f"EVERY ONE IS EMPTY — no interview has run. Nothing needing one of "
+                    f"them can be answered yet."
+                )
+
         # The domain owner's own question sheet, where one exists. It beats the
         # derived per-quantity questions below, which asked "what is the rate?" --
         # one number for a whole domain. The sheet asks for the rate per package,
@@ -360,6 +390,7 @@ def _reasoning_kit_facts(state: Any) -> str:
                 f"blocker and not a stub: the platform refuses anything needing it and "
                 f"names the question, so NEVER invent a value to fill one, and never "
                 f"tell the user a figure is in hand because the question was asked."
+                + register_note
             )
 
         open_questions = [
@@ -373,6 +404,8 @@ def _reasoning_kit_facts(state: Any) -> str:
             # first version reported "every figure already answered" for a kit
             # that declared no figures at all, which is the most misleading thing
             # it could have said.
+            if register_note:
+                return f"REASONING KIT: {kit}.{register_note}"
             return (
                 f"REASONING KIT: {kit} — it declares NO question list yet, so the "
                 f"platform will refuse every figure it needs. Do not claim it can "
@@ -390,7 +423,7 @@ def _reasoning_kit_facts(state: Any) -> str:
             f"that change the DESIGN; the rest are operational and the platform "
             f"collects them later at /v1/reasoning/pending. An unanswered figure is "
             f"not a blocker — the platform refuses anything needing it and names the "
-            f"question, so never invent a value to fill one."
+            f"question, so never invent a value to fill one." + register_note
         )
     except Exception:  # noqa: BLE001 -- kit facts are context, never a blocker
         logger.warning("Floor chat: reasoning-kit questions unavailable", exc_info=True)
