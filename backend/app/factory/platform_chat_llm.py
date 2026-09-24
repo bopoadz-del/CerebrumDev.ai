@@ -280,6 +280,77 @@ def _store_inventory() -> str:
         )
 
 
+
+def _reasoning_kit_facts(state: Any) -> str:
+    """The chosen kit's OPEN questions, for the model to ask from.
+
+    The Floor already has a bounded number of question rounds. What it did not
+    have is anything to ask ABOUT: each reasoning kit ships with every figure
+    empty and each empty figure carrying the question that fills it, and the model
+    could not see them. So they are listed here, derived from the kit on disk --
+    the model asks them, it does not invent them.
+
+    Unanswered is not a blocker. The platform is built either way, the kernel
+    refuses anything needing an unanswered figure and names the question, and the
+    operator answers the rest later through /v1/reasoning/pending. So the model
+    should ask the few that change the DESIGN and leave the operational ones to
+    the platform.
+    """
+    try:
+        from app.factory.build import reasoning_socket
+        from app.factory.blocks_source import resolve_blocks_root
+
+        pd = getattr(state, "product_design", None)
+        blueprint = getattr(pd, "blueprint", None) if pd else None
+        kit = reasoning_socket.kit_for_vertical(blueprint) if blueprint else None
+        if not kit:
+            return (
+                "REASONING KIT: none matched for this vertical yet — do not claim "
+                "the platform will gate its figures."
+            )
+        root = resolve_blocks_root()
+        if root is None:
+            return f"REASONING KIT: {kit} (questions unavailable — Store unreachable)."
+        import pathlib as _pathlib
+
+        import yaml as _yaml
+
+        manifest = _yaml.safe_load(
+            (_pathlib.Path(root) / "app" / "blocks" / kit / "manifest.yaml")
+            .read_text(encoding="utf-8")
+        ) or {}
+        open_questions = [
+            str((entry or {}).get("question") or name)
+            for name, entry in (manifest.get("figures") or {}).items()
+            if not isinstance(entry, dict) or entry.get("value") is None
+        ]
+        declared = manifest.get("figures")
+        if not declared:
+            # Said plainly: an absent question list is NOT "all answered". The
+            # first version reported "every figure already answered" for a kit
+            # that declared no figures at all, which is the most misleading thing
+            # it could have said.
+            return (
+                f"REASONING KIT: {kit} — it declares NO question list yet, so the "
+                f"platform will refuse every figure it needs. Do not claim it can "
+                f"answer any of them."
+            )
+        if not open_questions:
+            return f"REASONING KIT: {kit} — every declared figure is answered."
+        listed = "; ".join(open_questions[:12])
+        return (
+            f"REASONING KIT: {kit}, with {len(open_questions)} unanswered figure(s). "
+            f"These are the questions the kit itself asks: {listed}. Ask only the ones "
+            f"that change the DESIGN; the rest are operational and the platform "
+            f"collects them later at /v1/reasoning/pending. An unanswered figure is "
+            f"not a blocker — the platform refuses anything needing it and names the "
+            f"question, so never invent a value to fill one."
+        )
+    except Exception:  # noqa: BLE001 -- kit facts are context, never a blocker
+        logger.warning("Floor chat: reasoning-kit questions unavailable", exc_info=True)
+        return "REASONING KIT: questions unavailable right now."
+
+
 def _elicitation_facts(state: Any) -> str:
     pd = getattr(state, "product_design", None)
     asked = int(getattr(pd, "elicitation_rounds", 0) or 0)

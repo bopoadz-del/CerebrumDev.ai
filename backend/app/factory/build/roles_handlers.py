@@ -2967,6 +2967,20 @@ def _vendor_product_kernel(ctx: RoleContext) -> None:
         ctx.workspace.copy_file(item, rel)
 
 
+
+def _emit_reasoning_socket(ctx) -> None:
+    """Emit the universal reasoning socket into the product under build."""
+    from app.factory.build import reasoning_socket
+
+    written = reasoning_socket.emit(ctx)
+    kit = reasoning_socket.kit_for_vertical(
+        ctx.blueprint, getattr(ctx, "plan", None) and getattr(ctx.plan, "__dict__", None))
+    logger.info(
+        "reasoning socket emitted (%d files); kit for this vertical: %s",
+        len(written), kit or "none — the socket will refuse until a kit is vendored",
+    )
+
+
 def _render_kernel_bridge() -> str:
     """Adapt sync capability handle() to execute_action. Does not own persist."""
     return '''"""Bridge capability handle() through the vendored product kernel.
@@ -3701,6 +3715,16 @@ def run_writer(
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     _vendor_product_kernel(ctx)
     ctx.workspace.write_text(Path("app") / "kernel_bridge.py", _render_kernel_bridge())
+    # The universal reasoning socket. Identical in every platform the Factory
+    # builds: the kernel is one file, and the KIT vendored beside it is the only
+    # thing that differs between a hotel build and an airport build. Emitted here
+    # rather than hand-patched into one product, so every future build has it.
+    #
+    # Fail closed twice over: a kit that does not load refuses every statement,
+    # and a host function the product has not wired raises instead of returning a
+    # clean pass -- a platform that forgot to wire retrieval must not answer
+    # ungated and look fine doing it.
+    _emit_reasoning_socket(ctx)
     vendored_ids = [b for b in ctx.state.get("vendored_blocks", ()) if b]
     contracts = {b: _block_contract(ctx, b) for b in vendored_ids}
     ctx.workspace.write_text(Path("app") / "dispatch.py", _render_dispatch(contracts))
