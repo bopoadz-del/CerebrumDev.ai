@@ -333,3 +333,85 @@ def test_the_kernel_budget_skips_and_says_so(platform):
     outcome = platform.kernel.answer_time(many, state={"notam": {"as_of": 1}})
     assert outcome.incomplete is False, "five figures must not exhaust the budget"
     assert outcome.skipped == 0
+
+
+# ── answers persist, and "recorded" means recorded ────────────────────────
+
+def test_an_answer_persists_and_a_fresh_kernel_sees_it(platform, tmp_path, monkeypatch):
+    """The bug this closes: answer() validated the provenance, returned the dict
+    and stored NOTHING, so the route reported ok:true for a no-op -- a success
+    over an operation that did nothing, which is what this layer refuses from
+    everyone else."""
+    storage = tmp_path / "platform_storage"
+    storage.mkdir()
+    monkeypatch.setenv("STORAGE_PATH", str(storage))
+    pending = importlib.import_module("builtapp.reasoning.pending")
+
+    assert "runway_13l_tora" in pending.unanswered()
+    pending.answer("runway_13l_tora", 3200, answered_by="the aerodrome operator",
+                   answered_at="2026-09-24", source="AIP declared distance table")
+
+    assert "runway_13l_tora" not in pending.unanswered()
+    value, refusal = pending.value_of("runway_13l_tora")
+    assert value == 3200 and refusal is None
+
+    # A fresh kernel is what a restart or another worker gets.
+    fresh = platform.ReasoningKernel(kit_dir=platform.KIT_DIR)
+    assert fresh.figure_value("runway_13l_tora") == (3200, None)
+    assert "runway_13l_tora" not in fresh.pending_questions()
+
+
+def test_an_answer_never_lands_in_the_kit(platform, tmp_path, monkeypatch):
+    """The kit is a SIGNED Store block shared by every customer. One client's
+    figures reaching the next platform built from it would be the provenance
+    failure this layer exists to prevent, arriving signed."""
+    storage = tmp_path / "platform_storage"
+    storage.mkdir()
+    monkeypatch.setenv("STORAGE_PATH", str(storage))
+    kit_before = {p.name: p.read_bytes() for p in platform.KIT_DIR.iterdir()}
+
+    pending = importlib.import_module("builtapp.reasoning.pending")
+    pending.answer("runway_13l_tora", 3200, answered_by="an operator",
+                   answered_at="2026-09-24", source="the table")
+
+    kit_after = {p.name: p.read_bytes() for p in platform.KIT_DIR.iterdir()}
+    assert kit_after == kit_before, "an answer was written into the shared kit"
+    assert (storage / "reasoning_answers.json").is_file()
+
+
+def test_an_answer_that_cannot_be_read_back_raises_rather_than_reporting_success(
+        platform, tmp_path, monkeypatch):
+    storage = tmp_path / "platform_storage"
+    storage.mkdir()
+    monkeypatch.setenv("STORAGE_PATH", str(storage))
+
+    # A store that silently drops the write is the shape of the original bug.
+    monkeypatch.setattr(platform.kernel, "answers", lambda: {})
+
+    with pytest.raises(RuntimeError, match="did not persist"):
+        platform.kernel.record_answer(
+            "runway_13l_tora", 3200, answered_by="an operator",
+            answered_at="2026-09-24", source="the table")
+
+
+def test_an_answer_to_a_figure_the_kit_never_asks_about_is_refused(platform, tmp_path,
+                                                                  monkeypatch):
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    with pytest.raises(KeyError, match="not a figure this kit asks about"):
+        platform.kernel.record_answer("invented_figure", 1, answered_by="a",
+                                      answered_at="b", source="c")
+
+
+def test_answers_arrive_one_at_a_time_rather_than_in_a_whole_kit_swap(platform, tmp_path,
+                                                                     monkeypatch):
+    """Answers trickle in. Each one takes effect the moment it lands; nothing
+    waits for a second kit to be swapped in."""
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path))
+    pending = importlib.import_module("builtapp.reasoning.pending")
+
+    before = len(pending.unanswered())
+    pending.answer("runway_13l_tora", 3200, answered_by="an operator",
+                   answered_at="2026-09-24", source="the table")
+
+    assert len(pending.unanswered()) == before - 1
+    assert pending.value_of("runway_13l_tora")[0] == 3200

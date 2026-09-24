@@ -273,6 +273,85 @@ class ReasoningKernel:
             f"pass statements through with no invariants")
         return Outcome("refused", hook, [finding], retrieval_permitted=False)
 
+    # -- the answer store --------------------------------------------------
+    #
+    # Answers are THIS PLATFORM'S data and live in this platform's storage. They
+    # are never written into the kit, because the kit is a signed Store block
+    # shared by every customer: one client's declared distances reaching the next
+    # platform built from the same kit would be the provenance failure this whole
+    # layer exists to prevent, arriving signed.
+
+    def _answers_path(self) -> pathlib.Path:
+        root = os.getenv("STORAGE_PATH") or "."
+        return pathlib.Path(root) / "reasoning_answers.json"
+
+    def answers(self) -> Dict[str, Dict[str, Any]]:
+        """What this platform has been told, read fresh.
+
+        Read from disk every time rather than cached: an answer posted by one
+        worker must be visible to the next request on another, and a cache here
+        would make a recorded answer look unrecorded.
+        """
+        path = self._answers_path()
+        if not path.is_file():
+            return {}
+        try:
+            import json
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logger.error("reasoning answers unreadable at %s; treating as none", path)
+            return {}
+        return {str(k): v for k, v in (data or {}).items() if isinstance(v, dict)}
+
+    def record_answer(self, figure: str, value: Any, *, answered_by: str,
+                      answered_at: str, source: str) -> Dict[str, Any]:
+        """Persist one answer, then READ IT BACK before reporting success.
+
+        The read-back is the point. An earlier version validated the provenance,
+        returned the dict and stored nothing, so the route answered ok:true for a
+        no-op -- a success report over an operation that did nothing, which is the
+        defect class this layer exists to catch.
+        """
+        if not (answered_by and answered_at and source):
+            raise ValueError(
+                "an interview answer needs answered_by, answered_at and source: an "
+                "unattributed figure is not evidence, whoever supplied it")
+        if figure not in (self.manifest.get("figures") or {}):
+            raise KeyError(f"{figure} is not a figure this kit asks about")
+
+        record = {
+            "value": value,
+            "answered_by": answered_by,
+            "answered_at": answered_at,
+            "source": source,
+        }
+        import json
+        import os as _os
+        import tempfile as _tempfile
+
+        path = self._answers_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current = self.answers()
+        current[figure] = record
+        # Atomic: a crash mid-write must not leave a half-written answer file that
+        # reads as "no answers at all".
+        handle, temporary = _tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with _os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(current, stream, indent=2, sort_keys=True)
+            _os.replace(temporary, path)
+        except BaseException:
+            _os.unlink(temporary)
+            raise
+
+        stored = self.answers().get(figure)
+        if not stored or stored.get("value") != value:
+            raise RuntimeError(
+                f"{figure} did not persist: the answer is not readable back, so it "
+                f"has not been recorded and must not be reported as recorded")
+        return dict(stored, figure=figure)
+
     # -- the unanswered interview -----------------------------------------
 
     def pending_questions(self) -> Dict[str, str]:
@@ -283,7 +362,10 @@ class ReasoningKernel:
         visible to the operator instead of shipping as a plausible number.
         """
         out: Dict[str, str] = {}
+        answered = self.answers()
         for name, entry in (self.manifest.get("figures") or {}).items():
+            if str(name) in answered:
+                continue
             if not isinstance(entry, dict) or entry.get("value") is None:
                 question = ""
                 if isinstance(entry, dict):
@@ -292,7 +374,15 @@ class ReasoningKernel:
         return out
 
     def figure_value(self, name: str) -> Tuple[Any, Optional[str]]:
-        """``(value, refusal)``. A null figure yields a refusal, never a default."""
+        """``(value, refusal)``. A null figure yields a refusal, never a default.
+
+        An answer this platform has been given wins over the kit's null, which is
+        how one answer takes effect the moment it lands instead of waiting for
+        some whole-kit swap.
+        """
+        answered = self.answers().get(name)
+        if answered and answered.get("value") is not None:
+            return answered["value"], None
         entry = (self.manifest.get("figures") or {}).get(name)
         if not isinstance(entry, dict) or entry.get("value") is None:
             question = self.pending_questions().get(name, "")
@@ -746,23 +836,25 @@ def value_of(figure: str) -> Tuple[Any, Optional[str]]:
 
 def answer(figure: str, value: Any, *, answered_by: str, answered_at: str,
            source: str) -> Dict[str, Any]:
-    """Record an interview answer WITH its provenance.
+    """Record an interview answer WITH its provenance, and PERSIST it.
 
     All three of answered_by, answered_at and source are required. An answer
     without them is an unattributed figure, which is the thing this layer refuses
     from a model and must equally refuse from a person.
+
+    The kernel writes it to this platform's storage and reads it back before
+    returning; if it did not persist, this raises instead of reporting success.
+    An earlier version validated the provenance, returned the dict and stored
+    nothing, so a caller got ok:true for a no-op.
     """
-    if not (answered_by and answered_at and source):
-        raise ValueError(
-            "an interview answer needs answered_by, answered_at and source: an "
-            "unattributed figure is not evidence, whoever supplied it")
-    return {
-        "figure": figure,
-        "value": value,
-        "answered_by": answered_by,
-        "answered_at": answered_at,
-        "source": source,
-    }
+    return kernel.record_answer(
+        figure, value, answered_by=answered_by, answered_at=answered_at,
+        source=source)
+
+
+def answered() -> Dict[str, Dict[str, Any]]:
+    """Every answer this platform holds, with who gave it, when and from where."""
+    return kernel.answers()
 '''
 
 
@@ -931,8 +1023,19 @@ async def reasoning_answer(request: Request) -> Dict[str, Any]:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # It did not persist. Reporting ok here would be a success over an
+        # operation that did nothing, which is what this layer refuses from
+        # everyone else.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     recorded["tenant_id"] = getattr(tenant, "tenant_id", None)
-    return {"ok": True, "recorded": recorded}
+    return {
+        "ok": True,
+        "recorded": recorded,
+        "still_unanswered": len(pending.unanswered()),
+    }
 
 
 async def _principal(request: Request):
