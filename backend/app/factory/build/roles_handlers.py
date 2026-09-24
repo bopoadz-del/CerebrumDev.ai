@@ -2973,8 +2973,19 @@ def _emit_reasoning_socket(ctx) -> None:
     from app.factory.build import reasoning_socket
 
     written = reasoning_socket.emit(ctx)
+    # Ask the Store the same way ``emit`` just did, or this line names no kit for
+    # a kit the alias table has no entry for — reporting "kit 'None' vendored"
+    # beside the four files it vendored.
+    from app.factory.blocks_source import resolve_blocks_root
+
+    try:
+        store_root = resolve_blocks_root()
+    except Exception:  # noqa: BLE001 -- a log line must not fail a build
+        store_root = None
     kit = reasoning_socket.kit_for_vertical(
-        ctx.blueprint, getattr(ctx, "plan", None) and getattr(ctx.plan, "__dict__", None))
+        ctx.blueprint,
+        getattr(ctx, "plan", None) and getattr(ctx.plan, "__dict__", None),
+        store_root=store_root)
     vendored = [p for p in written if "/kit/" in p]
     if vendored:
         logger.info(

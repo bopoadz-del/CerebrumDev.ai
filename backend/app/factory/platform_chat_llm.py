@@ -360,13 +360,24 @@ def _reasoning_kit_facts(state: Any) -> str:
 
         pd = getattr(state, "product_design", None)
         blueprint = getattr(pd, "blueprint", None) if pd else None
-        kit = reasoning_socket.kit_for_vertical(blueprint) if blueprint else None
+        if blueprint is None:
+            return (
+                "REASONING KIT: none matched for this vertical yet — do not claim "
+                "the platform will gate its figures."
+            )
+        # Resolve the Store BEFORE the kit, and pass it in. This leg already
+        # resolved it two lines further down for every kit it recognised, so the
+        # order costs nothing and buys the honest answer: a kit the Store
+        # publishes but the alias table has no entry for was reported here as
+        # "none matched for this vertical", which is a claim about the domain
+        # made from a stale copy of the Store's kit list.
+        root = resolve_blocks_root()
+        kit = reasoning_socket.kit_for_vertical(blueprint, store_root=root)
         if not kit:
             return (
                 "REASONING KIT: none matched for this vertical yet — do not claim "
                 "the platform will gate its figures."
             )
-        root = resolve_blocks_root()
         if root is None:
             return f"REASONING KIT: {kit} (questions unavailable — Store unreachable)."
         import pathlib as _pathlib

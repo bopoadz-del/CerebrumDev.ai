@@ -331,3 +331,41 @@ def test_the_budget_is_big_enough_to_be_worth_calling_a_budget():
         "the per-turn cap is the wrong shape: it mutilates the longest turn, which "
         "is the one most worth keeping"
     )
+
+
+def test_a_kit_only_the_store_knows_is_not_reported_as_no_kit_for_the_vertical(
+        store, tmp_path):
+    """"None matched for this vertical yet" is a claim about the DOMAIN, and it
+    was being made from a stale copy of the Store's kit list.
+
+    ``stadium_venue`` shipped in the Store while the Factory's alias table had no
+    entry, so this leg told the model the vertical had no reasoning kit — and the
+    model then correctly declined to promise gating for a domain that had 43
+    invariants sitting in the Store.
+    """
+    where = store("a_kit_nobody_hardcoded", {
+        "kit": "a_kit_nobody_hardcoded", "version": 1,
+        "quantities": {"rate": {"units": ["currency_per_m2"]}},
+        "figures": {"rate": {"value": None, "question": "What is the rate?"}},
+    })
+    (where / "invariants.yaml").write_text(yaml.safe_dump({"invariants": [
+        {"id": "INV-1", "kind": "grounding", "severity": "refuse", "hook": "H3",
+         "applies_to": {"quantity": "any"}, "message": "{quantity} is not grounded",
+         "measurement": "20 probes. Before: n uncited. After: 0."}]}),
+        encoding="utf-8")
+
+    facts = platform_chat_llm._reasoning_kit_facts(_state("a_kit_nobody_hardcoded"))
+    assert "none matched for this vertical" not in facts
+    assert "a_kit_nobody_hardcoded" in facts
+
+
+def test_half_a_kit_in_the_store_is_still_no_kit(store):
+    """The leg asks the Store, which is not the same as trusting a directory: a
+    manifest with no invariants would gate nothing, so it must not be announced
+    as a kit that will gate this platform's figures."""
+    store("half_a_kit", {
+        "kit": "half_a_kit", "version": 1,
+        "quantities": {"rate": {"units": ["currency_per_m2"]}},
+    })
+    facts = platform_chat_llm._reasoning_kit_facts(_state("half_a_kit"))
+    assert "none matched for this vertical" in facts

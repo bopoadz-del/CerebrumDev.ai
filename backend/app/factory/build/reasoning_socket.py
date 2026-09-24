@@ -1278,23 +1278,33 @@ def vendor_kit(ctx: Any) -> list:
     logger = logging.getLogger(__name__)
 
     plan = getattr(ctx, "plan", None)
-    kit = kit_for_vertical(
-        getattr(ctx, "blueprint", None),
-        getattr(plan, "__dict__", None) if plan is not None else None,
-    )
+    blueprint = getattr(ctx, "blueprint", None)
+    resolved = getattr(plan, "__dict__", None) if plan is not None else None
+
+    # Resolve the Store BEFORE the kit, so the kit can be resolved against what
+    # the Store actually publishes. Only a build does this: resolving the root
+    # can clone the Store, and ``kit_for_vertical`` is also called per message by
+    # the Floor's chat leg, which must not pay for a clone to answer a question.
+    root = None
+    unreachable = None
+    if vertical_of(blueprint, resolved):
+        try:
+            from app.factory.blocks_source import resolve_blocks_root
+
+            root = resolve_blocks_root()
+        except Exception as exc:  # noqa: BLE001 -- an unreachable Store is not a crash
+            unreachable = exc
+
+    kit = kit_for_vertical(blueprint, resolved, store_root=root)
     if not kit:
         logger.warning(
             "reasoning socket: no kit for this vertical. The platform will refuse "
             "every figure its rules need — that is fail-closed, not a gate.")
         return []
 
-    try:
-        from app.factory.blocks_source import resolve_blocks_root
-
-        root = resolve_blocks_root()
-    except Exception as exc:  # noqa: BLE001 -- an unreachable Store is not a crash
+    if unreachable is not None:
         logger.error("reasoning socket: Store unreachable (%s); kit '%s' NOT vendored, "
-                     "so this platform will refuse every figure", exc, kit)
+                     "so this platform will refuse every figure", unreachable, kit)
         return []
     if root is None:
         logger.error(
@@ -1352,27 +1362,76 @@ def vendor_kit(ctx: Any) -> list:
     return paths
 
 
-def kit_for_vertical(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def kit_for_vertical(blueprint: Any, resolved: Optional[Dict[str, Any]] = None,
+                     store_root: Any = None) -> Optional[str]:
     """Which kit this build gets, from the blueprint's own vertical.
 
     Nothing is guessed from a product name: the blueprint states its vertical, and
     a vertical with no kit gets None -- which the socket reports as a refusal
     rather than as a pass.
+
+    ``store_root``, when a caller has already resolved one, lets a vertical that
+    names a Store kit outright resolve without an entry in the alias table below.
     """
-    vertical = ""
+    vertical = vertical_of(blueprint, resolved)
+    if not vertical:
+        return None
+    alias = VERTICAL_TO_KIT.get(vertical)
+    if alias:
+        return alias
+    # Not an alias. Ask the STORE whether it publishes a kit of this name, rather
+    # than concluding from a Factory dict that no kit exists. The dict is a
+    # committed copy of the Store's kit list, and the copy is what went stale:
+    # ``stadium_venue`` shipped in the Store, was absent here, and every stadium
+    # build took the no-kit path and refused every figure -- reported as
+    # fail-closed, which is the one way for a missing kit to look correct.
+    #
+    # Only a caller holding a resolved ``store_root`` gets this leg. A caller
+    # without one is not told "no kit exists"; it is told what the alias table
+    # knows, because resolving the root can clone the Store and the chat leg
+    # calls this per message.
+    return vertical if store_publishes_kit(store_root, vertical) else None
+
+
+def vertical_of(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> str:
+    """The blueprint's stated vertical, normalised. "" when it states none."""
     for attribute in ("vertical", "domain", "industry"):
         value = getattr(blueprint, attribute, None) or (
             (resolved or {}).get(attribute) if resolved else None)
         if value:
-            vertical = str(value).strip().lower().replace(" ", "_").replace("-", "_")
-            break
-    if not vertical:
-        return None
-    return VERTICAL_TO_KIT.get(vertical)
+            return str(value).strip().lower().replace(" ", "_").replace("-", "_")
+    return ""
 
 
-#: Vertical -> kit. One entry per kit the Store publishes; a vertical absent here
-#: has no reasoning kit yet, and the socket says so instead of inventing one.
+def store_publishes_kit(store_root: Any, kit: str) -> bool:
+    """Does this Store checkout declare a kit by this name?
+
+    The Factory follows the Store's head, so this is the only answer that is
+    true at build time. A kit is its two required declarative files; a directory
+    holding neither is not a kit and must not be reported as one.
+
+    The root is PASSED IN, never resolved here: resolving it can clone the Store,
+    and the caller that already holds one is the build. No root answers False,
+    and the caller's no-kit path then refuses every figure — the same outcome the
+    Store-unreachable branch in ``emit`` produces, so nothing degrades silently.
+    """
+    import pathlib
+
+    if store_root is None or not kit:
+        return False
+    # The vertical arrives from a blueprint, so it must not be turned into a path
+    # that leaves app/blocks.
+    if "/" in kit or "\\" in kit or kit.startswith("."):
+        return False
+    directory = pathlib.Path(store_root) / "app" / "blocks" / kit
+    return (directory / "manifest.yaml").is_file() and (
+        directory / "invariants.yaml").is_file()
+
+
+#: Vertical -> kit, for verticals whose NAME differs from the kit's. A vertical
+#: that names a Store kit outright needs no entry: ``kit_for_vertical`` asks the
+#: Store. Entries whose key equals their value are kept only so a vertical still
+#: resolves with no Store reachable, which is what the Floor's chat leg does.
 VERTICAL_TO_KIT: Dict[str, str] = {
     "datacentre": "datacentre",
     "data_centre": "datacentre",
@@ -1408,6 +1467,15 @@ VERTICAL_TO_KIT: Dict[str, str] = {
     "ports": "ports_marine",
     "airport_construction": "airport_construction",
     "airport": "airport_construction",
+    # One kit, four archetypes. A touring event is a GUEST in someone else's
+    # building, so "mega_event" and "stadium" get the SAME kit and then mean
+    # different things by the same number -- which is the distinction the kit's
+    # archetypes exist to hold, and splitting them here would hide it.
+    "stadium": "stadium_venue",
+    "stadium_venue": "stadium_venue",
+    "sports_venue": "stadium_venue",
+    "arena": "stadium_venue",
+    "mega_event": "stadium_venue",
 }
 
 

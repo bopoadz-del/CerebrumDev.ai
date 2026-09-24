@@ -401,3 +401,103 @@ def test_a_broken_register_disables_rather_than_losing_the_answers(tmp_path, sto
         sys.modules.pop(module.__name__, None)
     assert kernel.enabled is False
     assert "figure register" in kernel.disabled_reason
+
+
+# ── which kit a vertical gets ───────────────────────────────────────────────
+
+def test_a_kit_the_store_publishes_is_reachable_with_no_factory_edit(tmp_path):
+    """The defect this covers is a missing entry, not a wrong one.
+
+    ``VERTICAL_TO_KIT`` was a committed copy of the Store's kit list, so a kit
+    that shipped in the Store was unreachable until somebody remembered to edit
+    the Factory. ``stadium_venue`` shipped, the entry was absent, and every
+    stadium build took the no-kit path and refused every figure — which reads as
+    fail-closed, the one way for a missing kit to look like correct behaviour.
+    """
+    root = _store(tmp_path, "a_kit_nobody_hardcoded")
+    blueprint = types.SimpleNamespace(vertical="a_kit_nobody_hardcoded")
+    assert reasoning_socket.kit_for_vertical(
+        blueprint, store_root=root) == "a_kit_nobody_hardcoded"
+
+
+def test_the_store_is_asked_only_by_a_caller_that_already_holds_a_root(tmp_path):
+    """Resolving the Store's root can CLONE it, and the Floor's chat leg calls
+    this per message. So a caller with no root is answered from the alias table
+    and never made to pay for a network fetch to answer a question."""
+    blueprint = types.SimpleNamespace(vertical="a_kit_nobody_hardcoded")
+    assert reasoning_socket.kit_for_vertical(blueprint) is None
+    assert reasoning_socket.kit_for_vertical(blueprint, store_root=None) is None
+    # An alias still resolves with no root at all: aliases are Factory knowledge.
+    assert reasoning_socket.kit_for_vertical(
+        types.SimpleNamespace(vertical="metro")) == "rail"
+
+
+def test_a_vertical_the_store_does_not_publish_still_gets_no_kit(tmp_path):
+    """Asking the Store is not the same as guessing. A vertical with no kit must
+    still resolve to None, or the socket vendors a directory that isn't there."""
+    root = _store(tmp_path, "fitout")
+    blueprint = types.SimpleNamespace(vertical="no_such_domain")
+    assert reasoning_socket.kit_for_vertical(blueprint, store_root=root) is None
+
+
+def test_a_directory_that_is_not_a_kit_is_not_reported_as_one(tmp_path):
+    """``app/blocks`` holds plain blocks too. A kit is its two required
+    declarative files, so a directory holding neither must not resolve."""
+    root = _store(tmp_path, "fitout")
+    (root / "app" / "blocks" / "plain_block").mkdir(parents=True)
+    (root / "app" / "blocks" / "plain_block" / "block.py").write_text(
+        "x", encoding="utf-8")
+    blueprint = types.SimpleNamespace(vertical="plain_block")
+    assert reasoning_socket.kit_for_vertical(blueprint, store_root=root) is None
+
+
+def test_half_a_kit_does_not_resolve(tmp_path):
+    """Half a kit is not a kit: a manifest with no invariants would build a
+    platform whose gate has no rules to enforce."""
+    root = _store(tmp_path, "half_a_kit")
+    (root / "app" / "blocks" / "half_a_kit" / "invariants.yaml").unlink()
+    blueprint = types.SimpleNamespace(vertical="half_a_kit")
+    assert reasoning_socket.kit_for_vertical(blueprint, store_root=root) is None
+    assert reasoning_socket.store_publishes_kit(root, "half_a_kit") is False
+
+
+def test_a_vertical_cannot_escape_the_blocks_directory(tmp_path):
+    """The vertical arrives from a blueprint, so a name that walks out of
+    ``app/blocks`` must not be turned into a path."""
+    root = _store(tmp_path, "fitout")
+    for hostile in ("../../etc", "..", ".ssh", "a/b", "a\b"):
+        blueprint = types.SimpleNamespace(vertical=hostile)
+        assert reasoning_socket.kit_for_vertical(
+            blueprint, store_root=root) is None, hostile
+
+
+def test_the_stadium_aliases_all_reach_the_sports_venue_kit():
+    """Four archetypes, one kit. A touring event is a guest in someone else's
+    building, so "mega_event" and "stadium" are the same kit and must not become
+    two."""
+    for vertical in ("stadium", "stadium_venue", "sports_venue", "arena", "mega_event"):
+        blueprint = types.SimpleNamespace(vertical=vertical)
+        assert reasoning_socket.kit_for_vertical(blueprint) == "stadium_venue", vertical
+
+
+def test_a_build_whose_vertical_only_the_store_knows_vendors_the_kit(
+        tmp_path, store_root):
+    """End to end on the leg that matters: a kit with no alias entry is vendored
+    by a real build, because ``emit`` resolves the Store before the kit."""
+    store_root["root"] = _store(tmp_path, "a_kit_nobody_hardcoded")
+    ctx = FakeCtx(tmp_path / "product", vertical="a_kit_nobody_hardcoded")
+    written = reasoning_socket.emit(ctx)
+    assert reasoning_socket.KIT_MANIFEST in written
+    assert reasoning_socket.KIT_INVARIANTS in written
+
+
+def test_a_build_with_no_vertical_never_asks_the_store_at_all(tmp_path, monkeypatch):
+    """No vertical means no kit, decided without touching the Store — resolving
+    it can clone, and a build that states no vertical has nothing to look up."""
+    asked = []
+    module = importlib.import_module("app.factory.blocks_source")
+    monkeypatch.setattr(module, "resolve_blocks_root",
+                        lambda: asked.append(1) or None)
+    ctx = FakeCtx(tmp_path / "product", vertical=None)
+    reasoning_socket.emit(ctx)
+    assert not asked, "a build with no vertical resolved the Store for nothing"
