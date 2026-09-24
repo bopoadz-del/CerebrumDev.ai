@@ -61,6 +61,29 @@ CURSOR_KEY_ENVS = (
     "FACTORY_CURSOR_API_KEY",
 )
 
+#: DeepSeek is the primary provider and OpenRouter is the fallback. These are the
+#: DEFAULTS used when no *_LLM_BASE_URL / *_LLM_MODEL is configured.
+#:
+#: They used to be `https://api.moonshot.ai/v1` and `kimi-k2.7-code`, a retired
+#: provider. That is not a cosmetic default: `_scoped_path_endpoint` returns on the
+#: FIRST prefix with an API key and takes host+model from that prefix alone, so a
+#: prefix with a key but no BASE_URL fell through to the Moonshot constant and the
+#: loop never reached the prefix where the real DeepSeek endpoint was configured.
+#: A DeepSeek key was POSTed to Moonshot, 401'd, and the Floor reported "LLM
+#: drafting failed, falling back" -- shipping deterministic-template blueprints
+#: while every key in the environment was valid. Diagnosed live on build
+#: sess_f427772fcfcc4087 and worked around with two env vars; this is the fix.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+#: The retired host, kept as a NAMED legacy constant for one reason: an operator
+#: who sets KIMI_API_KEY and nothing else is explicitly naming that provider, and
+#: sending their key anywhere else would be the same defect mirrored -- a named key
+#: POSTed to a host that will 401 it. It is never a default on its own.
+MOONSHOT_BASE_URL = "https://api.moonshot.ai/v1"
+#: Both default to the same id, matching the explicit DeepSeek branch further down
+#: rather than inventing a sibling model name that might 404.
+DEFAULT_PRIMARY_MODEL = "deepseek-chat"
+DEFAULT_FALLBACK_MODEL = "deepseek-chat"
+
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_OPENROUTER_FALLBACK_MODEL = "minimax/minimax-m3:free"
 
@@ -262,6 +285,33 @@ def _native_moonshot_key(*prefixes: str) -> str:
     return ""
 
 
+def _default_base_url() -> str:
+    """DeepSeek, unless the environment explicitly names Kimi credentials.
+
+    A blanket DeepSeek default would mirror the very defect it fixes: an operator
+    with only KIMI_API_KEY set would have that key POSTed to DeepSeek and 401'd. So
+    the default follows the credential that is actually present -- an environment
+    that configures nothing, or configures DeepSeek, gets DeepSeek; one that names
+    Kimi gets Kimi, because it asked.
+    """
+    if _names_kimi_explicitly():
+        return MOONSHOT_BASE_URL
+    return DEEPSEEK_BASE_URL
+
+
+def _names_kimi_explicitly() -> bool:
+    """Whether this environment ASKED for the retired provider.
+
+    Two ways to ask, and both are explicit: ``LLM_PROVIDER=kimi``/``moonshot``, or a
+    ``KIMI_*`` credential. Either one means the default host and model must be that
+    provider's, because sending a named key to a host that will 401 it is the same
+    defect as the one the DeepSeek default fixes -- just pointing the other way.
+    """
+    if os.getenv("KIMI_API_KEY", "").strip():
+        return True
+    return os.getenv("LLM_PROVIDER", "").strip().lower() in ("kimi", "moonshot")
+
+
 def _kimi_base_url(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates: List[str] = []
     for prefix in prefixes:
@@ -269,8 +319,17 @@ def _kimi_base_url(*prefixes: str, skip_openrouter: bool = False) -> str:
     candidates.extend(["KIMI_BASE_URL", "CEREBRUM_LLM_BASE_URL"])
     reject = _is_openrouter_base if skip_openrouter else None
     return _env_first_skipping(
-        *candidates, default="https://api.moonshot.ai/v1", reject=reject
+        *candidates, default=_default_base_url(), reject=reject
     )
+
+
+def _default_model() -> str:
+    """Same rule as the base URL: the model must belong to the host the key goes to."""
+    return "kimi-k2.7-code" if _names_kimi_explicitly() else DEFAULT_PRIMARY_MODEL
+
+
+def _default_fallback_model() -> str:
+    return "moonshot-v1-8k" if _names_kimi_explicitly() else DEFAULT_FALLBACK_MODEL
 
 
 def _kimi_model(*prefixes: str, skip_openrouter: bool = False) -> str:
@@ -278,13 +337,14 @@ def _kimi_model(*prefixes: str, skip_openrouter: bool = False) -> str:
     for prefix in prefixes:
         candidates.append(f"{prefix}_LLM_MODEL")
     candidates.extend(["KIMI_MODEL", "CEREBRUM_LLM_MODEL"])
-    # kimi-k2-0905-preview (the old Cerebrum-Blocks-aligned default) answers
-    # 404 on api.moonshot.ai — measured live on the 2026-08-13 factory build:
-    # every primary call failed and only the fallback leg did the work. The
-    # code-oriented sibling is real on this endpoint; override via KIMI_MODEL.
+    # KIMI_MODEL / KIMI_BASE_URL are still READ, because a live service may still
+    # have them set and silently ignoring a value someone configured is its own
+    # defect. They are legacy aliases only: the DEFAULT is DeepSeek, so an
+    # environment that configures nothing can no longer be routed to a retired
+    # provider. Override with {PREFIX}_LLM_MODEL or CEREBRUM_LLM_MODEL.
     reject = _looks_like_openrouter_model if skip_openrouter else None
     return _env_first_skipping(
-        *candidates, default="kimi-k2.7-code", reject=reject
+        *candidates, default=_default_model(), reject=reject
     )
 
 
@@ -297,10 +357,10 @@ def _kimi_fallback_model(*prefixes: str, default: str, skip_openrouter: bool = F
     return _env_first_skipping(*candidates, default=default, reject=reject)
 
 
-def _non_cursor_base(value: str, default: str = "https://api.moonshot.ai/v1") -> str:
+def _non_cursor_base(value: str, default: str | None = None) -> str:
     if value and not _is_cursor_chat_host(value):
         return value
-    return default
+    return _default_base_url() if default is None else default
 
 
 def _scoped_path_endpoint(*prefixes: str) -> Dict[str, str] | None:
@@ -319,12 +379,12 @@ def _scoped_path_endpoint(*prefixes: str) -> Dict[str, str] | None:
             shared = _env_first("CEREBRUM_LLM_BASE_URL", "KIMI_BASE_URL")
             base = _non_cursor_base(shared)
         model = os.getenv(f"{prefix}_LLM_MODEL", "").strip() or _env_first(
-            "CEREBRUM_LLM_MODEL", "KIMI_MODEL", default="kimi-k2.7-code"
+            "CEREBRUM_LLM_MODEL", "KIMI_MODEL", default=_default_model()
         )
         fallback = os.getenv(f"{prefix}_LLM_FALLBACK_MODEL", "").strip() or _env_first(
             "CEREBRUM_LLM_FALLBACK_MODEL",
             "KIMI_FALLBACK_MODEL",
-            default="moonshot-v1-8k",
+            default=_default_fallback_model(),
         )
         return {
             "api_key": key,
@@ -356,7 +416,7 @@ def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
             "api_key": native,
             "model": _kimi_model(*prefixes, skip_openrouter=True),
             "fallback_model": _kimi_fallback_model(
-                *prefixes, default="moonshot-v1-8k", skip_openrouter=True
+                *prefixes, default=_default_fallback_model(), skip_openrouter=True
             ),
         }
     base_url = _non_cursor_base(_kimi_base_url(*prefixes))
@@ -364,7 +424,7 @@ def _resolve_kimi_primary(*prefixes: str) -> Dict[str, str]:
         "base_url": base_url,
         "api_key": _resolve_kimi_api_key(base_url, *prefixes),
         "model": _kimi_model(*prefixes),
-        "fallback_model": _kimi_fallback_model(*prefixes, default="moonshot-v1-8k"),
+        "fallback_model": _kimi_fallback_model(*prefixes, default=_default_fallback_model()),
     }
 
 
@@ -671,8 +731,8 @@ def _openai_compatible_chat_cfg(
         "provider": provider,
         "api_key": api_key,
         "base_url": base_url,
-        "model": model or "kimi-k2.7-code",
-        "fallback_model": fallback_model or "moonshot-v1-8k",
+        "model": model or _default_model(),
+        "fallback_model": fallback_model or _default_fallback_model(),
         "mock": mock,
         "temperature": _llm_temperature(),
     }
@@ -793,10 +853,25 @@ def get_factory_llm_config() -> Dict[str, Any]:
                 "KIMI_API_KEY / CEREBRUM_LLM_API_KEY are Moonshot credentials "
                 "and will 401 on this host"
             )
-        else:
+        elif _names_kimi_explicitly():
+            # The operator asked for this provider by name, so name THEIR variable.
             cfg["error"] = (
-                "Factory architect requires KIMI_API_KEY (or CEREBRUM_LLM_API_KEY), "
-                "or set KIMI_MOCK=1 for tests"
+                "Factory architect was asked for Kimi/Moonshot (LLM_PROVIDER or a "
+                "KIMI_* credential) but KIMI_API_KEY (or CEREBRUM_LLM_API_KEY) is not "
+                "set; set the key, or unset LLM_PROVIDER to use the DeepSeek default. "
+                "Set KIMI_MOCK=1 for tests"
+            )
+        else:
+            # Name the vars an operator should actually set. This said "requires
+            # KIMI_API_KEY" unconditionally -- pointing whoever read it at a retired
+            # provider, which is the one thing a fail-closed message must not do.
+            cfg["error"] = (
+                "Factory architect has no LLM credential: set "
+                "CEREBRUM_FACTORY_LLM_API_KEY, or CEREBRUM_CHAT_LLM_API_KEY, or "
+                "CEREBRUM_LLM_API_KEY (DeepSeek is the default host; set the matching "
+                "*_LLM_BASE_URL for any other provider). Set KIMI_MOCK=1 for tests. "
+                "DEEPSEEK_API_KEY is the coding CLI's credential and does not arm "
+                "this path."
             )
     return cfg
 
