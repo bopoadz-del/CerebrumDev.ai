@@ -655,9 +655,14 @@ class ReasoningKernel:
         for name, entry in self.register.items():
             if str(name) in answered or (entry or {}).get("value") is not None:
                 continue
-            out[str(name)] = (
-                f"declared in this kit's figure register with no value. "
-                f"{self.register_meta.get('scope') or ''}".strip())
+            # The owner's own wording wins here too. Without this the register's
+            # generic "declared with no value" shadowed "[B.2] your rate per package:
+            # partitions, ceilings, raised floor..." -- the register knows the figure
+            # exists, the sheet knows what to ask for it.
+            asked = self._sheet_wording(str(name))
+            scope = self.register_meta.get("scope") or ""
+            out[str(name)] = asked or (
+                f"declared in this kit's figure register with no value. {scope}".strip())
         for name, entry in (self.manifest.get("figures") or {}).items():
             if str(name) in answered:
                 continue

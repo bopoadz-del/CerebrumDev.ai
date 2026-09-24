@@ -207,7 +207,12 @@ def test_a_real_store_kit_vendors_and_the_emitted_kernel_gates_with_it(
 
     # And it asks the owner's own questions, marked as the owner marked them.
     state = kernel.interview()
-    assert state["questions_source"] == "owner_sheet"
+    # fit-out carries BOTH now: every Store kit has its own figure register, and the
+    # owner's question sheet beside it. They are not alternatives — the register holds
+    # this asset's figures, the sheet asks the organisation's rules.
+    assert state["questions_source"] == "design_basis+owner_sheet"
+    assert state["design_basis_supplied"] is True
+    assert state["design_basis"]["answered"] == 0, "no interview has run on this build"
     assert state["questions"] == 62 and state["gating"] == 21
     assert state["ready"] is False
     assert state["required_fields"] == [
@@ -239,7 +244,10 @@ def test_a_real_store_kit_vendors_and_the_emitted_kernel_gates_with_it(
     # And it never landed in the kit.
     kit_dir = inner / "reasoning" / "kit"
     assert sorted(p.name for p in kit_dir.iterdir()) == [
-        "invariants.yaml", "manifest.yaml", "questions.yaml"]
+        "design_basis.yaml", "invariants.yaml", "manifest.yaml", "questions.yaml"], (
+        "the kit arrives as its four declarative files and NOTHING else — no answer "
+        "file, because answers are per-platform and this kit is signed and shared"
+    )
 
 
 # ── the kit's own figure register ──────────────────────────────────────────
