@@ -233,3 +233,101 @@ def test_a_filled_register_is_never_reported_as_a_kit_that_can_answer_nothing(st
     facts = platform_chat_llm._reasoning_kit_facts(_state("datacentre"))
     assert "ALREADY HOLDS" in facts
     assert "refuse every figure it needs" not in facts
+
+
+# ── the Floor's prompt must carry what it was given ────────────────────────
+
+def test_a_long_owner_question_is_carried_whole_not_clipped(store):
+    """Each question used to be capped at 220 characters, and the questions worth
+    asking are the long ones. Fit-out's B.2 runs past 400: "your rate per package —
+    partitions (plasterboard, glazed, demountable), ceilings (grid,
+    plasterboard/feature), raised floor, ...". Clipped, the model was instructed to
+    ask VERBATIM a question that had been cut mid-list."""
+    long_question = (
+        "Your rate per package — partitions (plasterboard, glazed, demountable), "
+        "ceilings (grid, plasterboard/feature), raised floor, flooring (carpet, "
+        "stone/tile, timber), joinery (standard, bespoke), wall finishes (paint, "
+        "specialist), doors and ironmongery, MEP mechanical, MEP electrical, "
+        "lighting, sprinkler modification, fire alarm modification, BMS integration, "
+        "AV/IT, kitchen equipment, sanitaryware, fire stopping, T&C, prelims."
+    )
+    assert len(long_question) > 400
+    sheet = dict(OWNER_SHEET, questions=[
+        {"id": "B.2", "section": "B", "gate": True, "text": long_question}])
+    store("fitout", DERIVED_MANIFEST, sheet)
+
+    facts = platform_chat_llm._reasoning_kit_facts(_state("fitout"))
+    assert long_question in facts, "the owner's question arrived truncated"
+    assert "prelims." in facts, "the tail of the list is where half the packages are"
+
+
+def test_the_question_budget_drops_whole_questions_and_says_how_many(store):
+    """When there are more questions than budget, whole ones are dropped and the
+    count is stated — never a question cut in half."""
+    many = [
+        {"id": f"Q.{n}", "section": "B", "gate": True, "text": "q " * 2000}
+        for n in range(20)
+    ]
+    store("fitout", DERIVED_MANIFEST, dict(OWNER_SHEET, questions=many))
+    facts = platform_chat_llm._reasoning_kit_facts(_state("fitout"))
+    assert "more gating" in facts
+    assert "ask for them by id" in facts
+
+
+# ── the conversation the model is shown ────────────────────────────────────
+
+def _history(*turns):
+    import types as _types
+
+    return _types.SimpleNamespace(chat_history=[
+        {"role": role, "content": content} for role, content in turns])
+
+
+def test_a_long_pasted_brief_survives_the_next_turn_verbatim():
+    """The current message goes in full, so a long brief was understood ONCE and
+    then shredded to its first 600 characters on every turn after. The model asked
+    again for what it had been told, or drafted on assumptions."""
+    brief = ("Our fit-out business: we price per package, our market is Dubai, and "
+             "the quality bands are basic, standard, premium, super-prime. " * 120).strip()
+    assert len(brief) > 10_000
+
+    shown = platform_chat_llm._conversation(
+        _history(("user", brief), ("assistant", "Noted.")), "and the rates?")
+
+    assert brief in shown, "the brief was truncated in the history the model sees"
+    assert "elided" not in shown and "dropped" not in shown
+
+
+def test_the_conversation_stays_inside_its_budget_and_says_what_it_dropped():
+    turns = [("user", "x" * 30_000) for _ in range(10)]
+    shown = platform_chat_llm._conversation(_history(*turns), "next")
+
+    assert len(shown) <= platform_chat_llm._CONVERSATION_BUDGET_CHARS + 500
+    assert "dropped to fit the context budget" in shown
+    assert "ask rather than assume" in shown, (
+        "a trimmed conversation must not read as the whole of what it was told"
+    )
+
+
+def test_one_turn_bigger_than_the_budget_keeps_its_start_and_its_end():
+    """The end of a long brief is where the asks are. Keeping only the head loses
+    the part that was the point of sending it."""
+    huge = "START-OF-BRIEF" + ("y" * 200_000) + "AND-IT-MUST-HANDLE-VAT"
+    shown = platform_chat_llm._conversation(_history(("user", huge)), "next")
+
+    assert "START-OF-BRIEF" in shown
+    assert shown.rstrip().endswith("AND-IT-MUST-HANDLE-VAT")
+    assert "elided from the middle" in shown
+    assert len(shown) <= platform_chat_llm._CONVERSATION_BUDGET_CHARS + 500
+
+
+def test_the_budget_is_big_enough_to_be_worth_calling_a_budget():
+    """A regression guard on the numbers themselves: 600 characters per turn was the
+    defect, and a future 'tidy-up' that restores a small per-turn cap would bring it
+    back silently."""
+    assert platform_chat_llm._CONVERSATION_BUDGET_CHARS >= 100_000
+    assert platform_chat_llm._HISTORY_TURNS >= 40
+    assert not hasattr(platform_chat_llm, "_HISTORY_TURN_CHARS"), (
+        "the per-turn cap is the wrong shape: it mutilates the longest turn, which "
+        "is the one most worth keeping"
+    )

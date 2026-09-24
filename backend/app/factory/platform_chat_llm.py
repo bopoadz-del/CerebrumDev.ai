@@ -59,8 +59,29 @@ MAX_ELICITATION_ROUNDS = 6
 
 #: Conversation the model is shown. The router used to send the current
 #: message alone, so the chat could not hold a dialogue even in principle.
-_HISTORY_TURNS = 12
-_HISTORY_TURN_CHARS = 600
+#:
+#: These were 12 turns capped at 600 characters EACH, and the per-turn cap was the
+#: wrong shape. The current message goes in full, so a long brief -- a domain
+#: encoding sheet, a spec, a list of the customer's own rules -- was read once and
+#: then shredded to its first 600 characters on every turn afterwards. The model
+#: then asked again for what it had been told, or drafted on assumptions, while 12
+#: lines of chit-chat passed through untouched. The one thing most worth keeping was
+#: the only thing being cut.
+#:
+#: So: a TOTAL budget, spent newest-first, and whole turns dropped rather than every
+#: turn mutilated. 120k characters is roughly 30k tokens, well inside the window of
+#: the DeepSeek primary and the OpenRouter fallback.
+_HISTORY_TURNS = 40
+_CONVERSATION_BUDGET_CHARS = 120_000
+#: When ONE turn is bigger than the whole budget, keep its head and its TAIL. The
+#: end of a long brief is where the asks are ("...and it must handle VAT"), so
+#: keeping only the head loses the part that was the point of sending it.
+_SINGLE_TURN_TAIL_CHARS = 20_000
+
+#: How much of the owner's question sheet the Floor prompt may carry. Whole
+#: questions, as many as fit — never a question cut mid-list, because the model is
+#: told to ask them in the sheet's own words and half a question is a different one.
+_KIT_QUESTIONS_BUDGET_CHARS = 12_000
 
 _SYSTEM = """You are the Cerebrum Factory Floor chat. Users describe software \
 platforms in this conversation. You do not configure kit chains or invent \
@@ -254,15 +275,44 @@ def _conversation(state: Any, message: str) -> str:
             and str(last.get("content") or "").strip() == (message or "").strip()
         ):
             history = history[:-1]
-    lines: List[str] = []
-    for turn in history[-_HISTORY_TURNS:]:
+    # Newest first, spending a total budget: a long turn survives whole and an old
+    # turn is dropped whole. Nothing is shredded in the middle, because a brief cut
+    # mid-sentence reads to the model as a brief that said less than it did.
+    rendered: List[str] = []
+    spent = 0
+    dropped = 0
+    for turn in reversed(history[-_HISTORY_TURNS:]):
         if not isinstance(turn, dict):
             continue
         text = str(turn.get("content") or "").strip()
         if not text:
             continue
         who = "User" if turn.get("role") == "user" else "Floor"
-        lines.append(f"{who}: {text[:_HISTORY_TURN_CHARS]}")
+        if spent + len(text) > _CONVERSATION_BUDGET_CHARS:
+            remaining = _CONVERSATION_BUDGET_CHARS - spent
+            # Only the NEWEST turn is worth keeping partially; once the budget is
+            # this close to spent, older turns are dropped whole and counted.
+            if not rendered and remaining > _SINGLE_TURN_TAIL_CHARS * 2:
+                head = text[: remaining - _SINGLE_TURN_TAIL_CHARS]
+                tail = text[-_SINGLE_TURN_TAIL_CHARS:]
+                cut = len(text) - len(head) - len(tail)
+                rendered.append(
+                    f"{who}: {head}\n[... {cut} characters elided from the middle of "
+                    f"this turn; the start and the end are verbatim ...]\n{tail}"
+                )
+                spent = _CONVERSATION_BUDGET_CHARS
+                continue
+            dropped += 1
+            continue
+        rendered.append(f"{who}: {text}")
+        spent += len(text)
+
+    lines = list(reversed(rendered))
+    if dropped:
+        # Said, not silent: the model must not treat a trimmed conversation as the
+        # whole of what it was told.
+        lines.insert(0, f"[{dropped} earlier turn(s) dropped to fit the context "
+                        f"budget — ask rather than assume what they said]")
     return "\n".join(lines) or "(this is the first message)"
 
 
@@ -374,9 +424,25 @@ def _reasoning_kit_facts(state: Any) -> str:
                 for f in (sheet.get("answer_format") or ())
                 if str(f).strip().lower() != "value"
             ]
-            listed = "; ".join(
-                f"[{q.get('id')}] {str(q.get('text') or '')[:220]}" for q in gating[:10]
-            )
+            # The owner's questions go in WHOLE. This used to cap each at 220
+            # characters, and the questions worth asking are the long ones: fit-out's
+            # B.2 ("your rate per package — partitions (plasterboard, glazed,
+            # demountable), ceilings (grid, plasterboard/feature), raised floor,
+            # ...") runs past 500, so the model was told to ask, verbatim, half a
+            # question. A total budget instead, so nothing is asked in fragments.
+            listed_parts: List[str] = []
+            spent = 0
+            for question in gating:
+                text = str(question.get("text") or "").strip()
+                entry = f"[{question.get('id')}] {text}"
+                if spent + len(entry) > _KIT_QUESTIONS_BUDGET_CHARS and listed_parts:
+                    break
+                listed_parts.append(entry)
+                spent += len(entry)
+            listed = "; ".join(listed_parts)
+            if len(listed_parts) < len(gating):
+                listed += (f"; [and {len(gating) - len(listed_parts)} more gating "
+                           f"questions in the sheet — ask for them by id]")
             return (
                 f"REASONING KIT: {kit}. It carries the DOMAIN OWNER'S OWN question "
                 f"sheet ({sheet.get('source_document') or 'questions.yaml'}): "
