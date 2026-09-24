@@ -1247,10 +1247,7 @@ def emit(ctx: Any) -> list:
                                           than failing the build that would ship
                                           it.
     """
-    import logging
     import pathlib
-
-    logger = logging.getLogger(__name__)
 
     written = []
     for relative, body in (

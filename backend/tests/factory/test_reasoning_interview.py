@@ -24,9 +24,9 @@ import sys
 import pytest
 import yaml
 
-# The built-platform fixture and figure helper are defined next door; imported by
-# name so both suites drive the same emitted kernel rather than two copies of it.
-from tests.factory.test_reasoning_socket import _figure, platform  # noqa: F401
+# `platform` is a conftest fixture: pytest resolves it by parameter name with no
+# import, which is what keeps ruff's F811 away and keeps one definition of it.
+from tests.factory.conftest import _figure
 
 KIT_SHEET = {
     "kit": "probe",
