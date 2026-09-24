@@ -19,6 +19,41 @@ import yaml
 
 from app.factory.build import reasoning_socket
 
+from tests.factory.blocks_root import real_blocks_root
+
+#: Resolved once, by the resolver the rest of this suite uses. The three
+#: end-to-end tests below used to name ``C:/Users/shimm/Cerebrum-Blocks`` — a
+#: path that exists on one laptop — and ``pytest.skip`` past it everywhere else,
+#: so on CI, the only machine whose result anyone reads, the claim this file
+#: exists to make was never tested at all. It reported as coverage and provided
+#: none.
+REAL_STORE = real_blocks_root()
+
+
+def _store_declaring(kit: str, *files: str) -> pathlib.Path:
+    """The real Store checkout, or a FAILURE that names how to point at one.
+
+    Not a skip. CI checks the Store out and exports ``CEREBRUM_BLOCKS_ROOT``
+    before pytest runs, so an unresolvable Store there is a broken pipeline, not
+    a platform difference to step around — and a Store that no longer declares
+    the kit named here is Store drift the Factory must hear about, which is the
+    whole point of following the Store's head.
+    """
+    if REAL_STORE is None:
+        pytest.fail(
+            "no Store checkout resolved: set CEREBRUM_BLOCKS_ROOT to a "
+            "Cerebrum-Blocks checkout. CI does this; an unnamed sibling "
+            "checkout is honoured only at blocks.lock.json's pinned sha, "
+            "because a floating one makes the same test assert different content"
+        )
+    for name in files:
+        if not (REAL_STORE / "app" / "blocks" / kit / name).is_file():
+            pytest.fail(
+                f"Store {REAL_STORE} declares no app/blocks/{kit}/{name} — "
+                f"the kit moved, was renamed, or this checkout is partial"
+            )
+    return REAL_STORE
+
 
 class FakeWorkspace:
     """Records what the build wrote, and writes it, so a test can import it."""
@@ -176,10 +211,7 @@ def test_a_real_store_kit_vendors_and_the_emitted_kernel_gates_with_it(
         tmp_path, store_root, monkeypatch):
     """The claim this file exists to support: not that files were copied, but that
     the built platform gates, and asks the owner's questions while doing it."""
-    store = pathlib.Path("C:/Users/shimm/Cerebrum-Blocks")
-    if not (store / "app" / "blocks" / "fitout" / "questions.yaml").is_file():
-        pytest.skip("the Store checkout is not beside this worktree")
-    store_root["root"] = store
+    store_root["root"] = _store_declaring("fitout", "questions.yaml")
 
     product = tmp_path / "product"
     ctx = FakeCtx(product, vertical="fitout")
@@ -258,10 +290,7 @@ def test_a_real_datacentre_build_arrives_holding_its_answers(tmp_path, store_roo
     facility_01. A platform built on it must arrive with those 17 figures in hand.
     Reporting it as an un-interviewed domain, which an earlier version did, called
     the one answered domain in the Store an empty one."""
-    store = pathlib.Path("C:/Users/shimm/Cerebrum-Blocks")
-    if not (store / "app" / "blocks" / "datacentre" / "design_basis.yaml").is_file():
-        pytest.skip("the Store checkout is not beside this worktree")
-    store_root["root"] = store
+    store_root["root"] = _store_declaring("datacentre", "design_basis.yaml")
 
     product = tmp_path / "product"
     ctx = FakeCtx(product, vertical="datacentre")
@@ -310,10 +339,8 @@ def test_a_real_datacentre_build_arrives_holding_its_answers(tmp_path, store_roo
 def test_an_empty_register_vendors_and_every_figure_refuses(tmp_path, store_root, monkeypatch):
     """Five of the six registers are declared and empty. Empty is not "nothing to
     ask" -- it is everything still to ask, and every one of those figures refuses."""
-    store = pathlib.Path("C:/Users/shimm/Cerebrum-Blocks")
-    if not (store / "app" / "blocks" / "rail" / "design_basis.yaml").is_file():
-        pytest.skip("the Store checkout is not beside this worktree")
-    store_root["root"] = store
+    store_root["root"] = _store_declaring(
+        "rail", "design_basis.yaml", "questions.yaml")
 
     product = tmp_path / "product"
     ctx = FakeCtx(product, vertical="rail")
