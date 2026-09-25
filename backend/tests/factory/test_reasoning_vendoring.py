@@ -501,3 +501,73 @@ def test_a_build_with_no_vertical_never_asks_the_store_at_all(tmp_path, monkeypa
     ctx = FakeCtx(tmp_path / "product", vertical=None)
     reasoning_socket.emit(ctx)
     assert not asked, "a build with no vertical resolved the Store for nothing"
+
+
+def test_a_real_stadium_build_gates_with_the_sports_venue_kit(
+        tmp_path, store_root, monkeypatch):
+    """The stadium path, end to end, because it was the one that silently did not work.
+
+    ``stadium_venue`` had no entry in the alias table, so ``kit_for_vertical``
+    returned None, nothing was vendored, and the platform refused every figure
+    while logging that refusing every figure was fail-closed behaviour. Nothing
+    here asserted otherwise, so this test is the reason that cannot recur.
+
+    It also drives the kit's GROUNDING record, which the kit shipped without: 43
+    invariants checked how a figure was qualified, sourced, banded, aged and
+    carried, and none of them asked whether it came from anywhere. An uncited
+    licensed capacity passed every one of them.
+    """
+    store_root["root"] = _store_declaring(
+        "stadium_venue", "manifest.yaml", "invariants.yaml", "design_basis.yaml")
+
+    product = tmp_path / "product"
+    ctx = FakeCtx(product, vertical="stadium")
+    written = reasoning_socket.emit(ctx)
+    assert reasoning_socket.KIT_MANIFEST in written
+    assert reasoning_socket.KIT_INVARIANTS in written
+    assert reasoning_socket.KIT_DESIGN_BASIS in written
+    # No owner sheet for this domain, and the platform must not imply one.
+    assert reasoning_socket.KIT_QUESTIONS not in written
+
+    inner = product / "app"
+    (inner / "__init__.py").write_text("", encoding="utf-8")
+    monkeypatch.setenv("STORAGE_PATH", str(tmp_path / "storage"))
+    monkeypatch.syspath_prepend(str(product))
+    for name in [n for n in list(sys.modules)
+                 if n in ("app", "builtapp") or n.startswith("app.")
+                 or n.startswith("builtapp.")]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    kernel_mod = importlib.import_module("app.reasoning.kernel")
+
+    kernel = kernel_mod.kernel
+    assert kernel.enabled, f"the vendored stadium kit did not load: {kernel.disabled_reason}"
+
+    # GROUNDING: a capacity with no source is refused, naming source_id. Without
+    # the grounding record this figure passed every other rule in the kit.
+    ungrounded = kernel_mod.Figure(quantity="event_capacity", value=52000, unit="persons")
+    outcome = kernel.answer_time([ungrounded])
+    assert outcome.verdict == "refused"
+    # The emitted kernel's Finding names the field `invariant`; the Store's names
+    # it `invariant_id`. Same concept, two spellings, so assert on the built one.
+    ids = [f.invariant for f in outcome.findings]
+    assert "INV-SV-GROUNDING" in ids, f"grounding did not fire: {ids}"
+    assert any("source_id" in (f.message or "") for f in outcome.findings)
+
+    # SCOPE, at H0: an operational go/no-go is refused BEFORE retrieval, and the
+    # block's contract for "nothing was searched" is what must say so.
+    refused = kernel.pre_retrieval("can we start the match")
+    assert refused.verdict == "refused"
+    assert any(f.invariant.startswith("SCOPE:") for f in refused.findings)
+
+    # Not an over-refusing kit: a venue question with no operational authority in
+    # it is allowed through to retrieval.
+    allowed = kernel.pre_retrieval("what is the licensed capacity in the football configuration")
+    assert allowed.verdict != "refused", (
+        "H0 refused an ordinary venue question — a scope gate that refuses "
+        "everything is indistinguishable from a broken corpus"
+    )
+
+    # No interview has run, so the register refuses rather than inventing.
+    value, refusal = kernel.figure_value("event_capacity")
+    assert value is None
+    assert refusal, "an unanswered figure must refuse, not return None silently"
