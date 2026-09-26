@@ -45,7 +45,7 @@ CEREBRUM_BLOCKS_BRANCH = os.getenv("CEREBRUM_BLOCKS_BRANCH", "main").strip() or 
 # Factory then cannot see blocks the Store has already published. Live: this
 # constant sat four days behind `main` and the shelf could not offer the
 # marketplace_ops pack the Store had certified and signed.
-FALLBACK_CEREBRUM_BLOCKS_REF = "930519e090281cfe859aafb830c725eece24f98b"
+FALLBACK_CEREBRUM_BLOCKS_REF = "a967e0a1f8dd87f3746821135b07b4410a3b86c8"
 
 #: Kept for callers that import the old name. Same value, honest meaning.
 DEFAULT_CEREBRUM_BLOCKS_REF = FALLBACK_CEREBRUM_BLOCKS_REF

@@ -138,7 +138,8 @@ def test_resolve_engine_source_uses_default_ref_when_unset(
 
     def _run(args: List[str], **kwargs: Dict[str, Any]):
         return _fake_fetch(
-            tmp_path, "930519e090281cfe859aafb830c725eece24f98b", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+            tmp_path, FALLBACK_CEREBRUM_BLOCKS_REF,
+            "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
         )(args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", _run)
@@ -149,8 +150,11 @@ def test_resolve_engine_source_uses_default_ref_when_unset(
 
     assert metadata["source"] == "fetched"
     assert metadata["repo"] == "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
+    # Against the CONSTANT, never a literal copy of it. A second copy of the SHA
+    # lived here and made this test fail the moment the constant was moved to
+    # follow the Store -- which is the same "the constant is the pin" defect
+    # test_the_fallback_ref_is_a_full_commit_sha below was written to remove.
     assert metadata["ref"] == DEFAULT_CEREBRUM_BLOCKS_REF
-    assert metadata["ref"] == "930519e090281cfe859aafb830c725eece24f98b"
     assert "commit_sha" in metadata
     assert root.is_dir()
 
