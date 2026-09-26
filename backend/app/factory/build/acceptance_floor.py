@@ -77,6 +77,29 @@ def check_ids() -> Tuple[str, ...]:
     return tuple(str(c["id"]) for c in checks())
 
 
+def advisory_ids() -> Tuple[str, ...]:
+    """Checks the gate REPORTS but does not fail a build on.
+
+    A check is advisory when the floor demands evidence that no step of the
+    pipeline yet produces. On 2026-09-26 three of the 21 were in that state:
+    ``one_live_connector`` (nothing anywhere sets STORE_LIVE_CONNECTOR),
+    ``backup_restore_roundtrip`` (the restore drill runs in the product's own
+    tests, which the gate never executes) and ``bench_p95`` (the bench job
+    prints STORE_BENCH_P95_MS inside product CI, which the gate never reads).
+    Every build failed on all three by construction — a bar that cannot be
+    cleared is not a bar, it is a wall, and it hid the checks that COULD fail.
+
+    Advisory is a fact about the pipeline, not about the requirement: the
+    requirement text still reaches the writer's prompt unchanged, the check
+    still runs and still prints FAIL with its reason, and the line is still
+    counted in the k/N score as SKIP. It just does not veto the build. The
+    flag lives in the floor file, next to the check it describes, so both
+    consumers read one source — the same reason the checklist itself does.
+    The owner chose demotion over building the bridges (Gate 3b, 2026-09-26).
+    """
+    return tuple(str(c["id"]) for c in checks() if c.get("advisory") is True)
+
+
 def requirements() -> List[str]:
     """What the coder is told, in the same order the gate reports."""
     return [str(c["requirement_text"]).strip() for c in checks()]

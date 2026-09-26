@@ -36,6 +36,7 @@ AUTH_REL = Path("app") / "auth.py"
 #: from. It used to be written out here, which is how the coder came to be
 #: graded on thirteen checks nothing ever told it about -- see
 #: app/factory/build/acceptance_floor.py.
+from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -43,6 +44,25 @@ ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
 #: Every check on the floor must pass. A literal here drifts from the file
 #: the moment a check is added, and a build would be graded 14/13.
 ACCEPTANCE_REQUIRED = len(ACCEPTANCE_CHECK_NAMES)
+#: Reported, scored as SKIP, never a veto. Read from the floor file so the gate
+#: and the stamped harness agree on which lines are advisory; see
+#: acceptance_floor.advisory_ids for why any line is.
+ACCEPTANCE_ADVISORY_NAMES: frozenset = frozenset(_floor_advisory_ids())
+assert ACCEPTANCE_ADVISORY_NAMES <= set(ACCEPTANCE_CHECK_NAMES)
+assert "authorship_floor" not in ACCEPTANCE_ADVISORY_NAMES
+
+
+def demote_if_advisory(name: str, status: str, detail: str) -> tuple:
+    """An advisory FAIL becomes a SKIP that still says why it failed.
+
+    SKIP is the status both consumers already count as satisfied, so no new
+    status and no new arithmetic: the line stays in k/N, the reason stays on
+    the line, and only the veto is removed. PASS and SKIP pass through unchanged,
+    and a non-advisory FAIL is untouched -- the floor still fails a build.
+    """
+    if status == "FAIL" and name in ACCEPTANCE_ADVISORY_NAMES:
+        return "SKIP", f"advisory (not on the floor yet): {detail}"
+    return status, detail
 
 assert len(ACCEPTANCE_CHECK_NAMES) >= ACCEPTANCE_REQUIRED
 assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
@@ -116,6 +136,7 @@ def parse_acceptance_output(text: str) -> AcceptanceReport:
         if name not in ACCEPTANCE_CHECK_NAMES or name in seen:
             continue
         seen.add(name)
+        status, detail = demote_if_advisory(name, status, detail)
         lines.append(AcceptanceLine(name=name, status=status, detail=detail))
     by_name = {line.name: line for line in lines}
     ordered = [
@@ -752,6 +773,7 @@ def _with_deploy_time_settings(script: str) -> str:
 def render_acceptance_script() -> str:
     """Self-contained harness stamped into every pilot zip."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
+    advisory = ", ".join(repr(n) for n in sorted(ACCEPTANCE_ADVISORY_NAMES))
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -774,6 +796,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKS = [{names}]
+# Reported and scored, never a veto -- same source as CHECKS (the floor file).
+ADVISORY = [{advisory}]
 REQUIRED = {ACCEPTANCE_REQUIRED}
 
 
@@ -1647,6 +1671,8 @@ def main() -> int:
                 status, detail = fn()
             except Exception as exc:
                 status, detail = "FAIL", "%s: %s" % (type(exc).__name__, exc)
+            if status == "FAIL" and name in ADVISORY:
+                status, detail = "SKIP", "advisory (not on the floor yet): " + detail
             results.append((name, status, detail))
             print("%s %s — %s" % (status, name, detail))
     finally:

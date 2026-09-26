@@ -245,7 +245,25 @@ def _sync_workspace_onto_tree(src: Path, dest: Path) -> None:
         return [n for n in names if not is_exported(base / n)]
 
     for item in src.iterdir():
-        if item.name == ".github" or not is_exported(Path(item.name)):
+        if not is_exported(Path(item.name)):
+            continue
+        if item.name == ".github":
+            # MERGE, never skip and never replace. The inherited ``dest/.github/``
+            # is where the Store gate's own workflow lives, so it must survive;
+            # but skipping the workspace's ``.github/`` wholesale -- which this
+            # did until 2026-09-26 -- threw away the product's stamped
+            # ``workflows/ci.yml`` (test + pip-audit/bandit + bench) and every
+            # branch inherited main's 18-line pytest-only file instead. The
+            # gate then read THAT file, and ``audit_clean`` failed every fresh
+            # build by construction. ``is_exported('.github/workflows/ci.yml')``
+            # was already True; the allowlist never got a vote.
+            for sub in item.rglob("*"):
+                rel = sub.relative_to(src)
+                if sub.is_dir() or not is_exported(rel):
+                    continue
+                out = dest / rel
+                out.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(sub, out)
             continue
         target = dest / item.name
         if target.exists() or target.is_symlink():

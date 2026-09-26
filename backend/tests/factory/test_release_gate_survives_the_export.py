@@ -178,3 +178,41 @@ def test_the_template_paths_gate_requires_only_a_file_that_ships():
 
     assert "docs/provenance/provenance.json" not in FACTORY_INTERNAL_PATHS
     assert is_exported(Path("docs/provenance/provenance.json"))
+
+
+def test_the_products_ci_reaches_the_branch_without_evicting_the_store_gate(tmp_path):
+    """The gate grades the ci.yml that is ON THE BRANCH. Until 2026-09-26 the
+    export skipped the workspace's .github/ wholesale to protect the inherited
+    store-gate.yml, so every branch carried main's pytest-only ci.yml and
+    audit_clean failed every fresh build by construction. Merge, not skip."""
+    ws = _workspace(tmp_path / "ws")
+    (ws / ".github" / "workflows").mkdir(parents=True)
+    stamped = "name: product-ci\njobs:\n  audit:\n    steps:\n      - run: pip-audit\n      - run: bandit -ll -r app\n"
+    (ws / ".github" / "workflows" / "ci.yml").write_text(stamped, encoding="utf-8")
+
+    shipped = tmp_path / "shipped"
+    (shipped / ".github" / "workflows").mkdir(parents=True)
+    gate = "name: store-gate\n"
+    (shipped / ".github" / "workflows" / "store-gate.yml").write_text(gate, encoding="utf-8")
+    (shipped / ".github" / "workflows" / "ci.yml").write_text("name: inherited-18-line\n", encoding="utf-8")
+
+    _sync_workspace_onto_tree(ws, shipped)
+
+    assert (shipped / ".github" / "workflows" / "store-gate.yml").read_text(encoding="utf-8") == gate, (
+        "the Store gate's own workflow must survive the overlay"
+    )
+    assert (shipped / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8") == stamped, (
+        "the branch must carry the product's stamped ci.yml, not main's inherited one"
+    )
+
+
+def test_a_workspace_without_github_leaves_the_inherited_gate_untouched(tmp_path):
+    """Control on the merge: nothing to overlay means nothing changes."""
+    ws = _workspace(tmp_path / "ws")
+    shipped = tmp_path / "shipped"
+    (shipped / ".github" / "workflows").mkdir(parents=True)
+    (shipped / ".github" / "workflows" / "store-gate.yml").write_text("name: store-gate\n", encoding="utf-8")
+
+    _sync_workspace_onto_tree(ws, shipped)
+
+    assert sorted(p.name for p in (shipped / ".github" / "workflows").iterdir()) == ["store-gate.yml"]

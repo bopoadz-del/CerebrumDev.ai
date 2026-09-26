@@ -113,7 +113,8 @@
       "requirement_text": "One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
       "brief_render": "- one_live_connector: One connector performs a real outbound round-trip in every build -- SMTP or webhook delivery is the cheapest. Other connectors stay stubs and keep declaring blocks_unavailable. A platform where every integration is mocked has never been proven to leave the box.",
       "gate_fn": "check_one_live_connector",
-      "check": "a real outbound delivery is observed, not mocked"
+      "check": "a real outbound delivery is observed, not mocked",
+      "advisory": true
     },
     {
       "id": "metrics_served",
@@ -127,14 +128,16 @@
       "requirement_text": "The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
       "brief_render": "- backup_restore_roundtrip: The backup script runs on a schedule AND its output restores into an empty database with the rows intact. The Factory ships scripts/backup.sh and tests/test_backup_restore.py; keep them wired. A backup nobody has restored is a file, not a backup.",
       "gate_fn": "check_backup_restore_roundtrip",
-      "check": "a backup is taken and restored with its rows intact"
+      "check": "a backup is taken and restored with its rows intact",
+      "advisory": true
     },
     {
       "id": "bench_p95",
       "requirement_text": "200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
       "brief_render": "- bench_p95: 200 concurrent requests answer with p95 under 500ms on the reference box. The Factory ships scripts/bench.py, which prints the number. Measure it; do not estimate it.",
       "gate_fn": "check_bench_p95",
-      "check": "p95 under 500ms over a 200-request concurrent smoke"
+      "check": "p95 under 500ms over a 200-request concurrent smoke",
+      "advisory": true
     },
     {
       "id": "audit_clean",

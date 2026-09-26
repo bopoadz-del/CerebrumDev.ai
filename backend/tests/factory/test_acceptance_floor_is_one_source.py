@@ -267,3 +267,76 @@ class TestTheFloorIsProductAgnostic:
         assert not domains and not columns, (
             f"product vocabulary reaches the coder's prompt: {domains} {columns}"
         )
+
+
+class TestAdvisoryLinesReportButDoNotVeto:
+    """Three checks demand evidence no pipeline step produces yet. Demoted, not
+    removed: the requirement still reaches the writer, the check still runs and
+    still says FAIL and why, and only the veto is gone. Owner's decision,
+    2026-09-26 (Gate 3b), over building the three evidence bridges."""
+
+    def test_the_advisory_set_is_exactly_the_three_the_owner_demoted(self):
+        from app.factory.build.acceptance_floor import advisory_ids
+
+        assert set(advisory_ids()) == {
+            "one_live_connector", "backup_restore_roundtrip", "bench_p95"
+        }, "an advisory line was added or removed without this test changing"
+
+    def test_advisory_lines_are_on_the_floor_and_the_count_is_unchanged(self):
+        """Demotion does not shrink the floor: k/N still counts 21 lines and every
+        advisory id is one of them. A line that vanished from the floor would be
+        neither graded nor told to the writer, which is a different decision."""
+        from app.factory.build.acceptance_floor import advisory_ids, check_ids
+
+        assert set(advisory_ids()) <= set(check_ids())
+        assert len(check_ids()) == ACCEPTANCE_REQUIRED
+        assert "authorship_floor" not in advisory_ids()
+
+    def test_the_gate_and_the_stamped_harness_read_the_same_advisory_roster(self):
+        """Two consumers, one source. A hand-kept ADVISORY list in the rendered
+        harness is the second copy the floor file exists to abolish."""
+        from app.factory.build.acceptance_floor import advisory_ids
+        from app.factory.build.store_acceptance import (
+            ACCEPTANCE_ADVISORY_NAMES, render_acceptance_script,
+        )
+
+        assert ACCEPTANCE_ADVISORY_NAMES == set(advisory_ids())
+        rendered = render_acceptance_script()
+        for name in advisory_ids():
+            assert repr(name) in rendered.split("ADVISORY = [", 1)[1].split("]", 1)[0]
+
+    def test_an_advisory_fail_parses_as_a_skip_that_keeps_its_reason(self):
+        from app.factory.build.store_acceptance import parse_acceptance_output
+
+        text = "FAIL bench_p95 — STORE_BENCH_P95_MS unset: p95 was not measured\n"
+        report = parse_acceptance_output(text)
+        line = next(l for l in report.lines if l.name == "bench_p95")
+        assert line.status == "SKIP"
+        assert line.satisfied
+        assert "p95 was not measured" in line.detail, "the reason must survive demotion"
+        assert "advisory" in line.detail
+
+    def test_a_floor_fail_still_fails_the_build(self):
+        """The companion: demotion must not have quietly softened the floor.
+        A non-advisory FAIL is untouched and still vetoes."""
+        from app.factory.build.store_acceptance import parse_acceptance_output
+
+        report = parse_acceptance_output("FAIL no_token_401 — HTTP 200 without a token\n")
+        line = next(l for l in report.lines if l.name == "no_token_401")
+        assert line.status == "FAIL"
+        assert not line.satisfied
+        assert not report.ok
+
+    def test_all_three_advisory_lines_failing_does_not_veto_an_otherwise_green_build(self):
+        """The whole point: a build red ONLY on the three unproducible lines is green."""
+        from app.factory.build.store_acceptance import (
+            ACCEPTANCE_ADVISORY_NAMES, ACCEPTANCE_CHECK_NAMES, parse_acceptance_output,
+        )
+
+        lines = []
+        for name in ACCEPTANCE_CHECK_NAMES:
+            status = "FAIL" if name in ACCEPTANCE_ADVISORY_NAMES else "PASS"
+            lines.append(f"{status} {name} — synthetic")
+        lines.append(f"ACCEPTANCE: {ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}")
+        report = parse_acceptance_output("\n".join(lines) + "\n")
+        assert report.ok, [l for l in report.lines if not l.satisfied]

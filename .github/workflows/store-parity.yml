@@ -1,0 +1,58 @@
+name: Store parity
+
+# The Factory follows the Store's live head, but pins every block's content hash
+# in blocks.lock.json. A Store commit that changes a block's bytes therefore
+# invalidates the lock -- and nothing in either repo noticed: CI here runs on
+# pull_request only, a Store-only change never touches this repo, and the Store's
+# CI does not know the lock exists. The first thing that noticed, twice on
+# 2026-09-26, was a customer's build dying in CLONER with a hash mismatch.
+#
+# This is the guard. On a schedule, check the Store out at the same ref the
+# Factory resolves in production and run the parity script. A stale lock fails
+# here, loudly, hours before it fails a build. Regenerate with
+#   python -m app.factory.cli update-lock --blocks-root "$CEREBRUM_BLOCKS_ROOT"
+# and commit the lock (and FALLBACK_CEREBRUM_BLOCKS_REF, which must agree).
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: blocks.lock.json matches the Store's head
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Same step as ci.yml, on purpose: the guard must look at the Store the
+      # way production does, or it guards the wrong thing.
+      - name: Check out the Store
+        env:
+          STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
+        run: |
+          echo "Store ref: $STORE_REF"
+          git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
+          cd "$RUNNER_TEMP/Cerebrum-Blocks"
+          git remote add origin https://github.com/bopoadz-del/Cerebrum-Blocks.git
+          git fetch -q --depth 1 origin "$STORE_REF"
+          git checkout -q FETCH_HEAD
+          test -d block_registry
+          echo "Store head: $(git rev-parse HEAD)  ($(ls block_registry | wc -l) blocks)"
+          echo "CEREBRUM_BLOCKS_ROOT=$RUNNER_TEMP/Cerebrum-Blocks" >> "$GITHUB_ENV"
+
+      - name: Verify the lock against the Store
+        run: python scripts/verify_vendor_parity.py --blocks-root "$CEREBRUM_BLOCKS_ROOT"
