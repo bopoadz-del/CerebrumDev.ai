@@ -1,11 +1,5 @@
 {
   "blocks": {
-    "action_contract": {
-      "content_hash": "sha256:6dfdec95532ed531710005aa9761d1a55e4fc4bf0a310b52a0be203d0991104a",
-      "id": "action_contract",
-      "source": "cerebrum-blocks",
-      "version": "1.0.0"
-    },
     "adaptive_router": {
       "content_hash": "sha256:4211dbe962fd105c55f68c71f2bb42eec037869dfacb621e37180a1facf3e9ee",
       "id": "adaptive_router",
@@ -489,12 +483,6 @@
     "finance_import": {
       "content_hash": "sha256:3240c18a8735aa3a6daaddc2de5fd33fbe5845a73afd179de41777b1d86d1d27",
       "id": "finance_import",
-      "source": "cerebrum-blocks",
-      "version": "1.0.0"
-    },
-    "finance_ops": {
-      "content_hash": "sha256:4384e899545ffdf33119fe342408a34ac43cde78a5107f89e93b72d4b6056993",
-      "id": "finance_ops",
       "source": "cerebrum-blocks",
       "version": "1.0.0"
     },
@@ -1396,6 +1384,6 @@
   "schema": "factory.blocks.lock.v1",
   "store": {
     "repo": "https://github.com/bopoadz-del/Cerebrum-Blocks",
-    "sha": "a967e0a1f8dd87f3746821135b07b4410a3b86c8"
+    "sha": "de40dd2dab6a66c565752942935839abfb81f5fa"
   }
 }
