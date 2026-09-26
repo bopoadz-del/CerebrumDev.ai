@@ -29,6 +29,21 @@ FAKE_KIMI = "sk-kimi-not-real"
 FAKE_OPENROUTER = "sk-or-v1-not-real"
 
 
+def _names_no_retired_credential(error) -> None:
+    """A fail-closed message must not send the reader to a retired provider.
+
+    Moonshot is no longer the primary and OpenRouter is the fallback, so an
+    operator who follows "set KIMI_API_KEY" out of this message buys a key on
+    the wrong host. These two tests used to assert that exact string, which
+    made the stale instruction the thing under test. ``KIMI_MOCK`` stays
+    admissible: it is an env var this code still reads, not a credential to buy.
+    """
+    message = str(error)
+    assert "KIMI_API_KEY" not in message, (
+        f"a no-credential message must not name the retired provider's key: {message}"
+    )
+
+
 class _Resp:
     def __init__(self, payload):
         self._payload = payload
@@ -394,15 +409,17 @@ def test_a_paid_leg_will_not_run_unasked_with_no_primary(monkeypatch, no_credent
         coder.httpx, "post", lambda *a, **k: posts.append(1) or _ok("x")
     )
 
-    with pytest.raises(coder.CoderError, match="KIMI_API_KEY"):
+    with pytest.raises(coder.CoderError, match="CEREBRUM_FACTORY_LLM_API_KEY") as exc:
         coder._llm_code_call([{"role": "user", "content": "hi"}])
 
     assert not posts
+    _names_no_retired_credential(exc.value)
 
 
 def test_no_key_and_no_leg_fails_exactly_as_before(monkeypatch, no_credentials):
-    with pytest.raises(coder.CoderError, match="KIMI_API_KEY"):
+    with pytest.raises(coder.CoderError, match="CEREBRUM_FACTORY_LLM_API_KEY") as exc:
         coder._llm_code_call([{"role": "user", "content": "hi"}])
+    _names_no_retired_credential(exc.value)
 
 
 def test_a_leg_only_failure_is_not_dressed_up_as_a_fallback(

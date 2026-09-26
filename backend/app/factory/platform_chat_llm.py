@@ -59,8 +59,29 @@ MAX_ELICITATION_ROUNDS = 6
 
 #: Conversation the model is shown. The router used to send the current
 #: message alone, so the chat could not hold a dialogue even in principle.
-_HISTORY_TURNS = 12
-_HISTORY_TURN_CHARS = 600
+#:
+#: These were 12 turns capped at 600 characters EACH, and the per-turn cap was the
+#: wrong shape. The current message goes in full, so a long brief -- a domain
+#: encoding sheet, a spec, a list of the customer's own rules -- was read once and
+#: then shredded to its first 600 characters on every turn afterwards. The model
+#: then asked again for what it had been told, or drafted on assumptions, while 12
+#: lines of chit-chat passed through untouched. The one thing most worth keeping was
+#: the only thing being cut.
+#:
+#: So: a TOTAL budget, spent newest-first, and whole turns dropped rather than every
+#: turn mutilated. 120k characters is roughly 30k tokens, well inside the window of
+#: the DeepSeek primary and the OpenRouter fallback.
+_HISTORY_TURNS = 40
+_CONVERSATION_BUDGET_CHARS = 120_000
+#: When ONE turn is bigger than the whole budget, keep its head and its TAIL. The
+#: end of a long brief is where the asks are ("...and it must handle VAT"), so
+#: keeping only the head loses the part that was the point of sending it.
+_SINGLE_TURN_TAIL_CHARS = 20_000
+
+#: How much of the owner's question sheet the Floor prompt may carry. Whole
+#: questions, as many as fit — never a question cut mid-list, because the model is
+#: told to ask them in the sheet's own words and half a question is a different one.
+_KIT_QUESTIONS_BUDGET_CHARS = 12_000
 
 _SYSTEM = """You are the Cerebrum Factory Floor chat. Users describe software \
 platforms in this conversation. You do not configure kit chains or invent \
@@ -254,15 +275,44 @@ def _conversation(state: Any, message: str) -> str:
             and str(last.get("content") or "").strip() == (message or "").strip()
         ):
             history = history[:-1]
-    lines: List[str] = []
-    for turn in history[-_HISTORY_TURNS:]:
+    # Newest first, spending a total budget: a long turn survives whole and an old
+    # turn is dropped whole. Nothing is shredded in the middle, because a brief cut
+    # mid-sentence reads to the model as a brief that said less than it did.
+    rendered: List[str] = []
+    spent = 0
+    dropped = 0
+    for turn in reversed(history[-_HISTORY_TURNS:]):
         if not isinstance(turn, dict):
             continue
         text = str(turn.get("content") or "").strip()
         if not text:
             continue
         who = "User" if turn.get("role") == "user" else "Floor"
-        lines.append(f"{who}: {text[:_HISTORY_TURN_CHARS]}")
+        if spent + len(text) > _CONVERSATION_BUDGET_CHARS:
+            remaining = _CONVERSATION_BUDGET_CHARS - spent
+            # Only the NEWEST turn is worth keeping partially; once the budget is
+            # this close to spent, older turns are dropped whole and counted.
+            if not rendered and remaining > _SINGLE_TURN_TAIL_CHARS * 2:
+                head = text[: remaining - _SINGLE_TURN_TAIL_CHARS]
+                tail = text[-_SINGLE_TURN_TAIL_CHARS:]
+                cut = len(text) - len(head) - len(tail)
+                rendered.append(
+                    f"{who}: {head}\n[... {cut} characters elided from the middle of "
+                    f"this turn; the start and the end are verbatim ...]\n{tail}"
+                )
+                spent = _CONVERSATION_BUDGET_CHARS
+                continue
+            dropped += 1
+            continue
+        rendered.append(f"{who}: {text}")
+        spent += len(text)
+
+    lines = list(reversed(rendered))
+    if dropped:
+        # Said, not silent: the model must not treat a trimmed conversation as the
+        # whole of what it was told.
+        lines.insert(0, f"[{dropped} earlier turn(s) dropped to fit the context "
+                        f"budget — ask rather than assume what they said]")
     return "\n".join(lines) or "(this is the first message)"
 
 
@@ -278,6 +328,183 @@ def _store_inventory() -> str:
             "STORE INVENTORY: unavailable right now — do not claim any "
             "ready-made part, connector or kit."
         )
+
+
+
+def _reasoning_kit_facts(state: Any) -> str:
+    """The chosen kit's OPEN questions, for the model to ask from.
+
+    The Floor already has a bounded number of question rounds. What it did not
+    have is anything to ask ABOUT: each reasoning kit ships with every figure
+    empty and each empty figure carrying the question that fills it, and the model
+    could not see them. So they are listed here, read from the kit on disk -- the
+    model asks them, it does not invent them.
+
+    Two sources, in this order. Where the kit carries the DOMAIN OWNER'S OWN
+    question sheet (``questions.yaml``), that is what the model asks from, in the
+    owner's words, with the owner's [GATE] / [GAP] mark and the fields that domain
+    requires with an answer. Where it does not, the per-quantity questions derived
+    from the manifest are the fallback AND THE PROMPT SAYS THEY ARE DERIVED -- a
+    model that presents "what is the rate?" as the domain's own question invites an
+    answer that no rule can then use.
+
+    Unanswered is not a blocker. The platform is built either way, the kernel
+    refuses anything needing an unanswered figure and names the question, and the
+    operator answers the rest later through /v1/reasoning/pending. So the model
+    should ask the few that change the DESIGN and leave the operational ones to
+    the platform.
+    """
+    try:
+        from app.factory.build import reasoning_socket
+        from app.factory.blocks_source import resolve_blocks_root
+
+        pd = getattr(state, "product_design", None)
+        blueprint = getattr(pd, "blueprint", None) if pd else None
+        if blueprint is None:
+            return (
+                "REASONING KIT: none matched for this vertical yet — do not claim "
+                "the platform will gate its figures."
+            )
+        # Resolve the Store BEFORE the kit, and pass it in. This leg already
+        # resolved it two lines further down for every kit it recognised, so the
+        # order costs nothing and buys the honest answer: a kit the Store
+        # publishes but the alias table has no entry for was reported here as
+        # "none matched for this vertical", which is a claim about the domain
+        # made from a stale copy of the Store's kit list.
+        root = resolve_blocks_root()
+        kit = reasoning_socket.kit_for_vertical(blueprint, store_root=root)
+        if not kit:
+            return (
+                "REASONING KIT: none matched for this vertical yet — do not claim "
+                "the platform will gate its figures."
+            )
+        if root is None:
+            return f"REASONING KIT: {kit} (questions unavailable — Store unreachable)."
+        import pathlib as _pathlib
+
+        import yaml as _yaml
+
+        kit_dir = _pathlib.Path(root) / "app" / "blocks" / kit
+        manifest = _yaml.safe_load(
+            (kit_dir / "manifest.yaml").read_text(encoding="utf-8")
+        ) or {}
+
+        # The kit's OWN figure register, where it has one. Reported FIRST because
+        # it is the only source that can already hold answers: one of the six is
+        # filled in from a completed encoding sheet, and telling the model to go
+        # and ask for figures a platform already holds wastes a bounded question
+        # round and invites the user to restate what is on file.
+        register_note = ""
+        register_path = kit_dir / "design_basis.yaml"
+        if register_path.is_file():
+            register = _yaml.safe_load(register_path.read_text(encoding="utf-8")) or {}
+            block = next((n for n in ("design_basis", "operating_basis")
+                          if n in register), None)
+            entries = (register.get(block) or {}) if block else {}
+            answered = [n for n, spec in entries.items()
+                        if (spec or {}).get("value") is not None]
+            still_open = [n for n in entries if n not in answered]
+            if answered:
+                register_note = (
+                    f" This kit ALREADY HOLDS {len(answered)} of {len(entries)} figures "
+                    f"in its own register for "
+                    f"{register.get('facility') or 'its declared scope'} "
+                    f"({register.get('scope') or 'scope not stated'}) — do not ask for "
+                    f"those again. Still open: {', '.join(sorted(still_open)) or 'none'}."
+                )
+            else:
+                register_note = (
+                    f" This kit declares a figure register of {len(entries)} figures and "
+                    f"EVERY ONE IS EMPTY — no interview has run. Nothing needing one of "
+                    f"them can be answered yet."
+                )
+
+        # The domain owner's own question sheet, where one exists. It beats the
+        # derived per-quantity questions below, which asked "what is the rate?" --
+        # one number for a whole domain. The sheet asks for the rate per package,
+        # and marks each question [GATE] (blocks) or [GAP] (worth having). The
+        # model asks from the sheet; it does not paraphrase it.
+        sheet_path = kit_dir / "questions.yaml"
+        if sheet_path.is_file():
+            sheet = _yaml.safe_load(sheet_path.read_text(encoding="utf-8")) or {}
+            questions = [q for q in (sheet.get("questions") or []) if isinstance(q, dict)]
+            # UNMARKED gates: a question whose class cannot be read must block.
+            gating = [q for q in questions if q.get("gate") is not False]
+            fields = [
+                str(f).strip().lower().replace(" ", "_")
+                for f in (sheet.get("answer_format") or ())
+                if str(f).strip().lower() != "value"
+            ]
+            # The owner's questions go in WHOLE. This used to cap each at 220
+            # characters, and the questions worth asking are the long ones: fit-out's
+            # B.2 ("your rate per package — partitions (plasterboard, glazed,
+            # demountable), ceilings (grid, plasterboard/feature), raised floor,
+            # ...") runs past 500, so the model was told to ask, verbatim, half a
+            # question. A total budget instead, so nothing is asked in fragments.
+            listed_parts: List[str] = []
+            spent = 0
+            for question in gating:
+                text = str(question.get("text") or "").strip()
+                entry = f"[{question.get('id')}] {text}"
+                if spent + len(entry) > _KIT_QUESTIONS_BUDGET_CHARS and listed_parts:
+                    break
+                listed_parts.append(entry)
+                spent += len(entry)
+            listed = "; ".join(listed_parts)
+            if len(listed_parts) < len(gating):
+                listed += (f"; [and {len(gating) - len(listed_parts)} more gating "
+                           f"questions in the sheet — ask for them by id]")
+            return (
+                f"REASONING KIT: {kit}. It carries the DOMAIN OWNER'S OWN question "
+                f"sheet ({sheet.get('source_document') or 'questions.yaml'}): "
+                f"{len(questions)} questions, {len(gating)} of them gating. Every "
+                f"answer must arrive with {', '.join(fields)} — an answer short of "
+                f"any of those cannot be cited and will be refused. Ask these in the "
+                f"sheet's own words, never a paraphrase, and ask ONLY the ones that "
+                f"change the DESIGN; the rest are operational and the platform "
+                f"collects them after the build at /v1/reasoning/interview. The first "
+                f"gating questions are: {listed}. An unanswered question is not a "
+                f"blocker and not a stub: the platform refuses anything needing it and "
+                f"names the question, so NEVER invent a value to fill one, and never "
+                f"tell the user a figure is in hand because the question was asked."
+                + register_note
+            )
+
+        open_questions = [
+            str((entry or {}).get("question") or name)
+            for name, entry in (manifest.get("figures") or {}).items()
+            if not isinstance(entry, dict) or entry.get("value") is None
+        ]
+        declared = manifest.get("figures")
+        if not declared:
+            # Said plainly: an absent question list is NOT "all answered". The
+            # first version reported "every figure already answered" for a kit
+            # that declared no figures at all, which is the most misleading thing
+            # it could have said.
+            if register_note:
+                return f"REASONING KIT: {kit}.{register_note}"
+            return (
+                f"REASONING KIT: {kit} — it declares NO question list yet, so the "
+                f"platform will refuse every figure it needs. Do not claim it can "
+                f"answer any of them."
+            )
+        if not open_questions:
+            return f"REASONING KIT: {kit} — every declared figure is answered."
+        listed = "; ".join(open_questions[:12])
+        return (
+            f"REASONING KIT: {kit}, with {len(open_questions)} unanswered figure(s). "
+            f"This kit has NO owner question sheet, so the questions below are DERIVED "
+            f"from its quantity names and are not the domain owner's own wording — say "
+            f"so if the user asks where they come from. "
+            f"These are the questions the kit itself asks: {listed}. Ask only the ones "
+            f"that change the DESIGN; the rest are operational and the platform "
+            f"collects them later at /v1/reasoning/pending. An unanswered figure is "
+            f"not a blocker — the platform refuses anything needing it and names the "
+            f"question, so never invent a value to fill one." + register_note
+        )
+    except Exception:  # noqa: BLE001 -- kit facts are context, never a blocker
+        logger.warning("Floor chat: reasoning-kit questions unavailable", exc_info=True)
+        return "REASONING KIT: questions unavailable right now."
 
 
 def _elicitation_facts(state: Any) -> str:

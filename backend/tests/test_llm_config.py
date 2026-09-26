@@ -435,8 +435,18 @@ def test_deepseek_key_does_not_arm_chat_or_factory_llm():
     factory_cfg = get_factory_llm_config()
     assert chat_cfg.get("api_key") != "sk-deepseek-test-not-real"
     assert factory_cfg.get("api_key") != "sk-deepseek-test-not-real"
-    assert "deepseek.com" not in (chat_cfg.get("base_url") or "")
-    assert "deepseek.com" not in (factory_cfg.get("base_url") or "")
+    # Neither path is ARMED, which is the claim. This used to be asserted as
+    # "deepseek.com not in base_url" -- a proxy that only worked because the
+    # default host was the retired provider, and which now forbids the legitimate
+    # default while proving nothing: a base_url with no key cannot call anything.
+    # The absence of a key, and the factory's named fail-closed error, are the
+    # direct evidence and a stronger assertion than the proxy was.
+    assert not (chat_cfg.get("api_key") or "").strip()
+    assert not (factory_cfg.get("api_key") or "").strip()
+    assert factory_cfg.get("error"), "the factory path must fail closed and say so"
+    assert "DEEPSEEK_API_KEY" in factory_cfg["error"], (
+        "the error should tell the operator that this key is the CLI's, not this path's"
+    )
 
 
 def test_chat_http_host_is_hostname_only():

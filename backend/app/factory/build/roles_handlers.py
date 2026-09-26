@@ -2967,6 +2967,42 @@ def _vendor_product_kernel(ctx: RoleContext) -> None:
         ctx.workspace.copy_file(item, rel)
 
 
+
+def _emit_reasoning_socket(ctx) -> None:
+    """Emit the universal reasoning socket into the product under build."""
+    from app.factory.build import reasoning_socket
+
+    written = reasoning_socket.emit(ctx)
+    # Ask the Store the same way ``emit`` just did, or this line names no kit for
+    # a kit the alias table has no entry for — reporting "kit 'None' vendored"
+    # beside the four files it vendored.
+    from app.factory.blocks_source import resolve_blocks_root
+
+    try:
+        store_root = resolve_blocks_root()
+    except Exception:  # noqa: BLE001 -- a log line must not fail a build
+        store_root = None
+    kit = reasoning_socket.kit_for_vertical(
+        ctx.blueprint,
+        getattr(ctx, "plan", None) and getattr(ctx.plan, "__dict__", None),
+        store_root=store_root)
+    vendored = [p for p in written if "/kit/" in p]
+    if vendored:
+        logger.info(
+            "reasoning socket emitted (%d files); kit '%s' vendored: %s",
+            len(written), kit, ", ".join(sorted(p.rsplit("/", 1)[-1] for p in vendored)),
+        )
+    else:
+        # Said at ERROR, not info. A platform whose reasoning layer refuses every
+        # figure is fail-closed and correct, and also gates nothing — that is not
+        # something a build log should mention in passing.
+        logger.error(
+            "reasoning socket emitted (%d files) with NO KIT (%s). This platform will "
+            "refuse every figure its rules need.",
+            len(written), kit or "no kit maps to this vertical",
+        )
+
+
 def _render_kernel_bridge() -> str:
     """Adapt sync capability handle() to execute_action. Does not own persist."""
     return '''"""Bridge capability handle() through the vendored product kernel.
@@ -3701,6 +3737,16 @@ def run_writer(
     ctx.workspace.write_text(Path("app") / "__init__.py", '"""Generated platform."""\n')
     _vendor_product_kernel(ctx)
     ctx.workspace.write_text(Path("app") / "kernel_bridge.py", _render_kernel_bridge())
+    # The universal reasoning socket. Identical in every platform the Factory
+    # builds: the kernel is one file, and the KIT vendored beside it is the only
+    # thing that differs between a hotel build and an airport build. Emitted here
+    # rather than hand-patched into one product, so every future build has it.
+    #
+    # Fail closed twice over: a kit that does not load refuses every statement,
+    # and a host function the product has not wired raises instead of returning a
+    # clean pass -- a platform that forgot to wire retrieval must not answer
+    # ungated and look fine doing it.
+    _emit_reasoning_socket(ctx)
     vendored_ids = [b for b in ctx.state.get("vendored_blocks", ()) if b]
     contracts = {b: _block_contract(ctx, b) for b in vendored_ids}
     ctx.workspace.write_text(Path("app") / "dispatch.py", _render_dispatch(contracts))
