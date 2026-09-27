@@ -34,4 +34,9 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_READY_WAIT_S: "300"
-        run: python3 scripts/post_deploy_smoke.py https://api.cerebrum-dev.com
+        run: python3 scripts/post_deploy_smoke.py ${{ vars.FACTORY_BASE_URL || 'http://cerebrum-918074828.us-west-2.elb.amazonaws.com' }}
+        # api.cerebrum-dev.com still resolves to the suspended Render
+        # service, so every probe there is a 503 and this job fails on
+        # each merge. Points at the AWS load balancer until the DNS
+        # record moves; set the FACTORY_BASE_URL repo variable to
+        # override without editing this file again.
