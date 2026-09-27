@@ -72,7 +72,20 @@ def _is_product_failure(row: Dict[str, str]) -> bool:
     if innermost.startswith("app/") or "/app/" in innermost:
         return True
     blob = " ".join(str(row.get(k) or "") for k in ("message", "text"))
-    return "AssertionError" in blob
+    if "AssertionError" not in blob:
+        return False
+    # An AssertionError is the product's doing only when the assertion COMPARED
+    # product output to an expected value -- the generated round-trip and route
+    # checks (``assert fetched[key] == value, (key, fetched[key], value)``).
+    # Their failure carries the comparison: a ``==``/``!=`` in the asserted
+    # source line, or a ``(key, got, want)`` tuple in the message. A stub the
+    # factory itself wrote broken (``assert False, 'broken on purpose'``)
+    # carries neither -- that is a broken test, the factory's, not the
+    # product's, and it must halt with no rework (test_g_series_rework_loop).
+    message = str(row.get("message") or "")
+    if re.search(r"\([^()]*,[^()]*\)", message):  # a (key, got, want) tuple
+        return True
+    return bool(re.search(r"assert\b[^\n]*[=!]=", blob))  # a compared assertion
 
 
 def generator_location(test_name: str, test_file: str) -> str:

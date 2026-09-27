@@ -36,7 +36,12 @@ def test_store_enables_wal_once_out_of_band():
 
 def test_upgrade_head_sets_wal_at_boot():
     mig = render_migrations()
-    assert "enable_wal" in mig, (
+    head = mig[mig.index("def upgrade_head"):mig.index("def upgrade_to")]
+    assert "journal_mode=WAL" in head, (
         "upgrade_head runs once before the threadpool serves; it must set WAL "
         "there so no connection has to switch it"
     )
+    # Inline, not via app.store: store.py is writer-authored and may not expose
+    # a WAL helper (the emitted-migrations test uses a floor-compliant store
+    # that does not), so importing one there raises ImportError at boot.
+    assert "from app.store import enable_wal" not in head

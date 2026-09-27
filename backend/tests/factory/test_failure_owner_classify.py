@@ -92,3 +92,21 @@ def test_pure_factory_failure_still_halts_and_names_the_generator():
 def test_environment_fault_is_unchanged():
     v = _verdict([], reason="environment_fault")
     assert classify(v, FACTORY_FILES)["owner"] == "ENVIRONMENT"
+
+
+def test_a_broken_stub_assertion_stays_factory():
+    """`assert False` is a broken test the factory wrote, not a product defect.
+
+    It carries no value comparison -- no (key, got, want) tuple, no ==. It must
+    stay FACTORY so the run halts with zero rework (the g_series invariant), not
+    dispatch a writer that cannot fix a test it may not edit.
+    """
+    v = _verdict(
+        ["FAILED tests/test_zz_broken_generated.py::test_zz_broken_generated - AssertionError: broken on purpose"],
+        rows=[{"nodeid": "tests/test_zz_broken_generated.py::test_zz_broken_generated",
+               "file": "tests/test_zz_broken_generated.py", "name": "test_zz_broken_generated",
+               "kind": "failure", "message": "broken on purpose",
+               "text": "def test_zz_broken_generated():\n>   assert False, 'broken on purpose'\nE   AssertionError: broken on purpose",
+               "innermost": "tests/test_zz_broken_generated.py:2"}],
+    )
+    assert classify(v, ("tests/test_zz_broken_generated.py",))["owner"] == FACTORY
