@@ -112,6 +112,17 @@ def _real_run(argv: List[str], *, cwd: Path, timeout: float) -> subprocess.Compl
     # ("✓") dies with a charmap UnicodeEncodeError that looks like a
     # block failure -- measured live on the team block.
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    # The FACTORY's own database binding must never become the workspace's.
+    # DATABASE_URL rode along from Render's auto-injection into the AWS task
+    # env, and every gate subprocess inherited it -- so the emitted platform
+    # under test picked Postgres while its templated migration code assumed
+    # sqlite, and every generation died in the writer-behaviour probe
+    # (ObjectNotExecutableError, 2026-09-27). Now that the emitted product
+    # honours DATABASE_URL end to end, inheriting it here would be worse
+    # than the crash: a product's migrations pointed at the Factory's own
+    # database. A build carries no operator DATABASE_URL; a gate that wants
+    # one must say so explicitly.
+    env.pop("DATABASE_URL", None)
     return subprocess.run(
         argv,
         cwd=str(cwd),

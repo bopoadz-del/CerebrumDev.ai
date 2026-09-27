@@ -130,6 +130,24 @@ def connect() -> Any:
 def backend_name() -> str:
     """What /health and the acceptance harness report."""
     return "postgres" if is_postgres() else "sqlite"
+
+
+def resolved_url() -> str:
+    """The SQLAlchemy URL for whichever engine this platform is on.
+
+    The one answer, for everything that needs a URL rather than a
+    connection: alembic's env.py and app/migrations.py both read THIS. Each
+    used to build its own -- env.py hardcoded sqlite and ignored
+    DATABASE_URL, migrations assumed sqlite semantics on whatever came back
+    -- so a platform with DATABASE_URL set migrated one database and served
+    another. One place decides, so they cannot disagree.
+    """
+    url = database_url()
+    if url:
+        return url
+    path = sqlite_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return "sqlite:///" + path.resolve().as_posix()
 '''
 
 
