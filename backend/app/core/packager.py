@@ -1,7 +1,8 @@
 """Package a CerebrumDev.ai session into a deployable Cerebrum-Blocks instance.
 
 Two paths:
-- render_yaml: Render blueprint + Dockerfile that clones the engine at build time.
+- deploy contract: deploy/contract.json + Dockerfile that clones the engine at
+  build time. Was a Render blueprint until 2026-09-27; that platform is gone.
 - zip: full package with vectors.json, docs, chain, Dockerfile, .env
 """
 
@@ -53,28 +54,54 @@ CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${{PORT}}
     )
 
 
-def _write_render_yaml(
+#: Names whose value is a credential, never written into a delivered file.
+_SECRET_ENV_KEYS = frozenset(
+    {"SECRET_KEY", "DATA_ENCRYPTION_KEY", "CEREBRUM_MASTER_KEY"}
+)
+
+
+def _write_deploy_contract(
     package_root: Path,
     service_name: str,
     env_vars: Dict[str, str],
 ) -> None:
-    render = package_root / "render.yaml"
-    env_lines = "\n".join(
-        f'      - key: {key}\n        value: "{value}"' for key, value in env_vars.items()
-    )
-    render.write_text(
-        f'''services:
-  - type: web
-    name: {service_name}
-    env: docker
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
-    plan: starter
-    region: oregon
-    envVars:
-{env_lines}
-''',
-        encoding="utf-8",
+    """State what this package needs. Replaces the Render blueprint.
+
+    Render is gone and that account is suspended, so a blueprint is a file
+    that cannot be applied -- and it is the most deploy-shaped thing in the
+    delivery, so it is what gets opened first.
+
+    The blueprint it replaces wrote EVERY variable with its value, including
+    the minted platform key, into a file handed to the customer. Secrets are
+    now named and never valued, and the redaction matches on value as well as
+    name so an alias of the same credential cannot slip through under a
+    different key.
+    """
+    import json as _json
+
+    secret_values = {
+        str(v)
+        for k, v in env_vars.items()
+        if k in _SECRET_ENV_KEYS and str(v).strip()
+    }
+    redacted = {
+        k
+        for k, v in env_vars.items()
+        if k in _SECRET_ENV_KEYS or str(v) in secret_values
+    }
+    contract = {
+        "schema": "cerebrum.deploy.v1",
+        "service": service_name,
+        "port": 8000,
+        "health_path": "/health",
+        "environment": {k: v for k, v in env_vars.items() if k not in redacted},
+        "secrets_required": sorted(redacted),
+        "datastores": [],
+    }
+    deploy = package_root / "deploy"
+    deploy.mkdir(parents=True, exist_ok=True)
+    (deploy / "contract.json").write_text(
+        _json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
 
@@ -214,7 +241,7 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
 
                 shutil.copy2(f, docs_dir / f.name)
 
-    # 4. Dockerfile + render.yaml + bootstrap + probe
+    # 4. Dockerfile + deploy contract + bootstrap + probe
     engine_repo = os.getenv(
         "CEREBRUM_BLOCKS_REPO", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
     )
@@ -242,7 +269,7 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
     }
     # Non-secret LLM configuration is fine to ship; the owner's API key is NOT.
 
-    _write_render_yaml(package_root, service_name, env_vars)
+    _write_deploy_contract(package_root, service_name, env_vars)
 
     dotenv = package_root / ".env"
     dotenv_lines = [f"{key}={value}" for key, value in env_vars.items()]
@@ -261,9 +288,10 @@ Service name: {service_name}
 - {llm_key_note}
 - No factory credentials are bundled in this package.
 
-## Option A: Render blueprint
-1. Push this folder to a Git repo.
-2. In Render, create a **Blueprint** and point it at `render.yaml`.
+## Option A: any container runtime
+1. Read `deploy/contract.json` — port, health path and the secrets you must
+   supply (named there, never valued).
+2. Build the Dockerfile and run it, passing those values as environment.
 
 ## Option B: Manual Docker
 ```bash
