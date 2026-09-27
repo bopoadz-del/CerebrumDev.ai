@@ -3505,6 +3505,37 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             source="factory",
         )
 
+    # data_lifecycle was only one of THREE emitters stranded below the
+    # CodeWhale branch. run_tester stamps tests/test_deploy.py and
+    # tests/test_domain_acceptance.py just as unconditionally, and they open
+    # ``from app.health import ...`` / ``from app.observe import ...`` /
+    # ``from app.revision import ...`` and ``from app.domain_ops import
+    # OUTCOMES, perform_all``. None of those modules were written on this
+    # path, so the suite died at COLLECTION -- before one assertion ran --
+    # and the agent spent rework rounds inventing a contract the factory
+    # owns. Live: sess_42d244d317f042b2 (Cerebrum VenueOps run 2),
+    # "suite_red: missing module -- FAILED tests.test_domain_acceptance".
+    # Gaps only, same as above: anything the agent wrote stays as written.
+    from app.factory.build.deploy import backfill_deploy_substrate
+    from app.factory.build.domain_acceptance import backfill_domain_substrate
+
+    for label, result in (
+        ("deploy", backfill_deploy_substrate(ctx.workspace)),
+        (
+            "domain",
+            backfill_domain_substrate(
+                ctx.workspace, dict(ctx.state.get("model_specs") or {})
+            ),
+        ),
+    ):
+        if result["written"]:
+            ctx.note(
+                f"{label} substrate written by the factory (the agent is not "
+                "asked for these): " + ", ".join(result["written"]),
+                stage="substrate",
+                source="factory",
+            )
+
     # Same early return, the other half of the contract: run_writer converges
     # the ProductGenerator classes (app/agents/manifests, app/workflows,
     # app/connectors, product-dna, docs/blueprint, docs/provenance,
@@ -5379,6 +5410,20 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     )
     ctx.workspace.write_text(
         Path("tests") / "test_domain_acceptance.py", render_domain_tests(specs)
+    )
+
+    # Eight suites were stamped and none touched the UI, so the agent could
+    # not see a UI problem until it had yielded and ui_end_to_end rejected the
+    # build -- a full rework round for something a red test shows in the same
+    # pass (sess_42d244d317f042b2 lost a 10m22s writer pass to
+    # ui_not_wired_end_to_end). The prompt already tells the agent to run
+    # pytest -m "not pilot" before yielding; this puts the UI in that run.
+    # Same bar as the gate, detected earlier: it asserts only what the gate
+    # treats as fatal, never its advisories.
+    from app.factory.build.ui_e2e import render_ui_tests
+
+    ctx.workspace.write_text(
+        Path("tests") / "test_ui_operator_flow.py", render_ui_tests(specs)
     )
 
     # negative_floor asks each capability for four counter-cases. Asking the
