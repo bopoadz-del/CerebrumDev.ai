@@ -145,9 +145,10 @@ def test_the_cloud_target_pushes_the_package_nowhere(deploy_env, monkeypatch):
     company left Render -- so the guard is replaced by the stronger property
     the new behaviour gives for free: the cloud target contacts nothing at all,
     so there is no repository to get wrong and no package to leak.
+
+    The two RENDER_* credentials this test used to seed are gone from the module
+    entirely, so there is nothing left to seed -- which is the point.
     """
-    monkeypatch.setattr(deployer, "RENDER_API_KEY", "render-key")
-    monkeypatch.setattr(deployer, "RENDER_OWNER_ID", "owner-id")
 
     class FakeState:
         config = type("Config", (), {"domain": "medical"})()
@@ -217,25 +218,107 @@ def test_the_cloud_target_does_not_call_render(deploy_env, monkeypatch):
     account and reports a live URL that never answers. The delivered platform
     carries its own deploy artifacts instead, so the cloud target must say so
     and must not reach for the vendor.
+
+    This used to patch a ``_render_request`` helper and assert it went unused.
+    That helper has since been deleted along with the rest of the client, so the
+    assertion is now made against the network itself -- which is the property
+    that actually matters and cannot be satisfied by renaming a function.
     """
     from app.core import deployer
 
-    calls = []
-    monkeypatch.setattr(
-        deployer, "_render_request",
-        lambda *a, **k: calls.append(a) or {},
-    )
-    monkeypatch.setattr(deployer, "RENDER_API_KEY", "not-real-key")
-    monkeypatch.setattr(deployer, "RENDER_OWNER_ID", "not-real-owner")
+    def _explode(*args, **kwargs):
+        raise AssertionError("the cloud target made a network call")
+
+    monkeypatch.setattr(deployer.urllib.request, "urlopen", _explode)
 
     result = deployer.deploy_to_render(
         "sess-1", None, "/tmp/pkg", "svc", {},
     )
 
-    assert not calls, "the cloud target reached the Render API"
     assert result["status"] == "packaged"
     message = result["message"].lower()
     assert "deploy/contract.json" in message, (
         "the refusal must name the artifact that replaces it, or the caller is "
         "told no with nowhere to go"
     )
+
+
+def test_poll_deploy_status_does_not_reach_the_vendor_either(monkeypatch):
+    """The status poll was left pointing at Render when the deploy path was cut.
+
+    ``deploy_to_render`` was made to refuse the vendor, but
+    ``poll_deploy_status`` still called ``api.render.com`` -- and it is the half
+    that is reachable from a route. ``routers/deploy.py`` polls it whenever a
+    persisted session carries a ``service_id``, which every session created
+    before the cut still does.
+
+    Worse, it swallows the exception and returns ``status: unknown``, so the
+    endpoint never fails loudly. It just answers "unknown" forever while a UI
+    waits for a deploy that no provider is running.
+    """
+    from app.core import deployer
+
+    def _explode(*args, **kwargs):
+        raise AssertionError("poll_deploy_status made a network call")
+
+    monkeypatch.setattr(deployer.urllib.request, "urlopen", _explode)
+
+    result = deployer.poll_deploy_status("srv-abc123")
+
+    assert result["status"] != "unknown", (
+        "'unknown' is what the old vendor call degraded to on failure; the "
+        "answer must distinguish 'no provider is wired' from 'the poll broke'"
+    )
+    message = result["message"].lower()
+    assert "provider" in message or "not wired" in message, (
+        f"the status must say why there is nothing to poll, got: {result['message']!r}"
+    )
+
+
+def test_the_render_api_client_is_gone_from_the_source():
+    """No code path may retain a client for a provider the company left.
+
+    A dead client is not inert: it keeps the credentials plumbed, keeps the
+    vendor's URL in the file, and is one call away from being reachable again.
+
+    This reads the AST rather than grepping the text, because the docstrings in
+    this module and in deployer.py have to be free to *explain* that the vendor
+    is gone. A plain substring scan fails on its own explanation, which would
+    make the honest comment the thing that breaks the build.
+    """
+    import ast
+    from pathlib import Path
+
+    import app.core.deployer as deployer_module
+
+    tree = ast.parse(Path(deployer_module.__file__).read_text(encoding="utf-8"))
+
+    docstrings = {
+        node.body[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.body
+        and isinstance(node.body[0], ast.Expr)
+        and isinstance(node.body[0].value, ast.Constant)
+        and isinstance(node.body[0].value.value, str)
+    }
+
+    literals = [
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node not in docstrings
+    ]
+    offenders = [text for text in literals if "api.render.com" in text]
+    assert not offenders, f"the Render API URL is still a live string: {offenders}"
+
+    names = {
+        node.id for node in ast.walk(tree) if isinstance(node, ast.Name)
+    } | {
+        node.name for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    for banned in ("RENDER_API_KEY", "RENDER_OWNER_ID", "_render_request",
+                   "_build_service_payload", "_deploy_to_render_unused"):
+        assert banned not in names, f"{banned} is still defined or used in deployer.py"
