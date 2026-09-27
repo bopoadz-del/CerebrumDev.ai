@@ -129,7 +129,9 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "Procfile",
         ".env.example",
         ".dockerignore",
-        "render.yaml",
+        "deploy/contract.json",
+        "deploy/README.md",
+        "deploy/aws/task-definition.json",
         "alembic.ini",
         "scripts/entrypoint.sh",
         "scripts/rollback.sh",
@@ -157,7 +159,16 @@ def test_the_writer_lane_admits_the_scaffold_but_stays_narrow(tmp_path):
         "docs/openapi.json",
     ):
         assert assert_write_allowed(BuildRole.WRITER, ws / allowed, workspace=ws)
-    for denied in ("docker-compose.yml", "Makefile", "setup.py"):
+    # deploy/ is three NAMED files, not a wildcard. A `deploy/**` entry would
+    # pass every assertion above while letting the writer drop anything into a
+    # directory the customer is told to read as generated.
+    for denied in (
+        "docker-compose.yml",
+        "Makefile",
+        "setup.py",
+        "deploy/anything-else.yaml",
+        "deploy/aws/extra.json",
+    ):
         with pytest.raises(AuthorityError):
             assert_write_allowed(BuildRole.WRITER, ws / denied, workspace=ws)
 
