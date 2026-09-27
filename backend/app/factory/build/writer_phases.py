@@ -52,7 +52,10 @@ PHASE_TITLES = {
 
 RENDER_READY_RELS = (
     Path("Dockerfile"),
-    Path("render.yaml"),
+    # Was render.yaml. The phase keeps its name, but what it gates on is the
+    # platform-neutral deploy contract: Render is gone, and a blueprint for a
+    # suspended account is not evidence that a tree would deploy.
+    Path("deploy") / "contract.json",
     Path("app") / "main.py",
 )
 
@@ -188,7 +191,7 @@ def phase_do_text(phase_id: str) -> str:
     else:
         body = (
             "Package, boot, and integration: shippable tree that *would* "
-            "deploy (Dockerfile + render.yaml + app/main.py).\n"
+            "deploy (Dockerfile + deploy/contract.json + app/main.py).\n"
             "render-ready is not live Render deploy and not Store Docker "
             "acceptance — those stay owner-gated.\n"
             "Then existing TESTER / STORE_MANAGER. STOP / checkpoint after "

@@ -183,7 +183,9 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "Procfile"),
             (LaneRoot.WORKSPACE, ".env.example"),
             (LaneRoot.WORKSPACE, ".dockerignore"),
-            (LaneRoot.WORKSPACE, "render.yaml"),
+            # Deploy artifacts, derived from deploy/contract.json. Replaces
+            # the Render blueprint: that platform is gone.
+            (LaneRoot.WORKSPACE, "deploy/**"),
             # The clone-and-test contract the customer runs, and the build
             # provenance it audits. Named, not a wildcard, for the same
             # reason as the files above.

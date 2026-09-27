@@ -6,9 +6,11 @@ every ``store.connect()``. This module is the WRITER/TESTER emission for
 versioned up/down migrations, WAL durability, backup/restore/retention, and
 the product-side tests that *perform* a restore drill.
 
-SQLite on a single Render disk is retained. That is a SPOF. Capacity is the
-disk size (1 GiB in the emitted render.yaml). Backups on the same volume do
-not survive disk loss; set BACKUP_DIR onto another volume if that is in scope.
+SQLite on a single mounted volume is retained. That is a SPOF. Capacity is the
+volume size (1 GiB in the emitted deploy/contract.json). Backups on the same
+volume do not survive its loss; set BACKUP_DIR onto another volume if that is
+in scope. The volume is not optional: on a runtime with ephemeral storage --
+an ECS task, a plain container -- every deploy discards the database silently.
 """
 
 from __future__ import annotations
@@ -752,7 +754,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
         "capacity": {
             "disk_gb": DISK_SIZE_GB,
             "practical_sqlite": (
-                "Bound by the 1 GiB Render disk declared in render.yaml, "
+                "Bound by the 1 GiB volume declared in deploy/contract.json, "
                 "not SQLite's theoretical file limit."
             ),
             "ha": False,

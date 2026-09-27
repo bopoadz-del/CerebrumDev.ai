@@ -281,9 +281,47 @@ def deploy_to_render(
     service_name: str,
     env_vars: Dict[str, str],
 ) -> Dict[str, Any]:
-    """Push the package to a branch and create a Render service.
+    """Return the package; do not deploy to Render.
 
-    Returns service metadata, including the dashboard URL and inferred live URL.
+    Kept as the cloud target's entry point, but it no longer calls the vendor.
+    The company left Render and that account is suspended: an API call there
+    either fails or creates a service that answers nothing while this function
+    reports a live URL for it. Reporting a deploy that did not happen is worse
+    than refusing one.
+
+    What replaces it ships inside the package. `deploy/contract.json` states
+    the platform's port, health path, required volume and environment, and
+    `deploy/aws/task-definition.json` is an ECS Fargate definition derived from
+    it. Both are generated from one source, so neither can drift from the
+    container they describe.
+
+    The signature and the "packaged" status are unchanged, because every caller
+    and the UI already handle that outcome — this is the path they take whenever
+    credentials are absent.
+    """
+    return {
+        "status": "packaged",
+        "message": (
+            "Cloud deploy is not wired to a provider. The package carries its "
+            "own deploy artifacts: deploy/contract.json states what the "
+            "platform needs, and deploy/aws/task-definition.json is an ECS "
+            "Fargate definition derived from it. Download the package and "
+            "apply them."
+        ),
+    }
+
+
+def _deploy_to_render_unused(
+    session_id: str,
+    state: SessionState,
+    package_dir: str,
+    service_name: str,
+    env_vars: Dict[str, str],
+) -> Dict[str, Any]:
+    """The former Render path, retained only so the git history reads.
+
+    Not reachable. Delete once an AWS deploy path for delivered platforms is
+    implemented and this file has a real provider again.
     """
     if not RENDER_API_KEY or not RENDER_OWNER_ID:
         return {

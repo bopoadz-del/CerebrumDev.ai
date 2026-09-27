@@ -137,16 +137,25 @@ def test_push_package_to_branch_proceeds_for_private_repo(deploy_env, tmp_path: 
     assert reason is None
 
 
-def test_deploy_to_render_surfaces_public_repo_abort(deploy_env, monkeypatch):
+def test_the_cloud_target_pushes_the_package_nowhere(deploy_env, monkeypatch):
+    """Was test_deploy_to_render_surfaces_public_repo_abort.
+
+    That test guarded one way the Render path could leak a package: pushing it
+    to a repository that turned out to be public. The path is gone -- the
+    company left Render -- so the guard is replaced by the stronger property
+    the new behaviour gives for free: the cloud target contacts nothing at all,
+    so there is no repository to get wrong and no package to leak.
+    """
     monkeypatch.setattr(deployer, "RENDER_API_KEY", "render-key")
     monkeypatch.setattr(deployer, "RENDER_OWNER_ID", "owner-id")
 
     class FakeState:
         config = type("Config", (), {"domain": "medical"})()
 
+    opened = []
     with patch(
         "app.core.deployer.urllib.request.urlopen",
-        _make_fake_urlopen({"private": False, "full_name": "owner/deploy-target"}),
+        lambda *a, **k: opened.append(a) or _make_fake_urlopen({})(*a, **k),
     ):
         result = deploy_to_render(
             "sess-abort",
@@ -156,9 +165,9 @@ def test_deploy_to_render_surfaces_public_repo_abort(deploy_env, monkeypatch):
             {"CEREBRUM_MASTER_KEY": "key"},
         )
 
+    assert not opened, "the cloud target opened a network connection"
     assert result["status"] == "packaged"
-    assert "public" in result["message"].lower()
-    assert "owner/deploy-target" in result["message"]
+    assert "deploy/contract.json" in result["message"]
 
 
 def test_assert_no_client_data_staged_raises_when_guard_not_passed(tmp_path: Path):
@@ -199,3 +208,34 @@ def test_verify_repo_private_invalid_url():
     ok, reason = _verify_repo_private("https://example.com/not-github", "token")
     assert ok is False
     assert "Not a valid GitHub repository URL" in reason
+
+
+def test_the_cloud_target_does_not_call_render(deploy_env, monkeypatch):
+    """Render is gone; the company left it and the account is suspended.
+
+    Calling that API now either fails or, worse, creates a service on a dead
+    account and reports a live URL that never answers. The delivered platform
+    carries its own deploy artifacts instead, so the cloud target must say so
+    and must not reach for the vendor.
+    """
+    from app.core import deployer
+
+    calls = []
+    monkeypatch.setattr(
+        deployer, "_render_request",
+        lambda *a, **k: calls.append(a) or {},
+    )
+    monkeypatch.setattr(deployer, "RENDER_API_KEY", "not-real-key")
+    monkeypatch.setattr(deployer, "RENDER_OWNER_ID", "not-real-owner")
+
+    result = deployer.deploy_to_render(
+        "sess-1", None, "/tmp/pkg", "svc", {},
+    )
+
+    assert not calls, "the cloud target reached the Render API"
+    assert result["status"] == "packaged"
+    message = result["message"].lower()
+    assert "deploy/contract.json" in message, (
+        "the refusal must name the artifact that replaces it, or the caller is "
+        "told no with nowhere to go"
+    )
