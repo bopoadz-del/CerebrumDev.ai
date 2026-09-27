@@ -41,7 +41,7 @@ env:
   ECR_REPOSITORY: cerebrumdev-frontend
   ECS_CLUSTER: cerebrum
   ECS_SERVICE: cerebrumdev-frontend
-  VITE_API_URL: "https://api.cerebrum-dev.com"
+  VITE_API_URL: https://api.cerebrum-dev.com
 
 jobs:
   deploy:
