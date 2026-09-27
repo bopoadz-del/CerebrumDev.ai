@@ -34,19 +34,19 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_READY_WAIT_S: "300"
-          # The SPA moved with the API. Its default still pointed at
-          # www.cerebrum-dev.com, which Cloudflare still resolves to the
-          # suspended Render origin, so the frontend security-header probe
-          # read a vendor error page: "1 dead kernel(s): security headers
-          # (frontend)" on every merge, including one whose backend was
-          # verifiably healthy (/version returned the merge sha). The ALB
-          # serves the SPA at / and carries all five required headers.
-          # Same lever as FACTORY_BASE_URL: set the repo variable when DNS
-          # moves, no commit needed.
-          SMOKE_FRONTEND: ${{ vars.SMOKE_FRONTEND || 'http://cerebrum-918074828.us-west-2.elb.amazonaws.com' }}
-        run: python3 scripts/post_deploy_smoke.py ${{ vars.FACTORY_BASE_URL || 'http://cerebrum-918074828.us-west-2.elb.amazonaws.com' }}
-        # api.cerebrum-dev.com still resolves to the suspended Render
-        # service, so every probe there is a 503 and this job fails on
-        # each merge. Points at the AWS load balancer until the DNS
-        # record moves; set the FACTORY_BASE_URL repo variable to
-        # override without editing this file again.
+          # DNS has moved: cerebrum-dev.com, www and api all resolve to the
+          # AWS load balancer, so these defaults are the public hostnames
+          # again rather than the load balancer's generated name.
+          #
+          # The frontend probe must use a host the :443 listener forwards to
+          # cerebrumdev-frontend, because what it checks is the SPA's security
+          # headers. That listener routes by HOST, so www is the SPA and api is
+          # the backend -- they are not interchangeable here, and pointing this
+          # at api would read the API's headers while reporting on the SPA.
+          SMOKE_FRONTEND: ${{ vars.SMOKE_FRONTEND || 'https://www.cerebrum-dev.com' }}
+        run: python3 scripts/post_deploy_smoke.py ${{ vars.FACTORY_BASE_URL || 'https://api.cerebrum-dev.com' }}
+        # The API probes (/health, /ready, /version) need the host that
+        # reaches the backend target group, which is api.cerebrum-dev.com.
+        # Verified live: /version returns the deployed git_sha as JSON.
+        # Both defaults stay overridable by repo variable, so a future move
+        # needs no commit.

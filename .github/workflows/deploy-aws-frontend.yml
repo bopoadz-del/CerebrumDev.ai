@@ -1,22 +1,33 @@
 # Build the SPA and push it to ECR, then roll the ECS service.
 #
-# VITE_API_URL is EMPTY on purpose, and that is the whole point of this comment.
+# VITE_API_URL names the API's own hostname on purpose. Two traps sit behind
+# that one line, and the second one is the reason it is not empty.
 #
-# Vite bakes it into the bundle at build time, so any absolute host here becomes
-# a constant the SPA carries until someone rebuilds it. With the ALB's hostname
-# baked in, moving DNS to cerebrum-dev.com would have served the app over HTTPS
-# while it kept calling http://...elb.amazonaws.com -- mixed content, which
-# browsers block outright. The DNS move would have looked done and the app would
-# have been dead.
+# Vite bakes this value into the bundle at build time, so it is a constant the
+# SPA carries until someone rebuilds it. Trap one: the ALB's own hostname was
+# baked in as http://. Once DNS moved, the page was served over HTTPS and kept
+# calling http://...elb.amazonaws.com -- mixed content, which browsers block
+# outright. The cutover looked done and the app was dead.
 #
-# frontend/src/api/factory.ts reads `VITE_API_URL || ''`, so empty means every
-# call is same-origin: `/v1/...` against whatever host served the page. The ALB
-# routes by PATH, not host -- /v1/*, /health, /ready, /version, /docs and
-# /openapi.json go to the backend target group, everything else to this SPA --
-# so same-origin resolves correctly under the ALB name, under
-# www.cerebrum-dev.com, and under anything else pointed at that load balancer.
+# Trap two: empty looks like the fix. frontend/src/api/factory.ts reads
+# `VITE_API_URL || ''`, so empty makes every call same-origin, and same-origin
+# does resolve under the load balancer's own name -- the :80 listener routes by
+# PATH (/v1/*, /health, /ready, /version, /docs, /openapi.json to the backend
+# target group, everything else to this SPA). But :443 does not. It routes by
+# HOST: api.cerebrum-dev.com to the backend, cerebrum-dev.com and
+# www.cerebrum-dev.com to this SPA, theshovel.ai elsewhere. So over HTTPS
+# `https://www.cerebrum-dev.com/v1/auth/me` returns this SPA's index.html with
+# status 200 and content-type text/html -- never the API. Same-origin is
+# correct on :80 and dead on :443, and :443 is what the public gets.
 #
-# The consequence worth keeping: a DNS cutover no longer needs a rebuild.
+# Hence the API's own host. That makes the calls cross-origin, which is already
+# provided for: backend/app/core/cors_policy.py pins https://www.cerebrum-dev.com
+# in PRODUCTION_DEFAULT_ALLOWLIST, and the live API returns it in
+# access-control-allow-origin with allow-credentials true.
+#
+# Why this URL is safe to bake when the ALB's was not: it is https, so no mixed
+# content, and it is a stable public hostname rather than the load balancer's
+# generated name, so replacing the load balancer does not require a rebuild.
 name: deploy-aws-frontend
 
 on:
@@ -30,7 +41,7 @@ env:
   ECR_REPOSITORY: cerebrumdev-frontend
   ECS_CLUSTER: cerebrum
   ECS_SERVICE: cerebrumdev-frontend
-  VITE_API_URL: ""
+  VITE_API_URL: "https://api.cerebrum-dev.com"
 
 jobs:
   deploy:
