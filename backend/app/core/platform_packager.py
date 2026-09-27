@@ -352,52 +352,76 @@ volumes:
     )
 
 
-def _write_render_yaml(
+def _write_deploy_contract(
     package_root: Path,
     service_name: str,
     env_vars: Dict[str, str],
 ) -> None:
-    """Write a Render blueprint with a managed Postgres database."""
-    safe_envs = []
+    """State what this platform needs; do not provision it on a vendor.
+
+    Replaces the Render blueprint. Render is gone and that account is
+    suspended, and a blueprint is the most deploy-shaped file in a delivery --
+    the one a customer opens first.
+
+    This package is NOT the build path's shape: its entrypoint runs
+    ``alembic upgrade head`` when DATABASE_URL is a postgres URL and its
+    docker-compose ships a Postgres service, so the database is real and is
+    declared as required. The build path's platform is sqlite on a volume and
+    declares no datastore; both are honest about what they actually open.
+
+    Secrets are NAMED and never valued, exactly as the blueprint's
+    ``sync: false`` did. A minted key written into a json file inside the
+    package would be a regression the file this replaces did not have.
+    """
+    import json as _json
+
     secret_keys = {"SECRET_KEY", "DATA_ENCRYPTION_KEY", "CEREBRUM_MASTER_KEY"}
-    for key, value in env_vars.items():
-        if key in secret_keys:
-            safe_envs.append(f"      - key: {key}\n        sync: false")
-        else:
-            safe_envs.append(f"      - key: {key}\n        value: {value}")
-    env_lines = "\n".join(safe_envs)
-
-    render = package_root / "render.yaml"
-    render.write_text(
-        f'''# Render Blueprint — production-hardened Cerebrum Blocks platform.
-# Set secret keys in the Render dashboard after the first apply.
-
-databases:
-  - name: {service_name}-db
-    databaseName: cerebrum
-    user: cerebrum
-    plan: starter
-
-services:
-  - type: web
-    name: {service_name}
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
-    plan: starter
-    region: oregon
-    envVars:
-{env_lines}
-      - key: DATABASE_URL
-        fromDatabase:
-          name: {service_name}-db
-          property: connectionString
-    disk:
-      name: {service_name}-data
-      mountPath: /app/data
-      sizeGB: 1
-''',
-        encoding="utf-8",
+    # Redact by VALUE as well as by name. The minted deploy key is written to
+    # three variables -- CEREBRUM_MASTER_KEY, CB_DEV_KEY and
+    # CEREBRUM_API_KEY_PLATFORM (see test_platform_auth_single_source_of_truth)
+    # -- and the name list covered only the first, so render.yaml shipped the
+    # platform's live API key in plaintext under the other two. Matching on the
+    # value catches every alias, including ones added later.
+    secret_values = {
+        str(v) for k, v in env_vars.items() if k in secret_keys and str(v).strip()
+    }
+    redacted = {
+        k for k, v in env_vars.items() if k in secret_keys or str(v) in secret_values
+    }
+    environment = {k: v for k, v in env_vars.items() if k not in redacted}
+    contract = {
+        "schema": "cerebrum.deploy.v1",
+        "service": service_name,
+        "port": 8000,
+        "health_path": "/health",
+        "persistent_volume": {
+            "required": True,
+            "mount_path": "/app/data",
+            "size_gb": 1,
+            "reason": (
+                "session state and uploaded artifacts live here. On a runtime "
+                "with ephemeral storage every deploy discards them silently."
+            ),
+        },
+        "environment": environment,
+        "secrets_required": sorted(redacted),
+        "datastores": [
+            {
+                "kind": "postgres",
+                "required": True,
+                "env": "DATABASE_URL",
+                "reason": (
+                    "entrypoint.sh runs alembic upgrade head when DATABASE_URL "
+                    "is a postgresql URL; docker-compose.yml provisions one for "
+                    "local use. Supply a managed instance in production."
+                ),
+            }
+        ],
+    }
+    deploy = package_root / "deploy"
+    deploy.mkdir(parents=True, exist_ok=True)
+    (deploy / "contract.json").write_text(
+        _json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
 
@@ -466,11 +490,18 @@ docker compose up --build
 The first startup runs `alembic upgrade head` automatically when `DATABASE_URL`
 is set.
 
-## Deploy to Render
+## Deploy
+
+`deploy/contract.json` states what this platform needs: port, health path,
+the persistent volume, and the Postgres it migrates against. Read it first —
+every requirement below comes from there.
 
 1. Push this folder to a Git repository.
-2. In Render, choose **Blueprint** and point it at `render.yaml`.
-3. Enter the secret keys in the dashboard:
+2. Build the Dockerfile and run it on any container runtime. `docker compose
+   up` works as-is and brings its own Postgres for local use; in production
+   supply a managed instance via `DATABASE_URL`.
+3. Supply the secret keys out of band (they are named in the contract's
+   `secrets_required` and deliberately carry no values):
    - `SECRET_KEY`
    - `DATA_ENCRYPTION_KEY`
    - `CEREBRUM_MASTER_KEY`
@@ -612,7 +643,7 @@ def package_platform_session(state: SessionState, api_key: Optional[str] = None)
 
     dotenv = package_root / ".env"
     dotenv.write_text("\n".join(dotenv_lines), encoding="utf-8")
-    _write_render_yaml(package_root, service_name, env_vars)
+    _write_deploy_contract(package_root, service_name, env_vars)
     _write_readme(package_root, service_name)
     _drop_cli_artifacts(package_root, service_name, env_vars, engine_root)
 
