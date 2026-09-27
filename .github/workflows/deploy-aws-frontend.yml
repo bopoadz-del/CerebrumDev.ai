@@ -1,6 +1,22 @@
 # Build the SPA and push it to ECR, then roll the ECS service.
 #
-# VITE_API_URL is baked in at build time by Vite, so it is a build arg here.
+# VITE_API_URL is EMPTY on purpose, and that is the whole point of this comment.
+#
+# Vite bakes it into the bundle at build time, so any absolute host here becomes
+# a constant the SPA carries until someone rebuilds it. With the ALB's hostname
+# baked in, moving DNS to cerebrum-dev.com would have served the app over HTTPS
+# while it kept calling http://...elb.amazonaws.com -- mixed content, which
+# browsers block outright. The DNS move would have looked done and the app would
+# have been dead.
+#
+# frontend/src/api/factory.ts reads `VITE_API_URL || ''`, so empty means every
+# call is same-origin: `/v1/...` against whatever host served the page. The ALB
+# routes by PATH, not host -- /v1/*, /health, /ready, /version, /docs and
+# /openapi.json go to the backend target group, everything else to this SPA --
+# so same-origin resolves correctly under the ALB name, under
+# www.cerebrum-dev.com, and under anything else pointed at that load balancer.
+#
+# The consequence worth keeping: a DNS cutover no longer needs a rebuild.
 name: deploy-aws-frontend
 
 on:
@@ -14,7 +30,7 @@ env:
   ECR_REPOSITORY: cerebrumdev-frontend
   ECS_CLUSTER: cerebrum
   ECS_SERVICE: cerebrumdev-frontend
-  VITE_API_URL: http://cerebrum-918074828.us-west-2.elb.amazonaws.com
+  VITE_API_URL: ""
 
 jobs:
   deploy:
