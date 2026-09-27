@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.factory.build.data_lifecycle import (
     IDEMPOTENCY_TABLE,
@@ -370,7 +370,7 @@ acceptance. LLM-authored route bodies are forbidden on this path.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from app import store, work_queue
 from app.cerebrum_product_kernel.contract.models import (
@@ -1043,11 +1043,56 @@ def render_declaration(specs: Dict[str, Dict[str, Any]]) -> str:
 
 def emit_writer_artifacts(workspace: Any, specs: Dict[str, Dict[str, Any]]) -> None:
     """Write kernel domain ops, work queue, and the outcome contract."""
-    workspace.write_text(Path("app") / "work_queue.py", render_work_queue())
-    workspace.write_text(Path("app") / "domain_ops.py", render_domain_ops(specs))
-    workspace.write_text(
-        Path("docs") / "domain_acceptance.json", render_declaration(specs)
-    )
+    for rel, content in domain_substrate(specs):
+        workspace.write_text(Path(rel), content)
+
+
+def domain_substrate(specs: Dict[str, Dict[str, Any]]) -> List[Tuple[str, str]]:
+    """(relpath, content) for the spec-DEPENDENT half of the writer artifacts.
+
+    The twin of :func:`data_lifecycle.platform_substrate`, and it exists for
+    the same reason. ``run_writer`` returns at its CodeWhale branch, which
+    ``FACTORY_CODEWHALE_WRITER=1`` makes the only path production takes, so
+    :func:`emit_writer_artifacts` never runs there -- while ``run_tester``
+    stamps ``tests/test_domain_acceptance.py`` regardless, and that file opens
+    ``from app.domain_ops import OUTCOMES, perform_all``.
+
+    ``backfill_platform_substrate`` closed this hole for ``app/backup.py``
+    (sess_b6d51f9089e14176) but is explicitly the spec-INDEPENDENT half, so
+    ``domain_ops`` stayed uncovered and the same failure came back as a
+    collection error: live build sess_42d244d317f042b2 (Cerebrum VenueOps,
+    run 2) went red on ``suite_red: missing module -- FAILED
+    tests.test_domain_acceptance - collection failure``, with the agent
+    spending rework rounds on a module the factory, not the agent, owns.
+    """
+    return [
+        ("app/work_queue.py", render_work_queue()),
+        ("app/domain_ops.py", render_domain_ops(specs)),
+        ("docs/domain_acceptance.json", render_declaration(specs)),
+    ]
+
+
+def backfill_domain_substrate(
+    workspace: Any, specs: Dict[str, Dict[str, Any]]
+) -> Dict[str, List[str]]:
+    """Write the domain substrate the agent was never asked for.
+
+    Gap-filling only, exactly like ``backfill_platform_substrate``: anything
+    already on disk is left as the agent wrote it, and a module never shadows
+    a package of the same name the agent authored.
+    """
+    written: List[str] = []
+    skipped: List[str] = []
+    for rel, content in domain_substrate(specs):
+        if workspace.exists(rel):
+            skipped.append(rel)
+            continue
+        if rel.endswith(".py") and workspace.exists(rel[:-3]):
+            skipped.append(f"{rel} (a package of the same name exists)")
+            continue
+        workspace.write_text(Path(rel), content)
+        written.append(rel)
+    return {"written": written, "skipped": skipped}
 
 
 def _normalised_sources(path: Path) -> Dict[str, str]:
