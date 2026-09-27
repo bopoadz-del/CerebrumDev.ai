@@ -82,6 +82,12 @@ RUN useradd --system --uid 10001 --home-dir /app --no-create-home appuser \
 # /app/factory_outputs → that path so Factory ledgers survive deploys.
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
 RUN chmod 755 /app/docker-entrypoint.sh
+
+# Read by app/core/metrics.py; without it the factory's S0 preflight
+# refuses every generation with git_sha_unknown.
+ARG GIT_COMMIT=""
+ENV GIT_COMMIT=$GIT_COMMIT
+
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # Apply accounts-DB migrations before serving (no-op when already at head).
 # A failed migration must stop the boot. The previous form swallowed the
