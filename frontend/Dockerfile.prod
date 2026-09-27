@@ -28,8 +28,13 @@ ENV NODE_ENV=production
 
 # serve.mjs is the same server Render started; it serves ./dist and answers
 # `/` for the health check.
+# serve.mjs reads TWO things at startup: ./dist and ./security-headers.json.
+# The header file is read at module load (serve.mjs:23), before the server can
+# listen, so omitting it is not a missing header -- it is ENOENT and a crash
+# loop. The first build of this image left it out and did exactly that.
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/serve.mjs ./serve.mjs
+COPY --from=build /app/security-headers.json ./security-headers.json
 COPY --from=build /app/package.json ./package.json
 
 EXPOSE 8000
