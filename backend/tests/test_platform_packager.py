@@ -85,7 +85,7 @@ def test_package_platform_session_neutral(session: SessionState, fake_medical_ki
         names = zf.namelist()
         assert "Dockerfile" in names
         assert "docker-compose.yml" in names
-        assert "render.yaml" in names
+        assert "deploy/contract.json" in names
         assert "entrypoint.sh" in names
         assert ".env" in names
         assert "default_chain.json" in names
@@ -100,9 +100,12 @@ def test_package_platform_session_neutral(session: SessionState, fake_medical_ki
         assert "dar_al_arkan" not in env.lower()
         assert "construction" not in env.lower()
 
-        render = zf.read("render.yaml").decode()
-        assert "databases:" in render
-        assert "cerebrum-platform-medical-" in render
+        # Was render.yaml with a `databases:` block. The package still needs
+        # Postgres -- entrypoint.sh migrates against DATABASE_URL -- so the
+        # contract DECLARES it instead of provisioning it on a vendor.
+        contract = zf.read("deploy/contract.json").decode()
+        assert '"kind": "postgres"' in contract
+        assert "cerebrum-platform-medical-" in contract
 
 
 def test_package_uses_fallback_kit_resolution(
@@ -282,8 +285,8 @@ def test_platform_auth_single_source_of_truth(
     assert env["CB_DEV_KEY"] == deploy_key
     assert env["CEREBRUM_API_KEY_PLATFORM"] == deploy_key
 
-    render = (package_dir / "render.yaml").read_text(encoding="utf-8")
-    assert "key: CEREBRUM_MASTER_KEY" in render
+    contract = (package_dir / "deploy" / "contract.json").read_text(encoding="utf-8")
+    assert "CEREBRUM_MASTER_KEY" in contract
 
     try:
         import tomllib
@@ -391,3 +394,73 @@ def test_package_build_metadata_records_vendored_engine(
     )
     assert written["engine"]["vendored"] is True
     assert written["engine"]["vendored_path"] == "engine/"
+
+
+def test_the_platform_package_states_its_requirements_instead_of_a_render_blueprint(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """This package genuinely needs a database -- its entrypoint runs alembic
+    when DATABASE_URL is a postgres URL, and its docker-compose ships one. So
+    the fix here is not the build path's (sqlite on a volume, no datastore);
+    it is to STATE the database rather than provision it on a vendor the
+    company has left. A render.yaml for a suspended account is the most
+    deploy-shaped file in the delivery, so it is the one a customer opens.
+    """
+    import json
+
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+    info = package_platform_session(session)
+    package_dir = Path(info["package_dir"])
+
+    assert not (package_dir / "render.yaml").exists(), (
+        "the platform package still ships a Render blueprint"
+    )
+
+    contract = json.loads(
+        (package_dir / "deploy" / "contract.json").read_text(encoding="utf-8")
+    )
+    assert contract["port"] == 8000
+    assert contract["health_path"] == "/health"
+    volume = contract["persistent_volume"]
+    assert volume["required"] is True
+    assert volume["mount_path"] == "/app/data"
+
+    # The difference from the build path, stated rather than assumed.
+    postgres = [d for d in contract["datastores"] if d["kind"] == "postgres"]
+    assert postgres, "the package runs alembic against DATABASE_URL and says so nowhere"
+    assert postgres[0]["env"] == "DATABASE_URL"
+    assert postgres[0]["required"] is True
+
+    # The compose file is the portable path and already carries a database;
+    # it must survive, or removing the blueprint leaves no way to run this.
+    assert (package_dir / "docker-compose.yml").is_file()
+
+
+def test_the_minted_key_is_wired_into_the_contract_not_a_blueprint(
+    session: SessionState, fake_medical_kit: Path, monkeypatch
+):
+    """The key-consistency check moved with the file, and kept the blueprint's
+    discipline: render.yaml named CEREBRUM_MASTER_KEY with ``sync: false``, so
+    the secret was NEVER in the delivered file. The contract names it as
+    required and carries no value -- writing the minted key into a json file
+    inside the package would be a regression the old blueprint did not have.
+    """
+    import json
+
+    engine_root = fake_medical_kit.parent.parent.parent
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(engine_root))
+    info = package_platform_session(session)
+    package_dir = Path(info["package_dir"])
+
+    env = _load_dotenv(package_dir)
+    raw = (package_dir / "deploy" / "contract.json").read_text(encoding="utf-8")
+    contract = json.loads(raw)
+
+    assert "CEREBRUM_MASTER_KEY" in contract["secrets_required"]
+    assert "CEREBRUM_MASTER_KEY" not in contract.get("environment", {})
+    secret = env["CEREBRUM_MASTER_KEY"]
+    assert secret and secret not in raw, (
+        "the minted key was written into the delivered contract; the blueprint "
+        "it replaces used sync: false precisely so it would not be"
+    )
