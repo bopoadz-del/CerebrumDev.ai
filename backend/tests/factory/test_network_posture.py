@@ -159,8 +159,14 @@ def test_staged_writer_reads_destination_readme(tmp_path):
     stage.mkdir()
     dest.mkdir()
     (dest / "README.md").write_text("# LotDesk\nNETWORK_POSTURE: P1\n", encoding="utf-8")
-    for name in ("Dockerfile", "render.yaml", ".env.example", "requirements.txt"):
+    for name in ("Dockerfile", ".env.example", "requirements.txt"):
         (stage / name).write_text("NETWORK_POSTURE=P1\n", encoding="utf-8")
+    # Was render.yaml. The deploy contract carries the posture now; Render is
+    # gone and the platform no longer ships a blueprint for it.
+    (stage / "deploy").mkdir()
+    (stage / "deploy" / "contract.json").write_text(
+        '{"schema": "cerebrum.deploy.v1", "network_posture": "P1"}\n', encoding="utf-8"
+    )
     (stage / "app").mkdir()
     (stage / "app" / "main.py").write_text("NETWORK_POSTURE = 'P1'\n", encoding="utf-8")
     (stage / "docs").mkdir()

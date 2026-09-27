@@ -56,7 +56,7 @@ DELIVERY_ARTIFACTS: Tuple[str, ...] = (
     "Dockerfile",
     "README.md",
     ".env.example",
-    "render.yaml",
+    "deploy/contract.json",
     "app/main.py",
     "requirements.txt",
     "docs/network_posture.json",
@@ -301,7 +301,7 @@ def assert_workspace_posture(root: Path, fallback: Path | None = None) -> None:
         text = _posture_file(base, rel, fallback).read_text(encoding="utf-8")
         if NETWORK_POSTURE not in text:
             findings.append(f"{rel}: does not name {NETWORK_POSTURE}")
-        if rel == "render.yaml":
+        if rel == "deploy/contract.json":
             lowered = text.lower()
             for forbidden in ("postgres", "keyvalue", "redis", "fromdatabase"):
                 if forbidden in lowered:

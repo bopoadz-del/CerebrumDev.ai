@@ -6,9 +6,11 @@ every ``store.connect()``. This module is the WRITER/TESTER emission for
 versioned up/down migrations, WAL durability, backup/restore/retention, and
 the product-side tests that *perform* a restore drill.
 
-SQLite on a single Render disk is retained. That is a SPOF. Capacity is the
-disk size (1 GiB in the emitted render.yaml). Backups on the same volume do
-not survive disk loss; set BACKUP_DIR onto another volume if that is in scope.
+SQLite on a single mounted volume is retained. That is a SPOF. Capacity is the
+volume size (1 GiB in the emitted deploy/contract.json). Backups on the same
+volume do not survive its loss; set BACKUP_DIR onto another volume if that is
+in scope. The volume is not optional: on a runtime with ephemeral storage --
+an ECS task, a plain container -- every deploy discards the database silently.
 """
 
 from __future__ import annotations
@@ -310,18 +312,22 @@ def render_migrations() -> str:
         '"""Apply and roll back Alembic revisions for this platform.\n'
         "\n"
         "Deploy (scripts/entrypoint.sh) and FastAPI lifespan both call\n"
-        "upgrade_head() against STORAGE_PATH. Failure refuses boot.\n"
+        "upgrade_head() against whichever engine app.db resolves. Failure\n"
+        "refuses boot.\n"
         '"""\n'
         "\n"
         "from __future__ import annotations\n"
         "\n"
-        "import sqlite3\n"
         "from pathlib import Path\n"
         "\n"
         "from alembic import command\n"
         "from alembic.config import Config\n"
         "\n"
-        "from app.store import connect, db_path\n"
+        "# app.db, never app.store: store.py is writer-authored, so what its\n"
+        "# connect() returns is not this module's to assume -- assuming sqlite3\n"
+        "# is how a SQLAlchemy connection met a raw string and every build with\n"
+        "# DATABASE_URL set died (ObjectNotExecutableError, 2026-09-27).\n"
+        "from app.db import is_postgres, resolved_url, sqlite_path\n"
         "\n"
         "ROOT = Path(__file__).resolve().parents[1]\n"
         "\n"
@@ -348,18 +354,28 @@ def render_migrations() -> str:
         "\n"
         "\n"
         "def current_revision() -> str | None:\n"
-        "    if not db_path().exists():\n"
+        "    # One code path for both engines: a short-lived SQLAlchemy engine\n"
+        "    # on the same URL alembic itself uses. The sqlite existence check\n"
+        "    # stays -- connecting through SQLAlchemy CREATES the file, and an\n"
+        '    # empty database appearing because someone asked "which revision?"\n'
+        "    # is a side effect nobody ordered.\n"
+        "    from sqlalchemy import create_engine, text\n"
+        "    from sqlalchemy.exc import DatabaseError\n"
+        "\n"
+        "    if not is_postgres() and not sqlite_path().exists():\n"
         "        return None\n"
-        "    conn = connect()\n"
+        "    engine = create_engine(resolved_url())\n"
         "    try:\n"
-        "        row = conn.execute(\n"
-        '            "SELECT version_num FROM alembic_version"\n'
-        "        ).fetchone()\n"
-        "        return str(row[0]) if row else None\n"
-        "    except sqlite3.OperationalError:\n"
+        "        with engine.connect() as conn:\n"
+        "            row = conn.execute(\n"
+        '                text("SELECT version_num FROM alembic_version")\n'
+        "            ).fetchone()\n"
+        "            return str(row[0]) if row else None\n"
+        "    except DatabaseError:\n"
+        "        # No alembic_version table yet: not migrated, not an error.\n"
         "        return None\n"
         "    finally:\n"
-        "        conn.close()\n"
+        "        engine.dispose()\n"
         "\n"
         "\n"
         "def head_revision() -> str | None:\n"
@@ -516,28 +532,34 @@ def render_alembic_ini() -> str:
 
 def render_alembic_env() -> str:
     return (
-        '"""Alembic env for a generated platform (SQLite on STORAGE_PATH)."""\n'
+        '"""Alembic env for a generated platform. app.db decides the engine."""\n'
         "\n"
         "from __future__ import annotations\n"
         "\n"
-        "import os\n"
+        "import sys\n"
         "from logging.config import fileConfig\n"
         "from pathlib import Path\n"
         "\n"
         "from alembic import context\n"
         "from sqlalchemy import create_engine, pool\n"
         "\n"
+        "# The product root, so `app` imports when alembic is run as a bare CLI\n"
+        "# (scripts/entrypoint.sh) as well as through app/migrations.py.\n"
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        "if str(ROOT) not in sys.path:\n"
+        "    sys.path.insert(0, str(ROOT))\n"
+        "\n"
+        "# One place decides the engine. This file used to keep its own copy --\n"
+        '# "Must match app.store.db_path(). Duplicated so a migration can run\n'
+        '# before app is imported." -- and the copy hardcoded sqlite, so a\n'
+        "# platform with DATABASE_URL set migrated one database and served\n"
+        "# another. That is the exact failure the acceptance floor's own text\n"
+        "# forbids: a DATABASE_URL that is read and then ignored.\n"
+        "from app.db import resolved_url as sqlalchemy_url\n"
+        "\n"
         "config = context.config\n"
         "if config.config_file_name is not None:\n"
         "    fileConfig(config.config_file_name)\n"
-        "\n"
-        "\n"
-        "def sqlalchemy_url() -> str:\n"
-        "    # Must match app.store.db_path(). Duplicated so a migration can\n"
-        "    # run before app is imported.\n"
-        '    root = Path(os.getenv("STORAGE_PATH", "./data"))\n'
-        "    root.mkdir(parents=True, exist_ok=True)\n"
-        '    return "sqlite:///" + (root / "platform.db").resolve().as_posix()\n'
         "\n"
         "\n"
         "def run_migrations_offline() -> None:\n"
@@ -752,7 +774,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
         "capacity": {
             "disk_gb": DISK_SIZE_GB,
             "practical_sqlite": (
-                "Bound by the 1 GiB Render disk declared in render.yaml, "
+                "Bound by the 1 GiB volume declared in deploy/contract.json, "
                 "not SQLite's theoretical file limit."
             ),
             "ha": False,

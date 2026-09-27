@@ -2505,26 +2505,157 @@ def _render_platform_env_example() -> str:
     return P1_ENV_EXAMPLE
 
 
-def _render_render_yaml(product_id: str) -> str:
+def _deploy_contract(product_id: str) -> Dict[str, Any]:
+    """What this platform needs in order to run, stated once.
+
+    Render supplied five things no config file mentioned -- PORT, DATABASE_URL,
+    a persistent disk, RENDER_GIT_COMMIT and auto-linked datastores -- and the
+    hosting migration found each one by breaking. A delivered platform must not
+    inherit that trick, so its requirements are written down here and every
+    deploy artifact is DERIVED from this dict rather than restating it. A second
+    copy is how a contract goes stale while still reading as authoritative.
+    """
     from app.factory.build.network_posture import NETWORK_POSTURE
 
     slug = re.sub(r"[^a-z0-9-]+", "-", str(product_id).lower()).strip("-") or "platform"
+    return {
+        "schema": "cerebrum.deploy.v1",
+        "service": slug,
+        "port": 8000,
+        "health_path": "/health",
+        "persistent_volume": {
+            "required": True,
+            "mount_path": "/app/data",
+            "size_gb": 1,
+            "reason": (
+                "the platform's sqlite database and its backups live here. On a "
+                "runtime with ephemeral storage -- an ECS task, a plain container "
+                "-- every deploy silently discards all rows unless this path is a "
+                "mounted volume."
+            ),
+        },
+        "environment": {"STORAGE_PATH": "/app/data"},
+        # No Postgres and no key-value store: persistence is a sqlite file
+        # (posture: NETWORK_POSTURE). Provisioning either would bill for
+        # infrastructure the platform never opens.
+        "datastores": [],
+        "network_posture": NETWORK_POSTURE,
+    }
+
+
+def _render_deploy_contract(product_id: str) -> str:
+    return json.dumps(_deploy_contract(product_id), indent=2, sort_keys=True) + "\n"
+
+
+def _render_aws_task_definition(product_id: str) -> str:
+    """An ECS Fargate task definition, derived from the contract.
+
+    ECS injects no PORT and gives the task no disk of its own, which is exactly
+    where the Render assumptions bite. So the port is passed explicitly and the
+    volume is an EFS mount at the contract's own path. Account-specific values
+    are REPLACE_WITH_ placeholders: inventing an ARN or a filesystem id here
+    would produce a file that looks deployable and is not.
+    """
+    contract = _deploy_contract(product_id)
+    slug = contract["service"]
+    mount = contract["persistent_volume"]["mount_path"]
+    port = int(contract["port"])
+    health = contract["health_path"]
+    environment = [
+        {"name": key, "value": value}
+        for key, value in sorted(contract["environment"].items())
+    ]
+    # Injected by Render and by nothing else. State it.
+    environment.append({"name": "PORT", "value": str(port)})
+    probe = (
+        "python3 -c \"import urllib.request; urllib.request.urlopen("
+        "'http://127.0.0.1:{port}{health}')\" || exit 1"
+    ).format(port=port, health=health)
+    task = {
+        "family": slug,
+        "networkMode": "awsvpc",
+        "requiresCompatibilities": ["FARGATE"],
+        "cpu": "512",
+        "memory": "1024",
+        "executionRoleArn": "REPLACE_WITH_EXECUTION_ROLE_ARN",
+        "taskRoleArn": "REPLACE_WITH_TASK_ROLE_ARN",
+        "volumes": [
+            {
+                "name": slug + "-data",
+                "efsVolumeConfiguration": {
+                    "fileSystemId": "REPLACE_WITH_EFS_FILESYSTEM_ID",
+                    "rootDirectory": "/",
+                    "transitEncryption": "ENABLED",
+                },
+            }
+        ],
+        "containerDefinitions": [
+            {
+                "name": slug,
+                "image": "REPLACE_WITH_ECR_IMAGE_URI",
+                "essential": True,
+                "portMappings": [{"containerPort": port, "protocol": "tcp"}],
+                "environment": environment,
+                "mountPoints": [
+                    {
+                        "sourceVolume": slug + "-data",
+                        "containerPath": mount,
+                        "readOnly": False,
+                    }
+                ],
+                "healthCheck": {
+                    "command": ["CMD-SHELL", probe],
+                    "interval": 10,
+                    "timeout": 3,
+                    "retries": 3,
+                    "startPeriod": 20,
+                },
+            }
+        ],
+    }
+    return json.dumps(task, indent=2, sort_keys=True) + "\n"
+
+
+def _render_deploy_readme(product_id: str) -> str:
+    contract = _deploy_contract(product_id)
+    volume = contract["persistent_volume"]
     return (
-        "# Render blueprint. One web service, no database and no key-value\n"
-        f"# store: persistence is a sqlite file on the mounted disk ({NETWORK_POSTURE}).\n"
-        "services:\n"
-        "  - type: web\n"
-        f"    name: {slug}\n"
-        "    runtime: docker\n"
-        "    dockerfilePath: ./Dockerfile\n"
-        "    healthCheckPath: /health\n"
-        "    envVars:\n"
-        "      - key: STORAGE_PATH\n"
-        "        value: /app/data\n"
-        "    disk:\n"
-        f"      name: {slug}-data\n"
-        "      mountPath: /app/data\n"
-        "      sizeGB: 1\n"
+        "# Deploying {service}\n"
+        "\n"
+        "`contract.json` is the source: port, health path, volume and\n"
+        "environment. Every file beside it is generated from those values, so\n"
+        "change the contract rather than a copy of it.\n"
+        "\n"
+        "## What this platform requires\n"
+        "\n"
+        "- **Port `{port}`.** The container reads `$PORT` and falls back to\n"
+        "  `{port}`. Some runtimes inject `PORT`; most do not. Pass it.\n"
+        "- **Health check `{health}`.** It is fail-closed -- 503 until the\n"
+        "  database answers and the migration is at head -- so allow a start\n"
+        "  period before the first probe counts.\n"
+        "- **A persistent volume at `{mount}`** ({size} GiB is enough).\n"
+        "  {reason}\n"
+        "- **No database service and no key-value store.** Persistence is a\n"
+        "  sqlite file on that volume; provisioning either would bill for\n"
+        "  infrastructure this platform never opens.\n"
+        "\n"
+        "## AWS (ECS Fargate)\n"
+        "\n"
+        "`aws/task-definition.json` mounts EFS at the contract's path, because\n"
+        "an ECS task has no disk of its own. Replace every `REPLACE_WITH_`\n"
+        "value, register the definition, then roll the service.\n"
+        "\n"
+        "## Anywhere else\n"
+        "\n"
+        "The image is an ordinary container. Honour the four requirements above\n"
+        "and it runs; miss the volume and it runs until the first redeploy.\n"
+    ).format(
+        service=contract["service"],
+        port=contract["port"],
+        health=contract["health_path"],
+        mount=volume["mount_path"],
+        size=volume["size_gb"],
+        reason=volume["reason"],
     )
 
 
@@ -4479,7 +4610,20 @@ def run_writer(
     )
     sources["acceptance"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())
-    ctx.workspace.write_text("render.yaml", _render_render_yaml(product_id))
+    # Deploy artifacts, all derived from one contract. No Render blueprint: that
+    # platform is gone, and a blueprint for a suspended account is the most
+    # deploy-shaped file in the delivery, so it is the one a customer reaches
+    # for first.
+    ctx.workspace.write_text(
+        Path("deploy") / "contract.json", _render_deploy_contract(product_id)
+    )
+    ctx.workspace.write_text(
+        Path("deploy") / "README.md", _render_deploy_readme(product_id)
+    )
+    ctx.workspace.write_text(
+        Path("deploy") / "aws" / "task-definition.json",
+        _render_aws_task_definition(product_id),
+    )
     from app.factory.build.network_posture import POSTURE_ID, declaration_json
 
     ctx.workspace.write_text(Path("docs") / "network_posture.json", declaration_json())

@@ -959,6 +959,12 @@ def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) ->
     (app / "actions").mkdir(parents=True, exist_ok=True)
     (app / "__init__.py").write_text("", encoding="utf-8")
     (app / "models.py").write_text(_render_models(specs), encoding="utf-8")
+    # db.py is substrate: the real emission writes it via platform_substrate,
+    # and app/migrations.py imports it (app.db decides the engine). A harness
+    # workspace without it is not the workspace the probe actually sees.
+    from app.factory.build.engine_switch import render_db_module
+
+    (app / "db.py").write_text(render_db_module(), encoding="utf-8")
     (app / "store.py").write_text(render_store(specs), encoding="utf-8")
     (app / "migrations.py").write_text(render_migrations(), encoding="utf-8")
     (root / "alembic.ini").write_text(render_alembic_ini(), encoding="utf-8")

@@ -114,7 +114,10 @@ def _plant_backend(root: Path, compiled) -> None:
 
 def _plant_render_ready(root: Path) -> None:
     (root / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
-    (root / "render.yaml").write_text("services: []\n", encoding="utf-8")
+    (root / "deploy").mkdir(parents=True, exist_ok=True)
+    (root / "deploy" / "contract.json").write_text(
+        '{"schema": "cerebrum.deploy.v1"}\n', encoding="utf-8"
+    )
     (root / "app").mkdir(parents=True, exist_ok=True)
     (root / "app" / "main.py").write_text("app = None\n", encoding="utf-8")
 

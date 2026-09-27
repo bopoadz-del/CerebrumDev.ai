@@ -183,7 +183,14 @@ ROLE_CONTRACTS: Mapping[BuildRole, RoleContract] = {
             (LaneRoot.WORKSPACE, "Procfile"),
             (LaneRoot.WORKSPACE, ".env.example"),
             (LaneRoot.WORKSPACE, ".dockerignore"),
-            (LaneRoot.WORKSPACE, "render.yaml"),
+            # Deploy artifacts, derived from deploy/contract.json. Replaces the
+            # Render blueprint: that platform is gone. Named, not `deploy/**`,
+            # for the same reason as every other entry here -- a wildcard would
+            # let the writer drop arbitrary files into a directory the customer
+            # is told to trust as generated.
+            (LaneRoot.WORKSPACE, "deploy/contract.json"),
+            (LaneRoot.WORKSPACE, "deploy/README.md"),
+            (LaneRoot.WORKSPACE, "deploy/aws/task-definition.json"),
             # The clone-and-test contract the customer runs, and the build
             # provenance it audits. Named, not a wildcard, for the same
             # reason as the files above.
