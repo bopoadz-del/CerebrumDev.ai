@@ -83,7 +83,10 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
     # The child runs under an explicit per-job environment, never the live
     # process env inherited by reference at fork.
     assert isinstance(captured["env"], dict)
-    assert captured["argv"] == [
+    # The brief travels by file, never argv (the 128 KiB exec cliff --
+    # "[Errno 7] Argument list too long" killed a live dispatch); argv ends
+    # with the fixed-size pointer and the file carries the brief verbatim.
+    assert captured["argv"][:-1] == [
         "codewhale",
         "--provider",
         "deepseek",
@@ -92,8 +95,11 @@ def test_worker_argv_puts_provider_and_api_key_before_exec(tmp_path):
         "exec",
         "--auto",
         "--json",
-        prompt,
     ]
+    assert "docs/writer_prompt.txt" in captured["argv"][-1]
+    assert (
+        tmp_path / "checkout" / "docs" / "writer_prompt.txt"
+    ).read_text(encoding="utf-8") == prompt
     # Global flags must never be appended after the subcommand again.
     assert captured["argv"].index("--provider") < captured["argv"].index("exec")
 
