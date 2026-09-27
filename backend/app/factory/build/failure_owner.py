@@ -39,12 +39,40 @@ def _failing(verdict: Any) -> List[Dict[str, str]]:
         return [dict(r) for r in rows]
     out = []
     for line in getattr(verdict, "findings", None) or []:
-        m = _FAILED_LINE.match(str(line))
+        text = str(line)
+        m = _FAILED_LINE.match(text)
         if m:
             name = (m.group(2) or "").split("::")[-1]
+            # Keep the "- <ExcType>: ..." tail: it is the only signal in the
+            # fallback path of whether the product failed an assertion (its
+            # fault) or the test code itself broke (the factory's).
+            _, _, tail = text.partition(" - ")
             out.append({"file": m.group(1), "nodeid": m.group(1) + ("::" + m.group(2) if m.group(2) else ""),
-                        "name": name, "innermost": ""})
+                        "name": name, "innermost": "", "message": tail.strip(), "text": text})
     return out
+
+
+def _is_product_failure(row: Dict[str, str]) -> bool:
+    """The product, not the test code, is why this row is red.
+
+    Two ways that happens, and both mean a WRITER rework can fix it even though
+    the failing test lives in a file the writer may not edit:
+
+    * the traceback ends inside ``app/**`` -- the product raised; or
+    * the test's own assertion fired -- the factory built a valid input and the
+      product returned something the assertion rejected (``open_items`` read
+      back as a string). The factory's generated assertions compare product
+      input to product output, so a failing one is a product defect, not a
+      wrong expectation.
+
+    A non-assertion error in the test (``KeyError``/``ImportError``/collection)
+    is the test code or its mined contract breaking -- that stays the factory's.
+    """
+    innermost = str(row.get("innermost") or "")
+    if innermost.startswith("app/") or "/app/" in innermost:
+        return True
+    blob = " ".join(str(row.get(k) or "") for k in ("message", "text"))
+    return "AssertionError" in blob
 
 
 def generator_location(test_name: str, test_file: str) -> str:
@@ -76,13 +104,25 @@ def classify(verdict: Any, factory_test_files: Iterable[str]) -> Dict[str, Any]:
 
     factory_files = {str(f).replace("\\", "/") for f in (factory_test_files or ())}
     failing = _failing(verdict)
-    factory_owned = []
+    product_owned, factory_owned = [], []
     for row in failing:
         rel = str(row.get("file") or "").replace("\\", "/")
-        innermost = str(row.get("innermost") or "")
-        product_raised = innermost.startswith("app/") or "/app/" in innermost
-        if rel in factory_files and not product_raised:
+        # A row outside the factory's own test files is product-owned by
+        # definition. A row inside them is the factory's ONLY when the test
+        # code itself broke, not when the product failed the test.
+        if rel in factory_files and not _is_product_failure(row):
             factory_owned.append(row)
+        else:
+            product_owned.append(row)
+
+    # Route to PRODUCT whenever anything product-owned failed: the writer can
+    # fix those, and a rework round is only wasted when there is nothing for it
+    # to do. A single factory-owned row must not bury a product row and halt a
+    # run the writer could advance -- the pure-factory remainder (if any)
+    # surfaces on the next round once the product rows are green.
+    if product_owned:
+        return {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in product_owned],
+                "generator": "", "reason": reason}
     if factory_owned:
         first = factory_owned[0]
         return {
