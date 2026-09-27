@@ -1,4 +1,11 @@
-"""Deploy a packaged CerebrumDev session to Render (cloud) or prepare an edge package."""
+"""Package a CerebrumDev session for deploy, or prepare an edge package.
+
+There is no cloud provider client here any more. Render is gone and that
+account is suspended, so the Render API client this module used to carry was
+not inert: it kept RENDER_API_KEY plumbed, kept the vendor's URL in the file,
+and was one call away from being reachable again. What replaces it ships inside
+the package -- deploy/contract.json and the ECS task definition derived from it.
+"""
 
 import json
 import logging
@@ -28,9 +35,6 @@ def _scrub_git_output(text: Optional[str]) -> str:
     if not text:
         return ""
     return _URL_CREDENTIAL_RE.sub(r"\1", text)
-
-RENDER_API_KEY = os.getenv("RENDER_API_KEY", "")
-RENDER_OWNER_ID = os.getenv("RENDER_OWNER_ID", "")
 
 # Dedicated deploy target repository. This must never be the CerebrumDev.ai
 # repository itself. Git-push deploy is disabled when this variable is unset.
@@ -232,48 +236,6 @@ def _push_package_to_branch(session_id: str, package_dir: str) -> Tuple[Optional
         return branch, None
 
 
-def _render_request(path: str, payload: Optional[Dict[str, Any]] = None, method: str = "GET") -> Dict[str, Any]:
-    url = f"https://api.render.com/v1{path}"
-    data = json.dumps(payload).encode() if payload else None
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {RENDER_API_KEY}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
-        method=method,
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        logger.error("Render API HTTP %s: %s", e.code, e.read().decode())
-        raise
-
-
-def _build_service_payload(service_name: str, branch: str, root_dir: str, env_vars: Dict[str, str]) -> Dict[str, Any]:
-    return {
-        "type": "web_service",
-        "name": service_name,
-        "ownerId": RENDER_OWNER_ID,
-        "repo": DEPLOY_REPO_URL,
-        "branch": branch,
-        "rootDir": root_dir,
-        "autoDeploy": "yes",
-        "serviceDetails": {
-            "env": "docker",
-            "plan": "starter",
-            "region": "oregon",
-            "envSpecificDetails": {"dockerfilePath": "./Dockerfile"},
-            "healthCheckPath": "/health",
-            "numInstances": 1,
-        },
-        "envVars": [{"key": k, "value": v} for k, v in env_vars.items()],
-    }
-
-
 def deploy_to_render(
     session_id: str,
     state: SessionState,
@@ -311,73 +273,36 @@ def deploy_to_render(
     }
 
 
-def _deploy_to_render_unused(
-    session_id: str,
-    state: SessionState,
-    package_dir: str,
-    service_name: str,
-    env_vars: Dict[str, str],
-) -> Dict[str, Any]:
-    """The former Render path, retained only so the git history reads.
-
-    Not reachable. Delete once an AWS deploy path for delivered platforms is
-    implemented and this file has a real provider again.
-    """
-    if not RENDER_API_KEY or not RENDER_OWNER_ID:
-        return {
-            "status": "packaged",
-            "message": "RENDER_API_KEY or RENDER_OWNER_ID not configured; manual deploy required",
-        }
-
-    branch, abort_reason = _push_package_to_branch(session_id, package_dir)
-    if not branch:
-        return {
-            "status": "packaged",
-            "message": abort_reason or "Package generated. Git-push deploy is unavailable; use the zip package.",
-        }
-
-    root_dir = f"deployments/{session_id}"
-    payload = _build_service_payload(service_name, branch, root_dir, env_vars)
-    try:
-        service = _render_request("/services", payload, "POST")
-    except Exception as exc:
-        logger.exception("Render service creation failed")
-        return {"status": "failed", "message": f"Render API error: {exc}"}
-
-    service_obj = service.get("service", service)
-    service_id = service_obj.get("id")
-    deploy_id = service.get("deployId")
-    dashboard_url = service_obj.get("dashboardUrl")
-    service_details = service_obj.get("serviceDetails", {})
-    url = service_details.get("url") or f"https://{service_name}.onrender.com"
-
-    return {
-        "status": "deploying",
-        "service_id": service_id,
-        "deploy_id": deploy_id,
-        "service_name": service_name,
-        "branch": branch,
-        "url": url,
-        "dashboard_url": dashboard_url,
-        "message": "Render service created; build in progress",
-    }
-
-
 def poll_deploy_status(service_id: str) -> Dict[str, Any]:
-    """Poll Render for the latest deploy status."""
-    try:
-        deploys = _render_request(f"/services/{service_id}/deploys")
-        if not deploys:
-            return {"status": "unknown", "message": "No deploys found"}
-        latest = deploys[0]
-        return {
-            "status": latest.get("status", "unknown"),
-            "deploy_id": latest.get("id"),
-            "message": f"Render deploy status: {latest.get('status')}",
-        }
-    except Exception as exc:
-        logger.exception("Failed to poll Render deploy status")
-        return {"status": "unknown", "message": f"Poll failed: {exc}"}
+    """Report that no provider is wired, without calling one.
+
+    This was the half that got left behind when the cloud deploy path was cut.
+    ``deploy_to_render`` was made to refuse the vendor, but this function kept
+    calling ``api.render.com`` -- and unlike that one, this is reachable from a
+    route: ``routers/deploy.py`` polls it for any session whose deployment
+    record carries a ``service_id``, which every session created before the cut
+    still does.
+
+    It also swallowed the failure into ``status: "unknown"``, so the endpoint
+    never went red. It answered "unknown" indefinitely while a UI waited on a
+    deploy that no provider was running -- the same class of lie as reporting a
+    live URL for a service that answers nothing, just quieter.
+
+    ``no_provider`` is a distinct status precisely so a caller can tell "there
+    is nothing to poll" from "the poll broke". The ``service_id`` is echoed back
+    because it is the record that needs clearing, not a live handle.
+    """
+    return {
+        "status": "no_provider",
+        "service_id": service_id,
+        "message": (
+            "No deploy provider is wired, so there is no deploy to poll. This "
+            "session's service_id refers to a provider the company left. The "
+            "package carries its own deploy artifacts: deploy/contract.json "
+            "states what the platform needs, and deploy/aws/task-definition.json "
+            "is an ECS Fargate definition derived from it."
+        ),
+    }
 
 
 def generate_edge_package(state: SessionState, package_dir: str) -> str:

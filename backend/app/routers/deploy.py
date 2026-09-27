@@ -170,8 +170,11 @@ async def deploy_status(state: SessionState = Depends(require_owned_session)):
     deployment = state.deployment
     service_id: Optional[str] = None
 
-    # If the deployment record includes a service_id, poll Render for the latest status.
-    # We store service_id on the deployment object when available.
+    # Sessions created before the cloud deploy path was cut still carry a
+    # service_id from the provider the company left. poll_deploy_status no
+    # longer calls any vendor -- it reports "no_provider", which matches none
+    # of the branches below, so a stale record is left exactly as it is rather
+    # than being advanced on the strength of a failed lookup.
     if getattr(deployment, "service_id", None):
         service_id = deployment.service_id
         latest = poll_deploy_status(service_id)
