@@ -38,6 +38,13 @@ jobs:
           # AWS load balancer, so these defaults are the public hostnames
           # again rather than the load balancer's generated name.
           #
+          # SMOKE_FRONTEND is a separate variable because it once silently
+          # measured the wrong thing: it pointed at a host still resolving to
+          # the suspended Render origin, so the security-header probe read a
+          # vendor error page and reported "1 dead kernel(s): security headers
+          # (frontend)" on every merge -- including one whose backend was
+          # verifiably healthy, with /version returning the merge sha.
+          #
           # The frontend probe must use a host the :443 listener forwards to
           # cerebrumdev-frontend, because what it checks is the SPA's security
           # headers. That listener routes by HOST, so www is the SPA and api is
