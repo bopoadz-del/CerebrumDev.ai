@@ -110,3 +110,56 @@ def test_a_broken_stub_assertion_stays_factory():
                "innermost": "tests/test_zz_broken_generated.py:2"}],
     )
     assert classify(v, ("tests/test_zz_broken_generated.py",))["owner"] == FACTORY
+
+
+# ── v3: ownership by construction, not by message shape ────────────────────
+#
+# When the runner supplies behavior_test_files (the tests run_tester's own
+# emitters stamped), an AssertionError in one of them is the PRODUCT failing
+# a behavior check BY CONSTRUCTION -- no tuple/== sniffing. Live miss the
+# heuristics could not catch: the negative floor's
+#   "mega_event_history_explorer accepted a payload with no question: {json}"
+# asserts via `status_code in (...) or _refused(resp)` -- no ==, no tuple --
+# and was billed FACTORY, halting a run a writer could have advanced.
+
+BEHAVIOR = FACTORY_FILES
+
+
+def test_behavior_assertion_is_product_even_without_comparison_shape():
+    v = _verdict(
+        ["FAILED tests/test_data_lifecycle.py::test_x_refuses_a_missing_required_field - AssertionError: x accepted a payload with no question: {\"id\":2}"],
+        rows=[{"nodeid": "tests/test_data_lifecycle.py::test_x", "file": "tests/test_data_lifecycle.py",
+               "name": "test_x", "kind": "failure",
+               "message": 'AssertionError: x accepted a payload with no question: {"id":2}',
+               "innermost": "tests/test_data_lifecycle.py:40"}],
+    )
+    out = classify(v, FACTORY_FILES, behavior_test_files=BEHAVIOR)
+    assert out["owner"] == PRODUCT
+
+
+def test_injected_stub_assertion_stays_factory_under_behavior_list():
+    """The g_series stub: written during the TESTER phase (so inside
+    factory_test_files) but NOT by run_tester's emitters (so outside the
+    behavior list). Its assertion is nobody's product."""
+    stub = "tests/test_zz_broken_generated.py"
+    v = _verdict(
+        [f"FAILED {stub}::test_zz - AssertionError: broken on purpose"],
+        rows=[{"nodeid": f"{stub}::test_zz", "file": stub, "name": "test_zz",
+               "kind": "failure", "message": "AssertionError: broken on purpose",
+               "innermost": f"{stub}:2"}],
+    )
+    out = classify(v, FACTORY_FILES + (stub,), behavior_test_files=BEHAVIOR)
+    assert out["owner"] == FACTORY
+
+
+def test_nonassertion_error_in_behavior_test_stays_factory():
+    """KeyError 'figure' in a behavior file is the TEST code breaking (a
+    mined junk field), never the product."""
+    v = _verdict(
+        ["FAILED tests/test_models.py::test_every_model_round_trips - KeyError: 'figure'"],
+        rows=[{"nodeid": "tests/test_models.py::t", "file": "tests/test_models.py",
+               "name": "test_every_model_round_trips", "kind": "error",
+               "message": "KeyError: 'figure'", "innermost": "tests/test_models.py:31"}],
+    )
+    out = classify(v, FACTORY_FILES, behavior_test_files=BEHAVIOR)
+    assert out["owner"] == FACTORY

@@ -64,12 +64,22 @@ def _refused(response):
 
 
 def _required_field(spec: Mapping[str, Any]) -> Optional[str]:
-    """A field the handler will miss. Prefer one the spec marks required."""
-    fields = [f for f in (spec.get("fields") or []) if isinstance(f, dict) and f.get("name")]
-    for field in fields:
-        if field.get("required"):
+    """A field the spec MARKS required -- never a fallback pick.
+
+    This used to fall back to ``fields[0]`` when nothing was marked
+    required, and the emitted case then demanded the handler REFUSE a
+    payload missing an OPTIONAL field, under a message that misstated it
+    as required. Accepting that payload is correct handler behaviour, so
+    the case was unwinnable by construction: live build halted as
+    FACTORY_FAULT on ``mega_event_history_explorer accepted a payload
+    with no question``. No required field -> None, and the caller emits
+    the empty-payload case instead (the policy a no-field spec already
+    gets: nothing at all is not a record).
+    """
+    for field in spec.get("fields") or []:
+        if isinstance(field, dict) and field.get("name") and field.get("required"):
             return str(field["name"])
-    return str(fields[0]["name"]) if fields else None
+    return None
 
 
 def _vocabulary_field(spec: Mapping[str, Any]) -> Optional[str]:

@@ -353,7 +353,9 @@ def _provenance_from_tree(out) -> dict:
 
 @router.get("/{session_id}/product/package")
 def download_product_package(
-    session_id: str, principal: Principal = Depends(require_api_key)
+    session_id: str,
+    as_is: bool = False,
+    principal: Principal = Depends(require_api_key),
 ) -> FileResponse:
     """Export the generated platform as a zip â€” the factory's deliverable."""
     state = _require_session(session_id, principal)
@@ -388,6 +390,37 @@ def download_product_package(
                 f"({status.get('phases_done', 0)}/{status.get('phases_total', 5)} "
                 "phases complete) â€” poll /product/build-status"
             ),
+        )
+    if as_is and status["state"] in ("failed", "stalled"):
+        # Owner's order (2026-09-28): a gate-failed build IS downloadable --
+        # on the explicit ask, loudly labeled, never certified. The zip goes
+        # through the same is_exported() filter as every export, so the
+        # in-house and client-data exclusions hold unchanged. What changes is
+        # the paperwork: no MANIFEST.json and no store/acceptance claims; an
+        # EXPORTED-AS-IS.md naming the gate that rejected the build instead.
+        # "building" stays refused above in every mode -- a splice of two
+        # writer passes has no honest as-is to ship.
+        from datetime import datetime, timezone
+
+        product_id = gen.get("product_id") or out.name
+        note = (
+            "# EXPORTED AS-IS — THIS BUILD FAILED ITS GATES\n\n"
+            f"Product: {product_id}\n"
+            f"Build state: {status['state']}\n"
+            f"Gate verdict: {status.get('detail')}\n"
+            f"Exported: {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n\n"
+            "This zip was exported on the owner's explicit request AFTER the\n"
+            "factory's gates rejected the build. It carries NO certification\n"
+            "manifest and makes no store-green, acceptance or pilot claims.\n"
+            "Nothing here has been verified beyond what the gate verdict above\n"
+            "says. Use it as source material, not as a product.\n"
+        )
+        (out / "EXPORTED-AS-IS.md").write_text(note, encoding="utf-8")
+        archive = zip_generated_product(out, out.parent / f"{out.name}-as-is-export")
+        return FileResponse(
+            archive,
+            filename=f"cerebrumdev-{product_id}-FAILED-GATES-as-is.zip",
+            media_type="application/zip",
         )
     if status["state"] == "failed":
         raise HTTPException(

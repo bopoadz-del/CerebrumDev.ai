@@ -344,3 +344,95 @@ def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
     assert any(n.startswith("kits/") for n in names)
     assert any(n.endswith("manifest.json") and n.startswith("kits/") for n in names)
 
+
+
+def _failed_workspace(tmp_path, session_id: str, detail: str):
+    """A terminal-failed runner workspace wired into a session."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger, EventKind
+
+    create_session(session_id, "tester")
+    out = tmp_path / f"{session_id}-product"
+    out.mkdir()
+    (out / "README.md").write_text("the tree as the gates saw it", encoding="utf-8")
+    (out / "docs").mkdir()
+    (out / "docs" / "writer_prompt.txt").write_text("in-house", encoding="utf-8")
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id=session_id, inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.TESTER, detail="TESTER")
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.TESTER,
+        detail=detail,
+        payload={"outcome": "FAILED_GATE", "findings": [detail]},
+    )
+    state = get_session(session_id)
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": session_id,
+        "inputs_hash": "abc",
+        "engine": "runner",
+    }
+    update_session(session_id, state)
+    return out
+
+
+def test_failed_build_downloads_as_is_only_when_asked(client, tmp_path):
+    """Owner's order: a gate-failed build IS downloadable -- labeled, never
+    certified, and only on the explicit ``as_is`` ask. The default refusal
+    stays exactly as it was."""
+    import io
+    import zipfile as _zipfile
+
+    detail = "TESTER gate 'suite_green' failed: suite is red"
+    _failed_workspace(tmp_path, "sess_asis_dl", detail)
+
+    status = client.get("/v1/sessions/sess_asis_dl/product/build-status")
+    assert status.json()["build"]["state"] == "failed"
+
+    # Default contract unchanged: refused.
+    pkg = client.get("/v1/sessions/sess_asis_dl/product/package")
+    assert pkg.status_code == 409, pkg.text
+
+    # Explicit as-is: shipped, loudly labeled, no certification paperwork.
+    pkg = client.get("/v1/sessions/sess_asis_dl/product/package?as_is=1")
+    assert pkg.status_code == 200, pkg.text
+    assert "FAILED-GATES-as-is" in pkg.headers.get("content-disposition", "")
+    zf = _zipfile.ZipFile(io.BytesIO(pkg.content))
+    names = set(zf.namelist())
+    assert "EXPORTED-AS-IS.md" in names, "the as-is marker must ship in the zip"
+    note = zf.read("EXPORTED-AS-IS.md").decode("utf-8")
+    assert "suite is red" in note, "the marker names the gate that rejected it"
+    assert "MANIFEST.json" not in names, (
+        "an as-is zip must carry NO certification manifest -- it failed"
+    )
+    # The in-house exclusions still hold: same is_exported() filter.
+    assert "docs/writer_prompt.txt" not in names
+    assert "README.md" in names
+
+
+def test_building_is_never_downloadable_even_as_is(client, tmp_path):
+    """Mid-build is not a build: a splice of two writer passes has no honest
+    as-is to ship. The flag changes labeling, never this."""
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.ledger import BuildLedger, EventKind
+
+    create_session("sess_asis_building", "tester")
+    out = tmp_path / "asis-building-product"
+    out.mkdir()
+    ledger = BuildLedger(out / "build_ledger.jsonl")
+    ledger.start_run(product_id="asis-building", inputs_hash="abc")
+    ledger.append(EventKind.PHASE_STARTED, role=BuildRole.WRITER, detail="WRITER")
+    state = get_session("sess_asis_building")
+    assert state is not None
+    state.product_design.generation = {
+        "output_dir": str(out),
+        "product_id": "asis-building",
+        "inputs_hash": "abc",
+        "engine": "runner",
+    }
+    update_session("sess_asis_building", state)
+
+    pkg = client.get("/v1/sessions/sess_asis_building/product/package?as_is=1")
+    assert pkg.status_code == 409, pkg.text

@@ -973,19 +973,27 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   label: string
   disabled: boolean
   ghost: boolean
+  asIs?: boolean
   title?: string
 } {
   if (
     isUnreadableLedger(build) ||
     build?.state === 'failed' ||
+    build?.state === 'stalled' ||
     productSuiteFailed(build) ||
     outcomeFailed(build)
   ) {
+    // Owner's order (2026-09-28): a gate-failed build IS downloadable --
+    // explicitly as-is. The server ships it loudly labeled (EXPORTED-AS-IS.md
+    // naming the failing gate, no certification manifest); the Floor's job is
+    // to offer it honestly, not to hide the artifact behind a dead button.
     return {
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
-      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+      asIs: true,
+      title:
+        'The gates rejected this build. The zip ships labeled EXPORTED-AS-IS with the failing gate named — no certification claims.',
     }
   }
   if (!build || build.state === 'building' || build.state === 'not_started') {
@@ -1017,14 +1025,8 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
       title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
     }
   }
-  if (build.state === 'stalled') {
-    return {
-      label: 'Export (.zip) — build stalled',
-      disabled: true,
-      ghost: true,
-      title: 'Build stalled — a full-pilot zip will be refused by the server',
-    }
-  }
+  // 'stalled' is handled by the as-is branch at the top: a dead runner
+  // thread is a gate-failed artifact too, downloadable only as-is.
   if (build.state === 'succeeded' && !isPilotZipReady(build)) {
     return {
       label: 'Download code-cycle prototype (.zip)',
