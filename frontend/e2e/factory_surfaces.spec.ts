@@ -401,7 +401,9 @@ test('Floor ?session= deep-link selects that session — not list[0] Download', 
   await expect(page.getByRole('heading', { name: 'Coding agent stopped' })).toBeVisible()
   await expect(page.getByTestId('floor-failed-pill')).toContainText('Pilot suite failed')
   await expectNoGoldFinished(page)
-  await expect(page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+  // Failed panel offers the honest exits: enabled as-is download + rerun.
+  await expect(page.getByRole('button', { name: 'Download as-is (failed gates)' })).toBeEnabled()
+  await expect(page.getByTestId('floor-rerun-writer')).toBeEnabled()
 })
 
 /** Live sess_cec9a1345b2049bb 1449 photograph — thin authorship, package 409. */
@@ -1161,10 +1163,10 @@ test('Your Platforms shows Pilot suite failed — never a success Download — w
   await expect(page.getByTestId('platforms-failed-pill')).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('platforms-failed-badge')).toContainText(/Build failed/)
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
-  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  const refused = page.getByRole('button', { name: 'Download as-is (failed gates)' })
   await expect(refused).toBeVisible()
-  await expect(refused).toBeDisabled()
-  await expect(page.getByTestId('platforms-lead')).toContainText(/Download unavailable — build failed/)
+  await expect(refused).toBeEnabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Build failed — no certified download/)
   await expect(page.getByTestId('platforms-lead')).not.toContainText(/Download the export/)
   await expect(page.getByText(/Download the export and launch it anywhere/i)).toHaveCount(0)
 })
@@ -1412,10 +1414,10 @@ test('Your Platforms refuses Export when CLI-failed founding claim is not pilot-
   await expect(page.getByText(/Founding-customer-ready/)).toHaveCount(0)
   await expect(page.getByText(/Finished —/)).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
-  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  const refused = page.getByRole('button', { name: 'Download as-is (failed gates)' })
   await expect(refused).toBeVisible()
-  await expect(refused).toBeDisabled()
-  await expect(page.getByTestId('platforms-lead')).toContainText(/Download unavailable — build failed/)
+  await expect(refused).toBeEnabled()
+  await expect(page.getByTestId('platforms-lead')).toContainText(/Build failed — no certified download/)
 })
 
 test('Your Platforms sess_45729 0639 thin Store-green never claims founding', async ({
@@ -1865,9 +1867,9 @@ test('Floor overdue coder call is STOPPED and Platforms refuses export', async (
 
   await page.getByRole('button', { name: 'Your Platforms', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your Platforms' })).toBeVisible()
-  const refused = page.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+  const refused = page.getByRole('button', { name: 'Download as-is (failed gates)' })
   await expect(refused).toBeVisible()
-  await expect(refused).toBeDisabled()
+  await expect(refused).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Download platform export (.zip)' })).toHaveCount(0)
 })
 

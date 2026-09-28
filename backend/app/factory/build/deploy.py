@@ -18,7 +18,7 @@ import json
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.factory.build.data_lifecycle import DISK_SIZE_GB, first_entity_sample
 from app.factory.build.lotdesk_gate import inspect_path, resolve_lotdesk_fixture
@@ -671,11 +671,47 @@ def test_revision_identity_and_row_survive_mark_change(client, monkeypatch):
 
 def emit_writer_artifacts(workspace: Any) -> None:
     """Write health, observability, revision identity, rollback, deploy doc."""
-    workspace.write_text(Path("app") / "revision.py", render_revision())
-    workspace.write_text(Path("app") / "health.py", render_health())
-    workspace.write_text(Path("app") / "observe.py", render_observe())
-    workspace.write_text(Path("scripts") / "rollback.sh", render_rollback_script())
-    workspace.write_text(Path("docs") / "deploy.json", render_deploy_doc())
+    for rel, content in deploy_substrate():
+        workspace.write_text(Path(rel), content)
+
+
+def deploy_substrate() -> List[Tuple[str, str]]:
+    """(relpath, content) for the deploy half of the writer artifacts.
+
+    The third emitter stranded below ``run_writer``'s CodeWhale branch, and so
+    never run in production, while ``run_tester`` stamps
+    ``tests/test_deploy.py`` regardless -- a file that opens
+    ``from app.health import evaluate_health``, ``from app.observe import
+    JsonFormatter`` and ``from app.revision import MARK_BASELINE``. Three
+    modules, none of them the agent's to invent.
+
+    ``backfill_platform_substrate`` closed the same hole for ``app/backup.py``
+    and covers ``app/observability.py`` -- a different module from
+    ``app/observe.py``, which is what the stamped suite actually imports.
+    """
+    return [
+        ("app/revision.py", render_revision()),
+        ("app/health.py", render_health()),
+        ("app/observe.py", render_observe()),
+        ("scripts/rollback.sh", render_rollback_script()),
+        ("docs/deploy.json", render_deploy_doc()),
+    ]
+
+
+def backfill_deploy_substrate(workspace: Any) -> Dict[str, List[str]]:
+    """Write the deploy substrate the agent was never asked for. Gaps only."""
+    written: List[str] = []
+    skipped: List[str] = []
+    for rel, content in deploy_substrate():
+        if workspace.exists(rel):
+            skipped.append(rel)
+            continue
+        if rel.endswith(".py") and workspace.exists(rel[:-3]):
+            skipped.append(f"{rel} (a package of the same name exists)")
+            continue
+        workspace.write_text(Path(rel), content)
+        written.append(rel)
+    return {"written": written, "skipped": skipped}
 
 
 def assert_fail_closed_health_source(main_source: str) -> None:

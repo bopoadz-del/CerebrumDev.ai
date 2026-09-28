@@ -660,26 +660,50 @@ def run_worker_job(
         if api_key:
             argv += ["--provider", worker_provider(), "--api-key", api_key]
         argv += ["exec", "--auto", "--json"]
-        argv.append(prompt)
 
-        # E4: persist exactly what the coder was told and how it was
-        # invoked, so "what did the writer receive" never needs a source
-        # read or an SSH session again. The api key is scrubbed from the
-        # persisted argv.
-        sanitized = [
-            "[redacted]" if (a == api_key and api_key) else a for a in argv
-        ]
+        # The brief does NOT ride in argv. Linux caps one exec argument at
+        # 128 KiB (MAX_ARG_STRLEN); a full brief -- template + floor + the
+        # capability specs -- sits near that cliff, and a live build died
+        # before the process even started: "worker_exec_failed: could not
+        # start /usr/local/bin/codewhale: [Errno 7] Argument list too long".
+        # codewhale 0.9.13 has no stdin or file flag (verified against the
+        # pinned npm package: a missing positional is refused, and `-` is
+        # read as a literal prompt), so the brief goes to the SAME file E4
+        # already persisted for audit -- what the coder was told and what
+        # the coder reads are now one artifact -- and argv carries only a
+        # fixed-size pointer. Writing it is therefore part of the dispatch,
+        # not best-effort audit: a pointer to a missing file would spend a
+        # full worker wall on a prompt of nothing.
         try:
             (cwd / "docs").mkdir(parents=True, exist_ok=True)
             (cwd / "docs" / "writer_prompt.txt").write_text(
                 prompt, encoding="utf-8"
             )
+        except OSError as exc:
+            raise WorkerError(
+                "worker_brief_unwritable: could not write "
+                f"docs/writer_prompt.txt for the dispatch: {exc}"
+            ) from exc
+        argv.append(
+            "Your complete brief is in docs/writer_prompt.txt (UTF-8, in the "
+            "current working directory). Read that file FIRST and follow it "
+            "exactly as if its contents were this message. It is the entire "
+            "task; nothing else will be sent."
+        )
+
+        # E4: persist how the coder was invoked, so "what did the writer
+        # receive" never needs a source read or an SSH session again. The
+        # api key is scrubbed from the persisted argv.
+        sanitized = [
+            "[redacted]" if (a == api_key and api_key) else a for a in argv
+        ]
+        try:
             (cwd / "docs" / "writer_argv.json").write_text(
                 json.dumps({"argv": sanitized}, indent=2) + "\n",
                 encoding="utf-8",
             )
         except OSError:  # never fail the build on audit persistence
-            logger.exception("writer prompt/argv persistence failed")
+            logger.exception("writer argv persistence failed")
 
         # E3 part 1: the dispatch line an operator can tail on Render.
         logger.info(
