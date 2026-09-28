@@ -13,7 +13,22 @@ if (import.meta.env.VITE_SENTRY_DSN) {
         dsn: import.meta.env.VITE_SENTRY_DSN,
         environment: import.meta.env.MODE,
         release: import.meta.env.VITE_APP_VERSION as string | undefined,
-        sendDefaultPii: false,
+        // @sentry/react 11 removed `sendDefaultPii` (v10: false = no cookies,
+        // no user info, no auth headers, no query strings). The v11
+        // replacement, `dataCollection`, DEFAULTS TO COLLECT-EVERYTHING --
+        // including stack-frame variable VALUES, which the browser SDK never
+        // captured before -- so deleting the old flag would silently flip PII
+        // collection on. This block states the v10 posture explicitly (equal
+        // or more restrictive). Loosening it is a deliberate edit here, never
+        // an upgrade side effect.
+        dataCollection: {
+          userInfo: false,
+          cookies: false,
+          httpHeaders: false,
+          httpBodies: [],
+          urlQueryParams: false,
+          stackFrameVariables: false,
+        },
         tracesSampleRate: 0.1,
       })
     })
