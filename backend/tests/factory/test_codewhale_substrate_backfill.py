@@ -356,3 +356,79 @@ class TestProvenanceOnTheProductionPath:
         mine = {"schema_version": "build_provenance.v1", "artifact_sources": {"x": "coder CLI"}, "by": "agent"}
 
         assert self._run(tmp_path, monkeypatch, agent_wrote=mine) == mine
+
+
+class TestEveryStampedSuiteImportsSomethingProductionWrites:
+    """The same hole, generalised: backup was the first, domain_ops the second.
+
+    ``run_tester`` stamps its suite unconditionally. Every module those files
+    import from ``app.`` must be written on the path production actually
+    takes, or the suite dies at COLLECTION -- before a single assertion runs --
+    and the agent burns a rework round per missing file trying to
+    reverse-engineer a contract the factory owns.
+
+    ``backfill_platform_substrate`` closed this for ``app/backup.py``. It is
+    explicitly "the spec-independent half", so ``app/domain_ops.py`` -- written
+    only by ``domain_acceptance.emit_writer_artifacts``, which the CodeWhale
+    branch returns before reaching -- was left uncovered. Live build
+    sess_42d244d317f042b2 (Cerebrum VenueOps, run 2) died on exactly that:
+
+        suite_red: missing module -- FAILED tests.test_domain_acceptance
+        - collection failure
+
+    This test is the general invariant rather than a third named file.
+    """
+
+    #: (emitted suite file, its renderer) that ``run_tester`` always stamps.
+    def _stamped_suites(self):
+        from app.factory.build import data_lifecycle, deploy, domain_acceptance, ui_e2e
+
+        specs = {
+            "book_slot": {
+                "entity": "booking",
+                "fields": {"name": "str", "qty": "int"},
+            }
+        }
+        return {
+            "tests/test_data_lifecycle.py": data_lifecycle.render_product_tests(specs),
+            "tests/test_deploy.py": deploy.render_product_tests(specs),
+            "tests/test_domain_acceptance.py": domain_acceptance.render_product_tests(specs),
+            "tests/test_ui_operator_flow.py": ui_e2e.render_ui_tests(specs),
+        }
+
+    def _modules_production_writes(self):
+        """Every app/ module a production build actually puts on disk."""
+        from app.factory.build.data_lifecycle import platform_substrate
+        from app.factory.build.deploy import deploy_substrate
+        from app.factory.build.domain_acceptance import domain_substrate
+
+        written = {rel for rel, _ in platform_substrate()}
+        written |= {rel for rel, _ in deploy_substrate()}
+        written |= {rel for rel, _ in domain_substrate({})}
+        # The agent authors these; the backfill deliberately leaves them alone.
+        written |= {"app/store.py", "app/main.py", "app/models.py"}
+        return {
+            rel[len("app/"):-len(".py")]
+            for rel in written
+            if rel.startswith("app/") and rel.endswith(".py")
+        }
+
+    def test_no_stamped_suite_imports_a_module_production_never_writes(self):
+        import ast
+
+        available = self._modules_production_writes()
+        missing = {}
+        for name, source in self._stamped_suites().items():
+            needed = set()
+            for node in ast.walk(ast.parse(source)):
+                if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("app."):
+                    needed.add(node.module[len("app."):].split(".")[0])
+                elif isinstance(node, ast.ImportFrom) and node.module == "app":
+                    needed |= {a.name for a in node.names}
+            gap = sorted(needed - available)
+            if gap:
+                missing[name] = gap
+        assert not missing, (
+            "a stamped suite imports a module no production path writes, so it "
+            f"dies at collection: {missing}"
+        )
