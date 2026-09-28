@@ -143,6 +143,123 @@ def test_a_silent_cli_gets_a_heartbeat_and_a_talking_one_does_not(tmp_path, monk
     assert "No files yet" in beats[0]
 
 
+# -- the model-call NOTE is CLOSED when the CLI session ends -------------------
+#
+# Live, 2026-09-28: the Floor declared "coder LLM timed out after 2595s
+# (deadline 1800s)" on a build whose writer session had already finished and
+# whose run was still working. The codewhale path OPENED the model-call NOTE
+# ("codewhale writer CLI started") and never emitted the
+# "FACTORY_CODE_CLI session finished" close that build_status waits for --
+# only the C-BRIEF dispatch layer (coder_session) ever emitted it. So on
+# EVERY codewhale build, 1800s of wall clock after the CLI started --
+# regardless of what the run was doing by then -- _model_call_overdue flipped
+# the status to failed and the Floor showed CODING AGENT STOPPED over a live
+# run.
+
+
+class _FastProc:
+    """A CLI that answers immediately with a completed JSON summary."""
+
+    def __init__(self):
+        self.stdout = io.StringIO(
+            json.dumps({"status": "completed", "termination_reason": "resolved"}) + "\n"
+        )
+        self.stderr = io.StringIO("")
+        self.returncode = None
+
+    def wait(self, timeout=None):
+        self.returncode = 0
+        return 0
+
+    def kill(self):
+        self.returncode = 9
+
+
+class _HungProc:
+    """A CLI that never returns: only the worker wall ends it."""
+
+    def __init__(self):
+        self.stdout = io.StringIO("")
+        self.stderr = io.StringIO("")
+        self.returncode = None
+
+    def wait(self, timeout=None):
+        import subprocess
+
+        if self.returncode is not None:
+            return self.returncode
+        time.sleep(min(timeout or 0.1, 0.1))
+        raise subprocess.TimeoutExpired("codewhale", timeout)
+
+    def kill(self):
+        self.returncode = 9
+
+
+def _run_real_worker(tmp_path, proc, *, timeout_s=None):
+    relayed: list[tuple[str, dict]] = []
+    with mock.patch.object(codewhale_worker, "worker_cli_path", return_value="codewhale"), \
+         mock.patch.object(codewhale_worker, "worker_api_key", return_value="sk-test"), \
+         mock.patch.object(codewhale_worker, "worker_provider", return_value="deepseek"), \
+         mock.patch.object(codewhale_worker.subprocess, "Popen", side_effect=lambda *a, **k: proc):
+        try:
+            codewhale_worker.run_worker_job(
+                "write the platform",
+                tmp_path / "checkout",
+                tenant_store=bind_tenant_store("acct-close-note"),
+                timeout_s=timeout_s,
+                progress=lambda line, info: relayed.append((line, dict(info or {}))),
+            )
+        except codewhale_worker.WorkerError:
+            pass
+    return relayed
+
+
+def test_the_model_call_note_is_closed_when_the_cli_finishes(tmp_path):
+    relayed = _run_real_worker(tmp_path, _FastProc())
+
+    opened = [i for i, (d, _) in enumerate(relayed) if "CLI started" in d]
+    closed = [
+        (i, p) for i, (d, p) in enumerate(relayed)
+        if "FACTORY_CODE_CLI session finished" in d
+    ]
+    assert opened, relayed
+    assert closed, "the CLI finished and no close NOTE was emitted -- the " \
+        "Floor will declare this build timed out 1800s after the CLI STARTED"
+    assert closed[-1][0] > opened[-1], "close must land after the open"
+    # model_call=False rides the payload so the relay never throttles the
+    # close behind a noise line (the same guarantee the open NOTE has).
+    assert closed[-1][1].get("model_call") is False
+
+
+def test_the_model_call_note_is_closed_when_the_wall_kills_the_cli(tmp_path):
+    relayed = _run_real_worker(tmp_path, _HungProc(), timeout_s=0.4)
+
+    assert any(
+        "FACTORY_CODE_CLI session finished" in d for d, _ in relayed
+    ), "a wall-killed session left the model-call NOTE open forever"
+
+
+def test_the_close_detail_is_the_one_build_status_waits_for():
+    """Tie the two modules: the worker's close text must be the exact text
+    _open_model_call_note treats as a close, or the fix silently rots."""
+    from types import SimpleNamespace
+
+    from app.factory.build_jobs import _open_model_call_note
+
+    opened = SimpleNamespace(
+        detail="codewhale writer CLI started -- model call in flight",
+        payload={"model_call": True, "deadline_s": 1800.0},
+        ts="2026-09-28T00:00:00+00:00",
+    )
+    closed = SimpleNamespace(
+        detail=codewhale_worker.MODEL_CALL_CLOSED_DETAIL,
+        payload={"model_call": False},
+        ts="2026-09-28T00:20:00+00:00",
+    )
+    assert _open_model_call_note([opened]) is not None
+    assert _open_model_call_note([opened, closed]) is None
+
+
 # -- surviving a server restart mid-WRITER -------------------------------------
 
 
