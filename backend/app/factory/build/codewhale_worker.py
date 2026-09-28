@@ -56,6 +56,18 @@ WORKER_CLI_MISSING = "worker_cli_missing"
 WORKER_EXEC_FAILED = "worker_exec_failed"
 WORKER_TIMED_OUT = "worker_timed_out"
 
+#: The close half of the model-call NOTE. build_status treats the "CLI
+#: started" NOTE as an in-flight coder call until a NOTE whose detail
+#: carries "FACTORY_CODE_CLI session finished" lands (_open_model_call_note);
+#: budget_inspect closes on the same text. Only the C-BRIEF dispatch layer
+#: ever emitted it, so on every codewhale build the call stayed open forever
+#: and 1800s after the CLI STARTED the Floor declared the build stopped --
+#: live 2026-09-28: "coder LLM timed out after 2595s (deadline 1800s)" over
+#: a run whose writer had finished and whose tester was still working.
+MODEL_CALL_CLOSED_DETAIL = (
+    "FACTORY_CODE_CLI session finished — codewhale writer CLI exited"
+)
+
 #: The two exhaustion modes behind WORKER_CONCURRENCY_CAPPED. The capped
 #: token stays the LEADING token of both messages -- the documented
 #: contract is preserved, the scope is ADDED. Grep one or the other to
@@ -886,8 +898,9 @@ def run_worker_job(
         # E3 part 1b: the CLI path never emitted a model_call NOTE (that
         # NOTE belonged to the factory-coder route), so a live-but-silent
         # CLI writer looked identical to a dead one on the Floor. Open the
-        # call here with the worker wall as its deadline; the dispatch
-        # layer's "FACTORY_CODE_CLI session finished" note closes it.
+        # call here with the worker wall as its deadline; _note_cli_finished
+        # below closes it on EVERY exit of the wait loop -- success, bad
+        # exit code, or wall kill.
         def _note_cli_started() -> None:
             if progress_handle is not None:
                 try:
@@ -913,6 +926,38 @@ def run_worker_job(
                             "deadline_s": timeout,
                             "provider": worker_provider(),
                         },
+                    )
+                except Exception:  # noqa: BLE001 — telemetry never fails the build
+                    pass
+
+        def _note_cli_finished() -> None:
+            """Close the model-call NOTE the moment the session is over.
+
+            Without this, _model_call_overdue keeps aging the STARTED
+            NOTE and fails the build's status ``deadline_s`` after the
+            CLI began, however alive the run is by then. model_call=False
+            rides the payload so the relay never throttles the close.
+            """
+            if progress_handle is not None:
+                try:
+                    progress_handle.write(
+                        json.dumps(
+                            {
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                                "line": MODEL_CALL_CLOSED_DETAIL,
+                                "model_call": False,
+                            }
+                        )
+                        + "\n"
+                    )
+                    progress_handle.flush()
+                except OSError:
+                    pass
+            if progress is not None:
+                try:
+                    progress(
+                        MODEL_CALL_CLOSED_DETAIL,
+                        {"model_call": False, "provider": worker_provider()},
                     )
                 except Exception:  # noqa: BLE001 — telemetry never fails the build
                     pass
@@ -953,6 +998,11 @@ def run_worker_job(
                     break
             tailer.pump(_relay)
             _pump_prompt_progress()
+            # The subprocess is over on every path through here (returned,
+            # bad exit, or killed at the wall): close the model call NOW,
+            # before the post-loop raises, so the Floor never ages a
+            # finished session into "coder LLM timed out".
+            _note_cli_finished()
             if progress_handle is not None:
                 try:
                     progress_handle.close()
