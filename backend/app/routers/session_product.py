@@ -391,7 +391,12 @@ def download_product_package(
                 "phases complete) â€” poll /product/build-status"
             ),
         )
-    if as_is and status["state"] in ("failed", "stalled"):
+    if as_is and status["state"] != "building":
+        # Any terminal state ships as-is on the explicit ask -- including a
+        # "succeeded" whose certification blockers (thin authorship, red
+        # acceptance, CLI-failed claims) would 409 the normal path below:
+        # those ARE gate failures under the owner's rule. Only mid-build
+        # stays refused in every mode.
         # Owner's order (2026-09-28): a gate-failed build IS downloadable --
         # on the explicit ask, loudly labeled, never certified. The zip goes
         # through the same is_exported() filter as every export, so the
