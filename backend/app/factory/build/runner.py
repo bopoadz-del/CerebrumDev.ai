@@ -602,6 +602,20 @@ class RoleRunner:
                 return list(recorded)
         return []
 
+    def _behavior_test_files(self) -> list:
+        """Tests run_tester's own emitters stamped -- assertions in these
+        judge the PRODUCT by construction. From state, else the ledger,
+        exactly like _factory_test_files, so ownership survives a resume."""
+        files = self.state.get("behavior_test_files")
+        if files:
+            return list(files)
+        events = list(self.ledger.events()) if self.ledger.exists() else []
+        for event in reversed(events):
+            payload = event.payload or {}
+            if payload.get("behavior_test_files"):
+                return list(payload["behavior_test_files"])
+        return []
+
     def _run_phase(self, role: BuildRole, work_list: Sequence[str]) -> GateResult:
         """Run the role then its gate. Raises RoleError / AuthorityError up."""
         self.ledger.append(EventKind.PHASE_STARTED, role=role, detail=role.value)
@@ -750,7 +764,16 @@ class RoleRunner:
                     EventKind.NOTE,
                     role=role,
                     detail=f"TESTER wrote {len(written)} test file(s)",
-                    payload={"factory_test_files": written},
+                    payload={
+                        "factory_test_files": written,
+                        # Strictly what run_tester's own emitters stamped
+                        # (its snapshot delta) -- a file injected during the
+                        # phase is in factory_test_files but NOT here, so an
+                        # assertion in it stays the factory's own fault.
+                        "behavior_test_files": list(
+                            self.state.get("behavior_test_files") or []
+                        ),
+                    },
                 )
 
         if role is BuildRole.CLONER:
@@ -1593,7 +1616,11 @@ class RoleRunner:
                 # by a WRITER rework; the writer is forbidden to edit tests/.
                 from app.factory.build import failure_owner
 
-                owned = failure_owner.classify(verdict, self._factory_test_files())
+                owned = failure_owner.classify(
+                    verdict,
+                    self._factory_test_files(),
+                    behavior_test_files=self._behavior_test_files(),
+                )
                 if owned["owner"] != failure_owner.PRODUCT:
                     label = (
                         "FACTORY_FAULT"

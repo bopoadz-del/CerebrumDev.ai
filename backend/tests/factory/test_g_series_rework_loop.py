@@ -72,6 +72,17 @@ def test_a_broken_generated_test_halts_as_factory_fault_with_zero_rework(
     assert note.payload["rework"] == 0
     assert note.payload["writer_dispatched"] is False
     assert note.payload["generator"], "the ledger names where the test was generated"
+    # v3 ownership is constructional: the TESTER note carries BOTH lists, and
+    # the injected stub is in factory_test_files (written during the phase)
+    # but NOT in behavior_test_files (not stamped by run_tester's emitters).
+    wrote = next(
+        e for e in _events(runner, EventKind.NOTE)
+        if "TESTER wrote" in (e.detail or "")
+    )
+    behavior = wrote.payload.get("behavior_test_files") or []
+    assert "tests/test_models.py" in behavior
+    assert "tests/test_zz_broken_generated.py" not in behavior
+    assert "tests/test_zz_broken_generated.py" in wrote.payload["factory_test_files"]
 
 
 def test_a_product_code_failure_still_goes_to_the_writer():

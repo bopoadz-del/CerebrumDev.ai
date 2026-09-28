@@ -1362,14 +1362,54 @@ def settings_names(source: str) -> set:
     return found
 
 
+def _confirmed_key_refs(text: str) -> set:
+    """String literals the source actually uses as a payload/record KEY.
+
+    A key reference is ``d["x"]``, ``d.get("x")``, or ``"x" in d`` / ``not in``.
+    A word inside a message string (``raise ValueError("... is missing")``) is
+    NOT a key reference. That distinction is what tells a real field from prose:
+    the ``(name) is missing`` pattern fires on a refusal sentence
+    ("any of the four is missing") and yields "four", which the handler never
+    reads as a key -- so it is dropped. See test_miner_rejects_prose_fields.
+    """
+    keys: set = set()
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        # Un-parseable fragment: fall back to a literal-access regex so the
+        # filter degrades to permissive rather than dropping real fields.
+        keys.update(re.findall(r"""(?:\.get\(\s*|\[\s*)['"]([A-Za-z_]\w*)['"]""", text))
+        return keys
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            s = node.slice
+            if isinstance(s, ast.Constant) and isinstance(s.value, str):
+                keys.add(s.value)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == "get" and node.args \
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
+            keys.add(node.args[0].value)
+        elif isinstance(node, ast.Compare):
+            for op, operand in zip(node.ops, [node.left, *node.comparators]):
+                if isinstance(op, (ast.In, ast.NotIn)) and isinstance(node.left, ast.Constant) \
+                        and isinstance(node.left.value, str):
+                    keys.add(node.left.value)
+    return keys
+
+
 def handler_required_fields(handler_source: str) -> List[str]:
     """Domain field names a handler body treats as required."""
     found: List[str] = []
     text = handler_source or ""
+    # The regex patterns read free text, including refusal messages, so a
+    # capture is trusted only when the handler also reads that name as a real
+    # payload key. List-literals and rosters below are explicit declarations
+    # in code, not prose, so they are kept without confirmation.
+    confirmed = _confirmed_key_refs(text)
     for pattern in _HANDLER_REQUIRED_PATTERNS:
         for match in pattern.finditer(text):
             name = _usable_align_name(next((g for g in match.groups() if g), None))
-            if name:
+            if name and name in confirmed:
                 found.append(name)
     for match in _MISSING_FIELDS_LIST.finditer(text):
         found.extend(_names_from_list_text(match.group(1)))
