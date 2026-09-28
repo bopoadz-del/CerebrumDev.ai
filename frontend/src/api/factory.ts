@@ -599,8 +599,12 @@ export async function watchBuildStatus(
   }
 }
 
-export async function downloadProductPackage(sid: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/v1/sessions/${sid}/product/package`, {
+export async function downloadProductPackage(
+  sid: string,
+  opts?: { asIs?: boolean },
+): Promise<void> {
+  const qs = opts?.asIs ? '?as_is=1' : ''
+  const res = await fetch(`${API_BASE}/v1/sessions/${sid}/product/package${qs}`, {
     credentials: 'include',
     headers: authHeaders(false),
   })

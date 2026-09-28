@@ -550,7 +550,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Download ready/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })).toBeDisabled()
+    // Owner's order: a gate-failed build offers a retry and an honest as-is
+    // download instead of a dead export button.
+    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
+    const asIs = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(asIs).toBeEnabled()
+    expect(asIs).toHaveClass('ghost')
   })
 
   it('sess_45729bb 0639 photograph: thin Store-green Floor never claims founding', async () => {
@@ -882,10 +887,10 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText('coding agent')).not.toBeInTheDocument()
     expect(screen.queryByText('chat LLM')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
-    const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(failedExport).toBeDisabled()
-    expect(failedExport).toHaveAttribute('disabled')
+    const failedExport = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(failedExport).toBeEnabled()
     expect(failedExport).toHaveClass('ghost')
+    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
     expect(screen.queryByRole('heading', { name: /Coding agent finished/ })).not.toBeInTheDocument()
     const startNew = screen.getByRole('button', { name: 'Start a new product' })
     expect(startNew).toBeEnabled()
@@ -964,9 +969,12 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(
       screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
     ).not.toBeInTheDocument()
-    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — build stalled' })
-    expect(exportBtn).toBeDisabled()
+    // A stalled build is a gate-failed artifact too: retry it, or take the
+    // tree honestly labeled as-is — never a "ready" download.
+    const exportBtn = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(exportBtn).toBeEnabled()
     expect(exportBtn).toHaveClass('ghost')
+    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
   })
 
   it('stops the takeover chrome when the ledger is unreadable', async () => {
@@ -986,8 +994,9 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(await screen.findByRole('heading', { name: 'Coding agent stopped' })).toBeInTheDocument()
     expect(screen.queryByText(/Writing your platform/)).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Coding agent has taken over' })).not.toBeInTheDocument()
-    const failedExport = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(failedExport).toBeDisabled()
+    const failedExport = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(failedExport).toBeEnabled()
+    expect(screen.getByTestId('floor-rerun-writer')).toBeEnabled()
   })
 
   it('keeps coding chrome after Approve while generation SSE and status poll are pending', async () => {

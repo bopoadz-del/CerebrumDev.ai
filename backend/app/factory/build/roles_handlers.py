@@ -5151,6 +5151,19 @@ def run_tester(ctx: RoleContext) -> RoleResult:
     Re-emit the suite from the current specs so ``pytest -m pilot`` matches
     the workspace under test.
     """
+    # G1 ownership, the honest half: remember which tests THIS function
+    # stamps, as a snapshot delta on the workspace's written-list. The
+    # runner's factory_test_files is "written under tests/ during the TESTER
+    # phase" -- which also catches files a wrapper or a broken TESTER injects
+    # after this function returns (that is the point: the writer may not
+    # edit any of them). behavior_test_files is strictly what the canonical
+    # emitters produced, so an assertion failing in one of THESE is the
+    # product failing a behavior check by construction, while an assertion
+    # in an injected file stays the factory's own fault.
+    _stamped_before = {
+        str(rel).replace("\\", "/")
+        for rel in (getattr(ctx.workspace, "written", None) or [])
+    }
     if str(ctx.state.get("build_cycle") or "") == "pilot":
         existing = Path("tests") / "test_smoke.py"
         if ctx.workspace.exists(existing) and not ctx.work_list:
@@ -5646,6 +5659,15 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         )
     if admitted:
         detail += f"; coding agent added {len(admitted)} domain case(s)"
+    ctx.state["behavior_test_files"] = sorted(
+        rel
+        for rel in {
+            str(r).replace("\\", "/")
+            for r in (getattr(ctx.workspace, "written", None) or [])
+        }
+        - _stamped_before
+        if rel.startswith("tests/")
+    )
     return RoleResult(
         ok=True,
         detail=detail,

@@ -861,7 +861,7 @@ export function platformsLeadCopy(
     return 'What the factory built for you. A downloadable export appears here only after a pilot-ready run succeeds.'
   }
   if (isUnreadableLedger(build)) {
-    return 'The last build crashed with an unreadable ledger. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+    return 'The last build crashed with an unreadable ledger. Build failed — no certified download; you can re-run the writer or download the tree as-is.'
   }
   if (isAcceptancePendingPrototype(build)) {
     const score = formatAcceptanceScore(build)
@@ -874,7 +874,7 @@ export function platformsLeadCopy(
     shouldRefuseExport(build) &&
     !(isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build))
   ) {
-    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+    return 'The last build did not pass its gates. Build failed — no certified download; you can re-run the writer or download the tree as-is.'
   }
   if (isBelowFullPilotAuthorshipFloor(build) && claimsStoreGreenPilot(build)) {
     return 'Authorship is below the full-pilot floor. Download unavailable — a thin Store-green zip is refused.'
@@ -883,10 +883,10 @@ export function platformsLeadCopy(
     return 'The coding agent is writing this platform. Export stays closed until a pilot-ready run succeeds.'
   }
   if (build.state === 'failed') {
-    return 'The last build did not pass its gates. Download unavailable — build failed. Export is refused until a pilot-ready run succeeds.'
+    return 'The last build did not pass its gates. Build failed — no certified download; you can re-run the writer or download the tree as-is.'
   }
   if (build.state === 'stalled') {
-    return 'The last build stalled. Download unavailable — build stalled. Export is refused until a fresh run succeeds.'
+    return 'The last build stalled. Build stalled — no certified download; you can re-run the writer or download the tree as-is.'
   }
   if (build.state === 'succeeded' && !isPilotZipReady(build)) {
     return 'A code-cycle prototype is on this page. This is not a full-pilot export — do not treat it as launch-ready.'
@@ -973,19 +973,27 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
   label: string
   disabled: boolean
   ghost: boolean
+  asIs?: boolean
   title?: string
 } {
   if (
     isUnreadableLedger(build) ||
     build?.state === 'failed' ||
+    build?.state === 'stalled' ||
     productSuiteFailed(build) ||
     outcomeFailed(build)
   ) {
+    // Owner's order (2026-09-28): a gate-failed build IS downloadable --
+    // explicitly as-is. The server ships it loudly labeled (EXPORTED-AS-IS.md
+    // naming the failing gate, no certification manifest); the Floor's job is
+    // to offer it honestly, not to hide the artifact behind a dead button.
     return {
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
-      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+      asIs: true,
+      title:
+        'The gates rejected this build. The zip ships labeled EXPORTED-AS-IS with the failing gate named — no certification claims.',
     }
   }
   if (!build || build.state === 'building' || build.state === 'not_started') {
@@ -1010,21 +1018,19 @@ export function exportAffordance(build: BuildStatus | null | undefined): {
     }
   }
   if (shouldRefuseExport(build)) {
+    // A succeeded-shaped build whose gates failed (CLI-failed claim, red
+    // PRODUCT suite) is a gate failure too: same honest as-is exit.
     return {
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
-      title: 'Pilot suite failed — export is not pilot-ready and will be refused by the server',
+      asIs: true,
+      title:
+        'The gates rejected this build. The zip ships labeled EXPORTED-AS-IS with the failing gate named — no certification claims.',
     }
   }
-  if (build.state === 'stalled') {
-    return {
-      label: 'Export (.zip) — build stalled',
-      disabled: true,
-      ghost: true,
-      title: 'Build stalled — a full-pilot zip will be refused by the server',
-    }
-  }
+  // 'stalled' is handled by the as-is branch at the top: a dead runner
+  // thread is a gate-failed artifact too, downloadable only as-is.
   if (build.state === 'succeeded' && !isPilotZipReady(build)) {
     return {
       label: 'Download code-cycle prototype (.zip)',

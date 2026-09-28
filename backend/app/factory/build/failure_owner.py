@@ -108,14 +108,30 @@ def generator_location(test_name: str, test_file: str) -> str:
     return f"emitted by TESTER into {test_file or 'tests/'}"
 
 
-def classify(verdict: Any, factory_test_files: Iterable[str]) -> Dict[str, Any]:
-    """``{owner, tests, generator, reason}`` for a failed TESTER verdict."""
+def classify(
+    verdict: Any,
+    factory_test_files: Iterable[str],
+    behavior_test_files: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    """``{owner, tests, generator, reason}`` for a failed TESTER verdict.
+
+    ``behavior_test_files`` -- the tests run_tester's own emitters stamped --
+    makes ownership constructional: an AssertionError in one of THOSE files
+    is the product failing a behavior check by how the suite is built (its
+    assertions compare product input to product output, or demand a refusal
+    the product owes), so no message-shape sniffing is needed. A file that is
+    in ``factory_test_files`` (written during the TESTER phase, writer may
+    not edit it) but NOT in the behavior list was injected -- a broken stub's
+    assertion is nobody's product. Without the behavior list (older ledgers,
+    resumes of pre-upgrade runs) the heuristic fallback below still applies.
+    """
     payload = getattr(verdict, "payload", None) or {}
     reason = str(getattr(verdict, "reason", "") or "")
     if reason in ("environment_fault", "suite_could_not_run") or payload.get("infrastructure"):
         return {"owner": ENVIRONMENT, "tests": [], "generator": "", "reason": reason}
 
     factory_files = {str(f).replace("\\", "/") for f in (factory_test_files or ())}
+    behavior = {str(f).replace("\\", "/") for f in (behavior_test_files or ())}
     failing = _failing(verdict)
     product_owned, factory_owned = [], []
     for row in failing:
@@ -123,7 +139,17 @@ def classify(verdict: Any, factory_test_files: Iterable[str]) -> Dict[str, Any]:
         # A row outside the factory's own test files is product-owned by
         # definition. A row inside them is the factory's ONLY when the test
         # code itself broke, not when the product failed the test.
-        if rel in factory_files and not _is_product_failure(row):
+        if behavior:
+            innermost = str(row.get("innermost") or "")
+            blob = " ".join(str(row.get(k) or "") for k in ("message", "text", "nodeid"))
+            is_product = (
+                innermost.startswith("app/")
+                or "/app/" in innermost
+                or (rel in behavior and "AssertionError" in blob)
+            )
+        else:
+            is_product = _is_product_failure(row)
+        if rel in factory_files and not is_product:
             factory_owned.append(row)
         else:
             product_owned.append(row)
