@@ -441,11 +441,10 @@ describe('Your Platforms — coding-agent build', () => {
     expect(screen.getByTestId('platforms-gate-product')).toHaveTextContent('PRODUCT FAIL')
     expect(screen.queryByText(/Founding-customer-ready/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Finished —/)).not.toBeInTheDocument()
-    const refused = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(refused).toBeDisabled()
-    expect(refused).toHaveAttribute('disabled')
+    const refused = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(refused).toBeEnabled()
     expect(refused).toHaveClass('ghost')
-    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Build failed — no certified download/)
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
@@ -562,14 +561,18 @@ describe('Your Platforms — coding-agent build', () => {
     expect(
       screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
     ).not.toBeInTheDocument()
-    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
+    const exportBtn = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
     expect(exportBtn).toHaveClass('ghost')
-    expect(exportBtn).toBeDisabled()
-    expect(exportBtn).toHaveAttribute('disabled')
+    expect(exportBtn).toBeEnabled()
     fireEvent.click(exportBtn)
-    expect(downloadMock).not.toHaveBeenCalled()
+    // A red pilot suite is still never a SUCCESSFUL download: the only call
+    // permitted is the explicitly labeled as-is form.
+    await waitFor(() =>
+      expect(downloadMock).toHaveBeenCalledWith(expect.any(String), { asIs: true }),
+    )
+    expect(downloadMock).not.toHaveBeenCalledWith(expect.any(String))
     expect(awaitBuildMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Build failed — no certified download/)
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
     expect(screen.queryByText(/Download the export and launch it anywhere/i)).not.toBeInTheDocument()
   })
@@ -651,10 +654,10 @@ describe('Your Platforms — coding-agent build', () => {
     expect(
       screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
     ).not.toBeInTheDocument()
-    const refused = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(refused).toBeDisabled()
+    const refused = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(refused).toBeEnabled()
     expect(refused).toHaveClass('ghost')
-    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Build failed — no certified download/)
     expect(screen.getByTestId('platforms-lead')).not.toHaveTextContent(/Download the export/i)
   })
 
@@ -773,8 +776,8 @@ describe('Your Platforms — coding-agent build', () => {
     // Wait for watchBuild failed — /health banner can win the race while
     // the card still says Building… (CI flake on C-BRIEF-only PRs).
     expect(
-      await screen.findByRole('button', { name: 'Export (.zip) — pilot suite failed' }),
-    ).toBeDisabled()
+      await screen.findByRole('button', { name: 'Download as-is (failed gates)' }),
+    ).toBeEnabled()
   })
 
   it('labels code-phase success as not pilot-ready', async () => {
@@ -812,8 +815,8 @@ describe('Your Platforms — coding-agent build', () => {
     expect(
       screen.queryByRole('button', { name: 'Download platform export (.zip)' }),
     ).not.toBeInTheDocument()
-    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — build stalled' })
-    expect(exportBtn).toBeDisabled()
+    const exportBtn = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(exportBtn).toBeEnabled()
     expect(exportBtn).toHaveClass('ghost')
     expect(screen.getByTestId('platforms-stalled-pill')).toHaveTextContent('Build stalled')
   })
@@ -834,8 +837,8 @@ describe('Your Platforms — coding-agent build', () => {
     expect(await screen.findByText(/Build failed — LEDGER_UNREADABLE/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Building…' })).not.toBeInTheDocument()
     expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/unreadable ledger/)
-    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(exportBtn).toBeDisabled()
+    const exportBtn = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(exportBtn).toBeEnabled()
   })
 
   it('sess_4591d5cc sticky need≥5 card matches live 4/4 package SUCCESS', async () => {
@@ -970,12 +973,15 @@ describe('Your Platforms — coding-agent build', () => {
     })
     render(<Platforms sessionId="sess_ui" />)
     expect(await screen.findByTestId('platforms-failed-pill')).toHaveTextContent('Pilot suite failed')
-    const exportBtn = screen.getByRole('button', { name: 'Export (.zip) — pilot suite failed' })
-    expect(exportBtn).toBeDisabled()
+    const exportBtn = screen.getByRole('button', { name: 'Download as-is (failed gates)' })
+    expect(exportBtn).toBeEnabled()
     expect(exportBtn).toHaveClass('ghost')
     fireEvent.click(exportBtn)
-    expect(downloadMock).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(downloadMock).toHaveBeenCalledWith(expect.any(String), { asIs: true }),
+    )
+    expect(downloadMock).not.toHaveBeenCalledWith(expect.any(String))
     expect(awaitBuildMock).not.toHaveBeenCalled()
-    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Download unavailable — build failed/)
+    expect(screen.getByTestId('platforms-lead')).toHaveTextContent(/Build failed — no certified download/)
   })
 })

@@ -152,6 +152,145 @@ def _render_probe() -> str:
     return UI_E2E_PROBE.replace("__LABEL_KEYS__", repr(LABEL_KEYS))
 
 
+def render_ui_tests(specs: "dict") -> str:
+    """The UI suite TESTER stamps, so the agent sees a UI failure in-pass.
+
+    Eight suites were stamped and none touched the UI, so the agent could not
+    know it had a UI problem until it had yielded and ``ui_end_to_end``
+    rejected the build -- a whole rework round for something a red test shows
+    in the same pass. The prompt already tells the agent to run
+    ``pytest -m "not pilot"`` before yielding; this puts the UI in that run.
+
+    It asserts ONLY what the gate already treats as fatal. The unbuilt
+    frontend and the missing authority label are ``advisory`` in the probe
+    above and are deliberately absent here: the bar does not move, the
+    detection moves earlier. Asserting them here would raise the bar through
+    the tester, which is the gate change this replaced.
+    """
+    return '''"""The served UI reaches the product -- the same bar ui_end_to_end holds.
+
+Run before you yield. A failure here is a failure the gate would have found
+after you yielded, at the cost of a full rework round.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+PAGE = Path("app/static/index.html")
+
+
+def _capabilities():
+    if not Path("app/actions").is_dir():
+        return []
+    return sorted(
+        p.stem for p in Path("app/actions").glob("*.py") if p.stem != "__init__"
+    )
+
+
+def _html():
+    if not PAGE.is_file():
+        pytest.fail(
+            "the platform serves no UI: app/static/index.html is missing"
+        )
+    return PAGE.read_text(encoding="utf-8", errors="replace")
+
+
+def _ui_paths(html):
+    return sorted(set(re.findall(r"/v1/[A-Za-z0-9_/\\-]+", html)))
+
+
+def _driven(html):
+    """Capabilities the UI reaches: named outright, or discovered at runtime."""
+    caps = _capabilities()
+    paths = _ui_paths(html)
+    discovers = "/v1/capabilities" in html and any(
+        marker in html
+        for marker in ('"/v1/" +', "'/v1/' +", "/v1/${", "`/v1/${")
+    )
+    if discovers:
+        return caps
+    return sorted(
+        {c for c in caps if any(p.rstrip("/").endswith("/" + c) for p in paths)}
+    )
+
+
+def test_the_platform_serves_a_ui():
+    assert _html().strip(), "app/static/index.html is empty"
+
+
+def test_the_ui_reaches_more_than_one_capability():
+    caps = _capabilities()
+    if not caps:
+        pytest.skip("this product ships no capabilities")
+    driven = _driven(_html())
+    need = min(2, len(caps))
+    assert len(driven) >= need, (
+        "the served UI drives %d of %d capability(ies) (%s): read "
+        "/v1/capabilities and build the routes from it"
+        % (len(driven), len(caps), ", ".join(driven) or "none")
+    )
+
+
+def test_every_route_the_ui_calls_answers():
+    from app.main import app
+
+    html = _html()
+    declared = set()
+    spec = Path("openapi.json")
+    if spec.is_file():
+        try:
+            declared = set(
+                (json.loads(spec.read_text(encoding="utf-8")).get("paths") or {}).keys()
+            )
+        except Exception:
+            declared = set()
+
+    token = os.environ.get("PLATFORM_TOKEN", "dev-local-token")
+    auth = {"Authorization": "Bearer " + token}
+    dead = []
+    with TestClient(app) as client:
+        for path in _ui_paths(html):
+            if "{" in path or path.rstrip("/") == "/v1":
+                continue
+            if declared and path not in declared:
+                continue  # an optional surface this product does not ship
+            try:
+                resp = client.get(path, headers=auth)
+            except Exception as exc:
+                dead.append("%s raised %s" % (path, type(exc).__name__))
+                continue
+            # 405 means the route exists and wants another verb.
+            if resp.status_code in (404, 500, 501, 502):
+                dead.append("%s answered %d" % (path, resp.status_code))
+    assert not dead, "the UI calls routes the platform does not answer: %s" % dead
+
+
+def test_the_formulas_are_reachable_from_the_ui():
+    if not Path("app/formulas.py").is_file():
+        pytest.skip("this product ships no formula layer")
+    driven = _driven(_html())
+    if not driven:
+        pytest.skip("no capability is driven from the UI yet")
+    for cap in driven:
+        handler = Path("app/actions") / (cap + ".py")
+        if handler.is_file() and "formulas" in handler.read_text(
+            encoding="utf-8", errors="replace"
+        ):
+            return
+    pytest.fail(
+        "app/formulas.py ships and no capability the UI drives uses it: "
+        "the formula layer is not reachable from the product"
+    )
+'''
+
+
 def gate_ui_end_to_end(ctx: "GateContext") -> "GateResult":
     """The served UI reaches the platform, and the pilot serves one UI."""
     from app.factory.build.gates import GateResult

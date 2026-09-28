@@ -261,7 +261,12 @@ def test_no_env_key_falls_back_to_cli_config(monkeypatch, tmp_path):
     run_worker_job("build it", tmp_path, tenant_store=_binding("d4"))
     argv = captured["argv"]
     assert "--api-key" not in argv
-    assert argv[-1] == "build it"
+    # The brief travels by file, never argv (the 128 KiB exec cliff); argv
+    # ends with the fixed-size pointer to it.
+    assert "docs/writer_prompt.txt" in argv[-1]
+    assert (tmp_path / "docs" / "writer_prompt.txt").read_text(
+        encoding="utf-8"
+    ) == "build it"
 
 
 def test_worker_streams_cli_progress_lines(monkeypatch, tmp_path):
@@ -311,3 +316,78 @@ def test_worker_streams_cli_progress_lines(monkeypatch, tmp_path):
     progress_file = tmp_path / "docs" / "writer_progress.jsonl"
     assert progress_file.is_file()
     assert "engine turn" in progress_file.read_text(encoding="utf-8")
+
+
+def test_the_brief_travels_by_file_not_argv(monkeypatch, tmp_path):
+    """The prompt must not ride in argv: exec has a kernel cliff.
+
+    Linux caps one exec argument at 128 KiB (MAX_ARG_STRLEN). A full brief --
+    template + floor + 15 capability specs -- sits near that cliff, and a live
+    build died before the process even started: ``worker_exec_failed: could
+    not start /usr/local/bin/codewhale: [Errno 7] Argument list too long``.
+    codewhale 0.9.13 offers no stdin or file flag (verified: no positional ->
+    "required arguments were not provided"; ``-`` is treated as a literal
+    prompt), so the brief goes to docs/writer_prompt.txt -- the file E4 already
+    persisted for audit, making the audit and the input one artifact -- and
+    argv carries only a fixed-size pointer the agent reads first.
+    """
+    import io
+    import subprocess
+
+    from app.factory.build import codewhale_worker as worker_mod
+
+    captured = {}
+
+    class _FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+            self.stdout = io.StringIO(
+                '{"status": "completed", "termination_reason": "resolved"}\n'
+            )
+            self.returncode = 0
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = 9
+
+    monkeypatch.setattr(subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    brief = "BEGIN-BRIEF " + ("x" * 300_000) + " END-BRIEF"
+    receipt = run_worker_job(brief, tmp_path, tenant_store=_binding("d-argfile"))
+    assert receipt.status == "completed"
+
+    argv = captured["argv"]
+    oversized = [a[:40] for a in argv if len(a.encode("utf-8")) > 32 * 1024]
+    assert not oversized, (
+        f"argv still carries a large payload (the 128 KiB exec cliff): {oversized}"
+    )
+    on_disk = (tmp_path / "docs" / "writer_prompt.txt").read_text(encoding="utf-8")
+    assert on_disk == brief, "the full brief must reach the file verbatim"
+    assert "docs/writer_prompt.txt" in argv[-1], (
+        "the argv prompt must tell the agent where the brief lives"
+    )
+
+
+def test_an_unwritable_brief_fails_fast(monkeypatch, tmp_path):
+    """The brief file IS the input now, so failing to write it is fatal --
+    dispatching a coder with a pointer to a file that does not exist would
+    burn a full wall-clock pass on a prompt of nothing."""
+    import subprocess
+
+    from app.factory.build import codewhale_worker as worker_mod
+
+    def _no_popen(*a, **k):  # the process must never start
+        raise AssertionError("Popen called although the brief was unwritable")
+
+    monkeypatch.setattr(subprocess, "Popen", _no_popen)
+    monkeypatch.setattr(worker_mod, "worker_cli_path", lambda: "/usr/local/bin/codewhale")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek-test")
+
+    (tmp_path / "docs").write_text("a file where the dir must go", encoding="utf-8")
+    with pytest.raises(WorkerError) as exc:
+        run_worker_job("build it", tmp_path, tenant_store=_binding("d-nofile"))
+    assert "writer_prompt.txt" in str(exc.value)

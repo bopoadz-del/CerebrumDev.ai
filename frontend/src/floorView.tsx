@@ -716,10 +716,17 @@ export function Floor({
   }
 
   async function download() {
-    if (exportAffordance(liveCoderBuild).disabled) return
+    const aff = exportAffordance(liveCoderBuild)
+    if (aff.disabled) return
     setDownloading(true)
     setDownloadError(null)
     try {
+      if (aff.asIs) {
+        // Gate-failed build, owner asked anyway: the server ships it loudly
+        // labeled as-is. No waiting on a build that already ended.
+        await downloadProductPackage(sessionId, { asIs: true })
+        return
+      }
       const status =
         liveCoderBuild?.state === 'succeeded'
           ? liveCoderBuild
@@ -737,6 +744,25 @@ export function Floor({
       setDownloadError(e instanceof Error ? e.message : 'export failed')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  const [rerunBusy, setRerunBusy] = useState(false)
+  const [rerunError, setRerunError] = useState<string | null>(null)
+  async function rerunWriter() {
+    // The failed run's honest next action is a retry: POST /product/generate
+    // resumes the failed workspace at its stopped phase, or opens a fresh
+    // __runN when the ledger is terminal -- the server decides which.
+    setRerunBusy(true)
+    setRerunError(null)
+    try {
+      await product.generate(sessionId)
+      const s = await product.buildStatus(sessionId)
+      setCoderBuild((prev) => preferHonestBuild(s.build, prev))
+    } catch (e) {
+      setRerunError(e instanceof Error ? e.message : 'rerun failed')
+    } finally {
+      setRerunBusy(false)
     }
   }
 
@@ -1002,9 +1028,18 @@ export function Floor({
               </span>
               <button
                 type="button"
+                data-testid="floor-rerun-writer"
+                disabled={busy || rerunBusy || accessPaused}
+                onClick={() => void rerunWriter()}
+              >
+                Re-run the writer
+              </button>
+              <button
+                type="button"
                 className="ghost"
-                disabled
+                disabled={exportAffordance(liveCoderBuild).disabled || downloading}
                 title={exportAffordance(liveCoderBuild).title}
+                onClick={() => void download()}
               >
                 {exportAffordance(liveCoderBuild).label}
               </button>
@@ -1022,9 +1057,18 @@ export function Floor({
               </span>
               <button
                 type="button"
+                data-testid="floor-rerun-writer"
+                disabled={busy || rerunBusy || accessPaused}
+                onClick={() => void rerunWriter()}
+              >
+                Re-run the writer
+              </button>
+              <button
+                type="button"
                 className="ghost"
-                disabled
+                disabled={exportAffordance(liveCoderBuild).disabled || downloading}
                 title={exportAffordance(liveCoderBuild).title}
+                onClick={() => void download()}
               >
                 {exportAffordance(liveCoderBuild).label}
               </button>
@@ -1045,6 +1089,7 @@ export function Floor({
             </div>
           )}
           {downloadError && <div className="error-box">{downloadError}</div>}
+          {rerunError && <div className="error-box">{rerunError}</div>}
           {newSessionError && <div className="error-box">{newSessionError}</div>}
         </div>
       )}
