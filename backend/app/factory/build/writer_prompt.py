@@ -15,6 +15,16 @@ from app.factory.build.acceptance_floor import (
 )
 
 #: Version log.
+#: v11 -- THE UI BAR, HELD. The prompt told the agent "a UI nothing builds is
+#:   decoration, and the gate refuses it" and that answers carry an authority
+#:   label. ui_e2e filed both as `advisory` and returned ok=True, with a note
+#:   saying they were "not yet fatal ... failing on them today would stop
+#:   every build". So the prompt asserted a bar the gate did not hold, and a
+#:   platform could ship dead frontend source and unlabelled answers and still
+#:   be green -- one of the ways a semi-working UI reached delivery. Both are
+#:   findings now. The section also states the production delivery level and
+#:   names the `dashboard` block as where operator surfaces come from, so the
+#:   agent stops hand-rolling a parallel UI beside the Store's own.
 #: v10 -- THE FLOOR, TOLD. The Store gate graded every build against thirteen
 #:   checks the agent was never shown: grepping this template and the C-BRIEF
 #:   for `no_token_401` returned zero, and the same for the other twelve. So
@@ -74,7 +84,7 @@ from app.factory.build.acceptance_floor import (
 #:   contract from red tests, one rework round per file. v3 names what the
 #:   factory backfills (data_lifecycle.platform_substrate) and what the agent
 #:   owns (store.py, 0001_baseline), with the exact surface the suite calls.
-PROMPT_VERSION = "writer_worker_prompt.v10"
+PROMPT_VERSION = "writer_worker_prompt.v11"
 
 _TEMPLATE = """You are the WRITER role of the CerebrumDev factory, manufacturing a
 governed platform. Work headless in this checkout. Produce real, runnable
@@ -168,6 +178,21 @@ PROCESSES (you share this machine with the factory that is running you):
   if you must start one, use a high port of your own and stop it by PID.
 
 UI (a pilot is deployed and tested, so what it serves must work):
+- PRODUCTION DELIVERY LEVEL: a FULL WORKING UI. Not a prototype, not a demo
+  shell, not a page that renders and returns 200. An operator opens it and
+  finishes the job it is named after. That is the whole bar, and it is not
+  complicated -- every screen you ship does the thing it says it does.
+  It is gate-enforced, not advice: the ui_end_to_end gate boots your product
+  and checks each rule here, and the Store gate grades the acceptance floor
+  below. A build that trips either comes back to you.
+- The operator surfaces come from the `dashboard` block -- layer 3, platform
+  trust tier, already in the Store. Drive them through its actions (render,
+  list_widgets, add_widget, get_metrics, save_layout, get_layout,
+  subscribe_stream, get_snapshot) and configure it through its `ui_schema`
+  inputs (default_layout, refresh_interval, max_widgets, theme). The block
+  carries the operator contract, so a screen built beside it rather than on it
+  is not the platform's UI -- build the craft on top of the block, not around
+  it.
 - The platform serves ONE UI. You ship frontend/ and the Dockerfile; either
   the image builds the frontend and serves it, or you do not ship a frontend
   at all. A UI nothing builds is decoration, and the gate refuses it.

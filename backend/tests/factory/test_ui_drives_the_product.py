@@ -161,3 +161,99 @@ class TestTheGateJudgesWhatIsServed:
         line = [ln for ln in proc.stdout.splitlines() if ln.startswith("UI_PROBE=")]
         out = json.loads(line[-1].split("=", 1)[1])
         assert any("serves no UI" in f for f in out["findings"]), out
+
+
+class TestThePromptStatesTheDeliveryLevel:
+    """The bar the agent aims at, stated where the agent reads it.
+
+    A first attempt at this made the ui_end_to_end gate stricter instead --
+    promoting its two advisories to findings. That was the wrong lever. The
+    gate is a detector: tightening it rejects more builds without making any
+    of them better, and these gates have held since day one. What raises the
+    product is what the agent is told before it writes, and what the emitted
+    suite checks while it can still fix things.
+    """
+
+    def _prompt(self):
+        return render_writer_prompt(_Blueprint(), brief="build it")
+
+    def test_the_prompt_states_the_production_delivery_level(self):
+        text = self._prompt()
+        assert "PRODUCTION DELIVERY" in text, (
+            "the agent is never told the delivery level, so it aims at "
+            "'renders' instead of 'an operator can finish the job'"
+        )
+        assert "FULL WORKING UI" in text
+
+    def test_the_prompt_names_the_dashboard_block_as_the_ui_contract(self):
+        text = self._prompt()
+        assert "dashboard" in text, "the UI block the operator surfaces come from"
+        assert "ui_schema" in text, "how the surfaces are configured"
+
+    def test_the_prompt_names_the_store_gate_as_the_judge(self):
+        text = self._prompt()
+        assert "Store gate" in text or "store gate" in text
+
+
+class TestTheTesterChecksTheUIBeforeTheGateDoes:
+    """TESTER stamps eight suites and none of them touches the UI.
+
+    So the agent cannot see a UI problem while it can still fix one. It
+    yields, ``ui_end_to_end`` rejects the build, and a whole rework round is
+    spent on something a failing test would have shown in the same pass. Live:
+    sess_42d244d317f042b2 lost a 10m22s writer pass to
+    ``ui_end_to_end ok=False reason=ui_not_wired_end_to_end``.
+
+    The prompt's own DEPTH section tells the agent to run
+    ``python -m pytest -m "not pilot" -q`` before yielding. A UI suite in that
+    run is the difference between fixing it in-pass and burning a round.
+
+    The bar does not move. The emitted suite checks what the gate already
+    treats as FATAL and nothing more -- the unbuilt frontend and the missing
+    authority label stay advisory there, so they stay absent here. Making
+    those fail via the emitted suite would be the gate change this replaced,
+    smuggled in through the tester.
+    """
+
+    def _emitted(self):
+        from app.factory.build.ui_e2e import render_ui_tests
+
+        return render_ui_tests(
+            {"book_slot": {"entity": "booking", "fields": []},
+             "cancel_slot": {"entity": "booking", "fields": []}}
+        )
+
+    def test_the_tester_emits_a_ui_suite(self):
+        source = self._emitted()
+        assert source.strip(), "TESTER emits no UI suite at all"
+        assert "def test_" in source
+
+    def test_it_checks_the_ui_is_served_and_reaches_the_product(self):
+        source = self._emitted()
+        assert "app/static/index.html" in source, "it must check a UI is served"
+        assert "/v1/capabilities" in source, "it must check the UI reaches the product"
+
+    def test_it_does_not_enforce_what_the_gate_leaves_advisory(self):
+        """The bar stays where the gates have had it since day one."""
+        source = self._emitted().lower()
+        assert "package.json" not in source, (
+            "the unbuilt-frontend check is ADVISORY in ui_e2e; asserting it "
+            "here raises the bar through the tester, which is the gate change "
+            "this work replaced"
+        )
+        for label_key in ("authority", "precedence"):
+            assert f'"{label_key}"' not in source, (
+                "the authority label is advisory in ui_e2e; it must not be "
+                "fatal here"
+            )
+
+    def test_run_tester_stamps_it(self):
+        import inspect
+
+        from app.factory.build import roles_handlers
+
+        source = inspect.getsource(roles_handlers.run_tester)
+        assert "test_ui_operator_flow.py" in source, (
+            "the emitter exists but TESTER never writes it, so the agent still "
+            "never runs it"
+        )

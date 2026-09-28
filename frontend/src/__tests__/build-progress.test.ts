@@ -318,12 +318,13 @@ describe('build progress copy', () => {
     }
     expect(withClientStall(torn)?.state).toBe('failed')
     expect(platformsLeadCopy(torn, true)).toMatch(/unreadable ledger/)
-    expect(platformsLeadCopy(torn, true)).toMatch(/Download unavailable — build failed/)
+    expect(platformsLeadCopy(torn, true)).toMatch(/Build failed — no certified download/)
     expect(platformsLeadCopy(torn, true)).not.toMatch(/writing this platform/)
     expect(exportAffordance(torn)).toMatchObject({
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
+      asIs: true,
     })
   })
 
@@ -331,12 +332,12 @@ describe('build progress copy', () => {
     expect(platformsLeadCopy(null, false)).not.toMatch(/Download the export/i)
     expect(platformsLeadCopy({ state: 'building' }, true)).not.toMatch(/Download the export/i)
     expect(platformsLeadCopy({ state: 'failed', pilot_ready: false }, true)).toMatch(
-      /Download unavailable — build failed/,
+      /Build failed — no certified download/,
     )
     expect(platformsLeadCopy({ state: 'failed', pilot_ready: false }, true)).not.toMatch(
       /Download the export/i,
     )
-    expect(platformsLeadCopy({ state: 'stalled' }, true)).toMatch(/Download unavailable — build stalled/)
+    expect(platformsLeadCopy({ state: 'stalled' }, true)).toMatch(/Build stalled — no certified download/)
     expect(platformsLeadCopy({ state: 'succeeded', pilot_ready: false }, true)).not.toMatch(
       /Download the export/i,
     )
@@ -451,16 +452,17 @@ describe('build progress copy', () => {
   })
 
   it('gold Download is only for a Store-green success', () => {
-    expect(exportAffordance({ state: 'stalled', detail: 'gone' })).toEqual({
-      label: 'Export (.zip) — build stalled',
-      disabled: true,
+    expect(exportAffordance({ state: 'stalled', detail: 'gone' })).toMatchObject({
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
-      title: 'Build stalled — a full-pilot zip will be refused by the server',
+      asIs: true,
     })
     expect(exportAffordance({ state: 'failed', pilot_ready: false })).toMatchObject({
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
+      asIs: true,
     })
     expect(
       exportAffordance({ state: 'succeeded', pilot_ready: false }),
@@ -977,7 +979,7 @@ describe('build progress copy', () => {
     const stillUnknown = withClientStall(sticky)
     expect(stillUnknown?.state).toBe('failed')
     expect(shouldRefuseExport(stillUnknown)).toBe(true)
-    expect(exportAffordance(stillUnknown).label).toMatch(/pilot suite failed/)
+    expect(exportAffordance(stillUnknown).label).toMatch(/Download as-is \(failed gates\)/)
 
     const threeSticky = withResolvedNRequired(
       {
@@ -1157,11 +1159,12 @@ describe('build progress copy', () => {
       detail: 'FACTORY_CODE_CLI_FAILED: CLI exited 1',
     })
     expect(exportAffordance(cliMissNotReady)).toMatchObject({
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
+      asIs: true,
     })
-    expect(platformsLeadCopy(cliMissNotReady, true)).toMatch(/Download unavailable — build failed/)
+    expect(platformsLeadCopy(cliMissNotReady, true)).toMatch(/Build failed — no certified download/)
     expect(
       formatFinishedAuthorship(cliMissNotReady.authorship, {
         pilotReady: isPilotZipReady(cliMissNotReady),
@@ -1198,11 +1201,12 @@ describe('build progress copy', () => {
     })
     expect(withClientStall(vetCareCliFailed)?.state).toBe('failed')
     expect(exportAffordance(vetCareCliFailed)).toMatchObject({
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
       ghost: true,
+      asIs: true,
     })
-    expect(platformsLeadCopy(vetCareCliFailed, true)).toMatch(/Download unavailable — build failed/)
+    expect(platformsLeadCopy(vetCareCliFailed, true)).toMatch(/Build failed — no certified download/)
     expect(platformsLeadCopy(vetCareCliFailed, true)).not.toMatch(/Download the export/i)
     expect(
       formatFinishedAuthorship(vetCareCliFailed.authorship, {
@@ -1221,9 +1225,12 @@ describe('build progress copy', () => {
     expect(honestLevel(scaffold)).toBe('SCAFFOLD')
     expect(isPilotZipReady(scaffold)).toBe(false)
     expect(shouldRefuseExport(scaffold)).toBe(true)
+    // Not pilot-ready => never a gold zip; the honest exit is the labeled
+    // as-is download, not a dead button.
     expect(exportAffordance(scaffold)).toMatchObject({
-      label: 'Export (.zip) — pilot suite failed',
-      disabled: true,
+      label: 'Download as-is (failed gates)',
+      disabled: false,
+      asIs: true,
     })
   })
 

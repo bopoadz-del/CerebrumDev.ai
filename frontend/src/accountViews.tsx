@@ -192,6 +192,12 @@ export function Platforms({
     setDownloading(true)
     setError(null)
     try {
+      if (exportBtn.asIs) {
+        // Gate-failed build, owner asked anyway: the server ships it loudly
+        // labeled as-is (EXPORTED-AS-IS.md, no certification manifest).
+        await downloadProductPackage(sessionId, { asIs: true })
+        return
+      }
       const status =
         liveBuild?.state === 'succeeded'
           ? liveBuild
