@@ -36,10 +36,37 @@ BRANCH = "build/sess_0123abcd-feed01"
         "resume https://github.com/bopoadz-del/cerebrum-builds/tree/build/sess_0123abcd-feed01 please",
         "sess_0123abcd-feed01",
         "build/sess_0123abcd-feed01",
+        # Live, 2026-09-29: the owner pasted the branch from a phone and the
+        # keyboard appended a period. The strict full-match parser called it
+        # "not a link", the message fell through to the terminal-failure
+        # resume door, and a FULL fresh build started from COLLECTOR over a
+        # tree whose gate was already green 21/21. A session token in a chat
+        # message attaches that session -- however it is wrapped.
+        "build/sess_0123abcd-feed01.",
+        "Build/sess_0123abcd-feed01",
+        "sess_0123abcd-feed01,",
+        "resume build/sess_0123abcd-feed01 please",
+        "pull sess_0123abcd-feed01 and hand it to the writer",
+        "(build/sess_0123abcd-feed01)",
     ],
 )
 def test_a_session_link_resolves_to_its_branch(message):
     assert parse_build_link(message, env={}) == (BRANCH, None)
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "build/sess_0123abcd-feed01. Didnt work",
+        "why is sess_0123abcd-feed01 stopped??",
+    ],
+)
+def test_a_session_token_never_falls_through_to_chat(message):
+    """(None, None) means ordinary chat -- and ordinary chat can reach the
+    fresh-generation door. A message carrying a session token must never
+    get there: it attaches, or it is refused by name."""
+    branch, refusal = parse_build_link(message, env={})
+    assert branch == BRANCH and refusal is None
 
 
 @pytest.mark.parametrize(
