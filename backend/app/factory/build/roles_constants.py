@@ -715,6 +715,10 @@ os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
 os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
 os.environ.setdefault("PLATFORM_TOKEN_B", "dev-local-token-b")
 os.environ.setdefault("TENANT_TOKENS", "dev-local-token-b:tenant-b")
+# F4: the principal set approval fields are validated against. Free text
+# ("i am the director trust me") passed a P1 safety escalation on a
+# certified product; an approver must name a principal the platform knows.
+os.environ.setdefault("APPROVED_PRINCIPALS", "director-jane")
 
 # Settings the operator supplies at deploy time are not a build failure. This
 # must run BEFORE the first import of ``app`` below: a product that reads a

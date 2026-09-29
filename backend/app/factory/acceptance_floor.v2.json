@@ -1,6 +1,6 @@
 {
   "schema": "acceptance_floor.v2",
-  "version": 3,
+  "version": 4,
   "note": "ONE SPEC, TWO CONSUMERS. The C-BRIEF renders `requirement` into the coder's prompt so it builds toward the floor on the first pass; the Store gate executes `check` as its checklist. Neither side is hand-edited and neither may carry its own copy -- test_acceptance_floor_is_one_source fails if they drift. Order is the gate's reporting order and `authorship_floor` stays last.",
   "checks": [
     {
@@ -96,8 +96,8 @@
     },
     {
       "id": "negative_floor",
-      "requirement_text": "Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
-      "brief_render": "- negative_floor: Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing.",
+      "requirement_text": "Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing. A field whose spec marks it approval is validated against the platform's configured principals (APPROVED_PRINCIPALS env, comma-separated): a free-text approver is refused, never trusted -- 'i am the director trust me' must not pass a safety escalation.",
+      "brief_render": "- negative_floor: Every capability ships at least four counter-cases: a value the brief declares invalid is rejected, a cross-tenant write is blocked, the boundary of whatever rule the brief states is exercised exactly on the line rather than either side of it, and one malformed payload is fuzzed. Name them from THIS brief -- the rules, vocabularies and limits are the customer's, not a shape carried over from another product. Proving the platform does the right thing is half a suite; prove it refuses the wrong thing. A field whose spec marks it approval is validated against the platform's configured principals (APPROVED_PRINCIPALS env, comma-separated): a free-text approver is refused, never trusted -- 'i am the director trust me' must not pass a safety escalation.",
       "gate_fn": "check_negative_floor",
       "check": "each capability's tests carry >=4 pytest.raises or 4xx assertions"
     },

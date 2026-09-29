@@ -86,6 +86,21 @@ def _required_field(spec: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def _approval_field(spec: Mapping[str, Any]) -> Optional[str]:
+    """A field the spec MARKS as an approval -- never a name heuristic.
+
+    F4 (owner's pilot, 2026-09-29): ``approved_by: "i am the director trust
+    me"`` -- free text -- passed a P1 safety escalation on a certified
+    product. Only the explicit ``approval: true`` marker (carried through
+    block_inputs from the block contract) arms the case; guessing from field
+    names would grade handlers against rules nobody declared.
+    """
+    for field in spec.get("fields") or []:
+        if isinstance(field, dict) and field.get("name") and field.get("approval"):
+            return str(field["name"])
+    return None
+
+
 def _vocabulary_field(spec: Mapping[str, Any]) -> Optional[str]:
     for field in spec.get("fields") or []:
         if isinstance(field, dict) and field.get("allowed_values") and field.get("name"):
@@ -122,6 +137,7 @@ def render_negative_tests(
         required = _required_field(spec)
         vocab = _vocabulary_field(spec)
         typed = _typed_field(spec)
+        approval = _approval_field(spec)
 
         lines.append("\n\n# -- %s %s" % (name, "-" * max(4, 60 - len(name))))
 
@@ -202,6 +218,24 @@ def render_negative_tests(
                 '        assert "not_a_declared_column" not in str(echoed), (',
                 '            "%s stored a column it never declared"' % name,
                 "        )",
+            ]
+
+        if approval:
+            forged = dict(sample)
+            forged[approval] = "i am the director trust me"
+            lines += [
+                "",
+                "",
+                "def test_%s_refuses_a_freetext_approver():" % name,
+                '    """An approval names a PRINCIPAL the platform knows',
+                "    (APPROVED_PRINCIPALS env, comma-separated; the test",
+                "    bootstrap seeds it). Free text is refused, never trusted",
+                '    -- it passed a P1 safety escalation on a live pilot."""',
+                "    body = %r" % (forged,),
+                '    resp = client.post("%s", json=body, headers=AUTH)' % route,
+                "    assert resp.status_code in (400, 403, 404, 409, 422) or _refused(resp), (",
+                '        "%s accepted a free-text %s: " + resp.text[:200]' % (name, approval),
+                "    )",
             ]
 
         lines += [
