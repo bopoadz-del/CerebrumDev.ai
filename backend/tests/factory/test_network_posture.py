@@ -146,17 +146,11 @@ def test_role_runner_tree_is_p1(tmp_path, monkeypatch, stub_coder):
     result = RoleRunner(load_blueprint(SMOKE), out).run()
     assert result.ok, result.to_dict()
     text = (out / ".env.example").read_text(encoding="utf-8")
-    # F1: the emitted env carries a per-package RANDOM deploy token where the
-    # template holds the slot -- everything else stays the template verbatim.
-    # A pin on byte-equality would force the world-known literal back in.
-    import re as _re
-
-    m = _re.search(r"^PLATFORM_TOKEN=(\S+)$", text, _re.M)
-    assert m, "emitted .env.example lost its PLATFORM_TOKEN line"
-    tok = m.group(1)
-    assert tok != "__DEPLOY_PLATFORM_TOKEN__", "the slot was not rendered"
-    assert _re.fullmatch(r"pt-[A-Za-z0-9_\-]+", tok), tok
-    assert text.replace(tok, "__DEPLOY_PLATFORM_TOKEN__") == P1_ENV_EXAMPLE
+    assert text == P1_ENV_EXAMPLE
+    # F1: the deploy token line is the deterministic placeholder, never
+    # the world-known dev literal; runtime refuses the placeholder.
+    assert "PLATFORM_TOKEN=set-at-deploy" in text
+    assert "dev-local-token" not in text
     for token in P1_FORBIDDEN:
         assert token not in text
     assert_workspace_posture(out)

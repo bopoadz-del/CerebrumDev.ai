@@ -13,8 +13,10 @@ order — because:
   into ``app/tenancy.py`` to make ``cross_tenant_404`` pass. The harness forced
   the backdoor it then certified.
 
-The contract now: RUNTIME reads tokens from the environment only (fail
-closed); the DEPLOY env gets a random per-package token; the TEST bootstrap
+The contract now: RUNTIME reads tokens from the environment only and refuses
+the shipped placeholder (fail closed); the DEPLOY env carries the
+deterministic ``set-at-deploy`` placeholder so scaffolds stay byte-
+reproducible; the TEST bootstrap
 (conftest) is the one place well-known values may exist, and it provisions the
 second tenant through the legitimate ``TENANT_TOKENS`` mechanism; and a new
 floor check refuses any runtime token literal so none of this can regress.
@@ -82,41 +84,42 @@ def test_conftest_provisions_test_tokens_and_the_second_tenant():
     assert "dev-local-token-b:" in _CONFTEST, "token B must map to a real tenant"
 
 
-# -- the deploy env gets a RANDOM per-package token -----------------------------
+# -- the deploy env carries the deterministic placeholder, never the literal --
+#
+# A render-time RANDOM token broke the factory's byte-reproducibility
+# invariant (7 determinism tests: "non-determinism escaped into
+# .env.example"). The scaffold therefore ships the existing deploy-time
+# placeholder -- deterministic, world-known-value-free -- and RUNTIME
+# refuses the placeholder exactly like an empty token, so production must
+# supply a real value at deploy.
 
 
-def test_deploy_platform_token_is_random_and_url_safe():
-    from app.factory.build.deploy_token import deploy_platform_token
-
-    a, b = deploy_platform_token(), deploy_platform_token()
-    assert a != b, "the deploy token must be per-package random"
-    for tok in (a, b):
-        assert len(tok) >= 24
-        assert re.fullmatch(r"[A-Za-z0-9_\-]+", tok), tok
-        assert tok not in LITERALS
-
-
-def test_generator_env_example_uses_the_random_token_not_the_literal():
+def test_generator_env_example_ships_the_placeholder_not_the_literal():
     source = Path("app/factory/generator.py").read_text(encoding="utf-8")
     assert "dev-local-token" not in source, (
         "generator.py still ships the world-known token as the deploy default"
     )
-    assert "deploy_platform_token" in source
+    assert "PLATFORM_TOKEN=set-at-deploy" in source
 
 
-def test_network_posture_env_uses_the_random_token_not_the_literal():
-    from app.factory.build import network_posture
+def test_network_posture_env_ships_the_placeholder_not_the_literal():
+    from app.factory.build.network_posture import P1_ENV_EXAMPLE
 
     source = Path("app/factory/build/network_posture.py").read_text(encoding="utf-8")
     assert "dev-local-token" not in source
-    assert "deploy_platform_token" in source
-    # And the rendered env text itself carries a random token, not the literal.
-    rendered = network_posture.render_env_example() if hasattr(
-        network_posture, "render_env_example"
-    ) else ""
-    if rendered:
-        assert "dev-local-token" not in rendered
-        assert "PLATFORM_TOKEN=" in rendered
+    assert "PLATFORM_TOKEN=set-at-deploy" in P1_ENV_EXAMPLE
+
+
+def test_runtime_refuses_the_placeholder_as_a_credential():
+    """An operator who deploys .env.example verbatim must get FAIL-CLOSED
+    (no platform token), not a world-known bearer value."""
+    from app.factory.build.store_acceptance import (
+        render_auth_module,
+        render_tenancy_module,
+    )
+
+    assert 'set-at-deploy' in render_tenancy_module()
+    assert 'set-at-deploy' in render_auth_module()
 
 
 # -- the floor refuses a runtime token literal, forever -------------------------
