@@ -43,7 +43,16 @@ _TREE_LINK = re.compile(
     r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/tree/(\S+)"
 )
 _BRANCH = re.compile(r"^build/sess_[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*$")
-_BARE = re.compile(r"^\s*(?:build/)?(sess_[0-9A-Za-z]+)(-[0-9A-Za-z]+)?\s*$")
+#: A session token ANYWHERE in the message, however wrapped. The old form
+#: full-matched the whole message, so "build/sess_...-2a1daefe." -- the
+#: branch pasted from a phone whose keyboard appended a period -- was "not
+#: a link", fell through to the terminal-failure resume door, and a fresh
+#: build re-ran COLLECTOR/CLONER/WRITER over a tree whose store gate was
+#: already green (live, sess_ee6997342dbb405a, 2026-09-29). A message that
+#: carries a session token means THAT session: attach it or refuse it by
+#: name; it must never read as ordinary chat, because ordinary chat can
+#: start a fresh generation.
+_TOKEN = re.compile(r"(?i)(?:build/)?\b(sess_[0-9A-Za-z]{6,})(-[0-9A-Za-z]+)?\b")
 
 
 class AttachError(RuntimeError):
@@ -67,9 +76,12 @@ def parse_build_link(text: str, env: Mapping[str, str] | None = None) -> Tuple[O
         if not _BRANCH.match(branch):
             return None, NOT_A_BUILD_LINK
         return branch, None
-    bare = _BARE.match(message)
-    if bare:
-        session, suffix = bare.group(1), bare.group(2) or ""
+    token = _TOKEN.search(message)
+    if token:
+        # Factory session ids and branch suffixes are lowercase hex; a
+        # phone that capitalizes the paste must not 404 a real branch.
+        session = token.group(1).lower()
+        suffix = (token.group(2) or "").lower()
         if suffix:
             return f"build/{session}{suffix}", None
         return resolve_session_branch(session, env), None
