@@ -21,7 +21,13 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.factory.build.failure_owner import FACTORY, PRODUCT, classify
+from app.factory.build.failure_owner import (
+    FACTORY,
+    PRODUCT,
+    classify,
+    failure_names,
+    repeated,
+)
 
 FACTORY_FILES = (
     "tests/test_models.py",
@@ -92,6 +98,62 @@ def test_pure_factory_failure_still_halts_and_names_the_generator():
 def test_environment_fault_is_unchanged():
     v = _verdict([], reason="environment_fault")
     assert classify(v, FACTORY_FILES)["owner"] == "ENVIRONMENT"
+
+
+# -- D3: G5 counts the failure SHAPE, not just the name --------------------------
+
+
+def test_g5_does_not_count_a_collection_error_then_an_assertion_as_a_repeat():
+    """D4 half of the incident: round 1 died at COLLECTION (kind=error, the
+    substrate stub) and round 2 asserted (kind=failure, a real defect the fix
+    surfaced). Same nodeid, different SHAPE -- G5 must not call that "the same
+    failure twice" and kill a run that was actually progressing."""
+    r1 = _verdict([], rows=[{"nodeid": "tests/test_pilot.py::t", "name": "t",
+                             "kind": "error", "message": "ImportError: cannot import name"}])
+    r2 = _verdict([], rows=[{"nodeid": "tests/test_pilot.py::t", "name": "t",
+                             "kind": "failure", "message": "AssertionError: 1 != 2"}])
+    assert repeated(failure_names(r1), failure_names(r2)) == []
+
+
+def test_g5_still_stops_the_identical_failure_twice():
+    """The rule is not weakened: the same nodeid failing the same WAY on two
+    rounds still halts."""
+    row = {"nodeid": "tests/test_pilot.py::t", "name": "t",
+           "kind": "failure", "message": "AssertionError: 1 != 2"}
+    r1 = _verdict([], rows=[dict(row)])
+    r2 = _verdict([], rows=[dict(row)])
+    assert repeated(failure_names(r1), failure_names(r2)) == failure_names(r2)
+
+
+def test_failure_names_carries_the_shape_readably():
+    v = _verdict([], rows=[{"nodeid": "tests/test_pilot.py::t", "name": "t",
+                            "kind": "error", "message": "ImportError"}])
+    names = failure_names(v)
+    assert len(names) == 1
+    assert "tests/test_pilot.py::t" in names[0] and "error" in names[0]
+
+
+# -- D4: a product route still NAMES the factory-owned row -----------------------
+
+
+def test_a_product_route_still_names_the_factory_owned_row():
+    """When a product row routes the verdict PRODUCT, a factory-owned row in the
+    same suite must not vanish -- the owner needs to see the factory still owes
+    a fix, and the writer must not be asked to fix it."""
+    v = _verdict(
+        [],
+        rows=[
+            {"nodeid": "tests/test_routes.py::t_prod", "file": "tests/test_routes.py",
+             "name": "t_prod", "kind": "error", "message": "boom",
+             "innermost": "app/store.py:41 in connect"},
+            {"nodeid": "tests/test_models.py::t_broken", "file": "tests/test_models.py",
+             "name": "t_broken", "kind": "error", "message": "KeyError: 'figure'",
+             "innermost": "tests/test_models.py:31"},
+        ],
+    )
+    out = classify(v, FACTORY_FILES)
+    assert out["owner"] == PRODUCT
+    assert any("test_models.py::t_broken" in t for t in out.get("factory_owned", [])), out
 
 
 def test_a_broken_stub_assertion_stays_factory():
