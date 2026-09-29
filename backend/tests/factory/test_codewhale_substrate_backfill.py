@@ -45,6 +45,9 @@ class _Workspace:
     def exists(self, relpath) -> bool:
         return (self.root / Path(relpath)).exists()
 
+    def read_text(self, relpath) -> str:
+        return (self.root / Path(relpath)).read_text(encoding="utf-8")
+
 
 SPECS = {"booking": {"entity": "booking", "fields": [{"name": "reference", "type": "string"}]}}
 
@@ -60,6 +63,72 @@ def test_the_module_the_emitted_suite_imports_is_written(tmp_path):
     assert "app/backup.py" in result["written"]
     assert (tmp_path / "app" / "backup.py").is_file()
     assert (tmp_path / "app" / "migrations.py").is_file()
+
+
+def test_a_stub_that_breaks_a_stamped_import_is_repaired(tmp_path):
+    """D2 (live 2026-09-29, contractor platform): with stub_rate=1.0 the agent
+    left a stub app/domain_ops.py. The backfill was 'gaps only' -- file exists
+    → skip -- so the stub survived, and the factory's OWN stamped test
+    (from app.domain_ops import OUTCOMES, perform_all) died at collection:
+    'suite_red: missing module -- FAILED tests.test_domain_acceptance'. The
+    factory owns that module and that import contract, so it must repair a
+    stub that cannot satisfy the test the factory itself stamps."""
+    from app.factory.build.domain_acceptance import (
+        backfill_domain_substrate,
+        render_product_tests,
+    )
+
+    specs = {"booking": {"entity": "booking",
+                         "fields": [{"name": "reference", "type": "string"}]}}
+    assert "from app.domain_ops import OUTCOMES, perform_all" in render_product_tests(specs)
+
+    ws = _Workspace(tmp_path)
+    ws.write_text("app/domain_ops.py", '"""a stub the agent left"""\n')
+
+    result = backfill_domain_substrate(ws, specs)
+
+    repaired = result.get("repaired", [])
+    assert any("domain_ops" in r for r in repaired), (
+        f"the stub was not repaired: written={result['written']} "
+        f"skipped={result['skipped']} repaired={repaired}"
+    )
+    body = (tmp_path / "app" / "domain_ops.py").read_text(encoding="utf-8")
+    assert "OUTCOMES" in body and "def perform_all" in body, (
+        "domain_ops still cannot satisfy the stamped test's import"
+    )
+
+
+def test_a_module_level_agent_file_is_still_left_alone(tmp_path):
+    """The repair keys on NAME-level import contracts only. A module the
+    stamped suite imports whole (from app import backup) has no name contract,
+    so an agent-authored backup.py must still be preserved, not clobbered."""
+    ws = _Workspace(tmp_path)
+    mine = "# authored by the coding agent, not the factory\n"
+    (tmp_path / "app").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app" / "backup.py").write_text(mine, encoding="utf-8")
+
+    backfill_platform_substrate(ws)
+
+    assert (tmp_path / "app" / "backup.py").read_text(encoding="utf-8") == mine
+
+
+def test_a_partial_real_module_is_a_conflict_not_a_clobber(tmp_path):
+    """Safety valve: if a file provides SOME of the required names but not all,
+    it may be real authored work the factory must not overwrite. Repair is
+    unsafe -> report a conflict (the caller halts FACTORY, no rework)."""
+    from app.factory.build.domain_acceptance import backfill_domain_substrate
+
+    specs = {"booking": {"entity": "booking",
+                         "fields": [{"name": "reference", "type": "string"}]}}
+    ws = _Workspace(tmp_path)
+    # Provides OUTCOMES but not perform_all -- a partial, possibly-real module.
+    ws.write_text("app/domain_ops.py", 'OUTCOMES = ("create_persists",)\n')
+
+    result = backfill_domain_substrate(ws, specs)
+
+    assert any("domain_ops" in c for c in result.get("conflicts", [])), result
+    # Not silently overwritten.
+    assert "OUTCOMES" in (tmp_path / "app" / "domain_ops.py").read_text(encoding="utf-8")
 
 
 def test_every_substrate_file_lands_when_the_agent_wrote_none(tmp_path):

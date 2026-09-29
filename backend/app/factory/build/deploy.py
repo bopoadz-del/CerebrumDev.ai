@@ -699,19 +699,20 @@ def deploy_substrate() -> List[Tuple[str, str]]:
 
 
 def backfill_deploy_substrate(workspace: Any) -> Dict[str, List[str]]:
-    """Write the deploy substrate the agent was never asked for. Gaps only."""
-    written: List[str] = []
-    skipped: List[str] = []
-    for rel, content in deploy_substrate():
-        if workspace.exists(rel):
-            skipped.append(rel)
-            continue
-        if rel.endswith(".py") and workspace.exists(rel[:-3]):
-            skipped.append(f"{rel} (a package of the same name exists)")
-            continue
-        workspace.write_text(Path(rel), content)
-        written.append(rel)
-    return {"written": written, "skipped": skipped}
+    """Write the deploy substrate the agent was never asked for, AND repair a
+    stub that cannot satisfy the stamped import contract (D2).
+
+    ``tests/test_deploy.py`` imports specific names from ``app.health``,
+    ``app.observe`` and ``app.revision``; a stub of any of those that provides
+    none of them is replaced with canonical, a partial one is a conflict.
+    """
+    from app.factory.build.substrate_contract import reconcile_substrate
+
+    return reconcile_substrate(
+        workspace,
+        deploy_substrate(),
+        [render_product_tests({})],
+    )
 
 
 def assert_fail_closed_health_source(main_source: str) -> None:
