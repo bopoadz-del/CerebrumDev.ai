@@ -1182,6 +1182,11 @@ def _mine_constraints_literal(
                 slot.setdefault("min", rules["min"])
             if rules.get("max") is not None:
                 slot.setdefault("max", rules["max"])
+            # F4: a block contract may mark a field as an APPROVAL -- the
+            # negative floor then demands a free-text approver is refused.
+            # Only the explicit marker arms it; never a name heuristic.
+            if rules.get("approval") is True:
+                slot["approval"] = True
 
 
 def _inferred_field_shape(name: str) -> Dict[str, Any]:
@@ -1230,6 +1235,10 @@ def _merge_field_contract(
         if allowed:
             field["allowed_values"] = list(allowed)
             changed = True
+    if contract.get("approval") is True and not field.get("approval"):
+        # F4: the approval marker rides the same channel as the vocabulary.
+        field["approval"] = True
+        changed = True
     if contract.get("min") is not None and field.get("min") is None:
         field["min"] = contract["min"]
         changed = True
