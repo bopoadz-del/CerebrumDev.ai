@@ -147,6 +147,10 @@ def test_role_runner_tree_is_p1(tmp_path, monkeypatch, stub_coder):
     assert result.ok, result.to_dict()
     text = (out / ".env.example").read_text(encoding="utf-8")
     assert text == P1_ENV_EXAMPLE
+    # F1: the deploy token line is the deterministic placeholder, never
+    # the world-known dev literal; runtime refuses the placeholder.
+    assert "PLATFORM_TOKEN=set-at-deploy" in text
+    assert "dev-local-token" not in text
     for token in P1_FORBIDDEN:
         assert token not in text
     assert_workspace_posture(out)

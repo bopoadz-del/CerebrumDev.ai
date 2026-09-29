@@ -1,6 +1,6 @@
 {
   "schema": "acceptance_floor.v2",
-  "version": 2,
+  "version": 3,
   "note": "ONE SPEC, TWO CONSUMERS. The C-BRIEF renders `requirement` into the coder's prompt so it builds toward the floor on the first pass; the Store gate executes `check` as its checklist. Neither side is hand-edited and neither may carry its own copy -- test_acceptance_floor_is_one_source fails if they drift. Order is the gate's reporting order and `authorship_floor` stays last.",
   "checks": [
     {
@@ -145,6 +145,13 @@
       "brief_render": "- audit_clean: CI runs pip-audit and bandit and both are clean. The Factory ships a .github/workflows/ci.yml with those jobs; keep them. A dependency advisory found by the buyer's scanner and not by yours is the worst order to find it in.",
       "gate_fn": "check_audit_clean",
       "check": "CI runs pip-audit and bandit"
+    },
+    {
+      "id": "no_token_literal",
+      "requirement_text": "Runtime code (app/**) carries no bearer-token literal and no environment-fallback token. Tokens come from the deploy environment only: PLATFORM_TOKEN for the platform tenant, TENANT_TOKENS (token:tenant pairs) for further tenants. A baked token is a production backdoor -- a certified product shipped one and it opened a second tenant with a world-known value.",
+      "brief_render": "- no_token_literal: Runtime code (app/**) carries no bearer-token literal and no environment-fallback token. Tokens come from the deploy environment only: PLATFORM_TOKEN for the platform tenant, TENANT_TOKENS (token:tenant pairs) for further tenants. A baked token is a production backdoor -- a certified product shipped one and it opened a second tenant with a world-known value.",
+      "gate_fn": "check_no_token_literal",
+      "check": "no token literal or env-fallback token in runtime app/**"
     },
     {
       "id": "authorship_floor",

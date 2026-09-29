@@ -343,11 +343,12 @@ def render_auth_module() -> str:
         'from fastapi import HTTPException, Request',
         '',
         'PLATFORM_TOKEN_ENV = "PLATFORM_TOKEN"',
-        'DEFAULT_PLATFORM_TOKEN = "dev-local-token"',
+        '# No baked default: RUNTIME reads the token from the environment only.',
         '',
         '',
         'def platform_token() -> str:',
-        '    return (os.environ.get(PLATFORM_TOKEN_ENV) or DEFAULT_PLATFORM_TOKEN).strip()',
+        '    token = (os.environ.get(PLATFORM_TOKEN_ENV) or "").strip()',
+        '    return "" if token == "set-at-deploy" else token',
         '',
         '',
         'def require_platform_token(request: Request) -> Any:',
@@ -424,7 +425,7 @@ def render_tenancy_module() -> str:
         '',
         'Token → tenant mapping comes from the environment:',
         '',
-        '    PLATFORM_TOKEN      the platform token (default dev-local-token)',
+        '    PLATFORM_TOKEN      the platform token (required; no baked default)',
         '    TENANT_TOKENS       "token:tenant,token:tenant" for extra tenants',
         '    TENANT_NAMES        "tenant:display name" for readable names',
         '',
@@ -476,7 +477,12 @@ def render_tenancy_module() -> str:
         'def token_map() -> Dict[str, str]:',
         '    """token → tenant_id. The platform token owns the default tenant."""',
         '    out: Dict[str, str] = {}',
-        '    platform = (os.environ.get("PLATFORM_TOKEN") or "dev-local-token").strip()',
+        '    # No baked fallback: a deploy that sets no token has NO platform',
+        '    # token (fail closed). The deploy env carries a per-package random',
+        '    # value; the TEST bootstrap (conftest) provides the dev value.',
+        '    platform = (os.environ.get("PLATFORM_TOKEN") or "").strip()',
+        '    if platform == "set-at-deploy":',
+        '        platform = ""  # the shipped placeholder is not a credential',
         '    if platform:',
         '        out[platform] = DEFAULT_TENANT',
         '    for token, tenant in _pairs(os.environ.get("TENANT_TOKENS", "")):',
@@ -1507,6 +1513,46 @@ def check_audit_clean() -> Tuple[str, str]:
         # STORE_POSTGRES_BOOT -- unmeasured is a fail, never a silent pass.
         return "FAIL", "STORE_AUDIT_CLEAN unmeasured: the gate must run bandit/pip-audit and read the verdict, not just confirm the scan is configured"
     return "PASS", "scan ran and is clean (no HIGH, no SQL-construction findings)"
+
+
+def check_no_token_literal() -> Tuple[str, str]:
+    """Runtime app/** carries no baked bearer token and no token fallback.
+
+    The well-known dev values live in the TEST bootstrap (tests/conftest.py)
+    only; the deploy env carries a per-package random token. A baked token is
+    a production backdoor -- live 2026-09-29, a second-tenant token literal
+    opened another tenant on a CERTIFIED product with a world-known value.
+    An EMPTY default (or two quotes with nothing between) is the fail-closed
+    pattern and is allowed.
+    """
+    app_dir = ROOT / "app"
+    if not app_dir.is_dir():
+        return "FAIL", "app/ missing"
+    literals = ("dev-local-token-b", "dev-local-token")
+    dq, sq = chr(34), chr(39)
+    for path in sorted(app_dir.rglob("*.py")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        rel = path.relative_to(ROOT)
+        for no, line in enumerate(text.splitlines(), 1):
+            for lit in literals:
+                if lit in line:
+                    return "FAIL", "%s:%s bakes %s -- runtime tokens come from the environment only" % (rel, no, lit)
+            flat = "".join(line.split())
+            idx = flat.find("environ.get(")
+            if idx < 0 or "PLATFORM_TOKEN" not in flat[idx:]:
+                continue
+            seg = flat[idx:]
+            for q in (dq, sq):
+                j = seg.find("," + q)
+                if j >= 0 and not seg.startswith("," + q + q, j):
+                    return "FAIL", "%s:%s has a token default -- read the environment and fail closed instead" % (rel, no)
+                j = seg.find(")or" + q)
+                if j >= 0 and not seg.startswith(")or" + q + q, j):
+                    return "FAIL", "%s:%s has an env-fallback token -- read the environment and fail closed instead" % (rel, no)
+    return "PASS", "no token literal or fallback in runtime app/**"
 
 
 def check_openapi_committed() -> Tuple[str, str]:

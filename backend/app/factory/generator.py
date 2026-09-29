@@ -305,7 +305,10 @@ class ProductGenerator:
             "# CEREBRUM_API_KEY=",
             "",
             "# Capability write routes require this bearer token (HTTP 401 without it).",
-            "PLATFORM_TOKEN=dev-local-token",
+            # F1: never the world-known dev literal. set-at-deploy is the
+            # existing deploy-time placeholder; RUNTIME refuses it like an
+            # empty token, so production must supply a real value.
+            "PLATFORM_TOKEN=set-at-deploy",
         ]
         if self.blueprint.vertical == "estate":
             lines += [

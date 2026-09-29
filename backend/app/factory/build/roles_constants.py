@@ -705,6 +705,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ["STORAGE_PATH"] = tempfile.mkdtemp(prefix="platform-test-")
 
+# Test-context tokens. RUNTIME has no baked token: production reads
+# PLATFORM_TOKEN from the deploy environment (a per-package random value)
+# and fails closed without one. This bootstrap is the ONE place the
+# well-known dev values may exist, and it provisions the second tenant
+# through TENANT_TOKENS -- the legitimate mechanism whose absence once
+# forced a writer to hardwire a token into app/tenancy.py (a production
+# backdoor the floor's no_token_literal check now refuses).
+os.environ.setdefault("PLATFORM_TOKEN", "dev-local-token")
+os.environ.setdefault("PLATFORM_TOKEN_B", "dev-local-token-b")
+os.environ.setdefault("TENANT_TOKENS", "dev-local-token-b:tenant-b")
+
 # Settings the operator supplies at deploy time are not a build failure. This
 # must run BEFORE the first import of ``app`` below: a product that reads a
 # required credential at import would otherwise KeyError inside the factory's

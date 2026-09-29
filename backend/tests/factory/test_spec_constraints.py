@@ -390,7 +390,10 @@ def test_the_route_actually_rejects_a_value_outside_the_vocabulary(
         "import os, sys\n"
         "sys.path.insert(0, r'%s')\n" % str(out).replace("\\", "\\\\")
         + "os.environ['STORAGE_PATH'] = r'%s'\n" % str(out / "d").replace("\\", "\\\\")
-        +         "from fastapi.testclient import TestClient\n"
+        # Runtime is fail-closed now (F1): a deployed product gets its token
+        # from the environment, so the probe provisions one like an operator.
+        + "os.environ['PLATFORM_TOKEN'] = 'dev-local-token'\n"
+        + "from fastapi.testclient import TestClient\n"
         "from app.main import app\n"
         "c = TestClient(app)\n"
         "headers = {'Authorization': 'Bearer ' + os.environ.get("
