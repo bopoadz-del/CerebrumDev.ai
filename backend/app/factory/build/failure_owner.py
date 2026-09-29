@@ -47,9 +47,24 @@ def _failing(verdict: Any) -> List[Dict[str, str]]:
             # fallback path of whether the product failed an assertion (its
             # fault) or the test code itself broke (the factory's).
             _, _, tail = text.partition(" - ")
+            # pytest prints ERROR for a collection/setup error and FAILED for a
+            # test that ran and failed. That distinction is the failure SHAPE
+            # G5 must not collapse (D3): a stripped stub that errors at import
+            # and a real assertion carry the same nodeid but are not the same
+            # failure.
+            kind = "error" if text.lstrip().upper().startswith("ERROR") else "failure"
             out.append({"file": m.group(1), "nodeid": m.group(1) + ("::" + m.group(2) if m.group(2) else ""),
-                        "name": name, "innermost": "", "message": tail.strip(), "text": text})
+                        "name": name, "innermost": "", "message": tail.strip(), "text": text,
+                        "kind": kind})
     return out
+
+
+def _row_kind(row: Dict[str, str]) -> str:
+    """The failure shape: 'error' (collection/setup/raise) or 'failure'
+    (a test that ran and asserted). Defaults to 'failure' when a row carries
+    no kind (older ledgers), which keeps the pre-D3 behaviour for those."""
+    kind = str(row.get("kind") or "").strip().lower()
+    return kind if kind in ("error", "failure") else "failure"
 
 
 def _is_product_failure(row: Dict[str, str]) -> bool:
@@ -160,8 +175,13 @@ def classify(
     # run the writer could advance -- the pure-factory remainder (if any)
     # surfaces on the next round once the product rows are green.
     if product_owned:
+        # D4: a factory-owned row must not vanish just because a product row
+        # routed the verdict PRODUCT. The writer is not asked to fix it (the
+        # tests stay PRODUCT-routed), but the owner needs to see the factory
+        # still owes a fix, so the caller can name it in the note and halt.
         return {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in product_owned],
-                "generator": "", "reason": reason}
+                "generator": "", "reason": reason,
+                "factory_owned": [r.get("nodeid") or r.get("name") for r in factory_owned]}
     if factory_owned:
         first = factory_owned[0]
         return {
@@ -175,11 +195,24 @@ def classify(
 
 
 def failure_names(verdict: Any) -> List[str]:
-    """Stable names for G5's same-failure-twice rule."""
-    names = [r.get("nodeid") or r.get("name") for r in _failing(verdict)]
-    names = [n for n in names if n]
-    if names:
-        return sorted(set(names))
+    """Stable keys for G5's same-failure-twice rule, carrying the failure SHAPE.
+
+    D3 (live 2026-09-29): G5 keyed on the nodeid alone, so a test that failed
+    round 1 by NOT importing (a collection error) and round 2 by ASSERTING
+    counted as "the same failure twice" and the run was killed -- even though
+    the second round was a different, progressing defect. The key now embeds
+    the row's kind (``<nodeid> [error]`` / ``[failure]``), so the two are
+    distinct. Rows from an older ledger carry no kind and default to
+    ``failure``: they simply will not match a new ``[error]`` key, which costs
+    at most one extra rework round -- never a false halt.
+    """
+    keys = []
+    for row in _failing(verdict):
+        nodeid = row.get("nodeid") or row.get("name")
+        if nodeid:
+            keys.append(f"{nodeid} [{_row_kind(row)}]")
+    if keys:
+        return sorted(set(keys))
     gate = str(getattr(verdict, "gate", "") or "")
     return [f"{gate}:{getattr(verdict, 'reason', '') or 'failed'}"] if gate else []
 

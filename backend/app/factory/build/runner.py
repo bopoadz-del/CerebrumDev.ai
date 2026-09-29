@@ -1649,6 +1649,19 @@ class RoleRunner:
                         findings=verdict.findings,
                     )
 
+                # D4: a factory-owned row rides along with the product rows.
+                # The writer is not asked to fix it, but it must not vanish --
+                # name it so the owner sees the factory still owes a fix.
+                factory_rows = owned.get("factory_owned") or []
+                if factory_rows:
+                    self.ledger.append(
+                        EventKind.NOTE,
+                        role=role,
+                        detail="FACTORY_ALSO_OWNS (not sent to the writer): "
+                        + ", ".join(str(t) for t in factory_rows),
+                        payload={"factory_owned": factory_rows, "routed": "PRODUCT"},
+                    )
+
                 # G5: the same failing check/test on two consecutive rounds
                 # stops the run. Never a third attempt at the same thing.
                 current = failure_owner.failure_names(verdict)
