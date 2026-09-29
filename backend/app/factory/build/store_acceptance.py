@@ -1498,8 +1498,15 @@ def check_audit_clean() -> Tuple[str, str]:
         return "FAIL", "CI does not run " + ", ".join(missing)
     measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
     if measured in ("0", "false", "dirty"):
-        return "FAIL", "pip-audit/bandit reported findings"
-    return "PASS", "CI runs pip-audit and bandit"
+        return "FAIL", "bandit/pip-audit reported HIGH or SQL-construction findings"
+    if measured not in ("1", "true", "clean"):
+        # F3: a scan that is CONFIGURED but never RUN is not a pass. A product
+        # shipped 16 bandit SQL findings and still scored 21/21 because this
+        # check only proved ci.yml mentions the scanners. The store gate must
+        # RUN the scan and export STORE_AUDIT_CLEAN, exactly as it measures
+        # STORE_POSTGRES_BOOT -- unmeasured is a fail, never a silent pass.
+        return "FAIL", "STORE_AUDIT_CLEAN unmeasured: the gate must run bandit/pip-audit and read the verdict, not just confirm the scan is configured"
+    return "PASS", "scan ran and is clean (no HIGH, no SQL-construction findings)"
 
 
 def check_openapi_committed() -> Tuple[str, str]:
