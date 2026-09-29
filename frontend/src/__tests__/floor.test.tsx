@@ -14,6 +14,7 @@ const downloadMock = vi.fn()
 const coderControlMock = vi.fn()
 const getHealthMock = vi.fn()
 const approveMock = vi.fn()
+const sessionStateMock = vi.fn()
 
 vi.mock('../api/factory', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api/factory')>()
@@ -29,6 +30,10 @@ vi.mock('../api/factory', async (importOriginal) => {
       get: (...args: unknown[]) => getMock(...args),
       coderControl: (...args: unknown[]) => coderControlMock(...args),
       approve: (...args: unknown[]) => approveMock(...args),
+    },
+    sessions: {
+      ...actual.sessions,
+      state: (...args: unknown[]) => sessionStateMock(...args),
     },
   }
 })
@@ -55,6 +60,8 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     approveMock.mockReset()
     approveMock.mockResolvedValue({ ok: true, blueprint_approved: false })
     coderControlMock.mockResolvedValue({ ok: true, control: { action: 'pause' } })
+    sessionStateMock.mockReset()
+    sessionStateMock.mockResolvedValue({ chat_history: [] })
     getHealthMock.mockReset()
     getHealthMock.mockResolvedValue({
       factory_code_cli: { available: true, credentials_file_present: true },
@@ -230,6 +237,33 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.getByText('chat LLM')).toBeInTheDocument()
     expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
     expect(screen.getByPlaceholderText(/coding agent has taken over/i)).toBeDisabled()
+  })
+
+  it('the pre-build conversation survives a reload', async () => {
+    // Live, 2026-09-29 (MEP Construction Platform): after takeover the
+    // Floor re-hydrated only two synthetic bubbles -- greeting + takeover
+    // card -- and the owner's brief and the whole drafting exchange
+    // vanished from the page. The backend kept chat_history the whole
+    // time; the Floor just never asked for it.
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    sessionStateMock.mockResolvedValue({
+      chat_history: [
+        { role: 'user', content: 'Build me a vineyard management platform' },
+        { role: 'assistant', content: 'Blueprint drafted: Vineyard Platform (winery).' },
+        { role: 'assistant', content: 'The coding agent has taken over the floor.' },
+      ],
+    })
+    render(<Floor sessionId="sess_history" goPlatforms={() => {}} />)
+    expect(await screen.findByRole('status')).toHaveTextContent(/Coding agent has taken over/)
+    // The owner's brief and the drafting exchange are still on the floor...
+    expect(screen.getByText('Build me a vineyard management platform')).toBeInTheDocument()
+    expect(screen.getByText(/Blueprint drafted: Vineyard Platform/)).toBeInTheDocument()
+    // ...and the takeover line renders once (the card), never twice.
+    expect(screen.getAllByText('The coding agent has taken over the floor.')).toHaveLength(1)
   })
 
   it('restores a pending blueprint after remount so Approve & build is still there', async () => {
