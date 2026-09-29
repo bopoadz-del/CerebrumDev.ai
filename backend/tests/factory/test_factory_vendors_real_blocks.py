@@ -74,6 +74,10 @@ def test_generator_vendors_real_code_when_registry_present(tmp_path):
 
 
 def test_blocks_root_prefers_env_path(monkeypatch, tmp_path):
+    # A VALID root: the resolver now ignores a configured path with no
+    # block_registry/ (a CI image's empty placeholder must not become a
+    # dead root handed to CLONER).
+    (tmp_path / "block_registry").mkdir()
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
     assert platform_chat_flow._blocks_root() == tmp_path
 
