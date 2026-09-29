@@ -3535,6 +3535,28 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 stage="substrate",
                 source="factory",
             )
+        # D2: a stub that could not satisfy the factory's own stamped import
+        # contract was replaced with the canonical module. Named on the Floor
+        # so a repaired file is never mistaken for agent authorship.
+        if result.get("repaired"):
+            ctx.note(
+                f"{label} substrate REPAIRED (a stub could not satisfy the "
+                "test the factory stamps): " + ", ".join(result["repaired"]),
+                stage="substrate",
+                source="factory",
+            )
+        # A file that provides some required names but not all may be real
+        # authored work; the factory must not overwrite it, and it cannot ship
+        # a product whose own stamped suite will not import. This is the
+        # factory's fault to resolve, so it halts FACTORY (no writer rework).
+        if result.get("conflicts"):
+            raise RoleError(
+                f"factory_substrate_conflict: {label} substrate cannot be "
+                "safely repaired without overwriting possible agent work: "
+                + "; ".join(result["conflicts"]),
+                reason="factory_substrate_conflict",
+                location="WRITER",
+            )
 
     # Same early return, the other half of the contract: run_writer converges
     # the ProductGenerator classes (app/agents/manifests, app/workflows,

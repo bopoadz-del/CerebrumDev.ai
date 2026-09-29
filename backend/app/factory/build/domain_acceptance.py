@@ -1075,24 +1075,23 @@ def domain_substrate(specs: Dict[str, Dict[str, Any]]) -> List[Tuple[str, str]]:
 def backfill_domain_substrate(
     workspace: Any, specs: Dict[str, Dict[str, Any]]
 ) -> Dict[str, List[str]]:
-    """Write the domain substrate the agent was never asked for.
+    """Write the domain substrate the agent was never asked for, AND repair a
+    stub that cannot satisfy the import contract the factory itself stamps.
 
-    Gap-filling only, exactly like ``backfill_platform_substrate``: anything
-    already on disk is left as the agent wrote it, and a module never shadows
-    a package of the same name the agent authored.
+    Gap-fill preserves the agent's bytes; the repair is D2's fix: a stub
+    ``app/domain_ops.py`` that provides none of the names
+    ``tests/test_domain_acceptance.py`` imports is replaced with the canonical
+    module the factory owns. A file that provides SOME but not all required
+    names is a ``conflict`` — possibly real authored work — and the caller
+    halts FACTORY rather than overwrite it.
     """
-    written: List[str] = []
-    skipped: List[str] = []
-    for rel, content in domain_substrate(specs):
-        if workspace.exists(rel):
-            skipped.append(rel)
-            continue
-        if rel.endswith(".py") and workspace.exists(rel[:-3]):
-            skipped.append(f"{rel} (a package of the same name exists)")
-            continue
-        workspace.write_text(Path(rel), content)
-        written.append(rel)
-    return {"written": written, "skipped": skipped}
+    from app.factory.build.substrate_contract import reconcile_substrate
+
+    return reconcile_substrate(
+        workspace,
+        domain_substrate(specs),
+        [render_product_tests(specs)],
+    )
 
 
 def _normalised_sources(path: Path) -> Dict[str, str]:
