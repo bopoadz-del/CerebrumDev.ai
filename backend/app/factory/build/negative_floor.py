@@ -41,10 +41,14 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 client = TestClient(app)
-AUTH = {"Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN", "dev-local-token")}
-OTHER_TENANT = {
-    "Authorization": "Bearer " + os.environ.get("PLATFORM_TOKEN_B", "dev-local-token-b")
-}
+# Tokens come from the environment ONLY -- tests/conftest.py provisions the
+# well-known TEST values and maps tenant B through TENANT_TOKENS. No fallback
+# literal here: a writer that copies this pattern into runtime copies an
+# env-subscript, not a baked token (live 2026-09-29: the old fallback was
+# hardwired into app/tenancy.py as a production backdoor to make the
+# cross-tenant case pass).
+AUTH = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN"]}
+OTHER_TENANT = {"Authorization": "Bearer " + os.environ["PLATFORM_TOKEN_B"]}
 
 REFUSED = (400, 403, 404, 409, 422)
 

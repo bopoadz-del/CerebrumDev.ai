@@ -90,8 +90,24 @@ STORAGE_PATH=./data
 # tests/conftest.py refuses non-loopback sockets. That blocker is unchanged.
 
 # Capability write routes require this bearer token (HTTP 401 without it).
-PLATFORM_TOKEN=dev-local-token
+PLATFORM_TOKEN=__DEPLOY_PLATFORM_TOKEN__
 """
+
+
+def render_env_example() -> str:
+    """The P1 .env.example with a per-package RANDOM deploy token (F1).
+
+    The template used to bake the world-known dev token as every
+    product's deploy default, which production then accepted unless the
+    operator overrode it. The token is now generated per package at render
+    time; the well-known dev value lives only in tests/conftest.py.
+    """
+    from app.factory.build.deploy_token import deploy_platform_token
+
+    return P1_ENV_EXAMPLE.replace(
+        "__DEPLOY_PLATFORM_TOKEN__", deploy_platform_token()
+    )
+
 
 P1_CAPTURE_ADAPTER = '''"""P1 capture adapter. Factory CLONER emission.
 

@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.cerebrum_product_kernel.provenance import build_provenance, hash_tree, write_provenance
+from app.factory.build.deploy_token import (
+    deploy_platform_token as _deploy_platform_token,
+)
 from app.factory.blueprint import ProductBlueprint, blueprint_to_dict
 from app.factory.build.supply_chain import (
     PYTHON_312_SLIM_FROM,
@@ -305,7 +308,10 @@ class ProductGenerator:
             "# CEREBRUM_API_KEY=",
             "",
             "# Capability write routes require this bearer token (HTTP 401 without it).",
-            "PLATFORM_TOKEN=dev-local-token",
+            # F1: a per-package RANDOM token, never the world-known dev
+            # literal -- production must not accept a value every reader
+            # of this source knows. Tests get theirs from conftest.
+            "PLATFORM_TOKEN=" + _deploy_platform_token(),
         ]
         if self.blueprint.vertical == "estate":
             lines += [

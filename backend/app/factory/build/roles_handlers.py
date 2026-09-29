@@ -2500,9 +2500,9 @@ def _render_platform_env_example() -> str:
     platform's handlers import vendored blocks, so a store or cloud-LLM
     variable here would be a lie about how it runs.
     """
-    from app.factory.build.network_posture import P1_ENV_EXAMPLE
+    from app.factory.build.network_posture import render_env_example
 
-    return P1_ENV_EXAMPLE
+    return render_env_example()
 
 
 def _deploy_contract(product_id: str) -> Dict[str, Any]:
