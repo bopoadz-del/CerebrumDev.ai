@@ -431,7 +431,12 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Build production image
-        run: docker build -t cerebrumdev-backend:ci .
+        # store-blocks/ is baked by the DEPLOY workflow (private-Store clone
+        # via CROSS_REPO_PAT). CI ships an empty placeholder so the COPY
+        # succeeds; blocks_source ignores a root with no block_registry/.
+        run: |
+          mkdir -p store-blocks
+          docker build -t cerebrumdev-backend:ci .
 
       - name: S0 factory source is in the image workdir
         run: |

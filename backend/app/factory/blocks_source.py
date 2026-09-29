@@ -26,7 +26,20 @@ logger = logging.getLogger(__name__)
 def resolve_blocks_root() -> Optional[Path]:
     root = os.getenv("CEREBRUM_BLOCKS_ROOT") or os.getenv("CEREBRUM_BLOCKS_PATH")
     if root:
-        return Path(root)
+        path = Path(root)
+        # The deploy bakes the Store into the image and sets this var, so it
+        # is load-bearing in production -- and therefore GUARDED. A configured
+        # path that is missing or has no block_registry/ (a CI image built
+        # with the empty placeholder dir) is ignored with a warning, never
+        # handed to CLONER as a dead root (live 2026-09-30:
+        # vendor_blocks_missing after the Store went private).
+        if (path / "block_registry").is_dir():
+            return path
+        logger.warning(
+            "blocks_root: configured %s has no block_registry/ -- ignoring "
+            "it and trying the Store clone",
+            path,
+        )
     try:
         from app.core import engine_discovery
 

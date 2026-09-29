@@ -44,6 +44,15 @@ COPY blueprints /app/blueprints
 # store-sourced block as unlocked (live Steward Continue sess_5782f226
 # died at database with the lock-hash that was already committed).
 COPY blocks.lock.json /app/blocks.lock.json
+
+# The Store, baked at image build. Cerebrum-Blocks is private, so the
+# runtime clone (engine_discovery) has no anonymous path any more -- the
+# deploy workflow clones the Store into store-blocks/ with CROSS_REPO_PAT
+# and this COPY ships it. CI's docker-build job ships an empty placeholder
+# instead; blocks_source ignores a root with no block_registry/, so a CI
+# image still falls through to the mirror instead of trusting a dead root.
+COPY store-blocks /app/store-blocks
+ENV CEREBRUM_BLOCKS_ROOT=/app/store-blocks
 # Alembic migration system for the accounts DB (runs at boot; see backend/alembic/)
 COPY backend/alembic.ini /app/alembic.ini
 COPY backend/alembic /app/alembic

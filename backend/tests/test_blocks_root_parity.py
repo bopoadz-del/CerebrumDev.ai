@@ -15,6 +15,7 @@ from app.factory.blocks_source import resolve_blocks_root
 
 
 def test_env_path_wins(monkeypatch, tmp_path):
+    (tmp_path / "block_registry").mkdir()  # a valid root, per the guard
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
     assert resolve_blocks_root() == tmp_path
 
@@ -57,6 +58,7 @@ def test_clone_failure_never_raises(monkeypatch):
 
 
 def test_chat_flow_delegates_to_shared_resolver(monkeypatch, tmp_path):
+    (tmp_path / "block_registry").mkdir()  # a valid root, per the guard
     monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
     assert platform_chat_flow._blocks_root() == resolve_blocks_root() == tmp_path
 
