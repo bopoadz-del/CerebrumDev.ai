@@ -265,6 +265,11 @@ export const sessions = {
   list: () => req<SessionInfo[] | { sessions?: SessionInfo[] }>('GET', '/v1/sessions/'),
   /** Deletes the session for good: chat, uploads and its generated workspace. */
   remove: (sid: string) => req<{ ok: boolean }>('DELETE', `/v1/sessions/${sid}`),
+  /** The full session state. The Floor reads chat_history from it so the
+   *  pre-build conversation survives a reload instead of being replaced
+   *  by two synthetic bubbles. */
+  state: (sid: string) =>
+    req<{ chat_history?: { role: string; content: string }[] }>('GET', `/v1/sessions/${sid}`),
 }
 
 export interface ChatEvent {

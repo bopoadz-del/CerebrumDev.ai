@@ -5,6 +5,7 @@ import {
   chatStream,
   downloadProductPackage,
   product,
+  sessions,
   watchBuildStatus,
   type BuildStatus,
   type ChatEvent,
@@ -374,7 +375,10 @@ function latestProductCard(msgs: ChatMsg[]): ChatMsg | undefined {
   return undefined
 }
 
-function hydrateFromDesign(design: ProductDesign): {
+function hydrateFromDesign(
+  design: ProductDesign,
+  history: { role?: string; content?: string }[] = [],
+): {
   msgs: ChatMsg[]
   coderActive: boolean
 } {
@@ -384,6 +388,22 @@ function hydrateFromDesign(design: ProductDesign): {
       text: 'This is the factory floor. Describe the platform you need — I will draft a blueprint, and when you approve the feature list the coding agent takes over and writes it.',
     },
   ]
+  // The saved conversation renders between the greeting and the status
+  // card. Without this, a reload after takeover replaced the owner's
+  // brief and the whole drafting exchange with two synthetic bubbles
+  // (live: MEP Construction Platform, 2026-09-29) — the backend kept
+  // chat_history the entire time; the Floor never asked for it. Lines
+  // that exactly duplicate the greeting or a status card are skipped so
+  // takeover never reads twice.
+  const synthetic = new Set([
+    msgs[0].text,
+    'The coding agent has taken over the floor.',
+  ])
+  for (const turn of history) {
+    const text = String(turn?.content ?? '').trim()
+    if (!text || synthetic.has(text)) continue
+    msgs.push({ role: turn?.role === 'user' ? 'user' : 'factory', text })
+  }
   const rawBp = design.blueprint as ChatMsg['blueprint'] | null | undefined
   const intake = design.intake_blueprint as {
     roles?: { value?: string[] }
@@ -464,12 +484,18 @@ export function Floor({
 
   useEffect(() => {
     let cancelled = false
-    product
-      .get(sessionId)
-      .then((design) => {
+    Promise.all([
+      product.get(sessionId),
+      // History is additive: a failed fetch must never block hydration.
+      Promise.resolve()
+        .then(() => sessions.state(sessionId))
+        .then((s) => s?.chat_history ?? [])
+        .catch(() => [] as { role?: string; content?: string }[]),
+    ])
+      .then(([design, history]) => {
         if (cancelled || !design) return
         setProductDesign(design)
-        const hydrated = hydrateFromDesign(design)
+        const hydrated = hydrateFromDesign(design, history)
         let applied = false
         setMsgs((current) => {
           if (current.length > 1) return current
