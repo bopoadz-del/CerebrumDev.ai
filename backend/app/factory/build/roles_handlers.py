@@ -3372,6 +3372,34 @@ def _compiled_writer_brief(ctx: RoleContext) -> str:
     return "\n\n".join(sections)
 
 
+def _writer_worker_timeout_s(ctx: RoleContext) -> Optional[float]:
+    """The wall the WRITER subprocess is given, from the run's own budget.
+
+    D1 (live 2026-09-29): ``run_worker_job`` was called with no ``timeout_s``,
+    so ``worker_timeout_s()`` returned the flat ``DEFAULT_WORKER_TIMEOUT_S``
+    (1800s) and killed the subprocess 30 minutes in -- even on a pilot run
+    granted a 90-minute phase wall. Because the worker died right at the
+    stage-1 boundary, the budget inspector found the CLI NOT in flight, took
+    its ``else`` branch, saw ``written=0, stub_rate=1.0`` on a dead writer and
+    hard-stopped: ``wall-clock budget of 1800s spent before WRITER completed``.
+
+    The wall now tracks the phase budget (the same source the C-BRIEF path
+    reads via ``cli_dispatch_timeout_s``): the remaining phase time minus a
+    grace so the worker dies just BEFORE the phase wall -- keeping the writer
+    in flight through the intermediate budget inspections, which is exactly
+    what flips the stage-1 inspect from ``hard_stop`` to ``continue_stage_2``.
+    Floored at the historical default so a code-only pass is never granted
+    less than it had; ``None`` (unbounded) defers to the worker's own default.
+    """
+    from app.factory.build.codewhale_worker import DEFAULT_WORKER_TIMEOUT_S
+    from app.factory.llm_watchdog import MODEL_CALL_GRACE_S
+
+    left = ctx.coder_time_left()
+    if left is None:
+        return None
+    return max(float(DEFAULT_WORKER_TIMEOUT_S), float(left) - MODEL_CALL_GRACE_S)
+
+
 def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     """Phase 5: the WRITER role runs headless through `codewhale exec`.
 
@@ -3447,6 +3475,10 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
             # its session id to this writer child through the process env.
             session_id=str(ctx.state.get("session_id") or ""),
             progress=relay_progress,
+            # D1: the wall is the run's remaining phase budget, not a flat
+            # 1800s that kills the writer before the phase inspector's
+            # in-flight bump can fire.
+            timeout_s=_writer_worker_timeout_s(ctx),
         )
     except WorkerError as exc:
         raise RoleError(
@@ -3534,6 +3566,28 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 "asked for these): " + ", ".join(result["written"]),
                 stage="substrate",
                 source="factory",
+            )
+        # D2: a stub that could not satisfy the factory's own stamped import
+        # contract was replaced with the canonical module. Named on the Floor
+        # so a repaired file is never mistaken for agent authorship.
+        if result.get("repaired"):
+            ctx.note(
+                f"{label} substrate REPAIRED (a stub could not satisfy the "
+                "test the factory stamps): " + ", ".join(result["repaired"]),
+                stage="substrate",
+                source="factory",
+            )
+        # A file that provides some required names but not all may be real
+        # authored work; the factory must not overwrite it, and it cannot ship
+        # a product whose own stamped suite will not import. This is the
+        # factory's fault to resolve, so it halts FACTORY (no writer rework).
+        if result.get("conflicts"):
+            raise RoleError(
+                f"factory_substrate_conflict: {label} substrate cannot be "
+                "safely repaired without overwriting possible agent work: "
+                + "; ".join(result["conflicts"]),
+                reason="factory_substrate_conflict",
+                location="WRITER",
             )
 
     # Same early return, the other half of the contract: run_writer converges
