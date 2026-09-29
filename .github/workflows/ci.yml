@@ -132,12 +132,17 @@ jobs:
         working-directory: .
         env:
           STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
+          # Cerebrum-Blocks is private, so the fetch must authenticate. The
+          # default GITHUB_TOKEN is scoped to THIS repo only; CROSS_REPO_PAT
+          # (an existing repo secret) has read access to the Store. Passed via
+          # a token URL that is never stored in remote config, and GitHub masks
+          # the secret in logs.
+          CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
         run: |
           echo "Store ref: $STORE_REF"
           git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
           cd "$RUNNER_TEMP/Cerebrum-Blocks"
-          git remote add origin https://github.com/bopoadz-del/Cerebrum-Blocks.git
-          git fetch -q --depth 1 origin "$STORE_REF"
+          git fetch -q --depth 1 "https://x-access-token:${CROSS_REPO_PAT}@github.com/bopoadz-del/Cerebrum-Blocks.git" "$STORE_REF"
           git checkout -q FETCH_HEAD
           test -d block_registry
           echo "Store head: $(git rev-parse HEAD)  ($(ls block_registry | wc -l) blocks)"
