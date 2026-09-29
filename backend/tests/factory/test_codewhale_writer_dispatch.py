@@ -77,11 +77,110 @@ def _plant_authored_handler(root):
     )
 
 
+def _ctx_with_budget(tmp_path, seconds_left):
+    """A writer ctx whose phase budget has ``seconds_left`` remaining."""
+    import time as _time
+
+    ctx = _ctx(tmp_path)
+    _plant_authored_handler(tmp_path / "build")
+    now = _time.monotonic()
+    ctx.deadline_box = {"at": now + float(seconds_left), "clock": _time.monotonic}
+    return ctx
+
+
+def test_writer_worker_gets_the_phase_budget_not_a_flat_wall(tmp_path, monkeypatch):
+    """D1: the WRITER was dispatched with no timeout_s, so worker_timeout_s()
+    returned the flat 1800s DEFAULT and killed the subprocess 30 min in --
+    even on a pilot run granted a 90-minute phase wall (live 2026-09-29:
+    'wall-clock budget of 1800s spent before WRITER completed, written=0').
+    A pilot-budget writer must be dispatched with a wall that tracks the
+    phase budget and stays above 1800s, so it can still be IN FLIGHT when
+    the budget inspector looks at the stage-1 boundary."""
+    from app.factory.build.budget_inspect import STAGE_1_S
+
+    captured = {}
+
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+        captured["timeout_s"] = timeout_s
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr("app.factory.build.codewhale_worker.run_worker_job", fake_run)
+    ctx = _ctx_with_budget(tmp_path, seconds_left=5400.0)  # pilot phase wall
+    assert _run_writer_via_codewhale_worker(ctx).ok is True
+
+    wall = captured["timeout_s"]
+    assert wall is not None, "writer dispatched with no timeout_s (the D1 bug)"
+    assert wall > STAGE_1_S, (
+        f"writer wall {wall}s <= stage-1 boundary {STAGE_1_S}s: the worker is "
+        "killed before the budget inspector's in-flight bump can fire"
+    )
+    assert wall <= 5400.0 + 1, "worker must die before the phase wall, not after"
+
+
+def test_code_only_writer_budget_keeps_the_1800s_floor(tmp_path, monkeypatch):
+    """A code-only pass (short phase wall) must not be granted LESS than the
+    historical 1800s default, and must not be silently extended either."""
+    from app.factory.build.codewhale_worker import DEFAULT_WORKER_TIMEOUT_S
+
+    captured = {}
+
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+        captured["timeout_s"] = timeout_s
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr("app.factory.build.codewhale_worker.run_worker_job", fake_run)
+    ctx = _ctx_with_budget(tmp_path, seconds_left=1500.0)  # code-only phase wall
+    assert _run_writer_via_codewhale_worker(ctx).ok is True
+    assert captured["timeout_s"] == DEFAULT_WORKER_TIMEOUT_S
+
+
+def test_unbounded_budget_falls_back_to_the_worker_default(tmp_path, monkeypatch):
+    """No deadline set (tests, unbounded runs): pass None and let
+    run_worker_job apply its own default rather than inventing a wall."""
+    captured = {"timeout_s": "unset"}
+
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+        captured["timeout_s"] = timeout_s
+        return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
+
+    monkeypatch.setattr("app.factory.build.codewhale_worker.run_worker_job", fake_run)
+    ctx = _ctx(tmp_path)  # no deadline_box, coder_time_left() is None
+    _plant_authored_handler(tmp_path / "build")
+    assert _run_writer_via_codewhale_worker(ctx).ok is True
+    assert captured["timeout_s"] is None
+
+
+def test_stage_1_inspect_bumps_an_in_flight_writer_instead_of_stopping(tmp_path):
+    """The interaction that IS the incident: once the writer wall outlives
+    the stage-1 boundary, the budget inspector sees the CLI still in flight
+    and BUMPS the wall (continue_stage_2) rather than hard-stopping a corpse.
+    Pins budget_inspect.py:400-409 so the D1 fix cannot be undone from the
+    inspector side."""
+    from app.factory.build.budget_inspect import STAGE_1_S, STAGE_2_S, inspect_decision
+
+    out = inspect_decision(
+        stage="stage_1",
+        snapshot={
+            "cli_in_flight": True,
+            "model_call_deadline_s": 5400.0,
+            "agent_written": 3,
+            "stub_rate": 0.4,
+        },
+        elapsed_s=STAGE_1_S,
+        current_wall_s=STAGE_1_S,
+        state={},
+        workspace=tmp_path,
+    )
+    assert out["decision"] == "continue_stage_2", out
+    assert out["next_wall_s"] == STAGE_2_S
+    assert "not FACTORY_CODE_CLI_UNUSED" in out["reason"]
+
+
 def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     _plant_authored_handler(tmp_path / "build")
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
     monkeypatch.setattr(
@@ -102,7 +201,7 @@ def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
     """E1: a 'completed' receipt with zero tool calls or zero stamped
     handlers is the same silent success the writer_contract gate refuses â€”
     the role must refuse it, not report ok=True."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
         return _receipt(tools=[])
 
     monkeypatch.setattr(
@@ -118,7 +217,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 ):
     """E1: tool calls alone are not authorship â€” the disk-level stamp
     count is what counts."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
         return _receipt(tools=[{"tool": "write", "path": "notes.txt"}])
 
     monkeypatch.setattr(
@@ -130,7 +229,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
-    def boom(prompt, dest, tenant_store=None, session_id="", progress=None):
+    def boom(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
         raise WorkerError("worker_exec_failed: nope")
 
     monkeypatch.setattr(
@@ -184,7 +283,7 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
         state={},
     )
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
         # The worker subprocess writes directly into the staging dir.
         actions = Path(dest) / "app" / "actions"
         actions.mkdir(parents=True, exist_ok=True)
