@@ -608,3 +608,48 @@ def test_rag_roundtrip_hit_passes_against_real_retrieval(tmp_path):
     ns["_has_rag_surface"] = lambda: True
     status, detail = check_fn(_RealRetrievalHttp())
     assert status == "PASS", f"genuine plant->retrieve must pass, got: {status} {detail}"
+
+
+# -- F3: the security scan's VERDICT is on the floor, not just its presence -----
+
+
+def _load_named_check(tmp_path, name):
+    script = render_acceptance_script()
+    ns: dict = {"__file__": str(tmp_path / "scripts" / "acceptance.py"),
+                "__name__": "acceptance_under_test"}
+    (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
+    exec(compile(script, "acceptance.py", "exec"), ns)
+    return ns[name], ns
+
+
+def _ci_with_scanners(tmp_path):
+    ci = tmp_path / ".github" / "workflows" / "ci.yml"
+    ci.parent.mkdir(parents=True, exist_ok=True)
+    ci.write_text("steps:\n  - run: pip-audit\n  - run: bandit -r app/\n", encoding="utf-8")
+
+
+def test_audit_clean_fails_when_the_scan_was_not_measured(tmp_path, monkeypatch):
+    """F3 (live 2026-09-29): a product shipped with 16 bandit SQL findings and
+    still scored 21/21, because audit_clean only checked the scan was
+    CONFIGURED, not that it PASSED. An unmeasured scan must FAIL, never pass
+    silently -- exactly as postgres_boot_200 fails when unmeasured."""
+    _ci_with_scanners(tmp_path)
+    monkeypatch.delenv("STORE_AUDIT_CLEAN", raising=False)
+    check_fn, _ = _load_named_check(tmp_path, "check_audit_clean")
+    status, detail = check_fn()
+    assert status == "FAIL", f"unmeasured scan must fail, got {status}: {detail}"
+    assert "measure" in detail.lower() or "unmeasured" in detail.lower()
+
+
+def test_audit_clean_fails_when_scan_reported_findings(tmp_path, monkeypatch):
+    _ci_with_scanners(tmp_path)
+    monkeypatch.setenv("STORE_AUDIT_CLEAN", "0")
+    check_fn, _ = _load_named_check(tmp_path, "check_audit_clean")
+    assert check_fn()[0] == "FAIL"
+
+
+def test_audit_clean_passes_only_when_the_scan_ran_and_is_clean(tmp_path, monkeypatch):
+    _ci_with_scanners(tmp_path)
+    monkeypatch.setenv("STORE_AUDIT_CLEAN", "1")
+    check_fn, _ = _load_named_check(tmp_path, "check_audit_clean")
+    assert check_fn()[0] == "PASS"
