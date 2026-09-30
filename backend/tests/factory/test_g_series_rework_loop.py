@@ -177,6 +177,56 @@ def test_a_run_failed_at_writer_is_re_entered_at_writer(blueprint, tmp_path, stu
     assert outcome.ok, outcome.detail
 
 
+def test_a_re_entered_writer_is_told_what_it_failed(blueprint, tmp_path, stub_coder):
+    """Live 2026-09-30 (automotive-aiops): re-entry at WRITER worked, but the
+    resumed writer was handed an EMPTY work_list and failed the identical
+    ui_not_wired_end_to_end gate a second time. The prior failure sits on the
+    ledger's RUN_FAILED event (findings, or the detail when the gate surfaced
+    as a RoleError); re-entry must seed work_list from it so the writer's
+    compiled brief names what to fix, instead of finishing blind.
+    """
+    out = tmp_path / "build"
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = _writer_that_fails_its_gate
+    first = RoleRunner(blueprint, out, roles=roles)
+    assert not first.run().ok
+
+    captured: dict = {}
+    real_writer = ROLE_IMPLEMENTATIONS[BuildRole.WRITER]
+
+    def recording_writer(ctx):
+        captured["work_list"] = tuple(ctx.work_list)
+        return real_writer(ctx)
+
+    roles2 = dict(ROLE_IMPLEMENTATIONS)
+    roles2[BuildRole.WRITER] = recording_writer
+    second = RoleRunner(blueprint, out, roles=roles2)
+    outcome = second.run()
+
+    assert "work_list" in captured, "the re-entered WRITER never ran"
+    assert captured["work_list"], "the re-entered WRITER was handed no findings"
+    joined = " ".join(captured["work_list"]).lower()
+    assert "formulas" in joined or "ui_not_wired_end_to_end" in joined, captured["work_list"]
+    assert outcome.ok, outcome.detail
+
+
+def test_a_fresh_run_has_no_seeded_findings(blueprint, tmp_path, stub_coder):
+    """The seed is re-entry only: a first run's WRITER starts with a clean
+    work_list, never a phantom finding from an absent prior failure."""
+    out = tmp_path / "build"
+    captured: dict = {}
+    real_writer = ROLE_IMPLEMENTATIONS[BuildRole.WRITER]
+
+    def recording_writer(ctx):
+        captured.setdefault("first_work_list", tuple(ctx.work_list))
+        return real_writer(ctx)
+
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = recording_writer
+    assert RoleRunner(blueprint, out, roles=roles).run().ok
+    assert captured.get("first_work_list") == (), captured.get("first_work_list")
+
+
 def test_a_missing_workspace_is_not_re_entered(tmp_path):
     phase, why = reattach_point(tmp_path / "nothing-here")
 

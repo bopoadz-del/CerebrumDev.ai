@@ -1324,6 +1324,32 @@ class RoleRunner:
         work_list: Sequence[str] = ()
         collected: list[str] = []
 
+        # A re-entered run that FAILED at the phase it is about to re-run must
+        # be handed what failed. Live 2026-09-30 (automotive-aiops): re-entry
+        # at WRITER worked, but the resumed writer got an EMPTY work_list and
+        # failed the identical ui_not_wired_end_to_end gate a second time --
+        # the prior verdict sat on the ledger's RUN_FAILED event and was never
+        # read back, so the compiled brief named nothing to fix. Seed the
+        # first re-run phase from that event: its structured findings, or its
+        # detail when the gate surfaced as a RoleError (which carries none).
+        # Cleared to () the moment a phase passes (below), so it only reaches
+        # the resumed phase, and a fresh first run has no terminal event.
+        terminal = self.ledger.terminal_event()
+        if (
+            terminal is not None
+            and terminal.kind is EventKind.RUN_FAILED
+            and terminal.role is not None
+            and terminal.role == self.ledger.resume_point()
+        ):
+            seeded = [
+                str(f)
+                for f in (terminal.payload.get("findings") or [])
+                if str(f).strip()
+            ]
+            if not seeded and terminal.detail.strip():
+                seeded = [terminal.detail.strip()]
+            work_list = tuple(seeded)
+
         # A re-entered run (resume, or a pasted build link) carries the
         # Factory files of the Factory that first built it. Re-render them
         # from the current templates before TESTER judges the build, so a
