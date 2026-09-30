@@ -36,6 +36,15 @@ _KEY_PATTERN_RE = re.compile(
 #: Bare long blobs (JWT-ish, base64 secrets) — short tokens survive.
 _LONG_BLOB_RE = re.compile(r"\b[A-Za-z0-9+/_=-]{40,}\b")
 
+#: A long token made of lowercase snake_case / path segments is an
+#: identifier, not a secret: a pytest node id, a module path, a workspace
+#: file path. Live 2026-09-30 the blob rule blanked exactly the two tokens
+#: the owner needed from a TESTER failure ("::[redacted] - failed on setup
+#: with 'file /[redacted]'"). A random 40+ char base64 secret with no
+#: uppercase, ``+`` or ``=`` is a ~1e-9 event, and hex tokens carry no
+#: ``_`` / ``/`` / ``-`` separators — those still redact.
+_IDENTIFIERISH_RE = re.compile(r"[a-z0-9]+(?:[-_/][a-z0-9]+)+\Z")
+
 _REDACTED = "[redacted]"
 
 
@@ -56,5 +65,9 @@ def sanitize_for_status(text: Optional[str]) -> str:
 
     out = _KEY_ASSIGN_RE.sub(_redact_assign, out)
     out = _KEY_PATTERN_RE.sub(_REDACTED, out)
-    out = _LONG_BLOB_RE.sub(_REDACTED, out)
+
+    def _redact_blob(m: "re.Match[str]") -> str:
+        return m.group(0) if _IDENTIFIERISH_RE.fullmatch(m.group(0)) else _REDACTED
+
+    out = _LONG_BLOB_RE.sub(_redact_blob, out)
     return out
