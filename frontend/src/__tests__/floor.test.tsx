@@ -1344,6 +1344,42 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     expect(screen.queryByText(/^Last: /)).not.toBeInTheDocument()
   })
 
+  it('shows a TESTER mid-fail as an orange rework, red only when the run stops', async () => {
+    // Live automotive build: TESTER went suite_red, the writer took the work
+    // back (WORKERS 3/5 still moving) -- and the Floor painted TESTER the same
+    // red as a dead build. A rework round is the machine working, not a stop:
+    // orange while the run is alive, red only when state is failed/stalled.
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'building',
+        current_phase: { id: 'WRITER', label: 'Platform manufacturer' },
+        completed: ['COLLECTOR', 'CLONER'],
+        failure: {
+          phase: 'TESTER',
+          location: 'TESTER',
+          reason: 'suite_red',
+          detail: 'acceptance suite is red: 3 checks failing',
+        },
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'automotive', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_rework_orange" goPlatforms={() => {}} />)
+
+    // Orange rework chip, not the red failed chip.
+    const chip = await screen.findByTestId('floor-phase-rework-TESTER')
+    expect(chip.className).toContain('rework')
+    expect(screen.queryByTestId('floor-phase-failed-TESTER')).not.toBeInTheDocument()
+    // The note says the work went back to the coder; no red alert.
+    const note = screen.getByTestId('floor-rework-line')
+    expect(note).toHaveTextContent('TESTER sent it back to the coder')
+    expect(note).toHaveTextContent('suite_red')
+    expect(screen.queryByTestId('floor-failure-line')).not.toBeInTheDocument()
+  })
+
   it('shows a failure the run recovered from as history, not a red alert', async () => {
     // sess_617f60024df24a4e: a 13/13 build showed "TESTER failed -- KeyError"
     // in red for a KeyError the agent had already fixed in rework.

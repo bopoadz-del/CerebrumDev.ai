@@ -612,3 +612,33 @@ def test_vetcare_readiness_engine_reuse_kept_when_exact_id_hits(monkeypatch):
     assert compiled.missing_reuse == []
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
     assert "REUSE ['readiness_engine']" in compiled.text
+
+
+def test_setup_error_findings_name_the_shared_break_not_a_test_list():
+    # Live automotive build: every rework finding was "<nodeid> [error]" --
+    # pytest died during SETUP (a missing shared fixture), one break, not
+    # sixty defects. The writer was handed the raw list, chased it test by
+    # test, and G5 stopped the run on SAME_FAILURE_TWICE. The brief must
+    # diagnose the shape: fix the shared setup first.
+    bp = load_blueprint(SMOKE)
+    plan = plan_blueprint(bp)
+    findings = [
+        "tests/test_platform_routes.py::test_capability_accepts_and_returns_its_own_record[email] [error]",
+        "tests/test_negative_floor_counter_cases.py::test_negative_email_refuses_malformed_address [error]",
+        "tests/test_routes.py::test_every_capability_route_answers [failure]",
+    ]
+    compiled = compile_brief(bp, plan, work_list=findings)
+    text = compiled.text
+    assert "died during SETUP" in text
+    assert "conftest" in text
+    assert "fixture" in text
+    # The raw rows still ride along -- the diagnosis is added, not replacing.
+    assert "test_every_capability_route_answers [failure]" in text
+
+
+def test_plain_failures_get_no_setup_diagnosis():
+    bp = load_blueprint(SMOKE)
+    plan = plan_blueprint(bp)
+    findings = ["tests/test_routes.py::test_every_capability_route_answers [failure]"]
+    compiled = compile_brief(bp, plan, work_list=findings)
+    assert "died during SETUP" not in compiled.text

@@ -612,8 +612,22 @@ def render_slot_bodies(
         do_lines += [
             "",
             "A previous attempt failed these checks — keep what works and fix only these:",
-            *[f"- {item}" for item in findings],
         ]
+        # Live 2026-09-30 (automotive): every row was "[error]" -- pytest
+        # died during SETUP (a missing shared fixture), one break, not one
+        # defect per row. Handed the raw list, the writer chased it test by
+        # test and G5 stopped the run on SAME_FAILURE_TWICE. Name the shape.
+        setup_errors = [item for item in findings if "[error]" in item]
+        if setup_errors:
+            do_lines += [
+                f"{len(setup_errors)} of {len(findings)} rows are [error]: those tests "
+                "never ran — pytest died during SETUP. That is one broken shared "
+                "dependency (a fixture the tests request, tests/conftest.py, or an "
+                "import it performs), not a defect in each test. Fix the shared "
+                "setup FIRST, then re-check the remaining [failure] rows. Do not "
+                "rewrite the [error] tests one by one.",
+            ]
+        do_lines += [f"- {item}" for item in findings]
     do_lines += [
         "",
         "Kit manifests (Factory shelf + on-disk packs):",

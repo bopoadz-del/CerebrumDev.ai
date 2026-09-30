@@ -138,6 +138,45 @@ def test_a_run_killed_at_tester_is_re_entered_at_tester(blueprint, tmp_path, stu
     assert outcome.ok, outcome.detail
 
 
+def _writer_that_fails_its_gate(ctx):
+    from app.factory.build.roles_models import RoleResult
+
+    return RoleResult(
+        ok=False,
+        detail="WRITER gate 'ui_end_to_end' failed: formulas not reachable",
+        reason="ui_not_wired_end_to_end",
+        location="WRITER",
+    )
+
+
+def test_a_run_failed_at_writer_is_re_entered_at_writer(blueprint, tmp_path, stub_coder):
+    """Live 2026-09-30 (automotive-aiops): ONE writer-gate miss
+    (ui_not_wired_end_to_end) and the re-run went FRESH from COLLECTOR --
+    "not passed: WRITER" -- re-collecting and re-cloning phases that had
+    already passed. The old rule demanded WRITER passed because it was
+    written for re-entry at TESTER; when WRITER itself is the failed
+    phase, its prerequisites are exactly what must be preserved, and the
+    run re-enters AT WRITER (whose own progress-log resume then applies).
+    """
+    out = tmp_path / "build"
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = _writer_that_fails_its_gate
+    first = RoleRunner(blueprint, out, roles=roles)
+    assert not first.run().ok
+    seen = len(list(first.ledger.events()))
+
+    assert reattach_point(out) == ("WRITER", "")
+
+    second = RoleRunner(blueprint, out)
+    outcome = second.run()
+
+    after = list(second.ledger.events())[seen:]
+    started = {e.role for e in after if e.kind is EventKind.PHASE_STARTED}
+    assert BuildRole.WRITER in started
+    assert not started & {BuildRole.COLLECTOR, BuildRole.CLONER}, started
+    assert outcome.ok, outcome.detail
+
+
 def test_a_missing_workspace_is_not_re_entered(tmp_path):
     phase, why = reattach_point(tmp_path / "nothing-here")
 

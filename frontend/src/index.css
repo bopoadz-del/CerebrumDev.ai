@@ -617,6 +617,14 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   background: #1f1010;
   font-weight: 600;
 }
+/* A mid-fail the run is still fixing: the phase sent the work back to the
+   coder. Orange = rework in progress; red is reserved for a stopped run. */
+.kernel-strip li.rework {
+  color: #ffb27d;
+  border-color: #8a5530;
+  background: #1f1508;
+  font-weight: 600;
+}
 /* A failure the run recovered from. History, not an alert: muted, no red,
    so a green build never reads as a dead one. */
 .coder-recovered-line {
@@ -629,6 +637,15 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   color: #ff8f8f;
   background: #1f1010;
   border: 1px solid #7a3a3a;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+.coder-rework-line {
+  color: #ffb27d;
+  background: #1f1508;
+  border: 1px solid #8a5530;
   border-radius: 6px;
   padding: 8px 10px;
   font-size: 13px;

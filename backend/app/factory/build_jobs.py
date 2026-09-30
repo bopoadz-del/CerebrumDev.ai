@@ -346,6 +346,23 @@ def reattach_point(output_dir: Path | str) -> tuple:
     except Exception as exc:  # noqa: BLE001 -- a torn ledger is not a resume source
         return None, f"ledger unreadable: {type(exc).__name__}"
     missing_phases = [p for p in _REATTACH_NEEDS if p not in done]
+    if missing_phases == ["WRITER"]:
+        # The WRITER itself failed (a writer gate such as ui_end_to_end).
+        # The old rule demanded WRITER passed because re-entry was written
+        # for resuming at TESTER -- so ONE writer-gate miss sent the re-run
+        # FRESH from COLLECTOR, re-collecting and re-cloning phases that had
+        # already passed (live 2026-09-30: automotive-aiops). WRITER's
+        # prerequisites are exactly what must be preserved: re-enter AT
+        # WRITER on the cloned tree, where the writer's own progress-log
+        # resume applies. Only the CLONER outputs are required -- a writer
+        # that died before its first file has no app/ yet, and that is fine.
+        writer_needs = [
+            rel for rel in ("vendor/blocks", "blocks.lock.json")
+            if not (out / rel).exists()
+        ]
+        if writer_needs:
+            return None, "workspace incomplete: missing " + ", ".join(writer_needs)
+        return "WRITER", ""
     if missing_phases:
         return None, "not passed: " + ", ".join(missing_phases)
     missing_files = [rel for rel in _REATTACH_FILES if not (out / rel).exists()]

@@ -751,8 +751,46 @@ KIT_NOTICE = (
     "more than a platform built on a ready kit."
 )
 
+#: Kit ids too generic to name from a message match -- they appear in nearly
+#: every brief and would turn every notice into a named-kit claim.
+_GENERIC_KIT_TOKENS = frozenset({"platform", "kit", "operations", "core", "base"})
 
-def _kit_notice(state: Any, decision: Dict[str, Any]) -> str:
+#: Said when the shelf DOES hold a kit whose own name appears in the owner's
+#: message, but that kit is not certified for domain depth. Absent and
+#: uncertified are different truths (live 2026-09-30: an automotive brief was
+#: told "we don't have a kit" while an uncertified automotive kit sat on the
+#: shelf).
+UNCERTIFIED_KIT_NOTICE = (
+    "Heads up: the store holds an uncertified '%s' kit \u2014 its domain depth "
+    'is not verified yet. Say "build on %s" to compose on it anyway, or '
+    "continue and we build a simple one fresh \u2014 that will take longer and "
+    "may cost more than a certified ready kit."
+)
+
+
+def _shelf_kit_named_in(text: str, kits) -> str:
+    """The first shelf kit whose own name appears in the owner's message.
+
+    Token match only (kit-id parts of 4+ chars, generic tokens excluded):
+    deterministic and inspectable, never a similarity guess. Used for the
+    NOTICE wording only -- nothing is attached by this; building on the kit
+    stays the owner's word.
+    """
+    import re as _re
+
+    words = set(_re.findall(r"[a-z0-9]+", (text or "").lower()))
+    for kit in sorted(str(k) for k in kits):
+        tokens = [
+            t
+            for t in kit.lower().replace("-", "_").split("_")
+            if len(t) >= 4 and t not in _GENERIC_KIT_TOKENS
+        ]
+        if tokens and any(t in words for t in tokens):
+            return kit
+    return ""
+
+
+def _kit_notice(state: Any, decision: Dict[str, Any], text: str = "") -> str:
     """The once-per-session notice, when no real kit covers the business.
 
     ``kit_match`` is the model's explicit claim and is checked against the
@@ -772,6 +810,9 @@ def _kit_notice(state: Any, decision: Dict[str, Any]) -> str:
     if str(decision.get("kit_match") or "") in kits:
         return ""
     pd.kit_notice_given = True
+    named = _shelf_kit_named_in(text, kits)
+    if named:
+        return UNCERTIFIED_KIT_NOTICE % (named, named)
     return KIT_NOTICE
 
 
@@ -793,7 +834,7 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         if (message or "").strip():
             pd.elicitation_turns = [*pd.elicitation_turns, message.strip()]
         pd.elicitation_rounds = int(pd.elicitation_rounds or 0) + 1
-        notice = _kit_notice(state, decision)
+        notice = _kit_notice(state, decision, message)
         return {
             "sse": "info",
             "ok": True,
@@ -817,7 +858,7 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         # says "no top-notch kit for this, a simple one takes longer and may
         # cost more". Dropping them made a draft look like a silent switch.
         said = " ".join(
-            s for s in (_kit_notice(state, decision), str(decision.get("message") or "").strip()) if s
+            s for s in (_kit_notice(state, decision, message), str(decision.get("message") or "").strip()) if s
         )
         if said and isinstance(result.get("summary"), str):
             result["summary"] = said + " " + result["summary"]
