@@ -3411,9 +3411,12 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
     output exactly as it applies to the in-process coder.
     """
     from app.factory.build.codewhale_worker import (
+        SLOT_WAIT_POLL_S,
+        TENANT_SLOTS_EXHAUSTED,
         WorkerError,
         is_narration_line,
         run_worker_job,
+        worker_slot_wait_s,
         writer_specialist_cap,
     )
     from app.factory.build.writer_prompt import render_writer_prompt
@@ -3467,19 +3470,54 @@ def _run_writer_via_codewhale_worker(ctx: RoleContext) -> RoleResult:
                 **call,
             )
 
-        receipt = run_worker_job(
-            prompt,
-            dest,
-            tenant_store=ctx.state.get("tenant_store"),
-            # THIS build's own identity, so a concurrent build cannot hand
-            # its session id to this writer child through the process env.
-            session_id=str(ctx.state.get("session_id") or ""),
-            progress=relay_progress,
-            # D1: the wall is the run's remaining phase budget, not a flat
-            # 1800s that kills the writer before the phase inspector's
-            # in-flight bump can fire.
-            timeout_s=_writer_worker_timeout_s(ctx),
-        )
+        # A tenant-scope slot refusal is the owner's OWN other build --
+        # transient, not terminal. Live 2026-09-30 (automotive re-run): the
+        # refusal was buried as "coding agent stopped" while the sibling
+        # build held the single tenant slot. Wait for it, narrated on the
+        # Floor and bounded by FACTORY_WORKER_SLOT_WAIT_S -- never a silent
+        # queue. Process-scope stays an immediate refusal: a full box is
+        # other tenants' work.
+        import time as _wait_time
+
+        wait_deadline = _wait_time.monotonic() + worker_slot_wait_s()
+        last_wait_note = 0.0
+        while True:
+            try:
+                receipt = run_worker_job(
+                    prompt,
+                    dest,
+                    tenant_store=ctx.state.get("tenant_store"),
+                    # THIS build's own identity, so a concurrent build cannot hand
+                    # its session id to this writer child through the process env.
+                    session_id=str(ctx.state.get("session_id") or ""),
+                    product_id=str(
+                        getattr(ctx.blueprint, "product_id", "") or ""
+                    ),
+                    progress=relay_progress,
+                    # D1: the wall is the run's remaining phase budget, not a flat
+                    # 1800s that kills the writer before the phase inspector's
+                    # in-flight bump can fire.
+                    timeout_s=_writer_worker_timeout_s(ctx),
+                )
+                break
+            except WorkerError as exc:
+                capped_by_self = TENANT_SLOTS_EXHAUSTED in str(exc)
+                if not capped_by_self or _wait_time.monotonic() >= wait_deadline:
+                    raise RoleError(
+                        f"codewhale_worker_failed: {exc}",
+                        reason="codewhale_worker_failed",
+                        location="WRITER",
+                    ) from exc
+                now = _wait_time.monotonic()
+                if now - last_wait_note >= 60.0 or last_wait_note == 0.0:
+                    last_wait_note = now
+                    ctx.note(
+                        "waiting for your other build to release its slot -- "
+                        + str(exc).split(" — ")[-1][:160],
+                        stage="writer-slot-wait",
+                        source="codewhale_worker",
+                    )
+                _wait_time.sleep(SLOT_WAIT_POLL_S)
     except WorkerError as exc:
         raise RoleError(
             f"codewhale_worker_failed: {exc}",
