@@ -284,7 +284,7 @@ def _real_draft_state(monkeypatch) -> SessionState:
     return state
 
 
-def _catalog(monkeypatch, connectors=("notification",), mcp=(), not_cleared=("google_drive",)):
+def _catalog(monkeypatch, connectors=("notification",), mcp=(), not_cleared=("google_drive",), kits=("platform",)):
     from app.factory import store_catalog as sc
 
     cat = {
@@ -292,7 +292,7 @@ def _catalog(monkeypatch, connectors=("notification",), mcp=(), not_cleared=("go
         "connectors": [{"id": c, "description": "", "tags": ["integration"]} for c in connectors],
         "mcp": [{"id": c, "description": "", "tags": ["mcp"]} for c in mcp],
         "not_cleared": [{"id": c, "description": "", "tags": ["integration"]} for c in not_cleared],
-        "kits": ["platform"],
+        "kits": list(kits),
     }
     monkeypatch.setattr(sc, "store_catalog", lambda *a, **k: cat)
     return cat
@@ -372,6 +372,45 @@ def test_the_models_words_survive_an_immediate_draft(monkeypatch):
     s = result["summary"]
     assert "We do not have a top-notch falconry kit; we can build a simple one." in s
     assert s.index("simple one.") < s.index("Blueprint drafted."), "model's words come first"
+
+
+def test_an_uncertified_shelf_kit_is_named_not_denied(monkeypatch):
+    """Live 2026-09-30: the shelf held an automotive kit (uncertified) and the
+    notice still opened with the no-kit line -- absent and uncertified are
+    different truths. When a shelf kit's own name appears in the owner's
+    message, the notice names that kit and how to build on it."""
+    state = _real_draft_state(monkeypatch)
+    _catalog(monkeypatch, kits=("platform", "automotive"))
+    _script(
+        monkeypatch,
+        [{"action": "ask_user", "message": "One question before drafting."}],
+    )
+
+    result = _say(state, "an AI operations platform for a multi-brand automotive group")
+
+    s2 = result["summary"]
+    assert "automotive" in s2, s2
+    assert "uncertified" in s2 or "unverified" in s2, s2
+    assert "don't have a top-notch kit" not in s2, (
+        "the shelf HAS a matching kit; absence must not be claimed: " + s2
+    )
+
+
+def test_a_generic_kit_id_does_not_hijack_the_notice(monkeypatch):
+    """'platform' appears in nearly every brief; a generic kit id must not
+    convert every notice into a named-kit claim."""
+    state = _real_draft_state(monkeypatch)
+    _catalog(monkeypatch, kits=("platform",))
+    _script(
+        monkeypatch,
+        [{"action": "ask_user", "message": "One question before drafting."}],
+    )
+
+    result = _say(state, "a falconry school platform")
+
+    from app.factory import platform_chat_llm
+
+    assert platform_chat_llm.KIT_NOTICE in result["summary"]
 
 
 def test_the_system_prompt_teaches_kit_honesty_and_connector_choice():
