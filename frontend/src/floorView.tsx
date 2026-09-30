@@ -220,22 +220,38 @@ function KernelStrip({ build }: { build: BuildStatus | null }) {
   const failedAt = build?.failure?.location || build?.failure?.phase
   const failedReason = build?.failure?.reason || 'unknown'
   const failedDetail = build?.failure?.detail || ''
+  // A failure on a run that is still moving is a rework round -- the phase
+  // sent the work back and the machine is fixing it. Red is reserved for a
+  // run that actually stopped; live 2026-09-30 TESTER suite_red painted the
+  // same red as a dead build while WORKERS were still writing.
+  const stopped = build?.state === 'failed' || build?.state === 'stalled'
   return (
     <ol className="kernel-strip">
       {phases.map((phase) => {
         const job = KERNEL_JOBS[phase]
         const cls = done.has(phase) ? 'done' : phase === current ? 'current' : undefined
-        const failed = phase === failedAt
+        const failed = phase === failedAt && stopped
+        const rework = phase === failedAt && !stopped
         return (
           <li
             key={phase}
-            className={[cls, failed ? 'failed' : undefined].filter(Boolean).join(' ')}
+            className={[cls, failed ? 'failed' : undefined, rework ? 'rework' : undefined]
+              .filter(Boolean)
+              .join(' ')}
             title={
               failed
                 ? `${kernelName(phase)} failed — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
-                : undefined
+                : rework
+                  ? `${kernelName(phase)} sent it back to the coder — ${failedReason}${failedDetail ? ': ' + failedDetail : ''}`
+                  : undefined
             }
-            data-testid={failed ? `floor-phase-failed-${phase}` : undefined}
+            data-testid={
+              failed
+                ? `floor-phase-failed-${phase}`
+                : rework
+                  ? `floor-phase-rework-${phase}`
+                  : undefined
+            }
           >
             <span className="kernel-id">{kernelName(phase)}</span>
             {job ? <span className="kernel-title">{job.title}</span> : null}
@@ -938,15 +954,29 @@ export function Floor({
           </h3>
           <LevelGradeStrip build={liveCoderBuild} testIdPrefix="floor" />
           <KernelStrip build={liveCoderBuild} />
-          {liveCoderBuild?.failure && (
-            <p className="coder-failure-line" data-testid="floor-failure-line" role="alert">
-              <strong>
-                {liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'Build'} failed
-              </strong>
-              {liveCoderBuild.failure.reason ? ` — ${liveCoderBuild.failure.reason}` : ''}
-              {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
-            </p>
-          )}
+          {liveCoderBuild?.failure &&
+            (liveCoderBuild.state === 'failed' || liveCoderBuild.state === 'stalled' ? (
+              <p className="coder-failure-line" data-testid="floor-failure-line" role="alert">
+                <strong>
+                  {liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'Build'}{' '}
+                  failed
+                </strong>
+                {liveCoderBuild.failure.reason ? ` — ${liveCoderBuild.failure.reason}` : ''}
+                {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
+              </p>
+            ) : (
+              // The run is still moving: a mid-fail is a rework round, not a
+              // stop. Orange status, no red alert -- red means it ended.
+              <p className="coder-rework-line" data-testid="floor-rework-line" role="status">
+                <strong>
+                  {liveCoderBuild.failure.location || liveCoderBuild.failure.phase || 'A phase'}{' '}
+                  sent it back to the coder
+                </strong>
+                {liveCoderBuild.failure.reason ? ` — ${liveCoderBuild.failure.reason}` : ''}
+                {liveCoderBuild.failure.detail ? `: ${liveCoderBuild.failure.detail}` : ''}
+                {' — rework in progress.'}
+              </p>
+            ))}
           {!liveCoderBuild?.failure && liveCoderBuild?.recovered_failure && (
             <p className="coder-recovered-line" data-testid="floor-recovered-line">
               Recovered in rework —{' '}
