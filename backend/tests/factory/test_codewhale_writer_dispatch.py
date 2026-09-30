@@ -100,7 +100,7 @@ def test_writer_worker_gets_the_phase_budget_not_a_flat_wall(tmp_path, monkeypat
 
     captured = {}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -124,7 +124,7 @@ def test_code_only_writer_budget_keeps_the_1800s_floor(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -139,7 +139,7 @@ def test_unbounded_budget_falls_back_to_the_worker_default(tmp_path, monkeypatch
     run_worker_job apply its own default rather than inventing a wall."""
     captured = {"timeout_s": "unset"}
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         captured["timeout_s"] = timeout_s
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
@@ -180,7 +180,7 @@ def test_worker_dispatch_records_the_receipt(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     _plant_authored_handler(tmp_path / "build")
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         return _receipt(tools=[{"tool": "write", "path": "app/actions/cap.py"}])
 
     monkeypatch.setattr(
@@ -201,7 +201,7 @@ def test_worker_succeeded_but_wrote_nothing_is_refused(tmp_path, monkeypatch):
     """E1: a 'completed' receipt with zero tool calls or zero stamped
     handlers is the same silent success the writer_contract gate refuses â€”
     the role must refuse it, not report ok=True."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         return _receipt(tools=[])
 
     monkeypatch.setattr(
@@ -217,7 +217,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 ):
     """E1: tool calls alone are not authorship â€” the disk-level stamp
     count is what counts."""
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         return _receipt(tools=[{"tool": "write", "path": "notes.txt"}])
 
     monkeypatch.setattr(
@@ -229,7 +229,7 @@ def test_worker_succeeded_with_tools_but_no_stamped_handlers_is_refused(
 
 
 def test_worker_failure_raises_a_named_role_error(tmp_path, monkeypatch):
-    def boom(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def boom(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         raise WorkerError("worker_exec_failed: nope")
 
     monkeypatch.setattr(
@@ -283,7 +283,7 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
         state={},
     )
 
-    def fake_run(prompt, dest, tenant_store=None, session_id="", progress=None, timeout_s=None):
+    def fake_run(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
         # The worker subprocess writes directly into the staging dir.
         actions = Path(dest) / "app" / "actions"
         actions.mkdir(parents=True, exist_ok=True)
@@ -306,3 +306,81 @@ def test_worker_output_in_staging_survives_commit(tmp_path, monkeypatch):
     assert dest_handler.is_file(), "worker-authored handler was dropped by commit"
     dest_receipt = ws.destination / "docs" / "coder_receipt.json"
     assert dest_receipt.is_file(), "worker receipt was dropped by commit"
+
+
+def test_tenant_capped_writer_waits_then_runs(tmp_path, monkeypatch):
+    """Live 2026-09-30: the automotive re-run died terminally on
+    tenant_slots_exhausted while the owner's other build held the slot.
+    A tenant-scope cap is the owner's own other build -- transient. The
+    WRITER waits (narrated, bounded), it does not bury the run."""
+    import time as _time
+
+    from app.factory.build.codewhale_worker import TENANT_SLOTS_EXHAUSTED
+
+    calls = {"n": 0}
+    naps = []
+
+    def capped_twice(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise WorkerError(
+                f"worker_concurrency_capped: {TENANT_SLOTS_EXHAUSTED} "
+                "scope=tenant — tenant deadbeef holds 1/1"
+            )
+        return _receipt([{"tool": "write_file"}])
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", capped_twice
+    )
+    monkeypatch.setattr(_time, "sleep", lambda s: naps.append(s))
+    ctx = _ctx(tmp_path)
+    _plant_authored_handler(tmp_path / "build")
+    notes = []
+    ctx.note = lambda text, **kw: notes.append(str(text))
+
+    result = _run_writer_via_codewhale_worker(ctx)
+    assert result.ok, result.detail
+    assert calls["n"] == 3
+    assert naps, "the retry must wait between attempts, not spin"
+    assert any("wait" in n.lower() for n in notes), notes
+
+
+def test_process_capped_writer_fails_immediately(tmp_path, monkeypatch):
+    """A full box is other tenants' work -- refuse fast, never camp on it."""
+    from app.factory.build.codewhale_worker import PROCESS_SLOTS_EXHAUSTED
+
+    calls = {"n": 0}
+
+    def box_full(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
+        calls["n"] += 1
+        raise WorkerError(
+            f"worker_concurrency_capped: {PROCESS_SLOTS_EXHAUSTED} scope=process — 3/3"
+        )
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", box_full
+    )
+    with pytest.raises(RoleError) as exc:
+        _run_writer_via_codewhale_worker(_ctx(tmp_path))
+    assert "codewhale_worker_failed" in str(exc.value)
+    assert calls["n"] == 1
+
+
+def test_slot_wait_budget_zero_fails_without_retry(tmp_path, monkeypatch):
+    from app.factory.build.codewhale_worker import TENANT_SLOTS_EXHAUSTED
+
+    monkeypatch.setenv("FACTORY_WORKER_SLOT_WAIT_S", "0")
+    calls = {"n": 0}
+
+    def capped(prompt, dest, tenant_store=None, session_id="", product_id="", progress=None, timeout_s=None):
+        calls["n"] += 1
+        raise WorkerError(
+            f"worker_concurrency_capped: {TENANT_SLOTS_EXHAUSTED} scope=tenant — 1/1"
+        )
+
+    monkeypatch.setattr(
+        "app.factory.build.codewhale_worker.run_worker_job", capped
+    )
+    with pytest.raises(RoleError):
+        _run_writer_via_codewhale_worker(_ctx(tmp_path))
+    assert calls["n"] == 1

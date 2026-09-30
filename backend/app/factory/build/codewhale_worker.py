@@ -76,6 +76,25 @@ MODEL_CALL_CLOSED_DETAIL = (
 PROCESS_SLOTS_EXHAUSTED = "process_slots_exhausted"
 TENANT_SLOTS_EXHAUSTED = "tenant_slots_exhausted"
 
+#: How long a WRITER whose tenant slot is taken by the owner's OWN other
+#: build may wait (narrated on the Floor, retrying) before it fails. A
+#: tenant-scope cap is self-inflicted and transient; process-scope stays an
+#: immediate refusal (other tenants' work is not ours to camp on).
+SLOT_WAIT_ENV = "FACTORY_WORKER_SLOT_WAIT_S"
+DEFAULT_SLOT_WAIT_S = 900.0
+SLOT_WAIT_POLL_S = 15.0
+
+
+def worker_slot_wait_s() -> float:
+    raw = str(os.getenv(SLOT_WAIT_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_SLOT_WAIT_S
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return DEFAULT_SLOT_WAIT_S
+
+
 #: A handle that carries no server-derived tenant key cannot be accounted
 #: for fairly, so it is refused rather than dropped into a shared bucket.
 #: Fail-closed, same trust boundary as NO_AUTHENTICATED_TENANT.
@@ -393,7 +412,8 @@ class WorkerReceipt:
 # cerebrumdev-redis in render.yaml, wired to REDIS_URL -- so the swap is
 # implementation only: no new dependency, no new infrastructure.
 #
-# TO SWAP: implement acquire/release/snapshot with the same signatures and
+# TO SWAP: implement acquire/release/snapshot with the same signatures
+# (acquire takes an optional holder dict naming the job for refusals) and
 # semantics (atomic check-and-increment; decrement-and-delete-at-zero;
 # release must be exception-safe and must not leak a slot if the holder
 # dies -- a TTL on the shared entry, which the in-process version does not
@@ -428,8 +448,19 @@ class InProcessSlotCounter:
         # about to refuse, so a refusal storm would grow the map as fast as
         # the successes.
         self._tenant_active: Dict[str, int] = {}
+        # WHO holds each slot (live 2026-09-30: "tenant f714a7c0 holds 1/1"
+        # told the owner nothing about WHICH of their builds held it).
+        # Parallel to _tenant_active, same lock, popped at zero with it.
+        self._tenant_holders: Dict[str, list] = {}
 
-    def acquire(self, key: str, *, process_cap: int, tenant_cap: int) -> None:
+    def acquire(
+        self,
+        key: str,
+        *,
+        process_cap: int,
+        tenant_cap: int,
+        holder: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """Take one slot for ``key`` or raise a named WorkerError.
 
         CHECK ORDER is process first, then tenant, and that is deliberate:
@@ -455,13 +486,21 @@ class InProcessSlotCounter:
                     f"recomputed, or move {PROFILE_ENV} to a larger plan."
                 )
             if held >= tenant_cap:
+                holders = ""
+                named = [
+                    f"session {h.get('session_id')} building {h.get('product_id')}"
+                    for h in self._tenant_holders.get(key, ())
+                    if h.get("session_id") or h.get("product_id")
+                ]
+                if named:
+                    holders = " Held by your own " + "; ".join(named) + "."
                 raise WorkerError(
                     f"{WORKER_CONCURRENCY_CAPPED}: {TENANT_SLOTS_EXHAUSTED} "
                     f"scope=tenant — tenant {short} holds {held}/{tenant_cap} "
                     f"of its own concurrent build slots; this instance has "
                     f"{active}/{process_cap} in flight, so other tenants are "
                     f"unaffected — job refused, never silently run and never "
-                    f"silently queued."
+                    f"silently queued.{holders}"
                 )
             # Both mutations together, LAST. The increment is the final
             # statement of the critical section and `try:` opens immediately
@@ -469,6 +508,8 @@ class InProcessSlotCounter:
             # never incremented.
             self._process_active = active + 1
             self._tenant_active[key] = held + 1
+            if holder:
+                self._tenant_holders.setdefault(key, []).append(dict(holder))
 
     def release(self, key: str) -> None:
         """Give the slot back. Mirrors acquire; runs from a finally block."""
@@ -477,11 +518,15 @@ class InProcessSlotCounter:
             remaining = self._tenant_active.get(key, 0) - 1
             if remaining > 0:
                 self._tenant_active[key] = remaining
+                holders = self._tenant_holders.get(key)
+                if holders:
+                    holders.pop()
             else:
                 # CLEANUP INSIDE THE LOCK. This pop is what keeps 50
                 # churning tenants from leaving 50 zero-valued entries
                 # behind forever.
                 self._tenant_active.pop(key, None)
+                self._tenant_holders.pop(key, None)
 
     def snapshot(self) -> Dict[str, Any]:
         """Observability + the leak assertion. A copy, never the live map."""
@@ -554,7 +599,9 @@ def _tenant_slot_key(tenant_store: Any) -> str:
 
 
 @contextmanager
-def worker_job_slot(tenant_store: Any) -> Iterator[None]:
+def worker_job_slot(
+    tenant_store: Any, holder: Optional[Dict[str, Any]] = None
+) -> Iterator[None]:
     """Acquire one concurrency slot for this tenant's job.
 
     Phase 1 applies to the builder: the store must already be BOUND for
@@ -578,7 +625,9 @@ def worker_job_slot(tenant_store: Any) -> Iterator[None]:
     # exist. These same locals make the decision AND the message.
     process_cap = worker_process_cap()
     tenant_cap = worker_tenant_cap()
-    _COUNTER.acquire(key, process_cap=process_cap, tenant_cap=tenant_cap)
+    _COUNTER.acquire(
+        key, process_cap=process_cap, tenant_cap=tenant_cap, holder=holder
+    )
     try:
         yield
     finally:
@@ -635,6 +684,7 @@ def run_worker_job(
     tenant_store: Any = None,
     timeout_s: Optional[float] = None,
     session_id: Optional[str] = None,
+    product_id: str = "",
     progress: Optional[Callable[[str, Dict[str, Any]], None]] = None,
 ) -> WorkerReceipt:
     """Run one headless CodeWhale exec — non-interactive, JSON summary.
@@ -657,7 +707,16 @@ def run_worker_job(
             f"{WORKER_CLI_MISSING}: codewhale executable not found — the "
             "worker cannot run headless"
         )
-    with worker_job_slot(tenant_store):
+    with worker_job_slot(
+        tenant_store,
+        # Name THIS job so a capped sibling's refusal can say which of the
+        # owner's builds holds the slot (live 2026-09-30: "holds 1/1" with
+        # no name was a dead-end on the Floor).
+        holder={
+            "session_id": str(session_id or "") or None,
+            "product_id": str(product_id or "") or Path(checkout_dir).name,
+        },
+    ):
         cwd = Path(checkout_dir)
         cwd.mkdir(parents=True, exist_ok=True)
         timeout = timeout_s if timeout_s is not None else worker_timeout_s()

@@ -515,9 +515,11 @@ def test_the_slot_backend_is_swappable(monkeypatch):
         def __init__(self):
             self.inner = InProcessSlotCounter()
 
-        def acquire(self, key, *, process_cap, tenant_cap):
+        def acquire(self, key, *, process_cap, tenant_cap, holder=None):
             calls.append(("acquire", key, process_cap, tenant_cap))
-            self.inner.acquire(key, process_cap=process_cap, tenant_cap=tenant_cap)
+            self.inner.acquire(
+                key, process_cap=process_cap, tenant_cap=tenant_cap, holder=holder
+            )
 
         def release(self, key):
             calls.append(("release", key))
@@ -599,3 +601,52 @@ def test_render_yaml_does_not_declare_a_plan_that_cannot_host_a_writer():
     for a single Node writer child."""
     assert WORKER_PROFILES.get("starter") is None
     assert _backend_service().get("plan") != "starter"
+
+
+# ---------------------------------------------------------------------------
+# The refusal names the holder (live 2026-09-30, automotive re-run):
+# "tenant f714a7c0 holds 1/1" told the owner nothing about WHICH of their
+# builds held the slot -- a dead-end message on a phone screen.
+# ---------------------------------------------------------------------------
+
+
+def test_a_tenant_refusal_names_the_holding_build(monkeypatch):
+    monkeypatch.setenv(TENANT_CAP_ENV, "1")
+    solo = _tenant("solo")
+    with worker_job_slot(
+        solo, holder={"session_id": "sess_a1b2", "product_id": "automotive-aiops"}
+    ):
+        with pytest.raises(WorkerError) as exc:
+            with worker_job_slot(
+                solo, holder={"session_id": "sess_new", "product_id": "retry"}
+            ):
+                raise AssertionError("second slot must refuse")
+        msg = str(exc.value)
+        assert TENANT_SLOTS_EXHAUSTED in msg
+        assert "sess_a1b2" in msg
+        assert "automotive-aiops" in msg
+
+
+def test_a_released_holder_no_longer_blocks_or_appears(monkeypatch):
+    monkeypatch.setenv(TENANT_CAP_ENV, "1")
+    solo = _tenant("solo2")
+    with worker_job_slot(solo, holder={"session_id": "sess_gone", "product_id": "p1"}):
+        pass
+    # Slot free again; the old holder must not leak into a later refusal.
+    with worker_job_slot(solo, holder={"session_id": "sess_live", "product_id": "p2"}):
+        with pytest.raises(WorkerError) as exc:
+            with worker_job_slot(solo):
+                raise AssertionError("second slot must refuse")
+        assert "sess_gone" not in str(exc.value)
+        assert "sess_live" in str(exc.value)
+
+
+def test_a_holderless_acquire_still_refuses_cleanly(monkeypatch):
+    """Backends and callers that pass no holder keep the old message shape."""
+    monkeypatch.setenv(TENANT_CAP_ENV, "1")
+    solo = _tenant("solo3")
+    with worker_job_slot(solo):
+        with pytest.raises(WorkerError) as exc:
+            with worker_job_slot(solo):
+                raise AssertionError("second slot must refuse")
+        assert TENANT_SLOTS_EXHAUSTED in str(exc.value)
