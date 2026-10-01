@@ -4747,6 +4747,7 @@ def run_writer(
             str(getattr(c, "capability_id", "") or getattr(c, "id", "") or "")
             for c in (getattr(ctx.plan, "capabilities", None) or [])
         ],
+        blueprint=ctx.blueprint,
     )
     sources["acceptance"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())

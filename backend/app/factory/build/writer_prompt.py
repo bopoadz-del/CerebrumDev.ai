@@ -221,6 +221,15 @@ DEPTH (the gates are the bar, and you can reach them yourself):
   a standard, how a trade actually works -- is yours to find out. Say in your
   report where it came from. A value the customer owns (a rate, a threshold, a
   limit) stays a named setting they can change, whatever you learn about it.
+- The work is yours to create, grounded in our block-store standards and the
+  vertical build. Build ON the stocked kit when one exists for this domain,
+  composing the blocks you were given. When none exists, research the domain
+  freely and build the new vertical yourself -- but shaped the Store's way: the
+  same structure and contracts every Cerebrum platform and block follows (the
+  OUTPUT contract, PERSISTENCE, TENANCY and AUTHORITY sections above), laid out
+  and registered like a block, not a one-off architecture. Never fabricate a
+  retrieval corpus: a RAG surface is empty until the customer supplies sources
+  -- ship the ingest/query surface, never seed documents.
 - You have the wall. Use it: a shallow pass that ends early is sent back.
 
 SPECIALISTS (five of them, and you have agents — use them):
@@ -327,7 +336,7 @@ def render_writer_prompt(
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
-        acceptance_floor=render_acceptance_floor(),
+        acceptance_floor=render_acceptance_floor(blueprint),
     )
     if resume:
         body = _RESUME_PREFACE + body

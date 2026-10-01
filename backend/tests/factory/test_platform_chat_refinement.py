@@ -111,3 +111,38 @@ def test_parse_refinement_command_variations():
     assert platform_chat_flow.parse_refinement_command("include chat")[0] == "add_capability"
     assert platform_chat_flow.parse_refinement_command("drop capability audit")[0] == "remove_capability"
     assert platform_chat_flow.parse_refinement_command("list capabilities")[0] == "list_capabilities"
+
+
+# ── set_rigor: the acceptance bar is the customer's to choose ────────────────
+
+@pytest.mark.parametrize("phrase,level", [
+    ("set rigor to prototype", "prototype"),
+    ("make it a test platform", "prototype"),
+    ("build a light platform", "light"),
+    ("make it half-ass", "light"),
+    ("rigor: standard", "standard"),
+    ("make it a production platform", "production"),
+    ("rigor to full", "production"),
+])
+def test_set_rigor_phrasings(state, phrase, level):
+    _draft_retail(state)
+    result = refine_from_chat(state, phrase)
+    assert result is not None, phrase
+    assert result["ok"] and result["refined"], phrase
+    assert result["action"] == "set_rigor", phrase
+    assert result["blueprint"]["rigor"] == level, phrase
+
+
+def test_set_rigor_reflows_plan(state):
+    _draft_retail(state)
+    state.product_design.plan = {"stale": True}
+    refine_from_chat(state, "make it a prototype")
+    assert state.product_design.plan is None  # bar changed -> re-plan
+
+
+def test_rigor_regex_does_not_hijack_add_remove(state):
+    _draft_retail(state)
+    # 'add'/'remove' commands must still parse as themselves
+    assert refine_from_chat(state, "add capability vector_search")["action"] == "add_capability"
+    r = refine_from_chat(state, "remove capability audit")
+    assert r["action"] == "remove_capability"

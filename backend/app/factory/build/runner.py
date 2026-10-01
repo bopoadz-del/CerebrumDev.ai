@@ -571,7 +571,9 @@ class RoleRunner:
             or "Platform"
         )
         try:
-            changed = refresh_factory_files(self.workspace, name)
+            changed = refresh_factory_files(
+                self.workspace, name, self.blueprint
+            )
         except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
             self.ledger.append(
                 EventKind.NOTE,

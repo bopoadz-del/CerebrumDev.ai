@@ -247,6 +247,26 @@ _LIST_CAPS_RE = re.compile(
     r"^(?:list\s+capabilities|show\s+capabilities|what\s+is\s+in\s+the\s+blueprint|show\s+blueprint)$",
     re.IGNORECASE,
 )
+#: Build rigor in the customer's own words. The acceptance floor grades the
+#: build against the bar it declares, so a throwaway is not failed on a
+#: production security scan. Synonyms map to the four floor levels.
+_RIGOR_SYNONYMS = {
+    "prototype": "prototype", "throwaway": "prototype", "poc": "prototype",
+    "proof of concept": "prototype", "test": "prototype", "disposable": "prototype",
+    "light": "light", "half-ass": "light", "half ass": "light", "halfass": "light",
+    "quick": "light", "basic": "light", "lite": "light",
+    "standard": "standard", "normal": "standard", "default": "standard",
+    "production": "production", "prod": "production", "full": "production",
+    "strict": "production", "real": "production",
+}
+_RIGOR_RE = re.compile(
+    r"(?:set\s+(?:the\s+)?rigor\s+(?:to\s+)?|rigor\s*(?:to\s+|[:=]\s*)|"
+    r"make\s+it\s+(?:a\s+)?|build\s+(?:a\s+)?|run\s+(?:a\s+)?|as\s+(?:a\s+)?)"
+    r"(prototype|throwaway|proof of concept|poc|disposable|half[\s-]?ass|"
+    r"light|lite|basic|quick|standard|normal|default|production|prod|full|"
+    r"strict|real|test)\b(?:\s+platform)?",
+    re.IGNORECASE,
+)
 
 
 def _capability_for_id(cap_id: str, dual_ids: List[str]) -> Dict[str, Any]:
@@ -287,6 +307,12 @@ def parse_refinement_command(message: str) -> tuple[str, Dict[str, Any]]:
         return "set_vertical", {"vertical": m.group(1).strip()}
     if _LIST_CAPS_RE.search(text):
         return "list_capabilities", {}
+    m = _RIGOR_RE.search(text)
+    if m:
+        key = re.sub(r"[\s-]+", " ", m.group(1).strip().lower())
+        level = _RIGOR_SYNONYMS.get(key) or _RIGOR_SYNONYMS.get(key.replace(" ", ""))
+        if level:
+            return "set_rigor", {"rigor": level}
     return "", {}
 
 
@@ -368,6 +394,35 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
             "refined": True,
             "action": action,
             "summary": f"Vertical set to '{vertical}'.",
+            "blueprint": pd.blueprint,
+            "yaml": blueprint_to_yaml(bp),
+        }
+
+    elif action == "set_rigor":
+        rigor = args["rigor"]
+        bp.rigor = rigor
+        pd.blueprint = bp.model_dump(mode="json")
+        pd.plan = None  # the bar changed; re-plan and re-stamp the harness
+        pd.generation = None
+        from app.factory.build.acceptance_floor import is_production_grade
+
+        if is_production_grade(bp):
+            bar = (
+                f"{rigor} — a production-grade build: the universal checks plus "
+                "the security scan and anything your brief declares (retrieval, "
+                "connectors) are enforced."
+            )
+        else:
+            bar = (
+                f"{rigor} — a disposable/test build: the universal 'does it work' "
+                "checks stay enforced, but the security scan is advisory. The gate "
+                "still enforces whatever your brief actually asks for."
+            )
+        return {
+            "ok": True,
+            "refined": True,
+            "action": action,
+            "summary": f"Build grade set to {bar}",
             "blueprint": pd.blueprint,
             "yaml": blueprint_to_yaml(bp),
         }

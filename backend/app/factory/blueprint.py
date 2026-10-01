@@ -55,6 +55,10 @@ class ProductBlueprint(BaseModel):
     ui_modules: List[str] = Field(default_factory=list)
     connectors: List[str] = Field(default_factory=list)
     edge_profile: str = "standard"
+    #: Build rigor: prototype | light | standard | production. The acceptance
+    #: floor grades THIS build against the bar it declared, not a fixed maximum.
+    #: Defaults to the strictest so an unset brief is never silently lowered.
+    rigor: str = "production"
     human_authority: bool = True
     factory_scenario: FactoryScenario = FactoryScenario.CREATE_PRODUCT
     # Provenance of the draft itself: "architect_llm" | "golden_steward" |

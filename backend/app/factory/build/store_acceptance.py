@@ -776,10 +776,16 @@ def _with_deploy_time_settings(script: str) -> str:
     return script.replace(slot, SNIPPET.strip("\n"))
 
 
-def render_acceptance_script() -> str:
-    """Self-contained harness stamped into every pilot zip."""
+def render_acceptance_script(blueprint: Any = None) -> str:
+    """Self-contained harness stamped into every pilot zip.
+
+    The advisory set follows THIS build's brief: all checks still RUN and report,
+    but a conditional check the brief never asked for is advisory (FAIL -> SKIP,
+    no veto), exactly like the statically-advisory pipeline-evidence checks.
+    ``None`` (no brief) raises every signal, so the advisory set is the static
+    one — byte-for-byte what it was before brief-driven applicability existed."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
-    advisory = ", ".join(repr(n) for n in sorted(ACCEPTANCE_ADVISORY_NAMES))
+    advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -1758,9 +1764,12 @@ def stamp_acceptance_artifacts(
     *,
     product_name: str,
     cap_ids: Sequence[str],
+    blueprint: Any = None,
 ) -> None:
     """WRITER / ProductGenerator emit the harness and the files it measures."""
-    workspace.write_text(ACCEPTANCE_SCRIPT_REL, render_acceptance_script())
+    workspace.write_text(
+        ACCEPTANCE_SCRIPT_REL, render_acceptance_script(blueprint)
+    )
     workspace.write_text(AUTH_REL, render_auth_module())
     workspace.write_text(Path("app") / "tenancy.py", render_tenancy_module())
     workspace.write_text(GITHUB_CI_REL, render_github_ci())
@@ -1773,10 +1782,11 @@ def stamp_acceptance_into_path(
     *,
     product_name: str = "platform",
     cap_ids: Optional[Sequence[str]] = None,
+    blueprint: Any = None,
 ) -> None:
     dest = Path(root)
     files = {
-        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(),
+        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(blueprint),
         AUTH_REL: render_auth_module(),
     Path("app") / "tenancy.py": render_tenancy_module(),
         GITHUB_CI_REL: render_github_ci(),

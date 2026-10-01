@@ -33,6 +33,68 @@ logger = logging.getLogger(__name__)
 FLOOR_REL = "acceptance_floor.v2.json"
 SCHEMA = "acceptance_floor.v2"
 
+#: The gate follows the prompt. Every check is either UNIVERSAL (each one in
+#: the floor file carries ``universal: true`` — every platform owes it, always
+#: enforced) or CONDITIONAL (``applies_when: "<signal>"`` — enforced only when
+#: the brief declares that subject). A conditional check whose signal the brief
+#: never raised is advisory (reported, scored SKIP, never a veto), so a build is
+#: never rejected over a capability it was never asked to have — e.g. a RAG
+#: round-trip on a platform whose brief never asked for retrieval. The split
+#: lives in the floor file, as data, so a check can move between the two sets
+#: without touching code.
+
+#: Grades that mean "not a production platform": the production-only checks (the
+#: security scan) are advisory for these. Anything else — including an unset
+#: grade — is production, so nothing is silently lowered.
+_NON_PRODUCTION_GRADES = frozenset(
+    {"prototype", "light", "test", "disposable", "demo", "throwaway", "poc"}
+)
+
+#: Capability text that means the brief asked for a retrieval surface.
+_RETRIEVAL_HINTS = (
+    "rag", "retriev", "search", "knowledge", "corpus", "document",
+    "semantic", "vector", "ingest",
+)
+
+
+def is_production_grade(blueprint: Any) -> bool:
+    """True unless the brief declared a disposable/test grade. An unset grade is
+    production, so the security bar is never lowered by omission."""
+    grade = str(getattr(blueprint, "rigor", "") or "").strip().lower()
+    return grade not in _NON_PRODUCTION_GRADES
+
+
+def _all_signals() -> frozenset:
+    """Every applies_when value the floor references."""
+    return frozenset(
+        str(c["applies_when"]) for c in checks() if c.get("applies_when")
+    )
+
+
+def brief_signals(blueprint: Any) -> frozenset:
+    """Which conditional subjects THIS brief declared.
+
+    ``None`` means no brief is in hand (a standalone re-render): assume the
+    strictest reading — every signal present — so nothing is silently skipped.
+    """
+    if blueprint is None:
+        return _all_signals()
+    sigs = set()
+    if is_production_grade(blueprint):
+        sigs.add("production")
+    caps = getattr(blueprint, "capabilities", None) or []
+    parts: List[str] = [str(getattr(blueprint, "summary", "") or "")]
+    for cap in caps:
+        parts.append(str(getattr(cap, "id", "") or ""))
+        parts.append(str(getattr(cap, "description", "") or ""))
+        parts.extend(str(b) for b in (getattr(cap, "block_ids", None) or []))
+    blob = " ".join(parts).lower()
+    if any(h in blob for h in _RETRIEVAL_HINTS):
+        sigs.add("retrieval")
+    if getattr(blueprint, "connectors", None):
+        sigs.add("connectors")
+    return frozenset(sigs)
+
 
 def floor_path() -> Path:
     return Path(__file__).resolve().parent.parent / FLOOR_REL
@@ -59,6 +121,14 @@ def _load() -> Dict[str, Any]:
         for field in ("requirement_text", "brief_render", "gate_fn", "check"):
             if not str(check.get(field) or "").strip():
                 raise ValueError(f"{FLOOR_REL}: {cid} has no {field}")
+        is_universal = check.get("universal") is True
+        is_conditional = bool(str(check.get("applies_when") or "").strip())
+        is_static_advisory = check.get("advisory") is True
+        if not (is_universal or is_conditional or is_static_advisory):
+            raise ValueError(
+                f"{FLOOR_REL}: {cid} must be universal:true, carry an "
+                "applies_when signal, or be advisory:true"
+            )
     return data
 
 
@@ -77,7 +147,7 @@ def check_ids() -> Tuple[str, ...]:
     return tuple(str(c["id"]) for c in checks())
 
 
-def advisory_ids() -> Tuple[str, ...]:
+def advisory_ids(blueprint: Any = None) -> Tuple[str, ...]:
     """Checks the gate REPORTS but does not fail a build on.
 
     A check is advisory when the floor demands evidence that no step of the
@@ -96,8 +166,30 @@ def advisory_ids() -> Tuple[str, ...]:
     flag lives in the floor file, next to the check it describes, so both
     consumers read one source — the same reason the checklist itself does.
     The owner chose demotion over building the bridges (Gate 3b, 2026-09-26).
+
+    ``blueprint`` widens this set to follow the prompt: a CONDITIONAL check whose
+    ``applies_when`` signal the brief never raised is advisory for THIS build, on
+    top of the statically-advisory ones. ``None`` (no brief in hand) raises every
+    signal, so the set is exactly the static one — the safe, strictest default.
     """
-    return tuple(str(c["id"]) for c in checks() if c.get("advisory") is True)
+    sigs = brief_signals(blueprint)
+    out = []
+    for c in checks():
+        cid = str(c["id"])
+        if c.get("advisory") is True:
+            out.append(cid)
+            continue
+        applies_when = c.get("applies_when")
+        if applies_when and str(applies_when) not in sigs:
+            out.append(cid)  # conditional check the brief did not ask for
+    return tuple(out)
+
+
+def enforced_ids(blueprint: Any = None) -> Tuple[str, ...]:
+    """The checks that VETO this build — the checklist minus what is advisory
+    for its brief (universal checks, plus conditionals the brief asked for)."""
+    adv = set(advisory_ids(blueprint))
+    return tuple(cid for cid in check_ids() if cid not in adv)
 
 
 def requirements() -> List[str]:
@@ -105,18 +197,26 @@ def requirements() -> List[str]:
     return [str(c["requirement_text"]).strip() for c in checks()]
 
 
-def render_for_prompt() -> str:
+def render_for_prompt(blueprint: Any = None) -> str:
     """The floor as the REQUIREMENTS block of the writer's prompt.
 
-    Rendered verbatim from the same file the gate grades against, so the
-    agent is building toward the checklist rather than guessing at it.
+    Rendered verbatim from the same file the gate grades against, so the agent
+    builds toward the checklist rather than guessing at it. The set follows THIS
+    brief: a check that is advisory for this build (a conditional the brief did
+    not ask for) is marked so, so the writer spends effort on what actually
+    vetoes its build and is never failed on a requirement it was never asked for.
     """
+    adv = set(advisory_ids(blueprint))
     lines = [
-        f"ACCEPTANCE FLOOR (v{floor_version()} — the Store gate grades every "
-        "build against exactly these, in this order; they are not advice):",
+        f"ACCEPTANCE FLOOR (v{floor_version()} — the Store gate grades this "
+        "build against exactly these, in this order; a line marked [not "
+        "required by this brief] is reported but does not fail the build):",
     ]
     for check in checks():
-        lines.append(str(check["brief_render"]).strip())
+        line = str(check["brief_render"]).strip()
+        if str(check["id"]) in adv:
+            line += "  [not required by this brief]"
+        lines.append(line)
     return "\n".join(lines)
 
 
