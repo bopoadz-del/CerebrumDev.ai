@@ -96,11 +96,6 @@ def brief_signals(blueprint: Any) -> frozenset:
     return frozenset(sigs)
 
 
-def rigor_of(blueprint: Any) -> str:
-    """The grade label the brief declared (free text; empty => production)."""
-    return str(getattr(blueprint, "rigor", "") or "").strip().lower() or "production"
-
-
 def floor_path() -> Path:
     return Path(__file__).resolve().parent.parent / FLOOR_REL
 
