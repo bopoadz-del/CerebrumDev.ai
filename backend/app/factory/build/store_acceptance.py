@@ -1638,6 +1638,7 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
 
 def check_authorship_floor() -> Tuple[str, str]:
     from app.factory.build.authorship import (  # type: ignore
+        agent_written_handler_ids_in_workspace,
         full_pilot_authorship_from,
     )
 
@@ -1657,26 +1658,29 @@ def check_authorship_floor() -> Tuple[str, str]:
     # delivered product. The stamp in each handler's own docstring is what
     # this check is ABOUT, it is in the tree, and it is what the floor line
     # asks the writer for. Judge the product by the product.
-    try:
-        floor = full_pilot_authorship_from(receipt, ROOT) if receipt else None
-        if floor is not None and floor.meets_floor:
+    floor = None
+    if receipt:
+        try:
+            floor = full_pilot_authorship_from(receipt, ROOT)
+        except Exception:
+            floor = None
+    if floor is not None:
+        if floor.meets_floor:
             return "PASS", "need≥%s action_py=%s cli=%s" % (
                 floor.need,
                 floor.action_py,
                 len(floor.cli_authored_ids),
             )
         return "FAIL", "below floor need≥%s action_py=%s" % (floor.need, floor.action_py)
-    except Exception:
-        pass
-    authored = 0
-    actions = ROOT / "app" / "actions"
-    if actions.is_dir():
-        for path in actions.glob("*.py"):
-            if path.name.startswith("_"):
-                continue
-            text = path.read_text(encoding="utf-8")
-            if "CODER_MODEL" in text or "coding agent" in text.lower() or "coder CLI" in text:
-                authored += 1
+    # ONE source of truth for "the coding agent wrote this": the WRITER's own
+    # docstring stamp, read by the factory's canonical detector. A private
+    # substring list here drifted behind the writer -- it still looked for the
+    # pre-CodeWhale markers (CODER_MODEL / coding agent / coder CLI), so every
+    # CodeWhale-authored product counted authored=0 while shipping ten stamped
+    # handlers (live 2026-10-01, automotive_aiops: acceptance 20/21, and this
+    # line was the 1). No receipt ships with a delivered product, so this is
+    # the path every real product takes -- judge the product by its own stamp.
+    authored = len(agent_written_handler_ids_in_workspace(ROOT))
     n_required = receipt.get("n_required") or receipt.get("n_required_capabilities")
     try:
         n_required = int(n_required) if n_required is not None else None

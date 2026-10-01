@@ -37,9 +37,13 @@ from app.factory.build.builds_push import (
 )
 from app.factory.build.roles_handlers import _render_release_gate
 
+# The stamp the WRITER actually emits. This fixture used to carry
+# "CODER_MODEL: authored by the coding agent", which only ever matched the
+# release gate's own private marker list -- so the test passed while every
+# real CodeWhale-stamped product reported 0 (live 2026-10-01).
 _HANDLER = '''"""Record a thing.
 
-CODER_MODEL: authored by the coding agent.
+Written by the factory WRITER role (codewhale exec)
 """
 
 CAPABILITY_ID = "record_thing"
