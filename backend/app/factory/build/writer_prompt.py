@@ -13,6 +13,7 @@ from typing import Any
 from app.factory.build.acceptance_floor import (
     render_for_prompt as render_acceptance_floor,
 )
+from app.factory.build.acceptance_floor import rigor_of as _rigor_of
 
 #: Version log.
 #: v11 -- THE UI BAR, HELD. The prompt told the agent "a UI nothing builds is
@@ -327,7 +328,7 @@ def render_writer_prompt(
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
-        acceptance_floor=render_acceptance_floor(),
+        acceptance_floor=render_acceptance_floor(_rigor_of(blueprint)),
     )
     if resume:
         body = _RESUME_PREFACE + body

@@ -77,8 +77,15 @@ def merged_requirements(root: Path) -> str:
     )
 
 
-def refresh_factory_files(root: Path, product_name: str) -> List[str]:
-    """Re-render Factory-owned files in ``root``; return the ones that changed."""
+def refresh_factory_files(
+    root: Path, product_name: str, rigor: str = "production"
+) -> List[str]:
+    """Re-render Factory-owned files in ``root``; return the ones that changed.
+
+    ``rigor`` keeps a re-entered build's acceptance harness at the bar it
+    declared — re-rendering at a fixed maximum would silently re-strict a
+    light/prototype build on resume."""
+    from app.factory.build.acceptance_floor import normalize_rigor
     from app.factory.build.roles_handlers import _render_release_gate
     from app.factory.build.store_acceptance import render_acceptance_script, render_github_ci
 
@@ -87,7 +94,12 @@ def refresh_factory_files(root: Path, product_name: str) -> List[str]:
     if (root / "scripts" / "release_gate.py").is_file():
         _write_if_changed(root, "scripts/release_gate.py", _render_release_gate(product_name), changed)
     if (root / "scripts" / "acceptance.py").is_file():
-        _write_if_changed(root, "scripts/acceptance.py", render_acceptance_script(), changed)
+        _write_if_changed(
+            root,
+            "scripts/acceptance.py",
+            render_acceptance_script(normalize_rigor(rigor)),
+            changed,
+        )
     if (root / ".github" / "workflows" / "ci.yml").is_file():
         _write_if_changed(root, ".github/workflows/ci.yml", render_github_ci(), changed)
     if (root / "requirements.txt").is_file():

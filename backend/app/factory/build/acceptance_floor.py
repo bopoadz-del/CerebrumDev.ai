@@ -33,6 +33,39 @@ logger = logging.getLogger(__name__)
 FLOOR_REL = "acceptance_floor.v2.json"
 SCHEMA = "acceptance_floor.v2"
 
+#: Build rigor, weakest to strictest. The brief declares one; the gate grades
+#: the build against THAT bar, not a fixed maximum. A check is enforced at a
+#: rigor when its ``min_rigor`` is at or below the active level; above it, the
+#: check is advisory (reported, scored SKIP, never a veto) exactly like the
+#: statically-advisory pipeline-evidence checks.
+RIGOR_LEVELS: Tuple[str, ...] = ("prototype", "light", "standard", "production")
+
+#: Absent a declared rigor, nothing is lowered: the strictest bar, so every
+#: existing build grades exactly as it did before rigor existed.
+DEFAULT_RIGOR = "production"
+
+
+def _rigor_rank(rigor: str) -> int:
+    try:
+        return RIGOR_LEVELS.index(str(rigor))
+    except ValueError:
+        raise ValueError(
+            f"unknown rigor {rigor!r}; known: {', '.join(RIGOR_LEVELS)}"
+        ) from None
+
+
+def normalize_rigor(value: Any) -> str:
+    """A brief's declared rigor, coerced to a known level — defaulting to the
+    strictest. A typo or empty value must never SILENTLY lower the bar, so it
+    falls back to DEFAULT_RIGOR rather than raising on the build path."""
+    text = str(value or "").strip().lower()
+    return text if text in RIGOR_LEVELS else DEFAULT_RIGOR
+
+
+def rigor_of(blueprint: Any) -> str:
+    """The rigor THIS build declared, read off the blueprint; safe default."""
+    return normalize_rigor(getattr(blueprint, "rigor", None))
+
 
 def floor_path() -> Path:
     return Path(__file__).resolve().parent.parent / FLOOR_REL
@@ -59,6 +92,12 @@ def _load() -> Dict[str, Any]:
         for field in ("requirement_text", "brief_render", "gate_fn", "check"):
             if not str(check.get(field) or "").strip():
                 raise ValueError(f"{FLOOR_REL}: {cid} has no {field}")
+        mr = check.get("min_rigor")
+        if mr is not None and str(mr) not in RIGOR_LEVELS:
+            raise ValueError(
+                f"{FLOOR_REL}: {cid} has min_rigor {mr!r}, not one of "
+                f"{', '.join(RIGOR_LEVELS)}"
+            )
     return data
 
 
@@ -77,7 +116,7 @@ def check_ids() -> Tuple[str, ...]:
     return tuple(str(c["id"]) for c in checks())
 
 
-def advisory_ids() -> Tuple[str, ...]:
+def advisory_ids(rigor: str = DEFAULT_RIGOR) -> Tuple[str, ...]:
     """Checks the gate REPORTS but does not fail a build on.
 
     A check is advisory when the floor demands evidence that no step of the
@@ -96,8 +135,28 @@ def advisory_ids() -> Tuple[str, ...]:
     flag lives in the floor file, next to the check it describes, so both
     consumers read one source — the same reason the checklist itself does.
     The owner chose demotion over building the bridges (Gate 3b, 2026-09-26).
+
+    ``rigor`` widens this set downward: a check whose ``min_rigor`` is stricter
+    than the build's declared rigor is advisory for THIS build, on top of the
+    statically-advisory ones. At ``DEFAULT_RIGOR`` the min_rigor clause can
+    never fire (production is the maximum), so the set is exactly the static
+    one — the safe default.
     """
-    return tuple(str(c["id"]) for c in checks() if c.get("advisory") is True)
+    rank = _rigor_rank(rigor)
+    out = []
+    for c in checks():
+        cid = str(c["id"])
+        static = c.get("advisory") is True
+        min_rigor = str(c.get("min_rigor") or RIGOR_LEVELS[0])
+        if static or _rigor_rank(min_rigor) > rank:
+            out.append(cid)
+    return tuple(out)
+
+
+def enforced_ids(rigor: str = DEFAULT_RIGOR) -> Tuple[str, ...]:
+    """The checks that VETO a build at this rigor — checklist minus advisory."""
+    adv = set(advisory_ids(rigor))
+    return tuple(cid for cid in check_ids() if cid not in adv)
 
 
 def requirements() -> List[str]:
@@ -105,18 +164,26 @@ def requirements() -> List[str]:
     return [str(c["requirement_text"]).strip() for c in checks()]
 
 
-def render_for_prompt() -> str:
+def render_for_prompt(rigor: str = DEFAULT_RIGOR) -> str:
     """The floor as the REQUIREMENTS block of the writer's prompt.
 
     Rendered verbatim from the same file the gate grades against, so the
-    agent is building toward the checklist rather than guessing at it.
+    agent is building toward the checklist rather than guessing at it. The
+    ``rigor`` is the bar THIS build declared: a check that is advisory at this
+    rigor is marked so, so the writer spends effort on what actually vetoes
+    its build and is never failed on a requirement above the declared bar.
     """
+    adv = set(advisory_ids(rigor))
     lines = [
-        f"ACCEPTANCE FLOOR (v{floor_version()} — the Store gate grades every "
-        "build against exactly these, in this order; they are not advice):",
+        f"ACCEPTANCE FLOOR (v{floor_version()}, rigor={rigor} — the Store gate "
+        "grades this build against exactly these, in this order; a line marked "
+        "[advisory at this rigor] is reported but does not fail the build):",
     ]
     for check in checks():
-        lines.append(str(check["brief_render"]).strip())
+        line = str(check["brief_render"]).strip()
+        if str(check["id"]) in adv:
+            line += "  [advisory at this rigor]"
+        lines.append(line)
     return "\n".join(lines)
 
 

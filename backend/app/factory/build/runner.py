@@ -570,8 +570,12 @@ class RoleRunner:
             or getattr(self.blueprint, "product_id", "")
             or "Platform"
         )
+        from app.factory.build.acceptance_floor import rigor_of
+
         try:
-            changed = refresh_factory_files(self.workspace, name)
+            changed = refresh_factory_files(
+                self.workspace, name, rigor_of(self.blueprint)
+            )
         except Exception as exc:  # noqa: BLE001 -- recorded; the gates still judge
             self.ledger.append(
                 EventKind.NOTE,
