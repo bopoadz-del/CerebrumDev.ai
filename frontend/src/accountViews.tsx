@@ -525,6 +525,161 @@ function verifiedLabel(me: AccountInfo | null): string {
   return me.email_verified ? 'Yes' : 'No'
 }
 
+// Owner-only ops: switch the coding model when it stops responding, and
+// reboot the service. Gated by the master key the owner enters here; the key
+// is kept only in this browser (localStorage), never sent anywhere but the
+// admin endpoints. Hidden entirely until a key is entered.
+function AdminOps() {
+  const [key, setKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('cerebrum_admin_key') || ''
+    } catch {
+      return ''
+    }
+  })
+  const [open, setOpen] = useState(false)
+  const [model, setModel] = useState('')
+  const [provider, setProvider] = useState('')
+  const [effective, setEffective] = useState<{ model?: string; provider?: string }>({})
+  const [providers, setProviders] = useState<string[]>(['deepseek', 'openrouter', 'anthropic', 'kimi'])
+  const [msg, setMsg] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  function saveKey(k: string) {
+    setKey(k)
+    try {
+      if (k) localStorage.setItem('cerebrum_admin_key', k)
+      else localStorage.removeItem('cerebrum_admin_key')
+    } catch {
+      /* private window — fine */
+    }
+  }
+
+  async function adminFetch(path: string, init?: RequestInit) {
+    const res = await fetch(path, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+        ...(init?.headers || {}),
+      },
+    })
+    if (res.status === 401 || res.status === 404) throw new Error('Wrong or missing admin key.')
+    if (!res.ok) throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`)
+    return res.json()
+  }
+
+  async function load() {
+    setErr(null)
+    setMsg(null)
+    setBusy(true)
+    try {
+      const d = await adminFetch('/v1/admin/coder-model')
+      setEffective(d.effective || {})
+      if (Array.isArray(d.provider_options)) setProviders(d.provider_options)
+      setOpen(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed to load')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function apply() {
+    setErr(null)
+    setMsg(null)
+    setBusy(true)
+    try {
+      const body: Record<string, string> = {}
+      if (model.trim()) body.model = model.trim()
+      if (provider.trim()) body.provider = provider.trim()
+      if (!Object.keys(body).length) {
+        setErr('Enter a model id (or pick a provider) first.')
+        return
+      }
+      const d = await adminFetch('/v1/admin/coder-model', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
+      setEffective(d.effective || {})
+      setModel('')
+      setProvider('')
+      setMsg(d.message || 'Applied. Re-run the writer to pick it up.')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed to apply')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reboot() {
+    if (!window.confirm('Reboot the Factory now? It will be back in ~30–60s.')) return
+    setErr(null)
+    setMsg(null)
+    setBusy(true)
+    try {
+      const d = await adminFetch('/v1/admin/reboot', { method: 'POST' })
+      setMsg(d.message || 'Rebooting — back in a moment.')
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'failed to reboot')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="panel admin-ops">
+      <h3>Factory controls</h3>
+      <p className="dim">Owner only. Enter your admin key to switch the coding model or reboot.</p>
+      <div className="admin-key-row">
+        <input
+          type="password"
+          placeholder="admin key"
+          autoComplete="off"
+          value={key}
+          onChange={(e) => saveKey(e.target.value)}
+        />
+        <button type="button" disabled={!key || busy} onClick={() => void load()}>
+          {busy ? 'Working…' : open ? 'Refresh' : 'Unlock'}
+        </button>
+      </div>
+      {open && (
+        <>
+          <p className="dim">
+            Coder now: <strong className="mono">{effective.model || '—'}</strong> on{' '}
+            <strong className="mono">{effective.provider || '—'}</strong>
+          </p>
+          <div className="admin-model-row">
+            <input
+              type="text"
+              placeholder="model id (e.g. deepseek-2.0)"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            />
+            <select value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <option value="">keep provider</option>
+              {providers.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <button type="button" disabled={busy} onClick={() => void apply()}>
+              Apply
+            </button>
+          </div>
+          <button type="button" className="danger" disabled={busy} onClick={() => void reboot()}>
+            Reboot Factory
+          </button>
+        </>
+      )}
+      {msg && <p className="dim note">{msg}</p>}
+      {err && <div className="error-box">{err}</div>}
+    </div>
+  )
+}
+
 export function Account({
   onLogout,
   initialMe,
@@ -739,6 +894,7 @@ export function Account({
           </button>
         </div>
       </div>
+      <AdminOps />
     </div>
   )
 }

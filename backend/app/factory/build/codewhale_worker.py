@@ -220,7 +220,16 @@ def worker_cli_path() -> Optional[str]:
 
 def worker_provider() -> str:
     """Model provider for the headless CLI. DeepSeek by default (the CLI's
-    production provider); deployments may override via env."""
+    production provider); an operator override from the admin page wins over
+    the env, and the env over the default."""
+    try:
+        from app.core.runtime_settings import CODER_PROVIDER, get as _rt_get
+
+        override = _rt_get(CODER_PROVIDER)
+        if override:
+            return override
+    except Exception:  # noqa: BLE001 — settings never break provider resolution
+        pass
     return os.getenv("CODEWHALE_PROVIDER", "deepseek").strip() or "deepseek"
 
 
