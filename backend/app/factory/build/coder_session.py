@@ -1501,6 +1501,8 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
             "kimi-k2",
             "deepseek-v4",
             "deepseek-v4-pro",
+            "deepseek-v3",
+            "deepseek-v2",
         )
     )
     denied = any(hint in lowered for hint in _MODEL_DENIED_HINTS)
