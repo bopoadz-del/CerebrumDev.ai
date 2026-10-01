@@ -156,7 +156,20 @@ def normalize_deepseek_claude_model(model: str) -> str:
 
 
 def deepseek_code_model() -> str:
-    """Primary coding model for the Kimi → DeepSeek OpenAI-compat subprocess."""
+    """Primary coding model for the Kimi → DeepSeek OpenAI-compat subprocess.
+
+    An operator override set from the admin page wins over everything: when the
+    configured model stops responding, the operator must be able to switch it
+    without cloud access (live 2026-10-02).
+    """
+    try:
+        from app.core.runtime_settings import CODER_MODEL, get as _rt_get
+
+        override = _rt_get(CODER_MODEL)
+        if override:
+            return normalize_deepseek_model(override)
+    except Exception:  # noqa: BLE001 — settings never break model resolution
+        pass
     raw = os.getenv(DEEPSEEK_CODE_MODEL_ENV, "").strip()
     if raw:
         return normalize_deepseek_model(raw)
