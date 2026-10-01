@@ -425,8 +425,20 @@ def agent_written_handler_ids_in_workspace(workspace: Path | str) -> List[str]:
     return ids
 
 
+#: Stamp sources that mean "a coding agent wrote this". ONE vocabulary:
+#: scripts the factory renders into a product (the acceptance floor's
+#: authorship_floor, the release gate) derive their test from these rather
+#: than keeping a private copy -- a private copy is what drifted behind the
+#: CodeWhale writer and reported authored=0 for a fully agent-written tree
+#: (live 2026-10-01, automotive_aiops: acceptance 20/21 on that line alone).
+#: ``codewhale`` is Phase 5's headless worker; its stamped handlers count
+#: toward the artifact gate like any other.
+AGENT_SOURCE_PREFIXES = ("coder LLM", "coder CLI", "FACTORY_CODE_CLI", "codewhale")
+AGENT_SOURCE_EXACT = frozenset({"harvested workspace handler", "compiled-brief oneshot"})
+
+
 def is_coding_agent_source(source: Any) -> bool:
-    """True for coder LLM, coder CLI, or harvested keep-path labels.
+    """True for coder LLM, coder CLI, codewhale, or harvested keep-path labels.
 
     Factory-grounded persist/event_bus emit is not the coding agent.
     Deterministic templates are not the coding agent.
@@ -434,16 +446,9 @@ def is_coding_agent_source(source: Any) -> bool:
     text = str(source or "").strip()
     if not text:
         return False
-    if text.startswith("coder LLM") or text.startswith("coder CLI"):
+    if text.startswith(AGENT_SOURCE_PREFIXES):
         return True
-    if text.startswith("FACTORY_CODE_CLI"):
-        return True
-    if text.startswith("codewhale"):
-        # Phase 5: the headless CodeWhale worker is a coding agent; its
-        # stamped handlers count toward the artifact gate like any other.
-        return True
-    lowered = text.lower()
-    return lowered in {"harvested workspace handler", "compiled-brief oneshot"}
+    return text.lower() in AGENT_SOURCE_EXACT
 
 
 def coding_agent_artifact_ids(sources: Optional[Mapping[str, Any]]) -> List[str]:

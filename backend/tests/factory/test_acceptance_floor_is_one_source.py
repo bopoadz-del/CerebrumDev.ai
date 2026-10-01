@@ -340,3 +340,71 @@ class TestAdvisoryLinesReportButDoNotVeto:
         lines.append(f"ACCEPTANCE: {ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}")
         report = parse_acceptance_output("\n".join(lines) + "\n")
         assert report.ok, [l for l in report.lines if not l.satisfied]
+
+
+# ── the authorship stamp is one source too ─────────────────────────────────
+#
+# Live 2026-10-01 (automotive_aiops, cerebrum-builds run 36794735083):
+# acceptance scored 20/21 with the only failure
+# ``authorship_floor — authored=0 below need>=5`` while the SAME run reported
+# ``handler_bodies_distinct — 10 distinct handle() bodies``. All ten handlers
+# carried the writer's stamp; none matched the private substring list the
+# rendered check scanned for (``CODER_MODEL`` / ``coding agent`` /
+# ``coder CLI``), because that list predates the CodeWhale worker. The
+# canonical detector already lives in authorship.py and accepts ``codewhale``
+# — so a second copy here is the bug, exactly as this module's docstring says.
+
+WRITER_STAMP = "Written by the factory WRITER role (codewhale exec)"
+
+
+def _product(tmp_path, stamp, n=5):
+    root = tmp_path / "product"
+    actions = root / "app" / "actions"
+    actions.mkdir(parents=True)
+    (actions / "__init__.py").write_text("", encoding="utf-8")
+    for i in range(n):
+        (actions / f"cap_{i}.py").write_text(
+            f'"""Handler for cap_{i}.\n\n{stamp}\n"""\n\n'
+            f'CAPABILITY_ID = "cap_{i}"\n\n\ndef handle(payload):\n    return {{}}\n',
+            encoding="utf-8",
+        )
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _rendered_authorship_check(root):
+    """The REAL rendered check, with ROOT resolved to *root*."""
+    from app.factory.build.store_acceptance import render_acceptance_script
+
+    ns = {
+        "__name__": "acceptance_under_test",
+        "__file__": str(root / "scripts" / "acceptance.py"),
+    }
+    exec(compile(render_acceptance_script(), "acceptance.py", "exec"), ns)
+    return ns["check_authorship_floor"]
+
+
+class TestAuthorshipReadsTheWritersActualStamp:
+    def test_codewhale_stamped_handlers_are_counted(self, tmp_path):
+        root = _product(tmp_path, WRITER_STAMP)
+        status, detail = _rendered_authorship_check(root)()
+        assert status == "PASS", detail
+
+    def test_a_legacy_coder_cli_stamp_still_counts(self, tmp_path):
+        """Old products must not start failing because the fix moved on."""
+        root = _product(tmp_path, "Written by the factory WRITER role (coder CLI)")
+        status, detail = _rendered_authorship_check(root)()
+        assert status == "PASS", detail
+
+    def test_unstamped_template_handlers_do_not_count(self, tmp_path):
+        """The floor is not weakened: a templated tree still fails."""
+        root = _product(tmp_path, "Generated from the deterministic template")
+        status, detail = _rendered_authorship_check(root)()
+        assert status == "FAIL", detail
+
+    def test_the_rendered_check_grew_no_private_stamp_list(self):
+        from app.factory.build.store_acceptance import render_acceptance_script
+
+        script = render_acceptance_script()
+        assert 'if "CODER_MODEL" in text' not in script
+        assert "agent_written_handler_ids_in_workspace" in script
