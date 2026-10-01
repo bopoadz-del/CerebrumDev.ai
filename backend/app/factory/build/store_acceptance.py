@@ -36,10 +36,8 @@ AUTH_REL = Path("app") / "auth.py"
 #: from. It used to be written out here, which is how the coder came to be
 #: graded on thirteen checks nothing ever told it about -- see
 #: app/factory/build/acceptance_floor.py.
-from app.factory.build.acceptance_floor import DEFAULT_RIGOR as _DEFAULT_RIGOR
 from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
-from app.factory.build.acceptance_floor import normalize_rigor as _normalize_rigor
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
 
@@ -778,18 +776,16 @@ def _with_deploy_time_settings(script: str) -> str:
     return script.replace(slot, SNIPPET.strip("\n"))
 
 
-def render_acceptance_script(rigor: str = _DEFAULT_RIGOR) -> str:
+def render_acceptance_script(blueprint: Any = None) -> str:
     """Self-contained harness stamped into every pilot zip.
 
-    ``rigor`` is the bar THIS build declared. All checks still RUN and report;
-    the ones above the declared rigor are advisory (FAIL -> SKIP, no veto),
-    exactly like the statically-advisory pipeline-evidence checks. At the
-    default (production) the advisory set is the static one, so the rendered
-    harness is byte-for-byte what it was before rigor existed."""
+    The advisory set follows THIS build's brief: all checks still RUN and report,
+    but a conditional check the brief never asked for is advisory (FAIL -> SKIP,
+    no veto), exactly like the statically-advisory pipeline-evidence checks.
+    ``None`` (no brief) raises every signal, so the advisory set is the static
+    one — byte-for-byte what it was before brief-driven applicability existed."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
-    advisory = ", ".join(
-        repr(n) for n in sorted(_floor_advisory_ids(_normalize_rigor(rigor)))
-    )
+    advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -1768,11 +1764,11 @@ def stamp_acceptance_artifacts(
     *,
     product_name: str,
     cap_ids: Sequence[str],
-    rigor: str = _DEFAULT_RIGOR,
+    blueprint: Any = None,
 ) -> None:
     """WRITER / ProductGenerator emit the harness and the files it measures."""
     workspace.write_text(
-        ACCEPTANCE_SCRIPT_REL, render_acceptance_script(_normalize_rigor(rigor))
+        ACCEPTANCE_SCRIPT_REL, render_acceptance_script(blueprint)
     )
     workspace.write_text(AUTH_REL, render_auth_module())
     workspace.write_text(Path("app") / "tenancy.py", render_tenancy_module())
@@ -1786,11 +1782,11 @@ def stamp_acceptance_into_path(
     *,
     product_name: str = "platform",
     cap_ids: Optional[Sequence[str]] = None,
-    rigor: str = _DEFAULT_RIGOR,
+    blueprint: Any = None,
 ) -> None:
     dest = Path(root)
     files = {
-        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(_normalize_rigor(rigor)),
+        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(blueprint),
         AUTH_REL: render_auth_module(),
     Path("app") / "tenancy.py": render_tenancy_module(),
         GITHUB_CI_REL: render_github_ci(),

@@ -404,21 +404,25 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
         pd.blueprint = bp.model_dump(mode="json")
         pd.plan = None  # the bar changed; re-plan and re-stamp the harness
         pd.generation = None
-        bar = {
-            "prototype": "prototype — only the 'does it work' core is enforced; "
-            "security scans, migrations and ops checks are advisory.",
-            "light": "light — contract and tenant-isolation checks enforced too; "
-            "ops and security scans still advisory.",
-            "standard": "standard — migrations, surface, health and metrics "
-            "enforced; the security scan is advisory.",
-            "production": "production — the full floor, including the bandit "
-            "security scan, is enforced.",
-        }[rigor]
+        from app.factory.build.acceptance_floor import is_production_grade
+
+        if is_production_grade(bp):
+            bar = (
+                f"{rigor} — a production-grade build: the universal checks plus "
+                "the security scan and anything your brief declares (retrieval, "
+                "connectors) are enforced."
+            )
+        else:
+            bar = (
+                f"{rigor} — a disposable/test build: the universal 'does it work' "
+                "checks stay enforced, but the security scan is advisory. The gate "
+                "still enforces whatever your brief actually asks for."
+            )
         return {
             "ok": True,
             "refined": True,
             "action": action,
-            "summary": f"Build rigor set to {bar}",
+            "summary": f"Build grade set to {bar}",
             "blueprint": pd.blueprint,
             "yaml": blueprint_to_yaml(bp),
         }

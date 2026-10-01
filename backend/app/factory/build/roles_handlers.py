@@ -4740,8 +4740,6 @@ def run_writer(
     sources["release_gate"] = fallback_source
     from app.factory.build.store_acceptance import stamp_acceptance_artifacts
 
-    from app.factory.build.acceptance_floor import rigor_of
-
     stamp_acceptance_artifacts(
         ctx.workspace,
         product_name=product_name,
@@ -4749,7 +4747,7 @@ def run_writer(
             str(getattr(c, "capability_id", "") or getattr(c, "id", "") or "")
             for c in (getattr(ctx.plan, "capabilities", None) or [])
         ],
-        rigor=rigor_of(ctx.blueprint),
+        blueprint=ctx.blueprint,
     )
     sources["acceptance"] = fallback_source
     ctx.workspace.write_text(".env.example", _render_platform_env_example())

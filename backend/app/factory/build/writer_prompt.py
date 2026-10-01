@@ -13,7 +13,6 @@ from typing import Any
 from app.factory.build.acceptance_floor import (
     render_for_prompt as render_acceptance_floor,
 )
-from app.factory.build.acceptance_floor import rigor_of as _rigor_of
 
 #: Version log.
 #: v11 -- THE UI BAR, HELD. The prompt told the agent "a UI nothing builds is
@@ -222,6 +221,13 @@ DEPTH (the gates are the bar, and you can reach them yourself):
   a standard, how a trade actually works -- is yours to find out. Say in your
   report where it came from. A value the customer owns (a rate, a threshold, a
   limit) stays a named setting they can change, whatever you learn about it.
+- Build on the kit when one is stocked for this domain; compose from the blocks
+  you were given. When NO kit exists for this domain, build it yourself -- but
+  to THIS structure and these standards (the OUTPUT contract, PERSISTENCE,
+  TENANCY and AUTHORITY sections above), the same shape every Cerebrum platform
+  has. Research the domain, do not invent a different architecture. Never
+  fabricate a retrieval corpus: a RAG surface is empty until the customer
+  supplies sources -- ship the ingest/query surface, never seed documents.
 - You have the wall. Use it: a shallow pass that ends early is sent back.
 
 SPECIALISTS (five of them, and you have agents — use them):
@@ -328,7 +334,7 @@ def render_writer_prompt(
         # The Store gate's own checklist, rendered from the file the gate
         # grades against. The agent used to be judged on thirteen checks it
         # was never shown, and discovered them one rework round at a time.
-        acceptance_floor=render_acceptance_floor(_rigor_of(blueprint)),
+        acceptance_floor=render_acceptance_floor(blueprint),
     )
     if resume:
         body = _RESUME_PREFACE + body

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 _LF = "\n"
 
@@ -78,14 +78,13 @@ def merged_requirements(root: Path) -> str:
 
 
 def refresh_factory_files(
-    root: Path, product_name: str, rigor: str = "production"
+    root: Path, product_name: str, blueprint: Any = None
 ) -> List[str]:
     """Re-render Factory-owned files in ``root``; return the ones that changed.
 
-    ``rigor`` keeps a re-entered build's acceptance harness at the bar it
-    declared — re-rendering at a fixed maximum would silently re-strict a
-    light/prototype build on resume."""
-    from app.factory.build.acceptance_floor import normalize_rigor
+    ``blueprint`` keeps a re-entered build's acceptance harness following the
+    brief it declared — re-rendering without it would raise every signal and
+    silently re-strict a build whose brief asked for less."""
     from app.factory.build.roles_handlers import _render_release_gate
     from app.factory.build.store_acceptance import render_acceptance_script, render_github_ci
 
@@ -97,7 +96,7 @@ def refresh_factory_files(
         _write_if_changed(
             root,
             "scripts/acceptance.py",
-            render_acceptance_script(normalize_rigor(rigor)),
+            render_acceptance_script(blueprint),
             changed,
         )
     if (root / ".github" / "workflows" / "ci.yml").is_file():
