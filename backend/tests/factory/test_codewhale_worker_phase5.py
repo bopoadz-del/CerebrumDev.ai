@@ -202,6 +202,7 @@ def test_headless_dispatch_passes_provider_and_key_from_env(monkeypatch, tmp_pat
                 '{"status": "completed", "termination_reason": "resolved"}\n'
             )
             self.returncode = 0
+            self.stderr = io.StringIO("")
 
         def wait(self, timeout=None):
             return self.returncode
@@ -246,6 +247,7 @@ def test_no_env_key_falls_back_to_cli_config(monkeypatch, tmp_path):
             captured["argv"] = argv
             self.stdout = io.StringIO('{"status": "completed"}\n')
             self.returncode = 0
+            self.stderr = io.StringIO("")
 
         def wait(self, timeout=None):
             return self.returncode
@@ -345,6 +347,7 @@ def test_the_brief_travels_by_file_not_argv(monkeypatch, tmp_path):
                 '{"status": "completed", "termination_reason": "resolved"}\n'
             )
             self.returncode = 0
+            self.stderr = io.StringIO("")
 
         def wait(self, timeout=None):
             return self.returncode
