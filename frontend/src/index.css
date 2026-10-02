@@ -73,6 +73,14 @@ h3 { margin: 0 0 10px; }
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 13px;
+  /* Build failures carry long unbroken ids (test node ids, assertion blobs).
+     Wrap them inside the box, preserving the message's own line breaks, and
+     never let them spill past the edge or push the page sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: auto;
+  max-width: 100%;
 }
 .empty-state { text-align: center; padding: 48px 24px; }
 .loader { color: var(--dim); font-size: 15px; }
@@ -340,6 +348,11 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 .kv dd { margin: 0; font-size: 14px; }
 .kv-row { display: contents; }
 
+/* Desktop: the sessions list is always shown in the rail; the mobile toggle
+   and its backdrop do not exist. */
+.rail-sessions-toggle { display: none; }
+.rail-sessions-backdrop { display: none; }
+
 @media (max-width: 760px) {
   .shell { flex-direction: column; }
   .rail {
@@ -354,7 +367,50 @@ main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
   .brand { margin-bottom: 0; flex-shrink: 0; }
   .brand-text { display: none; }
   /* The phone rail is a one-row tab bar; the list lives on wider screens. */
+  /* The sessions list is a drawer on phones: hidden until the toggle opens it. */
   .rail-sessions { display: none; }
+  .rail-sessions-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .rail-sessions-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    border: none;
+    padding: 0;
+    margin: 0;
+    z-index: 40;
+  }
+  .rail-sessions.rail-sessions--open {
+    display: flex;
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 56px);
+    left: 0;
+    right: 0;
+    max-height: 70vh;
+    overflow-y: auto;
+    z-index: 50;
+    margin: 0;
+    padding: 10px 14px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  }
   .rail nav {
     flex-direction: row;
     flex: 1;

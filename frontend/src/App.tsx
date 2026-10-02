@@ -180,12 +180,15 @@ export function SessionList({
   currentId,
   onOpen,
   onDelete,
+  open = false,
 }: {
   items: SessionListItem[]
   currentId: string | null
   onOpen: (id: string) => void
   /** Resolves when the session is gone; rejects with a message to show. */
   onDelete?: (id: string) => Promise<void>
+  /** On phones the list is a drawer; this opens it. Ignored on desktop. */
+  open?: boolean
 }) {
   // Two-step, inline: a browser confirm() blocks the page, and a one-click
   // delete of a session holding a generated platform is too easy to misfire.
@@ -195,7 +198,10 @@ export function SessionList({
   const rows = items.filter((s): s is SessionListItem & { session_id: string } => !!s.session_id)
   if (rows.length === 0) return null
   return (
-    <section className="rail-sessions" aria-label="Your sessions">
+    <section
+      className={'rail-sessions' + (open ? ' rail-sessions--open' : '')}
+      aria-label="Your sessions"
+    >
       <h2 className="rail-sessions-head">Sessions</h2>
       <ul>
         {rows.map((s) => {
@@ -324,6 +330,8 @@ export default function App() {
   const [accessPaused, setAccessPaused] = useState(false)
   const [alreadySignedInNotice, setAlreadySignedInNotice] = useState(false)
   const [sessionLinkError, setSessionLinkError] = useState<string | null>(null)
+  // Phones hide the sessions list by default; this toggles it as a drawer.
+  const [sessionsOpen, setSessionsOpen] = useState(false)
   const [sessionList, setSessionList] = useState<SessionListItem[]>([])
   const [locationEpoch, setLocationEpoch] = useState(0)
   const sessionListRef = useRef<SessionListItem[]>([])
@@ -676,10 +684,31 @@ export default function App() {
             />
           ))}
         </nav>
+        <button
+          type="button"
+          className="rail-sessions-toggle"
+          aria-expanded={sessionsOpen}
+          aria-label="Your sessions"
+          onClick={() => setSessionsOpen((o) => !o)}
+        >
+          <span aria-hidden="true">☰</span> Sessions
+        </button>
+        {sessionsOpen && (
+          <button
+            type="button"
+            className="rail-sessions-backdrop"
+            aria-label="Close sessions"
+            onClick={() => setSessionsOpen(false)}
+          />
+        )}
         <SessionList
+          open={sessionsOpen}
           items={sessionList}
           currentId={sessionId}
-          onOpen={(id) => go('floor', id)}
+          onOpen={(id) => {
+            setSessionsOpen(false)
+            go('floor', id)
+          }}
           onDelete={async (id) => {
             await sessions.remove(id)
             const next = sessionListRef.current.filter((s) => s.session_id !== id)
