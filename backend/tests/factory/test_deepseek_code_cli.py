@@ -50,6 +50,7 @@ from app.factory.code_cli import (
     KIMI_PROMPT_STDIN_INSTRUCTION,
     LEGACY_CLAUDE_OPUS_MODEL,
     REJECTED_DEEPSEEK_CLAUDE_MODEL,
+    REJECTED_DEEPSEEK_BARE_MODEL,
     KimiPromptEmpty,
     code_cli_command,
     deepseek_cli_environ,
@@ -357,8 +358,10 @@ def test_default_deepseek_model_is_catalog_id_not_claude_opus():
     assert DEFAULT_DEEPSEEK_MODEL != LEGACY_CLAUDE_OPUS_MODEL
     assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
+    # Stripping the context suffix yields the bare catalog id, whatever the
+    # default happens to be.
     assert normalize_deepseek_model(REJECTED_DEEPSEEK_CLAUDE_MODEL) == (
-        DEFAULT_DEEPSEEK_MODEL
+        REJECTED_DEEPSEEK_BARE_MODEL
     )
     assert normalize_deepseek_model("deepseek-v4-pro") == "deepseek-v4-pro"
     assert normalize_deepseek_model(LEGACY_CLAUDE_OPUS_MODEL) == DEFAULT_DEEPSEEK_MODEL
