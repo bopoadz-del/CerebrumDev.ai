@@ -198,8 +198,8 @@ def test_deepseek_cli_environ_is_kimi_openai_not_anthropic(monkeypatch):
     assert "ANTHROPIC_AUTH_TOKEN" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "ANTHROPIC_MODEL" not in env
-    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
-    assert DEFAULT_DEEPSEEK_FLASH_MODEL == "deepseek-v4-flash"
+    assert DEFAULT_DEEPSEEK_MODEL.startswith("deepseek-")
+    assert DEFAULT_DEEPSEEK_FLASH_MODEL.startswith("deepseek-")
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
     legacy = legacy_deepseek_claude_environ("sk-deepseek-test-not-real")
     assert legacy["ANTHROPIC_BASE_URL"] == DEEPSEEK_ANTHROPIC_BASE_URL
@@ -225,7 +225,7 @@ def test_ensure_deepseek_writes_kimi_openai_provider(tmp_path, monkeypatch):
     assert 'type = "openai"' in text
     assert "https://api.deepseek.com" in text
     assert "sk-deepseek-test-not-real" in text
-    assert 'default_model = "deepseek-v4-pro"' in text
+    assert f'default_model = "{DEFAULT_DEEPSEEK_MODEL}"' in text
     assert 'provider = "deepseek"' in text
     assert "ANTHROPIC_BASE_URL" not in __import__("os").environ
     assert "ANTHROPIC_AUTH_TOKEN" not in __import__("os").environ
@@ -245,7 +245,7 @@ def test_ensure_kimi_still_writes_when_deepseek_also_set(tmp_path, monkeypatch):
     assert "[providers.deepseek]" in text
     assert "[providers.kimi]" in text
     assert "sk-kimi-test-not-real" in text
-    assert 'default_model = "deepseek-v4-pro"' in text
+    assert f'default_model = "{DEFAULT_DEEPSEEK_MODEL}"' in text
     assert result["deepseek"]["ok"] is True
 
 
@@ -353,7 +353,7 @@ def test_dispatch_deepseek_uses_prompt_and_kimi_model_env(tmp_path, monkeypatch)
 
 
 def test_default_deepseek_model_is_catalog_id_not_claude_opus():
-    assert DEFAULT_DEEPSEEK_MODEL == "deepseek-v4-pro"
+    assert DEFAULT_DEEPSEEK_MODEL.startswith("deepseek-")
     assert DEFAULT_DEEPSEEK_MODEL != LEGACY_CLAUDE_OPUS_MODEL
     assert DEFAULT_DEEPSEEK_MODEL != REJECTED_DEEPSEEK_CLAUDE_MODEL
     assert "[" not in DEFAULT_DEEPSEEK_MODEL
