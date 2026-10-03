@@ -19,7 +19,7 @@ import shutil
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
@@ -79,6 +79,9 @@ class AcceptanceLine:
     name: str
     status: str
     detail: str = ""
+    #: PRODUCT or FACTORY, derived from the check's subject and who wrote it
+    #: (acceptance_floor.owner_of). Empty until finalize_owners stamps it.
+    owner: str = ""
 
     @property
     def satisfied(self) -> bool:
@@ -94,6 +97,27 @@ class AcceptanceReport:
     missing: bool = False
     via: str = "scripts/acceptance.py"
     detail: str = ""
+    #: Scored over the checks the PRODUCT owns only, so a check the Factory
+    #: owns cannot lower the product's score; those are ``factory_owed``.
+    product_passed: int = 0
+    product_total: int = 0
+    factory_owed: List[str] = field(default_factory=list)
+    #: False when the harness never produced a verdict (the gate's own
+    #: workflow failed before scoring) -- nobody's product did that.
+    harness_ran: bool = True
+
+    @property
+    def product_ok(self) -> bool:
+        return (
+            self.harness_ran
+            and not self.missing
+            and self.product_total > 0
+            and self.product_passed == self.product_total
+        )
+
+    @property
+    def product_score(self) -> str:
+        return f"{self.product_passed}/{self.product_total}"
 
     def to_json(self) -> Dict[str, Any]:
         return {
@@ -107,7 +131,44 @@ class AcceptanceReport:
             "score": f"{self.passed}/{self.total}",
             "lines": [asdict(line) for line in self.lines],
             "checks": list(ACCEPTANCE_CHECK_NAMES),
+            "product_passed": self.product_passed,
+            "product_total": self.product_total,
+            "product_score": self.product_score,
+            "product_ok": self.product_ok,
+            "factory_owed": list(self.factory_owed),
+            "harness_ran": self.harness_ran,
         }
+
+
+def finalize_owners(report: AcceptanceReport) -> AcceptanceReport:
+    """Stamp each line's owner and score the report per owner.
+
+    Ownership is derived per line from what the check judges and who wrote it
+    (``acceptance_floor.owner_of``) -- there is no list of check names that
+    says who owns what, so a Factory-owned check added tomorrow is attributed
+    correctly without anyone touching this. The product's score counts only
+    the lines the product owns; a Factory-owned line that is not satisfied is
+    listed in ``factory_owed`` for the factory lane instead of failing the
+    product.
+    """
+    from app.factory.build.acceptance_floor import FACTORY, owner_of
+
+    owed: List[str] = []
+    p_pass = p_total = 0
+    for line in report.lines:
+        if not line.owner:
+            line.owner = owner_of(line.name, line.detail)
+        if line.owner == FACTORY:
+            if not line.satisfied:
+                owed.append(line.name)
+            continue
+        p_total += 1
+        if line.satisfied:
+            p_pass += 1
+    report.product_passed = p_pass
+    report.product_total = p_total
+    report.factory_owed = owed
+    return report
 
 
 def missing_acceptance_report(*, detail: str = "scripts/acceptance.py was not run") -> AcceptanceReport:
@@ -157,12 +218,14 @@ def parse_acceptance_output(text: str) -> AcceptanceReport:
         and all(line.satisfied for line in ordered)
         and ordered[-1].name == "authorship_floor"
     )
-    return AcceptanceReport(
-        passed=satisfied,
-        total=total,
-        ok=ok,
-        lines=ordered,
-        detail=f"{satisfied}/{total}",
+    return finalize_owners(
+        AcceptanceReport(
+            passed=satisfied,
+            total=total,
+            ok=ok,
+            lines=ordered,
+            detail=f"{satisfied}/{total}",
+        )
     )
 
 
@@ -235,14 +298,17 @@ def _report_from_mapping(raw: Mapping[str, Any]) -> AcceptanceReport:
     if total < ACCEPTANCE_REQUIRED:
         total = ACCEPTANCE_REQUIRED
     ok = bool(raw.get("ok")) and passed >= total and all(line.satisfied for line in ordered)
-    return AcceptanceReport(
-        passed=passed,
-        total=total,
-        ok=ok,
-        lines=ordered,
-        missing=bool(raw.get("missing")),
-        via=str(raw.get("via") or "scripts/acceptance.py"),
-        detail=str(raw.get("detail") or f"{passed}/{total}"),
+    return finalize_owners(
+        AcceptanceReport(
+            passed=passed,
+            total=total,
+            ok=ok,
+            lines=ordered,
+            missing=bool(raw.get("missing")),
+            via=str(raw.get("via") or "scripts/acceptance.py"),
+            detail=str(raw.get("detail") or f"{passed}/{total}"),
+            harness_ran=raw.get("harness_ran") is not False,
+        )
     )
 
 
@@ -1759,6 +1825,46 @@ if __name__ == "__main__":
 ''')
 
 
+def factory_renders(
+    product_name: str, cap_ids: Sequence[str], blueprint: Any = None
+) -> Dict[Path, str]:
+    """Every file the Factory stamps into a workspace, path -> text.
+
+    The ONE table both stampers write from, and the table
+    ``factory_rendered_paths`` reads -- so "which files are the Factory's" is
+    the same fact as "which files the Factory writes", by construction, and a
+    file added here is owned here without a second list anywhere.
+    """
+    return {
+        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(blueprint),
+        AUTH_REL: render_auth_module(),
+        Path(TENANCY_REL): render_tenancy_module(),
+        GITHUB_CI_REL: render_github_ci(),
+        OPENAPI_REL: render_openapi(product_name, cap_ids),
+        UI_INDEX_REL: render_ui_index(product_name),
+    }
+
+
+#: Factory files not stamped here but still the Factory's: the re-entry
+#: refresh re-renders these from templates (factory_refresh), and the Store
+#: gate's own workflow is pushed by the Factory (branch_attach).
+_OTHER_FACTORY_RELS = ("scripts/release_gate.py", "requirements.txt")
+
+
+def factory_rendered_paths() -> Tuple[str, ...]:
+    """Relative paths of every file the Factory renders into a build.
+
+    Derived from the stamp table, never kept by hand: a failure whose subject
+    is one of these is the Factory's failure (acceptance_floor.owner_of).
+    """
+    from app.factory.build.branch_attach import STORE_GATE_PATH
+
+    rels = [str(p).replace("\\", "/") for p in factory_renders("platform", ())]
+    rels += list(_OTHER_FACTORY_RELS)
+    rels.append(str(STORE_GATE_PATH).replace("\\", "/"))
+    return tuple(dict.fromkeys(rels))
+
+
 def stamp_acceptance_artifacts(
     workspace: Any,
     *,
@@ -1767,14 +1873,8 @@ def stamp_acceptance_artifacts(
     blueprint: Any = None,
 ) -> None:
     """WRITER / ProductGenerator emit the harness and the files it measures."""
-    workspace.write_text(
-        ACCEPTANCE_SCRIPT_REL, render_acceptance_script(blueprint)
-    )
-    workspace.write_text(AUTH_REL, render_auth_module())
-    workspace.write_text(Path("app") / "tenancy.py", render_tenancy_module())
-    workspace.write_text(GITHUB_CI_REL, render_github_ci())
-    workspace.write_text(OPENAPI_REL, render_openapi(product_name, cap_ids))
-    workspace.write_text(UI_INDEX_REL, render_ui_index(product_name))
+    for rel, text in factory_renders(product_name, cap_ids, blueprint).items():
+        workspace.write_text(rel, text)
 
 
 def stamp_acceptance_into_path(
@@ -1785,15 +1885,7 @@ def stamp_acceptance_into_path(
     blueprint: Any = None,
 ) -> None:
     dest = Path(root)
-    files = {
-        ACCEPTANCE_SCRIPT_REL: render_acceptance_script(blueprint),
-        AUTH_REL: render_auth_module(),
-    Path("app") / "tenancy.py": render_tenancy_module(),
-        GITHUB_CI_REL: render_github_ci(),
-        OPENAPI_REL: render_openapi(product_name, cap_ids or ()),
-        UI_INDEX_REL: render_ui_index(product_name),
-    }
-    for rel, text in files.items():
+    for rel, text in factory_renders(product_name, cap_ids or (), blueprint).items():
         path = dest / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")

@@ -41,6 +41,7 @@ from app.factory.build.store_acceptance import (
     ACCEPTANCE_REQUIRED,
     AcceptanceLine,
     AcceptanceReport,
+    finalize_owners,
     write_acceptance_report,
 )
 
@@ -51,13 +52,28 @@ N3_STORE_GATE_GREEN = "N3_STORE_GATE_GREEN"
 N3_STORE_GATE_FAILED = "N3_STORE_GATE_FAILED"
 N3_STORE_GATE_TIMEOUT = "N3_STORE_GATE_TIMEOUT"
 N3_STORE_GATE_MISSING = "N3_STORE_GATE_MISSING"
+#: The product passed every check it owns; what failed is the Factory's own
+#: (a check whose subject the Factory wrote, or the gate's own workflow
+#: never scoring). Terminal for THIS run -- no rework, nothing for the writer
+#: -- and routed to the factory lane, never billed to the product.
+N3_STORE_GATE_FACTORY_OWED = "N3_STORE_GATE_FACTORY_OWED"
 N3_FAIL_HONESTY = frozenset(
-    {N3_STORE_GATE_FAILED, N3_STORE_GATE_TIMEOUT, N3_STORE_GATE_MISSING}
+    {
+        N3_STORE_GATE_FAILED,
+        N3_STORE_GATE_TIMEOUT,
+        N3_STORE_GATE_MISSING,
+        N3_STORE_GATE_FACTORY_OWED,
+    }
 )
 
 DEFAULT_POLL_S = 15.0
 DEFAULT_WALL_S = 1800.0
 SCORE_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
+#: The store-gate status itemises what failed: ``... k/N FAIL:a,b``. Without
+#: it the Factory only ever learned a score, and could not say WHICH check --
+#: or whose -- failed (live: eight automotive rounds reported "store gate
+#: failed" while the only red line was the Factory's own authorship counter).
+FAIL_NAMES_RE = re.compile(r"FAIL:([A-Za-z0-9_,=]+)")
 
 #: N3 G-floor names → Factory ``ACCEPTANCE_CHECK_NAMES`` aliases.
 N3_NAME_ALIASES = {
@@ -98,6 +114,9 @@ class StoreGateSnapshot:
     via: str = "github-commit-status:store-gate"
     detail: str = ""
     lines: List[AcceptanceLine] = field(default_factory=list)
+    #: False when the gate reported failure without ever scoring -- the
+    #: workflow died before the harness ran. That is the gate's defect.
+    harness_ran: bool = True
 
     @property
     def score(self) -> str:
@@ -350,6 +369,38 @@ def _factory_check_name(name: str) -> str:
     return N3_NAME_ALIASES.get(raw, raw)
 
 
+def _parse_failing_names(description: str) -> List[str]:
+    """Check names the status itemised as FAIL. Unknown or truncated tokens
+    (the description is capped at 140 chars) are dropped, never guessed."""
+    match = FAIL_NAMES_RE.search(description or "")
+    if not match:
+        return []
+    out: List[str] = []
+    for token in match.group(1).split(","):
+        name = _factory_check_name(token)
+        if name in ACCEPTANCE_CHECK_NAMES and name not in out:
+            out.append(name)
+    return out
+
+
+def _itemised_lines(failing: Sequence[str]) -> List[AcceptanceLine]:
+    """One line per floor check from an itemised status: the named ones FAIL,
+    every other is satisfied (PASS or an advisory SKIP -- the harness demoted
+    those before it scored, so they are not in the FAIL list)."""
+    return [
+        AcceptanceLine(
+            name=name,
+            status="FAIL" if name in failing else "PASS",
+            detail=(
+                "FAIL per the store-gate status"
+                if name in failing
+                else "satisfied (itemised by the store-gate status)"
+            ),
+        )
+        for name in ACCEPTANCE_CHECK_NAMES
+    ]
+
+
 def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
     """Map a GHA ``store_gate.json`` (N3 names) onto Factory aliases."""
     lines: List[AcceptanceLine] = []
@@ -383,28 +434,37 @@ def report_from_store_gate_payload(raw: Mapping[str, Any]) -> AcceptanceReport:
     ok = bool(raw.get("ok")) and passed >= total and all(
         line.satisfied for line in ordered
     )
-    return AcceptanceReport(
-        passed=passed,
-        total=total,
-        ok=ok,
-        lines=ordered,
-        missing=False,
-        via=str(raw.get("via") or "store_gate.json"),
-        detail=str(raw.get("detail") or raw.get("score") or f"{passed}/{total}"),
+    return finalize_owners(
+        AcceptanceReport(
+            passed=passed,
+            total=total,
+            ok=ok,
+            lines=ordered,
+            missing=False,
+            via=str(raw.get("via") or "store_gate.json"),
+            detail=str(raw.get("detail") or raw.get("score") or f"{passed}/{total}"),
+        )
     )
 
 
 def report_from_snapshot(snap: StoreGateSnapshot) -> AcceptanceReport:
     if snap.lines:
-        return AcceptanceReport(
-            passed=int(snap.passed or 0),
-            total=int(snap.total or ACCEPTANCE_REQUIRED),
-            ok=snap.is_12_of_12,
-            lines=list(snap.lines),
-            missing=False,
-            via=snap.via,
-            detail=snap.detail or snap.score,
+        return finalize_owners(
+            AcceptanceReport(
+                passed=int(snap.passed or 0),
+                total=int(snap.total or ACCEPTANCE_REQUIRED),
+                ok=snap.is_12_of_12,
+                lines=list(snap.lines),
+                missing=False,
+                via=snap.via,
+                detail=snap.detail or snap.score,
+                harness_ran=snap.harness_ran,
+            )
         )
+    # Not itemised: the status carried a score and nothing else, so every
+    # line wears the score. Nobody can be blamed for a line like that, and
+    # finalize_owners will not: every line is FAIL, so product_ok is False
+    # and the factory lane is not invoked on a guess.
     status = "PASS" if snap.is_12_of_12 else "FAIL"
     detail = snap.description or snap.detail or snap.score or "store-gate"
     lines = [
@@ -413,14 +473,17 @@ def report_from_snapshot(snap: StoreGateSnapshot) -> AcceptanceReport:
     ]
     passed = snap.passed if snap.passed is not None else 0
     total = snap.total if snap.total is not None else ACCEPTANCE_REQUIRED
-    return AcceptanceReport(
-        passed=passed,
-        total=total,
-        ok=snap.is_12_of_12,
-        lines=lines,
-        missing=snap.missing,
-        via=snap.via,
-        detail=snap.detail or snap.score or "store-gate",
+    return finalize_owners(
+        AcceptanceReport(
+            passed=passed,
+            total=total,
+            ok=snap.is_12_of_12,
+            lines=lines,
+            missing=snap.missing,
+            via=snap.via,
+            detail=snap.detail or snap.score or "store-gate",
+            harness_ran=snap.harness_ran,
+        )
     )
 
 
@@ -474,6 +537,14 @@ def fetch_store_gate_status(
     state = str(match.get("state") or "").strip().lower()
     description = str(match.get("description") or "")
     passed, total = _parse_score(description)
+    failing = _parse_failing_names(description)
+    # A red status with no score at all: the workflow failed before the
+    # harness scored anything (live round 9: the gate's own YAML broke
+    # ``docker create``). No product check ran, so none can have failed.
+    harness_ran = not (passed is None and state in {"failure", "error"})
+    lines: List[AcceptanceLine] = []
+    if passed is not None and (failing or passed == total):
+        lines = _itemised_lines(failing)
     ok = (
         state == "success"
         and passed == ACCEPTANCE_REQUIRED
@@ -497,6 +568,8 @@ def fetch_store_gate_status(
         owner=target.owner,
         repo=target.repo,
         detail=description or f"store-gate {state}",
+        lines=lines,
+        harness_ran=harness_ran,
     )
 
 
@@ -664,19 +737,65 @@ def apply_store_gate_success(
     )
 
 
+def _product_failure_detail(snap: StoreGateSnapshot, report: AcceptanceReport) -> str:
+    """What to tell the owner when the PRODUCT failed its own checks."""
+    from app.factory.build.acceptance_floor import PRODUCT
+
+    failed = [
+        line.name
+        for line in report.lines
+        if line.owner == PRODUCT and not line.satisfied
+    ]
+    if not snap.lines:
+        base = snap.detail or f"store-gate {snap.state or 'missing'} {snap.score}"
+        return (
+            base
+            + " (the store-gate status did not itemise which check failed; "
+            "the workflow on this branch predates the itemised status)"
+        )
+    text = (
+        f"store-gate {snap.score}: your product failed {len(failed)} of the "
+        f"{report.product_total} checks it owns: {', '.join(failed)}"
+    )
+    if report.factory_owed:
+        text += (
+            "; the factory separately owes its own: "
+            + ", ".join(report.factory_owed)
+            + " (not yours)"
+        )
+    return text
+
+
 def apply_store_gate_failure(
     output_dir: Path | str,
     snap: StoreGateSnapshot,
     *,
     honesty: str,
+    report: Optional[AcceptanceReport] = None,
 ) -> None:
+    from app.factory.build.acceptance_floor import PRODUCT
+
     root = Path(output_dir)
     ledger = _ledger(root)
     if not ledger.exists():
         ledger.start_run(product_id=root.name, inputs_hash="n3_store_gate")
     from app.factory.build.authority import BuildRole
 
-    detail = snap.detail or f"store-gate {snap.state or 'missing'} {snap.score}"
+    if report is None:
+        detail = snap.detail or f"store-gate {snap.state or 'missing'} {snap.score}"
+        extra: Dict[str, Any] = {}
+    else:
+        detail = _product_failure_detail(snap, report)
+        extra = {
+            "failure_owner": PRODUCT,
+            "product_score": report.product_score,
+            "factory_owed": list(report.factory_owed),
+            "product_failed": [
+                line.name
+                for line in report.lines
+                if line.owner == PRODUCT and not line.satisfied
+            ],
+        }
     ledger.append(
         EventKind.RUN_FAILED,
         role=BuildRole.STORE_MANAGER,
@@ -692,8 +811,80 @@ def apply_store_gate_failure(
             "builds_sha": snap.sha,
             "builds_branch": snap.branch,
             "state": snap.state,
+            **extra,
         },
     )
+
+
+def apply_store_gate_factory_owed(
+    output_dir: Path | str,
+    snap: StoreGateSnapshot,
+    report: AcceptanceReport,
+) -> str:
+    """The product passed every check it owns; the Factory failed its own.
+
+    Terminal for this run and routed to the factory lane: no rework (there is
+    nothing for the writer to do), no re-run (the same Factory would fail the
+    same way), and the Floor says so in one sentence -- the sentence that,
+    had it been printed, would have saved rounds two through eight of the
+    automotive build. Returns the detail written.
+    """
+    from app.factory.build.acceptance_floor import FACTORY
+    from app.factory.build.authority import BuildRole
+    from app.factory.build.branch_attach import STORE_GATE_PATH
+    from app.factory.build.failure_owner import generator_location
+
+    root = Path(output_dir)
+    ledger = _ledger(root)
+    if not ledger.exists():
+        ledger.start_run(product_id=root.name, inputs_hash="n3_store_gate")
+
+    if not report.harness_ran:
+        owed = ["store_gate_workflow"]
+        generator = str(STORE_GATE_PATH)
+        detail = (
+            "store-gate did not run: the Factory's own workflow "
+            f"({STORE_GATE_PATH}) failed before scoring, so no product check "
+            "was measured. This is a Factory defect, not your product. No "
+            "rework; do not re-run until the Factory fix is live."
+        )
+    else:
+        owed = list(report.factory_owed)
+        generator = generator_location("check_" + owed[0], "store_acceptance.py")
+        detail = (
+            f"store-gate: your product passed {report.product_score} of the "
+            f"checks it owns. The Factory failed {len(owed)} of its own "
+            f"({', '.join(owed)}) -- a Factory defect, not your product. No "
+            "rework; do not re-run until the Factory fix is live "
+            f"({generator})."
+        )
+    report.detail = detail
+    write_acceptance_report(root, report)
+    ledger.append(
+        EventKind.RUN_FAILED,
+        role=BuildRole.STORE_MANAGER,
+        detail=detail,
+        payload={
+            "outcome": "FAILED_GATE",
+            "cycle": "code",
+            "pilot_ready": False,
+            "honesty": N3_STORE_GATE_FACTORY_OWED,
+            "green": False,
+            "next": "factory_fix",
+            "rework": False,
+            "failure_owner": FACTORY,
+            "factory_owed": owed,
+            "generator": generator,
+            "product_score": report.product_score,
+            "product_ok": report.product_ok,
+            "harness_ran": report.harness_ran,
+            "score": snap.score,
+            "builds_sha": snap.sha,
+            "builds_branch": snap.branch,
+            "state": snap.state,
+        },
+    )
+    return detail
 
 
 def _failure_honesty(snap: StoreGateSnapshot) -> str:
@@ -842,12 +1033,27 @@ def ingest_n3_store_gate(
             detail=f"store-gate not reachable, still waiting: {snap.detail}",
             snapshot=snap,
         )
+    # Owner by construction. The product's score counts only the checks it
+    # owns; a red line whose subject the Factory wrote -- or a gate that never
+    # scored -- is the Factory's, routed to the factory lane, and can never
+    # fail the product (acceptance_floor.owner_of derives this per line).
+    report = report_from_snapshot(snap)
+    if not snap.timeout and not snap.missing and (
+        not report.harness_ran or (report.product_ok and report.factory_owed)
+    ):
+        detail = apply_store_gate_factory_owed(root, snap, report)
+        return IngestResult(
+            honesty=N3_STORE_GATE_FACTORY_OWED,
+            ok=False,
+            detail=detail,
+            snapshot=snap,
+        )
     honesty = _failure_honesty(snap)
-    apply_store_gate_failure(root, snap, honesty=honesty)
+    apply_store_gate_failure(root, snap, honesty=honesty, report=report)
     return IngestResult(
         honesty=honesty,
         ok=False,
-        detail=snap.detail or f"store-gate fail-closed ({snap.state} {snap.score})",
+        detail=_product_failure_detail(snap, report),
         snapshot=snap,
     )
 

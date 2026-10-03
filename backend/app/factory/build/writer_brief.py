@@ -10,6 +10,8 @@ and stubbed capabilities are not a finished product.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.factory.build.authority import kernel_seat_brief
 from app.factory.build.level_grade import Level
 from app.factory.build.product_gate import GATE_SCOPES
@@ -17,6 +19,29 @@ from app.factory.build.persist_accept import persist_accept_brief_contract
 from app.factory.build.reuse_accept import reuse_accept_brief_contract
 from app.factory.build.schema_accept import schema_accept_brief_contract
 from app.factory.build.workflow_accept import workflow_accept_brief_contract
+
+#: Path to the standing coder protocol for handling a failing factory check.
+TESTING_ERRORS_PROTOCOL_PATH = Path(__file__).with_name("testing_errors_protocol.md")
+
+
+def testing_errors_protocol() -> str:
+    """The full coder protocol text (testing_errors_protocol.md).
+
+    Handed to the coder so a failing check is fixed at the cause, never by
+    weakening a validation, a route check, or a test to pass. Fails closed to
+    the one hard rule if the file is somehow missing on the build host.
+    """
+    try:
+        return TESTING_ERRORS_PROTOCOL_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return (
+            "Testing-errors protocol: never weaken, delete, or loosen a "
+            "validation, a route check, or a test assertion to turn a red check "
+            "green. Fix the cause. If a value was rejected, declare the accepted "
+            "vocabulary on the spec (allowed_values) so the suite builds a payload "
+            "the route accepts -- do not make the route accept anything."
+        )
+
 
 #: Shared system brief for every WRITER / rework coder call.
 CODING_AGENT_BRIEF = f"""
@@ -56,6 +81,18 @@ Contracts you must honour on every capability you write:
 - {reuse_accept_brief_contract()}
 - {persist_accept_brief_contract()}
 - {workflow_accept_brief_contract()}
+
+When a factory check fails, fix the cause. Never weaken, delete, or loosen a
+validation, a route check, or a test assertion to turn a red check green -- a
+green bought by removing a check is a red you hid, and the next gate finds it.
+If a value was rejected, the rejection is almost always correct: declare the
+accepted vocabulary on the spec (allowed_values) so the suite builds a payload
+the route accepts, instead of making the route accept anything. The full rules
+are in testing_errors_protocol.md (printed below), and the tester will tell you
+when it already tried the values a route named and the route still refused --
+that is a contradiction inside the product, not a tester artifact.
+
+{testing_errors_protocol()}
 
 This brief is the horizon. The user message is the compiled whole-job brief
 (TARGET / STEP 0 INVENTORY / DO / ACCEPTANCE) — not one handle(), one spec,

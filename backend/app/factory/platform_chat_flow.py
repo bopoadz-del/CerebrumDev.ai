@@ -1143,6 +1143,7 @@ def ingest_n3_store_gate_reply(
 ) -> Dict[str, Any]:
     """Continue-as-ingest: poll/fetch store-gate. Never re-enters WRITER."""
     from app.factory.build.n3_store_gate import (
+        N3_STORE_GATE_FACTORY_OWED,
         ingest_n3_store_gate,
         n3_ingest_live,
         start_n3_ingest_job,
@@ -1190,6 +1191,10 @@ def ingest_n3_store_gate_reply(
             "status context store-gate) for 12/12. I did not re-enter "
             "WRITER or launch another Background Agent."
         )
+    elif result.honesty == N3_STORE_GATE_FACTORY_OWED:
+        # The one sentence the owner needs: it is not their product, and a
+        # re-run will not help. No softening, no "store gate failed".
+        summary = f"{result.detail} I did not start another coding agent."
     else:
         summary = (
             "Store-gate ingest failed closed "

@@ -195,6 +195,17 @@ jobs:
         working-directory: .
         run: python scripts/scan_secrets.py
 
+      # NO HARDWIRING (owner's standing rule, 2026-10-02): a failing case is
+      # never fixed by name. This rejects any NEW session-id literal, LIVE_*
+      # snapshot, probe id, _rescue_* function, *_NEEDLES list or rescue knob
+      # in shipped factory code. Pre-doctrine forms are grandfathered in
+      # scripts/hardwiring_baseline.json, which may only shrink. Exit 1 is a
+      # rejection, not a warning: if this fails your diff, your diff is the
+      # problem -- fix the mechanism, not the case.
+      - name: Hardwiring gate (no new per-case form)
+        working-directory: .
+        run: python scripts/scan_hardwiring.py
+
       - name: Forbid VITE_API_KEY in frontend/src
         working-directory: .
         run: |
