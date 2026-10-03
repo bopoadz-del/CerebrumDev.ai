@@ -568,7 +568,7 @@ def render_slot_bodies(
         "app.routes, or app.main from a handler. The factory owns "
         "app/actions/__init__.py — do not rewrite it with "
         "'from app.actions import <capability>' eager re-exports. That "
-        "circular import (live VetCare pet_records_management) makes "
+        "circular import makes "
         "writer_behaviour halt as workspace does not import before route honesty.",
         "If you assign a block, you feed it — construct block inputs; do not demand "
         "block-specific keys (topic, sql/table, file paths, team_id, channel, steps) "
@@ -578,7 +578,11 @@ def render_slot_bodies(
         "",
         schema_accept_rules_text(),
         "",
-        reuse_accept_rules_text(),
+        reuse_accept_rules_text(
+            capability_ids=[
+                item.capability_id for item in inventory if getattr(item, "is_reuse", False)
+            ]
+        ),
         "",
         persist_accept_rules_text(),
         "",

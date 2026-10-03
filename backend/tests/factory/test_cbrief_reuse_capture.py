@@ -38,6 +38,10 @@ from tests.factory.store_paths import store_block  # noqa: E402
 LIVE_SESS = "sess_e8e4ab66e6dd4765"
 LIVE_INSURE_SESS = "sess_d10dfc28"
 LIVE_CAPTURE_KEYWORD = "extract"
+#: What the Store's capture code declares: params.get("action", "capture").
+#: The old Factory table said "extract", which that code answers with
+#: "Unknown action".
+STORE_CAPTURE_DEFAULT = "capture"
 LIVE_CAPTURE_CAPS = (
     "maintenance_and_work_order_management",
     "security_and_access_logging",
@@ -98,7 +102,8 @@ def test_path_and_role_workspace_harvest_capture(tmp_path):
     assert harvest_block_default_actions(["capture"], workspace=ws) == {
         "capture": "extract"
     }
-    assert harvest_block_default_action("capture", workspace=tmp_path) == "extract"
+    # No planted vendor: the Store's own capture block decides.
+    assert harvest_block_default_action("capture", workspace=tmp_path) == STORE_CAPTURE_DEFAULT
 
 
 def test_registry_shaped_block_json_without_action_falls_to_factory_vendor():
@@ -110,5 +115,5 @@ def test_registry_shaped_block_json_without_action_falls_to_factory_vendor():
     """
     assert default_action_from_block_json(_REGISTRY_SHAPED_CAPTURE) is None
     assert default_action_from_source(_FACTORY_CAPTURE_PY.read_text()) is None
-    assert harvest_block_default_action("capture") == "extract"
+    assert harvest_block_default_action("capture") == STORE_CAPTURE_DEFAULT
     assert harvest_block_default_action("not_a_real_block") is None
