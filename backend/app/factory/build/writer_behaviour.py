@@ -248,8 +248,8 @@ contract_misses = []
 # The baseline phase already executes the REAL vendored blocks with the
 # payload the coder wrote, so the evidence was passing through this function
 # and being thrown away: only the block id was recorded, never the answer. On
-# the residential-lettings build (sess_6400b6c273414352, six hours after #254
-# merged) every one of these came back here and none was seen:
+# one build six hours after #254 merged, every one of these came back here
+# and none was seen:
 #
 #   analytics  {'error': 'metric and value required'}   <- envelope shape
 #   team       'Unknown action: None'                   <- action in payload

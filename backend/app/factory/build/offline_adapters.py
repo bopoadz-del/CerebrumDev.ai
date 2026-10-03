@@ -25,7 +25,7 @@ STORE_HOST_DI_MARKER = "def _create_block_instance"
 #: when the Store module imports a parsers subpackage the flat slice missed.
 DOCUMENT_ENGINE_PARSERS_STUB = '''"""Store-unwired document_engine.parsers.
 
-Live sess_a69c8ce: PRODUCT died on
+Without it, a product dies on
 ``No module named vendor.cerebrum.blocks.document_engine.parsers``.
 Text comes from the caller payload (prepare_block_input already sets it).
 """

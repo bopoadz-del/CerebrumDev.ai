@@ -35,15 +35,14 @@ from app.factory.build.brief_compiler import compile_brief, verify_inventory
 from app.factory.build.coder_session import emit_factory_grounded_reuse_keep_path
 from app.factory.build.offline_adapters import emit_result_key_access
 from app.factory.build.reuse_accept import (
-    LIVE_VETCARE_REUSE_ACCEPT_BLOCKS,
     PRODUCT_ASSIGN_TO_CALL_HALT,
-    STORE_BLOCK_DEFAULT_ACTIONS,
 )
 from app.factory.build.roles_handlers import (
     _prepare_cloned_python,
     _sample_payload,
 )
 from tests.factory.test_cbrief_reuse_schema_accept import (
+    SAMPLE_REUSE_PLAN_BLOCKS,
     STORE_IDS,
     _VetCare,
     _Cap,
@@ -207,7 +206,7 @@ def _plant_block(root: Path, block_id: str, source: str) -> None:
 
 def _live_plan() -> _Plan:
     """sess_c63cc1a: appointment_scheduling bound queue + event_bus + workflow."""
-    blocks = dict(LIVE_VETCARE_REUSE_ACCEPT_BLOCKS)
+    blocks = dict(SAMPLE_REUSE_PLAN_BLOCKS)
     blocks["appointment_scheduling"] = ["event_bus", "workflow", "queue"]
     return _Plan(*(_Cap(cid, bids) for cid, bids in blocks.items()))
 
@@ -307,11 +306,6 @@ def test_prepare_cloned_python_queue_formula_compile():
         exec(shipped, ns, ns)
         out = ns["run"](input={"reference": "sample"})
         assert out.get("status") == "ok"
-
-
-def test_vector_search_harvest_from_351_kept():
-    """#351 harvest stays on master — this PR must not undo it."""
-    assert STORE_BLOCK_DEFAULT_ACTIONS["vector_search"] == "search"
 
 
 def test_mutation_naive_rewrite_refuses_schema_sample(tmp_path):

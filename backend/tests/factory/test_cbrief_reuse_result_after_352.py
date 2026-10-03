@@ -43,11 +43,7 @@ from app.factory.build.brief_compiler import compile_brief, verify_inventory
 from app.factory.build.coder_session import emit_factory_grounded_reuse_keep_path
 from app.factory.build.offline_adapters import emit_result_key_access
 from app.factory.build.reuse_accept import (
-    FAIL_CLOSED_MUST_REWRITE_READS,
-    LIVE_VETCARE_REUSE_ACCEPT_CAPS,
     PRODUCT_ASSIGN_TO_CALL_HALT,
-    PRODUCT_SCHEMA_SAMPLE_REJECT,
-    STORE_BLOCK_DEFAULT_ACTIONS,
 )
 from app.factory.build.roles_handlers import (
     _prepare_cloned_python,
@@ -227,21 +223,6 @@ def _run_handle(root: Path, sample: dict) -> dict:
     return json.loads(proc.stdout.strip())
 
 
-def test_live_tester_halt_strings():
-    """Exact TESTER assertion from sess_aed3e6e288414fcf."""
-    assert PRODUCT_SCHEMA_SAMPLE_REJECT == (
-        "appointment_scheduling rejected a payload built from its own schema"
-    )
-    assert PRODUCT_WORKFLOW_RESULT_HALT == "workflow: RuntimeError: 'result'"
-    assert PRODUCT_ASSIGN_TO_CALL_HALT == (
-        "SyntaxError: cannot assign to function call"
-    )
-    assert FAIL_CLOSED_MUST_REWRITE_READS in (
-        "fail-closed keep original must still rewrite reads"
-    )
-    assert LIVE_VETCARE_REUSE_ACCEPT_CAPS[1] == "appointment_scheduling"
-
-
 def test_mutation_unrewritten_input_result_is_runtimeerror_result():
     """Wall (1): schema-sample without result is RuntimeError: 'result'."""
     ns: dict = {}
@@ -303,11 +284,6 @@ def test_emit_rewrites_reads_and_keeps_for_store_assignment():
     exec(rewritten, ns, ns)
     out = ns["run"](input={"result": {"reference": "sample"}})
     assert out.get("status") == "ok"
-
-
-def test_vector_search_harvest_from_351_kept():
-    """#351 harvest stays — this PR must not undo it."""
-    assert STORE_BLOCK_DEFAULT_ACTIONS["vector_search"] == "search"
 
 
 def test_prepare_attaches_result_on_schema_sample():

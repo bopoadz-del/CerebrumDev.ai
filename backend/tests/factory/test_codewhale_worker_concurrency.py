@@ -32,7 +32,7 @@ from app.factory.build.codewhale_worker import (
     DEFAULT_PROCESS_CAP,
     DEFAULT_TENANT_CAP,
     FIFTY_TENANT_PROFILE,
-    LIVE_PROFILE,
+    DEPLOYED_PROFILE,
     NO_AUTHENTICATED_TENANT,
     PROCESS_CAP_ENV,
     PROCESS_SLOTS_EXHAUSTED,
@@ -436,7 +436,7 @@ def test_live_1c2g_profile_caps_at_three_process_one_per_tenant():
     assert worker_tenant_cap() == 1
     assert DEFAULT_PROCESS_CAP == 3
     assert DEFAULT_TENANT_CAP == 1
-    assert WORKER_PROFILES[LIVE_PROFILE] == (3, 1)
+    assert WORKER_PROFILES[DEPLOYED_PROFILE] == (3, 1)
 
 
 def test_the_upgrade_from_three_to_fifty_is_config_only(monkeypatch):
@@ -579,7 +579,7 @@ def test_render_yaml_declares_the_operating_profile_as_a_literal():
     """
     by_key = {v["key"]: v for v in _backend_service()["envVars"]}
 
-    assert by_key[PROFILE_ENV].get("value") == LIVE_PROFILE
+    assert by_key[PROFILE_ENV].get("value") == DEPLOYED_PROFILE
     assert "sync" not in by_key[PROFILE_ENV]
     assert PROCESS_CAP_ENV not in by_key
     assert TENANT_CAP_ENV not in by_key

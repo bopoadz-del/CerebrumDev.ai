@@ -85,10 +85,6 @@ def _plant_vendor_block_json(root: Path, block_id: str = "database") -> None:
 
 def _disable_factory_harvest(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.factory.build.reuse_accept.STORE_BLOCK_DEFAULT_ACTIONS",
-        {},
-    )
-    monkeypatch.setattr(
         "app.factory.build.reuse_accept._harvest_from_factory_vendor",
         lambda _bid: None,
     )

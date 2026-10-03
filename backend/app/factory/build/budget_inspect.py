@@ -574,7 +574,7 @@ def reconcile_budget_inspect_after_success(
         out["reason"] = (
             "mid-run inspect hard-stop superseded by Store-green "
             "RUN_SUCCEEDED — mid-run pilot_ready=false is expected "
-            "before the pilot cycle closes (sess_d10dfc28)"
+            "before the pilot cycle closes"
         )
     return out
 
