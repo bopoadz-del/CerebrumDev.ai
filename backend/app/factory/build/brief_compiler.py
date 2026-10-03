@@ -627,7 +627,31 @@ def render_slot_bodies(
                 "setup FIRST, then re-check the remaining [failure] rows. Do not "
                 "rewrite the [error] tests one by one.",
             ]
+        # A route that still refused after the tester adopted the exact values
+        # the route named is a contradiction inside the product, not a bad test
+        # value. Say so, and say what a fix is NOT -- the coder must not reach
+        # for the quick green of loosening the guard (the owner's concern: a
+        # "minor change for the platform to pass" that weakens validation).
+        tester_tried = [item for item in findings if "tester already tried" in item]
+        if tester_tried:
+            do_lines += [
+                f"{len(tester_tried)} row(s) say the tester already tried the values "
+                "the route itself named and the route STILL refused. The test value "
+                "is not the problem — the product contradicts itself: a route guard, "
+                "a handler, and the block disagree about the same field's vocabulary. "
+                "Reconcile them so a value the capability declares valid passes every "
+                "layer. Do NOT fix this by widening, dropping, or short-circuiting a "
+                "validation to make it pass — see testing_errors_protocol.md.",
+            ]
         do_lines += [f"- {item}" for item in findings]
+        do_lines += [
+            "",
+            "Fix the cause of each row, not the symptom. Never weaken, delete, or "
+            "loosen a validation, a route check, or a test assertion to turn a row "
+            "green (testing_errors_protocol.md). If a value was rejected, declare the "
+            "accepted vocabulary on the spec (allowed_values) rather than making the "
+            "route accept anything.",
+        ]
     do_lines += [
         "",
         "Kit manifests (Factory shelf + on-disk packs):",

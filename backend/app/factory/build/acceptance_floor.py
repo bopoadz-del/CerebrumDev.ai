@@ -129,7 +129,85 @@ def _load() -> Dict[str, Any]:
                 f"{FLOOR_REL}: {cid} must be universal:true, carry an "
                 "applies_when signal, or be advisory:true"
             )
+        subject = str(check.get("subject") or "").strip()
+        if not SUBJECT_RE.match(subject):
+            raise ValueError(
+                f"{FLOOR_REL}: {cid} must declare subject as runtime, "
+                f"factory_record, or tree:<path> (found {subject!r})"
+            )
     return data
+
+
+#: What a check judges. The owner of a failure is derived from this and from
+#: who wrote the subject -- never from a list of check names. A check that
+#: judges the booted product's answers is the product's; one that judges the
+#: Factory's own bookkeeping is the Factory's; one that judges a file in the
+#: tree belongs to whoever rendered that file (factory_rendered_paths), so a
+#: broken file the Factory stamped is the Factory's failure wherever it lands.
+SUBJECT_RE = __import__("re").compile(r"^(runtime|factory_record|tree:[A-Za-z0-9_./-]+)$")
+SUBJECT_RUNTIME = "runtime"
+SUBJECT_FACTORY_RECORD = "factory_record"
+
+#: Owner vocabulary, shared with the TESTER gate's classifier so one word
+#: means one thing across both gates.
+FACTORY = "FACTORY"
+PRODUCT = "PRODUCT"
+
+_PATH_IN_DETAIL = __import__("re").compile(
+    r"(?<![A-Za-z0-9_])((?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:py|ya?ml|txt|json|sh|html|toml|ini|cfg))"
+)
+
+
+def subject_of(check_id: str) -> str:
+    for c in checks():
+        if str(c["id"]) == check_id:
+            return str(c.get("subject") or "")
+    return ""
+
+
+def _norm_rel(path: str) -> str:
+    text = str(path or "").replace("\\", "/").strip()
+    for prefix in ("./", "/app/", "/workspace/"):
+        while text.startswith(prefix):
+            text = text[len(prefix):]
+    return text.lstrip("/")
+
+
+def _factory_rendered(path: str, rendered: frozenset) -> bool:
+    """True when ``path`` is (or names, by a slash-qualified suffix) a file the
+    Factory renders. A bare basename never matches -- ``acceptance.py`` in a
+    score line is not a claim about scripts/acceptance.py."""
+    rel = _norm_rel(path)
+    if not rel:
+        return False
+    if rel in rendered:
+        return True
+    return "/" in rel and any(r == rel or r.endswith("/" + rel) for r in rendered)
+
+
+def owner_of(check_id: str, detail: str = "") -> str:
+    """Who owns a failed line: PRODUCT or FACTORY, derived -- never looked up.
+
+    1. A detail that names a file the Factory rendered is the Factory's,
+       whatever the check (``no_token_literal`` tripping on the stamped
+       app/tenancy.py is the stamp's defect, not the coder's).
+    2. Otherwise the check's declared subject decides: ``runtime`` is the
+       product's (it answered); ``factory_record`` is the Factory's; ``tree:``
+       is the Factory's only when the path is a file the Factory renders --
+       a directory the coder fills (app, tests, alembic) is the product's.
+    """
+    from app.factory.build.store_acceptance import factory_rendered_paths
+
+    rendered = frozenset(factory_rendered_paths())
+    for m in _PATH_IN_DETAIL.finditer(str(detail or "")):
+        if _factory_rendered(m.group(1), rendered):
+            return FACTORY
+    subject = subject_of(check_id)
+    if subject == SUBJECT_FACTORY_RECORD:
+        return FACTORY
+    if subject.startswith("tree:"):
+        return FACTORY if _factory_rendered(subject[len("tree:"):], rendered) else PRODUCT
+    return PRODUCT
 
 
 def floor_version() -> int:

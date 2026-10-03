@@ -30,12 +30,16 @@ DEFAULT_KIMI_CLI = "kimi"
 #: DeepSeek's vehicle is Kimi Code CLI — never Claude Code.
 DEFAULT_DEEPSEEK_CLI = "kimi"
 
-#: DeepSeek OpenAI-compat catalog id.
-#: https://api-docs.deepseek.com/quick_start/pricing lists ``deepseek-v4-pro``.
-DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-pro"
-DEFAULT_DEEPSEEK_FLASH_MODEL = "deepseek-v4-flash"
-DEEPSEEK_API_PRO_MODEL = "deepseek-v4-pro"
-DEEPSEEK_API_FLASH_MODEL = "deepseek-v4-flash"
+#: DeepSeek model id the headless CodeWhale CLI actually serves. ``v4-pro``
+#: was the previous default and it hung every coder call (live 2026-10-02:
+#: the model call never returned); the CLI serves ``deepseek-v3`` / ``v2``.
+#: An operator can still switch this per-build from the admin page without a
+#: redeploy (runtime_settings coder_model), and env DEEPSEEK_CODE_MODEL still
+#: wins over this default.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v3"
+DEFAULT_DEEPSEEK_FLASH_MODEL = "deepseek-v3"
+DEEPSEEK_API_PRO_MODEL = "deepseek-v3"
+DEEPSEEK_API_FLASH_MODEL = "deepseek-v3"
 DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
 #: Leftover #371 Claude-catalog ids. OpenAI-compat DeepSeek does not want these.
 LEGACY_CLAUDE_OPUS_MODEL = "claude-opus-4-6"
