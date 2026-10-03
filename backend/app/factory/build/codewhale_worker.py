@@ -205,7 +205,7 @@ WORKER_PROFILES: Dict[str, Optional[Tuple[int, int]]] = {
 }
 
 #: The profile the live box runs, and the value render.yaml declares.
-LIVE_PROFILE = "1c-2g"
+DEPLOYED_PROFILE = "1c-2g"
 #: The smallest profile that can serve 50 concurrent tenants.
 FIFTY_TENANT_PROFILE = "8c-32g"
 

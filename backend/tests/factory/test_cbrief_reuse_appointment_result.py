@@ -31,11 +31,6 @@ from app.factory.build.block_inputs import (
 from app.factory.build.brief_compiler import compile_brief, verify_inventory
 from app.factory.build.coder_session import emit_factory_grounded_reuse_keep_path
 from app.factory.build.offline_adapters import emit_result_key_access
-from app.factory.build.reuse_accept import (
-    LIVE_VETCARE_REUSE_ACCEPT_BLOCKS,
-    LIVE_VETCARE_REUSE_ACCEPT_CAPS,
-)
-from app.factory.build.reuse_lookup import load_local_block_json
 from app.factory.build.roles_handlers import _sample_payload
 from app.factory.build.workflow_accept import PRODUCT_WORKFLOW_RESULT_HALT
 from tests.factory.test_cbrief_reuse_schema_accept import (
@@ -184,32 +179,6 @@ def _run_handle(root: Path, sample: dict) -> dict:
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout.strip())
-
-
-def test_registry_workflow_block_json_declares_result_and_run():
-    """STEP 0: factory vendor workflow/block.json is the harvest source."""
-    meta = load_local_block_json("workflow")
-    assert meta and meta.get("id") == "workflow"
-    action = next(
-        item
-        for item in (meta.get("inputs") or [])
-        if isinstance(item, dict) and item.get("name") == "action"
-    )
-    assert action.get("default") == "run"
-    declared = {
-        item.get("name")
-        for item in (meta.get("inputs") or [])
-        if isinstance(item, dict)
-    }
-    # steps/result must not be declared — they close dispatch known-fields
-    # and refuse schema-sample domain keys (field_ops defect_register).
-    assert "steps" not in declared
-    assert "result" not in declared
-    assert LIVE_VETCARE_REUSE_ACCEPT_CAPS[1] == "appointment_scheduling"
-    assert LIVE_VETCARE_REUSE_ACCEPT_BLOCKS["appointment_scheduling"] == [
-        "event_bus",
-        "workflow",
-    ]
 
 
 def test_mutation_unrewritten_out_result_is_runtimeerror_result():

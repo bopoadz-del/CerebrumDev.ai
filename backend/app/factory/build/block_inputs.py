@@ -41,17 +41,14 @@ import keyword
 import os
 import re
 import tempfile
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from app.factory.build.block_obligations import (
     ENVELOPE_STATUS_VALUES,
     is_envelope_status_field,
     is_envelope_status_vocab,
 )
-from app.factory.build.reuse_accept import (
-    STORE_BLOCK_DEFAULT_ACTIONS,
-    default_block_action,
-)
+from app.factory.build.reuse_accept import default_block_action
 
 #: Path-like keys document_engine (and SCHEMA_OBLIGATIONS) accept.
 _DOC_PATH_KEYS = (
@@ -320,10 +317,7 @@ def prepare_block_input(
     """
     _resolved, data = split_execute_action(domain, action=action)
     bid = str(block_id or "")
-    merged_actions = {
-        **STORE_BLOCK_DEFAULT_ACTIONS,
-        **(default_actions or {}),
-    }
+    merged_actions = dict(default_actions or {})
     if bid == "notification":
         return _for_notification(data, roster)
     if bid == "workflow":
@@ -1566,8 +1560,12 @@ def align_spec_to_handler_source(
     )
 
 
-def render_block_inputs_module() -> str:
-    """Source for the generated platform's ``app/block_inputs.py``."""
+def render_block_inputs_module(default_actions: Optional[Mapping[str, str]] = None) -> str:
+    """Source for the generated platform's ``app/block_inputs.py``.
+
+    ``default_actions`` is THIS build's map, harvested from the blocks it
+    vendored. A product never carries another product's answers.
+    """
     return (
         '''"""Block input construction for this platform.
 
@@ -2195,5 +2193,5 @@ def _for_database(data: Dict[str, Any], *, entity: Optional[str] = None) -> Dict
 '''
     ).replace(
         "__STORE_BLOCK_DEFAULT_ACTIONS__",
-        repr(dict(STORE_BLOCK_DEFAULT_ACTIONS)),
+        repr(dict(sorted((default_actions or {}).items()))),
     )

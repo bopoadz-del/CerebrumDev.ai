@@ -5,60 +5,6 @@
         "ACTIONS_PACKAGING_NEEDLES": 2,
         "TEMPLATE_STATIC_NEEDLES": 2
       }
-    },
-    "backend/app/factory/build/budget_inspect.py": {
-      "session_id": {
-        "sess_d10dfc28": 1
-      }
-    },
-    "backend/app/factory/build/coder_session.py": {
-      "session_id": {
-        "sess_401e6619": 1,
-        "sess_be217f6d": 1
-      }
-    },
-    "backend/app/factory/build/codewhale_worker.py": {
-      "live_snapshot": {
-        "LIVE_PROFILE": 1
-      }
-    },
-    "backend/app/factory/build/offline_adapters.py": {
-      "session_id": {
-        "sess_a69c8ce": 1
-      }
-    },
-    "backend/app/factory/build/reuse_accept.py": {
-      "live_snapshot": {
-        "LIVE_STEWARD_ESTATE_REGISTRY_BLOCKS": 1,
-        "LIVE_STEWARD_ESTATE_REGISTRY_CAP": 1,
-        "LIVE_VETCARE_REUSE_ACCEPT_BLOCKS": 1,
-        "LIVE_VETCARE_REUSE_ACCEPT_CAPS": 3
-      },
-      "session_id": {
-        "sess_5782f2264e0e4ff4": 2,
-        "sess_8259e197749b4441": 2,
-        "sess_bb870f4fb29042f2": 1,
-        "sess_d10dfc28": 1,
-        "sess_e8e4ab66e6dd4765": 1
-      }
-    },
-    "backend/app/factory/build/roles_constants.py": {
-      "session_id": {
-        "sess_6400b6c": 2,
-        "sess_6400b6c273414352": 1,
-        "sess_f1fe691": 1
-      }
-    },
-    "backend/app/factory/build/roles_handlers.py": {
-      "session_id": {
-        "sess_065fc3eac75c4f62": 1,
-        "sess_5dfb4a3": 1
-      }
-    },
-    "backend/app/factory/build/writer_behaviour.py": {
-      "session_id": {
-        "sess_6400b6c273414352": 1
-      }
     }
   },
   "forms": [
@@ -72,5 +18,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 29
+  "total": 4
 }

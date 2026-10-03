@@ -1,111 +1,16 @@
 """REUSE keep-path schema-sample accept contract (C-BRIEF).
 
-Photographed Floor after #346 (tip 5a530b3, sess_bb870f4fb29042f2,
-VetCare Hub, all-REUSE): ModuleNotFoundError did not recur. Export
-refuse PASS; pilot_zip=no. WRITER stopped at [check:reuse_accept]
-(fail-closed before TESTER):
+A REUSE handler calls Store blocks with ``execute(block_id, payload,
+action=...)``. The action each block expects is the BLOCK's contract, so it is
+read from the block itself -- ``inputs[name=action|operation].default`` in its
+block.json, else the default its own code declares
+(``params.get("action", "<default>")``), else the first action its code
+compares against. The Factory keeps no table of answers: a hand-kept map once
+told every coder to call ``capture`` with ``extract`` and ``validation`` with
+``validate``, both of which the Store answers with "Unknown action".
 
-    - prescription_management: formula_executor: reuse/accept miss —
-      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
-    - billing_and_invoicing: formula_executor: reuse/accept miss —
-      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
-
-#346 harvested STORE_BLOCK_DEFAULT_ACTIONS for the #345 roster
-(database / validation / event_bus / workflow / analytics / team) but
-keep-path emit left ``action=None`` for ``formula_executor`` — that
-Store id is bound on the photographed REUSE caps and is missing from
-the factory-known default map. Harvest also skipped the factory
-vendor_blocks_mirror when workspace vendor/block.json had no action
-input.
-
-Live sess_07dff0eaf8f64186 (tip da7cd2b / #348): Unknown action /
-formula_executor / ModuleNotFoundError did not recur. TESTER PRODUCT
-then refused appointment_scheduling:
-
-    workflow: RuntimeError: 'result'
-    schema sample refused; accept-payload persisted nothing
-
-Store workflow / kit shim reads input['result'] or out['result']. The
-schema-sample POST does not include that key. This is prepare + emit +
-CLONER rewrite — not a per-cap handle() micro-shot.
-
-Live sess_8259e197749b4441 (tip 467c83e / #350): the ``result`` key miss
-did not recur. WRITER stopped at [check:reuse_accept]:
-
-    patient_records_management: vector_search: reuse/accept miss —
-      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
-
-Registry-verified Cerebrum-Blocks ``vector_search/block.json`` has no
-``inputs[].name == action`` (Store runtime uses ``params.operation``
-default ``search``). Factory vendor_blocks_mirror also lacked that
-harvest, and the documented Store map omitted the id. Same class as
-#348 ``formula_executor``. Do not claim pilot_zip.
-
-Live sess_c63cc1a274994b33 (VetClinic Hub ALL-REUSE, tip 467c83e / #350):
-RuntimeError: 'result' did not recur. TESTER PRODUCT then refused after
-rework×3:
-
-    appointment_scheduling rejected a payload built from its own schema:
-    queue: SyntaxError: cannot assign to function call  (queue.py ~line 189)
-    workflow: step_0 (event_bus): error
-    billing_and_invoicing: formula_executor same SyntaxError (~line 242)
-    schema sample refused; accept-payload persisted nothing
-
-#350 rewrote any identifier ``['result']`` to ``.get("result", obj)``,
-including assignment targets (``something(x) = ...``). That is emit /
-CLONER, not a per-cap handle() micro-shot. Do not claim pilot_zip.
-
-Live sess_aed3e6e288414fcf (VetClinic Hub ALL-REUSE, tip 0963a6b / #352):
-#351 vector_search Unknown action CLEARED. #352 SyntaxError CLEARED
-(did not recur). TESTER PRODUCT then refused after rework×3:
-
-    appointment_scheduling rejected a payload built from its own schema:
-    workflow: RuntimeError: 'result'
-
-#352 fail-closed kept the *whole* original module when any rewrite
-missed a Store-ctx target (``for name['result'] in …``). Store workflow
-reads stayed as ``['result']`` and wrapped KeyError as RuntimeError.
-Fail-closed must skip that write and still rewrite reads. prepare /
-keep-path emit must still attach input['result']. Do not claim pilot_zip.
-
-Live sess_e8e4ab66e6dd4765 (tip 3b9261b, estate-operations / Private
-Estate Steward Platform): WRITER stopped at [check:reuse_accept]:
-
-    maintenance_and_work_order_management: capture: reuse/accept miss —
-      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
-    security_and_access_logging: capture: reuse/accept miss —
-
-Registry / live Store vendor ``capture/block.json`` has OCR-config
-inputs only (no ``inputs[].name == action`` / ``operation``). Factory
-vendor ``block.py`` is an adapter with no action dispatch. Harvest
-from block.json alone misses. InsureDistribute Store-green zip
-(sess_d10dfc28) emitted ``BLOCK_DEFAULT_ACTIONS = {'capture':
-'extract'}``. Factory-known map fallback is ``capture`` → ``extract``.
-Same class as #348 ``formula_executor`` / #351 ``vector_search``.
-Do not claim pilot_zip.
-
-Live sess_5782f2264e0e4ff4 Continue run3 (tip 4120a07 / #404 CLONER OK,
-#403 property_onboarding / spec_analyzer CLEARED): WRITER stopped at
-[check:reuse_accept]:
-
-    estate_registry: storage: reuse/accept miss —
-      no BLOCK_DEFAULT_ACTIONS entry (Unknown action: None)
-
-Outcome FAILED_ROLE_ERROR. TESTER not reached. Steward
-``estate_registry`` binds estate_registry + database + storage +
-validation. #403 harvested spec_analyzer / recommendation_template /
-readiness_engine; ``storage`` (and the other Steward kit adapters
-without an action input) were still missing from the factory-known
-map. Same class — not a per-cap handle() micro-shot.
-
-``factory budget ramp`` is independent of this check. Ramp fires
-during the in-flight C-BRIEF CLI wait (``_maybe_cli_phase_ramp``)
-when leftover phase-box time is inside
-``CLI_PHASE_RAMP_HEADROOM_S``. reuse_accept runs only after the CLI
-returns and keep-path emit lands handlers. A miss here cannot
-suppress a ramp that should already have logged; a Continue that
-never approached the 1500s phase box also logs no ramp. Do not
-claim pilot_zip.
+A block whose code dispatches on no action needs none; the emitted dispatch
+omits ``action`` when it is None.
 """
 
 from __future__ import annotations
@@ -124,7 +29,6 @@ from app.factory.build.reuse_lookup import (
     local_block_json_candidates,
 )
 from app.factory.build.workflow_accept import (
-    EVENT_BUS_STEP_ACTION,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
     PRODUCT_EVENT_BUS_STEP_CLASS,
     PRODUCT_WORKFLOW_RESULT_HALT,
@@ -132,14 +36,10 @@ from app.factory.build.workflow_accept import (
 
 PRODUCT_UNKNOWN_ACTION_HALT = "Unknown action"
 PRODUCT_UNKNOWN_ACTION_NONE_HALT = "Unknown action: None"
-#: Live sess_c63cc1a274994b33 after #350: CLONER result-key rewrite
-#: turned ``name['result'] =`` into ``name.get("result", name) =``.
+#: A result-key rewrite that turns ``name['result'] =`` into a call.
 PRODUCT_ASSIGN_TO_CALL_HALT = "SyntaxError: cannot assign to function call"
-#: Live sess_aed3e6e288414fcf after #352: whole-module keep-original
-#: dropped workflow ``['result']`` read rewrites. TESTER exact class:
-PRODUCT_SCHEMA_SAMPLE_REJECT = (
-    "appointment_scheduling rejected a payload built from its own schema"
-)
+#: What TESTER prints for any capability whose schema-sample POST is refused.
+PRODUCT_SCHEMA_SAMPLE_REJECT = "rejected a payload built from its own schema"
 FAIL_CLOSED_MUST_REWRITE_READS = (
     "fail-closed keep original must still rewrite reads"
 )
@@ -149,99 +49,6 @@ WRITER_REUSE_ACCEPT_HALT = (
     "its own schema sample (Unknown action / action=None)"
 )
 REUSE_ACCEPT_MISS = "reuse/accept miss"
-
-#: Photographed VetCare Hub REUSE roster after #346 (sess_bb870f4fb29042f2)
-#: plus sess_8259e197749b4441 ``vector_search`` on patient_records.
-LIVE_VETCARE_REUSE_ACCEPT_CAPS = (
-    "patient_records_management",
-    "appointment_scheduling",
-    "prescription_management",
-    "billing_and_invoicing",
-    "client_communication_portal",
-)
-
-LIVE_VETCARE_REUSE_ACCEPT_BLOCKS: Dict[str, List[str]] = {
-    "patient_records_management": ["database", "validation", "vector_search"],
-    "appointment_scheduling": ["event_bus", "workflow"],
-    "prescription_management": ["validation", "formula_executor"],
-    "billing_and_invoicing": ["analytics", "formula_executor"],
-    "client_communication_portal": ["team"],
-}
-
-#: Photographed Steward Continue run3 (sess_5782f2264e0e4ff4, tip 4120a07).
-LIVE_STEWARD_ESTATE_REGISTRY_CAP = "estate_registry"
-LIVE_STEWARD_ESTATE_REGISTRY_BLOCKS: List[str] = [
-    "estate_registry",
-    "database",
-    "storage",
-    "validation",
-]
-
-#: Factory-known Store defaults already documented in this repo
-#: (LIVE_CONTRACTS, workflow_accept, writer_behaviour / contract probes).
-#: Harvest from vendored block.json / source wins when present.
-#: ``formula_executor`` is the sess_bb870f4fb29042f2 miss: dual-registered
-#: budget block; Store runtime alias is ``formula_executor_v2``.
-#: ``vector_search`` is the sess_8259e197749b4441 miss: registry
-#: block.json has no action input; Store ``process()`` defaults
-#: ``params.operation`` to ``search``.
-#: ``capture`` is the sess_e8e4ab66e6dd4765 miss: registry / live Store
-#: vendor ``block.json`` has OCR-config inputs only (no ``action`` /
-#: ``operation``). Factory vendor ``block.py`` is an adapter with no
-#: action dispatch. InsureDistribute Store-green zip (sess_d10dfc28)
-#: emitted ``BLOCK_DEFAULT_ACTIONS = {'capture': 'extract'}``. Harvest
-#: aliases ``capture_v2``.
-#: ``spec_analyzer`` / ``recommendation_template`` / ``readiness_engine``
-#: are the sess_5782f2264e0e4ff4 miss on Steward ``property_onboarding``
-#: (Unknown action: None). reuse_accept failed independently of the
-#: ~1490s phase wall — the CLI had already returned at ~1488s.
-#: ``storage`` is the sess_5782f2264e0e4ff4 run3 miss on Steward
-#: ``estate_registry`` (tip 4120a07). RESOURCE_OBLIGATIONS.ensure is
-#: ``store``; retrieve/exists/delete are follow-on actions. Factory
-#: vendor ``storage/block.json`` has no action input (adapter run()
-#: only). Sibling Steward adapters without an action input get the
-#: same map so the next Continue cannot whack-a-mole:
-#: estate_registry / estate_maintenance / evidence_verifier /
-#: portfolio_rollup / knowledge.
-STORE_BLOCK_DEFAULT_ACTIONS: Dict[str, str] = {
-    "analytics": "track_event",
-    "audit": "log",
-    "capture": "extract",
-    "capture_v2": "extract",
-    "dashboard": "render",
-    "database": "query",
-    "document_engine": "parse",
-    "event_bus": EVENT_BUS_STEP_ACTION,
-    "formula_executor": "execute",
-    "formula_executor_v2": "execute",
-    "notification": "send",
-    "queue": "enqueue",
-    "team": "create_team",
-    "validation": "validate",
-    "vector_search": "search",
-    "workflow": "run",
-    #: sess_5782f2264e0e4ff4: Steward property_onboarding binds these three.
-    #: Factory vendor mirrors have no inputs[].name == action (adapter
-    #: run() only). Same class as formula_executor / vector_search / capture.
-    "spec_analyzer": "analyze",
-    "recommendation_template": "apply_template",
-    "readiness_engine": "evaluate",
-    #: The five estate entries below are the Store's REAL default actions
-    #: (block_registry/<id>/block.json, inputs[name=action].default). They were
-    #: first written against the Factory's always-ok stubs, which accepted any
-    #: action, and named ones the real blocks do not have: register, plan_work,
-    #: score, and verify-as-default.
-    #: sess_5782f2264e0e4ff4 run3: Steward estate_registry binds storage.
-    #: Factory vendor mirrors have no inputs[].name == action (adapter
-    #: run() only). Same class as formula_executor / vector_search /
-    #: capture / spec_analyzer.
-    "storage": "store",
-    "estate_registry": "create",
-    "estate_maintenance": "create",
-    "evidence_verifier": "store",
-    "portfolio_rollup": "aggregate",
-    "knowledge": "search",
-}
 
 _BLOCK_DEFAULTS_ASSIGN = re.compile(
     r"BLOCK_DEFAULT_ACTIONS\s*=\s*(\{(?:[^{}]|\{[^{}]*\})*\})",
@@ -260,11 +67,15 @@ _ACTION_NOT_IN = re.compile(
     re.IGNORECASE,
 )
 _IDENT_IN_LIST = re.compile(r"""['\"]([A-Za-z_][\w]*)['\"]""")
-#: Store vector_search (and similar) dispatch on operation, not action.
-_OPERATION_DEFAULT = re.compile(
-    r"""(?:params|kwargs)\.get\(\s*['\"]operation['\"]\s*,\s*['\"]([A-Za-z_][\w]*)['\"]"""
+#: A default the block's own code declares: ``<mapping>.get("action", "x")``
+#: or ``.get("operation", "x")``. This is the block's contract, so it wins over
+#: inference from the comparisons that follow it.
+_DECLARED_DEFAULT = re.compile(
+    r"""\.get\(\s*['\"](action|operation)['\"]\s*,\s*['\"]([A-Za-z_][\w]*)['\"]\s*\)"""
 )
 _ACTION_INPUT_NAMES = frozenset({"action", "operation"})
+#: Code that reads an action or operation at all, in any form.
+_READS_ACTION = re.compile(r"""['\"](?:action|operation)['\"]""")
 
 
 class ReuseAcceptHalt(ValueError):
@@ -292,21 +103,17 @@ def default_block_action(
     block_id: str,
     default_actions: Optional[Mapping[str, str]] = None,
 ) -> Optional[str]:
-    """Keyword action for ``execute(..., action=)``. Never invent from payload."""
-    bid = str(block_id or "").strip()
-    if isinstance(default_actions, Mapping):
-        cand = default_actions.get(bid)
-        if isinstance(cand, str) and cand.strip():
-            return cand.strip()
-    for cand_id in _harvest_candidate_ids(bid):
+    """Keyword action for ``execute(..., action=)``. Never invent from payload.
+
+    The handler's own ``BLOCK_DEFAULT_ACTIONS`` first (exact id, then the
+    ``_v2`` alias), then what the Store block itself declares.
+    """
+    for cand_id in _harvest_candidate_ids(block_id):
         if isinstance(default_actions, Mapping):
-            alias = default_actions.get(cand_id)
-            if isinstance(alias, str) and alias.strip():
-                return alias.strip()
-        mapped = STORE_BLOCK_DEFAULT_ACTIONS.get(cand_id)
-        if isinstance(mapped, str) and mapped.strip():
-            return mapped.strip()
-    return None
+            cand = default_actions.get(cand_id)
+            if isinstance(cand, str) and cand.strip():
+                return cand.strip()
+    return _harvest_from_factory_vendor(str(block_id or "").strip())
 
 
 def default_action_from_block_json(meta: Any) -> Optional[str]:
@@ -341,8 +148,14 @@ def default_action_from_block_json(meta: Any) -> Optional[str]:
 
 
 def default_action_from_source(source: str) -> Optional[str]:
-    """First action the vendored module compares against."""
+    """The action a block's code declares as its default, else the first one
+    it compares against. An ``action`` default beats an ``operation`` one."""
     blob = source or ""
+    declared = {}
+    for m in _DECLARED_DEFAULT.finditer(blob):
+        declared.setdefault(m.group(1), m.group(2))
+    if declared:
+        return declared.get("action") or declared.get("operation")
     match = _ACTION_NOT_IN.search(blob)
     if match:
         idents = _IDENT_IN_LIST.findall(match.group(1) or "")
@@ -351,9 +164,6 @@ def default_action_from_source(source: str) -> Optional[str]:
     match = _ACTION_EQ.search(blob)
     if match:
         return (match.group(1) or match.group(2) or "").strip() or None
-    match = _OPERATION_DEFAULT.search(blob)
-    if match:
-        return (match.group(1) or "").strip() or None
     return None
 
 
@@ -403,15 +213,22 @@ def _workspace_roots(
 
 
 def _harvest_from_factory_vendor(block_id: str) -> Optional[str]:
-    """Prefer factory / Blocks-root block.json, then sibling source."""
+    """The Store's own declaration: block.json, then the block's code.
+
+    ``block_registry/<id>/block.py`` is usually a thin wrapper; the code that
+    dispatches on the action lives in the Store's ``app/blocks/<id>.py``, two
+    levels above the block.json. Reading only the wrapper is why a hand-kept
+    table of answers grew to fill the gap.
+    """
     for cand in _harvest_candidate_ids(block_id):
         harvested = default_action_from_block_json(load_local_block_json(cand))
         if harvested:
             return harvested
         for path in local_block_json_candidates(cand):
-            harvested = default_action_from_source(_read_text(path.with_name("block.py")))
-            if harvested:
-                return harvested
+            for code in (path.with_name("block.py"), path.parents[2] / "app" / "blocks" / f"{cand}.py"):
+                harvested = default_action_from_source(_read_text(code))
+                if harvested:
+                    return harvested
     return None
 
 
@@ -462,10 +279,7 @@ def harvest_block_default_action(
                 harvested = default_action_from_source(_read_text(root / rel))
                 if harvested:
                     return harvested
-    harvested = _harvest_from_factory_vendor(bid)
-    if harvested:
-        return harvested
-    return default_block_action(bid)
+    return _harvest_from_factory_vendor(bid)
 
 
 def harvest_block_default_actions(
@@ -530,6 +344,37 @@ def apply_default_actions_to_handler(
     return assignment + "\n" + blob
 
 
+def block_takes_action(block_id: str) -> Optional[bool]:
+    """Does this Store block dispatch on an action at all?
+
+    True when its block.json declares an ``action``/``operation`` input or its
+    code reads one; False when its code was found and reads neither; None when
+    no code was found (unknown -- the caller fails closed).
+    """
+    for cand in _harvest_candidate_ids(block_id):
+        meta = load_local_block_json(cand)
+        if isinstance(meta, Mapping) and any(
+            isinstance(i, Mapping) and i.get("name") in _ACTION_INPUT_NAMES
+            for i in meta.get("inputs") or ()
+        ):
+            return True
+        found_code = False
+        for path in local_block_json_candidates(cand):
+            for code in (
+                path.with_name("block.py"),
+                path.parents[2] / "app" / "blocks" / f"{cand}.py",
+            ):
+                text = _read_text(code)
+                if not text:
+                    continue
+                found_code = True
+                if _READS_ACTION.search(text):
+                    return True
+        if found_code:
+            return False
+    return None
+
+
 def reuse_accept_handler_errors(
     text: str,
     block_ids: Optional[Sequence[str]] = None,
@@ -550,6 +395,8 @@ def reuse_accept_handler_errors(
     for bid in bids:
         action = default_block_action(bid, defaults)
         if action:
+            continue
+        if block_takes_action(bid) is False:
             continue
         errors.append(
             f"{prefix}{bid}: {REUSE_ACCEPT_MISS} — no BLOCK_DEFAULT_ACTIONS "
@@ -626,65 +473,44 @@ def reuse_accept_rules_text(
 ) -> str:
     """BUILD cut: schema-sample POSTs must not yield Unknown action."""
     named = [str(c) for c in (capability_ids or ()) if str(c).strip()]
-    roster = named or list(LIVE_VETCARE_REUSE_ACCEPT_CAPS)
-    return "\n".join(
-        [
-            "PRODUCT / writer_behaviour schema-sample accept (REUSE keep-path):",
-            "The harness POSTs /v1/{capability_id} with a payload built from",
-            "that capability's own FIELDS + CONSTRAINTS, then runs bound",
-            "blocks. A keep-path handler that calls execute() with no",
-            f"action= keyword (or action=None) fails as {PRODUCT_UNKNOWN_ACTION_HALT!r}",
-            f"/ {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. Workflow children without",
-            f"step.action fail as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
-            f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Store workflow / kit shim",
-            "reads input['result'] / out['result']; a schema-sample POST",
-            f"that omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT}.",
-            "prepare_block_input and keep-path emit MUST attach result from",
-            "the first prepared step so accept-payload can persist.",
-            "CLONER emit_result_key_access rewrites reads of name['result']",
-            "only — assignment targets must stay subscripts. Rewriting",
-            f"name['result'] = into a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT}",
-            "(live queue.py ~189 / formula_executor ~242).",
-            f"{FAIL_CLOSED_MUST_REWRITE_READS} — a whole-module keep of the",
-            "original Store workflow.py leaves envelope['result'] /",
-            f"input['result'] as KeyError → {PRODUCT_WORKFLOW_RESULT_HALT}",
-            f"({PRODUCT_SCHEMA_SAMPLE_REJECT}).",
-            "",
-            "factory-grounded REUSE emit MUST populate BLOCK_DEFAULT_ACTIONS",
-            "from vendored block.json (workspace vendor/, then factory",
-            "vendor_blocks_mirror / CEREBRUM_BLOCKS_ROOT action default or",
-            "options[0]) or the factory-known Store map. formula_executor",
-            "(and formula_executor_v2) must harvest a keyword action.",
-            "vector_search must harvest a keyword action (Store operation",
-            "default search) even when registry block.json has no action",
-            "input. capture must harvest a keyword action (Store-green",
-            "extract, sess_d10dfc28) even when registry / live vendor",
-            "block.json has no action input. Pass action= as a keyword —",
-            "never inside the payload dict.",
-            "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
-            "",
-            "Photographed VetCare Hub REUSE roster (sess_bb870f4fb29042f2 /",
-            "sess_8259e197749b4441):",
-            *[f"- {cid}" for cid in roster],
-            "Those ids are keep-path handlers, not per-cap micro-shots.",
-            "prescription_management / billing_and_invoicing bind",
-            "formula_executor — a missing default is reuse/accept miss.",
-            "patient_records_management binds vector_search — a missing",
-            "default is the sess_8259e197749b4441 reuse/accept miss.",
-            "estate-operations maintenance_and_work_order_management /",
-            "security_and_access_logging bind capture — a missing default",
-            "is the sess_e8e4ab66e6dd4765 reuse/accept miss.",
-            "Steward property_onboarding binds spec_analyzer /",
-            "recommendation_template / readiness_engine — a missing",
-            "default is the sess_5782f2264e0e4ff4 reuse/accept miss",
-            "(independent of the ~1490s phase wall).",
-            "Steward estate_registry binds storage — a missing default",
-            "is the sess_5782f2264e0e4ff4 run3 reuse/accept miss",
-            "(tip 4120a07; independent of factory budget ramp).",
-            f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
-            "three PRODUCT reworks on Unknown action.",
-        ]
-    )
+    lines = [
+        "PRODUCT / writer_behaviour schema-sample accept (REUSE keep-path):",
+        "The harness POSTs /v1/{capability_id} with a payload built from",
+        "that capability's own FIELDS + CONSTRAINTS, then runs bound",
+        "blocks. A keep-path handler that calls execute() with no action=",
+        "keyword (or action=None) on a block that dispatches on one fails as",
+        f"{PRODUCT_UNKNOWN_ACTION_HALT!r} / {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}.",
+        f"Workflow children without step.action fail as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
+        f"({PRODUCT_EVENT_BUS_STEP_CLASS}). Store workflow / kit shim",
+        "reads input['result'] / out['result']; a schema-sample POST",
+        f"that omits it fails as {PRODUCT_WORKFLOW_RESULT_HALT}.",
+        "prepare_block_input and keep-path emit MUST attach result from",
+        "the first prepared step so accept-payload can persist.",
+        "CLONER emit_result_key_access rewrites reads of name['result']",
+        "only — assignment targets must stay subscripts. Rewriting",
+        f"name['result'] = into a .get() call fails as {PRODUCT_ASSIGN_TO_CALL_HALT}.",
+        f"{FAIL_CLOSED_MUST_REWRITE_READS} — a whole-module keep of the",
+        "original Store workflow.py leaves envelope['result'] /",
+        f"input['result'] as KeyError → {PRODUCT_WORKFLOW_RESULT_HALT}",
+        f"({PRODUCT_SCHEMA_SAMPLE_REJECT}).",
+        "",
+        "Each block's action is the block's own contract. Populate",
+        "BLOCK_DEFAULT_ACTIONS by reading every bound block: its block.json",
+        "inputs[name=action|operation].default, else the default its code",
+        'declares (params.get("action", ...)), else the first action its',
+        "code compares against. Never type an action from memory or from",
+        "another product. A block whose code reads no action takes none.",
+        "Pass action= as a keyword — never inside the payload dict.",
+        "Prefer action=BLOCK_DEFAULT_ACTIONS.get(block_id).",
+    ]
+    if named:
+        lines += ["", "This build's REUSE keep-path capabilities:"]
+        lines += [f"- {cid}" for cid in named]
+    lines += [
+        f"A miss is {REUSE_ACCEPT_MISS}: HALT before TESTER, do not burn",
+        "three PRODUCT reworks on Unknown action.",
+    ]
+    return "\n".join(lines)
 
 
 def reuse_accept_acceptance_line() -> str:
@@ -724,10 +550,10 @@ def reuse_accept_brief_contract() -> str:
     """System-brief paragraph shared by WRITER seat + HTTP oneshot."""
     return (
         "REUSE keep-path handlers must accept a schema-sample POST. "
-        "Populate BLOCK_DEFAULT_ACTIONS from block.json / the factory Store "
-        "map (including formula_executor, vector_search, capture, "
-        "spec_analyzer, storage, and estate_registry) and pass action= "
-        "as a keyword (action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
+        "Populate BLOCK_DEFAULT_ACTIONS from each bound block's own contract "
+        "(its block.json action/operation default, else the default its code "
+        "declares) and pass action= as a keyword "
+        "(action=BLOCK_DEFAULT_ACTIONS.get(block_id)). "
         f"execute() with action=None is {PRODUCT_UNKNOWN_ACTION_NONE_HALT!r}. "
         f"Workflow step_0 without step.action is {PRODUCT_EVENT_BUS_STEP_0_HALT}. "
         "Store workflow reads input['result'] — a schema-sample POST that "
@@ -737,8 +563,7 @@ def reuse_accept_brief_contract() -> str:
         "(queue / formula_executor). "
         f"{FAIL_CLOSED_MUST_REWRITE_READS} or TESTER refuses "
         f"{PRODUCT_SCHEMA_SAMPLE_REJECT}: {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
-        f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER. "
-        f"Photographed roster: {', '.join(LIVE_VETCARE_REUSE_ACCEPT_CAPS)}."
+        f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER."
     )
 
 
@@ -751,12 +576,7 @@ def reuse_accept_needles() -> Sequence[str]:
         "action= as a keyword",
         REUSE_ACCEPT_MISS,
         f"[check:{REUSE_ACCEPT_CHECK}]",
-        LIVE_VETCARE_REUSE_ACCEPT_CAPS[0],
-        "formula_executor",
-        "vector_search",
-        "capture",
-        "Steward estate_registry binds storage",
-        "estate_registry",
+        "the block's own contract",
         PRODUCT_WORKFLOW_RESULT_HALT,
         "input['result']",
         PRODUCT_ASSIGN_TO_CALL_HALT,

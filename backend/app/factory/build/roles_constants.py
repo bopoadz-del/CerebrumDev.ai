@@ -150,7 +150,7 @@ def _instantiate_store_block(block_cls):
 def _create_block_instance(block_or_name, *args, **kwargs):
     """Store host DI. Generated platforms have no app.dependencies host.
 
-    Live sess_f1fe691 (VetCare Hub): workflow step_0 (database) raised
+    Live: workflow step_0 (database) raised
     DatabaseBlock.__init__() missing 2 required positional arguments:
     'hal_block' and 'config' after the Store-host import failed and the
     fallback constructed DatabaseBlock() with no HAL.
@@ -251,7 +251,7 @@ def _known_fields(block_id: str) -> set:
         database: Insert failed: near ")": syntax error
 
     One defect, four faces, measured on the booted zip of session
-    sess_6400b6c: ``document_engine`` answered "No input files provided"
+    Live: ``document_engine`` answered "No input files provided"
     holding a file_path, ``notification`` answered "block or tool name
     required for MCP channel" holding a block name, and ``team`` answered
     "Team access denied" holding a user_id. The platform built, shipped,
@@ -304,7 +304,7 @@ def _envelope_mismatch(block_id: str, data: Dict[str, Any]) -> tuple:
     inside ``data["input"]`` instead of at the top level, and any of those
     that already exist at the top level with a different value.
 
-    THE INCIDENT (residential-lettings, sess_6400b6c273414352, post-#254).
+    THE INCIDENT (post-#254).
     ``unit_registry_and_vacancy_tracking`` called::
 
         execute("analytics", {"input": {"metric": "monthly_rent_gbp",
@@ -408,7 +408,7 @@ _FAILED_STATUSES = {"error", "failed", "partial"}
 def _failed_steps(result: Dict[str, Any]) -> list:
     """Sub-step failures the top-level status may not carry.
 
-    Live, from the booted sess_6400b6c zip: punch_list_tracking returned
+    Live, from a booted build: a capability returned
     ``ok: true`` wrapped around
 
         {"status": "partial", "results": [{"step_id": "step_0",

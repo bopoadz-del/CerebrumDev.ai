@@ -19,39 +19,23 @@ Do not enable FACTORY_BRIEF_HTTP_ONESHOT. Do not claim pilot_zip.
 from __future__ import annotations
 
 import json
-import re
-import subprocess
-import sys
 from pathlib import Path
 from typing import Sequence
 
 import pytest
 
-from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief, verify_inventory
 from app.factory.build.brief_lint import lint_brief
-from app.factory.build.coder_session import (
-    KEEP_PATH_FACTORY_GROUNDED_REUSE,
-    NAMED_BLOCKER_CLI_BILLING,
-    NAMED_BLOCKER_CLI_FAILED,
-    emit_factory_grounded_reuse_keep_path,
-)
 from app.factory.build.reuse_accept import (
-    LIVE_VETCARE_REUSE_ACCEPT_BLOCKS,
-    LIVE_VETCARE_REUSE_ACCEPT_CAPS,
     FAIL_CLOSED_MUST_REWRITE_READS,
     PRODUCT_ASSIGN_TO_CALL_HALT,
     PRODUCT_SCHEMA_SAMPLE_REJECT,
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
     REUSE_ACCEPT_MISS,
-    STORE_BLOCK_DEFAULT_ACTIONS,
     WRITER_REUSE_ACCEPT_HALT,
     ReuseAcceptHalt,
     apply_default_actions_to_handler,
     assert_reuse_schema_accept,
-    default_action_from_block_json,
-    default_block_action,
-    harvest_block_default_action,
     harvest_block_default_actions,
     parse_handler_default_actions,
     reuse_accept_acceptance_line,
@@ -60,17 +44,14 @@ from app.factory.build.reuse_accept import (
     reuse_accept_needles,
     reuse_accept_rules_text,
 )
-from app.factory.build.roles import RoleContext, RoleError, run_writer
 from app.factory.build.roles_handlers import (
     _capability_handler_body,
     _handler_module,
 )
 from app.factory.build.workflow_accept import (
-    EVENT_BUS_STEP_ACTION,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
     PRODUCT_WORKFLOW_RESULT_HALT,
 )
-from app.factory.build.workspace import RoleWorkspace
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.coder import _WHOLE_JOB_SYSTEM
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
@@ -108,9 +89,20 @@ class _VetCare:
     summary = "sess_bb870f4fb29042f2 photograph — formula_executor reuse/accept"
 
 
+#: Sample plan for the mechanism tests below: invented capabilities bound to
+#: real Store blocks. Test data only -- production code holds no roster.
+SAMPLE_REUSE_PLAN_BLOCKS = {
+    "patient_records_management": ["database", "validation", "vector_search"],
+    "appointment_scheduling": ["event_bus", "workflow"],
+    "prescription_management": ["validation", "formula_executor"],
+    "billing_and_invoicing": ["analytics", "formula_executor"],
+    "client_communication_portal": ["team"],
+}
+
+
 def _vetcare_reuse_plan() -> _Plan:
     return _Plan(
-        *(_Cap(cid, bids) for cid, bids in LIVE_VETCARE_REUSE_ACCEPT_BLOCKS.items())
+        *(_Cap(cid, bids) for cid, bids in SAMPLE_REUSE_PLAN_BLOCKS.items())
     )
 
 
@@ -226,66 +218,6 @@ def _schema_sample_exec_script(caps: Sequence[str]) -> str:
     )
 
 
-def test_photographed_roster_and_factory_store_defaults():
-    assert LIVE_VETCARE_REUSE_ACCEPT_CAPS == (
-        "patient_records_management",
-        "appointment_scheduling",
-        "prescription_management",
-        "billing_and_invoicing",
-        "client_communication_portal",
-    )
-    assert default_block_action("validation") == "validate"
-    assert default_block_action("analytics") == "track_event"
-    assert default_block_action("team") == "create_team"
-    assert default_block_action("database") == "query"
-    assert default_block_action("event_bus") == EVENT_BUS_STEP_ACTION
-    assert default_block_action("workflow") == "run"
-    assert default_block_action("formula_executor") == "execute"
-    assert default_block_action("formula_executor_v2") == "execute"
-    assert default_block_action("vector_search") == "search"
-    assert default_block_action("capture") == "extract"
-    assert default_block_action("capture_v2") == "extract"
-    planted = default_action_from_block_json(
-        {"inputs": [{"name": "action", "default": "check", "options": ["check"]}]}
-    )
-    assert planted == "check"
-    assert default_block_action("validation", {"validation": "check"}) == "check"
-
-
-def test_formula_executor_reuse_accept_photograph_without_planted_vendor():
-    """sess_bb870f4fb29042f2: formula_executor miss on two REUSE caps.
-
-    Live keep-path emit harvested workspace vendor/ only, then the
-    factory map — and formula_executor was in neither. Factory vendor
-    block.json + STORE_BLOCK_DEFAULT_ACTIONS must fill the default
-    without a planted workspace vendor tree. Unknown ids stay closed.
-    """
-    assert LIVE_VETCARE_REUSE_ACCEPT_BLOCKS["prescription_management"] == [
-        "validation",
-        "formula_executor",
-    ]
-    assert LIVE_VETCARE_REUSE_ACCEPT_BLOCKS["billing_and_invoicing"] == [
-        "analytics",
-        "formula_executor",
-    ]
-    harvested = harvest_block_default_actions(
-        ["formula_executor", "validation", "analytics"]
-    )
-    assert harvested["formula_executor"] == "execute"
-    assert harvested["validation"] in {"validate", "validate_pipeline"}
-    assert harvested["analytics"] == "track_event"
-    assert harvest_block_default_action("formula_executor") == "execute"
-    assert harvest_block_default_action("formula_executor_v2") == "execute"
-    assert default_block_action("not_a_real_block") is None
-    assert harvest_block_default_actions(["not_a_real_block"]) == {}
-    ghost = reuse_accept_handler_errors(
-        "BLOCK_IDS = ['formula_executor']\nBLOCK_DEFAULT_ACTIONS = {}\n",
-        ["not_a_real_block"],
-        capability_id="prescription_management",
-    )
-    assert any(REUSE_ACCEPT_MISS in e and "not_a_real_block" in e for e in ghost)
-
-
 def test_vetcare_compiled_brief_grounds_reuse_accept():
     compiled = compile_brief(
         _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
@@ -355,102 +287,6 @@ def test_empty_block_default_actions_is_reuse_accept_miss():
     assert any("not_a_real_block" in e for e in errors)
 
 
-def test_emit_keep_path_populates_block_default_actions(tmp_path):
-    compiled = compile_brief(
-        _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
-    )
-    verify_inventory(compiled)
-    _plant_store_block_json(tmp_path)
-    emitted = emit_factory_grounded_reuse_keep_path(tmp_path, compiled)
-    assert set(emitted) == set(LIVE_VETCARE_REUSE_ACCEPT_CAPS)
-    for cid, bids in LIVE_VETCARE_REUSE_ACCEPT_BLOCKS.items():
-        text = (tmp_path / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        defaults = parse_handler_default_actions(text)
-        assert defaults, cid
-        for bid in bids:
-            assert defaults.get(bid), (cid, bid, defaults)
-            assert "action=BLOCK_DEFAULT_ACTIONS.get" in text or (
-                f"action=BLOCK_DEFAULT_ACTIONS.get('{bid}')" in text
-                or 'action=BLOCK_DEFAULT_ACTIONS.get("' in text
-            )
-        assert reuse_accept_handler_errors(text, bids, capability_id=cid) == []
-    assert_reuse_schema_accept(tmp_path, compiled)
-    sched = (tmp_path / "app" / "actions" / "appointment_scheduling.py").read_text(
-        encoding="utf-8"
-    )
-    assert EVENT_BUS_STEP_ACTION in sched
-    assert "execute(" in sched
-    assert not re.search(r"execute\s*\([^)]*action\s*=\s*None", sched)
-    assert "'result':" in sched or '"result":' in sched
-    assert "steps[0].get('input')" in sched or 'steps[0].get("input")' in sched
-    for cid in ("prescription_management", "billing_and_invoicing"):
-        defaults = parse_handler_default_actions(
-            (tmp_path / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        )
-        assert defaults.get("formula_executor") == "execute", (cid, defaults)
-    records = parse_handler_default_actions(
-        (tmp_path / "app" / "actions" / "patient_records_management.py").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert records.get("vector_search") == "search", records
-
-
-def test_emit_keep_path_formula_executor_without_planted_vendor(tmp_path):
-    """Keep-path emit must harvest formula_executor from factory vendor/map."""
-    compiled = compile_brief(
-        _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
-    )
-    verify_inventory(compiled)
-    planted = {
-        "database": ("query", ["query"]),
-        "validation": ("validate", ["validate"]),
-        "event_bus": ("publish", ["publish"]),
-        "workflow": ("run", ["run"]),
-        "analytics": ("track_event", ["track_event"]),
-        "team": ("create_team", ["create_team"]),
-    }
-    for bid, (default, options) in planted.items():
-        dest = tmp_path / "vendor" / "blocks" / bid
-        dest.mkdir(parents=True, exist_ok=True)
-        (dest / "block.json").write_text(
-            json.dumps(
-                {
-                    "id": bid,
-                    "inputs": [
-                        {
-                            "name": "action",
-                            "type": "string",
-                            "default": default,
-                            "options": options,
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
-    assert not (tmp_path / "vendor" / "blocks" / "formula_executor").exists()
-    assert not (tmp_path / "vendor" / "blocks" / "vector_search").exists()
-    emitted = emit_factory_grounded_reuse_keep_path(tmp_path, compiled)
-    assert set(emitted) == set(LIVE_VETCARE_REUSE_ACCEPT_CAPS)
-    for cid in ("prescription_management", "billing_and_invoicing"):
-        text = (tmp_path / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
-        defaults = parse_handler_default_actions(text)
-        assert defaults.get("formula_executor") == "execute", (cid, defaults)
-        assert reuse_accept_handler_errors(
-            text,
-            LIVE_VETCARE_REUSE_ACCEPT_BLOCKS[cid],
-            capability_id=cid,
-        ) == []
-    records = parse_handler_default_actions(
-        (tmp_path / "app" / "actions" / "patient_records_management.py").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert records.get("vector_search") == "search", records
-    assert_reuse_schema_accept(tmp_path, compiled)
-
-
 def test_empty_defaults_halt_before_tester(tmp_path):
     compiled = compile_brief(
         _VetCare(), _vetcare_reuse_plan(), store_ids=STORE_IDS
@@ -478,83 +314,3 @@ def test_empty_defaults_halt_before_tester(tmp_path):
     assert "not_a_real_block" in str(halted.value)
 
 
-def test_writer_keep_path_schema_sample_has_no_unknown_action(
-    tmp_path, monkeypatch
-):
-    """Live photograph roster: keep-path WRITER commit must keyword-dispatch."""
-    _arm_billing_cli(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        "app.factory.coder.generate_from_compiled_brief",
-        lambda **kw: {"specs": {}, "handlers": {}, "model": "x"},
-    )
-    plan = _vetcare_reuse_plan()
-    compiled = compile_brief(_VetCare(), plan, store_ids=STORE_IDS)
-    assert all(item.is_reuse for item in compiled.inventory)
-    monkeypatch.setattr(
-        "app.factory.build.brief_compiler.compile_brief_from_ctx",
-        lambda _ctx: compiled,
-    )
-    dest = tmp_path / "dest"
-    staging = tmp_path / "staging"
-    dest.mkdir()
-    _plant_store_block_json(dest)
-    ws = RoleWorkspace(BuildRole.WRITER, dest, staging=staging)
-    with pytest.raises(RoleError) as exc:
-        run_writer(
-            RoleContext(
-                role=BuildRole.WRITER,
-                workspace=ws,
-                blueprint=_VetCare(),
-                plan=plan,
-                state={
-                    "resolved_blocks": tuple(STORE_IDS),
-                    "vendored_blocks": tuple(STORE_IDS),
-                },
-            )
-        )
-    # 0.5: keep-path schema emit is factory-grounded, not coding-agent
-    # authorship -- zero agent artifacts refuses the WRITER. The staged
-    # commit and its evidence still land; only the false green flips.
-    assert "writer_no_output" in str(exc.value)
-    receipt = json.loads(
-        (staging / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
-    )
-    assert receipt["ok"] is False
-    assert receipt["blocker"] == NAMED_BLOCKER_CLI_BILLING
-    assert receipt["honesty_class"] == NAMED_BLOCKER_CLI_FAILED
-    assert receipt["keep_path"] == KEEP_PATH_FACTORY_GROUNDED_REUSE
-    assert receipt["inventory_gaps"] == []
-    ws.commit()
-    for cid, bids in LIVE_VETCARE_REUSE_ACCEPT_BLOCKS.items():
-        path = dest / "app" / "actions" / f"{cid}.py"
-        assert path.is_file(), cid
-        text = path.read_text(encoding="utf-8")
-        defaults = parse_handler_default_actions(text)
-        for bid in bids:
-            assert defaults.get(bid), (cid, bid, defaults)
-        assert "ModuleNotFoundError" not in text
-        assert reuse_accept_handler_errors(text, bids, capability_id=cid) == []
-    proc = subprocess.run(
-        [sys.executable, "-c", _schema_sample_exec_script(LIVE_VETCARE_REUSE_ACCEPT_CAPS)],
-        cwd=str(dest),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 0, proc.stderr or proc.stdout
-    assert "pilot_zip" not in str(exc.value).lower()
-    assert "FACTORY_BRIEF_HTTP_ONESHOT" not in json.dumps(receipt)
-
-
-def test_rendered_block_inputs_carries_store_default_map():
-    from app.factory.build.block_inputs import render_block_inputs_module
-
-    text = render_block_inputs_module()
-    assert "def default_block_action" in text
-    assert "STORE_BLOCK_DEFAULT_ACTIONS" in text
-    assert "track_event" in text
-    assert "create_team" in text
-    assert "validate" in text
-    assert repr(dict(STORE_BLOCK_DEFAULT_ACTIONS)) in text
-    assert "def _ensure_workflow_result" in text
-    assert 'out["result"]' in text or "out['result']" in text

@@ -3259,7 +3259,7 @@ def spec_for(capability_id: str) -> ActionSpec:
 #: a permission: passing roles straight through left every caller holding
 #: ["admin"] against operation specs that require product.write, so every
 #: PUT and DELETE in every generated platform answered permission_denied
-#: (FinOps, sess_065fc3eac75c4f62, 13/13 in Docker -- no check wrote twice).
+#: (13/13 in Docker -- no check wrote twice).
 #: Unknown roles grant nothing.
 ROLE_PERMISSIONS: Dict[str, Tuple[str, ...]] = {
     "admin": ("product.read", "product.write", "product.process"),
@@ -4023,7 +4023,12 @@ def run_writer(
     ctx.workspace.write_text(Path("app") / "dispatch.py", _render_dispatch(contracts))
     # Shared block-input construction for every handler's execute wrapper.
     # Lives beside dispatch (not inside it) so LotDesk F18 stays clean.
-    ctx.workspace.write_text(Path("app") / "block_inputs.py", render_block_inputs_module())
+    ctx.workspace.write_text(
+        Path("app") / "block_inputs.py",
+        render_block_inputs_module(
+            harvest_block_default_actions(vendored_ids, workspace=ctx.workspace)
+        ),
+    )
 
     vendored = set(ctx.state.get("vendored_blocks", ()))
     cap_ids = [cap.capability_id for cap in ctx.plan.capabilities]
@@ -5591,7 +5596,7 @@ def run_tester(ctx: RoleContext) -> RoleResult:
         "",
         "    Hard-coding listed.json()['items'] KeyError'd when GET answered",
         "    {ok: False} or {records: [...]} — pytest then reported only",
-        "    'suite is red' with no capability id (sess_5dfb4a3 class).",
+        "    'suite is red' with no capability id.",
         '    """',
         "    if isinstance(payload, list):",
         "        return payload",
