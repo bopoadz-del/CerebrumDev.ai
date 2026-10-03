@@ -248,11 +248,10 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
     assert PRODUCT_ASSIGN_TO_CALL_HALT in _WHOLE_JOB_SYSTEM
     assert FAIL_CLOSED_MUST_REWRITE_READS in _WHOLE_JOB_SYSTEM
     assert PRODUCT_SCHEMA_SAMPLE_REJECT in _WHOLE_JOB_SYSTEM
-    assert "patient_records_management" in _WHOLE_JOB_SYSTEM
-    assert "formula_executor" in _WHOLE_JOB_SYSTEM
-    assert "vector_search" in _WHOLE_JOB_SYSTEM
-    assert "formula_executor" in contract
-    assert "vector_search" in contract
+    # The system prompt goes to every coder on every build: it names no
+    # product's capabilities. This build's own names live in its brief (above).
+    for name in SAMPLE_REUSE_PLAN_BLOCKS:
+        assert name not in contract
 
 
 def test_empty_block_default_actions_is_reuse_accept_miss():
