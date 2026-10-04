@@ -16,7 +16,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from app.factory.store_kits import domain_blocks, domain_kits, serving_kit, slug
+from app.factory.store_kits import (
+    UNSUPPORTED,
+    domain_blocks,
+    domain_kits,
+    resolve_vertical,
+    slug,
+)
 
 
 def _slug(vertical: str) -> str:
@@ -26,14 +32,18 @@ def _slug(vertical: str) -> str:
 def ready_kit(vertical: str, store_root: Any = None) -> Optional[str]:
     """The Store kit serving a vertical the operator declared ready, or None."""
     kits = domain_kits(store_root)
-    kit = serving_kit(vertical, kits)
+    status, kit, _ = resolve_vertical(vertical, kits)
+    if status == UNSUPPORTED:
+        return None
     return kit if kit and kits[kit].get("build_ready") is True else None
 
 
 def vertical_is_excluded(vertical: str, store_root: Any = None) -> bool:
-    """A kit serves this vertical and the operator declared it NOT ready."""
+    """A Store kit excludes this vertical, or serves it and is NOT ready."""
     kits = domain_kits(store_root)
-    kit = serving_kit(vertical, kits)
+    status, kit, _ = resolve_vertical(vertical, kits)
+    if status == UNSUPPORTED:
+        return True
     return bool(kit) and kits[kit].get("build_ready") is False
 
 
@@ -53,6 +63,12 @@ def inventory_drafting_note(vertical: str, store_root: Any = None) -> str:
     if not s:
         return ""
     ready = _ready_names(store_root)
+    status, kit, reason = resolve_vertical(s, domain_kits(store_root))
+    if status == UNSUPPORTED:
+        return (
+            f"inventory: '{s}' is {UNSUPPORTED} — {reason}; no domain kit in "
+            f"the Store builds it (declared-ready set: {ready})"
+        )
     if vertical_is_excluded(s, store_root):
         return (
             f"inventory: no domain kit in the Store for '{s}' — this "
