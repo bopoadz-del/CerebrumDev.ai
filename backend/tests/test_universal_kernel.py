@@ -137,7 +137,7 @@ def test_gold_pins_the_one_hour_standard():
 def test_wave1_trust_spine_pack_renders_complete_brief():
     brief = delivery_standard.render(WAVE1_PLATFORM, WAVE1_PACK)
     assert "trust-spine" in brief
-    for marker in delivery_standard._LEFTOVER_MARKERS:
+    for marker in delivery_standard._slot_markers():
         assert marker not in brief
 
 

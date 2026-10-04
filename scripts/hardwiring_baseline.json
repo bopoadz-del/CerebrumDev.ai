@@ -31,11 +31,6 @@
         "inline:write": 1
       }
     },
-    "backend/app/factory/build/deploy.py": {
-      "word_list": {
-        "F1_ALWAYS_200_SNIPPETS": 1
-      }
-    },
     "backend/app/factory/build/level_grade.py": {
       "word_list": {
         "CLI_FOUNDING_HONESTY_MISS": 1
@@ -45,11 +40,6 @@
       "word_list": {
         "P1_FORBIDDEN": 1,
         "inline:postgres": 1
-      }
-    },
-    "backend/app/factory/build/offline_adapters.py": {
-      "word_list": {
-        "_AUGASSIGN_OPS": 1
       }
     },
     "backend/app/factory/build/supply_chain.py": {
@@ -69,11 +59,6 @@
       "word_list": {
         "inline:CREATE TABLE": 1
       }
-    },
-    "backend/app/factory/delivery_standard.py": {
-      "word_list": {
-        "_LEFTOVER_MARKERS": 1
-      }
     }
   },
   "forms": [
@@ -89,5 +74,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 23
+  "total": 20
 }
