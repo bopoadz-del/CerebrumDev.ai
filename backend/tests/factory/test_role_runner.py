@@ -770,3 +770,39 @@ def test_mutation_run_phase_protects_ledger_from_cli_scribble():
     ).read_text(encoding="utf-8")
     assert "with self.ledger.protect():" in src
     assert "self.roles[role](ctx)" in src
+
+
+def test_tester_judges_the_factorys_current_harness_not_what_the_writer_left(
+    blueprint, tmp_path, stub_coder
+):
+    """A FRESH run re-stamps the Factory-owned harness before TESTER.
+
+    Live 2026-10-04: the writer's workspace carried an older Factory's
+    acceptance harness (21 checks), it shipped unrefreshed, and the Store gate
+    refused the product's 21/21 for not being the Factory's 22/22. The refresh
+    ran only on re-entry; whatever the writer leaves is now re-rendered.
+    """
+    from app.factory.build.store_acceptance import render_acceptance_script
+
+    stale = "# an older Factory's harness\nCHECKS = ['zorblat_check']\nREQUIRED = 1\n"
+    seen = {}
+    real_writer = ROLE_IMPLEMENTATIONS[BuildRole.WRITER]
+    real_tester = ROLE_IMPLEMENTATIONS[BuildRole.TESTER]
+
+    def writer_leaves_a_stale_harness(ctx):
+        result = real_writer(ctx)
+        ctx.workspace.write_text(Path("scripts") / "acceptance.py", stale)
+        return result
+
+    def tester_records_the_harness(ctx):
+        seen["harness"] = ctx.workspace.read_text(Path("scripts") / "acceptance.py")
+        return real_tester(ctx)
+
+    roles = dict(ROLE_IMPLEMENTATIONS)
+    roles[BuildRole.WRITER] = writer_leaves_a_stale_harness
+    roles[BuildRole.TESTER] = tester_records_the_harness
+    RoleRunner(blueprint, tmp_path / "build", roles=roles).run()
+
+    assert "harness" in seen, "TESTER never ran"
+    assert seen["harness"] != stale
+    assert seen["harness"] == render_acceptance_script(blueprint)
