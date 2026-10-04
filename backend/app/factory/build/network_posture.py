@@ -63,11 +63,78 @@ DELIVERY_ARTIFACTS: Tuple[str, ...] = (
     "docs/build_provenance.json",
 )
 
-P1_FORBIDDEN: Tuple[str, ...] = (
-    "CEREBRUM_API_URL",
-    "CEREBRUM_API_KEY",
-    "/v1/execute",
-)
+#: Hosts that are this machine. P1 permits loopback (the product talks to
+#: itself, and its test suite blocks every other socket).
+_LOOPBACK = ("localhost",)
+
+
+def outbound_url(value: str) -> str:
+    """``value`` when it is a URL aimed OFF this machine, else "".
+
+    Decided by the URL's own structure: a scheme and a host that is neither
+    loopback by name nor a loopback / unspecified IP address.
+    """
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    text = str(value or "").strip().strip("'\"")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower()
+    if not parts.scheme or not host:
+        return ""
+    if host in _LOOPBACK or host.endswith(".localhost"):
+        return ""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return text
+    return "" if (address.is_loopback or address.is_unspecified) else text
+
+
+def _setting_values(text: str, rel: str) -> List[Tuple[str, str]]:
+    """(name, value) for every setting a file DECLARES -- ``KEY=value`` lines
+    of an env file, ``ENV`` / ``ARG`` instructions of a Dockerfile. Comments
+    are documentation, not settings."""
+    out: List[Tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if rel == "Dockerfile":
+            head, _, rest = line.partition(" ")
+            if head.upper() not in ("ENV", "ARG"):
+                continue
+            line = rest.strip()
+        name, sep, value = line.partition("=")
+        if sep and name.strip():
+            out.append((name.strip(), value.strip()))
+    return out
+
+
+def _code_urls(source: str) -> List[str]:
+    """Outbound URLs written as string constants in CODE (the syntax tree, so
+    a comment or docstring that names a URL is not a call)."""
+    import ast
+
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    docstrings = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(body, list) and body and isinstance(body[0], ast.Expr):
+            value = body[0].value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                docstrings.add(id(value))
+    return [
+        node.value for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and id(node) not in docstrings and outbound_url(node.value)
+    ]
 
 DECLARED_GENERATOR_POSTURE_EXCEPTIONS: Tuple[str, ...] = (
     "ProductGenerator._write_env_example documents CEREBRUM_API_URL "
@@ -301,15 +368,32 @@ def assert_workspace_posture(root: Path, fallback: Path | None = None) -> None:
         text = _posture_file(base, rel, fallback).read_text(encoding="utf-8")
         if NETWORK_POSTURE not in text:
             findings.append(f"{rel}: does not name {NETWORK_POSTURE}")
+        # P1 is "no outbound target". Read structurally from each artifact,
+        # never by searching for the names of particular services. README is
+        # prose and is not searched: what the product DOES is held by its own
+        # socket-blocking test suite (P1_SOCKET_BLOCKER_MARKERS).
         if rel == "deploy/contract.json":
-            lowered = text.lower()
-            for forbidden in ("postgres", "keyvalue", "redis", "fromdatabase"):
-                if forbidden in lowered:
-                    findings.append(f"{rel}: P1 forbids {forbidden}")
-        if rel in {".env.example", "README.md", "app/main.py", "Dockerfile"}:
-            for token in P1_FORBIDDEN:
-                if token in text:
-                    findings.append(f"{rel}: P1 forbids {token}")
+            try:
+                contract = json.loads(text)
+            except ValueError:
+                contract = None
+            if not isinstance(contract, dict):
+                findings.append(f"{rel}: not a JSON object")
+            else:
+                if contract.get("datastores"):
+                    findings.append(
+                        f"{rel}: P1 forbids datastores {contract['datastores']!r}"
+                    )
+                for name, value in sorted((contract.get("environment") or {}).items()):
+                    if outbound_url(str(value)):
+                        findings.append(f"{rel}: P1 forbids outbound {name}")
+        if rel in {".env.example", "Dockerfile"}:
+            for name, value in _setting_values(text, rel):
+                if outbound_url(value):
+                    findings.append(f"{rel}: P1 forbids outbound setting {name}")
+        if rel == "app/main.py":
+            for url in _code_urls(text):
+                findings.append(f"{rel}: P1 forbids outbound URL {url}")
     if findings:
         raise PostureError("; ".join(findings))
 

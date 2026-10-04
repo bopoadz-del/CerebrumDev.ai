@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Tuple
 
 logger = logging.getLogger(__name__)
@@ -50,13 +50,6 @@ _NON_PRODUCTION_GRADES = frozenset(
     {"prototype", "light", "test", "disposable", "demo", "throwaway", "poc"}
 )
 
-#: Capability text that means the brief asked for a retrieval surface.
-_RETRIEVAL_HINTS = (
-    "rag", "retriev", "search", "knowledge", "corpus", "document",
-    "semantic", "vector", "ingest",
-)
-
-
 def is_production_grade(blueprint: Any) -> bool:
     """True unless the brief declared a disposable/test grade. An unset grade is
     production, so the security bar is never lowered by omission."""
@@ -64,36 +57,60 @@ def is_production_grade(blueprint: Any) -> bool:
     return grade not in _NON_PRODUCTION_GRADES
 
 
+def withheld_signals() -> Dict[str, str]:
+    """Signals the Factory cannot decide yet, each with the reason, read from
+    the floor file.
+
+    A signal is raised by structure (a declared grade, bound connectors, a
+    bound block that declares the subject), never by words in the brief. When
+    the structure that would raise a signal does not exist yet, the floor says
+    so here and every check on that signal is WITHHELD -- reported with its
+    reason, never a veto and never a silent pass.
+    """
+    raw = _load().get("withheld_signals") or {}
+    return {str(k): str(v) for k, v in raw.items()}
+
+
+def withheld_label(check_id: str) -> str:
+    """``WITHHELD(<short reason>)`` for a withheld check, else ""."""
+    reason = withheld_reason(check_id)
+    return f"WITHHELD({reason.split(':', 1)[0].strip()})" if reason else ""
+
+
+def withheld_reason(check_id: str) -> str:
+    """The reason a check is withheld, or "" when it is decidable."""
+    held = withheld_signals()
+    for c in checks():
+        if str(c["id"]) == check_id:
+            return held.get(str(c.get("applies_when") or ""), "")
+    return ""
+
+
 def _all_signals() -> frozenset:
-    """Every applies_when value the floor references."""
+    """Every applies_when value the floor references and can decide."""
+    held = withheld_signals()
     return frozenset(
-        str(c["applies_when"]) for c in checks() if c.get("applies_when")
+        str(c["applies_when"]) for c in checks()
+        if c.get("applies_when") and str(c["applies_when"]) not in held
     )
 
 
 def brief_signals(blueprint: Any) -> frozenset:
-    """Which conditional subjects THIS brief declared.
+    """Which conditional subjects THIS brief declared, from its structure.
 
     ``None`` means no brief is in hand (a standalone re-render): assume the
-    strictest reading — every signal present — so nothing is silently skipped.
+    strictest reading — every decidable signal present — so nothing is
+    silently skipped. A withheld signal is never raised (see
+    ``withheld_signals``).
     """
     if blueprint is None:
         return _all_signals()
     sigs = set()
     if is_production_grade(blueprint):
         sigs.add("production")
-    caps = getattr(blueprint, "capabilities", None) or []
-    parts: List[str] = [str(getattr(blueprint, "summary", "") or "")]
-    for cap in caps:
-        parts.append(str(getattr(cap, "id", "") or ""))
-        parts.append(str(getattr(cap, "description", "") or ""))
-        parts.extend(str(b) for b in (getattr(cap, "block_ids", None) or []))
-    blob = " ".join(parts).lower()
-    if any(h in blob for h in _RETRIEVAL_HINTS):
-        sigs.add("retrieval")
     if getattr(blueprint, "connectors", None):
         sigs.add("connectors")
-    return frozenset(sigs)
+    return frozenset(sigs) - set(withheld_signals())
 
 
 def floor_path() -> Path:
@@ -135,6 +152,16 @@ def _load() -> Dict[str, Any]:
                 f"{FLOOR_REL}: {cid} must declare subject as runtime, "
                 f"factory_record, or tree:<path> (found {subject!r})"
             )
+    referenced = {str(c.get("applies_when")) for c in checks if c.get("applies_when")}
+    for signal, reason in (data.get("withheld_signals") or {}).items():
+        if str(signal) not in referenced:
+            raise ValueError(
+                f"{FLOOR_REL}: withheld signal {signal!r} is on no check"
+            )
+        if ":" not in str(reason):
+            raise ValueError(
+                f"{FLOOR_REL}: withheld signal {signal!r} needs '<short reason>: <why>'"
+            )
     return data
 
 
@@ -165,24 +192,31 @@ def subject_of(check_id: str) -> str:
     return ""
 
 
-def _norm_rel(path: str) -> str:
+def _path_parts(path: str) -> Tuple[bool, Tuple[str, ...]]:
+    """(is_absolute, the path's segments) -- ``.`` and empty segments dropped,
+    read from the path's own structure rather than a list of known roots."""
     text = str(path or "").replace("\\", "/").strip()
-    for prefix in ("./", "/app/", "/workspace/"):
-        while text.startswith(prefix):
-            text = text[len(prefix):]
-    return text.lstrip("/")
+    parts = tuple(p for p in PurePosixPath(text).parts if p not in ("/", "."))
+    return text.startswith("/"), parts
 
 
 def _factory_rendered(path: str, rendered: frozenset) -> bool:
     """True when ``path`` is (or names, by a slash-qualified suffix) a file the
     Factory renders. A bare basename never matches -- ``acceptance.py`` in a
-    score line is not a claim about scripts/acceptance.py."""
-    rel = _norm_rel(path)
-    if not rel:
+    score line is not a claim about scripts/acceptance.py.
+
+    An ABSOLUTE path is a file inside a workspace mounted somewhere; whatever
+    the mount root, it names a rendered file when its trailing segments are
+    that file's whole relative path."""
+    absolute, parts = _path_parts(path)
+    if not parts:
         return False
+    rel = "/".join(parts)
     if rel in rendered:
         return True
-    return "/" in rel and any(r == rel or r.endswith("/" + rel) for r in rendered)
+    if absolute:
+        return any(parts[-len(r.split("/")):] == tuple(r.split("/")) for r in rendered)
+    return len(parts) > 1 and any(r.endswith("/" + rel) for r in rendered)
 
 
 def owner_of(check_id: str, detail: str = "") -> str:

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.roles_handlers")
 
+from app.factory.build.failure_kinds import failure_kind, record_failure_kind
 from app.factory.build.authority import (
     KERNEL_ROUTE_NAMES,
     BuildRole,
@@ -2950,6 +2951,7 @@ def _coder_body(
         )
     except CoderTimeout as exc:
         ctx.state.setdefault("coder_failures", {})[cap.capability_id] = str(exc)
+        record_failure_kind(ctx.state, cap.capability_id, failure_kind(exc))
         raise RoleError(
             f"coder LLM timed out writing handler {cap.capability_id}: {exc}"
         ) from exc
@@ -2962,6 +2964,7 @@ def _coder_body(
 
 def _record_failure(ctx: RoleContext, key: str, exc: Exception) -> None:
     ctx.state.setdefault("coder_failures", {})[key] = str(exc)
+    record_failure_kind(ctx.state, key, failure_kind(exc))
 
 
 def _coder_model_spec(ctx: RoleContext, cap: Any) -> Optional[Dict[str, Any]]:
@@ -4895,6 +4898,7 @@ def run_writer(
                 "network_posture": POSTURE_ID,
                 "artifact_sources": sources,
                 "coder_failures": dict(ctx.state.get("coder_failures", {})),
+                "coder_failure_kinds": dict(ctx.state.get("coder_failure_kinds", {})),
                 "brief_dispatch": dict(ctx.state.get("brief_dispatch") or {}),
                 "n_required": ctx.state.get("n_required"),
                 "n_required_capabilities": ctx.state.get("n_required_capabilities"),

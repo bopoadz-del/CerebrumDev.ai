@@ -509,12 +509,12 @@ def test_classify_cli_exit_names_no_model_configured():
     assert generic_detail == "CLI exited 1"
 
 
-def test_classify_cli_exit_names_billing_suspended():
-    """sess_d5789a91: Moonshot 429 / insufficient balance is a billing class."""
+def test_classify_cli_exit_names_billing_by_provider_status():
+    """The ACCOUNT refused: the provider answered 401 or 402, in any of the
+    shapes a CLI prints a status. The words around it decide nothing."""
     blocker, detail = classify_cli_exit(
         1,
-        "429 Too Many Requests — this account has been suspended due to "
-        "insufficient balance",
+        "Error code: 402 - {'error': {'message': 'zorblat', 'type': 'x'}}",
     )
     assert blocker == NAMED_BLOCKER_CLI_BILLING
     assert CodeCliBillingFailed.blocker == NAMED_BLOCKER_CLI_BILLING
@@ -522,28 +522,41 @@ def test_classify_cli_exit_names_billing_suspended():
     assert NAMED_BLOCKER_CLI_BILLING in CLI_AUTH_BILLING_BLOCKERS
     assert NAMED_BLOCKER_CLI_BILLING in detail
     assert "FACTORY_CODE_CLI_FAILED" in detail
-    assert "insufficient balance" in detail
-    balance, _ = classify_cli_exit(1, "error: insufficient balance on Moonshot")
-    assert balance == NAMED_BLOCKER_CLI_BILLING
-    generic, _ = classify_cli_exit(1, "429 rate limit, retry later")
+    assert classify_cli_exit(1, "HTTP/1.1 401 from the provider")[0] == NAMED_BLOCKER_CLI_BILLING
+    assert classify_cli_exit(1, '{"error": {"code": 402}}')[0] == NAMED_BLOCKER_CLI_BILLING
+    # Words with no status: not a billing answer.
+    words, _ = classify_cli_exit(1, "error: insufficient balance, account suspended")
+    assert words == NAMED_BLOCKER_CLI_FAILED
+    # 429 is Too Many Requests -- throughput, not the account.
+    generic, _ = classify_cli_exit(1, "429 Too Many Requests -- retry later")
     assert generic == NAMED_BLOCKER_CLI_FAILED
 
 
 def test_classify_cli_exit_names_model_denied():
     blocker, detail = classify_cli_exit(
         1,
-        "error: failed to run prompt: 404 Not Found — Permission denied "
-        "for model kimi-code/k3 (k3)",
+        "error: failed to run prompt: 404 Not Found — for model kimi-code/k3 (k3)",
     )
     assert blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
     assert CodeCliModelDenied.blocker == NAMED_BLOCKER_CLI_MODEL_DENIED
-    assert "Permission denied" in detail
     assert "kimi-k3" in detail
     assert "KIMI_CODE_MODEL" in detail
     assert "templated" in detail
-    perm, perm_detail = classify_cli_exit(1, "Permission denied: model k3")
+    perm, perm_detail = classify_cli_exit(1, "HTTP 403 for model zorblat-9")
     assert perm == NAMED_BLOCKER_CLI_MODEL_DENIED
     assert "Moonshot" in perm_detail
+    # A 3-digit number that is not presented as a status is not one.
+    assert classify_cli_exit(1, "wrote 404 lines")[0] == NAMED_BLOCKER_CLI_FAILED
+
+
+def test_provider_statuses_reads_shapes_not_words():
+    from app.factory.build.coder_session import provider_statuses
+
+    assert provider_statuses("HTTP 429") == [429]
+    assert provider_statuses("Error code: 402 - {'error': {}}") == [402]
+    assert provider_statuses("got 404 Not Found") == [404]
+    assert provider_statuses('{"error": {"status": 401}}') == [401]
+    assert provider_statuses("processed 404 rows; 500 left") == []
 
 
 def test_cli_session_honours_owner_stop(tmp_path, monkeypatch):
@@ -1467,12 +1480,11 @@ def test_run_writer_raises_on_no_model_when_inventory_gaps(tmp_path, monkeypatch
 def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
     tmp_path, monkeypatch
 ):
-    """C-BRIEF sess_d5789a91: empty gaps + CLI 429 still harvests REUSE keep-path."""
+    """C-BRIEF sess_d5789a91: empty gaps + CLI billing refusal (402) still harvests REUSE keep-path."""
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo '429 Too Many Requests — this account has been suspended "
-        "due to insufficient balance'\n"
+        "echo \"Error code: 402 - {'error': {'message': 'account suspended'}}\"\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -1564,8 +1576,7 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo '429 Too Many Requests — this account has been suspended "
-        "due to insufficient balance'\n"
+        "echo \"Error code: 402 - {'error': {'message': 'account suspended'}}\"\n"
         "exit 1\n",
         encoding="utf-8",
     )

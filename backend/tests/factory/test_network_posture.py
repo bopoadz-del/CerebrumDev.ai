@@ -13,7 +13,6 @@ from app.factory.build.network_posture import (
     NETWORK_POSTURE,
     P1_CAPTURE_ADAPTER,
     P1_ENV_EXAMPLE,
-    P1_FORBIDDEN,
     P1_SOCKET_BLOCKER_MARKERS,
     POSTURE_ID,
     REJECTED_ALTERNATIVES,
@@ -151,8 +150,6 @@ def test_role_runner_tree_is_p1(tmp_path, monkeypatch, stub_coder):
     # the world-known dev literal; runtime refuses the placeholder.
     assert "PLATFORM_TOKEN=set-at-deploy" in text
     assert "dev-local-token" not in text
-    for token in P1_FORBIDDEN:
-        assert token not in text
     assert_workspace_posture(out)
 
 
@@ -193,3 +190,43 @@ def test_missing_artifact_is_fail_closed(tmp_path):
 
     with pytest.raises(PostureError):
         assert_workspace_posture(tmp_path)
+
+
+def test_p1_is_judged_by_structure_not_by_service_names(tmp_path):
+    """An outbound target is caught by what it IS (a datastore, a non-loopback
+    URL in a setting or in code), whatever service it names; prose and
+    loopback are not targets."""
+    from app.factory.build.network_posture import PostureError, outbound_url
+
+    assert outbound_url("https://zorblat.example/v9/run") == "https://zorblat.example/v9/run"
+    assert outbound_url("http://127.0.0.1:8000/health") == ""
+    assert outbound_url("http://localhost:11434") == ""
+    assert outbound_url("/app/data") == ""
+
+    root = tmp_path / "ws"
+    (root / "deploy").mkdir(parents=True)
+    (root / "app").mkdir()
+    (root / "docs").mkdir()
+    doc = {"posture": NETWORK_POSTURE, "reason": __import__(
+        "app.factory.build.network_posture", fromlist=["x"]).NETWORK_POSTURE_REASON}
+    (root / "docs" / "network_posture.json").write_text(json.dumps(doc), encoding="utf-8")
+    for rel in ("README.md", "requirements.txt", "docs/build_provenance.json"):
+        (root / rel).write_text("P1 -- mentions https://zorblat.example in prose\n", encoding="utf-8")
+    (root / "Dockerfile").write_text("# P1\nENV QUUX_URL=https://zorblat.example\n", encoding="utf-8")
+    (root / ".env.example").write_text("# P1\n# FROB_URL=https://zorblat.example\nSTORAGE_PATH=./data\n", encoding="utf-8")
+    (root / "app" / "main.py").write_text(
+        '"""P1 docs may name https://zorblat.example."""\nNETWORK_POSTURE = "P1"\nBASE = "https://frob.example/run"\n',
+        encoding="utf-8",
+    )
+    (root / "deploy" / "contract.json").write_text(
+        json.dumps({"network_posture": "P1", "datastores": [{"kind": "zorbdb"}], "environment": {}}),
+        encoding="utf-8",
+    )
+    with pytest.raises(PostureError) as caught:
+        assert_workspace_posture(root)
+    message = str(caught.value)
+    assert "Dockerfile: P1 forbids outbound setting QUUX_URL" in message
+    assert "app/main.py: P1 forbids outbound URL https://frob.example/run" in message
+    assert "datastores" in message
+    assert ".env.example" not in message  # a commented example is documentation
+    assert "README.md" not in message  # prose is never searched

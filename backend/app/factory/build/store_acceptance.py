@@ -38,6 +38,7 @@ AUTH_REL = Path("app") / "auth.py"
 #: app/factory/build/acceptance_floor.py.
 from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_ids
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
+from app.factory.build.acceptance_floor import withheld_label as _floor_withheld_label
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
 
@@ -60,6 +61,9 @@ def demote_if_advisory(name: str, status: str, detail: str) -> tuple:
     the line, and only the veto is removed. PASS and SKIP pass through unchanged,
     and a non-advisory FAIL is untouched -- the floor still fails a build.
     """
+    label = _floor_withheld_label(name)
+    if label and status != "PASS":
+        return "SKIP", f"{label}: {detail}"
     if status == "FAIL" and name in ACCEPTANCE_ADVISORY_NAMES:
         return "SKIP", f"advisory (not on the floor yet): {detail}"
     return status, detail
@@ -852,6 +856,10 @@ def render_acceptance_script(blueprint: Any = None) -> str:
     one — byte-for-byte what it was before brief-driven applicability existed."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
     advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
+    withheld = ", ".join(
+        f"{n!r}: {_floor_withheld_label(n)!r}"
+        for n in ACCEPTANCE_CHECK_NAMES if _floor_withheld_label(n)
+    )
     return _with_deploy_time_settings(f'''#!/usr/bin/env python3
 """Store-green acceptance — ≥12 measured checks. Presence-only is a fail.
 
@@ -876,6 +884,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECKS = [{names}]
 # Reported and scored, never a veto -- same source as CHECKS (the floor file).
 ADVISORY = [{advisory}]
+# Checks the Factory cannot decide yet, with the reason (the floor file's
+# withheld_signals): reported WITHHELD, never a veto, never a silent pass.
+WITHHELD = {{{withheld}}}
 REQUIRED = {ACCEPTANCE_REQUIRED}
 
 
@@ -1795,7 +1806,9 @@ def main() -> int:
                 status, detail = fn()
             except Exception as exc:
                 status, detail = "FAIL", "%s: %s" % (type(exc).__name__, exc)
-            if status == "FAIL" and name in ADVISORY:
+            if name in WITHHELD and status != "PASS":
+                status, detail = "SKIP", WITHHELD[name] + ": " + detail
+            elif status == "FAIL" and name in ADVISORY:
                 status, detail = "SKIP", "advisory (not on the floor yet): " + detail
             results.append((name, status, detail))
             print("%s %s — %s" % (status, name, detail))

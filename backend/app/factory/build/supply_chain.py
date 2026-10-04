@@ -58,16 +58,6 @@ _FS_RE = re.compile(
     r"STORAGE_PATH|mkdir -p\s+/app/data|alembic upgrade|/app/data",
     re.IGNORECASE,
 )
-_OUTBOUND_MARKERS = (
-    "curl ",
-    "wget ",
-    "CEREBRUM_API_URL",
-    "ADD http://",
-    "ADD https://",
-    "ollama",
-    "openai.com",
-    "api.anthropic.com",
-)
 
 
 SBOM_REL = Path("docs") / "sbom.cdx.json"
@@ -541,8 +531,28 @@ def render_permissions_declaration() -> str:
 
 
 def _text_has_outbound(text: str) -> bool:
-    lowered = text or ""
-    return any(marker in lowered for marker in _OUTBOUND_MARKERS)
+    """True when a Dockerfile / entrypoint names an outbound target: any
+    token that is a URL aimed off this machine (network_posture.outbound_url).
+    Decided by the URL's structure -- not by which tool or which provider a
+    line mentions -- so a new client or a new host needs no entry anywhere.
+    Comment lines are documentation and are skipped."""
+    import shlex
+
+    from app.factory.build.network_posture import outbound_url
+
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            tokens = shlex.split(line, comments=True)
+        except ValueError:
+            tokens = line.split()
+        for token in tokens:
+            for piece in token.replace("=", " ").split():
+                if outbound_url(piece):
+                    return True
+    return False
 
 
 def observe_behaviour(

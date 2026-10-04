@@ -29,6 +29,7 @@ stop terminates the session. Owner eyes are the monitor.
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import os
@@ -36,10 +37,12 @@ import re
 import shutil
 import subprocess
 import time
+from http import HTTPStatus
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from app.factory.build.failure_kinds import TIMEOUT, record_failure_kind
 from app.factory.build.workflow_accept import (
     handler_has_prepared_event_bus_step,
     handler_satisfies_event_bus_contract,
@@ -75,7 +78,6 @@ NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
 #: Named empty-harvest reasons folded into NO_AUTHORSHIP detail (not new
 #: honesty classes). Fail-closed stays FACTORY_CODE_CLI_NO_AUTHORSHIP.
 CLI_EMPTY_DESCRIBED_NOT_WRITTEN = "described-not-written"
-CLI_EMPTY_REFUSED = "refused"
 CLI_EMPTY_EMPTY_COMPLETION = "empty-completion"
 CLI_EMPTY_WRONG_PATH = "wrong-path"
 FACTORY_STAGING_DIRNAME = ".factory-staging"
@@ -122,15 +124,18 @@ CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS = frozenset(
 KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
 NO_MODEL_CONFIGURED_HINT = "No model configured"
 UNRECOGNIZED_MODEL_HINT = "unrecognized_model"
+#: A coder CLI that tags its own error: ``[claude-code:unrecognized_model]``.
+_CLI_ERROR_TAG_RE = re.compile(r"\[[a-z][a-z0-9-]*:([a-z_]+)\]", re.IGNORECASE)
+#: An HTTP status line, ``HTTP 429`` / ``HTTP/1.1 402``.
+_HTTP_STATUS_LINE_RE = re.compile(r"\bHTTP(?:/\d(?:\.\d)?)?\s+([45]\d\d)\b")
+_STATUS_NUMBER_RE = re.compile(r"(?<![\w.])([45]\d\d)(?![\w.])")
+#: Provider answers that mean the ACCOUNT refused: unauthenticated, unpaid.
+_BILLING_STATUSES = (HTTPStatus.UNAUTHORIZED, HTTPStatus.PAYMENT_REQUIRED)
+#: Provider answers that mean the MODEL was refused: forbidden, not found.
+_MODEL_DENIED_STATUSES = (HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND)
 _UNRECOGNIZED_MODEL_JSON_RE = re.compile(
     r"\[claude-code:unrecognized_model\]\s*(\{.*?\})",
     re.IGNORECASE | re.DOTALL,
-)
-_UNRECOGNIZED_MODEL_HARD_HINTS = (
-    UNRECOGNIZED_MODEL_HINT,
-    "not a recognized model",
-    "issue with the selected model",
-    "model is not a recognized model id",
 )
 
 #: Moonshot Open Platform ids for ``[providers.kimi]`` +
@@ -172,25 +177,6 @@ _DEFAULT_MODEL_LINE_RE = re.compile(
 _MODEL_FIELD_RE = re.compile(
     r'(?m)^\s*model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
 )
-_MODEL_DENIED_HINTS = (
-    "permission denied",
-    "model_not_found",
-    "invalid model",
-    "unknown model",
-    "model does not exist",
-)
-#: Moonshot / Kimi Code CLI billing-auth class (sess_d5789a91 photograph).
-_BILLING_HINTS = (
-    "insufficient balance",
-    "insufficient_balance",
-    "insufficient quota",
-    "insufficient_quota",
-    "account has been suspended",
-    "suspended due to insufficient",
-    "invalid api key",
-    "invalid_api_key",
-)
-
 #: One-line operator note. Dashboard clicks stay owner-gated.
 OWNER_GATED_CLI_LOG = (
     "FACTORY_CODE_CLI / DEEPSEEK_API_KEY / KIMI_CODE_API_KEY owner-gated "
@@ -1397,17 +1383,79 @@ def apply_deepseek_kimi_backend(
     return out, mutated
 
 
-def _billing_hints_present(lowered: str) -> bool:
-    rate_suspended = "429" in lowered and "suspended" in lowered
-    deepseek_denied = "429" in lowered and any(
-        token in lowered
-        for token in ("deepseek", "insufficient", "quota", "balance", "billing")
-    )
-    return (
-        any(hint in lowered for hint in _BILLING_HINTS)
-        or rate_suspended
-        or deepseek_denied
-    )
+def provider_statuses(output: str) -> List[int]:
+    """HTTP error statuses the provider answered, as the CLI printed them.
+
+    Read from the shapes a status takes, never from the words around it:
+    an HTTP status line (``HTTP 429``, ``HTTP/1.1 402``), a code followed by
+    its own standard reason phrase (``404 Not Found`` -- the phrase comes
+    from ``http.HTTPStatus``), a code introducing an error envelope
+    (``Error code: 402 - {...}``), or an error object carrying an integer
+    ``status`` / ``status_code`` / ``code``.
+    """
+    blob = output or ""
+    found: List[int] = []
+
+    def _keep(value: Any) -> None:
+        try:
+            code = int(value)
+        except (TypeError, ValueError):
+            return
+        if 400 <= code <= 599 and code not in found:
+            found.append(code)
+
+    for match in _HTTP_STATUS_LINE_RE.finditer(blob):
+        _keep(match.group(1))
+    for match in _STATUS_NUMBER_RE.finditer(blob):
+        code = int(match.group(1))
+        rest = blob[match.end():]
+        try:
+            phrase = HTTPStatus(code).phrase
+        except ValueError:
+            continue
+        if rest.lstrip(" :-").lower().startswith(phrase.lower()) or rest.startswith((" - {", " {")):
+            _keep(code)
+    for envelope in _error_envelopes(blob):
+        for key in ("status", "status_code", "code"):
+            _keep(envelope.get(key))
+        inner = envelope.get("error")
+        if isinstance(inner, dict):
+            for key in ("status", "status_code", "code"):
+                _keep(inner.get(key))
+    return found
+
+
+def _error_envelopes(blob: str) -> List[Dict[str, Any]]:
+    """Every JSON / Python-literal object in ``blob`` that carries ``error``."""
+    out: List[Dict[str, Any]] = []
+    depth, start = 0, None
+    for index, ch in enumerate(blob):
+        if ch == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth == 0 and start is not None:
+                text = blob[start:index + 1]
+                value: Any = None
+                try:
+                    value = json.loads(text)
+                except ValueError:
+                    try:
+                        value = ast.literal_eval(text)
+                    except (ValueError, SyntaxError):
+                        value = None
+                if isinstance(value, dict) and ("error" in value or "status" in value):
+                    out.append(value)
+                start = None
+    return out
+
+
+def _cli_tagged_kind(blob: str) -> str:
+    """The kind a coder CLI tags its own error with: ``[<cli>:<kind>]``."""
+    match = _CLI_ERROR_TAG_RE.search(blob or "")
+    return match.group(1).lower() if match else ""
 
 
 def _extract_unrecognized_model_id(blob: str) -> str:
@@ -1428,10 +1476,6 @@ def _extract_unrecognized_model_id(blob: str) -> str:
     if selected:
         return selected.group(1).strip()
     return ""
-
-
-def _unrecognized_model_denied(lowered: str) -> bool:
-    return any(hint in lowered for hint in _UNRECOGNIZED_MODEL_HARD_HINTS)
 
 
 def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
@@ -1473,7 +1517,9 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"pilot zip is not a ≥2h CLI session. {OWNER_GATED_CLI_LOG}."
             ),
         )
-    if _unrecognized_model_denied(lowered) and not _billing_hints_present(lowered):
+    statuses = provider_statuses(blob)
+    billing = any(s in _BILLING_STATUSES for s in statuses)
+    if _cli_tagged_kind(blob) == UNRECOGNIZED_MODEL_HINT and not billing:
         bad = _extract_unrecognized_model_id(blob) or REJECTED_DEEPSEEK_BARE_MODEL
         return (
             NAMED_BLOCKER_CLI_MODEL_DENIED,
@@ -1491,23 +1537,7 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"session; no OpenRouter fallthrough. {OWNER_GATED_CLI_LOG}."
             ),
         )
-    modelish = any(
-        token in lowered
-        for token in (
-            "model",
-            "k3",
-            "kimi-code",
-            "kimi-k3",
-            "kimi-k2",
-            "deepseek-v4",
-            "deepseek-v4-pro",
-            "deepseek-v3",
-            "deepseek-v2",
-        )
-    )
-    denied = any(hint in lowered for hint in _MODEL_DENIED_HINTS)
-    not_found_404 = "404" in lowered and modelish
-    if (denied and modelish) or not_found_404:
+    if any(s in _MODEL_DENIED_STATUSES for s in statuses) and not billing:
         return (
             NAMED_BLOCKER_CLI_MODEL_DENIED,
             (
@@ -1533,13 +1563,13 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
                 f"{OWNER_GATED_CLI_LOG}."
             ),
         )
-    if _billing_hints_present(lowered):
+    if billing:
         return (
             NAMED_BLOCKER_CLI_BILLING,
             (
                 f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — coder account "
-                "billing/auth refused the session (insufficient balance / "
-                "429 / DeepSeek or Moonshot). Still FACTORY_CODE_CLI_FAILED "
+                "billing/auth refused the session (the provider answered "
+                "401 Unauthorized / 402 Payment Required). Still FACTORY_CODE_CLI_FAILED "
                 "honesty — not a ≥2h CLI session. Verified REUSE continues "
                 "factory-grounded emit + harvest; GENERATE inventory_gaps "
                 "fall through to the factory coder LLM and stay listed "
@@ -1570,24 +1600,6 @@ _WRITE_PATH_RE = re.compile(
     re.IGNORECASE,
 )
 _CLI_CMD_LINE_RE = re.compile(r"^\$\s+\S+.*$", re.MULTILINE)
-_EMPTY_REFUSE_HINTS = (
-    "i cannot",
-    "i can't",
-    "i will not",
-    "i won't",
-    "i refuse",
-    "i am refusing",
-    "refusing to",
-    "unable to write",
-    "cannot write",
-    "can't write",
-    "won't write",
-    "i'm not able",
-    "i am not able",
-    "against my guidelines",
-    "i must decline",
-    "i decline",
-)
 
 
 def _cli_used_write_tool(blob: str) -> bool:
@@ -1612,11 +1624,6 @@ def _cli_described_not_written(blob: str) -> bool:
     return bool(_FENCE_RE.search(blob or "")) and not _cli_used_write_tool(blob)
 
 
-def _cli_refused(blob: str) -> bool:
-    lowered = (blob or "").lower()
-    return any(hint in lowered for hint in _EMPTY_REFUSE_HINTS)
-
-
 def _cli_wrote_wrong_path(blob: str) -> bool:
     paths = _cli_write_paths(blob)
     if not paths:
@@ -1633,13 +1640,15 @@ def _cli_empty_completion(blob: str) -> bool:
 def classify_cli_empty(log_text: str) -> str:
     """Named reason for CLI exit 0 + empty harvest.
 
-    Returns one of ``described-not-written``, ``refused``,
-    ``empty-completion``, ``wrong-path``. Does not change the
+    Returns one of ``described-not-written``, ``empty-completion``,
+    ``wrong-path``. Does not change the
     ``FACTORY_CODE_CLI_NO_AUTHORSHIP`` honesty class.
     """
     blob = log_text or ""
-    if _cli_refused(blob):
-        return CLI_EMPTY_REFUSED
+    # A prose refusal has no structural signal (it is the agent's words), so
+    # it is not told apart here: an exit-0 session that wrote nothing is
+    # classified by what it DID -- wrong path, described-not-written, or
+    # empty -- and the NO_AUTHORSHIP honesty class is unchanged.
     if _cli_wrote_wrong_path(blob):
         return CLI_EMPTY_WRONG_PATH
     if _cli_described_not_written(blob):
@@ -2333,11 +2342,6 @@ def cli_miss_allows_generate_llm(result: DispatchResult) -> bool:
         return False
     if result.blocker in CLI_GENERATE_LLM_FALLTHROUGH_BLOCKERS:
         return True
-    if result.blocker == NAMED_BLOCKER_CLI_FAILED:
-        blob = (result.detail or "").lower()
-        return any(hint in blob for hint in _BILLING_HINTS) or (
-            "429" in blob and "suspended" in blob
-        )
     return False
 
 
@@ -3622,4 +3626,6 @@ def dispatch_compiled_brief(ctx: Any, compiled: Any) -> DispatchResult:
         ctx.state.setdefault("coder_failures", {})["brief_dispatch"] = (
             f"{result.blocker}: {result.detail}"
         )
+        if result.blocker == NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL:
+            record_failure_kind(ctx.state, "brief_dispatch", TIMEOUT)
     return result

@@ -379,10 +379,10 @@ def test_leftover_anthropic_model_maps_back_to_deepseek_catalog(monkeypatch):
     assert REJECTED_DEEPSEEK_CLAUDE_MODEL not in env.values()
 
 
-def test_classify_deepseek_429_is_billing():
+def test_classify_deepseek_402_is_billing():
     blocker, detail = classify_cli_exit(
         1,
-        "HTTP 429 from https://api.deepseek.com: insufficient quota",
+        "HTTP 402 from https://api.deepseek.com",
     )
     assert blocker == NAMED_BLOCKER_CLI_BILLING
     assert "FACTORY_CODE_CLI_BILLING" in detail
@@ -406,7 +406,7 @@ def test_classify_unrecognized_model_is_model_denied():
     assert "not the DeepSeek vehicle" in detail
     billing_wins, _ = classify_cli_exit(
         1,
-        live + "\nHTTP 429 from https://api.deepseek.com: insufficient quota",
+        live + "\nHTTP 402 from https://api.deepseek.com",
     )
     assert billing_wins == NAMED_BLOCKER_CLI_BILLING
 
@@ -646,7 +646,7 @@ def test_dispatch_deepseek_billing_does_not_openrouter_fallthrough(
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo 'HTTP 429 from https://api.deepseek.com: insufficient quota'\n"
+        "echo 'HTTP 402 from https://api.deepseek.com'\n"
         "exit 1\n",
         encoding="utf-8",
     )
