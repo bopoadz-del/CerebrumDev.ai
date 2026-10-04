@@ -296,6 +296,46 @@ def chat(sid, tok, msg, retries=4):
     return f"event: error\ndata: {last_err}\n\n"
 
 
+def info_events(raw):
+    """The decoded ``info`` payloads of an SSE reply (their data is a JSON
+    string carrying a JSON object)."""
+    out, lines = [], raw.splitlines()
+    for i, line in enumerate(lines):
+        if line != "event: info" or i + 1 >= len(lines) or not lines[i + 1].startswith("data: "):
+            continue
+        try:
+            payload = json.loads(lines[i + 1][6:])
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+#: Upper bound on answered question rounds. The server caps elicitation
+#: (MAX_ELICITATION_ROUNDS) and turns the next ask into a draft, so the loop
+#: ends by the product's own contract; this only stops a server that broke it.
+MAX_SMOKE_ELICITATION_TURNS = 8
+
+
+def chat_until_drafted(sid, tok, brief):
+    """Hold the brief conversation the way a customer does.
+
+    The Floor asks clarifying questions before it drafts (an ``info`` event
+    with ``elicitation: true``) and the customer ends that by asking for the
+    build. Returns every SSE reply joined, and how many turns it took.
+    """
+    raw = chat(sid, tok, brief)
+    replies, turns = [raw], 1
+    while any(e.get("elicitation") for e in info_events(raw)) and turns < MAX_SMOKE_ELICITATION_TURNS:
+        raw = chat(sid, tok, "Go ahead and build it now with your best assumptions.")
+        replies.append(raw)
+        turns += 1
+    return "".join(replies), turns
+
+
 def verified_tokens():
     """Return (token, token_b) for verified smoke principals, or (None, None)."""
     gate = os.environ.get("SMOKE_GATE_TOKEN", "").strip()
@@ -464,10 +504,13 @@ def main():
         return finish()
 
     # LLM drafting: off-table brief; fallback fingerprint = 2 caps, empty block_ids
-    raw = chat(sid, tok, "Build me a vineyard management platform for a family winery: "
-                         "track fermentation tanks, barrel inventory across two cellars, "
-                         "harvest scheduling by sugar readings, and club member shipments.")
-    check("chat blueprint event", "blueprint" in raw, f"sse_bytes={len(raw)}")
+    raw, turns = chat_until_drafted(
+        sid, tok,
+        "Build me a vineyard management platform for a family winery: "
+        "track fermentation tanks, barrel inventory across two cellars, "
+        "harvest scheduling by sugar readings, and club member shipments.",
+    )
+    check("chat blueprint event", "blueprint" in raw, f"sse_bytes={len(raw)} turns={turns}")
     s, d = req("GET", f"/v1/sessions/{sid}/product", token=tok)
     if not isinstance(d, dict):
         d = {}
