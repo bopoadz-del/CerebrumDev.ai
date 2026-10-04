@@ -1435,10 +1435,16 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
     """
     text = handler_source or ""
     contracts: Dict[str, Dict[str, Any]] = {}
+    # The contract patterns read refusal MESSAGES, and a message is prose: a
+    # format placeholder ("%s must be an integer" % key) or a word in a
+    # sentence is captured as if it were a field. A captured name becomes a
+    # field only when the code also reads it as a record key -- the same
+    # confirmation handler_required_fields applies.
+    confirmed = _confirmed_key_refs(text)
 
     def _touch(name: Optional[str]) -> Optional[Dict[str, Any]]:
         usable = _usable_align_name(name)
-        if not usable:
+        if not usable or usable not in confirmed:
             return None
         return contracts.setdefault(usable, {"name": usable, "required": True})
 
