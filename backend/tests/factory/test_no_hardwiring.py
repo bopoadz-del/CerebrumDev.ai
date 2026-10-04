@@ -210,3 +210,49 @@ def test_a_single_phrase_used_as_a_decision_on_text_is_caught(src):
 ])
 def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
     assert _gate().phrase_matches(src) == [], src
+
+
+# -- samples follow declarations; source questions go to the parser --------
+
+
+def test_a_field_name_alone_implies_no_sample_shape():
+    """Only what a field declares shapes its sample. Names that used to imply
+    an address, a time, a status, a channel or an id imply nothing."""
+    from app.factory.build.roles_handlers import _sample_value
+
+    for name in ("zorblat_email", "zorblat_at", "zorblat_date", "zorblat_time",
+                 "zorblat_status", "zorblat_channel", "zorblat_id", "is_zorblat"):
+        assert _sample_value({"name": name, "type": "str"}) == "sample", name
+    assert "@" in _sample_value({"name": "quux", "type": "str", "format": "email"})
+    assert _sample_value({"name": "quux", "type": "time"}) == "10:00:00"
+    assert _sample_value({"name": "quux", "type": "str", "allowed_values": ["b", "c"]}) == "b"
+
+
+def test_source_questions_are_answered_by_the_syntax_tree():
+    """A word in a comment or a string is not the code it names."""
+    from app.factory.build.offline_adapters import (
+        _defines,
+        _import_is_guarded,
+        _references_module,
+        _tree,
+    )
+    from app.factory.build.roles_handlers import _dotted_mentions, _persists_directly
+    from app.factory.build.workflow_accept import handler_has_prepared_event_bus_step
+
+    prose = '"""import zorblat_mod; def zorblat_fn(): store.save(x)"""\n# zorblat_mod.helper\n'
+    assert not _references_module(prose, "zorblat_mod")
+    assert not _defines(prose, "zorblat_fn")
+    assert not _persists_directly(prose)
+    assert _references_module("import zorblat_mod.helper\n", "zorblat_mod")
+    assert _defines("def zorblat_fn():\n    pass\n", "zorblat_fn")
+    code, words = _dotted_mentions("import app.core.zorblat\nX = 'app.core.quux'\n")
+    assert "app.core.zorblat" in code and "app.core.quux" in words
+    # An import that is the whole body of an ImportError guard stays; one
+    # that shares its try body with other statements does not count.
+    guarded = "try:\n    from zorblat_pkg import thing\nexcept ImportError:\n    thing = None\n"
+    shared = "try:\n    from zorblat_pkg import thing\n    use(thing)\nexcept ImportError:\n    thing = None\n"
+    assert _import_is_guarded(_tree(guarded), 2)
+    assert not _import_is_guarded(_tree(shared), 2)
+    # The prepared-step keys must be BOUND in code, not mentioned in text.
+    mention = "# 'topic' 'message' payload={ channel='mcp' action='publish' 'event_bus'\n"
+    assert handler_has_prepared_event_bus_step(mention) is False
