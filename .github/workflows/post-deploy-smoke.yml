@@ -11,18 +11,35 @@ name: Post-deploy smoke
 #     health/ready/version only, PASS with a notice that gated checks skipped
 # Never invent or commit a token value.
 
+#
+# Runs AFTER deploy-aws, not beside it. It used to start on the same push as
+# the deploy, so it probed while the image was still building and gave up at
+# 5 minutes -- every deploy "failed" and every failure read as "AWS was slow".
+# Now: a deploy that did not succeed fails this job outright; otherwise the
+# smoke waits (cap 20 min) for /health, /ready and /version to serve the
+# DEPLOYED commit. A red smoke means the deploy failed.
+
 on:
-  push:
-    branches: [master]
+  workflow_run:
+    workflows: [deploy-aws]
+    types: [completed]
   workflow_dispatch:
 
 jobs:
   live-smoke:
     name: Live factory smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
+      - name: The deploy must have succeeded
+        if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success'
+        run: |
+          echo "::error::deploy-aws ${{ github.event.workflow_run.conclusion }} for ${{ github.event.workflow_run.head_sha }} -- the deploy failed"
+          exit 1
+
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-python@v7
         with:
@@ -33,7 +50,8 @@ jobs:
           SMOKE_GATE_TOKEN: ${{ secrets.SMOKE_GATE_TOKEN }}
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
-          SMOKE_READY_WAIT_S: "300"
+          SMOKE_READY_WAIT_S: "1200"
+          SMOKE_EXPECTED_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           # DNS has moved: cerebrum-dev.com, www and api all resolve to the
           # AWS load balancer, so these defaults are the public hostnames
           # again rather than the load balancer's generated name.
