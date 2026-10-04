@@ -1435,15 +1435,29 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
     """
     text = handler_source or ""
     contracts: Dict[str, Dict[str, Any]] = {}
+    # The contract patterns read refusal MESSAGES, and a message is prose: a
+    # format placeholder ("%s must be an integer" % key) or a word in a
+    # sentence is captured as if it were a field. A name captured from a
+    # message becomes a field only when the code also reads it as a record
+    # key -- the same confirmation handler_required_fields applies. A name
+    # DECLARED in code (a key of a baked ``constraints = {...}`` literal) is
+    # structure, not prose, and needs no confirmation.
+    confirmed = _confirmed_key_refs(text)
 
-    def _touch(name: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _declare(name: Optional[str]) -> Optional[Dict[str, Any]]:
         usable = _usable_align_name(name)
         if not usable:
             return None
         return contracts.setdefault(usable, {"name": usable, "required": True})
 
+    def _touch(name: Optional[str]) -> Optional[Dict[str, Any]]:
+        usable = _usable_align_name(name)
+        if not usable or usable not in confirmed:
+            return None
+        return _declare(usable)
+
     for name in handler_required_fields(text):
-        _touch(name)
+        _declare(name)  # already confirmed (or declared) by the required-fields miner
 
     for match in _MUST_BE_ONE_OF.finditer(text):
         slot = _touch(_match_field_name(match))
@@ -1457,7 +1471,7 @@ def handler_field_contracts(handler_source: str) -> Dict[str, Dict[str, Any]]:
         if slot and values:
             _assign_allowed_values(slot, values)
 
-    _mine_constraints_literal(text, _touch)
+    _mine_constraints_literal(text, _declare)
 
     for match in _MUST_BE_BOOL.finditer(text):
         slot = _touch(_match_field_name(match))
