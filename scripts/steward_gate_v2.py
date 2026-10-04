@@ -70,8 +70,7 @@ def _evaluate_gate(gate_id: str) -> Dict[str, Any]:
     heal_approval = _repo_path("backend", "app", "resident_engineer", "heal", "approval.py")
 
     if gate_id == "G1_factory_determinism":
-        status = "NOT VERIFIED" if not determinism.is_file() else "PASS"
-        return {"status": status, "detail": "double-generation artifact absent" if status != "PASS" else "artifact present"}
+        return _measured("determinism")
 
     if gate_id == "G2_authentication":
         ok = auth_py.is_file() and auth_models.is_file()
@@ -125,19 +124,13 @@ def _evaluate_gate(gate_id: str) -> Dict[str, Any]:
         }
 
     if gate_id == "G7_store":
-        return {"status": "FAIL", "detail": "block runtime execution not wired — GENERATE stubs only"}
+        return _measured("store_runtime")
 
     if gate_id == "G8_agents":
-        cert = ROOT / "artifacts" / "steward_agent_runtime_certification.json"
-        return {
-            "status": "FAIL",
-            "detail": "agent runtime certification harness absent"
-            if not cert.is_file()
-            else "certification artifact present but runtime enforcement not verified",
-        }
+        return _measured("agent_runtime")
 
     if gate_id == "G9_workflows":
-        return {"status": "FAIL", "detail": "approval persistence for workflows not implemented"}
+        return _measured("workflow_approvals")
 
     if gate_id == "G10_resident_engineer":
         catalog_text = _read(heal_catalog)
@@ -177,15 +170,15 @@ def _evaluate_gate(gate_id: str) -> Dict[str, Any]:
         }
 
     if gate_id == "G13_oracle":
-        oracle_text = _read(oracle_script)
-        has_static = "_evaluate_static_suite" in oracle_text
-        status = "FAIL" if oracle_script.is_file() else "NOT VERIFIED"
-        return {
-            "status": status,
-            "detail": "oracle v2 static kit checks present; live suites not fully verified"
-            if has_static
-            else "oracle v2 skeleton only — suites not implemented",
-        }
+        report = _oracle().run_oracle(None)
+        statuses = {s["suite"]: s["status"] for s in report["suites"]}
+        failed = sorted(k for k, v in statuses.items() if v in ("FAIL", "NOT VERIFIED"))
+        withheld = sorted(k for k, v in statuses.items() if v == "WITHHELD")
+        status = "FAIL" if failed else ("WITHHELD" if withheld else "PASS")
+        return {"status": status, "detail": {
+            "failed": failed, "withheld": withheld,
+            "withheld_declared_in": "artifacts/blockers.json" if withheld else None,
+            "passed": sorted(k for k, v in statuses.items() if v == "PASS")}}
 
     if gate_id == "G14_documentation":
         audit = ROOT / "docs" / "audits" / "STEWARD_V2_AGENT_AUDIT.md"
@@ -201,6 +194,19 @@ def _evaluate_gate(gate_id: str) -> Dict[str, Any]:
     return {"status": "NOT VERIFIED", "detail": "unknown gate"}
 
 
+def _oracle():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import steward_oracle_v2
+
+    return steward_oracle_v2
+
+
+def _measured(line: str) -> Dict[str, Any]:
+    """A line measured on the generated product by the general product gate."""
+    result = _oracle()._product_lines()[line]
+    return {"status": result["status"], "detail": result["detail"]}
+
+
 def run_gates() -> Dict[str, Any]:
     results = []
     for gate in GATES:
@@ -210,7 +216,11 @@ def run_gates() -> Dict[str, Any]:
 
     mandatory_fail = any(r["status"] == "FAIL" for r in results)
     mandatory_not_verified = any(r["status"] == "NOT VERIFIED" for r in results)
-    pilot_verdict = "NO-GO" if mandatory_fail or mandatory_not_verified else "GO"
+    withheld = any(r["status"] == "WITHHELD" for r in results)
+    pilot_verdict = (
+        "NO-GO" if mandatory_fail or mandatory_not_verified
+        else "WITHHELD" if withheld else "GO"
+    )
 
     return {
         "schema_version": "steward_gate_v2",
@@ -240,7 +250,9 @@ def main(argv: List[str] | None = None) -> int:
         print(payload, end="")
     print(f"Gate report written to {args.out}", file=sys.stderr)
     print(f"Pilot verdict: {report['pilot_verdict']}", file=sys.stderr)
-    return 0 if report["pilot_verdict"] == "GO" else 1
+    # WITHHELD (declared operator settings, artifacts/blockers.json) is not a
+    # failure; FAIL and NOT VERIFIED are.
+    return 0 if report["pilot_verdict"] in ("GO", "WITHHELD") else 1
 
 
 if __name__ == "__main__":
