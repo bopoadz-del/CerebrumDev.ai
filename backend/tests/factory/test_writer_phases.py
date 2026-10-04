@@ -327,11 +327,11 @@ def test_later_phase_skips_cli_when_remaining_work_empty():
     ) is True
 
 
-def test_phase_two_rag_required_when_inventory_names_rag_surface():
+def test_phase_two_rag_required_when_a_bound_block_retrieves():
     compiled = compile_brief(
         _Blueprint(),
-        _Plan(_Cap("dual_rag_estate_docs", ["rag", "database"], "REUSE")),
-        store_ids={"rag", "database"},
+        _Plan(_Cap("estate_docs", ["vector_search", "database"], "REUSE")),
+        store_ids={"vector_search", "database"},
     )
     assert inventory_needs_rag(compiled)
     assert "RAG ingest/query" in compiled.text
@@ -341,12 +341,24 @@ def test_phase_two_rag_required_when_inventory_names_rag_surface():
     assert lint_brief(phase).ok, lint_brief(phase).errors
 
 
-def test_phase_two_rag_not_required_for_vector_search_reuse():
-    """VetCare patient_records binds vector_search — reuse_accept, not RAG."""
+def test_binding_a_retrieving_block_owes_the_rag_contract_whatever_the_name():
+    """Binding vector_search -- a block whose signed manifest declares the
+    vector-store read -- owes the RAG ingest/query contract, the same signal
+    that makes rag_roundtrip_hit a veto. The old rule exempted it unless the
+    capability was NAMED rag; the name decides nothing now."""
     compiled = compile_brief(
         _Blueprint(),
         _Plan(_Cap("patient_records_management", ["vector_search", "database"], "REUSE")),
         store_ids={"vector_search", "database"},
+    )
+    assert inventory_needs_rag(compiled) is True
+
+
+def test_a_capability_whose_blocks_do_not_retrieve_owes_no_rag_contract():
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap("rag_answers", ["database"], "REUSE")),
+        store_ids={"database"},
     )
     assert inventory_needs_rag(compiled) is False
 
@@ -492,8 +504,8 @@ def test_live_miss_sess_5782f226_run6_keep_path_plants_callable_routes(tmp_path)
 def test_rag_keep_path_does_not_plant_when_inventory_has_no_rag(tmp_path):
     compiled = compile_brief(
         _Blueprint(),
-        _Plan(_Cap("patient_records_management", ["vector_search", "database"], "REUSE")),
-        store_ids={"vector_search", "database"},
+        _Plan(_Cap("patient_records_management", ["database"], "REUSE")),
+        store_ids={"database"},
     )
     assert inventory_needs_rag(compiled) is False
     planted = emit_factory_grounded_rag_surface(tmp_path, compiled)

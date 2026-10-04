@@ -117,7 +117,14 @@ def load_known_literals() -> FrozenSet[str]:
     spec.loader.exec_module(mod)
     known = mod.load()
     return frozenset(k.strip().lower() for k in known if k.strip())
-OPT_IN_FORMS: tuple = ()
+#: Measured, not yet enforced. phrase_match = a single string literal used as
+#: a decision input against text (scan_hardwiring.phrase_matches). It becomes a
+#: DEFAULT (enforced) form at 0 once the burn-down lands -- never by admitting
+#: the hits that stand today into a baseline.
+OPT_IN_FORMS: tuple = ("phrase_match",)
+#: Forms computed by a function over the syntax tree rather than a token
+#: pattern (selectable with --form like any other).
+AST_FORMS = ("word_list", "phrase_match")
 
 
 def _literal_body(text: str) -> str:
@@ -300,6 +307,110 @@ def word_lists(source: str) -> List[Tuple[int, str]]:
     return sorted(out)
 
 
+#: A phrase literal carries a word: a run of two or more letters.
+_PHRASE_WORD = re.compile(r"[A-Za-z]{2,}")
+#: Path-shaped literals are structure, not phrases: a path segment, a URL
+#: scheme, or a bare file extension (owner: path/filename/extension checks).
+_PATH_SHAPED = re.compile(r"^(?:[^\s]*/[^\s]*|\.[A-Za-z0-9]{1,8})$")
+_PHRASE_SEARCH_CALLS = _TEXT_SEARCH_CALLS + ("rindex",)
+
+
+def _is_phrase(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(_PHRASE_WORD.search(value))
+        and not _PATH_SHAPED.match(value)
+    )
+
+
+def _code_templates(tree: ast.AST) -> List[Tuple[int, str]]:
+    """(line offset, source) of every string constant that is itself Python
+    code the Factory emits -- a probe, a harness -- so a phrase check hidden
+    inside a template is scanned like any other code. An f-string template's
+    replacement fields are stood in by ``None``."""
+    out: List[Tuple[int, str]] = []
+    # A constant inside an f-string is a fragment of that template, scanned
+    # with it -- never a second template of its own.
+    inside_fstring = {
+        id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values
+    }
+    for node in ast.walk(tree):
+        src = None
+        if id(node) in inside_fstring:
+            continue
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            src = node.value
+        elif isinstance(node, ast.JoinedStr):
+            src = "".join(
+                str(v.value) if isinstance(v, ast.Constant) else "None" for v in node.values
+            )
+        if not src or src.count("\n") < 5:
+            continue
+        try:
+            inner = ast.parse(src)
+        except SyntaxError:
+            continue
+        if any(isinstance(x, (ast.FunctionDef, ast.Import, ast.ImportFrom)) for x in ast.walk(inner)):
+            out.append((node.lineno - 1, src))
+    return out
+
+
+def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
+    """(line, literal) of every single string literal used as a decision input
+    against TEXT: ``"lit" in text``, ``text.startswith/endswith/find/...("lit")``,
+    ``re.search/match/...("lit", ...)``, and ``text == "a sentence"``. Text is
+    recognised exactly as for the word-list form. Docstrings and comments are
+    prose and exempt; path-shaped literals are structure."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    spans = _docstring_spans(source)
+    scopes = [tree] + [n for n in ast.walk(tree)
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    text_in: Dict[int, set] = {}
+    for scope in scopes:
+        names = _text_names(scope)
+        for n in ast.walk(scope):
+            text_in.setdefault(id(n), set()).update(names)
+    out: List[Tuple[int, str]] = []
+
+    def is_text(expr: ast.AST, names: set) -> bool:
+        return not isinstance(expr, ast.Constant) and _is_text(expr, names)
+
+    for node in ast.walk(tree):
+        names = text_in.get(id(node), set())
+        if isinstance(node, ast.Compare):
+            if (isinstance(node.left, ast.Constant) and _is_phrase(node.left.value)
+                    and any(isinstance(o, (ast.In, ast.NotIn)) for o in node.ops)
+                    and any(is_text(c, names) for c in node.comparators)):
+                out.append((node.lineno, node.left.value))
+            for op, comp in zip(node.ops, node.comparators):
+                if not isinstance(op, (ast.Eq, ast.NotEq)):
+                    continue
+                for lit, other in ((node.left, comp), (comp, node.left)):
+                    if (isinstance(lit, ast.Constant) and isinstance(lit.value, str)
+                            and " " in lit.value.strip() and _is_phrase(lit.value)
+                            and is_text(other, names)):
+                        out.append((node.lineno, lit.value))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _PHRASE_SEARCH_CALLS):
+            recv = node.func.value
+            if isinstance(recv, ast.Name) and recv.id == "re":
+                if node.args and isinstance(node.args[0], ast.Constant) and _is_phrase(node.args[0].value):
+                    out.append((node.lineno, node.args[0].value))
+            elif is_text(recv, names) and node.args:
+                first = node.args[0]
+                lits = [first] if isinstance(first, ast.Constant) else (
+                    list(first.elts) if isinstance(first, ast.Tuple) else [])
+                out.extend((node.lineno, lit.value) for lit in lits
+                           if isinstance(lit, ast.Constant) and _is_phrase(lit.value))
+    hits = [(ln + offset, lit) for ln, lit in out if not _in_spans(ln, spans)]
+    for off, src in _code_templates(tree):
+        hits.extend(phrase_matches(src, offset + off))
+    return hits
+
+
 def scan_file(
     path: Path,
     forms: Iterable[str] = DEFAULT_FORMS,
@@ -321,6 +432,8 @@ def scan_file(
     literals = known if (known and "product_literal" in forms) else frozenset()
     if "word_list" in forms:
         out.extend((line, "word_list", name) for line, name in word_lists(source))
+    if "phrase_match" in forms:
+        out.extend((line, "phrase_match", lit) for line, lit in phrase_matches(source))
     for tok in tokens:
         if tok.type not in (tokenize.NAME, tokenize.STRING):
             continue
@@ -416,7 +529,7 @@ def main(argv: List[str] | None = None) -> int:
     ap.add_argument(
         "--form",
         action="append",
-        choices=sorted(FORMS),
+        choices=sorted(set(FORMS) | set(AST_FORMS)),
         help="add an opt-in form (repeatable); default: " + ", ".join(DEFAULT_FORMS),
     )
     ap.add_argument("--report", action="store_true", help="print every form by file and exit 0")

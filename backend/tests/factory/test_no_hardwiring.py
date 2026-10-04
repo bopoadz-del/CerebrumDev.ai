@@ -102,18 +102,31 @@ class _Blueprint:
     summary = "Track zorblats."
 
 
-@pytest.mark.parametrize("cap_id, owes_rag", [
-    ("storage_management", False),  # "rag" inside "storage" is not a token
-    ("leverage_tracker", False),
-    ("fragment_index", False),
-    ("rag", True),
-    ("zorblat_rag_answers", True),
-    ("rag-search", True),
-])
-def test_a_rag_surface_is_a_whole_token_of_the_capability_id(cap_id, owes_rag):
-    compiled = compile_brief(_Blueprint(), _Plan(_Cap(cap_id, ["database"])), store_ids={"database"})
-    assert inventory_needs_rag(compiled) is owes_rag
+def _store_root(tmp_path, reads_by_block):
+    """An invented Store: each block's block.json declares the given reads."""
+    import json
 
+    root = tmp_path / "store"
+    for bid, reads in reads_by_block.items():
+        d = root / "block_registry" / bid
+        d.mkdir(parents=True)
+        (d / "block.json").write_text(json.dumps({"id": bid, "reads": reads}), encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize("cap_id, block_id, owes_rag", [
+    ("zorblat_rag_answers", "zorblat_ledger", False),  # "rag" in the name decides nothing
+    ("storage_management", "zorblat_index", True),     # the bound block retrieves
+    ("rag", "zorblat_ledger", False),
+])
+def test_a_rag_surface_follows_what_the_bound_block_declares(tmp_path, monkeypatch, cap_id, block_id, owes_rag):
+    root = _store_root(tmp_path, {
+        "zorblat_index": [{"kind": "database", "scope": "vector"}],
+        "zorblat_ledger": [{"kind": "database", "scope": "sql"}],
+    })
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(root))
+    compiled = compile_brief(_Blueprint(), _Plan(_Cap(cap_id, [block_id])), store_ids={block_id})
+    assert inventory_needs_rag(compiled) is owes_rag
 
 # --- the word-list form ---------------------------------------------------------
 
@@ -170,3 +183,30 @@ def test_protocol_members_are_interfaces_and_the_same_body_elsewhere_is_a_stub(t
     bad = subprocess.run([sys.executable, str(script)], cwd=tmp_path,
                          capture_output=True, text=True, check=False)
     assert bad.returncode == 1 and "pkg/impl.py" in bad.stdout and "iface.py" not in bad.stdout
+
+
+# --- the phrase-match form --------------------------------------------------------
+
+
+@pytest.mark.parametrize("src", [
+    'def f(message: str):\n    return "zorblat refused" in message\n',
+    'def f(out: str):\n    return out.lower().startswith("zorblat")\n',
+    'import re\ndef f(log: str):\n    return re.search("zorblat failed", log)\n',
+    'def f(detail: str):\n    return detail == "zorblat went wrong"\n',
+    'def f(e):\n    return "zorblat" in str(e)\n',
+    # A phrase check inside a code template the Factory emits is still code.
+    'TEMPLATE = """\nimport sys\n\ndef check(text: str):\n    return "zorblat" in text\n\n\nprint(1)\n"""\n',
+])
+def test_a_single_phrase_used_as_a_decision_on_text_is_caught(src):
+    assert _gate().phrase_matches(src), src
+
+
+@pytest.mark.parametrize("src", [
+    '"""A docstring may say zorblat failed."""\n',
+    '# a comment may say "zorblat" in message\nx = 1\n',
+    'def f(p: str):\n    return p.endswith(".py") or "/" in p\n',
+    'def f(rec: dict):\n    return rec.get("zorblat")\n',
+    'def f(kind: str):\n    return kind == "zorblat"\n',  # one token: closed vocabulary
+])
+def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
+    assert _gate().phrase_matches(src) == [], src

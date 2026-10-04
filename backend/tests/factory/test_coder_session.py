@@ -491,12 +491,8 @@ def test_cli_preflight_blockers_include_no_model():
 
 
 def test_classify_cli_exit_names_no_model_configured():
-    blocker, detail = classify_cli_exit(
-        1,
-        "error: failed to run prompt: No model configured. "
-        "Run 'kimi' and use /login to sign in, then retry; "
-        "or set default model in config.toml.",
-    )
+    """Decided by the Factory's own model configuration, not the CLI's words."""
+    blocker, detail = classify_cli_exit(1, "segfault", model_configured=False)
     assert blocker == NAMED_BLOCKER_CLI_NO_MODEL
     assert CodeCliNoModelConfigured.blocker == NAMED_BLOCKER_CLI_NO_MODEL
     assert NAMED_BLOCKER_CLI_NO_MODEL in detail
@@ -507,6 +503,11 @@ def test_classify_cli_exit_names_no_model_configured():
     generic, generic_detail = classify_cli_exit(1, "segfault")
     assert generic == NAMED_BLOCKER_CLI_FAILED
     assert generic_detail == "CLI exited 1"
+    # The phrase alone, with a usable configuration, decides nothing.
+    worded, _ = classify_cli_exit(
+        1, "error: failed to run prompt: No model configured.", model_configured=True
+    )
+    assert worded == NAMED_BLOCKER_CLI_FAILED
 
 
 def test_classify_cli_exit_names_billing_by_provider_status():
@@ -1063,8 +1064,10 @@ def test_dispatch_kimi_without_config_toml_fail_closed(tmp_path, monkeypatch):
     assert "falling back to HTTP oneshot" not in log
 
 
-def test_dispatch_cli_no_model_configured_fail_closed(tmp_path, monkeypatch):
-    """CLI exit with 'No model configured' is a named fail-closed class."""
+def test_dispatch_cli_message_alone_does_not_name_no_model(tmp_path, monkeypatch):
+    """The model configuration is usable; the CLI printing 'No model configured'
+    does not decide the class -- a non-zero exit is FACTORY_CODE_CLI_FAILED and
+    still never falls back to the HTTP oneshot."""
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
@@ -1093,16 +1096,14 @@ def test_dispatch_cli_no_model_configured_fail_closed(tmp_path, monkeypatch):
     result = dispatch_compiled_brief(ctx, compiled)
     assert result.ok is False
     assert result.via == "cli"
-    assert result.blocker == NAMED_BLOCKER_CLI_NO_MODEL
-    assert "No model configured" in result.detail
-    assert "templated" in result.detail
+    assert result.blocker == NAMED_BLOCKER_CLI_FAILED
     assert oneshot == [], "CLI no-model must not fall back to HTTP oneshot"
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(encoding="utf-8")
     )
-    assert receipt["blocker"] == NAMED_BLOCKER_CLI_NO_MODEL
+    assert receipt["blocker"] == NAMED_BLOCKER_CLI_FAILED
     failures = ctx.state.get("coder_failures") or {}
-    assert NAMED_BLOCKER_CLI_NO_MODEL in failures.get("brief_dispatch", "")
+    assert NAMED_BLOCKER_CLI_NO_MODEL not in failures.get("brief_dispatch", "")
 
 
 def test_dispatch_cli_model_denied_is_named_class(tmp_path, monkeypatch):

@@ -35,11 +35,8 @@ WRITER_PHASES: Tuple[str, ...] = (
     WRITER_PHASE_INTEGRATION,
 )
 
-#: A Store ``vector_search`` bind is reuse_accept (BLOCK_DEFAULT_ACTIONS),
-#: not a product RAG ingest/query surface. A capability owes ingest + query
-#: routes when it binds a RAG block or its id carries ``rag`` as a whole token.
-#: A capability's persist POST/GET is not that surface.
-RAG_SURFACE_IDS = frozenset({"rag", "dual_rag"})
+#: A capability owes the RAG ingest + query routes when it binds a block that
+#: retrieves (inventory_needs_rag). Its persist POST/GET is not that surface.
 
 #: The platform's RAG contract, as the brief states it.
 RAG_INGEST_PATHS = ("/v1/rag/ingest",)
@@ -346,26 +343,23 @@ def checkpoint_landed_phase(ctx: Any, phase_id: str) -> None:
         )
 
 
-def inventory_needs_rag(compiled: Any) -> bool:
-    """True when STEP 0 names a RAG ingest/query surface.
+def inventory_needs_rag(compiled: Any, store_root: Any = None) -> bool:
+    """True when STEP 0 binds a block that retrieves.
 
-    ``vector_search`` / ``knowledge`` binds are registry REUSE, not a claimed
-    ingest/query product. A capability owes the HTTP contract when it binds a
-    RAG block, or when ``rag`` is a whole token of its id (``rag``,
-    ``x_rag_y``) -- a substring match also caught ``storage``.
+    A capability owes the RAG ingest/query contract when it binds a Store
+    block whose signed block.json declares the retrieval read (the same
+    signal that makes the floor's rag_roundtrip_hit a veto) -- never because
+    of what the capability or the block is called.
     """
-    for item in getattr(compiled, "inventory", ()) or ():
-        cid = str(getattr(item, "capability_id", "") or "").lower().replace("-", "_")
-        if "rag" in cid.split("_"):
-            return True
-        bids = list(getattr(item, "block_ids", ()) or ()) + list(
-            getattr(item, "verified_present", ()) or ()
-        )
-        for bid in bids:
-            name = str(bid).strip().lower()
-            if name in RAG_SURFACE_IDS or name.startswith("rag_") or "dual_rag" in name:
-                return True
-    return False
+    from app.factory.build.acceptance_floor import binds_retrieving_block
+
+    bids = [
+        bid
+        for item in getattr(compiled, "inventory", ()) or ()
+        for bid in list(getattr(item, "block_ids", ()) or ())
+        + list(getattr(item, "verified_present", ()) or ())
+    ]
+    return binds_retrieving_block(bids, store_root=store_root)
 
 
 def required_capability_ids(compiled: Any) -> List[str]:
