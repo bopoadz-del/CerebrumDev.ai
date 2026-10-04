@@ -138,24 +138,69 @@ def test_zero_agent_artifacts_fails_with_writer_no_output(blueprint, tmp_path):
     assert failed and failed[-1].role is BuildRole.WRITER
 
 
+#: Modules whose import makes code an HTTP client. Test data, not product
+#: code: the generated product must import none of them.
+_HTTP_CLIENT_MODULES = frozenset(
+    {"httpx", "requests", "aiohttp", "urllib3", "http.client", "urllib.request", "pycurl"}
+)
+
+
+def _http_client_identifiers(source: str) -> list:
+    """HTTP-client identifiers in CODE -- imports, names, attribute chains and
+    the store-callback strings -- read from the syntax tree, so a comment or
+    docstring that mentions a client is not a callback."""
+    import ast
+
+    found = []
+    tree = ast.parse(source)
+    roots = {m.split(".")[0] for m in _HTTP_CLIENT_MODULES}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [a.name for a in node.names
+                      if a.name in _HTTP_CLIENT_MODULES or a.name.split(".")[0] in roots - {"http", "urllib"}]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            mod = node.module
+            if mod in _HTTP_CLIENT_MODULES or mod.split(".")[0] in roots - {"http", "urllib"}:
+                found.append(mod)
+            elif mod in {"http", "urllib"}:
+                found += [f"{mod}.{a.name}" for a in node.names if f"{mod}.{a.name}" in _HTTP_CLIENT_MODULES]
+        elif isinstance(node, ast.Name) and node.id in roots - {"http", "urllib"}:
+            found.append(node.id)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if "/v1/execute" in node.value or node.value == "CEREBRUM_API_URL":
+                found.append(node.value)
+    return found
+
+
+def test_the_identifier_scan_ignores_comments_and_catches_code():
+    prose = '"""Mentions httpx and requests.post in a docstring."""\n# import httpx\nx = 1\n'
+    assert _http_client_identifiers(prose) == []
+    for code in ("import httpx\n", "from urllib.request import urlopen\n",
+                 "import requests as r\n", "U = 'http://h/v1/execute'\n"):
+        assert _http_client_identifiers(code), code
+
+
 def test_generated_platform_makes_no_store_callback(blueprint, tmp_path, stub_coder):
     """The whole point of the rebuild: the artifact runs without the store.
 
     The old template path emitted httpx.post(store_url + "/v1/execute") into
     every REUSE handler, making each delivered platform a client of the
-    operator's uptime.
+    operator's uptime. Every emitted runtime .py file is read as CODE: no
+    HTTP-client import or name, no store-callback path or variable. Comments
+    and docstrings may name a client; code may not.
     """
     out = tmp_path / "build"
     RoleRunner(blueprint, out).run()
 
     offenders = []
     for path in out.rglob("*.py"):
-        if "tests" in path.relative_to(out).parts:
-            continue  # the smoke test names the vars in order to strip them
-        text = path.read_text(encoding="utf-8")
-        for needle in ("httpx", "/v1/execute", "CEREBRUM_API_URL", "requests.post"):
-            if needle in text:
-                offenders.append(f"{path.relative_to(out)}: {needle}")
+        # tests/ and scripts/ are operator tooling run AGAINST the product
+        # (the acceptance harness must speak HTTP to the product's own
+        # server); the runtime -- app, vendored blocks -- may not.
+        if path.relative_to(out).parts[0] in {"tests", "scripts"}:
+            continue
+        for ident in _http_client_identifiers(path.read_text(encoding="utf-8")):
+            offenders.append(f"{path.relative_to(out)}: {ident}")
     assert not offenders, offenders
 
     assert (out / "app" / "dispatch.py").is_file()
