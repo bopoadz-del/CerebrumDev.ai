@@ -2,9 +2,6 @@
   "schema": "acceptance_floor.v2",
   "version": 7,
   "note": "ONE SPEC, TWO CONSUMERS. The C-BRIEF renders `requirement` into the coder's prompt so it builds toward the floor on the first pass; the Store gate executes `check` as its checklist. Neither side is hand-edited and neither may carry its own copy -- test_acceptance_floor_is_one_source fails if they drift. Order is the gate's reporting order and `authorship_floor` stays last. Every check also declares `subject` -- what it judges: `runtime` (the booted product's answers), `tree:<path>` (a file or directory in the tree) or `factory_record` (the Factory's own bookkeeping). The owner of a failure is DERIVED from that subject and from who wrote it (acceptance_floor.owner_of): a file the Factory renders is the Factory's failure wherever it lands, never the product's. There is no list of check names anywhere that says who owns what.",
-  "withheld_signals": {
-    "retrieval": "no signing key: a brief asks for retrieval when a capability binds a Store block that declares a retrieval capability; Store blocks do not carry that declaration yet, and adding it means re-signing block.json with the Ed25519 publisher key, which is not held"
-  },
   "checks": [
     {
       "id": "no_token_401",

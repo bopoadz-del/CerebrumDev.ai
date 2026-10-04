@@ -57,21 +57,43 @@ def test_rag_check_is_skipped_when_no_retrieval_requested():
     assert "retrieval" not in brief_signals(bp)
 
 
-def test_retrieval_is_withheld_until_a_bound_block_can_declare_it():
-    """Retrieval is a STRUCTURAL signal: a capability binds a Store block that
-    declares a retrieval capability. Store block.json carries no such typed
-    field -- only free-form ``tags``, and matching those would be the same word
-    list over different text -- and adding one means re-signing block.json
-    with the Ed25519 publisher key, which is not held. So the signal is
-    WITHHELD: neither the capability's words nor its block's name raise it,
-    and rag_roundtrip_hit is reported WITHHELD(no signing key), never a veto.
-    (Was: enforced when the brief SAID "search"/"rag" -- the removed word list.)
-    """
-    bp = _bp(capabilities=[_cap("policy_search", "semantic search over SOPs",
-                                block_ids=["rag_retrieval"])])
-    assert "retrieval" not in brief_signals(bp)
-    assert "rag_roundtrip_hit" in advisory_ids(bp)
-    assert "rag_roundtrip_hit" not in enforced_ids(bp)
+def _store_with_blocks(root, blocks):
+    """A fixture Store root: block_registry/<id>/block.json with ``reads``."""
+    import json
+
+    for bid, reads in blocks.items():
+        path = root / "block_registry" / bid / "block.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"id": bid, "reads": reads}), encoding="utf-8")
+    return root
+
+
+def test_rag_check_is_enforced_when_a_bound_block_declares_the_vector_read(
+    tmp_path, monkeypatch
+):
+    """Retrieval is raised by STRUCTURE the Store declares: a capability binds
+    a block whose block.json reads the database at vector scope. The words of
+    the brief and the name of the block decide nothing -- so this uses a
+    fixture Store root with invented blocks (the PR does not depend on the
+    real registry or on Store #140's merge timing). Was: block_ids=
+    ['rag_retrieval'], a block the Store does not have, raising the signal by
+    the old word list."""
+    store = _store_with_blocks(tmp_path / "store", {
+        "zorblat_lookup": [{"kind": "database", "scope": "vector"}],
+        "quux_ledger": [{"kind": "database", "scope": "rows"}],
+    })
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(store))
+
+    retrieves = _bp(capabilities=[_cap("frob_desk", "plain words",
+                                       block_ids=["zorblat_lookup"])])
+    assert "retrieval" in brief_signals(retrieves)
+    assert "rag_roundtrip_hit" in enforced_ids(retrieves)
+
+    # Control: retrieval words, and a block that reads rows -- no signal.
+    control = _bp(capabilities=[_cap("rag_search", "semantic search over SOPs",
+                                     block_ids=["quux_ledger"])])
+    assert "retrieval" not in brief_signals(control)
+    assert "rag_roundtrip_hit" in advisory_ids(control)
 
 
 def test_audit_scan_is_advisory_for_a_declared_test_platform():

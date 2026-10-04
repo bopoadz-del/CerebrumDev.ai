@@ -418,7 +418,6 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
     _write_provenance(out, STEWARD_FIVE)
     from app.factory.build.store_acceptance import (
         ACCEPTANCE_CHECK_NAMES,
-        ACCEPTANCE_REQUIRED,
         AcceptanceLine,
         AcceptanceReport,
         write_acceptance_report,
@@ -428,7 +427,7 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
         out,
         AcceptanceReport(
             passed=5,
-            total=ACCEPTANCE_REQUIRED,
+            total=len(ACCEPTANCE_CHECK_NAMES),
             ok=False,
             lines=[
                 AcceptanceLine(name=n, status="PASS" if i < 5 else "FAIL")
@@ -450,7 +449,7 @@ def test_product_package_refuses_authorship_only_store_green(tmp_path, monkeypat
     assert pkg.status_code == 409, pkg.text
     detail = pkg.json()["detail"]
     assert "STORE_ACCEPTANCE" in detail
-    assert f"5/{ACCEPTANCE_REQUIRED}" in detail
+    assert f"5/{len(ACCEPTANCE_CHECK_NAMES)}" in detail
 
 
 def _write_required_blueprint(out: Path, cap_ids: tuple[str, ...]) -> None:

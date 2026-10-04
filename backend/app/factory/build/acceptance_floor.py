@@ -50,6 +50,12 @@ _NON_PRODUCTION_GRADES = frozenset(
     {"prototype", "light", "test", "disposable", "demo", "throwaway", "poc"}
 )
 
+#: The read a Store block declares when it retrieves: it reads the database at
+#: vector scope. A brief retrieves when any capability binds a block whose own
+#: block.json declares this read (store_kits.blocks_declaring_read).
+RETRIEVAL_READ = ("database", "vector")
+
+
 def is_production_grade(blueprint: Any) -> bool:
     """True unless the brief declared a disposable/test grade. An unset grade is
     production, so the security bar is never lowered by omission."""
@@ -57,60 +63,45 @@ def is_production_grade(blueprint: Any) -> bool:
     return grade not in _NON_PRODUCTION_GRADES
 
 
-def withheld_signals() -> Dict[str, str]:
-    """Signals the Factory cannot decide yet, each with the reason, read from
-    the floor file.
-
-    A signal is raised by structure (a declared grade, bound connectors, a
-    bound block that declares the subject), never by words in the brief. When
-    the structure that would raise a signal does not exist yet, the floor says
-    so here and every check on that signal is WITHHELD -- reported with its
-    reason, never a veto and never a silent pass.
-    """
-    raw = _load().get("withheld_signals") or {}
-    return {str(k): str(v) for k, v in raw.items()}
-
-
-def withheld_label(check_id: str) -> str:
-    """``WITHHELD(<short reason>)`` for a withheld check, else ""."""
-    reason = withheld_reason(check_id)
-    return f"WITHHELD({reason.split(':', 1)[0].strip()})" if reason else ""
-
-
-def withheld_reason(check_id: str) -> str:
-    """The reason a check is withheld, or "" when it is decidable."""
-    held = withheld_signals()
-    for c in checks():
-        if str(c["id"]) == check_id:
-            return held.get(str(c.get("applies_when") or ""), "")
-    return ""
-
-
 def _all_signals() -> frozenset:
-    """Every applies_when value the floor references and can decide."""
-    held = withheld_signals()
+    """Every applies_when value the floor references."""
     return frozenset(
-        str(c["applies_when"]) for c in checks()
-        if c.get("applies_when") and str(c["applies_when"]) not in held
+        str(c["applies_when"]) for c in checks() if c.get("applies_when")
     )
 
 
+def _binds_a_retrieving_block(blueprint: Any) -> bool:
+    """True when a capability binds a Store block that declares the retrieval
+    read -- decided by what the Store's signed manifests say, never by the
+    words of the brief or the name of a block."""
+    bound = {
+        str(b)
+        for cap in (getattr(blueprint, "capabilities", None) or [])
+        for b in (getattr(cap, "block_ids", None) or [])
+    }
+    if not bound:
+        return False
+    from app.factory.store_kits import blocks_declaring_read
+
+    return bool(bound & blocks_declaring_read(*RETRIEVAL_READ))
+
+
 def brief_signals(blueprint: Any) -> frozenset:
-    """Which conditional subjects THIS brief declared, from its structure.
+    """Which conditional subjects THIS brief declared.
 
     ``None`` means no brief is in hand (a standalone re-render): assume the
-    strictest reading — every decidable signal present — so nothing is
-    silently skipped. A withheld signal is never raised (see
-    ``withheld_signals``).
+    strictest reading — every signal present — so nothing is silently skipped.
     """
     if blueprint is None:
         return _all_signals()
     sigs = set()
     if is_production_grade(blueprint):
         sigs.add("production")
+    if _binds_a_retrieving_block(blueprint):
+        sigs.add("retrieval")
     if getattr(blueprint, "connectors", None):
         sigs.add("connectors")
-    return frozenset(sigs) - set(withheld_signals())
+    return frozenset(sigs)
 
 
 def floor_path() -> Path:
@@ -151,16 +142,6 @@ def _load() -> Dict[str, Any]:
             raise ValueError(
                 f"{FLOOR_REL}: {cid} must declare subject as runtime, "
                 f"factory_record, or tree:<path> (found {subject!r})"
-            )
-    referenced = {str(c.get("applies_when")) for c in checks if c.get("applies_when")}
-    for signal, reason in (data.get("withheld_signals") or {}).items():
-        if str(signal) not in referenced:
-            raise ValueError(
-                f"{FLOOR_REL}: withheld signal {signal!r} is on no check"
-            )
-        if ":" not in str(reason):
-            raise ValueError(
-                f"{FLOOR_REL}: withheld signal {signal!r} needs '<short reason>: <why>'"
             )
     return data
 

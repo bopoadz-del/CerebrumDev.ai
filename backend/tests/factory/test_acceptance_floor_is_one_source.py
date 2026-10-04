@@ -278,16 +278,9 @@ class TestAdvisoryLinesReportButDoNotVeto:
     def test_the_advisory_set_is_exactly_the_three_the_owner_demoted(self):
         from app.factory.build.acceptance_floor import advisory_ids
 
-        from app.factory.build.acceptance_floor import withheld_label
-
-        # The three the owner demoted, plus rag_roundtrip_hit: its signal
-        # (retrieval) is WITHHELD -- Store blocks cannot declare retrieval
-        # without re-signing block.json -- so it never vetoes until they can.
         assert set(advisory_ids()) == {
-            "one_live_connector", "backup_restore_roundtrip", "bench_p95",
-            "rag_roundtrip_hit",
+            "one_live_connector", "backup_restore_roundtrip", "bench_p95"
         }, "an advisory line was added or removed without this test changing"
-        assert withheld_label("rag_roundtrip_hit") == "WITHHELD(no signing key)"
 
     def test_advisory_lines_are_on_the_floor_and_the_count_is_unchanged(self):
         """Demotion does not shrink the floor: k/N still counts 21 lines and every
@@ -295,12 +288,8 @@ class TestAdvisoryLinesReportButDoNotVeto:
         neither graded nor told to the writer, which is a different decision."""
         from app.factory.build.acceptance_floor import advisory_ids, check_ids
 
-        from app.factory.build.store_acceptance import ACCEPTANCE_WITHHELD_NAMES
-
         assert set(advisory_ids()) <= set(check_ids())
-        # A withheld line stays on the floor and is reported; it is judged by
-        # neither side of k/N, so REQUIRED counts the judged lines.
-        assert len(check_ids()) == ACCEPTANCE_REQUIRED + len(ACCEPTANCE_WITHHELD_NAMES)
+        assert len(check_ids()) == ACCEPTANCE_REQUIRED
         assert "authorship_floor" not in advisory_ids()
 
     def test_the_gate_and_the_stamped_harness_read_the_same_advisory_roster(self):

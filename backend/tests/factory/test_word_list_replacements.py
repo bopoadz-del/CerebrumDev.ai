@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from app.factory.build import acceptance_floor as floor
 from app.factory.build.block_inputs import required_fields_from_rosters
 from app.factory.build.level_grade import _cli_honesty_miss
-from app.factory.build.store_acceptance import demote_if_advisory
 from app.factory.build.supply_chain import _text_has_outbound
 
 
@@ -20,28 +19,32 @@ def _cap(cid: str, description: str) -> SimpleNamespace:
     return SimpleNamespace(id=cid, description=description, block_ids=[cid])
 
 
-# _RETRIEVAL_HINTS -> withheld signal (block bindings, no signing key)
+# _RETRIEVAL_HINTS -> the Store's typed read declaration (database, vector)
 
 
-def test_a_retrieval_word_in_the_brief_raises_no_signal():
-    brief = SimpleNamespace(
-        rigor="",
-        summary="semantic search over a knowledge corpus of documents",
-        capabilities=[_cap("zorblat_rag_search", "vector retrieval ingest")],
-        connectors=[],
-    )
-    assert "retrieval" not in floor.brief_signals(brief)
+def test_retrieval_is_the_bound_blocks_declared_vector_read_never_words(
+    tmp_path, monkeypatch
+):
+    import json
 
+    for bid, scope in (("zorblat_index", "vector"), ("quux_rows", "rows")):
+        path = tmp_path / "block_registry" / bid / "block.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"id": bid, "reads": [{"kind": "database", "scope": scope}]}),
+            encoding="utf-8",
+        )
+    monkeypatch.setenv("CEREBRUM_BLOCKS_ROOT", str(tmp_path))
 
-def test_the_retrieval_check_reads_withheld_with_its_reason_never_a_veto():
-    assert "retrieval" in floor.withheld_signals()
-    label = floor.withheld_label("rag_roundtrip_hit")
-    assert label == "WITHHELD(no signing key)"
-    assert "rag_roundtrip_hit" in floor.advisory_ids(None)
-    assert "rag_roundtrip_hit" not in floor.enforced_ids(None)
-    status, detail = demote_if_advisory("rag_roundtrip_hit", "FAIL", "no hit")
-    assert (status, detail) == ("SKIP", "WITHHELD(no signing key): no hit")
-    assert demote_if_advisory("rag_roundtrip_hit", "PASS", "hit") == ("PASS", "hit")
+    def brief(cid, words, block):
+        cap = SimpleNamespace(id=cid, description=words, block_ids=[block])
+        return SimpleNamespace(rigor="", summary=words, capabilities=[cap], connectors=[])
+
+    plain = brief("frob", "keeps a list", "zorblat_index")
+    wordy = brief("rag_search", "semantic vector retrieval over a knowledge corpus", "quux_rows")
+    assert "retrieval" in floor.brief_signals(plain)
+    assert "rag_roundtrip_hit" in floor.enforced_ids(plain)  # a veto, not advisory
+    assert "retrieval" not in floor.brief_signals(wordy)
 
 
 # inline "./" -> path structure
