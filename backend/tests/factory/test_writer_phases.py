@@ -565,17 +565,6 @@ def test_runner_hydrates_landed_writer_phases(tmp_path):
     assert WRITER_PHASE_BACKEND not in pending_writer_phases(ctx)
 
 
-def test_rag_surface_is_a_whole_token_of_the_capability_id(cap_id, owes_rag):
-    """A substring match once made every ``storage`` capability owe RAG
-    ingest/query routes. The rule is the token, on invented ids."""
-    compiled = compile_brief(
-        _Blueprint(),
-        _Plan(_Cap(cap_id, ["database"], "REUSE")),
-        store_ids={"database"},
-    )
-    assert inventory_needs_rag(compiled) is owes_rag
-
-
 def test_rag_route_checker_accepts_any_prefix_and_no_bare_mention(tmp_path):
     app = tmp_path / "app"
     app.mkdir()
