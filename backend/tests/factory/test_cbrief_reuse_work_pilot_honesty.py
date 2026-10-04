@@ -21,7 +21,6 @@ from app.factory.build.budget_inspect import (
     CEILING_S,
     STAGE_1_S,
     STAGE_2_S,
-    _is_real_timeout,
     inspect_build,
     inspect_decision,
     reconcile_budget_inspect_after_success,
@@ -36,6 +35,7 @@ from app.factory.build.coder_session import (
     remaining_cbrief_work_ids,
     reuse_inventory_ids,
 )
+from app.factory.build.failure_kinds import TIMEOUT, failure_kind
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.runner import Outcome, RoleRunner
 from app.factory.blueprint import load_blueprint
@@ -182,16 +182,44 @@ def test_cbrief_work_ids_drop_keepable_reuse_on_disk(tmp_path):
     assert inventory_gap_ids(compiled) == []
 
 
-def test_timeout_s_and_timeouts_count_are_not_real_timeouts():
-    assert _is_real_timeout("timeout_s=7230") is False
-    assert _is_real_timeout("gaps=[] reuse=['validation'] timeout_s=7230") is False
-    assert _is_real_timeout(
-        "inspect pilot_open: hard-stop — written=7, timeouts=7, contract_misses=0"
-    ) is False
-    assert _is_real_timeout("coder LLM timed out writing handler validation") is True
-    assert _is_real_timeout(
-        "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL: budget wall"
-    ) is True
+def test_a_timeout_is_counted_by_its_recorded_kind_never_by_its_words(tmp_path):
+    """The words decide nothing: a reason that says "timed out" with no kind
+    is not a timeout, and a typed TIMEOUT is one whatever its message says."""
+    ledger = _ledger_with_written(tmp_path)
+    ledger.append(
+        EventKind.NOTE,
+        role=BuildRole.WRITER,
+        detail="zorblat handler: coder LLM timed out (prose only, no kind)",
+        payload={},
+    )
+    ledger.append(
+        EventKind.PHASE_ABORTED,
+        role=BuildRole.WRITER,
+        detail="zorblat phase stopped",
+        payload={"failure_kind": TIMEOUT},
+    )
+    state = {
+        "coder_failures": {"quux": "wall reached", "frob": "timed out (words only)"},
+        "coder_failure_kinds": {"quux": TIMEOUT},
+    }
+    snap = inspect_build(ledger, tmp_path / "build", state)
+    assert snap["timeouts"] == ["zorblat phase stopped", "quux: wall reached"]
+
+
+def test_failure_kind_reads_the_exception_type_through_its_cause():
+    from app.factory.coder import CoderTimeout
+
+    def wrapped():
+        try:
+            raise CoderTimeout("anything")
+        except CoderTimeout as inner:
+            raise RuntimeError("phase failed") from inner
+
+    try:
+        wrapped()
+    except RuntimeError as exc:
+        assert failure_kind(exc) == TIMEOUT
+    assert failure_kind(ValueError("timed out")) == ""
 
 
 def test_inspect_written_plus_timeout_ledger_does_not_hard_stop_pilot(tmp_path):
@@ -306,6 +334,7 @@ def test_hung_cli_still_harvests_keepable_reuse(tmp_path, monkeypatch):
     assert result.via == "cli"
     assert result.ok is False
     assert result.blocker == NAMED_BLOCKER_CLI_HUNG_KILLED_BY_WALL
+    assert ctx.state["coder_failure_kinds"]["brief_dispatch"] == TIMEOUT
     assert "validation" in result.cli_authored_ids
     receipt = json.loads(
         (tmp_path / "build" / "docs" / "coder_receipt.json").read_text(

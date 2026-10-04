@@ -171,11 +171,7 @@ _LIST_LITERAL_BINDING = re.compile(
 #: a bare ``x not in CONST`` -- that is ``payload.get("status") not in
 #: ALLOWED_STATUSES``, where the list holds values, not field names, and
 #: mining it would declare "open" and "closed" required fields.
-_ROSTER_ITERATED = r"for\s+[A-Za-z_]\w*\s+in\s+{const}\b"
 _ROSTER_DIFFERENCED = r"(?:set\(\s*{const}\s*\)|\b{const}\b)\s*(?:-\s*set\(|\.difference\()"
-#: Within a few lines of the iteration, the loop must actually consult the
-#: payload -- otherwise it is some unrelated loop over a list of strings.
-_ROSTER_CONSULTS_PAYLOAD = ("not in", ".get(", "missing")
 
 #: payload.get("role") not in ("veterinarian", "technician")
 _GET_NOT_IN = re.compile(
@@ -1245,26 +1241,79 @@ def _merge_field_contract(
     return changed
 
 
+def _mentions(node: ast.AST, name: str) -> bool:
+    return any(isinstance(n, ast.Name) and n.id == name for n in ast.walk(node))
+
+
+def _consults_payload(var: str, nodes: Sequence[ast.AST]) -> bool:
+    """``nodes`` look the iteration variable ``var`` up in the payload: a
+    membership test against it (``f not in payload``) or a read of it
+    (``payload.get(f)`` / ``payload[f]``). Read from the syntax tree, so the
+    words of an error message decide nothing."""
+    for root in nodes:
+        for node in ast.walk(root):
+            if isinstance(node, ast.Compare) and any(
+                isinstance(op, (ast.In, ast.NotIn)) for op in node.ops
+            ):
+                sides = [node.left, *node.comparators]
+                if any(_mentions(s, var) for s in sides) and any(
+                    _mentions(s, "payload") for s in sides
+                ):
+                    return True
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and _mentions(node.func.value, "payload")
+                and any(_mentions(arg, var) for arg in node.args)
+            ):
+                return True
+            if (
+                isinstance(node, ast.Subscript)
+                and _mentions(node.value, "payload")
+                and _mentions(node.slice, var)
+            ):
+                return True
+    return False
+
+
+def _iterations_over(tree: ast.AST, const: str):
+    """(variable, the nodes that see it) for every iteration over ``const``:
+    a ``for`` statement (its body) or a comprehension generator (its element
+    and its filters)."""
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Name)
+            and node.iter.id == const
+            and isinstance(node.target, ast.Name)
+        ):
+            yield node.target.id, list(node.body)
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            heads = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+            for gen in node.generators:
+                if (
+                    isinstance(gen.iter, ast.Name)
+                    and gen.iter.id == const
+                    and isinstance(gen.target, ast.Name)
+                ):
+                    yield gen.target.id, heads + list(gen.ifs)
+
+
 def _roster_drives_a_required_check(text: str, const: str) -> bool:
     """True when ``const`` is read as a roster of required field names.
 
-    Iteration must be followed, within a few lines, by the loop consulting the
-    payload; a set-difference against the payload's keys counts on its own.
+    An iteration over it -- a loop or a comprehension -- must consult the
+    payload with its own variable (read from the syntax tree); a
+    set-difference against the payload's keys counts on its own.
     """
     escaped = re.escape(const)
     if re.search(_ROSTER_DIFFERENCED.format(const=escaped), text):
         return True
-    lines = text.splitlines()
-    iterated = re.compile(_ROSTER_ITERATED.format(const=escaped))
-    for index, line in enumerate(lines):
-        if not iterated.search(line):
-            continue
-        window = "\n".join(lines[index : index + 5])
-        if "payload" in window and any(
-            token in window for token in _ROSTER_CONSULTS_PAYLOAD
-        ):
-            return True
-    return False
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+    return any(_consults_payload(var, nodes) for var, nodes in _iterations_over(tree, const))
 
 
 def required_fields_from_rosters(handler_source: str) -> List[str]:

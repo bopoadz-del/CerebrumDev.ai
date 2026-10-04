@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import logging
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Mapping, Tuple
 
 logger = logging.getLogger(__name__)
@@ -50,11 +50,10 @@ _NON_PRODUCTION_GRADES = frozenset(
     {"prototype", "light", "test", "disposable", "demo", "throwaway", "poc"}
 )
 
-#: Capability text that means the brief asked for a retrieval surface.
-_RETRIEVAL_HINTS = (
-    "rag", "retriev", "search", "knowledge", "corpus", "document",
-    "semantic", "vector", "ingest",
-)
+#: The read a Store block declares when it retrieves: it reads the database at
+#: vector scope. A brief retrieves when any capability binds a block whose own
+#: block.json declares this read (store_kits.blocks_declaring_read).
+RETRIEVAL_READ = ("database", "vector")
 
 
 def is_production_grade(blueprint: Any) -> bool:
@@ -71,6 +70,22 @@ def _all_signals() -> frozenset:
     )
 
 
+def _binds_a_retrieving_block(blueprint: Any) -> bool:
+    """True when a capability binds a Store block that declares the retrieval
+    read -- decided by what the Store's signed manifests say, never by the
+    words of the brief or the name of a block."""
+    bound = {
+        str(b)
+        for cap in (getattr(blueprint, "capabilities", None) or [])
+        for b in (getattr(cap, "block_ids", None) or [])
+    }
+    if not bound:
+        return False
+    from app.factory.store_kits import blocks_declaring_read
+
+    return bool(bound & blocks_declaring_read(*RETRIEVAL_READ))
+
+
 def brief_signals(blueprint: Any) -> frozenset:
     """Which conditional subjects THIS brief declared.
 
@@ -82,14 +97,7 @@ def brief_signals(blueprint: Any) -> frozenset:
     sigs = set()
     if is_production_grade(blueprint):
         sigs.add("production")
-    caps = getattr(blueprint, "capabilities", None) or []
-    parts: List[str] = [str(getattr(blueprint, "summary", "") or "")]
-    for cap in caps:
-        parts.append(str(getattr(cap, "id", "") or ""))
-        parts.append(str(getattr(cap, "description", "") or ""))
-        parts.extend(str(b) for b in (getattr(cap, "block_ids", None) or []))
-    blob = " ".join(parts).lower()
-    if any(h in blob for h in _RETRIEVAL_HINTS):
+    if _binds_a_retrieving_block(blueprint):
         sigs.add("retrieval")
     if getattr(blueprint, "connectors", None):
         sigs.add("connectors")
@@ -165,24 +173,31 @@ def subject_of(check_id: str) -> str:
     return ""
 
 
-def _norm_rel(path: str) -> str:
+def _path_parts(path: str) -> Tuple[bool, Tuple[str, ...]]:
+    """(is_absolute, the path's segments) -- ``.`` and empty segments dropped,
+    read from the path's own structure rather than a list of known roots."""
     text = str(path or "").replace("\\", "/").strip()
-    for prefix in ("./", "/app/", "/workspace/"):
-        while text.startswith(prefix):
-            text = text[len(prefix):]
-    return text.lstrip("/")
+    parts = tuple(p for p in PurePosixPath(text).parts if p not in ("/", "."))
+    return text.startswith("/"), parts
 
 
 def _factory_rendered(path: str, rendered: frozenset) -> bool:
     """True when ``path`` is (or names, by a slash-qualified suffix) a file the
     Factory renders. A bare basename never matches -- ``acceptance.py`` in a
-    score line is not a claim about scripts/acceptance.py."""
-    rel = _norm_rel(path)
-    if not rel:
+    score line is not a claim about scripts/acceptance.py.
+
+    An ABSOLUTE path is a file inside a workspace mounted somewhere; whatever
+    the mount root, it names a rendered file when its trailing segments are
+    that file's whole relative path."""
+    absolute, parts = _path_parts(path)
+    if not parts:
         return False
+    rel = "/".join(parts)
     if rel in rendered:
         return True
-    return "/" in rel and any(r == rel or r.endswith("/" + rel) for r in rendered)
+    if absolute:
+        return any(parts[-len(r.split("/")):] == tuple(r.split("/")) for r in rendered)
+    return len(parts) > 1 and any(r.endswith("/" + rel) for r in rendered)
 
 
 def owner_of(check_id: str, detail: str = "") -> str:

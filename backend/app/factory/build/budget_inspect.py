@@ -19,8 +19,9 @@ wall is honoured (observe/log, do not slash). The default is not 2 hours.
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from app.factory.build.failure_kinds import TIMEOUT
 
 from app.factory.build.authorship import (
     exclusive_authorship_caps,
@@ -45,30 +46,15 @@ CEILING_S = 7200.0
 
 INSPECT_NOTE_KIND = "budget_inspect"
 
-#: Ledger noise that is not a coder timeout. ``timeout_s=7230`` on a
-#: C-BRIEF dispatch NOTE and ``timeouts=N`` inside a later inspect
-#: reason must not accumulate into a fake timeout ledger (sess_d10dfc28:
-#: 7 REUSE caps, written=7, timeouts=7, contract_misses=0).
-_TIMEOUT_NOISE_RE = re.compile(
-    r"timeout_s\s*=\s*\S+|timeouts\s*=\s*\S+",
-    re.IGNORECASE,
-)
-_REAL_TIMEOUT_HINTS = (
-    "timed out",
-    "hung_killed",
-    "hung killed",
-    "watchdog fired",
-    "coder llm timed out",
-)
+def _timed_out_keys(failure_kinds: Mapping[str, Any]) -> List[str]:
+    """Keys whose recorded failure kind is a timeout (failure_kinds.TIMEOUT).
 
-
-def _is_real_timeout(text: str) -> bool:
-    """True only for an actual coder/CLI timeout, not timeout_s= metadata."""
-    lowered = str(text or "").lower()
-    if not lowered:
-        return False
-    stripped = _TIMEOUT_NOISE_RE.sub(" ", lowered)
-    return any(hint in stripped for hint in _REAL_TIMEOUT_HINTS)
+    The kind is stamped where the failure happened, from the exception's
+    TYPE or the dispatch blocker -- so ``timeout_s=7230`` metadata or
+    ``timeouts=7`` inside a later reason can never be counted as one: the
+    message text is not read at all.
+    """
+    return [str(k) for k, v in (failure_kinds or {}).items() if v == TIMEOUT]
 
 
 def inspect_build(
@@ -131,7 +117,7 @@ def inspect_build(
         if isinstance(done, int) and isinstance(total, int) and total > 0:
             phase_done, phase_total = done, total
 
-        if _is_real_timeout(detail):
+        if payload.get("failure_kind") == TIMEOUT:
             timeouts.append(detail[:240])
 
         if kind == "GATE_FAILED":
@@ -145,10 +131,10 @@ def inspect_build(
             contract_misses.extend(str(f)[:240] for f in findings if f)
 
     failures = dict((state or {}).get("coder_failures") or {})
+    for key in _timed_out_keys((state or {}).get("coder_failure_kinds") or {}):
+        timeouts.append(f"{key}: {str(failures.get(key, ''))[:200]}")
     for key, reason in failures.items():
         text = str(reason)
-        if _is_real_timeout(text):
-            timeouts.append(f"{key}: {text[:200]}")
         if "skipped" in text.lower() or "budget" in text.lower():
             if key not in caps_templated and key not in caps_written:
                 caps_templated.append(str(key))
@@ -170,10 +156,10 @@ def inspect_build(
             if cap in caps_templated:
                 caps_templated.remove(str(cap))
         fail_map = provenance.get("coder_failures") or {}
-        for key, reason in fail_map.items():
-            text = str(reason)
-            if _is_real_timeout(text) and text not in timeouts:
-                timeouts.append(f"{key}: {text[:200]}")
+        for key in _timed_out_keys(provenance.get("coder_failure_kinds") or {}):
+            line = f"{key}: {str(fail_map.get(key, ''))[:200]}"
+            if line not in timeouts:
+                timeouts.append(line)
 
     dispatch = dict((state or {}).get("brief_dispatch") or {})
     # Promote successful CLI keep-path ids. Do not credit unused/failed CLI

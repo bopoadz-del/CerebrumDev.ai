@@ -1,57 +1,5 @@
 {
-  "files": {
-    "backend/app/factory/build/acceptance_floor.py": {
-      "word_list": {
-        "_RETRIEVAL_HINTS": 1,
-        "inline:./": 1
-      }
-    },
-    "backend/app/factory/build/block_inputs.py": {
-      "word_list": {
-        "_ROSTER_CONSULTS_PAYLOAD": 1
-      }
-    },
-    "backend/app/factory/build/budget_inspect.py": {
-      "word_list": {
-        "_REAL_TIMEOUT_HINTS": 1
-      }
-    },
-    "backend/app/factory/build/coder_session.py": {
-      "word_list": {
-        "_BILLING_HINTS": 1,
-        "_EMPTY_REFUSE_HINTS": 1,
-        "_MODEL_DENIED_HINTS": 1,
-        "inline:deepseek": 1,
-        "inline:model": 1
-      }
-    },
-    "backend/app/factory/build/codewhale_worker.py": {
-      "word_list": {
-        "inline:write": 1
-      }
-    },
-    "backend/app/factory/build/level_grade.py": {
-      "word_list": {
-        "CLI_FOUNDING_HONESTY_MISS": 1
-      }
-    },
-    "backend/app/factory/build/network_posture.py": {
-      "word_list": {
-        "P1_FORBIDDEN": 1,
-        "inline:postgres": 1
-      }
-    },
-    "backend/app/factory/build/supply_chain.py": {
-      "word_list": {
-        "_OUTBOUND_MARKERS": 1
-      }
-    },
-    "backend/app/factory/build/writer_behaviour.py": {
-      "word_list": {
-        "inline:CREATE TABLE": 1
-      }
-    }
-  },
+  "files": {},
   "forms": [
     "session_id",
     "live_snapshot",
@@ -66,5 +14,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 15
+  "total": 0
 }

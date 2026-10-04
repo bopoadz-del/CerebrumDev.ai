@@ -42,6 +42,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 logger = logging.getLogger("cerebrumdev.factory.runner")
 
+from app.factory.build.failure_kinds import failure_kind
 from app.factory.build.authority import (
     BUILD_PHASES,
     SEALED_AFTER_CLONER,
@@ -1474,7 +1475,11 @@ class RoleRunner:
                         EventKind.PHASE_ABORTED,
                         role=role,
                         detail=str(exc),
-                        payload={"reason": reason, "location": location},
+                        payload={
+                            "reason": reason,
+                            "location": location,
+                            "failure_kind": failure_kind(exc),
+                        },
                     )
                     logger.error(
                         "phase aborted: role=%s reason=%s location=%s",

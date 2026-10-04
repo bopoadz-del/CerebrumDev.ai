@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import re
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
@@ -704,8 +704,52 @@ def _looks_like_sql_ddl_line(line: str) -> bool:
     return _SQL_COL_RE.match(s) is not None
 
 
+_EXCEPTION_LINE_RE = re.compile(r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*): (.*)$")
+
+
+def _exception_class(dotted: str) -> Optional[type]:
+    """The exception class a traceback line names, resolved -- or None.
+
+    ``sqlalchemy.exc.OperationalError`` imports ``sqlalchemy.exc`` and reads
+    the attribute; a bare name is looked up in ``builtins``. Only a real
+    ``BaseException`` subclass counts, so prose that happens to contain a
+    colon is never mistaken for an exception.
+    """
+    import builtins
+    import importlib
+
+    module_name, _, name = dotted.rpartition(".")
+    try:
+        holder = importlib.import_module(module_name) if module_name else builtins
+    except Exception:  # noqa: BLE001 -- an unimportable name is not a class
+        return None
+    found = getattr(holder, name, None)
+    return found if isinstance(found, type) and issubclass(found, BaseException) else None
+
+
+def _database_error_types() -> tuple:
+    """The roots of every database / migration error the probe can raise:
+    the DB-API error base (sqlite3) and SQLAlchemy's error base. Subclasses
+    are found by the hierarchy, never by their names."""
+    import sqlite3
+
+    roots: list = [sqlite3.Error]
+    try:
+        from sqlalchemy.exc import SQLAlchemyError
+
+        roots.append(SQLAlchemyError)
+    except ImportError:  # pragma: no cover - sqlalchemy is a backend dependency
+        pass
+    return tuple(roots)
+
+
 def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
-    """Turn unmarked sqlite/alembic stderr into one GATE-FINDING sentence.
+    """Turn unmarked probe stderr into one GATE-FINDING sentence.
+
+    Read from the stderr's structure, not its words: the traceback's own
+    exception line, resolved to its class and judged by the class hierarchy
+    (a database error is a schema/migration halt), and SQL DDL recognised by
+    its grammar (``_looks_like_sql_ddl_line``).
 
     Live veterinary-care (sess_3daeca83ae9d4286): the probe crashed during
     import/migration, SQLAlchemy dumped the CREATE TABLE body to stderr,
@@ -713,33 +757,22 @@ def classify_unmarked_probe_failure(raw_lines: list[str]) -> str:
     first column line (``scheduled_time TEXT,``) instead of a reason.
     """
     nonempty = [ln.strip() for ln in raw_lines if ln.strip()]
+    raised = None
     for ln in nonempty:
-        if any(
-            tok in ln
-            for tok in (
-                "OperationalError",
-                "IntegrityError",
-                "ProgrammingError",
-                "CompileError",
-                "StatementError",
-            )
-        ):
-            msg = ln.split("[SQL:", 1)[0].strip()
-            if msg and not _looks_like_sql_ddl_line(msg):
-                return f"{SCHEMA_SQL_HALT}: {msg[:240]}"
-    text = "\n".join(nonempty)
-    if any(
-        tok in text
-        for tok in (
-            "CREATE TABLE",
-            "PRIMARY KEY",
-            "sqlite3",
-            "alembic",
-            "OperationalError",
-        )
-    ):
+        match = _EXCEPTION_LINE_RE.match(ln)
+        if match:
+            cls = _exception_class(match.group(1))
+            if cls is not None:
+                raised = (cls, match.group(1), match.group(2))
+    if raised is not None:
+        cls, name, message = raised
+        message = message.split("[SQL:", 1)[0].strip()
+        if issubclass(cls, _database_error_types()):
+            return f"{SCHEMA_SQL_HALT}: {name}: {message}"[:280]
+        return f"workspace probe crashed: {name}: {message}"[:280]
+    if any(_looks_like_sql_ddl_line(ln) for ln in nonempty):
         return (
-            f"{SCHEMA_SQL_HALT}: sqlite/alembic printed DDL without a "
+            f"{SCHEMA_SQL_HALT}: the database printed DDL without a "
             "GATE-FINDING (probe crashed during import or migration)"
         )
     last = next(
