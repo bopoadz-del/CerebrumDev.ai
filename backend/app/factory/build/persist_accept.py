@@ -41,7 +41,7 @@ never a deterministic contract template and never a claimed ≥2h CLI session.
 
 from __future__ import annotations
 
-import re
+import ast
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -295,20 +295,54 @@ def persist_handler_rel(capability_id: str) -> Path:
     return Path("app") / "actions" / f"{name}.py"
 
 
+def _persist_calls(text: str) -> Optional[List[ast.Call]]:
+    """The calls in a module that persist a record, read from its syntax
+    tree: ``_persist_record(...)``, ``store.save(...)`` or any ``save`` call
+    handed the request ``payload``. None when the source does not parse."""
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return None
+    found: List[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        receiver = func.value.id if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) else ""
+        passes_payload = any(isinstance(a, ast.Name) and a.id == "payload" for a in node.args)
+        if name == "_persist_record" or (name == "save" and (receiver == "store" or passes_payload)):
+            found.append(node)
+    return found
+
+
 def handler_declares_persist(text: str, entity: str) -> bool:
     """True when the handler body persists directly (a Phase 2 §0.2 violation).
 
     Persistence is route-scoped: the ROUTE's tenant-scoped save(payload)
     writes the request after ActionStatus.SUCCESS. A handler that still
     calls _persist_record / store.save / save(payload) has no tenant and
-    must be regenerated through the pure-dispatch envelope.
+    must be regenerated through the pure-dispatch envelope. Read from the
+    handler's syntax tree, never its text.
     """
-    blob = text or ""
-    return (
-        "_persist_record(" in blob
-        or "store.save(" in blob
-        or "save(payload)" in blob
-    )
+    return bool(_persist_calls(text))
+
+
+def _saved_tables(text: str) -> List[str]:
+    """Constant table names a module hands to ``store.save``."""
+    out: List[str] = []
+    for call in _persist_calls(text) or []:
+        if call.args and isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str):
+            out.append(call.args[0].value)
+    return out
+
+
+def _string_constants(text: str) -> set:
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return set()
+    return {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
 
 
 def persist_round_trip_errors(
@@ -338,8 +372,9 @@ def persist_round_trip_errors(
             store_src = store_py.read_text(encoding="utf-8")
         except OSError:
             store_src = ""
+        declared = _string_constants(store_src)
         for entity in sorted(set(entities.values())):
-            if f'"{entity}"' not in store_src and f"'{entity}'" not in store_src:
+            if entity not in declared:
                 errors.append(f"store.COLUMNS missing persist entity {entity}")
     else:
         errors.append("app/store.py is missing")
@@ -351,7 +386,10 @@ def persist_round_trip_errors(
             route_src = routes.read_text(encoding="utf-8")
         except OSError:
             route_src = ""
-    if route_src and "save(payload)" not in route_src:
+    if route_src and not any(
+        any(isinstance(a, ast.Name) and a.id == "payload" for a in call.args)
+        for call in (_persist_calls(route_src) or [])
+    ):
         errors.append("app/routes.py does not persist via save(payload)")
 
     for cid, entity in entities.items():
@@ -365,7 +403,7 @@ def persist_round_trip_errors(
             errors.append(f"handler {cid} unreadable: {exc}")
             continue
         if handler_declares_persist(text, entity):
-            wrong = re.findall(r"store\.save\(\s*['\"]([^'\"]+)['\"]", text)
+            wrong = _saved_tables(text)
             tables = sorted({t for t in wrong if t not in _SKIP_ALEMBIC_TABLES})
             if not tables:
                 tables = [entity]

@@ -82,6 +82,28 @@ class ReuseAcceptHalt(ValueError):
     """WRITER must not claim done: REUSE schema-sample would Unknown action."""
 
 
+def _passes_action_none(text: str) -> bool:
+    """A call to ``execute`` / ``<x>.execute`` with ``action=None``, read
+    from the syntax tree (never a pattern over the text)."""
+    import ast
+
+    try:
+        tree = ast.parse(text or "")
+    except SyntaxError:
+        return False
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "execute":
+            continue
+        for kw in node.keywords:
+            if kw.arg == "action" and isinstance(kw.value, ast.Constant) and kw.value.value is None:
+                return True
+    return False
+
+
 def _harvest_candidate_ids(block_id: str) -> List[str]:
     """Exact id plus the Store ``_v2`` / kit-shelf alias (formula_executor)."""
     bid = str(block_id or "").strip()
@@ -402,7 +424,7 @@ def reuse_accept_handler_errors(
             f"{prefix}{bid}: {REUSE_ACCEPT_MISS} — no BLOCK_DEFAULT_ACTIONS "
             f"entry ({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"
         )
-    if re.search(r"execute\s*\([^)]*action\s*=\s*None", text or ""):
+    if _passes_action_none(text):
         errors.append(
             f"{prefix}execute() passes action=None "
             f"({PRODUCT_UNKNOWN_ACTION_NONE_HALT})"

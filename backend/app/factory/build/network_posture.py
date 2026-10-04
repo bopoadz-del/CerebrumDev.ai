@@ -68,7 +68,9 @@ def outbound_url(value: str) -> str:
     host = (parts.hostname or "").lower()
     if not parts.scheme or not host:
         return ""
-    if host in _LOOPBACK or host.endswith(".localhost"):
+    # RFC 6761: "localhost" and every name under the .localhost TLD loop
+    # back -- decided by the host name's last DNS label.
+    if host.rstrip(".").split(".")[-1] in _LOOPBACK:
         return ""
     try:
         address = ipaddress.ip_address(host)

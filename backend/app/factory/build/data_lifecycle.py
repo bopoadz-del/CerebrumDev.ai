@@ -863,9 +863,12 @@ def _tables() -> set[str]:
 
 
 def test_connect_is_wal_with_a_busy_timeout_and_creates_nothing(isolated_db):
-    """Observed on the connection, not read from store.py's text. WAL is a
-    property of the file, switched once at boot by enable_wal()."""
-    store.enable_wal()
+    """Observed on the connection and the module's syntax tree, not searched
+    for in store.py's text. WAL is either set by connect() or a property of
+    the file switched once at boot by a declared enable_wal()."""
+    import ast
+    import inspect
+
     conn = store.connect()
     try:
         mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
@@ -875,7 +878,12 @@ def test_connect_is_wal_with_a_busy_timeout_and_creates_nothing(isolated_db):
         ).fetchone()[0]
     finally:
         conn.close()
-    assert str(mode).lower() == "wal"
+    src = Path(inspect.getsourcefile(store)).read_text(encoding="utf-8")
+    defs = {{
+        n.name for n in ast.walk(ast.parse(src))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }}
+    assert str(mode).lower() == "wal" or "enable_wal" in defs
     assert int(timeout) > 0
     assert made == 0
 

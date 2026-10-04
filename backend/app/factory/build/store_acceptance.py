@@ -11,6 +11,7 @@ plant a paragraph and get a hit — skip is forbidden there.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -353,10 +354,18 @@ def acceptance_surface_incomplete(root: Path | str) -> bool:
     if not routes.is_file():
         return True
     try:
-        text = routes.read_text(encoding="utf-8")
-    except OSError:
+        tree = ast.parse(routes.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
         return True
-    return "require_platform_token" not in text or "reject_invalid_payload" not in text
+    # The two guards are names the routes module USES (a call or a reference),
+    # read from its syntax tree -- never a search of the file's text.
+    used = (
+        {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        | {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
+        | {a.asname or a.name for n in ast.walk(tree)
+           if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+    )
+    return not {"require_platform_token", "reject_invalid_payload"} <= used
 
 
 def acceptance_export_blocker(
@@ -851,6 +860,11 @@ def render_acceptance_script(blueprint: Any = None) -> str:
     ``None`` (no brief) raises every signal, so the advisory set is the static
     one — byte-for-byte what it was before brief-driven applicability existed."""
     names = ", ".join(repr(n) for n in ACCEPTANCE_CHECK_NAMES)
+    # The Factory owns ci.yml (re-stamped before every TESTER): the harness
+    # measures that the product's CI IS that workflow, by digest.
+    ci_digest = hashlib.sha256(
+        render_github_ci().replace("\r\n", "\n").encode("utf-8")
+    ).hexdigest()
     advisory = ", ".join(repr(n) for n in sorted(_floor_advisory_ids(blueprint)))
     from app.factory.build.acceptance_floor import brief_signals
     from app.factory.build.writer_phases import RAG_INGEST_PATHS, RAG_QUERY_PATHS
@@ -875,13 +889,107 @@ import ast
 import hashlib
 import json
 import os
-import re
 import sys
 import uuid
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+#: sha256 of the Factory's own full-suite CI workflow (LF-normalised).
+CI_SHA256 = {ci_digest!r}
+
+
+def _parse(path: Path) -> Optional[ast.AST]:
+    try:
+        return ast.parse(path.read_text(encoding="utf-8", errors="ignore"))
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _dotted(expr: ast.AST) -> str:
+    parts: List[str] = []
+    while isinstance(expr, ast.Attribute):
+        parts.append(expr.attr)
+        expr = expr.value
+    if isinstance(expr, ast.Name):
+        parts.append(expr.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _aliases(tree: ast.AST) -> Dict[str, str]:
+    """Local name -> the module or object an import bound it to."""
+    out: Dict[str, str] = {{}}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                out[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            mod = "." * node.level + (node.module or "")
+            for a in node.names:
+                out[a.asname or a.name] = (mod + "." + a.name) if mod else a.name
+    return out
+
+
+def _callees(tree: ast.AST) -> List[Tuple[str, ast.Call]]:
+    """(callee resolved through the module's imports, call) for every call."""
+    alias = _aliases(tree)
+    out: List[Tuple[str, ast.Call]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _dotted(node.func)
+            if name:
+                head, _, rest = name.partition(".")
+                base = alias.get(head, head)
+                out.append((base + ("." + rest if rest else ""), node))
+    return out
+
+
+def _env_reads(tree: ast.AST) -> set:
+    """Environment keys the module reads (os.environ.get / os.getenv /
+    os.environ[...]), by constant key."""
+    keys: set = set()
+    readers = {{"os.environ.get", "os.getenv"}}
+    for name, call in _callees(tree):
+        if name in readers and call.args and isinstance(call.args[0], ast.Constant):
+            keys.add(call.args[0].value)
+    alias = _aliases(tree)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
+            head, _, rest = _dotted(node.value).partition(".")
+            if (alias.get(head, head) + ("." + rest if rest else "")) == "os.environ":
+                keys.add(node.slice.value)
+    return keys
+
+
+def _imports_module(tree: ast.AST, dotted: str) -> bool:
+    """Does the module import ``dotted`` -- absolutely, from its parent
+    package, or as a relative sibling?"""
+    parent, _, leaf = dotted.rpartition(".")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(a.name == dotted for a in node.names):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            names = {{a.name for a in node.names}}
+            if node.level == 0 and node.module == dotted:
+                return True
+            if node.level == 0 and node.module == parent and leaf in names:
+                return True
+            if node.level >= 1 and (node.module == leaf or (not node.module and leaf in names)):
+                return True
+    return False
+
+
+class _Tags(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: set = set()
+
+    def handle_starttag(self, tag, attrs):  # noqa: ARG002 -- tags only
+        self.tags.add(tag.lower())
+
+
 CHECKS = [{names}]
 # Reported and scored, never a veto -- same source as CHECKS (the floor file).
 ADVISORY = [{advisory}]
@@ -1103,7 +1211,14 @@ def check_ui_served_200(http: _Http) -> Tuple[str, str]:
     headers = getattr(resp, "headers", {{}}) or {{}}
     if hasattr(headers, "get"):
         ctype = str(headers.get("content-type") or headers.get("Content-Type") or "")
-    if "html" in ctype.lower() or "<html" in text.lower() or "<!doctype" in text.lower():
+    # The media type, or an <html> element the HTML parser actually finds.
+    media = ctype.split(";", 1)[0].strip().lower()
+    tags = _Tags()
+    try:
+        tags.feed(text)
+    except Exception:  # noqa: BLE001 -- unparseable is simply not HTML
+        pass
+    if media == "text/html" or "html" in tags.tags:
         return "PASS", "GET / HTTP 200 HTML"
     return "FAIL", "GET / was 200 but not served UI (content-type=%s)" % ctype
 
@@ -1202,23 +1317,29 @@ def check_single_persistence_root() -> Tuple[str, str]:
     store = ROOT / "app" / "store.py"
     if not store.is_file():
         return "FAIL", "app/store.py missing"
-    text = store.read_text(encoding="utf-8")
-    env_hits = len(re.findall(r"STORAGE_PATH", text))
-    db_names = set(re.findall(r"""['\"]([^'\"]+\\.db)['\"]""", text))
-    if env_hits < 1:
+    tree = _parse(store)
+    if tree is None:
+        return "FAIL", "app/store.py does not parse"
+    consts = [n.value for n in ast.walk(tree)
+              if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    if "STORAGE_PATH" not in set(consts):
         return "FAIL", "STORAGE_PATH not used"
+    db_names = {{c for c in consts if Path(c).suffix == ".db"}}
     if len(db_names) > 1:
         return "FAIL", "multiple db files: " + ", ".join(sorted(db_names))
-    extra_roots = [
-        line
-        for line in text.splitlines()
-        if re.search(r"sqlite3\\.connect\\(|open\\(.*\\.db", line)
-        and "STORAGE_PATH" not in line
-        and "platform.db" not in line
-        and not line.strip().startswith("#")
-    ]
+    # A database opened by a call that names neither the STORAGE_PATH root nor
+    # the platform file -- read from the call's own arguments.
+    extra_roots = []
+    for name, call in _callees(tree):
+        args = {{n.value for n in ast.walk(call)
+                if isinstance(n, ast.Constant) and isinstance(n.value, str)}}
+        opens_db = name == "sqlite3.connect" or (
+            name == "open" and any(Path(a).suffix == ".db" for a in args)
+        )
+        if opens_db and "STORAGE_PATH" not in args and "platform.db" not in args:
+            extra_roots.append(ast.unparse(call))
     if extra_roots:
-        return "FAIL", "connect() outside STORAGE_PATH: " + extra_roots[0].strip()[:80]
+        return "FAIL", "connect() outside STORAGE_PATH: " + extra_roots[0][:80]
     return "PASS", "one STORAGE_PATH root (%s)" % (next(iter(db_names), "platform.db"))
 
 
@@ -1226,24 +1347,13 @@ def check_ci_present_and_full_suite() -> Tuple[str, str]:
     ci = ROOT / ".github" / "workflows" / "ci.yml"
     if not ci.is_file():
         return "FAIL", ".github/workflows/ci.yml missing"
-    text = ci.read_text(encoding="utf-8")
-    run_lines = [
-        line
-        for line in text.splitlines()
-        if "pytest" in line and not line.lstrip().startswith("#")
-    ]
-    if not run_lines:
-        return "FAIL", "CI does not invoke pytest"
-    has_full = any(
-        ("python -m pytest tests" in line or "pytest tests" in line)
-        and "not pilot" not in line
-        for line in run_lines
-    )
-    if has_full:
-        return "PASS", "CI runs pytest tests"
-    if any("not pilot" in line for line in run_lines):
-        return "FAIL", "CI wires only pytest -m not-pilot — not the full suite"
-    return "FAIL", "CI pytest line is not a full suite"
+    # ci.yml is a Factory-owned file, re-stamped from the Factory's full-suite
+    # workflow before every TESTER: the measure is that the product's CI IS
+    # that workflow (by digest), never a search of its lines for words.
+    raw = ci.read_bytes().replace(b"\\r\\n", b"\\n")
+    if hashlib.sha256(raw).hexdigest() == CI_SHA256:
+        return "PASS", "CI is the Factory's full-suite workflow (python -m pytest tests)"
+    return "FAIL", "ci.yml is not the Factory's full-suite workflow (edited or stale)"
 
 
 def check_handler_bodies_distinct() -> Tuple[str, str]:
@@ -1308,12 +1418,15 @@ def check_migration_no_create_all() -> Tuple[str, str]:
     start-up, so the migration becomes decoration and the first deploy
     against a real database diverges from what the tests ran on.
     """
+    def _calls(tree, attr):
+        return [name for name, call in _callees(tree)
+                if isinstance(call.func, ast.Attribute) and call.func.attr == attr
+                or isinstance(call.func, ast.Name) and call.func.id == attr]
+
     offenders = []
     for rel in ("app/store.py", "app/main.py", "app/db.py", "app/models.py"):
-        path = ROOT / rel
-        if path.is_file() and "create_all" in path.read_text(
-            encoding="utf-8", errors="ignore"
-        ):
+        tree = _parse(ROOT / rel)
+        if tree is not None and _calls(tree, "create_all"):
             offenders.append(rel)
     versions = ROOT / "alembic" / "versions"
     if not versions.is_dir():
@@ -1323,10 +1436,14 @@ def check_migration_no_create_all() -> Tuple[str, str]:
         return "FAIL", "no alembic revision: the schema is not migrated"
     has_ddl = False
     for revision in revisions:
-        text = revision.read_text(encoding="utf-8", errors="ignore")
-        if "create_all" in text:
+        tree = _parse(revision)
+        if tree is None:
+            continue
+        if _calls(tree, "create_all"):
             offenders.append("alembic/versions/" + revision.name)
-        if "op.create_table" in text:
+        # Real DDL: a call to alembic's op.create_table, resolved by import.
+        if any(name.rpartition(".")[0].rpartition(".")[2] == "op"
+               for name in _calls(tree, "create_table")):
             has_ddl = True
     if offenders:
         return "FAIL", "create_all in " + ", ".join(sorted(set(offenders)))
@@ -1344,29 +1461,57 @@ def _capability_stems() -> List[str]:
     )
 
 
-NEGATIVE_STATUS = re.compile(r"status_code\\s*==\\s*4\\d\\d")
-NEGATIVE_CODE = re.compile(r"\\b(?:400|401|403|404|409|422|429)\\b")
+#: The client-error statuses a counter-case asserts (HTTP 4xx).
+NEGATIVE_CODES = frozenset({{400, 401, 403, 404, 409, 422, 429}})
 
 
-def _negative_hits(text: str) -> int:
-    """Count counter-case ASSERTIONS, not every mention of a number.
+def _is_4xx(node: ast.AST) -> bool:
+    return (isinstance(node, ast.Constant) and isinstance(node.value, int)
+            and not isinstance(node.value, bool) and 400 <= node.value < 500)
+
+
+def _status_compare(node: ast.AST) -> bool:
+    """``<x>.status_code == 4xx`` (either side), read from the syntax tree."""
+    if not isinstance(node, ast.Compare):
+        return False
+    sides = [node.left, *node.comparators]
+    return any(isinstance(s, ast.Attribute) and s.attr == "status_code" for s in sides) and any(
+        _is_4xx(s) for s in sides
+    )
+
+
+def _negative_hits(func: ast.AST) -> int:
+    """Count counter-case ASSERTIONS in one test function, from its AST.
 
     Counting bare 4xx anywhere in a file made a 27KB shared route test hand
     its hits to every capability named in it, and a suite with nine
     counter-cases in total scored four-per-capability. A gate that passes
-    what it exists to refuse is worse than no gate.
+    what it exists to refuse is worse than no gate. Counted: each
+    ``pytest.raises`` context, each ``status_code == 4xx`` comparison, and
+    each ``assert`` naming a client-error status without such a comparison.
     """
+    alias = _aliases(func)
     hits = 0
-    for line in text.splitlines():
-        stripped = line.strip()
-        if "pytest.raises" in stripped:
+    counted = set()
+    for node in ast.walk(func):
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                expr = item.context_expr
+                if isinstance(expr, ast.Call):
+                    head, _, rest = _dotted(expr.func).partition(".")
+                    if rest == "raises" and alias.get(head, head) == "pytest":
+                        hits += 1
+        elif _status_compare(node):
             hits += 1
-            continue
-        if NEGATIVE_STATUS.search(stripped):
-            hits += 1
-            continue
-        if stripped.startswith("assert") and NEGATIVE_CODE.search(stripped):
-            hits += 1
+            counted.add(id(node))
+    for node in ast.walk(func):
+        if isinstance(node, ast.Assert):
+            inner = list(ast.walk(node.test))
+            if any(id(n) in counted for n in inner):
+                continue
+            if any(isinstance(n, ast.Constant) and n.value in NEGATIVE_CODES
+                   and not isinstance(n.value, bool) for n in inner):
+                hits += 1
     return hits
 
 
@@ -1399,7 +1544,7 @@ def check_negative_floor() -> Tuple[str, str]:
             segment = ast.get_source_segment(text, node) or ""
             if not segment:
                 continue
-            hits = _negative_hits(segment)
+            hits = _negative_hits(node)
             if not hits:
                 continue
             for stem in stems:
@@ -1424,14 +1569,21 @@ def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
     store = ROOT / "app" / "store.py"
     if not db.is_file():
         return "FAIL", "app/db.py missing: nothing decides the backend"
-    db_text = db.read_text(encoding="utf-8", errors="ignore")
-    if "DATABASE_URL" not in db_text:
+    db_tree = _parse(db)
+    if db_tree is None or "DATABASE_URL" not in _env_reads(db_tree):
         return "FAIL", "app/db.py does not read DATABASE_URL"
     if not store.is_file():
         return "FAIL", "app/store.py missing"
-    store_text = store.read_text(encoding="utf-8", errors="ignore")
-    routes = ("from app.db import" in store_text) or ("app.db" in store_text)
-    opens_own = "sqlite3.connect(" in store_text or "create_engine(" in store_text
+    store_tree = _parse(store)
+    if store_tree is None:
+        return "FAIL", "app/store.py does not parse"
+    # From the syntax tree: store.py imports app.db, and opens no database of
+    # its own (a resolved sqlite3.connect / create_engine call).
+    routes = _imports_module(store_tree, "app.db")
+    opens_own = any(
+        name == "sqlite3.connect" or name.rpartition(".")[2] == "create_engine"
+        for name, _call in _callees(store_tree)
+    )
     if not routes:
         return (
             "FAIL",
@@ -1545,30 +1697,34 @@ def check_no_token_literal() -> Tuple[str, str]:
     app_dir = ROOT / "app"
     if not app_dir.is_dir():
         return "FAIL", "app/ missing"
-    literals = ("dev-local-token-b", "dev-local-token")
-    dq, sq = chr(34), chr(39)
+    # The world-known development token values (the test bootstrap's), as
+    # exact constants -- a value comparison, not a search of text.
+    literals = frozenset({{"dev-local-token-b", "dev-local-token"}})
+    readers = {{"os.environ.get", "os.getenv"}}
+
+    def _token_read(node: ast.AST, calls: Dict[int, str]) -> bool:
+        return (isinstance(node, ast.Call) and calls.get(id(node)) in readers
+                and bool(node.args) and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "PLATFORM_TOKEN")
+
+    def _nonempty_str(node: ast.AST) -> bool:
+        return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value != ""
+
     for path in sorted(app_dir.rglob("*.py")):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        tree = _parse(path)
+        if tree is None:
             continue
         rel = path.relative_to(ROOT)
-        for no, line in enumerate(text.splitlines(), 1):
-            for lit in literals:
-                if lit in line:
-                    return "FAIL", "%s:%s bakes %s -- runtime tokens come from the environment only" % (rel, no, lit)
-            flat = "".join(line.split())
-            idx = flat.find("environ.get(")
-            if idx < 0 or "PLATFORM_TOKEN" not in flat[idx:]:
-                continue
-            seg = flat[idx:]
-            for q in (dq, sq):
-                j = seg.find("," + q)
-                if j >= 0 and not seg.startswith("," + q + q, j):
-                    return "FAIL", "%s:%s has a token default -- read the environment and fail closed instead" % (rel, no)
-                j = seg.find(")or" + q)
-                if j >= 0 and not seg.startswith(")or" + q + q, j):
-                    return "FAIL", "%s:%s has an env-fallback token -- read the environment and fail closed instead" % (rel, no)
+        calls = {{id(call): name for name, call in _callees(tree)}}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and node.value in literals:
+                return "FAIL", "%s:%s bakes %s -- runtime tokens come from the environment only" % (rel, node.lineno, node.value)
+            if _token_read(node, calls) and len(node.args) > 1 and _nonempty_str(node.args[1]):
+                return "FAIL", "%s:%s has a token default -- read the environment and fail closed instead" % (rel, node.lineno)
+            if (isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)
+                    and any(_token_read(v, calls) for v in node.values)
+                    and any(_nonempty_str(v) for v in node.values)):
+                return "FAIL", "%s:%s has an env-fallback token -- read the environment and fail closed instead" % (rel, node.lineno)
     return "PASS", "no token literal or fallback in runtime app/**"
 
 

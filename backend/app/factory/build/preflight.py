@@ -11,6 +11,7 @@ mismatch between the two is FAIL. Does not emit PILOT_READY.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import sys
@@ -108,16 +109,26 @@ def inspect_kernel_ownership() -> Dict[str, Any]:
     from app.factory.build import runner as runner_mod
 
     runner_src = Path(runner_mod.__file__).read_text(encoding="utf-8")
+    # Identifiers the runner module binds or references, from its syntax tree.
+    _tree = ast.parse(runner_src)
+    runner_names = (
+        {n.id for n in ast.walk(_tree) if isinstance(n, ast.Name)}
+        | {n.attr for n in ast.walk(_tree) if isinstance(n, ast.Attribute)}
+        | {a.asname or a.name for n in ast.walk(_tree)
+           if isinstance(n, (ast.Import, ast.ImportFrom)) for a in n.names}
+        | {n.name for n in ast.walk(_tree)
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    )
     return {
         "execute_action": execute_action.__module__ + ".execute_action",
         "execute_action_callable": callable(execute_action),
         "_coder_route_body_is_None": coder_none,
         "prepare_pilot_workspace": "absent",
-        "prepare_pilot_workspace_in_runner": "prepare_pilot_workspace" in runner_src,
+        "prepare_pilot_workspace_in_runner": "prepare_pilot_workspace" in runner_names,
         "prepare_pilot_workspace_in_pilot": hasattr(pilot_mod, "prepare_pilot_workspace"),
         "ok": coder_none
         and callable(execute_action)
-        and "prepare_pilot_workspace" not in runner_src
+        and "prepare_pilot_workspace" not in runner_names
         and not hasattr(pilot_mod, "prepare_pilot_workspace"),
     }
 
@@ -167,7 +178,7 @@ def is_admitted_stage_evidence(name: str) -> bool:
     S4 has one canonical name. ``S4_kernel.json`` is a rejected alias.
     Other stages may still carry more than one distinct record (S5, S7).
     """
-    if not name.endswith(".json") or name.endswith(".reread.json"):
+    if Path(name).suffix != ".json" or Path(name).suffixes[-2:] == [".reread", ".json"]:
         return False
     if name in S4_EVIDENCE_ALIASES:
         return False
