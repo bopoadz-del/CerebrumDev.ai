@@ -20,7 +20,7 @@ const LETTINGS_BLUEPRINT = {
   product_name: 'Residential Lettings Platform',
   vertical: 'residential_lettings',
   summary: 'Factory golden for a residential-lettings platform.',
-  drafting_mode: 'golden_lettings',
+  drafting_mode: 'golden',
   drafting_note: 'Drafted from the golden residential-lettings blueprint.',
   capabilities: [
     {

@@ -85,7 +85,7 @@ describe('Your Platforms — coding-agent build', () => {
       blueprint: {
         product_name: 'Residential Lettings Platform',
         vertical: 'residential_lettings',
-        drafting_mode: 'golden_lettings',
+        drafting_mode: 'golden',
       },
       blueprint_approved: false,
     })

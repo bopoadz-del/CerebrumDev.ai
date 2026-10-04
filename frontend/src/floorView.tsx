@@ -97,7 +97,7 @@ export function BlueprintCard({
           >
             {blueprint.drafting_mode === 'architect_llm'
               ? 'architect LLM'
-              : (blueprint.drafting_mode || '').startsWith('golden_')
+              : blueprint.drafting_mode === 'golden'
                 ? 'golden blueprint'
                 : 'template fallback — no LLM'}
           </span>

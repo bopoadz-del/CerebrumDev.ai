@@ -61,12 +61,13 @@ from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.coder import _WHOLE_JOB_SYSTEM
 from app.factory.product_architect import (
-    lettings_golden_path,
     plan_blueprint,
 )
 
 #: A sample keyword-fallback plan -- test data only.
 SAMPLE_FALLBACK_CAPS = ("veterinary_care_core", "audit", "dashboard")
+
+LETTINGS_GOLDEN = Path(__file__).resolve().parents[3] / "blueprints/lettings/residential_lettings.v1.yaml"
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -131,14 +132,9 @@ def test_lettings_and_smoke_still_lint_with_persist_accept():
 
 
 def test_lettings_golden_roster_and_fingerprint_unchanged():
-    from app.factory.product_architect import draft_blueprint_from_brief as draft
-
-    bp = draft(
-        "build a platform for residential lettings",
-        use_llm=False,
-    )
+    bp = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in bp.capabilities} == LIVE_LETTINGS_CAPS
-    golden = load_blueprint(lettings_golden_path())
+    golden = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in golden.capabilities} == LIVE_LETTINGS_CAPS
     compiled = compile_brief(bp, plan_blueprint(bp))
     fp = brief_fingerprint(compiled)

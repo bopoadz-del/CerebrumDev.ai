@@ -44,14 +44,6 @@ def _repo_root() -> Path:
     return factory_repo_root()
 
 
-def steward_golden_path() -> Path:
-    return _repo_root() / "blueprints" / "steward" / "steward.v1.yaml"
-
-
-def lettings_golden_path() -> Path:
-    return _repo_root() / "blueprints" / "lettings" / "residential_lettings.v1.yaml"
-
-
 def session_domain_from_blueprint(blueprint: Any) -> str:
     """Session ``config.domain`` for a product draft.
 
@@ -73,82 +65,6 @@ def session_domain_from_blueprint(blueprint: Any) -> str:
     if vertical:
         return vertical.replace("_", "-")
     return "construction"
-
-
-def golden_for_vertical(vertical_hint: Optional[str]) -> Optional[Path]:
-    """The golden blueprint that declares it serves this vertical hint.
-
-    Each golden states its own hints (``serves_verticals``); a blueprint that
-    declares none is never a golden for any hint.
-    """
-    want = str(vertical_hint or "").strip().lower().replace("-", "_").replace(" ", "_")
-    if not want:
-        return None
-    for path in sorted((_repo_root() / "blueprints").rglob("*.yaml")):
-        try:
-            bp = load_blueprint(path)
-        except Exception:  # noqa: BLE001 -- not a product blueprint
-            continue
-        if want in {str(v).strip().lower() for v in bp.serves_verticals}:
-            return path
-    return None
-
-
-_LETTINGS_STEWARD_EXCLUSIONS = ("steward", "private estate", "property readiness")
-# One of these is enough. Branded Floor briefs say "Lettings Desk" / "lettings
-# CRM", not "lettings platform" — the #294 matcher missed those and the
-# keyword path then extracted property-management from "property portfolio".
-_LETTINGS_STRONG = (
-    "residential letting",
-    "residential lettings",
-    "lettings platform",
-    "letting platform",
-    "lettings desk",
-    "letting desk",
-    "lettings crm",
-    "letting crm",
-    "lettings hub",
-    "lettings agency",
-    "letting agency",
-    "tenancy application",
-)
-# Singular "letting" is ordinary English ("letting users…"). Require a
-# domain companion so we do not steal unrelated briefs.
-_LETTINGS_COMPANIONS = (
-    "landlord",
-    "tenant",
-    "tenancy",
-    "viewing",
-    "rent collection",
-    "property portfolio",
-)
-
-
-def _wants_lettings(text: str, vertical_hint: Optional[str] = None) -> bool:
-    """True when the brief is the residential-lettings golden, not keyword fallback.
-
-    Keyword drafting of "build a platform for residential lettings" used to
-    emit a GENERATE ``residential_lettings_core`` stub plus mentioned
-    blocks — a thin scaffold. The golden YAML is the live capability roster.
-
-    Branded / longer briefs (Northbridge Lettings Desk, Leeds landlords and
-    tenants, lettings CRM) must match too. Steward intent is excluded so
-    "private estate steward" still reaches the steward golden.
-    """
-    golden = golden_for_vertical(vertical_hint)
-    if golden is not None and golden.resolve() == lettings_golden_path().resolve():
-        return True
-    blob = (text or "").lower()
-    if any(key in blob for key in _LETTINGS_STEWARD_EXCLUSIONS):
-        return False
-    if any(key in blob for key in _LETTINGS_STRONG):
-        return True
-    # Plural "lettings" is the UK vertical noun (Northbridge Lettings).
-    if re.search(r"\blettings\b", blob):
-        return True
-    if re.search(r"\bletting\b", blob) and any(c in blob for c in _LETTINGS_COMPANIONS):
-        return True
-    return False
 
 
 # --- LLM drafting (gated, fail-safe) -----------------------------------------
@@ -588,8 +504,7 @@ def draft_blueprint_from_brief(
     brief: str,
     *,
     vertical_hint: Optional[str] = None,
-    use_golden_steward: bool = True,
-    use_golden_lettings: bool = True,
+    use_goldens: bool = True,
     use_llm: Optional[bool] = None,
 ) -> ProductBlueprint:
     """Draft a ProductBlueprint and stamp the honest inventory declaration.
@@ -598,18 +513,20 @@ def draft_blueprint_from_brief(
     wrapper stamps ``drafting_note`` with the factory inventory verdict when
     the vertical is not on the declared-ready list — the client must see
     "the Store has no domain kit for this" before approving, never after.
-    Golden drafts (lettings/steward) are shipped, store-backed products and
-    are exempt.
+    A golden is chosen by STRUCTURE only (``golden_match``): the draft's
+    capability ids, vertical and hint against each golden's declared
+    structure. Golden drafts are shipped, store-backed products and are
+    exempt from the inventory note.
     """
     bp = _draft_blueprint_from_brief_inner(
         brief,
         vertical_hint=vertical_hint,
-        use_golden_steward=use_golden_steward,
-        use_golden_lettings=use_golden_lettings,
         use_llm=use_llm,
     )
-    if str(bp.drafting_mode or "").startswith("golden_"):
-        return bp
+    if use_goldens:
+        golden = _golden_for_draft(bp, vertical_hint)
+        if golden is not None:
+            return golden
     from app.factory.inventory import inventory_drafting_note
 
     note = inventory_drafting_note(str(getattr(bp, "vertical", "") or ""))
@@ -619,38 +536,50 @@ def draft_blueprint_from_brief(
     return bp
 
 
+def _golden_for_draft(
+    draft: ProductBlueprint, vertical_hint: Optional[str] = None
+) -> Optional[ProductBlueprint]:
+    """The golden whose declared structure best overlaps the draft's, if any."""
+    from app.factory.golden_match import best_golden, draft_structure, goldens
+
+    store_root = None
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        store_root = resolve_blocks_root()
+    except Exception:  # noqa: BLE001 -- no Store: score on blueprints alone
+        store_root = None
+    match = best_golden(
+        draft_structure(draft, vertical_hint),
+        goldens(_repo_root() / "blueprints", store_root),
+    )
+    if match is None:
+        return None
+    golden, score = match
+    bp = load_blueprint(golden.path)
+    bp.drafting_mode = "golden"
+    note = f"golden {golden.name}: structure overlap {score:.2f}"
+    bp.drafting_note = f"{draft.drafting_note}; {note}" if draft.drafting_note else note
+    return bp
+
+
 def _draft_blueprint_from_brief_inner(
     brief: str,
     *,
     vertical_hint: Optional[str] = None,
-    use_golden_steward: bool = True,
-    use_golden_lettings: bool = True,
     use_llm: Optional[bool] = None,
 ) -> ProductBlueprint:
     """Draft a ProductBlueprint from a user brief.
 
-    Order of preference:
-    1. Golden residential-lettings blueprint for lettings briefs (the live
-       capability roster). This wins over the LLM: a keyed Floor drafted
-       branded lettings briefs as a property-management GENERATE stub.
-    2. LLM drafting when a factory API key is configured, or when
-       ARCHITECT_LLM_DRAFTING_ENABLED / ``use_llm=True`` forces it —
-       fail-safe: any error falls through to (3). Steward still reaches the
-       LLM first so "estate" alone does not short-circuit (see
-       test_draft_routing).
-    3. Golden steward blueprint for explicit steward intent ("steward",
-       "private estate", "property readiness", or vertical_hint == "estate")
-       — deterministic fallback after LLM failure.
-    4. Deterministic keyword drafting (always works, no keys needed).
+    1. LLM drafting when a factory API key is configured, or when
+       ARCHITECT_LLM_DRAFTING_ENABLED / ``use_llm=True`` forces it --
+       fail-safe: any error falls through to (2).
+    2. Deterministic drafting (always works, no keys needed).
+
+    Golden selection is not here: it compares the DRAFT's structure with
+    each golden's (``_golden_for_draft``), never the brief's words.
     """
     text = (brief or "").lower()
-    # Lettings golden is first-choice, not an LLM fallback. Production is
-    # keyed; LLM-first routing is how Northbridge became property-management.
-    if use_golden_lettings and _wants_lettings(text, vertical_hint):
-        bp = load_blueprint(lettings_golden_path())
-        bp.drafting_mode = "golden_lettings"
-        return bp
-
     if use_llm is None:
         use_llm = llm_drafting_enabled()
     fallback_note = "LLM drafting disabled" if not use_llm else None
@@ -666,17 +595,6 @@ def _draft_blueprint_from_brief_inner(
             # working architect.
             logger.warning("LLM drafting failed, falling back: %s", exc)
             fallback_note = f"LLM drafting failed ({type(exc).__name__}); deterministic fallback used"
-
-    wants_steward = any(
-        k in text for k in ("steward", "private estate", "property readiness")
-    )
-    golden = golden_for_vertical(vertical_hint)
-    hinted_steward = golden is not None and golden.resolve() == steward_golden_path().resolve()
-    if use_golden_steward and (wants_steward or hinted_steward):
-        bp = load_blueprint(steward_golden_path())
-        bp.drafting_mode = "golden_steward"
-        bp.drafting_note = fallback_note
-        return bp
 
     dual = sorted(dual_registered_ids())
     # Blocks the brief actually mentions become REUSE capabilities; audit is

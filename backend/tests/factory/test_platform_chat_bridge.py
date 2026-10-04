@@ -155,8 +155,8 @@ def test_draft_from_chat_parks_blueprint_on_session():
     assert state.product_design.blueprint_approved is False
     assert state.product_design.generation is None
     assert platform_chat_flow.has_pending_blueprint(state)
-    # estate-related brief -> golden steward source
-    assert result["source"] == "golden_steward"
+    # Words do not pick a golden; this draft overlaps none by structure.
+    assert result["source"] == "drafted"
 
 
 def test_approve_and_generate_produces_product(tmp_path):

@@ -72,8 +72,7 @@ class TestDraftCarriesTheDeclaration:
             "Build a platform for a veterinary clinic",
             vertical_hint="veterinary",
             use_llm=False,
-            use_golden_lettings=False,
-            use_golden_steward=False,
+            use_goldens=False,
         )
         assert bp.drafting_note and "no domain kit" in bp.drafting_note
 
@@ -83,7 +82,6 @@ class TestDraftCarriesTheDeclaration:
             "Build a platform for a retail chain",
             vertical_hint="retail",
             use_llm=False,
-            use_golden_lettings=False,
-            use_golden_steward=False,
+            use_goldens=False,
         )
         assert not bp.drafting_note or "inventory" not in bp.drafting_note

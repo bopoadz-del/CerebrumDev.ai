@@ -67,8 +67,8 @@ class ProductBlueprint(BaseModel):
     rigor: str = "production"
     human_authority: bool = True
     factory_scenario: FactoryScenario = FactoryScenario.CREATE_PRODUCT
-    # Provenance of the draft itself: "architect_llm" | "golden_steward" |
-    # "golden_lettings" | "keyword_fallback". The architect fails safe from
+    # Provenance of the draft itself: "architect_llm" | "golden" (chosen by
+    # structural overlap, see golden_match) | "keyword_fallback". The architect fails safe from
     # LLM to deterministic drafting, which is right for availability and
     # wrong to do silently —
     # a user whose LLM credit died must see that templates drafted this.
