@@ -102,10 +102,6 @@ def sample_for_spec(
         ftype = field.get("type") or "str"
         if field.get("allowed_values"):
             sample[name] = field["allowed_values"][0]
-        elif str(name).lower() == "status" or str(name).lower().endswith("_status"):
-            # Same envelope default as ``_sample_value``. Bare status used
-            # to emit the S10/S12 placeholder, which PRODUCT refused.
-            sample[name] = "open"
         elif ftype == "int":
             sample[name] = int(field["min"]) if field.get("min") is not None else 1
         elif ftype == "float":
@@ -866,12 +862,30 @@ def _tables() -> set[str]:
         conn.close()
 
 
-def test_store_source_has_no_create_table_if_not_exists():
-    src = Path(__file__).resolve().parents[1] / "app" / "store.py"
-    text = src.read_text(encoding="utf-8")
-    assert "CREATE TABLE" not in text
-    assert "PRAGMA journal_mode=WAL" in text
-    assert "busy_timeout" in text
+def test_connect_is_wal_with_a_busy_timeout_and_creates_nothing(isolated_db):
+    """Observed on the connection and the module's syntax tree, not searched
+    for in store.py's text. WAL is either set by connect() or a property of
+    the file switched once at boot by a declared enable_wal()."""
+    import ast
+    import inspect
+
+    conn = store.connect()
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        made = conn.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    src = Path(inspect.getsourcefile(store)).read_text(encoding="utf-8")
+    defs = {{
+        n.name for n in ast.walk(ast.parse(src))
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }}
+    assert str(mode).lower() == "wal" or "enable_wal" in defs
+    assert int(timeout) > 0
+    assert made == 0
 
 
 def test_connect_does_not_create_domain_tables(isolated_db):
@@ -1102,9 +1116,55 @@ def backfill_platform_substrate(workspace: Any) -> Dict[str, List[str]]:
     return {"written": written, "skipped": skipped}
 
 
+def _sql_creates_storage(statement: str) -> bool:
+    """True when SQLite compiles ``statement`` to a program that creates a
+    table or index. Decided by the engine (EXPLAIN, nothing executed), never
+    by searching the text; a string that is not SQL is simply not DDL."""
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        rows = conn.execute("EXPLAIN " + statement).fetchall()
+    except (sqlite3.Error, ValueError):
+        return False
+    finally:
+        conn.close()
+    return any(len(r) > 1 and r[1] == "CreateBtree" for r in rows)
+
+
+def connect_time_ddl(store_source: str) -> list:
+    """String constants in a store module that SQLite compiles to DDL. An
+    f-string's replacement fields stand in as a plain identifier."""
+    import ast
+
+    try:
+        tree = ast.parse(store_source)
+    except SyntaxError:
+        return []
+    inside = {id(v) for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for v in n.values}
+    found = []
+    for node in ast.walk(tree):
+        if id(node) in inside:
+            continue
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            text = node.value
+        elif isinstance(node, ast.JoinedStr):
+            text = "".join(
+                str(v.value) if isinstance(v, ast.Constant) else "t" for v in node.values
+            )
+        else:
+            continue
+        if _sql_creates_storage(text):
+            found.append(text.strip()[:80])
+    return found
+
+
 def assert_no_connect_time_ddl(store_source: str) -> None:
-    if "CREATE TABLE" in store_source:
-        raise ValueError("store.py still emits CREATE TABLE (schema belongs in Alembic)")
+    ddl = connect_time_ddl(store_source)
+    if ddl:
+        raise ValueError(
+            "store.py still emits table DDL (schema belongs in Alembic): " + "; ".join(ddl)
+        )
 
 
 def migration_table_names(revision_0001_source: str) -> set[str]:

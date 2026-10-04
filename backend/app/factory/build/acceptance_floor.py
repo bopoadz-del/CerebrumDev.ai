@@ -225,8 +225,9 @@ def owner_of(check_id: str, detail: str = "") -> str:
     subject = subject_of(check_id)
     if subject == SUBJECT_FACTORY_RECORD:
         return FACTORY
-    if subject.startswith("tree:"):
-        return FACTORY if _factory_rendered(subject[len("tree:"):], rendered) else PRODUCT
+    kind, _, target = subject.partition(":")
+    if kind == "tree" and target:
+        return FACTORY if _factory_rendered(target, rendered) else PRODUCT
     return PRODUCT
 
 

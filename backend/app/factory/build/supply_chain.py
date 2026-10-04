@@ -25,6 +25,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -48,8 +49,6 @@ REGISTRY_MANIFEST_URL = (
     "https://registry-1.docker.io/v2/library/python/manifests/{digest}"
 )
 
-_LATEST_RE = re.compile(r":latest(?:[^\w.-]|$)")
-_DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}\b")
 _FROM_RE = re.compile(r"^\s*FROM\s+(\S+)", re.MULTILINE | re.IGNORECASE)
 _REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(.*)$")
 _INSTALL_RE = re.compile(
@@ -91,11 +90,28 @@ def findings_for_image_ref(ref: str, *, loc: str) -> List[str]:
     ref = (ref or "").strip()
     if not ref:
         return [f"{loc}: empty image reference"]
-    if ref.endswith(":latest") or _LATEST_RE.search(ref):
+    _name, tag, digest = parse_image_ref(ref)
+    if tag == "latest":
         return [f"{loc}: :latest is not a pin ({ref})"]
-    if not _DIGEST_RE.search(ref):
+    if not is_sha256_digest(digest):
         return [f"{loc}: image is not digest-pinned ({ref})"]
     return []
+
+
+def parse_image_ref(ref: str) -> tuple:
+    """``name[:tag][@algo:hex]`` split by the image-reference grammar: the
+    digest follows ``@``; a tag is the ``:`` suffix of the LAST path component
+    (a registry ``host:port`` is not a tag)."""
+    name, _, digest = (ref or "").strip().partition("@")
+    head, _, last = name.rpartition("/")
+    repo, _, tag = last.partition(":")
+    return (head + "/" + repo if head else repo), tag, digest
+
+
+def is_sha256_digest(value: str) -> bool:
+    """``sha256:<64 lowercase hex>`` -- the content-address grammar."""
+    algo, _, hexpart = (value or "").strip().partition(":")
+    return algo == "sha256" and len(hexpart) == 64 and all(c in "0123456789abcdef" for c in hexpart)
 
 
 def scan_dockerfile(text: str, *, loc: str = "Dockerfile") -> List[str]:
@@ -118,10 +134,9 @@ def from_refs(text: str) -> List[str]:
 
 
 def extract_digest(ref: str) -> str:
-    match = _DIGEST_RE.search(ref or "")
-    if not match:
-        return ""
-    return match.group(0)[1:]  # drop leading @
+    """The ``sha256:<hex>`` an image reference is pinned to, or ""."""
+    digest = parse_image_ref(ref)[2]
+    return digest if is_sha256_digest(digest) else ""
 
 
 def scan_block_manifest(data: Dict[str, Any], *, loc: str) -> List[str]:
@@ -246,7 +261,7 @@ def fetch_registry_manifest_digest(
     the pin must still resolve.
     """
     want = (digest or "").strip()
-    if not want.startswith("sha256:") or len(want) != 71:
+    if not is_sha256_digest(want):
         return {
             "kind": "registry_manifest",
             "performed": True,
@@ -495,15 +510,28 @@ def render_cyclonedx_sbom(
     return json.dumps(doc, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
 
 
+def _floating_component(item: Mapping[str, Any]) -> bool:
+    """A component pinned to the floating ``latest`` tag, read from its own
+    fields: its version, its package URL's version (``...@<version>``), or an
+    image reference's tag."""
+    if str(item.get("version") or "") == "latest":
+        return True
+    base = str(item.get("purl") or "").partition("?")[0].partition("#")[0]
+    if base.rpartition("@")[2] == "latest" and "@" in base:
+        return True
+    return parse_image_ref(str(item.get("name") or ""))[1] == "latest"
+
+
 def assert_sbom(doc: Mapping[str, Any]) -> None:
     if doc.get("bomFormat") != "CycloneDX":
         raise SupplyChainError("SBOM bomFormat must be CycloneDX")
     if not str(doc.get("specVersion") or "").startswith("1."):
         raise SupplyChainError("SBOM specVersion must be CycloneDX 1.x JSON")
-    blob = json.dumps(doc)
-    if ":latest" in blob or _LATEST_RE.search(blob):
-        raise SupplyChainError("SBOM contains :latest — floating tags refused")
     components = doc.get("components")
+    meta = (doc.get("metadata") or {}).get("component")
+    for item in (list(components) if isinstance(components, list) else []) + [meta]:
+        if isinstance(item, dict) and _floating_component(item):
+            raise SupplyChainError("SBOM contains :latest — floating tags refused")
     if not isinstance(components, list) or not components:
         raise SupplyChainError("SBOM has no components")
     hashes = []
@@ -514,9 +542,13 @@ def assert_sbom(doc: Mapping[str, Any]) -> None:
             if isinstance(entry, dict):
                 hashes.append(str(entry.get("content") or ""))
         purl = str(item.get("purl") or "")
-        if "digest=" in purl:
+        # A package URL's qualifiers follow "?"; a digest qualifier is a key.
+        qualifiers = parse_qs(purl.partition("?")[2].partition("#")[0])
+        if "digest" in qualifiers:
             hashes.append(purl)
     recorded = PYTHON_312_SLIM_DIGEST.split(":", 1)[-1]
+    # The recorded base-image content address (hex) somewhere in the document.
+    blob = json.dumps(doc)
     if recorded not in blob:
         raise SupplyChainError("SBOM does not name the recorded python:3.12-slim digest")
 

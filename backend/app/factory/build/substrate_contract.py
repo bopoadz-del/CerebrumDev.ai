@@ -71,9 +71,10 @@ def required_names_by_module(test_sources: Iterable[str]) -> Dict[str, Set[str]]
             if not isinstance(node, ast.ImportFrom):
                 continue
             mod = node.module or ""
-            if not mod.startswith("app.") or mod.count(".") != 1:
+            parts = mod.split(".")
+            if len(parts) != 2 or parts[0] != "app":
                 continue
-            short = mod[len("app."):]
+            short = parts[1]
             for alias in node.names:
                 if alias.name != "*":
                     wanted.setdefault(short, set()).add(alias.name)

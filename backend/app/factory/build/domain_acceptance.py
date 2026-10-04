@@ -11,6 +11,7 @@ hollow queue). The fixture is inspected, never patched.
 
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -387,8 +388,6 @@ def sample_payload(capability_id: str) -> Dict[str, Any]:
         ftype = field.get("type") or "str"
         if allowed:
             payload[name] = allowed[0]
-        elif str(name).lower() == "status" or str(name).lower().endswith("_status"):
-            payload[name] = "open"
         elif ftype == "int":
             payload[name] = int(field["min"]) if field.get("min") is not None else 1
         elif ftype == "float":
@@ -1068,6 +1067,40 @@ def _basename_map(files: Dict[str, str]) -> Dict[str, str]:
     return out
 
 
+def _module_shape(src: str) -> Dict[str, Any]:
+    """What a module defines and uses, read from its syntax tree: function
+    names, referenced names, string constants, ``@<obj>.<method>`` decorators,
+    and whether any ``return`` hands back exactly ``{"status": "ok"}``."""
+    shape: Dict[str, Any] = {
+        "defs": set(), "names": set(), "consts": set(), "decorators": set(),
+        "returns_status_ok": False,
+    }
+    try:
+        tree = ast.parse(src or "")
+    except SyntaxError:
+        return shape
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            shape["defs"].add(node.name)
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                    shape["decorators"].add((target.value.id, target.attr))
+        elif isinstance(node, ast.Name):
+            shape["names"].add(node.id)
+        elif isinstance(node, ast.Attribute):
+            shape["names"].add(node.attr)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            shape["consts"].add(node.value)
+        elif isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            pairs = list(zip(node.value.keys, node.value.values))
+            if len(pairs) == 1 and all(isinstance(x, ast.Constant) for x in pairs[0]):
+                key, value = pairs[0][0].value, pairs[0][1].value
+                if key == "status" and value == "ok":
+                    shape["returns_status_ok"] = True
+    return shape
+
+
 def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
     """LotDesk cannot perform the ten outcomes on the kernel path."""
     path = resolve_lotdesk_fixture(explicit)
@@ -1077,14 +1110,20 @@ def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
     main_src = files.get("app/main.py", "")
     queue_src = files.get("app/work_queue.py", "")
     domain_src = files.get("app/domain_ops.py", "")
-    joined = "\n".join(files.values())
-    has_kernel = "def execute_action" in joined or "execute_action" in domain_src
-    has_update = "def update(" in store_src
-    has_delete = "def delete(" in store_src
-    has_put = "@router.put" in routes_src
-    has_http_delete = "@router.delete" in routes_src
-    has_process = "def mark(" in queue_src and "PROCESSED" in queue_src
-    always_200 = 'return {"status": "ok"}' in main_src or "return {'status': 'ok'}" in main_src
+    # Each module's shape, from its syntax tree -- never a search of its text.
+    store_s, routes_s, main_s, queue_s, domain_s = (
+        _module_shape(s) for s in (store_src, routes_src, main_src, queue_src, domain_src)
+    )
+    every_def: set = set()
+    for src in files.values():
+        every_def |= _module_shape(src)["defs"]
+    has_kernel = "execute_action" in every_def or "execute_action" in domain_s["names"]
+    has_update = "update" in store_s["defs"]
+    has_delete = "delete" in store_s["defs"]
+    has_put = ("router", "put") in routes_s["decorators"]
+    has_http_delete = ("router", "delete") in routes_s["decorators"]
+    has_process = "mark" in queue_s["defs"] and "PROCESSED" in (queue_s["names"] | queue_s["consts"])
+    always_200 = main_s["returns_status_ok"]
     vendor_queue = any(
         name.endswith("vendor/blocks/queue/block.py")
         or name.endswith("blocks/queue/block.py")

@@ -19,6 +19,7 @@ them into ``app.main``, leave the checker looking for quoted paths.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from typing import Any, List
 
@@ -252,7 +253,16 @@ def wire_rag_router(root: Path) -> bool:
     if not main.is_file():
         return False
     text = main.read_text(encoding="utf-8")
-    if RAG_WIRE_MARK in text or "app.rag_routes" in text:
+    # Already wired = main.py imports the keep-path module (syntax tree).
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        tree = None
+    if tree is not None and any(
+        (isinstance(n, ast.ImportFrom) and n.module == "app.rag_routes")
+        or (isinstance(n, ast.Import) and any(a.name == "app.rag_routes" for a in n.names))
+        for n in ast.walk(tree)
+    ):
         return False
     snippet = (
         "\ntry:\n"
