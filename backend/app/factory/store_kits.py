@@ -53,6 +53,8 @@ def _domain_kits(root: str) -> Dict[str, Dict[str, Any]]:
 def _reasoning_kits(root: str) -> Dict[str, Dict[str, Any]]:
     import yaml
 
+    # A kit is its two declarative files; half a kit is not a kit (the build
+    # names the missing file -- see reasoning_socket.emit).
     out: Dict[str, Dict[str, Any]] = {}
     for path in sorted((Path(root) / "app" / "blocks").glob("*/manifest.yaml")):
         if not (path.parent / "invariants.yaml").is_file():

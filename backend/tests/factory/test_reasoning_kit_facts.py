@@ -40,11 +40,15 @@ def store(tmp_path, monkeypatch):
     module = pytest.importorskip("app.factory.blocks_source")
     monkeypatch.setattr(module, "resolve_blocks_root", resolve)
 
-    def put(kit: str, manifest: dict, questions: dict = None) -> pathlib.Path:
+    def put(kit: str, manifest: dict, questions: dict = None,
+            invariants: bool = True) -> pathlib.Path:
         where = root / "app" / "blocks" / kit
         where.mkdir(parents=True, exist_ok=True)
         (where / "manifest.yaml").write_text(
             yaml.safe_dump(manifest, allow_unicode=True), encoding="utf-8")
+        # A kit is its two declarative files (half a kit is not a kit).
+        if invariants and not (where / "invariants.yaml").exists():
+            (where / "invariants.yaml").write_text("invariants: []\n", encoding="utf-8")
         if questions is not None:
             (where / "questions.yaml").write_text(
                 yaml.safe_dump(questions, allow_unicode=True), encoding="utf-8")
@@ -366,6 +370,6 @@ def test_half_a_kit_in_the_store_is_still_no_kit(store):
     store("half_a_kit", {
         "kit": "half_a_kit", "version": 1,
         "quantities": {"rate": {"units": ["currency_per_m2"]}},
-    })
+    }, invariants=False)
     facts = platform_chat_llm._reasoning_kit_facts(_state("half_a_kit"))
     assert "none matched for this vertical" in facts

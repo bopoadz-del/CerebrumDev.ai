@@ -421,15 +421,18 @@ def test_a_kit_the_store_publishes_is_reachable_with_no_factory_edit(tmp_path):
 
 
 def test_the_store_is_asked_only_by_a_caller_that_already_holds_a_root(tmp_path):
-    """Resolving the Store's root can CLONE it, and the Floor's chat leg calls
-    this per message. So a caller with no root is answered from the alias table
-    and never made to pay for a network fetch to answer a question."""
+    """Resolving the Store's root can CLONE it, so kit_for_vertical never does:
+    a caller with no root gets no kit. Aliases are the KIT'S declaration
+    (``serves_verticals`` in its manifest), so they resolve through a root --
+    the Factory holds no alias table."""
     blueprint = types.SimpleNamespace(vertical="a_kit_nobody_hardcoded")
     assert reasoning_socket.kit_for_vertical(blueprint) is None
     assert reasoning_socket.kit_for_vertical(blueprint, store_root=None) is None
-    # An alias still resolves with no root at all: aliases are Factory knowledge.
-    assert reasoning_socket.kit_for_vertical(
-        types.SimpleNamespace(vertical="metro")) == "rail"
+    root = _store(tmp_path, "zorblat_yards", manifest={
+        "kit": "zorblat_yards", "version": 1, "serves_verticals": ["zorblat", "yards"]})
+    alias = types.SimpleNamespace(vertical="yards")
+    assert reasoning_socket.kit_for_vertical(alias) is None
+    assert reasoning_socket.kit_for_vertical(alias, store_root=root) == "zorblat_yards"
 
 
 def test_a_vertical_the_store_does_not_publish_still_gets_no_kit(tmp_path):
@@ -458,7 +461,6 @@ def test_half_a_kit_does_not_resolve(tmp_path):
     (root / "app" / "blocks" / "half_a_kit" / "invariants.yaml").unlink()
     blueprint = types.SimpleNamespace(vertical="half_a_kit")
     assert reasoning_socket.kit_for_vertical(blueprint, store_root=root) is None
-    assert reasoning_socket.store_publishes_kit(root, "half_a_kit") is False
 
 
 def test_a_vertical_cannot_escape_the_blocks_directory(tmp_path):
@@ -474,10 +476,12 @@ def test_a_vertical_cannot_escape_the_blocks_directory(tmp_path):
 def test_the_stadium_aliases_all_reach_the_sports_venue_kit():
     """Four archetypes, one kit. A touring event is a guest in someone else's
     building, so "mega_event" and "stadium" are the same kit and must not become
-    two."""
+    two. The aliases are the Store kit's own serves_verticals."""
+    root = _store_declaring("stadium_venue", "manifest.yaml", "invariants.yaml")
     for vertical in ("stadium", "stadium_venue", "sports_venue", "arena", "mega_event"):
         blueprint = types.SimpleNamespace(vertical=vertical)
-        assert reasoning_socket.kit_for_vertical(blueprint) == "stadium_venue", vertical
+        assert reasoning_socket.kit_for_vertical(
+            blueprint, store_root=root) == "stadium_venue", vertical
 
 
 def test_a_build_whose_vertical_only_the_store_knows_vendors_the_kit(

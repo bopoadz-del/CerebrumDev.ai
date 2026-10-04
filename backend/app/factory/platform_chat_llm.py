@@ -372,14 +372,19 @@ def _reasoning_kit_facts(state: Any) -> str:
         # "none matched for this vertical", which is a claim about the domain
         # made from a stale copy of the Store's kit list.
         root = resolve_blocks_root()
+        if root is None:
+            # Which kit serves a vertical is the Store's declaration; with no
+            # Store the honest answer is that it cannot be read, not "none".
+            return (
+                "REASONING KIT: unknown (Store unreachable) — do not claim the "
+                "platform will gate its figures."
+            )
         kit = reasoning_socket.kit_for_vertical(blueprint, store_root=root)
         if not kit:
             return (
                 "REASONING KIT: none matched for this vertical yet — do not claim "
                 "the platform will gate its figures."
             )
-        if root is None:
-            return f"REASONING KIT: {kit} (questions unavailable — Store unreachable)."
         import pathlib as _pathlib
 
         import yaml as _yaml

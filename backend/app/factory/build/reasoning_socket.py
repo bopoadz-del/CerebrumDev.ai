@@ -1295,8 +1295,26 @@ def vendor_kit(ctx: Any) -> list:
         except Exception as exc:  # noqa: BLE001 -- an unreachable Store is not a crash
             unreachable = exc
 
+    if vertical_of(blueprint, resolved) and root is None:
+        logger.error(
+            "reasoning socket: Store unreachable (%s); no kit vendored, so this "
+            "platform will refuse every figure it needs", unreachable or "no root")
+        return []
+
     kit = kit_for_vertical(blueprint, resolved, store_root=root)
     if not kit:
+        # Half a kit named for this vertical is a broken Store kit, not an
+        # absent one: fail the build and name the missing file.
+        vertical = vertical_of(blueprint, resolved)
+        half = pathlib.Path(root) / "app" / "blocks" / vertical if root and vertical else None
+        if half is not None and half.is_dir() and half.resolve().parent == (pathlib.Path(root) / "app" / "blocks").resolve():
+            for name in ("manifest.yaml", "invariants.yaml"):
+                if not (half / name).is_file() and any(
+                        (half / other).is_file()
+                        for other in ("manifest.yaml", "invariants.yaml")):
+                    raise FileNotFoundError(
+                        f"Store kit {half.name} is missing {name}; refusing to "
+                        "build a platform on half a kit")
         logger.warning(
             "reasoning socket: no kit for this vertical. The platform will refuse "
             "every figure its rules need — that is fail-closed, not a gate.")
@@ -1398,33 +1416,6 @@ def vertical_of(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> st
         if value:
             return str(value).strip().lower().replace(" ", "_").replace("-", "_")
     return ""
-
-
-def store_publishes_kit(store_root: Any, kit: str) -> bool:
-    """Does this Store checkout declare a kit by this name?
-
-    The Factory follows the Store's head, so this is the only answer that is
-    true at build time. A kit is its two required declarative files; a directory
-    holding neither is not a kit and must not be reported as one.
-
-    The root is PASSED IN, never resolved here: resolving it can clone the Store,
-    and the caller that already holds one is the build. No root answers False,
-    and the caller's no-kit path then refuses every figure — the same outcome the
-    Store-unreachable branch in ``emit`` produces, so nothing degrades silently.
-    """
-    import pathlib
-
-    if store_root is None or not kit:
-        return False
-    # The vertical arrives from a blueprint, so it must not be turned into a path
-    # that leaves app/blocks.
-    if "/" in kit or "\\" in kit or kit.startswith("."):
-        return False
-    directory = pathlib.Path(store_root) / "app" / "blocks" / kit
-    return (directory / "manifest.yaml").is_file() and (
-        directory / "invariants.yaml").is_file()
-
-
 
 
 def render_routes() -> str:
