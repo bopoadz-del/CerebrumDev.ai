@@ -130,8 +130,10 @@ def test_resolve_engine_source_uses_default_ref_when_unset(
 ):
     """With nothing pinned AND the Store unreachable, the fallback ref is used."""
     monkeypatch.delenv("CEREBRUM_BLOCKS_REF", raising=False)
-    # Tracking is on by default; this test is about the floor beneath it.
-    monkeypatch.setattr("app.core.engine_discovery.store_head_sha", lambda *a, **k: None)
+    # No pin and no lock: this test is about the floor beneath them.
+    monkeypatch.setattr(
+        "app.factory.store_pin.pinned_sha_or_none", lambda *a, **k: None, raising=False
+    )
     monkeypatch.setattr(
         "app.factory.blocks_lock.load_lock_if_present", lambda *a, **k: None, raising=False
     )
@@ -172,77 +174,53 @@ def test_the_fallback_ref_is_a_full_commit_sha(no_local_engine):
     assert DEFAULT_CEREBRUM_BLOCKS_REF == FALLBACK_CEREBRUM_BLOCKS_REF
 
 
-class TestTheRefFollowsTheStore:
-    """The Factory is not a warehouse: what the Store publishes is what the
-    Factory builds from, with no commit in between."""
+class TestTheRefIsThePin:
+    """The Factory builds from the Store commit in store.pin -- never from a
+    floating Store main (2026-10-04: a Store re-sign reached production
+    through main before the lock moved, and every build died in CLONER)."""
 
-    def test_the_live_store_head_wins_over_the_lock_and_the_constant(self, monkeypatch):
+    def test_the_pin_wins_over_the_lock_and_the_constant(self, monkeypatch, tmp_path):
         from app.core import engine_discovery
+        from app.factory import store_pin
 
         monkeypatch.delenv("CEREBRUM_BLOCKS_REF", raising=False)
-        monkeypatch.delenv("CEREBRUM_BLOCKS_TRACK", raising=False)
-        head = "e1ac2925948657d64a4573b99b8fc2fee8635f40"
-        monkeypatch.setattr(engine_discovery, "store_head_sha", lambda *a, **k: head)
+        pin = tmp_path / "store.pin"
+        pin.write_text("e1ac2925948657d64a4573b99b8fc2fee8635f40\n", encoding="utf-8")
+        monkeypatch.setattr(store_pin, "pin_path", lambda root=None: pin)
 
-        assert engine_discovery._effective_ref() == head
-        assert head != FALLBACK_CEREBRUM_BLOCKS_REF
+        assert engine_discovery._effective_ref() == "e1ac2925948657d64a4573b99b8fc2fee8635f40"
 
-    def test_an_explicit_pin_still_wins(self, monkeypatch):
+    def test_an_explicit_operator_ref_still_wins(self, monkeypatch):
         from app.core import engine_discovery
 
         monkeypatch.setenv("CEREBRUM_BLOCKS_REF", "v2.1.0")
-        monkeypatch.setattr(engine_discovery, "store_head_sha", lambda *a, **k: "f" * 40)
-
         assert engine_discovery._effective_ref() == "v2.1.0"
 
-    def test_tracking_can_be_turned_off_for_a_reproducible_build(self, monkeypatch):
+    def test_the_store_head_is_never_consulted(self, monkeypatch):
+        """No ls-remote, no network: resolution is local and reproducible."""
         from app.core import engine_discovery
 
         monkeypatch.delenv("CEREBRUM_BLOCKS_REF", raising=False)
-        monkeypatch.setenv("CEREBRUM_BLOCKS_TRACK", "0")
+
+        def _no_network(*args, **kwargs):
+            raise AssertionError("resolving the ref must not run git/network")
+
+        monkeypatch.setattr(subprocess, "run", _no_network)
+        assert engine_discovery._effective_ref()
+        assert not hasattr(engine_discovery, "store_head_sha")
+
+    def test_without_a_pin_the_lock_names_the_store(self, monkeypatch, tmp_path):
+        from app.core import engine_discovery
+        from app.factory import store_pin
+
+        monkeypatch.delenv("CEREBRUM_BLOCKS_REF", raising=False)
+        monkeypatch.setattr(store_pin, "pin_path", lambda root=None: tmp_path / "absent.pin")
         monkeypatch.setattr(
-            engine_discovery, "store_head_sha", lambda *a, **k: pytest.fail("must not look up")
+            "app.factory.blocks_lock.load_lock_if_present",
+            lambda *a, **k: {"store": {"sha": "b" * 40}},
+            raising=False,
         )
-
-        assert engine_discovery._effective_ref() != "f" * 40
-
-    def test_an_unreachable_store_never_raises(self, monkeypatch):
-        """No git, no network, a timeout -- all fall through, none explode."""
-        from app.core import engine_discovery
-
-        engine_discovery._head_cache.update({"ref": None, "sha": None, "at": 0.0})
-
-        def _boom(*args, **kwargs):
-            raise OSError("no git here")
-
-        monkeypatch.setattr(subprocess, "run", _boom)
-
-        assert engine_discovery.store_head_sha() is None
-        assert engine_discovery._effective_ref()  # still answers something usable
-
-    def test_the_head_is_cached_rather_than_looked_up_per_read(self, monkeypatch):
-        """The shelf is read constantly; the Store moves a few times a day."""
-        from app.core import engine_discovery
-
-        engine_discovery._head_cache.update({"ref": None, "sha": None, "at": 0.0})
-        calls = []
-
-        class _Result:
-            returncode = 0
-            stdout = "a" * 40 + "\trefs/heads/main\n"
-            stderr = ""
-
-        def _run(*args, **kwargs):
-            calls.append(args)
-            return _Result()
-
-        monkeypatch.setattr(subprocess, "run", _run)
-
-        first = engine_discovery.store_head_sha()
-        second = engine_discovery.store_head_sha()
-
-        assert first == second == "a" * 40
-        assert len(calls) == 1
+        assert engine_discovery._effective_ref() == "b" * 40
 
 
 def test_fetch_engine_checkout_aborts_on_unreachable_repo(no_local_engine, tmp_path: Path, monkeypatch):
