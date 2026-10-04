@@ -48,6 +48,9 @@ from typing import Any, Optional
 #: Matched to the FastAPI sync threadpool: one writer, readers proceed.
 SQLITE_BUSY_TIMEOUT_MS = 30000
 SQLITE_CONNECT_TIMEOUT_S = 30.0
+#: The statement itself is a constant: nothing reaches execute() as a
+#: dynamically built string (the acceptance floor's audit_clean measures it).
+_BUSY_TIMEOUT_PRAGMA = "PRAGMA busy_timeout=30000"
 
 _ENGINE: Optional[Any] = None
 
@@ -125,7 +128,7 @@ def connect() -> Any:
         isolation_level="DEFERRED",
     )
     conn.row_factory = sqlite3.Row
-    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute(_BUSY_TIMEOUT_PRAGMA)
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn

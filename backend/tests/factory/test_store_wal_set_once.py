@@ -36,7 +36,12 @@ def test_connect_does_not_switch_journal_mode_per_connection():
     assert "journal_mode=WAL" not in body, (
         "app.db.connect() switches journal mode on every connection; that is the race"
     )
-    assert "busy_timeout" in body, "per-connection busy_timeout must stay"
+    assert "_BUSY_TIMEOUT_PRAGMA" in body, "per-connection busy_timeout must stay"
+    namespace: dict = {}
+    exec(compile(db, "db.py", "exec"), namespace)
+    assert namespace["_BUSY_TIMEOUT_PRAGMA"] == (
+        "PRAGMA busy_timeout=%d" % namespace["SQLITE_BUSY_TIMEOUT_MS"]
+    )
 
 
 def test_store_enables_wal_once_out_of_band():
