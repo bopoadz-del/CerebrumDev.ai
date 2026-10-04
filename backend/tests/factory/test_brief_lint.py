@@ -5,10 +5,6 @@ from __future__ import annotations
 import pytest
 
 from app.factory.blueprint import load_blueprint
-from app.factory.build.authorship import (
-    FULL_PILOT_MIN_AUTHORED_ACTIONS,
-    full_pilot_authorship_needles,
-)
 from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.brief_lint import BriefLintError, lint_brief, lint_or_raise
 from app.factory.product_architect import plan_blueprint
@@ -81,364 +77,6 @@ def test_mutation_invented_scope_line_is_rejected():
     assert any("orphan line" in e for e in result.errors)
 
 
-def test_mutation_drops_event_bus_workflow_accept_when_declared():
-    """Fail-closed: a VetCare-shaped brief must keep the PRODUCT contract."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap(
-                "reminders_and_notifications",
-                ["notification", "workflow", "event_bus"],
-                "COMPOSE",
-            )
-        ),
-        store_ids={"notification", "workflow", "event_bus"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace(
-        "test_every_capability_route_accepts_payload", "some_other_route_test"
-    )
-    compiled.text = compiled.text.replace("[check:event_bus_workflow]", "")
-    compiled.text = compiled.text.replace("event_bus_workflow", "event_bus_other")
-    compiled.text = compiled.text.replace("workflow: step_N (event_bus): error", "")
-    compiled.text = compiled.text.replace("workflow: step_1 (event_bus): error", "")
-    compiled.text = compiled.text.replace("workflow: step_2 (event_bus): error", "")
-    compiled.text = compiled.text.replace("appointment_scheduling", "")
-    compiled.text = compiled.text.replace("appointment_booking", "")
-    compiled.text = compiled.text.replace("every event_bus", "")
-    compiled.text = compiled.text.replace(
-        "schema sample refused (event_bus workflow step)", ""
-    )
-    compiled.text = compiled.text.replace("never the raw schema sample", "")
-    compiled.text = compiled.text.replace("not the raw schema sample", "")
-    compiled.text = compiled.text.replace("channel=mcp", "channel=email")
-    compiled.text = compiled.text.replace('"channel": "mcp"', '"channel": "email"')
-    compiled.text = compiled.text.replace("action=publish", "action=notify")
-    compiled.text = compiled.text.replace('"action": "publish"', '"action": "notify"')
-    compiled.text = compiled.text.replace("payload dict", "payload blob")
-    compiled.text = compiled.text.replace("input.topic", "input.subject")
-    compiled.text = compiled.text.replace("input.message", "input.body")
-    compiled.text = compiled.text.replace("'input': payload", "'input': record")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_only_step2_booking_needles():
-    """step_1 contract left intact; dropping step_2 / booking must still lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap(
-                "appointment_booking",
-                ["database", "workflow", "event_bus"],
-                "COMPOSE",
-            )
-        ),
-        store_ids={"database", "workflow", "event_bus"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("workflow: step_2 (event_bus): error", "")
-    compiled.text = compiled.text.replace("appointment_booking", "appointment_other")
-    compiled.text = compiled.text.replace("every event_bus", "the first event_bus")
-    compiled.text = compiled.text.replace("step_2", "step_one")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_only_step1_scheduling_needles():
-    """step_2 / booking left intact; dropping step_1 / scheduling must lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap(
-                "appointment_scheduling",
-                ["event_bus", "workflow"],
-                "COMPOSE",
-            )
-        ),
-        store_ids={"event_bus", "workflow"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("workflow: step_1 (event_bus): error", "")
-    compiled.text = compiled.text.replace("appointment_scheduling", "appointment_other")
-    compiled.text = compiled.text.replace("step_1", "step_one")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_factory_grounded_emit_needles():
-    """#332 live class: brief must keep the factory-grounded emit contract."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(_Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")),
-        store_ids={"event_bus", "workflow"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("factory-grounded", "coder-invented")
-    compiled.text = compiled.text.replace('execute("workflow", payload)', "execute workflow")
-    compiled.text = compiled.text.replace("execute(block_id, payload)", "execute blocks")
-    compiled.text = compiled.text.replace("input.tool", "input.topic")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_only_step0_reminders_needles():
-    """step_1 / step_2 left intact; dropping Store step_0 must still lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap(
-                "automated_reminders",
-                ["event_bus", "workflow"],
-                "COMPOSE",
-            )
-        ),
-        store_ids={"event_bus", "workflow"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("workflow: step_0 (event_bus): error", "")
-    compiled.text = compiled.text.replace("automated_reminders", "reminders_other")
-    compiled.text = compiled.text.replace("step_0", "step_zero")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_workflow_result_key_needles():
-    """sess_07dff0eaf8f64186: dropping RuntimeError: 'result' must lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE")
-        ),
-        store_ids={"event_bus", "workflow"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("workflow: RuntimeError: 'result'", "")
-    compiled.text = compiled.text.replace("input['result']", "input['output']")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("event_bus / accept-payload workflow contract" in e for e in result.errors)
-
-
-def test_mutation_drops_fail_closed_rewrite_reads_needles():
-    """sess_aed3e6e288414fcf: dropping fail-closed read rewrite must lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE"),
-            _Cap("billing_and_invoicing", ["analytics", "formula_executor"], "REUSE"),
-        ),
-        store_ids={"event_bus", "workflow", "analytics", "formula_executor"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace(
-        "fail-closed keep original must still rewrite reads", ""
-    )
-    compiled.text = compiled.text.replace(
-        "appointment_scheduling rejected a payload built from its own schema",
-        "appointment_other rejected a payload",
-    )
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any(
-        "REUSE schema-sample accept contract" in e
-        or "event_bus / accept-payload workflow contract" in e
-        for e in result.errors
-    )
-
-
-def test_mutation_drops_assign_to_call_needles():
-    """sess_c63cc1a274994b33: dropping assign-to-call halt must lint-fail."""
-    from app.factory.build.brief_compiler import compile_brief
-
-    class _Cap:
-        def __init__(self, cid, block_ids=(), strategy="REUSE"):
-            self.capability_id = cid
-            self.block_ids = list(block_ids)
-            self.strategy = strategy
-            self.notes = cid
-
-    class _Plan:
-        def __init__(self, *caps):
-            self.capabilities = caps
-
-    class _VetCare:
-        product_name = "VetCare Hub"
-        product_id = "veterinary-care"
-        vertical = "veterinary_care"
-        summary = "Clinic appointments, reminders, and pet records."
-
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(
-            _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE"),
-            _Cap("billing_and_invoicing", ["analytics", "formula_executor"], "REUSE"),
-        ),
-        store_ids={"event_bus", "workflow", "analytics", "formula_executor"},
-    )
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("SyntaxError: cannot assign to function call", "")
-    compiled.text = compiled.text.replace("name['result'] =", "name['output'] =")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any(
-        "REUSE schema-sample accept contract" in e
-        or "event_bus / accept-payload workflow contract" in e
-        for e in result.errors
-    )
-
-
-def test_mutation_drops_writer_behaviour_acceptance():
-    compiled = _compiled()
-    compiled.text = compiled.text.replace(
-        "every capability accepts a POST built from its own FIELDS/CONSTRAINTS",
-        "every capability looks fine in the demo",
-    )
-    compiled.text = compiled.text.replace("[check:writer_behaviour]", "")
-    compiled.text = compiled.text.replace("writer_behaviour", "writer_other")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("writer_behaviour schema-accept" in e for e in result.errors)
-
-
 def test_vetcare_dropped_readiness_engine_reuse_lints_clean(monkeypatch):
     """Invented readiness_engine REUSE is a GAP, not an unresolved-id lint fail."""
     from app.factory.build.brief_compiler import compile_brief
@@ -487,33 +125,6 @@ def test_vetcare_dropped_readiness_engine_reuse_lints_clean(monkeypatch):
     assert any("unresolved block id" in e and "readiness_engine" in e for e in planted.errors)
 
 
-def test_mutation_drops_full_pilot_authorship_floor():
-    """#387 floor must stay in the compiled brief — dropping it is a lint fail."""
-    compiled = _compiled()
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    n_required = len(list(compiled.capabilities or []))
-    n = str(min(FULL_PILOT_MIN_AUTHORED_ACTIONS, max(1, n_required)))
-    compiled.text = compiled.text.replace(f"≥{n}", "≥0")
-    compiled.text = compiled.text.replace(f"<{n}", "<0")
-    compiled.text = compiled.text.replace("full-pilot authorship", "authorship-ish")
-    compiled.text = compiled.text.replace("cli_authored_ids", "cli_other_ids")
-    compiled.text = compiled.text.replace(
-        "FACTORY_CODE_CLI_THIN_AUTHORSHIP", "FACTORY_CODE_CLI_OTHER"
-    )
-    compiled.text = compiled.text.replace("[check:full_pilot_authorship]", "")
-    compiled.text = compiled.text.replace("app/actions/*.py", "app/actions/other.py")
-    compiled.text = compiled.text.replace("dynamic floor", "scaled bar")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("full-pilot authorship floor" in e for e in result.errors)
-    missing = [
-        needle
-        for needle in full_pilot_authorship_needles(n_required)
-        if needle.lower() not in compiled.text.lower()
-    ]
-    assert missing, "mutation must actually drop the floor needles"
-
-
 def test_unfilled_template_slot_is_rejected():
     compiled = _compiled()
     compiled.text = compiled.text + "\n{{ORPHAN_SLOT}}\n"
@@ -522,34 +133,57 @@ def test_unfilled_template_slot_is_rejected():
     assert any("unfilled template slot" in e for e in result.errors)
 
 
-def test_mutation_drops_writer_phase_needles():
-    """Three-phase WRITER cuts must stay in the compiled brief."""
-    compiled = _compiled()
+# --- shape cases: each refuses a CLASS of leak, on invented names --------
+
+
+def test_kit_manifest_in_brief_is_identity_plus_claimed_contract_only():
+    """The smoke blueprint claims two estate-kit blocks. Its brief must carry
+    those blocks' contract -- never the kit's origin product, its capability
+    list or its blueprint path, nor blocks this build did not claim."""
+    compiled = _compiled(SMOKE)
+    kit = next(iter(compiled.kit_manifests.values()))
+    for leak in ("capabilities", "blueprint", "author", "artifacts"):
+        assert leak not in kit
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("PHASE 1 of 3", "STAGE 1 of 3")
-    compiled.text = compiled.text.replace("[check:writer_phase_backend]", "")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("one-WRITER three-phase contract" in e for e in result.errors)
 
 
-def test_mutation_drops_frontend_rag_route_contract():
-    """sess_5782f226 run5: brief must keep the exact RAG HTTP paths."""
+def test_kit_provenance_key_planted_in_a_brief_is_refused():
+    compiled = _compiled(SMOKE)
+    kit_id = next(iter(compiled.kit_manifests))
+    compiled.kit_manifests[kit_id] = dict(
+        compiled.kit_manifests[kit_id], capabilities=["zorblat_intake"]
+    )
+    errors = lint_brief(compiled).errors
+    assert any("non-contract keys: capabilities" in e for e in errors), errors
+
+
+def test_kit_contract_naming_an_unclaimed_block_is_refused():
+    compiled = _compiled(SMOKE)
+    kit_id = next(iter(compiled.kit_manifests))
+    kit = dict(compiled.kit_manifests[kit_id])
+    kit["blocks"] = {"group": list(kit.get("product_blocks") or []) + ["zorblat_block"]}
+    compiled.kit_manifests[kit_id] = kit
+    errors = lint_brief(compiled).errors
+    assert any("did not claim" in e for e in errors), errors
+
+
+def test_brief_citing_a_build_session_is_refused():
     compiled = _compiled()
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("/v1/rag/ingest", "/v1/search/ingest")
-    compiled.text = compiled.text.replace("/v1/steward/rag/ingest", "/v1/steward/search/ingest")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("one-WRITER three-phase contract" in e for e in result.errors)
+    compiled.text += "\nsess_0a1b2c3d4e5f\n"
+    errors = lint_brief(compiled).errors
+    assert any("cites a build session" in e for e in errors), errors
 
 
-def test_mutation_drops_frontend_rag_hard_write():
-    """run6: contract prose without HARD WRITE app/rag_routes.py is a miss."""
+def test_brief_naming_another_products_capability_is_refused():
     compiled = _compiled()
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    compiled.text = compiled.text.replace("HARD WRITE", "soft write")
-    compiled.text = compiled.text.replace("app/rag_routes.py", "app/search_routes.py")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("one-WRITER three-phase contract" in e for e in result.errors)
+    compiled.text += "\nzorblat_intake\n"
+    compiled.emitted_lines = frozenset(compiled.emitted_lines | {"zorblat_intake"})
+    errors = lint_brief(compiled, known_literals=frozenset({"zorblat_intake"})).errors
+    assert any("another product" in e and "zorblat_intake" in e for e in errors), errors
+
+
+def test_brief_naming_its_own_capability_is_not_foreign():
+    compiled = _compiled()
+    own = compiled.inventory[0].capability_id
+    assert lint_brief(compiled, known_literals=frozenset({own})).ok
+

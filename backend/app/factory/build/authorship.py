@@ -30,7 +30,6 @@ __all__ = (
     "full_pilot_authorship_forbidden_lines",
     "full_pilot_authorship_from",
     "full_pilot_authorship_need",
-    "full_pilot_authorship_needles",
     "full_pilot_authorship_rules_text",
     "is_action_artifact_id",
     "action_artifact_id",
@@ -350,23 +349,6 @@ def full_pilot_authorship_forbidden_lines(
         "FACTORY_CODE_CLI_THIN_AUTHORSHIP"
     )
 
-
-def full_pilot_authorship_needles(
-    n_required: Optional[int] = None,
-) -> Sequence[str]:
-    """Needles lint requires on every compiled brief."""
-    n = full_pilot_authorship_need(n_required)
-    needles = [
-        f"≥{n}",
-        "full-pilot authorship",
-        "app/actions/*.py",
-        "cli_authored_ids",
-        "FACTORY_CODE_CLI_THIN_AUTHORSHIP",
-        f"[check:{FULL_PILOT_AUTHORSHIP_CHECK}]",
-    ]
-    if n_required is not None and 0 < int(n_required) < FULL_PILOT_MIN_AUTHORED_ACTIONS:
-        needles.append("dynamic floor")
-    return tuple(needles)
 
 #: Writer extras that are not ``app/actions/*.py`` handlers.
 _NON_ACTION_ARTIFACT_IDS = frozenset(

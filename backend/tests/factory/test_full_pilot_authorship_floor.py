@@ -18,7 +18,6 @@ from app.factory.build.authorship import (
     full_pilot_authorship_forbidden_lines,
     full_pilot_authorship_from,
     full_pilot_authorship_need,
-    full_pilot_authorship_needles,
     full_pilot_authorship_rules_text,
     is_action_artifact_id,
     n_required_capabilities_from,
@@ -27,7 +26,6 @@ from app.factory.build.authorship import (
 from app.factory.blueprint import load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.brief_compiler import compile_brief
-from app.factory.build.brief_lint import lint_brief
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.level_grade import Level, attach_level_grade
 from app.factory.build_jobs import _authorship, build_status
@@ -69,12 +67,11 @@ def test_floor_constant_is_five():
     assert f"≥{n}" in full_pilot_authorship_rules_text()
     assert f"≥{n}" in full_pilot_authorship_acceptance_line()
     assert f"<{n}" in full_pilot_authorship_forbidden_lines()
-    assert f"≥{n}" in full_pilot_authorship_needles()
+    assert f"≥{n}" in full_pilot_authorship_acceptance_line()
     assert "dynamic floor" in full_pilot_authorship_rules_text(4)
     assert "≥4" in full_pilot_authorship_rules_text(4)
     assert "≥5" not in full_pilot_authorship_rules_text(4).split("dynamic floor")[0]
-    assert "dynamic floor" in full_pilot_authorship_needles(4)
-    assert "≥4" in full_pilot_authorship_needles(4)
+    assert "≥4" in full_pilot_authorship_acceptance_line(4)
 
 
 def test_compiled_cbrief_states_the_same_floor_constant():
@@ -90,11 +87,6 @@ def test_compiled_cbrief_states_the_same_floor_constant():
     assert full_pilot_authorship_rules_text(n_required) in text
     assert full_pilot_authorship_acceptance_line(n_required) in text
     assert full_pilot_authorship_forbidden_lines(n_required) in text
-    for needle in full_pilot_authorship_needles(n_required):
-        assert needle in text
-    assert f"≥{n}" in text
-    assert "dynamic floor" in text
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
 def test_vetcare_three_actions_are_below_floor():

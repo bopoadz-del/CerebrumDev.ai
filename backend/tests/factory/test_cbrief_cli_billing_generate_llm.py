@@ -30,7 +30,6 @@ from app.factory.build.coder_session import (
 from app.factory.build.level_grade import Level, grade_workspace
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
-    KEYWORD_FALLBACK_VETCARE_CAPS,
     assert_persist_round_trip_ready,
     persist_round_trip_errors,
 )
@@ -39,6 +38,9 @@ from app.factory.build.workspace import RoleWorkspace
 from tests.factory.coder_stub_bodies import invoking_handler_body
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
 from tests.factory.test_level_grade import _full_repo
+
+#: A sample keyword-fallback plan -- test data only.
+SAMPLE_FALLBACK_CAPS = ("veterinary_care_core", "audit", "dashboard")
 
 
 class _Cap:
@@ -318,11 +320,11 @@ def test_writer_photograph_vetcare_generate_round_trip_after_billing(
     assert set(receipt["kept_handler_ids"]) >= {"audit", "dashboard"}
     specs = {
         cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
-        for cid in KEYWORD_FALLBACK_VETCARE_CAPS
+        for cid in SAMPLE_FALLBACK_CAPS
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
-    for cid in KEYWORD_FALLBACK_VETCARE_CAPS:
+    for cid in SAMPLE_FALLBACK_CAPS:
         text = (out / "app" / "actions" / f"{cid}.py").read_text(encoding="utf-8")
         assert "_persist_record(" not in text, cid
         assert "def handle" in text, cid
@@ -390,7 +392,7 @@ def test_writer_generate_llm_empty_still_emits_persist_keep_path(
     assert receipt["inventory_gaps"] == []
     specs = {
         cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
-        for cid in KEYWORD_FALLBACK_VETCARE_CAPS
+        for cid in SAMPLE_FALLBACK_CAPS
     }
     assert persist_round_trip_errors(out, specs) == []
     assert_persist_round_trip_ready(out, specs)
@@ -443,7 +445,7 @@ def test_writer_staging_leftover_destination_still_emits_generate_persist(
     assert result.ok, result.detail
     specs = {
         cid: {"entity": cid, "fields": [{"name": "reference", "type": "str"}]}
-        for cid in KEYWORD_FALLBACK_VETCARE_CAPS
+        for cid in SAMPLE_FALLBACK_CAPS
     }
     assert persist_round_trip_errors(staging, specs) == []
     assert_persist_round_trip_ready(staging, specs)

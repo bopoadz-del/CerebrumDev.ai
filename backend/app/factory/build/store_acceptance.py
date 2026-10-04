@@ -1164,13 +1164,9 @@ def _rag_ingest_paths() -> List[str]:
         lambda n: ("ingest" in n or "upload" in n or "index" in n or "add" in n)
         and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "ingest" in n)
     )
-    known = [
-        "/v1/rag/ingest",
-        "/v1/steward/rag/ingest",
-        "/v1/dual_rag_sop",
-        "/v1/dual_rag_estate_docs",
-    ]
-    return declared + [k for k in known if k not in declared]
+    # The product declares its routes; the platform contract is the only
+    # fallback. No product's routes are listed here.
+    return declared + [k for k in ("/v1/rag/ingest",) if k not in declared]
 
 
 def _rag_query_paths() -> List[str]:
@@ -1178,8 +1174,7 @@ def _rag_query_paths() -> List[str]:
         lambda n: ("query" in n or "search" in n or "ask" in n or "retriev" in n)
         and ("rag" in n or "doc" in n or "knowledge" in n or "corpus" in n or "query" in n)
     )
-    known = ["/v1/rag/query", "/v1/steward/rag/query", "/v1/rag/dual", "/v1/dual_rag_sop"]
-    return declared + [k for k in known if k not in declared]
+    return declared + [k for k in ("/v1/rag/query",) if k not in declared]
 
 
 def check_rag_roundtrip_hit(http: _Http) -> Tuple[str, str]:

@@ -30,6 +30,8 @@ def gate(tmp_path, monkeypatch):
     mod = _load()
     monkeypatch.setattr(mod, "ROOT", tmp_path)
     monkeypatch.setattr(mod, "BASELINE", tmp_path / "scripts" / "hardwiring_baseline.json")
+    # The real set comes from the Store and every build; tests inject one.
+    monkeypatch.setattr(mod, "load_known_literals", lambda: frozenset({"zorblat_intake", "quillon fleet"}))
     (tmp_path / "scripts").mkdir()
     (tmp_path / "pkg").mkdir()
     return mod
@@ -150,6 +152,36 @@ def test_the_real_baseline_is_consistent_with_the_real_tree():
     step must be green on the commit that introduces it."""
     mod = _load()
     assert mod.main([]) == 0
+
+
+def test_a_string_equal_to_a_known_product_name_is_refused(gate, tmp_path, capsys):
+    _write(tmp_path, "pkg/ok.py", "x = 1\n")
+    assert gate.main(["--root", "pkg"]) == 0
+    _write(tmp_path, "pkg/bad.py", 'CAP = "zorblat_intake"\n')
+    assert gate.main(["--root", "pkg"]) == 1
+    err = capsys.readouterr().err
+    assert "product_literal" in err and "zorblat_intake" in err and "pkg/bad.py" in err
+
+
+def test_product_names_in_prose_or_docstrings_are_not_literals(gate, tmp_path):
+    _write(
+        tmp_path,
+        "pkg/prose.py",
+        '"""Built after the zorblat_intake incident."""\n'
+        "# zorblat_intake was the failing capability\n"
+        'MSG = "the zorblat_intake route answered 404"\n',
+    )
+    assert gate.main(["--root", "pkg"]) == 0
+
+
+def test_a_new_rule_grandfathers_once_then_only_shrinks(gate, tmp_path):
+    _write(tmp_path, "pkg/old.py", 'A = "zorblat_intake"\n')
+    (tmp_path / "scripts" / "hardwiring_baseline.json").write_text(
+        json.dumps({"forms": ["session_id"], "total": 0, "files": {}}), encoding="utf-8"
+    )
+    assert gate.main(["--root", "pkg", "--write-baseline"]) == 0
+    _write(tmp_path, "pkg/new.py", 'B = "quillon fleet"\n')
+    assert gate.main(["--root", "pkg", "--write-baseline"]) == 1
 
 
 def test_the_gate_itself_names_no_case():

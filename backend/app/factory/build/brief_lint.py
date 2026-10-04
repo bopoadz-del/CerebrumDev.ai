@@ -1,288 +1,35 @@
 """BRIEF LINT — reject before FACTORY_CODE_CLI session opens.
 
-A brief that fails lint never reaches the coder. Mutation tests plant a
-broken brief and a planted unsourced line; both must be refused.
+A brief that fails lint never reaches the coder. The lint checks SHAPE, never
+wording:
+
+* no template slot is left unfilled, and every claimed block resolved;
+* every block contract field has a manifest;
+* every acceptance bullet names the harness check that runs it (``[check:id]``);
+* a budget is stated;
+* every line is one the compiler itself wrote (its recorded provenance) --
+  a line planted after compiling is refused;
+* the brief cites no build session, and names no capability, product or
+  vertical other than this build's own (the set of known names is loaded from
+  the Store and from prior builds, never listed here).
+
+There is no list of phrases a brief must contain. What the contracts say is
+the compiler's job and its tests'; the lint only refuses a brief whose shape
+is wrong.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, FrozenSet, List, Optional, Set
 
-from app.factory.build.authorship import full_pilot_authorship_needles
-from app.factory.build.persist_accept import persist_accept_needles
-from app.factory.build.reuse_accept import reuse_accept_needles
-from app.factory.build.writer_phases import writer_phase_needles
-from app.factory.build.workflow_accept import (
-    declares_event_bus_workflow,
-    workflow_accept_needles,
-)
+from app.factory.build.brief_lines import content_lines, line_key
 
 SLOT_RE = re.compile(r"\{\{[A-Z0-9_]+\}\}")
-HEADING_RE = re.compile(
-    r"^(=+|CUT \d|TARGET|STEP 0|DO\b|ACCEPTANCE|FORBIDDEN|PHASE \d|# )"
-)
 BUDGET_RE = re.compile(r"\b(?:budget|wall)[^\n]{0,40}?(\d+)\s*s\b", re.I)
-
-#: Acceptance bullets the harness actually runs. A line without one of these
-#: needles is an acceptance line without an executable check.
-EXECUTABLE_ACCEPTANCE = (
-    ("product boots", "boot"),
-    ("own gates green", "gates"),
-    ("one-record round-trip", "round_trip"),
-    ("round-trip per capability", "round_trip"),
-    ("did not remember a record", "round_trip"),
-    ("no such table", "round_trip"),
-    ("tenant-scoped save(payload)", "round_trip"),
-    ("factory-grounded persist", "round_trip"),
-    ("alembic entity", "round_trip"),
-    ("writer_behaviour", "writer_behaviour"),
-    ("accepted its own schema", "writer_behaviour"),
-    ("own FIELDS/CONSTRAINTS", "writer_behaviour"),
-    ("schema-accept", "writer_behaviour"),
-    ("Unknown action", "reuse_accept"),
-    ("Unknown action: None", "reuse_accept"),
-    ("BLOCK_DEFAULT_ACTIONS", "reuse_accept"),
-    ("reuse/accept miss", "reuse_accept"),
-    ("patient_records_management", "reuse_accept"),
-    ("vector_search", "reuse_accept"),
-    ("capture", "reuse_accept"),
-    ("Steward estate_registry binds storage", "reuse_accept"),
-    ("estate_registry", "reuse_accept"),
-    ("event_bus_workflow", "event_bus_workflow"),
-    ("event_bus workflow", "event_bus_workflow"),
-    ("test_every_capability_route_accepts_payload", "event_bus_workflow"),
-    ("step_N (event_bus)", "event_bus_workflow"),
-    ("step_0 (event_bus)", "event_bus_workflow"),
-    ("step_1 (event_bus)", "event_bus_workflow"),
-    ("step_2 (event_bus)", "event_bus_workflow"),
-    ("appointment_scheduling", "event_bus_workflow"),
-    ("appointment_booking", "event_bus_workflow"),
-    ("automated_reminders", "event_bus_workflow"),
-    ("every event_bus", "event_bus_workflow"),
-    ("never the raw schema sample", "event_bus_workflow"),
-    ("prepared contract", "event_bus_workflow"),
-    ("action=publish", "event_bus_workflow"),
-    ("payload dict", "event_bus_workflow"),
-    ("input.topic", "event_bus_workflow"),
-    ("input.message", "event_bus_workflow"),
-    ("factory-grounded", "event_bus_workflow"),
-    ('execute("workflow", payload)', "event_bus_workflow"),
-    ("input.tool", "event_bus_workflow"),
-    ("workflow: RuntimeError: 'result'", "event_bus_workflow"),
-    ("input['result']", "event_bus_workflow"),
-    ("SyntaxError: cannot assign to function call", "reuse_accept"),
-    ("name['result'] =", "reuse_accept"),
-    ("fail-closed keep original must still rewrite reads", "reuse_accept"),
-    (
-        "appointment_scheduling rejected a payload built from its own schema",
-        "reuse_accept",
-    ),
-    ("domain_acceptance_conditions", "domain_acceptance"),
-    ("domain pack", "domain_acceptance"),
-    ("envelope vocab", "envelope_schema"),
-    ("open|in_progress|closed", "envelope_schema"),
-    ("open, in_progress, closed", "envelope_schema"),
-    ("product gate", "product_gate"),
-    ("store gate", "store_gate"),
-    ("scripts/acceptance.py", "store_acceptance"),
-    ("k/k", "store_acceptance"),
-    ("pilot_ready", "ledger"),
-    ("ledger records", "ledger"),
-    ("harness", "harness"),
-    ("full-pilot authorship", "full_pilot_authorship"),
-    ("cli_authored_ids", "full_pilot_authorship"),
-    ("FACTORY_CODE_CLI_THIN_AUTHORSHIP", "full_pilot_authorship"),
-    ("PHASE 1 of 3", "writer_phase_backend"),
-    ("PHASE 2 of 3", "writer_phase_frontend_rag"),
-    ("PHASE 3 of 3", "writer_phase_integration"),
-    ("one-record POST/GET", "writer_phase_backend"),
-    ("RAG ingest/query", "writer_phase_frontend_rag"),
-    ("HARD WRITE", "writer_phase_frontend_rag"),
-    ("app/rag_routes.py", "writer_phase_frontend_rag"),
-    ("render-ready", "writer_phase_integration"),
-    ("fail-closed: phase N", "writer_phase_gate"),
-    ("landed writer phases", "writer_phase_resume"),
-)
-
-#: C-BRIEF packaging contract. Dropping these lets Kimi rewrite
-#: ``app/actions/__init__.py`` with eager ``from app.actions import``
-#: re-exports (live VetCare: circular pet_records_management).
-ACTIONS_PACKAGING_NEEDLES = (
-    "from app.actions import",
-    "workspace does not import",
-    "app.routes",
-    "app.main from a",
-)
-
-
-TEMPLATE_STATIC_NEEDLES = (
-    "c-brief template",
-    "revision:",
-    "owner_shape:",
-    "fill:",
-    "llm_writes_brief:",
-    "changes to this file",
-    "reproduced",
-    "coder: list what",
-    "store registry",
-    "reuse (verified",
-    "gaps (you author",
-    "work items",
-    "missing claimed",
-    "build only confirmed",
-    "invocation contracts",
-    "prefer action=",
-    "call execute()",
-    "from app.actions import",
-    "workspace does not import",
-    "eager re-export",
-    "app.routes",
-    "if you assign a block",
-    "declare vocabularies",
-    "envelope status vocabulary",
-    "three tests per block",
-    "scope reads",
-    "kit manifests",
-    "block contracts",
-    "domain pack",
-    "fails loud",
-    "the run is not done",
-    "the product boots",
-    "own gates green",
-    "one-record round-trip",
-    "did not remember a record",
-    "no such table",
-    "tenant-scoped save(payload)",
-    "factory-grounded persist",
-    "alembic entity",
-    "0001_baseline",
-    "writer_behaviour",
-    "accepted its own schema",
-    "own fields/constraints",
-    "schema-accept",
-    "unknown action",
-    "unknown action: none",
-    "block_default_actions",
-    "reuse/accept miss",
-    "patient_records_management",
-    "vector_search",
-    "capture",
-    "steward estate_registry binds storage",
-    "estate_registry",
-    "event_bus_workflow",
-    "event_bus workflow",
-    "test_every_capability_route_accepts_payload",
-    "step_n (event_bus)",
-    "step_0 (event_bus)",
-    "step_1 (event_bus)",
-    "step_2 (event_bus)",
-    "appointment_scheduling",
-    "appointment_booking",
-    "automated_reminders",
-    "every event_bus",
-    "never the raw schema sample",
-    "schema sample refused",
-    "accept-payload",
-    "action=publish",
-    "payload dict",
-    "input.topic",
-    "input.message",
-    "'input': payload",
-    "prepared event_bus",
-    "factory-grounded",
-    'execute("workflow", payload)',
-    "execute(block_id, payload)",
-    "input.tool",
-    "workflow: runtimeerror: 'result'",
-    "input['result']",
-    "syntaxerror: cannot assign to function call",
-    "name['result'] =",
-    "fail-closed keep original must still rewrite reads",
-    "appointment_scheduling rejected a payload built from its own schema",
-    '"channel": "mcp"',
-    "the domain pack",
-    "envelope vocab",
-    "product gate:",
-    "store gate:",
-    "scripts/acceptance.py",
-    "ledger records",
-    "the harness",
-    "thin success",
-    "full-pilot authorship",
-    "cli_authored_ids",
-    "factory_code_cli_thin_authorship",
-    "decorative tests",
-    "reserved-keyword",
-    "unlisted blocks",
-    "assuming a reuse",
-    "one handle()",
-    "weakening honesty",
-    "cut 1",
-    "cut 2",
-    "cut 3",
-    "step 0",
-    "runner validates",
-    "factory coding-agent brief",
-    "you are manufacturing",
-    "exit condition",
-    "three gates",
-    "code →",
-    "product →",
-    "store →",
-    "contracts you must honour",
-    "this brief is the horizon",
-    "budget",
-    "approve",
-    "halt before writer",
-    "verified present",
-    "genuine gap",
-    "no verified block",
-    "not in store",
-    "schema-enforced",
-    "offline platform",
-    "do not invent scopes",
-    "hard rule",
-    "sealed vendor",
-    "sealed_after_cloner",
-    "never patch vendored",
-    "not declared on block.json",
-    "pre-flip",
-    "unverified reuse dropped",
-    "loadable app/actions/{capability_id}.py",
-    "registry-verified handler source",
-    "claiming reuse without",
-    "exact-id present=false",
-    "store exact-id",
-    "block scopes",
-    "block-level acceptance",
-    "report-only",
-    "l2.2",
-    "inventing reads/writes/never/acceptance",
-    "phase 1 of 3",
-    "phase 2 of 3",
-    "phase 3 of 3",
-    "one factory_code_cli writer",
-    "fail-closed: phase n acceptance before phase n+1",
-    "stop / checkpoint",
-    "render-ready",
-    "not live render",
-    "not store docker",
-    "rag ingest/query",
-    "one-record post/get",
-    "vector_search bind",
-    "/v1/rag",
-    "/v1/rag/ingest",
-    "/v1/rag/query",
-    "/v1/steward/rag/ingest",
-    "/v1/steward/rag/query",
-    "hard write",
-    "app/rag_routes.py",
-    "landed writer phase",
-    "frontend + rag",
-    "integration + render-ready",
-)
+CHECK_TAG_RE = re.compile(r"\[check:[a-z0-9_]+\]", re.I)
+SESSION_ID_RE = re.compile(r"\bsess_[0-9a-f]{6,}\b", re.I)
 
 
 class BriefLintError(ValueError):
@@ -305,20 +52,6 @@ class BriefLintResult:
         return {"ok": self.ok, "errors": list(self.errors), "checks": dict(self.checks)}
 
 
-def _content_lines(text: str) -> List[str]:
-    lines: List[str] = []
-    for raw in (text or "").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        if set(line) <= {"=", "-", " "}:
-            continue
-        if HEADING_RE.match(line):
-            continue
-        lines.append(line)
-    return lines
-
-
 def _acceptance_section(text: str) -> str:
     """Only the ACCEPTANCE cut, not the word inside CODING_AGENT_BRIEF."""
     marker = "ACCEPTANCE (harness"
@@ -337,53 +70,75 @@ def _acceptance_section(text: str) -> str:
 
 
 def _acceptance_bullets(text: str) -> List[str]:
-    section = _acceptance_section(text)
     return [
         line.strip()
-        for line in section.splitlines()
+        for line in _acceptance_section(text).splitlines()
         if line.strip().startswith("-")
     ]
 
 
-def _has_executable_check(bullet: str) -> bool:
-    blob = bullet.lower()
-    if "[check:" in blob:
-        return True
-    return any(needle in blob for needle, _name in EXECUTABLE_ACCEPTANCE)
+def _kit_manifest_errors(manifests: Any) -> List[str]:
+    """A kit manifest in a brief is identity + the claimed blocks' contract.
+
+    Anything else -- the product the kit was carved from, its capability list,
+    its blueprint path, blocks this build did not claim -- is another
+    product's record leaking into this build's brief.
+    """
+    from app.factory.kit_pack import (
+        KIT_BRIEF_CONTRACT_KEYS,
+        KIT_BRIEF_IDENTITY_KEYS,
+        kit_brief_view,
+    )
+
+    allowed = set(KIT_BRIEF_IDENTITY_KEYS) | set(KIT_BRIEF_CONTRACT_KEYS)
+    out: List[str] = []
+    if not isinstance(manifests, dict):
+        return out
+    for kit_id, kit in sorted(manifests.items()):
+        if not isinstance(kit, dict):
+            continue
+        extra = sorted(set(kit) - allowed)
+        if extra:
+            out.append(f"kit manifest {kit_id} carries non-contract keys: " + ", ".join(extra))
+        view = kit_brief_view(kit, [str(b) for b in (kit.get("product_blocks") or [])])
+        wider = [k for k in KIT_BRIEF_CONTRACT_KEYS if k in kit and kit[k] != view.get(k)]
+        if wider:
+            out.append(
+                f"kit manifest {kit_id} names blocks this build did not claim under: "
+                + ", ".join(wider)
+            )
+    return out
 
 
-def _line_is_sourced(
-    line: str,
-    *,
-    line_sources: Mapping[str, str],
-    source_needles: Iterable[str],
-) -> bool:
-    lowered = line.lower()
-    if any(needle in lowered for needle in source_needles):
-        return True
-    if any(needle and needle.lower() in lowered for needle in line_sources):
-        return True
-    if any(value and str(value).lower() in lowered for value in line_sources.values()):
-        return True
-    if any(static in lowered for static in TEMPLATE_STATIC_NEEDLES):
-        return True
-    return False
+def _known_literals() -> FrozenSet[str]:
+    from app.factory.build.product_literals import default_roots, known_product_literals
+
+    return known_product_literals(**default_roots())
+
+
+def _own_names(compiled: Any) -> Set[str]:
+    own: Set[str] = set()
+    for attr in ("product_id", "product_name", "vertical"):
+        value = getattr(compiled, attr, None)
+        if value:
+            own.add(str(value))
+    own.update(str(c) for c in (getattr(compiled, "capabilities", None) or []))
+    for item in getattr(compiled, "inventory", None) or []:
+        if getattr(item, "capability_id", None):
+            own.add(str(item.capability_id))
+        own.update(str(b) for b in (getattr(item, "block_ids", None) or []))
+    own.update(str(b) for b in (getattr(compiled, "store_ids", None) or []))
+    return own
 
 
 def lint_brief(
     compiled: Any,
     *,
-    line_sources: Optional[Mapping[str, str]] = None,
-    extra_sources: Optional[Sequence[str]] = None,
+    known_literals: Optional[FrozenSet[str]] = None,
 ) -> BriefLintResult:
-    """Reject a brief that is not ready to dispatch."""
+    """Reject a brief whose shape is not ready to dispatch."""
     errors: List[str] = []
     text = compiled.text if hasattr(compiled, "text") else str(compiled)
-    sources = dict(line_sources or {})
-    if hasattr(compiled, "line_sources") and compiled.line_sources:
-        sources.update(compiled.line_sources)
-    extra = list(extra_sources or [])
-    extra.extend(str(s) for s in (getattr(compiled, "source_needles", ()) or ()))
 
     slots = SLOT_RE.findall(text)
     if slots:
@@ -420,18 +175,17 @@ def lint_brief(
         for bid, contract in contracts.items():
             if not isinstance(contract, dict):
                 continue
-            for field in contract.get("declared_inputs") or []:
-                name = field.get("name") if isinstance(field, dict) else field
+            for item in contract.get("declared_inputs") or []:
+                name = item.get("name") if isinstance(item, dict) else item
                 if not name:
                     continue
                 in_manifest = (
                     str(name) in manifest_fields
                     or str(bid) in manifest_fields
                     or bool(contract.get("block_id"))
+                    or bool(contract.get("from_block_json"))
+                    or bool(contract.get("declared_inputs"))
                 )
-                # A harvested block.json contract is itself a manifest entry.
-                if contract.get("from_block_json") or contract.get("declared_inputs"):
-                    in_manifest = True
                 if not in_manifest:
                     orphan_fields.append(f"{bid}.{name}")
     if orphan_fields:
@@ -439,120 +193,47 @@ def lint_brief(
             "contract field without manifest: " + ", ".join(sorted(set(orphan_fields)))
         )
 
+    kit_errors = _kit_manifest_errors(manifests)
+    errors.extend(kit_errors)
+
     bullets = _acceptance_bullets(text)
-    unchecked = [b for b in bullets if not _has_executable_check(b)]
+    untagged = [b for b in bullets if not CHECK_TAG_RE.search(b)]
     if not bullets:
         errors.append("acceptance line without executable check: (none written)")
-    elif unchecked:
+    elif untagged:
         errors.append(
-            "acceptance line without executable check: "
-            + "; ".join(unchecked[:5])
+            "acceptance line without executable check: " + "; ".join(untagged[:5])
         )
-    acceptance = _acceptance_section(text).lower()
-    if "writer_behaviour" not in acceptance and "own fields/constraints" not in acceptance:
-        errors.append(
-            "acceptance missing writer_behaviour schema-accept "
-            "(no capability accepted its own schema)"
-        )
-    persist_needles = persist_accept_needles()
-    missing_persist = [
-        needle
-        for needle in persist_needles
-        if needle.lower() not in text.lower()
-    ]
-    if missing_persist:
-        errors.append(
-            "brief dropped PRODUCT one-record persist contract "
-            "(alembic entity / tenant-scoped save): "
-            + ", ".join(missing_persist[:4])
-        )
-    n_required = None
-    caps = getattr(compiled, "capabilities", None) or []
-    if caps:
-        n_required = len([c for c in caps if str(c).strip()])
-    floor_needles = full_pilot_authorship_needles(n_required)
-    missing_floor = [
-        needle
-        for needle in floor_needles
-        if needle.lower() not in text.lower()
-    ]
-    if missing_floor:
-        errors.append(
-            "brief dropped launching-ready full-pilot authorship floor "
-            "(≥N agent-written app/actions/*.py / cli_authored_ids): "
-            + ", ".join(missing_floor[:4])
-        )
-    reuse_needles = reuse_accept_needles()
-    missing_reuse = [
-        needle
-        for needle in reuse_needles
-        if needle.lower() not in text.lower()
-    ]
-    if missing_reuse:
-        errors.append(
-            "brief dropped REUSE schema-sample accept contract "
-            "(Unknown action / BLOCK_DEFAULT_ACTIONS): "
-            + ", ".join(missing_reuse[:4])
-        )
-    phase_needles = writer_phase_needles()
-    missing_phases = [
-        needle
-        for needle in phase_needles
-        if needle.lower() not in text.lower()
-    ]
-    if missing_phases:
-        errors.append(
-            "brief dropped one-WRITER three-phase contract "
-            "(backend → frontend+RAG → integration): "
-            + ", ".join(missing_phases[:4])
-        )
-
-    blob = text.lower()
-    missing_packaging = [
-        needle
-        for needle in ACTIONS_PACKAGING_NEEDLES
-        if needle.lower() not in blob
-    ]
-    if missing_packaging:
-        errors.append(
-            "brief dropped actions packaging contract "
-            "(circular app.actions import): "
-            + ", ".join(missing_packaging[:4])
-        )
-
-    if declares_event_bus_workflow(compiled):
-        blob = text.lower()
-        missing_needles = [
-            needle
-            for needle in workflow_accept_needles()
-            if needle.lower() not in blob
-        ]
-        if missing_needles:
-            errors.append(
-                "brief dropped event_bus / accept-payload workflow contract "
-                "(capability declares workflow + event_bus): "
-                + ", ".join(missing_needles[:4])
-            )
 
     budget_s = getattr(compiled, "budget_s", None)
-    if budget_s in (None, "", 0, 0.0) and not BUDGET_RE.search(text):
-        errors.append("missing budget")
-    elif budget_s in (None, "", 0, 0.0):
-        # Text mentions a budget but the compiled object forgot the number.
+    if budget_s in (None, "", 0, 0.0):
         errors.append("missing budget")
 
+    recorded = getattr(compiled, "emitted_lines", None)
     unsourced: List[str] = []
-    for line in _content_lines(text):
-        if _line_is_sourced(line, line_sources=sources, source_needles=extra):
-            continue
-        # Short structural leftovers (bars already skipped).
-        if len(line) < 8:
-            continue
-        unsourced.append(line)
-    if unsourced:
+    if not recorded:
+        errors.append("brief carries no provenance record (not compiled by the Factory)")
+    else:
+        for line in content_lines(text):
+            if line_key(line) not in recorded:
+                unsourced.append(line)
+        if unsourced:
+            errors.append(
+                "orphan line (not written by the compiler): " + unsourced[0][:160]
+            )
+
+    sessions = sorted(set(SESSION_ID_RE.findall(text)))
+    if sessions:
+        errors.append("brief cites a build session: " + ", ".join(sessions[:4]))
+
+    from app.factory.build.product_literals import foreign_literals_in
+
+    known = known_literals if known_literals is not None else _known_literals()
+    foreign = foreign_literals_in(text, known, _own_names(compiled))
+    if foreign:
         errors.append(
-            "orphan line (no blueprint / domain-pack / manifest source): "
-            + unsourced[0][:160]
+            "brief names another product's capability / product / vertical: "
+            + ", ".join(foreign[:6])
         )
 
     return BriefLintResult(
@@ -564,6 +245,8 @@ def lint_brief(
             "acceptance_bullets": len(bullets),
             "budget_s": budget_s,
             "unsourced": unsourced[:8],
+            "sessions": sessions,
+            "foreign": foreign,
         },
     )
 

@@ -48,7 +48,6 @@ from app.factory.build.writer_phases import (
     rag_query_route_present,
     should_dispatch_writer_phase,
     should_reopen_writer_phase,
-    writer_phase_needles,
 )
 from app.factory.product_architect import plan_blueprint
 
@@ -172,11 +171,10 @@ def _plant_quoted_routes(path: Path, *routes: str) -> None:
 
 def test_compiled_brief_carries_three_phase_cuts_and_lints():
     compiled = _compiled_smoke()
-    text = compiled.text
-    for needle in writer_phase_needles():
-        assert needle in text, needle
+    # Each phase's acceptance is a harness check, named by its tag.
+    for phase_id in WRITER_PHASES:
+        assert f"[check:writer_phase_{phase_id}]" in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    assert "CUT 1" in text and "CUT 3" in text
 
 
 def test_compile_phase_brief_does_not_drop_horizon_or_reuse_accept():
@@ -373,8 +371,8 @@ def test_steward_dual_rag_caps_owe_rag_http_even_with_vector_search_binds():
     assert inventory_needs_rag(compiled)
     text = compiled.text
     assert "/v1/rag/ingest" in text and "/v1/rag/query" in text
-    assert "/v1/steward/rag/ingest" in text and "/v1/steward/rag/query" in text
-    assert "dual_rag_estate_docs / dual_rag_sop one-record POST/GET" in text
+    # The brief states the platform contract; it names no product's routes.
+    assert "/v1/steward/rag" not in text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
@@ -565,3 +563,38 @@ def test_runner_hydrates_landed_writer_phases(tmp_path):
     assert WRITER_PHASE_BACKEND in runner.state.get("landed_writer_phases", [])
     ctx = SimpleNamespace(state=runner.state)
     assert WRITER_PHASE_BACKEND not in pending_writer_phases(ctx)
+
+
+@pytest.mark.parametrize(
+    "cap_id, owes_rag",
+    [
+        ("storage_management", False),  # "rag" inside "storage" is not a token
+        ("leverage_tracker", False),
+        ("fragment_index", False),
+        ("rag", True),
+        ("zorblat_rag_answers", True),
+        ("rag-search", True),
+    ],
+)
+def test_rag_surface_is_a_whole_token_of_the_capability_id(cap_id, owes_rag):
+    """A substring match once made every ``storage`` capability owe RAG
+    ingest/query routes. The rule is the token, on invented ids."""
+    compiled = compile_brief(
+        _Blueprint(),
+        _Plan(_Cap(cap_id, ["database"], "REUSE")),
+        store_ids={"database"},
+    )
+    assert inventory_needs_rag(compiled) is owes_rag
+
+
+def test_rag_route_checker_accepts_any_prefix_and_no_bare_mention(tmp_path):
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "routes.py").write_text(
+        '@router.post("/v1/zorblat/rag/ingest")\n@router.get("/v1/rag/query")\n',
+        encoding="utf-8",
+    )
+    assert rag_ingest_route_present(tmp_path) and rag_query_route_present(tmp_path)
+    (app / "routes.py").write_text("# see /v1/rag/ingest and /v1/rag/query\n", encoding="utf-8")
+    assert not rag_ingest_route_present(tmp_path)
+    assert not rag_query_route_present(tmp_path)

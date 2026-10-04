@@ -2,11 +2,12 @@ schema_version: product_blueprint.v1
 product_id: residential-lettings
 product_name: Residential Lettings Platform
 vertical: residential_lettings
+# Provenance (not product text, never sent to a coder): capability ids and
+# block bindings are the live roster of build session sess_6400b6c273414352,
+# blueprint hash b36090a424db -- not a keyword-fallback GENERATE stub.
 summary: >-
-  Factory golden for a residential-lettings platform. Capability ids and
-  block bindings are the live sess_6400b6c273414352 / hash b36090a424db
-  roster (unit registry, viewings, maintenance, tenancy applications) —
-  not a keyword-fallback GENERATE stub.
+  Residential-lettings platform: unit registry and vacancy tracking,
+  viewings, maintenance, tenancy applications.
 factory_scenario: CREATE_PRODUCT
 capabilities:
   - id: unit_registry_and_vacancy_tracking

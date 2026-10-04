@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set
 
 import re
 
@@ -65,11 +65,13 @@ from app.factory.build.reuse_lookup import (
 )
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.build.writer_phases import writer_phase_slot_bodies
+from app.factory.build.brief_lines import emitted_line_set
 from app.factory.coder import coder_budget_s
 from app.factory.delivery_standard import DOMAIN_PACK_FIELDS
 from app.factory.dual_registry import dual_registered_ids
 from app.factory.kit_pack import (
     find_kit_manifest,
+    kit_brief_view,
     kits_for_blocks,
     render_kit_manifest,
 )
@@ -133,6 +135,9 @@ class CompiledBrief:
     contracts: Dict[str, Any] = field(default_factory=dict)
     reuse_records: Dict[str, Any] = field(default_factory=dict)
     line_sources: Dict[str, str] = field(default_factory=dict)
+    #: Every content line the compiler wrote. The lint refuses any line
+    #: not in this record, so provenance is by construction, not by phrase.
+    emitted_lines: FrozenSet[str] = field(default_factory=frozenset)
     budget_s: float = 0.0
     template_revision: str = TEMPLATE_REVISION
 
@@ -311,11 +316,14 @@ def _load_kit_manifests(
                 existing = json.loads(src.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 existing = None
-        out[kit_id] = render_kit_manifest(
-            kit_id,
+        out[kit_id] = kit_brief_view(
+            render_kit_manifest(
+                kit_id,
+                bids,
+                source_kind="brief-compiler",
+                existing=existing,
+            ),
             bids,
-            source_kind="brief-compiler",
-            existing=existing,
         )
     return out
 
@@ -584,7 +592,7 @@ def render_slot_bodies(
             ]
         ),
         "",
-        persist_accept_rules_text(),
+        persist_accept_rules_text([item.capability_id for item in inventory]),
         "",
         workflow_accept_rules_text(
             capability_ids=event_bus_workflow_capability_ids(inventory)
@@ -919,6 +927,7 @@ def compile_brief(
     )
     return CompiledBrief(
         text=text,
+        emitted_lines=emitted_line_set(text),
         product_name=str(getattr(blueprint, "product_name", "") or "platform"),
         vertical=str(getattr(blueprint, "vertical", "") or "product"),
         product_id=str(getattr(blueprint, "product_id", "") or ""),

@@ -16,6 +16,12 @@ identifier in the path is a fixed point):
   rescue_fn     ``def _rescue_*``
   needle_list   ``*_NEEDLES = (...)``
   rescue_knob   ``*_RESCUE`` / ``*_BONUS`` / ``*_EXTRA_K`` knobs
+  product_literal  a string literal EQUAL to a name that belongs to some
+                product -- a capability id, product id or name, or vertical.
+                The set is loaded at run time from the Store registry, every
+                build on record (local workspaces and the cerebrum-builds
+                branches) and the golden blueprints
+                (scripts/known_product_literals.py). Nothing is hand-listed.
   probe_id      OPT-IN (``--form probe_id``): a probe / test-case id used as
                 an exact string literal (``"R18"``, ``"E1"``) -- the shape
                 of a photographed probe set. Off by default here because the
@@ -50,7 +56,7 @@ import sys
 import tokenize
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROOTS = ("backend/app/factory",)
@@ -73,7 +79,30 @@ FORMS: Dict[str, re.Pattern] = {
 STRING_ONLY_FORMS = {"probe_id", "session_id"}
 #: Whole-body match only: the literal IS the id, not a sentence containing it.
 EXACT_LITERAL_FORMS = {"probe_id"}
-DEFAULT_FORMS = ("session_id", "live_snapshot", "rescue_fn", "needle_list", "rescue_knob")
+DEFAULT_FORMS = (
+    "session_id",
+    "live_snapshot",
+    "rescue_fn",
+    "needle_list",
+    "rescue_knob",
+    "product_literal",
+)
+#: Forms decided by a loaded set rather than a pattern.
+DATA_FORMS = ("product_literal",)
+
+
+def load_known_literals() -> FrozenSet[str]:
+    """Every known product name, lower-cased (builds-repo part is additive)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "known_product_literals", ROOT / "scripts" / "known_product_literals.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    known = mod.load()
+    return frozenset(k.strip().lower() for k in known if k.strip())
 OPT_IN_FORMS = ("probe_id",)
 
 
@@ -107,7 +136,11 @@ def _in_spans(line: int, spans: Iterable[Tuple[int, int]]) -> bool:
     return any(a <= line <= b for a, b in spans)
 
 
-def scan_file(path: Path, forms: Iterable[str] = DEFAULT_FORMS) -> List[Tuple[int, str, str]]:
+def scan_file(
+    path: Path,
+    forms: Iterable[str] = DEFAULT_FORMS,
+    known: Optional[FrozenSet[str]] = None,
+) -> List[Tuple[int, str, str]]:
     """(line, form, token) for every hardwiring form in the file's CODE."""
     # utf-8-sig: a byte-order mark would make ast.parse fail, and a file whose
     # docstrings cannot be located would have every docstring citation
@@ -119,12 +152,18 @@ def scan_file(path: Path, forms: Iterable[str] = DEFAULT_FORMS) -> List[Tuple[in
         tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
     except (tokenize.TokenError, SyntaxError):
         return out
-    active = [(f, FORMS[f]) for f in forms]
+    forms = tuple(forms)
+    active = [(f, FORMS[f]) for f in forms if f in FORMS]
+    literals = known if (known and "product_literal" in forms) else frozenset()
     for tok in tokens:
         if tok.type not in (tokenize.NAME, tokenize.STRING):
             continue
         if _in_spans(tok.start[0], spans):
             continue
+        if literals and tok.type is tokenize.STRING:
+            body = _literal_body(tok.string)
+            if body.strip().lower() in literals:
+                out.append((tok.start[0], "product_literal", body.strip()))
         for form, pattern in active:
             if form in STRING_ONLY_FORMS:
                 if tok.type is not tokenize.STRING:
@@ -141,15 +180,21 @@ def scan_file(path: Path, forms: Iterable[str] = DEFAULT_FORMS) -> List[Tuple[in
     return out
 
 
-def scan(roots: Iterable[str], forms: Iterable[str] = DEFAULT_FORMS) -> Dict[str, List[Tuple[int, str, str]]]:
+def scan(
+    roots: Iterable[str],
+    forms: Iterable[str] = DEFAULT_FORMS,
+    known: Optional[FrozenSet[str]] = None,
+) -> Dict[str, List[Tuple[int, str, str]]]:
     found: Dict[str, List[Tuple[int, str, str]]] = {}
     forms = tuple(forms)
+    if known is None and any(f in DATA_FORMS for f in forms):
+        known = load_known_literals()
     for root in roots:
         base = ROOT / root
         for path in sorted(base.rglob("*.py")):
             if "tests" in path.parts or "__pycache__" in path.parts:
                 continue
-            hits = scan_file(path, forms)
+            hits = scan_file(path, forms, known)
             if hits:
                 found[path.relative_to(ROOT).as_posix()] = hits
     return found
@@ -169,6 +214,12 @@ def as_counts(found: Dict[str, List[Tuple[int, str, str]]]) -> Dict[str, Dict[st
 
 def total(counts: Dict[str, Dict[str, Dict[str, int]]]) -> int:
     return sum(n for forms in counts.values() for toks in forms.values() for n in toks.values())
+
+
+def _baseline_forms() -> List[str]:
+    if not BASELINE.is_file():
+        return []
+    return list(json.loads(BASELINE.read_text(encoding="utf-8")).get("forms") or [])
 
 
 def load_baseline() -> Dict[str, Dict[str, Dict[str, int]]]:
@@ -224,9 +275,16 @@ def main(argv: List[str] | None = None) -> int:
     before = total(baseline)
 
     if args.write_baseline:
-        if baseline and now > before:
+        # A rule that did not exist when the baseline was written grandfathers
+        # what already stands, once. Every form that WAS in the baseline may
+        # only shrink.
+        old_forms = set(_baseline_forms())
+        def _total_in(counts, keep):
+            return sum(n for forms_ in counts.values() for f, toks in forms_.items() if f in keep for n in toks.values())
+        prior = _total_in(current, old_forms) if old_forms else now
+        if baseline and prior > before:
             print(
-                f"REFUSED: the baseline may only shrink ({before} -> {now}). "
+                f"REFUSED: the baseline may only shrink ({before} -> {prior}). "
                 "Delete the new form; never admit it.",
                 file=sys.stderr,
             )
