@@ -20,12 +20,28 @@ _SPECS = {"book": {"entity": "book", "fields": [{"name": "title", "type": "str"}
 
 
 def test_connect_does_not_switch_journal_mode_per_connection():
-    src = render_store(_SPECS)
-    connect_body = src[src.index("def connect()"):src.index("def enable_wal(")]
-    assert "journal_mode=WAL" not in connect_body, (
-        "connect() switches journal mode on every connection; that is the race"
+    """store.connect() delegates to app.db.connect() (the store opens no
+    database of its own -- postgres_boot_200), so the property lives there:
+    app.db sets the per-connection busy_timeout and never switches WAL."""
+    from app.factory.build.engine_switch import render_db_module
+
+    store = render_store(_SPECS)
+    store_connect = store[store.index("def connect()"):store.index("def enable_wal(")]
+    assert "_db.connect()" in store_connect
+    assert "journal_mode=WAL" not in store_connect
+
+    db = render_db_module()
+    db_connect = db[db.index("def connect()"):db.index("def backend_name(")]
+    body = db_connect[db_connect.index('"""', db_connect.index('"""') + 3) + 3:]
+    assert "journal_mode=WAL" not in body, (
+        "app.db.connect() switches journal mode on every connection; that is the race"
     )
-    assert "busy_timeout" in connect_body, "per-connection busy_timeout must stay"
+    assert "_BUSY_TIMEOUT_PRAGMA" in body, "per-connection busy_timeout must stay"
+    namespace: dict = {}
+    exec(compile(db, "db.py", "exec"), namespace)
+    assert namespace["_BUSY_TIMEOUT_PRAGMA"] == (
+        "PRAGMA busy_timeout=%d" % namespace["SQLITE_BUSY_TIMEOUT_MS"]
+    )
 
 
 def test_store_enables_wal_once_out_of_band():
