@@ -57,11 +57,6 @@ PRODUCT_EVENT_BUS_STEP_1_HALT = "workflow: step_1 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_2_HALT = "workflow: step_2 (event_bus): error"
 
 
-
-
-PREPARE_BLOCK_INPUT_NEEDLE = "prepare_block_input"
-
-
 #: MCP notify target on the prepared input (notification requires block/tool).
 #: Use ``tool`` — ``input.block`` is also the workflow child discriminator,
 #: so AST would treat the inner dict as a second unprepared event_bus step.
@@ -129,6 +124,40 @@ def _parse_handler(text: str) -> Optional[ast.AST]:
     return None
 
 
+def _source_tokens(text: str) -> set:
+    """Identifiers and string-literal values in source, by the tokenizer.
+
+    Used only when the source does not parse as a whole: a token is a unit
+    of the language, so a word inside a comment or a larger string is not
+    one of them."""
+    import io
+    import tokenize
+
+    out: set = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text or "").readline):
+            if tok.type == tokenize.NAME:
+                out.add(tok.string)
+            elif tok.type == tokenize.STRING:
+                try:
+                    value = ast.literal_eval(tok.string)
+                except (ValueError, SyntaxError):
+                    continue
+                if isinstance(value, str):
+                    out.add(value)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+    return out
+
+
+def _names_block(text: str, block_id: str) -> bool:
+    """The source names ``block_id`` as a string constant (a block reference)."""
+    tree = _parse_handler(text)
+    if tree is None:
+        return block_id in _source_tokens(text)
+    return any(_ast_str(n) == block_id for n in ast.walk(tree))
+
+
 def _call_name(node: ast.Call) -> str:
     func = node.func
     if isinstance(func, ast.Name):
@@ -149,7 +178,7 @@ def handler_constructs_event_bus_step(text: str) -> bool:
     dispatch call to it. Read from the AST, never from spellings; source
     that does not parse is assumed to (fail closed)."""
     blob = text or ""
-    if "event_bus" not in blob:
+    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
         return False
     tree = _parse_handler(blob)
     if tree is None:
@@ -182,10 +211,6 @@ def handler_forwards_raw_sample(text: str) -> bool:
     return False
 
 
-def handler_calls_prepare_block_input(text: str) -> bool:
-    return PREPARE_BLOCK_INPUT_NEEDLE in (text or "")
-
-
 def handler_has_factory_event_bus_wrap(text: str) -> bool:
     """True when the factory execute wrap prepares every workflow child: a
     ``_watched(block_id, ...)`` wrapper that calls ``_prepare_block_input``."""
@@ -206,7 +231,9 @@ def handler_builds_workflow_children(text: str) -> bool:
     assignment or keyword) or a dispatch call to the workflow block."""
     tree = _parse_handler(text)
     if tree is None:
-        return "steps" in (text or "") or "workflow" in (text or "")
+        # Unparseable: decide on the source's identifier and string tokens.
+        names = _source_tokens(text)
+        return "steps" in names or "workflow" in names
     for node in ast.walk(tree):
         pairs = _ast_dict_map(node)
         if pairs and "steps" in pairs:
@@ -347,35 +374,59 @@ def event_bus_steps_from_handler(text: str) -> List[Tuple[int, bool]]:
     return out
 
 
+def _key_values(tree: ast.AST) -> dict:
+    """Every value the source binds to a string key, from dict literals,
+    keyword arguments, ``x["key"] = value`` and ``key = value``."""
+    out: dict = {}
+    for node in ast.walk(tree):
+        for key, value in (_ast_dict_map(node) or {}).items():
+            out.setdefault(key, []).append(value)
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if kw.arg:
+                    out.setdefault(kw.arg, []).append(kw.value)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    out.setdefault(target.id, []).append(node.value)
+                elif isinstance(target, ast.Subscript) and _ast_str(target.slice):
+                    out.setdefault(_ast_str(target.slice), []).append(node.value)
+    return out
+
+
+def _reads_input_attr(tree: ast.AST, attr: str) -> bool:
+    """``input.<attr>`` -- the prepared input read as an object."""
+    return any(
+        isinstance(n, ast.Attribute) and n.attr == attr
+        and isinstance(n.value, ast.Name) and n.value.id == "input"
+        for n in ast.walk(tree)
+    )
+
+
+def _is_dict_value(node: ast.AST) -> bool:
+    return isinstance(node, ast.Dict) or (
+        isinstance(node, ast.Call) and _call_name(node) == "dict"
+    )
+
+
 def handler_has_prepared_event_bus_step(text: str) -> bool:
-    """True when source names the PRODUCT-prepared event_bus step keys."""
+    """True when source binds the PRODUCT-prepared event_bus step keys: a
+    topic, a payload dict, a message, the event_bus channel and the publish
+    action. Read from the syntax tree; source that does not parse names
+    nothing it can be credited for."""
     blob = text or ""
-    if "event_bus" not in blob:
+    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
         return False
-    has_topic = '"topic"' in blob or "'topic'" in blob or "input.topic" in blob
-    has_payload_dict = (
-        '"payload": {' in blob
-        or "'payload': {" in blob
-        or "payload = {" in blob
-        or "payload={" in blob
-        or '"payload": dict' in blob
-        or "'payload': dict" in blob
-    )
-    has_message = '"message"' in blob or "'message'" in blob or "input.message" in blob
-    has_channel = (
-        f'"channel": "{EVENT_BUS_STEP_CHANNEL}"' in blob
-        or f"'channel': '{EVENT_BUS_STEP_CHANNEL}'" in blob
-        or f'channel="{EVENT_BUS_STEP_CHANNEL}"' in blob
-        or f"channel='{EVENT_BUS_STEP_CHANNEL}'" in blob
-        or f"channel={EVENT_BUS_STEP_CHANNEL!r}" in blob
-    )
-    has_action = (
-        f'"action": "{EVENT_BUS_STEP_ACTION}"' in blob
-        or f"'action': '{EVENT_BUS_STEP_ACTION}'" in blob
-        or f'action="{EVENT_BUS_STEP_ACTION}"' in blob
-        or f"action='{EVENT_BUS_STEP_ACTION}'" in blob
-        or f"action={EVENT_BUS_STEP_ACTION!r}" in blob
-    )
+    tree = _parse_handler(blob)
+    if tree is None:
+        return False
+    kv = _key_values(tree)
+    has_topic = "topic" in kv or _reads_input_attr(tree, "topic")
+    has_payload_dict = any(_is_dict_value(v) for v in kv.get("payload", ()))
+    has_message = "message" in kv or _reads_input_attr(tree, "message")
+    has_channel = any(_ast_str(v) == EVENT_BUS_STEP_CHANNEL for v in kv.get("channel", ()))
+    has_action = any(_ast_str(v) == EVENT_BUS_STEP_ACTION for v in kv.get("action", ()))
     return bool(has_topic and has_payload_dict and has_message and has_channel and has_action)
 
 
@@ -385,7 +436,7 @@ def handler_builds_unparsed_event_bus_workflow(text: str) -> bool:
     the live appointment_scheduling class after #325.
     """
     blob = text or ""
-    if "event_bus" not in blob:
+    if not _names_block(blob, EVENT_BUS_MCP_BLOCK):
         return False
     if not handler_builds_workflow_children(blob):
         return False
