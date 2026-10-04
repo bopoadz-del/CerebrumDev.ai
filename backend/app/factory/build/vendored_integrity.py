@@ -38,9 +38,14 @@ that it happened. It is deliberately narrow:
   condition is visible and auditable rather than silently tolerated. Set the
   strict flag once a run has proven the digests stable across environments.
 
-The signature is not verified: that needs the publisher's key, which the
-factory does not carry. The record marks which blocks are signed so the
-absence is visible instead of implied.
+The signature IS verified, with the publisher's public key read from the
+Store registry the block came from (``<store>/data/publishers.json``, beside
+``block_registry/``) -- never typed into the Factory. The manifest digest is
+recomputed over every declared field (only ``signature`` and ``digests``, the
+outputs of signing, are excluded), so a declaration the Factory decides on
+cannot be edited without re-signing. A signed block that fails verification
+fails the build; a block from a tree with no registry is recorded as
+unverifiable, never silently passed.
 """
 
 from __future__ import annotations
@@ -49,7 +54,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from app.factory.build.gates import GateContext, GateResult
@@ -156,20 +161,112 @@ def verify_block(block_dir: Path) -> Dict[str, object]:
     return out
 
 
+#: Where a Store tree keeps its publisher registry, relative to its root.
+PUBLISHER_REGISTRY_REL = Path("data") / "publishers.json"
+
+
+def _publisher_registry(block_dir: Path) -> Optional[Path]:
+    """The registry of the Store tree this block lives in, if any."""
+    for parent in Path(block_dir).resolve().parents:
+        candidate = parent / PUBLISHER_REGISTRY_REL
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _canonical(payload: object) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def verify_signature(block_dir: Path) -> Dict[str, object]:
+    """Verify a block's publisher signature against its Store's registry.
+
+    ``verified`` is True / False, or None when the block is unsigned or its
+    tree carries no registry (nothing to verify against -- recorded, so the
+    absence is visible). The check mirrors the Store's own verifier: the
+    manifest digest covers every field but ``signature``/``digests``, and the
+    signature covers ``{"publisher_id", "digests"}`` in canonical JSON.
+    """
+    import base64
+
+    out: Dict[str, object] = {"verified": None, "reason": ""}
+    try:
+        manifest = json.loads((Path(block_dir) / "block.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        out.update(verified=False, reason=f"block.json unreadable: {exc}")
+        return out
+    signature = manifest.get("signature")
+    digests = manifest.get("digests")
+    publisher_id = manifest.get("publisher_id")
+    if not signature:
+        out["reason"] = "unsigned"
+        return out
+    registry_path = _publisher_registry(block_dir)
+    if registry_path is None:
+        out["reason"] = "no publisher registry in the source tree"
+        return out
+    try:
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        out.update(verified=False, reason=f"publisher registry unreadable: {exc}")
+        return out
+    record = next(
+        (p for p in registry.get("publishers") or [] if p.get("publisher_id") == publisher_id),
+        None,
+    )
+    if record is None:
+        out.update(verified=False, reason=f"unknown publisher: {publisher_id}")
+        return out
+    if record.get("revoked_at") or record.get("tier") == "revoked":
+        out.update(verified=False, reason=f"publisher revoked: {publisher_id}")
+        return out
+    if not isinstance(digests, dict):
+        out.update(verified=False, reason="signed but publishes no digests")
+        return out
+    body = {k: v for k, v in manifest.items() if k not in ("signature", "digests")}
+    if hashlib.sha256(_canonical(body)).hexdigest().lower() != str(digests.get("block.json", "")).lower():
+        out.update(verified=False, reason="manifest edited after signing (block.json digest)")
+        return out
+    try:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+        key = Ed25519PublicKey.from_public_bytes(base64.b64decode(record["public_key"]))
+        key.verify(
+            base64.b64decode(signature),
+            _canonical({"publisher_id": publisher_id, "digests": digests}),
+        )
+    except InvalidSignature:
+        out.update(verified=False, reason="signature does not verify against the registry key")
+        return out
+    except Exception as exc:  # noqa: BLE001 -- a malformed key/signature is a failure
+        out.update(verified=False, reason=f"signature error: {type(exc).__name__}: {exc}")
+        return out
+    out.update(verified=True, reason=f"verified against {publisher_id}")
+    return out
+
+
 def lock_record(source_dir: Path) -> Dict[str, object]:
     """Clone-time verdict for one block, written into blocks.lock.json."""
     report = verify_block(source_dir)
     absent = [f"{n}: named in digests but absent from source" for n in report["missing"]]
     mismatched = [str(m) for m in report["mismatched"]]
+    sig = verify_signature(source_dir)
+    bad_signature = (
+        [f"{Path(source_dir).name}: {sig['reason']}"] if sig["verified"] is False else []
+    )
     return {
-        "verified": not absent and not mismatched,
+        "verified": not absent and not mismatched and not bad_signature,
         "files_hashed": report["digested"],
         "has_digests": report["has_digests"],
-        "signed_unverified": report["signed"],
+        "signed_unverified": report["signed"] and sig["verified"] is not True,
+        "signature_verified": sig["verified"],
+        "signature_reason": sig["reason"],
+        "bad_signature": bad_signature,
         # Split, because only one of the two is environment-independent.
         "absent": absent,
         "mismatched": mismatched,
-        "findings": absent + mismatched,
+        "findings": absent + mismatched + bad_signature,
     }
 
 
@@ -209,6 +306,7 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
     checked = 0
     files = 0
     signed = 0
+    sig_verified = 0
 
     for block_dir in sorted(p for p in vendor.iterdir() if p.is_dir()):
         checked += 1
@@ -221,8 +319,12 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             signed += 1
         if not record.get("has_digests"):
             undigested.append(block_dir.name)
-        # Absence is always fatal; a hash mismatch is fatal only in strict mode.
+        # Absence and a failed signature are always fatal; a hash mismatch is
+        # fatal only in strict mode.
         findings.extend(str(f) for f in (record.get("absent") or []))
+        findings.extend(str(f) for f in (record.get("bad_signature") or []))
+        if record.get("signature_verified") is True:
+            sig_verified += 1
         mism = [str(f) for f in (record.get("mismatched") or [])]
         if mism:
             if strict_digests():
@@ -244,7 +346,10 @@ def gate_vendored_integrity(ctx: "GateContext") -> "GateResult":
             payload={"blocks_checked": checked, "files_hashed": files},
         )
 
-    detail = f"{files} file(s) across {checked} block(s) verified against published digests"
+    detail = (
+        f"{files} file(s) across {checked} block(s) verified against published digests; "
+        f"{sig_verified} signature(s) verified against the Store registry key"
+    )
     if undigested:
         detail += f"; {len(undigested)} block(s) publish no digests"
     if mismatches:

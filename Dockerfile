@@ -44,6 +44,9 @@ COPY blueprints /app/blueprints
 # store-sourced block as unlocked (live Steward Continue sess_5782f226
 # died at database with the lock-hash that was already committed).
 COPY blocks.lock.json /app/blocks.lock.json
+# The Store commit this image was built and locked against (store.pin);
+# engine resolution reads it -- the Factory never follows Store main.
+COPY store.pin /app/store.pin
 
 # The Store, baked at image build. Cerebrum-Blocks is private, so the
 # runtime clone (engine_discovery) has no anonymous path any more -- the
