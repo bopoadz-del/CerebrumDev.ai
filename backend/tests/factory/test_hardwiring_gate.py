@@ -160,7 +160,8 @@ def test_a_string_equal_to_a_known_product_name_is_refused(gate, tmp_path, capsy
     _write(tmp_path, "pkg/bad.py", 'CAP = "zorblat_intake"\n')
     assert gate.main(["--root", "pkg"]) == 1
     err = capsys.readouterr().err
-    assert "product_literal" in err and "zorblat_intake" in err and "pkg/bad.py" in err
+    assert "product_literal" in err and "zorblat_intake" in err
+    assert "pkg/bad.py:1:" in err  # file:line, so the author can find it
 
 
 def test_product_names_in_prose_or_docstrings_are_not_literals(gate, tmp_path):

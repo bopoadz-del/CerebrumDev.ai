@@ -305,7 +305,12 @@ def main(argv: List[str] | None = None) -> int:
     if added:
         print("REJECTED: new hardwiring form(s) in shipped code -- fix the mechanism, not the case:", file=sys.stderr)
         for file, form, token, n, allowed in added:
-            print(f"  {file}: {form} {token!r} x{n} (baseline allows {allowed})", file=sys.stderr)
+            lines = [ln for ln, f, tok in found.get(file, []) if f == form and tok == token]
+            where = ",".join(str(ln) for ln in lines) or "?"
+            print(
+                f"  {file}:{where}: {form} {token!r} x{n} (baseline allows {allowed})",
+                file=sys.stderr,
+            )
         print(
             f"\n{len(added)} new form(s). The baseline ({before}) may only shrink; "
             "it is never regenerated to admit a new form.",
