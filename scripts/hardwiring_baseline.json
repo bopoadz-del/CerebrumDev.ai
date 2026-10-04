@@ -59,7 +59,8 @@
     "needle_list",
     "rescue_knob",
     "product_literal",
-    "word_list"
+    "word_list",
+    "probe_id"
   ],
   "roots": [
     "backend/app/factory"

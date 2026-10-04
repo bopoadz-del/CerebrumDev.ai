@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from app.cerebrum_product_kernel.contract.runtime import execute_action
+from app.factory.build import probe_set
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES
 from app.factory.build.roles import _coder_route_body
 from app.factory.build_jobs import BUILD_ENGINE_ENV, RUNNER, build_engine
@@ -27,8 +28,8 @@ from app.factory.generator import git_head
 from app.factory.paths import factory_repo_root
 
 EMITTER_ID = "app.factory.build.preflight.evaluate_preflight"
-STAGE = "S0"
 STAGE_NAME = "PREFLIGHT"
+STAGE = probe_set.stage_id(STAGE_NAME)
 
 # One S4 evidence filename. Closed #203 also wrote ``S4_kernel.json``; that
 # alias is not a reader input. Do not commit either JSON from a feature PR.
@@ -58,91 +59,21 @@ FACTORY_SOURCE_PATHS: Tuple[str, ...] = (
     "backend/app/factory/build/domain_pack.py",
 )
 
-#: Honest inventory of the stage table. Cite existing modules; do not
-#: duplicate them. ``expected`` is the path the table named (or the module
-#: that landed later — S11/S12 were listed "no module" but exist).
-STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
+#: Honest inventory of the stage table, from the probe set. Cite existing
+#: modules; do not duplicate them. ``expected`` is the path the table named
+#: (or the module that landed later -- S11/S12 were listed "no module" but
+#: exist). The probe set's own bookkeeping (name, promotion role) stays there.
+_INVENTORY_KEYS = ("expected", "purpose", "gaps", "note")
+STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = tuple(
     {
-        "stage": "S0",
-        "expected": "backend/app/factory/build/preflight.py",
-        "purpose": "fingerprint factory + RoleRunner emission before a build",
-    },
-    {
-        "stage": "S1",
-        "expected": "backend/app/factory/build/root_cause.py",
-        "purpose": "lane-authority map U1–U12, F1–F29",
-    },
-    {
-        "stage": "S2",
-        "expected": "backend/app/factory/build/supply_chain.py",
-        "purpose": "Dockerfile digest pin, SBOM, performed digest verify, F21",
-        "gaps": (
-            "cosign/signature verification not performed (honest; not claimed)",
-        ),
-    },
-    {
-        "stage": "S3",
-        "expected": "backend/app/factory/build/domain_pack.py",
-        "purpose": "the build's own Domain Pack against DOMAIN_PACK_FIELDS (15)",
-    },
-    {
-        "stage": "S4",
-        "expected": "backend/app/factory/build/roles.py",
-        "purpose": "kernel shipped via execute_action",
-        "gaps": ("_ensure_route_persists_payload still present (U4)",),
-    },
-    {
-        "stage": "S5",
-        "expected": "backend/app/factory/build/gates.py",
-        "purpose": "gate contract",
-        "gaps": ('FACTORY_SUITE_MARKER_EXPR remains "not pilot" (U7)',),
-    },
-    {
-        "stage": "S6",
-        "expected": "backend/app/factory/build/converge.py",
-        "purpose": "14-class emitter parity",
-        "gaps": ("chat not bound (U11)", "capture not executed (F17)"),
-    },
-    {
-        "stage": "S7",
-        "expected": "backend/app/factory/build/network_posture.py",
-        "purpose": "P1 offline-strict posture",
-    },
-    {
-        "stage": "S8",
-        "expected": "backend/app/factory/build/package.py",
-        "purpose": "package.write_identity",
-    },
-    {
-        "stage": "S9",
-        "expected": "backend/tests/factory/test_keyed_path_ci.py",
-        "purpose": "keyed path + LotDesk fixture rejection",
-        "gaps": ("F26 parity matrix not honestly Windows",),
-    },
-    {
-        "stage": "S10",
-        "expected": "backend/app/factory/build/data_lifecycle.py",
-        "purpose": "Alembic + restore drill",
-        "gaps": ("no factory evidence emitter for S10_data.json",),
-    },
-    {
-        "stage": "S11",
-        "expected": "backend/app/factory/build/deploy.py",
-        "purpose": "fail-closed health, observability, rollback drill",
-        "note": "audit said no module; deploy.py is present",
-    },
-    {
-        "stage": "S12",
-        "expected": "backend/app/factory/build/domain_acceptance.py",
-        "purpose": "ten outcomes through execute_action",
-        "note": "verified present; do not assume from the table",
-    },
-    {
-        "stage": "S13",
-        "expected": "backend/app/factory/build/promotion.py",
-        "purpose": "PILOT_READY machine emitter; harvest BLOCKED",
-        "note": "fail-closed is not completion",
-    },
+        "stage": row["id"],
+        **{
+            key: (tuple(row[key]) if isinstance(row[key], list) else row[key])
+            for key in _INVENTORY_KEYS
+            if key in row
+        },
+    }
+    for row in probe_set.stages()
 )
 
 

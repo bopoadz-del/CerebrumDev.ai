@@ -81,7 +81,9 @@ FORMS: Dict[str, re.Pattern] = {
     "rescue_knob": re.compile(r"^[A-Z0-9_]+_(?:RESCUE|BONUS|EXTRA_K)$"),
     # A probe id is a letter and one or two digits as the WHOLE string
     # literal ("R18", "E1"): the form a comparison or a photographed set uses.
-    # An id inside a longer message ("G5 stopped the run") is prose.
+    # An id inside a longer message ("G5 stopped the run") is prose. ENFORCED:
+    # probe ids live in app/factory/build/probe_set.json with their class and
+    # shape; code asks by shape/class/name and never spells an id.
     "probe_id": re.compile(r"^[A-Z]-?\d{1,2}$"),
 }
 #: Forms matched against string literals (the literal's body, quotes and
@@ -97,6 +99,7 @@ DEFAULT_FORMS = (
     "rescue_knob",
     "product_literal",
     "word_list",
+    "probe_id",
 )
 #: Forms decided by a loaded set rather than a pattern.
 DATA_FORMS = ("product_literal",)
@@ -114,7 +117,7 @@ def load_known_literals() -> FrozenSet[str]:
     spec.loader.exec_module(mod)
     known = mod.load()
     return frozenset(k.strip().lower() for k in known if k.strip())
-OPT_IN_FORMS = ("probe_id",)
+OPT_IN_FORMS: tuple = ()
 
 
 def _literal_body(text: str) -> str:

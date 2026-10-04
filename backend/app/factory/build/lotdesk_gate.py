@@ -17,11 +17,14 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from app.factory.build import probe_set
+
 LOTDESK_SHA256 = "8eec994d37f7068155152d1af486f705ff28d9674c587c0e4aa48217993f1554"
 GATE_NAME = "lotdesk_as_shipped"
 
-# Defects this Linux host can prove from the fixture tree/zip.
-REQUIRED_REJECTION_CODES = ("F18", "F19")
+# Defects this Linux host can prove from the fixture tree/zip: the probe set
+# marks them ``lotdesk_required_rejection``.
+REQUIRED_REJECTION_CODES = probe_set.codes_where(lotdesk_required_rejection=True)
 
 
 @dataclass(frozen=True)
@@ -117,7 +120,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
     if "_default_block_field" in dispatch or "_ALWAYS_FILL" in dispatch:
         findings.append(
             Finding(
-                "F18",
+                probe_set.code_for("fabricated_store_inputs"),
                 "app/dispatch.py",
                 "_DISPATCH_RUNTIME fabricates Store inputs "
                 "(_default_block_field / _ALWAYS_FILL)",
@@ -129,7 +132,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
         if "release_gate" not in dockerfile:
             findings.append(
                 Finding(
-                    "F19",
+                    probe_set.code_for("image_without_release_gate"),
                     "Dockerfile",
                     "product image does not run scripts/release_gate.py; "
                     "a red suite can still be a deployable image",
@@ -138,7 +141,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
         if "python:" in dockerfile and "@sha256:" not in dockerfile:
             findings.append(
                 Finding(
-                    "F20",
+                    probe_set.code_for("image_not_digest_pinned"),
                     "Dockerfile",
                     "FROM is not digest-pinned",
                 )
@@ -147,7 +150,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
     for rel, text in normalised.items():
         if rel.endswith("/Dockerfile") and ":latest" in text:
             findings.append(
-                Finding("F20", rel, "block image uses :latest"),
+                Finding(probe_set.code_for("block_image_latest"), rel, "block image uses :latest"),
             )
             break
 
@@ -155,7 +158,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
     if estate and 'status": "ok"' in estate and "payload" in estate:
         findings.append(
             Finding(
-                "F11",
+                probe_set.code_for("echo_block"),
                 "vendor/blocks/estate_registry/block.py",
                 "estate_registry echoes the caller payload as status=ok",
             )
@@ -164,11 +167,11 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
     main = normalised.get("app/main.py", "")
     if 'return {"status": "ok"}' in main and "def health" in main:
         findings.append(
-            Finding("F24", "app/main.py", "GET /health is a constant ok"),
+            Finding(probe_set.code_for("health_constant_ok"), "app/main.py", "GET /health is a constant ok"),
         )
         findings.append(
             Finding(
-                "F1",
+                probe_set.code_for("health_unconditional_ok"),
                 "app/main.py",
                 "GET /health is unconditional ok / always-200 (LotDesk-class)",
             ),
@@ -182,7 +185,7 @@ def inspect_files(files: Dict[str, str]) -> List[Finding]:
             n.startswith("frontend/") for n in files
         ):
             findings.append(
-                Finding("F14", "ui/", "no ui/ or frontend/ shipped"),
+                Finding(probe_set.code_for("no_ui_surface"), "ui/", "no ui/ or frontend/ shipped"),
             )
 
     return findings
