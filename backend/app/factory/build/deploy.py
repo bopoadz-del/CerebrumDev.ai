@@ -21,6 +21,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app.factory.build import probe_set
 from app.factory.build.data_lifecycle import DISK_SIZE_GB, first_entity_sample
 from app.factory.build.lotdesk_gate import inspect_path, resolve_lotdesk_fixture
 
@@ -91,7 +92,7 @@ def inspect_health_source(source: str, *, path: str = "app/main.py") -> List[Fin
     if health_is_always_200(source):
         findings.append(
             Finding(
-                "F1",
+                probe_set.code_for("health_unconditional_ok"),
                 path,
                 "GET /health is unconditional ok / always-200; "
                 "a down app, missing disk/DB, or unapplied migration still looks healthy",
@@ -115,7 +116,8 @@ def reject_lotdesk_always_200_health(explicit: Optional[Path] = None) -> Dict[st
     """LotDesk-class health is F1. The zip is inspected, never patched."""
     path = resolve_lotdesk_fixture(explicit)
     lotdesk = inspect_path(path)
-    health_findings = [item for item in lotdesk if item.code in {"F1", "F24"}]
+    health = set(probe_set.codes_where(cls="health"))
+    health_findings = [item for item in lotdesk if item.code in health]
     source_map = _lotdesk_main_source(path)
     if source_map:
         health_findings.extend(
@@ -137,7 +139,7 @@ def reject_lotdesk_always_200_health(explicit: Optional[Path] = None) -> Dict[st
         "fixture": str(path),
         "codes": codes,
         "findings": [asdict(item) for item in unique],
-        "f1_present": "F1" in codes,
+        **probe_set.present_flags(codes, (probe_set.code_for("health_unconditional_ok"),)),
         "lotdesk": "fixture only; not patched",
     }
 
@@ -525,7 +527,7 @@ def deploy_declaration() -> Dict[str, Any]:
             "path": "/health",
             "fail_closed": True,
             "checks": ["process", "persistent_disk", "database", "migrations"],
-            "unconditional_ok_is": "F1",
+            "unconditional_ok_is": probe_set.code_for("health_unconditional_ok"),
             "render": "healthCheckPath: /health (same probe; 503 takes the instance out)",
         },
         "rollback": {

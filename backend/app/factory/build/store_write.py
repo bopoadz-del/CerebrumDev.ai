@@ -36,6 +36,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app.factory.build import probe_set
+
 BLOCKS_REPO = "bopoadz-del/Cerebrum-Blocks"
 PROTECTED_BRANCHES = frozenset({"main", "master"})
 BRANCH_PREFIX = "factory-harvest"
@@ -139,7 +141,7 @@ def plan_harvest(blocks_root: Path) -> Dict[str, Any]:
     return {
         "blocks_repo": BLOCKS_REPO,
         "blocks_checkout": str(blocks_root),
-        "finding": "F16",
+        "finding": probe_set.code_for("ui_schema_unused"),
         "edits": edits,
         "edit_count": len(edits),
         "surveyed": report["blocks"],

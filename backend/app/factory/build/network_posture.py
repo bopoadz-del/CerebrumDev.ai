@@ -18,32 +18,15 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-# Exactly one. Do not add a second.
-NETWORK_POSTURE = "P1"
-POSTURE_ID = "P1"
-NETWORK_POSTURE_REASON = (
-    "Delivered platforms run in-process against vendored blocks; "
-    "local/scripted OCR only; no Store URL, no cloud LLM, no Ollama, "
-    "no outbound HTTP at runtime."
-)
+from app.factory.build import probe_set
 
-REJECTED_ALTERNATIVES: Dict[str, str] = {
-    "P2": (
-        "Local inference (Ollama :11434, 'no external call', loopback only). "
-        "Would rewrite the socket blocker and retract 'no network' to "
-        "'loopback LLM'. Ollama is not in the generated Dockerfile or Render "
-        "blueprint. Factory products already promise no outbound call. "
-        "Cost: new runtime dependency, new deploy surface, blocker change."
-    ),
-    "P3": (
-        "Cloud allowlist; retract offline claim; state PII egress. "
-        "Deleting the socket blocker is an S7 FAIL. Production generated "
-        "products do not already require cloud capture or chat (F17 is "
-        "capture listed not executed). Factory host LLM is the builder, "
-        "not the product. Cost: every offline claim becomes a lie unless "
-        "rewritten; PII egress is un-drilled."
-    ),
-}
+# Exactly one, chosen in the probe set (it refuses a second). The id, the
+# reason and the rejected alternatives are data there, never literals here.
+NETWORK_POSTURE, _CHOSEN = probe_set.chosen_posture()
+POSTURE_ID = NETWORK_POSTURE
+NETWORK_POSTURE_REASON: str = _CHOSEN["reason"]
+
+REJECTED_ALTERNATIVES: Dict[str, str] = probe_set.rejected_postures()
 
 P1_SOCKET_BLOCKER_MARKERS = (
     "offline suite: outbound connection",
@@ -286,9 +269,9 @@ def apply_p1_capture_manifest(data: Mapping[str, Any]) -> Dict[str, Any]:
     out = json.loads(json.dumps(data))
     out.setdefault("permissions", {})["network"] = False
     desc = str(out.get("description") or "")
-    if "P1" not in desc:
+    if NETWORK_POSTURE not in desc:
         out["description"] = (
-            "P1: local/scripted OCR and scripted structure. "
+            f"{NETWORK_POSTURE}: local/scripted OCR and scripted structure. "
             "Cloud LLM keys and Ollama are unused. " + desc
         )
     for inp in out.get("inputs") or []:
@@ -399,7 +382,7 @@ def assert_workspace_posture(root: Path, fallback: Path | None = None) -> None:
 
 
 def scan_disagreements(texts: Iterable[Tuple[str, str]]) -> List[str]:
-    other = {"P2", "P3"} - {NETWORK_POSTURE}
+    other = set(REJECTED_ALTERNATIVES) - {NETWORK_POSTURE}
     hits: List[str] = []
     for loc, text in texts:
         for token in other:

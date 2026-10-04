@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.factory.build import probe_set
 from app.factory.build.data_lifecycle import (
     IDEMPOTENCY_TABLE,
     WORK_QUEUE_TABLE,
@@ -51,68 +52,10 @@ OUTCOMES: tuple[str, ...] = (
     OUTCOME_MISSING_FIELD_REJECTED,
 )
 
-OUTCOME_CATALOG: tuple[Dict[str, str], ...] = (
-    {
-        "id": OUTCOME_CREATE_PERSISTS,
-        "via": "execute_action product.create then store.get",
-        "closes": "F6",
-        "requires": "row persists and reads back",
-    },
-    {
-        "id": OUTCOME_READ_RETURNS_PERSISTED,
-        "via": "execute_action product.read",
-        "closes": "F6",
-        "requires": "read returns the persisted fields",
-    },
-    {
-        "id": OUTCOME_UPDATE_PERSISTS,
-        "via": "execute_action product.update then store.get",
-        "closes": "F6",
-        "requires": "changed fields persist and read back",
-    },
-    {
-        "id": OUTCOME_DELETE_PERSISTS,
-        "via": "execute_action product.delete then store.get",
-        "closes": "F6",
-        "requires": "deleted id is gone",
-    },
-    {
-        "id": OUTCOME_LIST_ONLY_PERSISTED,
-        "via": "execute_action product.list",
-        "closes": "F6",
-        "requires": "list/search ids equal store.list_all ids",
-    },
-    {
-        "id": OUTCOME_QUEUE_ITEM_PROCESSED,
-        "via": "execute_action product.enqueue then product.process",
-        "closes": "F5",
-        "requires": "pending item is processed, not a no-op",
-    },
-    {
-        "id": OUTCOME_REFUSED_ACTION_ERRORS,
-        "via": "execute_action product.refuse / invalid contract",
-        "closes": "F1,F12",
-        "requires": "status is not success and envelope is not ok:true",
-    },
-    {
-        "id": OUTCOME_IDEMPOTENT_DUPLICATE_SAFE,
-        "via": "execute_action product.create with idempotency_key",
-        "closes": "F6",
-        "requires": "duplicate key returns the same row",
-    },
-    {
-        "id": OUTCOME_UNAUTHORIZED_REJECTED,
-        "via": "execute_action with empty permissions",
-        "closes": "F15",
-        "requires": "permission_denied, not ok:true",
-    },
-    {
-        "id": OUTCOME_MISSING_FIELD_REJECTED,
-        "via": "execute_action product.create missing required field",
-        "closes": "F4",
-        "requires": "validation_error, not ok:true",
-    },
-)
+#: What each outcome performs and which defects it closes -- data in the
+#: probe set, so the defects an outcome closes are never written here.
+OUTCOME_CATALOG: tuple[Dict[str, str], ...] = probe_set.acceptance_outcomes()
+assert tuple(item["id"] for item in OUTCOME_CATALOG) == OUTCOMES, "probe set outcomes drifted"
 
 
 @dataclass(frozen=True)
@@ -1021,17 +964,17 @@ def test_ten_business_outcomes_are_performed_through_the_kernel(tmp_path, monkey
 def declaration(specs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "schema_version": "domain_acceptance.v1",
-        "stage": "S12",
+        "stage": probe_set.stage_id("DOMAIN_ACCEPTANCE"),
         "outcomes": [dict(item) for item in OUTCOME_CATALOG],
         "kernel": "cerebrum_product_kernel.contract.runtime.execute_action",
         "llm_route_authorship": "forbidden; _coder_route_body stays None",
-        "http_ok_true_is": "F1",
+        "http_ok_true_is": probe_set.code_for("http_ok_true"),
         "capability_id": first_capability_id(specs),
         "permissions": [WRITE_PERMISSION, READ_PERMISSION, PROCESS_PERMISSION],
         "queue": {
             "table": WORK_QUEUE_TABLE,
             "idempotency_table": IDEMPOTENCY_TABLE,
-            "hollow_is": "F5",
+            "hollow_is": probe_set.code_for("hollow_queue"),
         },
         "lotdesk": "fixture only; not patched",
     }
@@ -1150,12 +1093,16 @@ def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
     findings: List[Finding] = []
     if always_200:
         findings.append(
-            Finding("F1", "app/main.py", "GET /health is unconditional ok / always-200")
+            Finding(
+                probe_set.code_for("health_unconditional_ok"),
+                "app/main.py",
+                "GET /health is unconditional ok / always-200",
+            )
         )
     if not has_kernel:
         findings.append(
             Finding(
-                "F1",
+                probe_set.code_for("http_ok_true"),
                 "app/",
                 "no cerebrum_product_kernel execute_action path; HTTP ok:true is not acceptance",
             )
@@ -1163,7 +1110,7 @@ def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
     if not has_update or not has_delete or not has_put or not has_http_delete:
         findings.append(
             Finding(
-                "F6",
+                probe_set.code_for("missing_update_delete"),
                 "app/store.py",
                 "missing update/delete persist (LotDesk-class CRUD hole)",
             )
@@ -1171,14 +1118,18 @@ def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
     if vendor_queue and not has_process:
         findings.append(
             Finding(
-                "F5",
+                probe_set.code_for("hollow_queue"),
                 "vendor/blocks/queue/block.py",
                 "queue/workflow vendor is present but no persisted process transition",
             )
         )
     if not has_process:
         findings.append(
-            Finding("F5", "app/work_queue.py", "hollow queue: no mark/process of pending items")
+            Finding(
+                probe_set.code_for("hollow_queue"),
+                "app/work_queue.py",
+                "hollow queue: no mark/process of pending items",
+            )
         )
     lotdesk = inspect_path(path)
     for item in lotdesk:
@@ -1216,9 +1167,14 @@ def inspect_lotdesk_domain(explicit: Optional[Path] = None) -> Dict[str, Any]:
         "performed": [name for name in OUTCOMES if name not in failed],
         "codes": codes,
         "findings": [asdict(item) for item in findings],
-        "f1_present": "F1" in codes,
-        "f5_present": "F5" in codes,
-        "f6_present": "F6" in codes,
+        **probe_set.present_flags(
+            codes,
+            (
+                probe_set.code_for("health_unconditional_ok"),
+                probe_set.code_for("hollow_queue"),
+                probe_set.code_for("missing_update_delete"),
+            ),
+        ),
         "lotdesk": "fixture only; not patched",
     }
 
