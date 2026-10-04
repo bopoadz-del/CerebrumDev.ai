@@ -202,8 +202,15 @@ jobs:
       # scripts/hardwiring_baseline.json, which may only shrink. Exit 1 is a
       # rejection, not a warning: if this fails your diff, your diff is the
       # problem -- fix the mechanism, not the case.
+      # product_literal: a string equal to any capability / product / vertical
+      # name loaded at run time from the Store (CEREBRUM_BLOCKS_ROOT, checked
+      # out above), the golden blueprints and every cerebrum-builds build
+      # branch (additive: without the token the step runs on the Store and
+      # blueprints and logs that the builds branches were skipped).
       - name: Hardwiring gate (no new per-case form)
         working-directory: .
+        env:
+          CEREBRUM_BUILDS_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
         run: python scripts/scan_hardwiring.py
 
       - name: Forbid VITE_API_KEY in frontend/src

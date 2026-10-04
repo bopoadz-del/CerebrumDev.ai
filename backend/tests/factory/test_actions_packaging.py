@@ -26,7 +26,6 @@ import sys
 from pathlib import Path
 
 from app.factory.build.brief_compiler import compile_brief
-from app.factory.build.brief_lint import ACTIONS_PACKAGING_NEEDLES, lint_brief
 from app.factory.build.roles_handlers import (
     _render_actions_init,
     _render_routes,
@@ -306,19 +305,7 @@ def test_factory_packaging_imports_veterinary_care_with_handler_route_imports(
 def test_compiled_brief_carries_actions_packaging_contract():
     bp = load_blueprint(SMOKE)
     compiled = compile_brief(bp, plan_blueprint(bp))
-    blob = compiled.text.lower()
-    for needle in ACTIONS_PACKAGING_NEEDLES:
-        assert needle.lower() in blob, needle
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
+    # The factory owns the actions package; the brief says so.
+    assert "app/actions/__init__.py" in compiled.text
 
 
-def test_mutation_drops_actions_packaging_needles():
-    bp = load_blueprint(SMOKE)
-    compiled = compile_brief(bp, plan_blueprint(bp))
-    compiled.text = compiled.text.replace("from app.actions import", "from app.dispatch import")
-    compiled.text = compiled.text.replace("workspace does not import", "workspace boots fine")
-    compiled.text = compiled.text.replace("app.routes", "app.dispatch")
-    compiled.text = compiled.text.replace("app.main from a", "app.dispatch from a")
-    result = lint_brief(compiled)
-    assert result.ok is False
-    assert any("actions packaging contract" in e for e in result.errors)

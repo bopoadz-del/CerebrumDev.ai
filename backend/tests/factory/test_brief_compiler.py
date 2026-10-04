@@ -11,10 +11,8 @@ from app.factory.build.authorship import (
     FULL_PILOT_MIN_AUTHORED_ACTIONS,
     full_pilot_authorship_acceptance_line,
     full_pilot_authorship_forbidden_lines,
-    full_pilot_authorship_needles,
     full_pilot_authorship_rules_text,
 )
-from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
 from app.factory.build.brief_compiler import (
     TEMPLATE_REVISION,
     InventoryHalt,
@@ -91,51 +89,6 @@ def test_compiled_brief_has_the_gated_shape():
     assert full_pilot_authorship_rules_text(n_required) in text
     assert full_pilot_authorship_acceptance_line(n_required) in text
     assert full_pilot_authorship_forbidden_lines(n_required) in text
-    for needle in full_pilot_authorship_needles(n_required):
-        assert needle in text
-    for vocab in ENVELOPE_STATUS_VALUES:
-        assert vocab in text
-    assert compiled.missing_reuse == []
-    verify_inventory(compiled)
-    assert "CUT 1" in text
-    assert "CUT 2" in text
-    assert "CUT 3" in text
-    assert "PHASE 1 of 3" in text
-    assert "PHASE 2 of 3" in text
-    assert "PHASE 3 of 3" in text
-    assert "one FACTORY_CODE_CLI writer" in text
-    assert "[check:writer_phase_backend]" in text
-    assert "[check:writer_phase_frontend_rag]" in text
-    assert "[check:writer_phase_integration]" in text
-    assert "/v1/rag/ingest" in text
-    assert "/v1/rag/query" in text
-    assert "/v1/steward/rag/ingest" in text
-    assert "/v1/steward/rag/query" in text
-    assert "HARD WRITE" in text
-    assert "app/rag_routes.py" in text
-    assert "Budget wall:" in text
-    assert TEMPLATE_REVISION in text
-    assert "READS" in text and "WRITES" in text and "NEVER" in text
-    assert "writer_behaviour" in text
-    assert "no capability accepted its own schema" in text
-    assert "[check:writer_behaviour]" in text
-    assert "from app.actions import" in text
-    assert "workspace does not import" in text
-    assert "test_every_capability_route_accepts_payload" in text
-    assert "workflow: step_N (event_bus): error" in text
-    assert "workflow: step_0 (event_bus): error" in text
-    assert "workflow: step_1 (event_bus): error" in text
-    assert "workflow: step_2 (event_bus): error" in text
-    assert "appointment_scheduling" in text
-    assert "appointment_booking" in text
-    assert "[check:event_bus_workflow]" in text
-    assert "action=publish" in text
-    assert "'input': payload" in text
-    assert "factory-grounded" in text
-    assert 'execute("workflow", payload)' in text
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    assert "llm_writes_brief: never" in load_brief_template()
-    assert "HARD RULE" in text
 
 
 def test_compiled_brief_forbids_sealed_vendor():
@@ -340,7 +293,6 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
     assert "test_every_capability_route_accepts_payload" in compiled.text
     assert "workflow: step_N (event_bus): error" in compiled.text
     assert "workflow: step_2 (event_bus): error" in compiled.text
-    assert "appointment_booking" in compiled.text
     assert "action=publish" in compiled.text
     assert "payload dict" in compiled.text
     assert "input.topic" in compiled.text

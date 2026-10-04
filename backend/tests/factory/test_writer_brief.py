@@ -29,10 +29,7 @@ def test_one_brief_names_gates_pilot_ready_and_forbids_thin_success():
     assert "workflow: step_N (event_bus): error" in brief
     assert "channel=mcp" in brief
     assert "'input': payload" in brief
-    assert "appointment_scheduling" in brief
-    assert "appointment_booking" in brief
     assert "workflow: step_2 (event_bus): error" in brief
-    assert "reminders_notifications" in brief
     assert "EVERY id in BLOCK_IDS" in brief
     assert "Finished" in brief or "finished product" in lowered
     assert "one factory_code_cli writer" in lowered
@@ -112,3 +109,17 @@ def test_rework_packet_keeps_the_same_system_brief(monkeypatch):
     assert writer_system_brief() in captured["messages"][0]["content"]
     user = captured["messages"][-1]["content"]
     assert "site_visits rejected a payload" in user
+
+
+def test_coder_system_brief_names_no_product():
+    """Owner rule: the coder at WRITER gets the build's own names, never a
+    prior product's. Product names are loaded from the Store and ledgers."""
+    from app.factory.build.product_literals import (
+        default_roots,
+        foreign_literals_in,
+        known_product_literals,
+    )
+    from app.factory.build.writer_brief import CODING_AGENT_BRIEF
+
+    known = known_product_literals(**default_roots())
+    assert foreign_literals_in(CODING_AGENT_BRIEF, known, set()) == []

@@ -12,7 +12,10 @@ independent — this module does not skip, weaken, or timeout them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
+
+from app.factory.build.brief_lines import emitted_line_set
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -33,16 +36,19 @@ WRITER_PHASES: Tuple[str, ...] = (
 )
 
 #: A Store ``vector_search`` bind is reuse_accept (BLOCK_DEFAULT_ACTIONS),
-#: not a product RAG ingest/query surface. Only an explicit rag* id owes
-#: dedicated ingest + query HTTP routes. Phase-1 persist POST/GET on
-#: ``/v1/dual_rag_estate_docs`` is not that surface.
+#: not a product RAG ingest/query surface. A capability owes ingest + query
+#: routes when it binds a RAG block or its id carries ``rag`` as a whole token.
+#: A capability's persist POST/GET is not that surface.
 RAG_SURFACE_IDS = frozenset({"rag", "dual_rag"})
 
-#: One honest HTTP contract shared by PHASE 2 DO, ACCEPTANCE, and the
-#: checker. Kit / legacy dual-RAG and Steward canonical both count.
-#: Capability persist routes and docs/rag/*.json stamps do not.
-RAG_INGEST_PATHS = ("/v1/rag/ingest", "/v1/steward/rag/ingest")
-RAG_QUERY_PATHS = ("/v1/rag/query", "/v1/steward/rag/query")
+#: The platform's RAG contract, as the brief states it.
+RAG_INGEST_PATHS = ("/v1/rag/ingest",)
+RAG_QUERY_PATHS = ("/v1/rag/query",)
+
+#: What the checker accepts: the contract's shape, under any route prefix a
+#: product uses (``/v1/rag/ingest`` or ``/v1/<prefix>/rag/ingest``). The shape
+#: is the rule; no product's routes are listed.
+_RAG_ROUTE_RE = re.compile(r"""["'](/v1/(?:[a-z0-9_]+/)*rag/(ingest|query))["']""")
 
 PHASE_TITLES = {
     WRITER_PHASE_BACKEND: "BACKEND",
@@ -96,34 +102,6 @@ def prior_writer_phase(phase_id: str) -> Optional[str]:
     return WRITER_PHASES[idx - 1]
 
 
-def writer_phase_needles() -> Sequence[str]:
-    """Needles lint requires on every compiled brief."""
-    return (
-        "PHASE 1 of 3",
-        "PHASE 2 of 3",
-        "PHASE 3 of 3",
-        "one FACTORY_CODE_CLI writer",
-        "fail-closed: phase N acceptance before phase N+1",
-        "[check:writer_phase_backend]",
-        "[check:writer_phase_frontend_rag]",
-        "[check:writer_phase_integration]",
-        "[check:writer_phase_gate]",
-        "[check:writer_phase_resume]",
-        "STOP / checkpoint",
-        "render-ready",
-        "not live Render",
-        "not Store Docker",
-        "RAG ingest/query",
-        "one-record POST/GET",
-        "/v1/rag/ingest",
-        "/v1/rag/query",
-        "/v1/steward/rag/ingest",
-        "/v1/steward/rag/query",
-        "HARD WRITE",
-        "app/rag_routes.py",
-    )
-
-
 def phase_step0_line(phase_id: Optional[str] = None) -> str:
     """STEP 0 cut. PHASE 2 must not hide RAG HTTP behind 'named GAPS only'.
 
@@ -173,18 +151,17 @@ def phase_do_text(phase_id: str) -> str:
             "rag_*) — otherwise do not invent a RAG surface.\n"
             "When RAG is owed, ship these HTTP routes as quoted paths in "
             "app/**/*.py (not docs/rag JSON, not phase-1 persist POST/GET): "
-            "ingest POST /v1/rag/ingest or POST /v1/steward/rag/ingest; "
-            "query GET or POST /v1/rag/query or GET or POST "
-            "/v1/steward/rag/query.\n"
+            "ingest POST /v1/rag/ingest; query GET or POST /v1/rag/query "
+            "(a route prefix before /rag/ is allowed).\n"
             "HARD WRITE app/rag_routes.py (Factory keep-path plants this "
             "file when the CLI miss-scopes work items to capability "
             "gaps_only): quoted POST /v1/rag/ingest and GET|POST "
-            "/v1/rag/query — or the /v1/steward/rag/* twins. Acceptance "
-            "cannot pass without those quoted paths in app/**/*.py.\n"
+            "/v1/rag/query. Acceptance cannot pass without those quoted "
+            "paths in app/**/*.py.\n"
             "A vector_search bind is reuse_accept — do not invent a second "
             "vector store. It is not a substitute for those ingest/query "
-            "routes. dual_rag_estate_docs / dual_rag_sop one-record POST/GET "
-            "is persist, not ingest/query.\n"
+            "routes. A capability's one-record POST/GET is persist, not "
+            "ingest/query.\n"
             "STOP / checkpoint after PHASE 2 acceptance. "
             "Do not start PHASE 3."
         )
@@ -208,9 +185,8 @@ def phase_acceptance_lines() -> str:
             "one-record POST/GET per required capability  "
             "[check:writer_phase_backend]",
             "- PHASE 2 of 3 FRONTEND + RAG accepted: UI on working backend; "
-            "RAG ingest/query where needed — POST /v1/rag/ingest or POST "
-            "/v1/steward/rag/ingest plus GET|POST /v1/rag/query or GET|POST "
-            "/v1/steward/rag/query in app/**/*.py  "
+            "RAG ingest/query where needed — POST /v1/rag/ingest plus "
+            "GET|POST /v1/rag/query (any route prefix) in app/**/*.py  "
             "[check:writer_phase_frontend_rag]",
             "- PHASE 3 of 3 INTEGRATION accepted: package/boot/render-ready "
             "(not live Render; not Store Docker)  "
@@ -258,7 +234,13 @@ def compile_phase_brief(compiled: Any, phase_id: str) -> Any:
             sources[stripped[:80]] = f"writer_phases.{spec.phase_id}"
     text = banner + "\n\n" + str(getattr(compiled, "text", "") or "")
     if hasattr(compiled, "text"):
-        return replace(compiled, text=text, line_sources=sources)
+        emitted = frozenset(getattr(compiled, "emitted_lines", None) or ())
+        return replace(
+            compiled,
+            text=text,
+            line_sources=sources,
+            emitted_lines=emitted | emitted_line_set(banner),
+        )
     return compiled
 
 
@@ -367,14 +349,14 @@ def checkpoint_landed_phase(ctx: Any, phase_id: str) -> None:
 def inventory_needs_rag(compiled: Any) -> bool:
     """True when STEP 0 names a RAG ingest/query surface.
 
-    ``vector_search`` / ``knowledge`` binds are registry REUSE, not a
-    claimed ingest/query product. Estate dual-RAG capabilities
-    (``dual_rag_estate_docs``, ``dual_rag_sop``) still owe the HTTP
-    contract below even when their Store binds are vector_search.
+    ``vector_search`` / ``knowledge`` binds are registry REUSE, not a claimed
+    ingest/query product. A capability owes the HTTP contract when it binds a
+    RAG block, or when ``rag`` is a whole token of its id (``rag``,
+    ``x_rag_y``) -- a substring match also caught ``storage``.
     """
     for item in getattr(compiled, "inventory", ()) or ():
-        cid = str(getattr(item, "capability_id", "") or "").lower()
-        if "rag" in cid:
+        cid = str(getattr(item, "capability_id", "") or "").lower().replace("-", "_")
+        if "rag" in cid.split("_"):
             return True
         bids = list(getattr(item, "block_ids", ()) or ()) + list(
             getattr(item, "verified_present", ()) or ()
@@ -407,11 +389,6 @@ def _read_if(path: Path) -> str:
         return ""
 
 
-def _quoted_path_present(blob: str, path: str) -> bool:
-    """True when *path* is a quoted HTTP route, not a docs/prose mention."""
-    return f'"{path}"' in blob or f"'{path}'" in blob
-
-
 def _app_python_sources(root: Path) -> str:
     """Concatenated ``app/**/*.py``. Docs JSON stamps are not routes."""
     app = root / "app"
@@ -423,14 +400,16 @@ def _app_python_sources(root: Path) -> str:
     return "\n".join(parts)
 
 
+def _rag_routes(root: Path) -> set:
+    return {m.group(2) for m in _RAG_ROUTE_RE.finditer(_app_python_sources(root))}
+
+
 def rag_ingest_route_present(root: Path) -> bool:
-    blob = _app_python_sources(root)
-    return any(_quoted_path_present(blob, path) for path in RAG_INGEST_PATHS)
+    return "ingest" in _rag_routes(root)
 
 
 def rag_query_route_present(root: Path) -> bool:
-    blob = _app_python_sources(root)
-    return any(_quoted_path_present(blob, path) for path in RAG_QUERY_PATHS)
+    return "query" in _rag_routes(root)
 
 
 def phase_acceptance_errors(

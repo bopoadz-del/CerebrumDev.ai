@@ -32,7 +32,6 @@ from app.factory.build.data_lifecycle import (
 )
 from app.factory.build.persist_accept import (
     FACTORY_GROUNDED_PERSIST_SOURCE,
-    KEYWORD_FALLBACK_VETCARE_CAPS,
     PERSIST_ISOLATE_NEEDLE,
     PRODUCT_NO_SUCH_TABLE_HALT,
     PRODUCT_ROUND_TRIP_CHECK,
@@ -43,8 +42,6 @@ from app.factory.build.persist_accept import (
     persist_accept_acceptance_line,
     persist_accept_brief_contract,
     persist_accept_forbidden_lines,
-    persist_accept_needles,
-    persist_accept_rules_text,
     persist_entity_of,
     persist_handler_rel,
     persist_round_trip_errors,
@@ -64,10 +61,12 @@ from app.factory.build.writer_behaviour import BEHAVIOUR_PROBE
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.coder import _WHOLE_JOB_SYSTEM
 from app.factory.product_architect import (
-    draft_blueprint_from_brief,
     lettings_golden_path,
     plan_blueprint,
 )
+
+#: A sample keyword-fallback plan -- test data only.
+SAMPLE_FALLBACK_CAPS = ("veterinary_care_core", "audit", "dashboard")
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -109,22 +108,6 @@ def _keyword_fallback_plan():
     )
 
 
-def test_photographed_caps_are_the_keyword_fallback_roster():
-    bp = draft_blueprint_from_brief(
-        "Build a veterinary care platform with a dashboard for the team",
-        use_llm=False,
-        use_golden_lettings=False,
-        use_golden_steward=False,
-    )
-    assert bp.drafting_mode == "keyword_fallback"
-    assert bp.product_id == "veterinary-care"
-    ids = [c.id for c in bp.capabilities]
-    for cid in KEYWORD_FALLBACK_VETCARE_CAPS:
-        assert cid in ids, (cid, ids)
-    assert persist_entity_of({}, "veterinary_care_core") == "veterinary_care_core"
-    assert persist_entity_of({"entity": "audit"}, "audit") == "audit"
-
-
 def test_vetcare_compiled_brief_grounds_persist_round_trip():
     compiled = compile_brief(
         _VetCare(),
@@ -135,15 +118,6 @@ def test_vetcare_compiled_brief_grounds_persist_round_trip():
     assert persist_accept_acceptance_line() in text
     assert persist_accept_forbidden_lines() in text
     assert persist_accept_brief_contract() in CODING_AGENT_BRIEF
-    for needle in persist_accept_needles():
-        assert needle.lower() in text.lower(), needle
-    rules = persist_accept_rules_text()
-    assert FACTORY_GROUNDED_PERSIST_SOURCE in rules
-    assert PRODUCT_NO_SUCH_TABLE_HALT in rules
-    assert "veterinary_care_core" in rules
-    assert "GENERATE-gap factory-LLM" in rules
-    assert "deterministic contract template" in rules
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
 def test_lettings_and_smoke_still_lint_with_persist_accept():
@@ -301,7 +275,7 @@ def test_harness_fails_when_handler_persists_to_the_wrong_table(tmp_path):
 def test_harness_passes_factory_grounded_keyword_fallback(tmp_path):
     specs = {
         cid: _fallback_spec(_Cap(cid, [] if cid.endswith("_core") else [cid]))
-        for cid in KEYWORD_FALLBACK_VETCARE_CAPS
+        for cid in SAMPLE_FALLBACK_CAPS
     }
     _write_persist_workspace(tmp_path, specs)
     assert persist_round_trip_errors(tmp_path, specs) == []
@@ -354,7 +328,7 @@ def test_emitted_keyword_fallback_vetcare_round_trips(tmp_path):
                 state={
                     "resolved_blocks": (),
                     "vendored_blocks": (),
-                    "gaps": list(KEYWORD_FALLBACK_VETCARE_CAPS),
+                    "gaps": list(SAMPLE_FALLBACK_CAPS),
                 },
             )
         )

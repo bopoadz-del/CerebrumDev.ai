@@ -1,20 +1,10 @@
-"""PRODUCT accept-payload / event_bus workflow contract for C-BRIEF.
+"""Workflow + event_bus accept-payload contract (C-BRIEF).
 
-The live VetCare Floor halt (sess_a4690fb3336c42fb, after #318) was
-step_1. After #323 grounded the prepared publish shape, the wall moved
-(sess_d70c18ef58ab48e6, tip 205f957) to step_2 booking. #325 grounded
-step_2 / appointment_booking needles. Live tip d72b97f / #330
-(sess_14e690829d1f4282) is back at:
-
-    appointment_scheduling rejected a payload built from its own schema:
-    workflow: step_1 (event_bus): error
-
-#325 treated a factory execute wrap, or one prepared child, as enough.
-WRITER then claimed done; PRODUCT still refused the first event_bus
-child. This module is the one brief + harvest + harness contract:
-EVERY event_bus child (step_1, step_2, and later) must be prepared in
-source. A wrap / import is not keep-or-done. An LLM never writes these
-rules.
+A capability that binds both ``workflow`` and ``event_bus`` must hand every
+event_bus child the prepared contract (topic, payload dict, message, channel,
+MCP target, action), never the raw schema sample. Which capabilities carry the
+contract is read from the blocks each one binds. Nothing here depends on what
+a capability is called.
 """
 
 from __future__ import annotations
@@ -57,17 +47,6 @@ EVENT_BUS_STEP_ACTION = "publish"
 #: Keys PRODUCT / prepare map onto event_bus.topic when the sample has none.
 EVENT_BUS_TOPIC_KEYS = ("topic", "event", "event_type", "event_name", "reminder_type")
 
-#: Capability-id markers that CLI treats as appointment / booking / reminder
-#: workflows. Live Floor aliases ``appointment_scheduling`` →
-#: ``appointment_booking``; "booking" must bind the same contract.
-REMINDER_STYLE_MARKERS = (
-    "appointment",
-    "scheduling",
-    "booking",
-    "reminder",
-    "notification",
-)
-
 #: Live PRODUCT class after #323: the wall moved from step_1 to step_2.
 #: Live tip d72b97f / #330: the wall is step_1 again (appointment_scheduling).
 #: Live sess_d5789a91 (2026-09-05, after #333): Store 0-indexes the first
@@ -76,9 +55,6 @@ REMINDER_STYLE_MARKERS = (
 PRODUCT_EVENT_BUS_STEP_0_HALT = "workflow: step_0 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_1_HALT = "workflow: step_1 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_2_HALT = "workflow: step_2 (event_bus): error"
-APPOINTMENT_SCHEDULING_STYLE = "appointment_scheduling"
-APPOINTMENT_BOOKING_STYLE = "appointment_booking"
-AUTOMATED_REMINDERS_STYLE = "automated_reminders"
 
 #: Tokens that mean the handler built an event_bus workflow child.
 EVENT_BUS_STEP_TOKENS = (
@@ -159,18 +135,11 @@ def _capability_block_ids(item: Any) -> set:
     return {str(b) for b in (getattr(item, "block_ids", None) or []) if str(b).strip()}
 
 
-def _is_reminder_or_appointment_style(cid: str) -> bool:
-    blob = str(cid or "").lower().replace("-", "_")
-    return any(marker in blob for marker in REMINDER_STYLE_MARKERS)
-
-
 def event_bus_workflow_capability_ids(compiled_or_inventory: Any) -> List[str]:
     """Capability ids that must receive the prepared event_bus step contract.
 
-    A row binds the contract when it claims workflow + event_bus, or when
-    the id is appointment / booking / reminder / notification style. CLI
-    invents the pairing and multi-step workflows even when the plan only
-    bound database — live ``appointment_booking`` at step_2 after #323.
+    Structural only: a row binds the contract when its own bound blocks
+    include both workflow and event_bus. A capability's NAME decides nothing.
     """
     inventory = (
         getattr(compiled_or_inventory, "inventory", None)
@@ -183,9 +152,7 @@ def event_bus_workflow_capability_ids(compiled_or_inventory: Any) -> List[str]:
         cid = str(getattr(item, "capability_id", "") or "")
         if not cid:
             continue
-        both = "workflow" in bids and "event_bus" in bids
-        style = _is_reminder_or_appointment_style(cid)
-        if both or style:
+        if "workflow" in bids and "event_bus" in bids:
             ids.append(cid)
     return ids
 
@@ -428,18 +395,12 @@ def needs_grounded_event_bus_handler(
 ) -> bool:
     """True when WRITER must emit the prepared event_bus step in source.
 
-    Style-only ids (stakeholder_notification) without a bound event_bus
-    stay on the generic template. Inventing an event_bus workflow child
-    when the block is not vendored is how field_ops PRODUCT went red.
+    Structural: the capability binds both workflow and event_bus. A bound
+    event_bus alone stays on the generic template, and inventing an event_bus
+    child for a block that is not vendored is how a build went red.
     """
-    cid = str(capability_id or "")
     bids = {str(b) for b in (block_ids or ()) if str(b).strip()}
-    style = _is_reminder_or_appointment_style(cid)
-    if "event_bus" in bids:
-        return style or "workflow" in bids
-    # Live sess_d5789a91: automated_reminders bound workflow; Store still
-    # synthesized event_bus as step_0 from the schema sample.
-    return style and "workflow" in bids
+    return "event_bus" in bids and "workflow" in bids
 
 
 def event_bus_step_is_store_ready(data: Any) -> bool:
@@ -470,13 +431,8 @@ def event_bus_step_is_store_ready(data: Any) -> bool:
 
 
 def grounded_event_bus_topic(capability_id: str) -> str:
+    """The event topic is the capability's own id; nothing is read from its name."""
     blob = str(capability_id or "record").lower().replace("-", "_")
-    if "remind" in blob or "notif" in blob:
-        return "reminder.due"
-    if "book" in blob:
-        return "appointment.booked"
-    if "appoint" in blob or "schedul" in blob:
-        return "appointment.scheduled"
     return f"{blob or 'record'}.recorded"
 
 
@@ -583,20 +539,14 @@ def handler_ids_for_event_bus_check(
     root: Path,
     compiled_or_inventory: Any,
 ) -> List[str]:
-    """Bound inventory ids plus on-disk appointment/booking-style modules.
-
-    Floor aliases (``appointment_booking`` vs ``appointment_scheduling``)
-    must not slip the WRITER check because the plan used a different id.
-    """
+    """Bound inventory ids plus every on-disk handler whose own source builds
+    an event_bus step, so a handler written under a different id than the
+    plan's is still checked. Decided by what the code does, never its name."""
     ids = list(event_bus_workflow_capability_ids(compiled_or_inventory))
     seen = {str(cid).replace("-", "_") for cid in ids}
     base = Path(root)
     for cid in _action_module_ids(base):
         if cid in seen:
-            continue
-        if _is_reminder_or_appointment_style(cid):
-            ids.append(cid)
-            seen.add(cid)
             continue
         path = base / "app" / "actions" / f"{cid}.py"
         try:
@@ -691,11 +641,9 @@ def workflow_accept_rules_text(
     bound_lines: List[str] = []
     if named:
         bound_lines = [
-            "These planned capabilities bind workflow and/or event_bus",
-            "(appointment / scheduling / booking / reminders style) and MUST",
-            "use the prepared step on EVERY event_bus child, including",
-            f"{AUTOMATED_REMINDERS_STYLE} Store step_0 (first child),",
-            f"{APPOINTMENT_SCHEDULING_STYLE} step_1 and {APPOINTMENT_BOOKING_STYLE} step_2+:",
+            "These planned capabilities bind workflow and event_bus and MUST",
+            "use the prepared step on EVERY event_bus child, whether it is",
+            "Store step_0 (first child), step_1 or step_2+:",
             *[f"- {cid}" for cid in named],
             "",
         ]
@@ -725,12 +673,9 @@ def workflow_accept_rules_text(
             f"- otherwise the word {GENERIC_STR_SAMPLE}",
             "",
             "That schema sample is NOT an event_bus input. When a capability",
-            "binds workflow AND event_bus — or a reminders / appointment /",
-            f"scheduling / booking-style id ({APPOINTMENT_SCHEDULING_STYLE} /",
-            f"{APPOINTMENT_BOOKING_STYLE}) invents a workflow — do NOT set",
-            "ANY step input to payload. Store 0-indexes children: an",
-            f"event_bus-first child fails PRODUCT as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
-            f"({AUTOMATED_REMINDERS_STYLE} class). An unprepared first factory",
+            "binds workflow AND event_bus, do NOT set ANY step input to",
+            "payload. Store 0-indexes children: an event_bus-first child",
+            f"fails PRODUCT as {PRODUCT_EVENT_BUS_STEP_0_HALT}. An unprepared first factory",
             f"child also fails as {PRODUCT_EVENT_BUS_STEP_1_HALT}. step_1 prepared +",
             f"step_2 raw still fails as {PRODUCT_EVENT_BUS_STEP_2_HALT}.",
             "The Store workflow records a child refusal as status=error — often",
@@ -745,10 +690,10 @@ def workflow_accept_rules_text(
             "formula_executor ~242).",
             "fail-closed keep original must still rewrite reads — keeping",
             "the whole Store workflow.py leaves envelope['result'] as",
-            f"{PRODUCT_WORKFLOW_RESULT_HALT} (appointment_scheduling "
-            "rejected a payload built from its own schema).",
+            f"{PRODUCT_WORKFLOW_RESULT_HALT} (<capability> rejected a payload",
+            "built from its own schema).",
             "WRITER emits a factory-grounded prepared event_bus step for",
-            "appointment / booking / reminder capabilities — do not burn",
+            "every capability that binds workflow + event_bus — do not burn",
             "rework on execute(block_id, payload) stubs, and do not",
             'execute("workflow", payload) with the raw schema sample.',
             "Construct each event_bus step (every child, including Store",
@@ -781,9 +726,7 @@ def workflow_accept_acceptance_line(
     who = f" ({', '.join(named)})" if named else ""
     return (
         f"- PRODUCT accept-payload{who}: every event_bus step including "
-        f"step_0 ({AUTOMATED_REMINDERS_STYLE} class), "
-        f"step_1 ({APPOINTMENT_SCHEDULING_STYLE} class) and step_2+ "
-        f"({APPOINTMENT_BOOKING_STYLE} class) accepts the prepared "
+        f"step_0, step_1 and step_2+ accepts the prepared "
         f"contract (topic, payload dict, message, "
         f"channel={EVENT_BUS_STEP_CHANNEL}, "
         f"action={EVENT_BUS_STEP_ACTION}) — never the raw schema sample "
@@ -803,14 +746,11 @@ def workflow_accept_forbidden_lines() -> str:
             "- setting an event_bus workflow step to 'input': payload or "
             '"input": payload (or input=dict(payload))',
             "- an unprepared step_0 (event_bus) — Store 0-index first child; "
-            f"{AUTOMATED_REMINDERS_STYLE} class fails PRODUCT as "
-            f"{PRODUCT_EVENT_BUS_STEP_0_HALT}",
-            "- an unprepared step_1 (event_bus) — "
-            f"{APPOINTMENT_SCHEDULING_STYLE} class fails PRODUCT as "
+            f"fails PRODUCT as {PRODUCT_EVENT_BUS_STEP_0_HALT}",
+            "- an unprepared step_1 (event_bus) — fails PRODUCT as "
             f"{PRODUCT_EVENT_BUS_STEP_1_HALT}",
             "- a prepared step_1 plus an unprepared step_2 (event_bus) — "
-            f"{APPOINTMENT_BOOKING_STYLE} class still fails PRODUCT as "
-            f"{PRODUCT_EVENT_BUS_STEP_2_HALT}",
+            f"still fails PRODUCT as {PRODUCT_EVENT_BUS_STEP_2_HALT}",
             "- treating one prepared event_bus child, a prepare_block_input "
             "import, or the factory execute wrap as keep/done while any "
             "child (including step_1) is still raw",
@@ -822,8 +762,8 @@ def workflow_accept_forbidden_lines() -> str:
             f"{PRODUCT_EVENT_BUS_STEP_2_HALT} without the prepared "
             f"contract on EVERY event_bus child (topic, payload dict, message, "
             f"channel={EVENT_BUS_STEP_CHANNEL}, action={EVENT_BUS_STEP_ACTION})",
-            "- execute(block_id, payload) stubs for appointment / booking / "
-            "reminder capabilities (WRITER must emit the factory-grounded "
+            "- execute(block_id, payload) stubs for a capability that binds "
+            "workflow + event_bus (WRITER must emit the factory-grounded "
             "prepared event_bus step)",
             '- execute("workflow", payload) with the raw schema sample',
             "- omitting workflow input['result'] so PRODUCT fails as "
@@ -843,9 +783,7 @@ def workflow_accept_brief_contract() -> str:
     """System-brief paragraph shared by WRITER seat + HTTP oneshot."""
     return (
         f"PRODUCT {PRODUCT_ACCEPT_TEST} POSTs a schema-sample payload then "
-        f"runs bound blocks. A capability that binds workflow + event_bus "
-        f"({APPOINTMENT_SCHEDULING_STYLE} / {APPOINTMENT_BOOKING_STYLE} / "
-        f"{AUTOMATED_REMINDERS_STYLE} / reminders_notifications style) must "
+        f"runs bound blocks. A capability that binds workflow + event_bus must "
         f"prepare EACH event_bus step including Store step_0, step_1 and "
         f"step_2+ "
         f"(block=event_bus, action={EVENT_BUS_STEP_ACTION}, topic, "
@@ -867,55 +805,13 @@ def workflow_accept_brief_contract() -> str:
         "becoming a .get() call fails as "
         "'SyntaxError: cannot assign to function call'. "
         "fail-closed keep original must still rewrite reads or TESTER "
-        "refuses appointment_scheduling rejected a payload built from "
+        "refuses <capability> rejected a payload built from "
         f"its own schema: {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"Exact shape: "
         f'{{"block": "event_bus", "action": "{EVENT_BUS_STEP_ACTION}", '
         f'"input": {{"topic": "<str>", "payload": {{}}, "message": "<str>", '
         f'"channel": "{EVENT_BUS_STEP_CHANNEL}", '
         f'"{EVENT_BUS_MCP_TARGET_KEY}": "{EVENT_BUS_MCP_BLOCK}"}}}}.'
-    )
-
-
-def workflow_accept_needles() -> Sequence[str]:
-    """Needles lint requires when a capability declares event_bus workflows."""
-    return (
-        PRODUCT_ACCEPT_TEST,
-        PRODUCT_EVENT_BUS_STEP_HALT,
-        PRODUCT_EVENT_BUS_STEP_0_HALT,
-        PRODUCT_EVENT_BUS_STEP_1_HALT,
-        PRODUCT_EVENT_BUS_STEP_2_HALT,
-        PRODUCT_EVENT_BUS_STEP_CLASS,
-        APPOINTMENT_SCHEDULING_STYLE,
-        APPOINTMENT_BOOKING_STYLE,
-        AUTOMATED_REMINDERS_STYLE,
-        f"[check:{PRODUCT_ACCEPT_CHECK}]",
-        f"channel={EVENT_BUS_STEP_CHANNEL}",
-        "never the raw schema sample",
-        f"action={EVENT_BUS_STEP_ACTION}",
-        "payload dict",
-        "input.topic",
-        "input.message",
-        "'input': payload",
-        "not the raw schema sample",
-        "every event_bus",
-        "step_0",
-        "step_1",
-        "step_2",
-        "keep/done",
-        f'"channel": "{EVENT_BUS_STEP_CHANNEL}"',
-        f'"action": "{EVENT_BUS_STEP_ACTION}"',
-        "factory-grounded",
-        'execute("workflow", payload)',
-        "execute(block_id, payload)",
-        "input.tool",
-        f'"tool": "{EVENT_BUS_MCP_BLOCK}"',
-        PRODUCT_WORKFLOW_RESULT_HALT,
-        "input['result']",
-        "SyntaxError: cannot assign to function call",
-        "name['result'] =",
-        "fail-closed keep original must still rewrite reads",
-        "appointment_scheduling rejected a payload built from its own schema",
     )
 
 

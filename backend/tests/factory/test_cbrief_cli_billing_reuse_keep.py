@@ -52,7 +52,7 @@ class _VetCare:
     product_name = "VetCare Hub"
     product_id = "veterinary-care"
     vertical = "veterinary_care"
-    summary = "sess_d5789a91 photograph — empty-gap REUSE after CLI billing"
+    summary = "Sample plan — empty-gap REUSE after CLI billing"
 
 
 def _billing_cli(tmp_path: Path) -> Path:

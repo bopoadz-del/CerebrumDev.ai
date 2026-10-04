@@ -177,6 +177,44 @@ def iter_kit_files(source: Path) -> List[Path]:
     return files
 
 
+#: What a brief carries of a kit manifest: identity and the block contract.
+#: A kit manifest also records where the kit came from (the product it was
+#: carved out of, that product's capabilities and blueprint); that is the
+#: kit's history, not a build's work, and never reaches a coder. The brief
+#: compiler projects onto these keys and the brief lint refuses any other.
+KIT_BRIEF_IDENTITY_KEYS = ("id", "name", "version", "source", "product_blocks", "vendored_blocks")
+KIT_BRIEF_CONTRACT_KEYS = ("blocks", "inputs", "fields", "reads", "writes")
+
+
+def kit_brief_view(manifest: Mapping[str, Any], claimed: Sequence[str]) -> Dict[str, Any]:
+    """The manifest restricted to identity + the contract of ``claimed`` blocks."""
+    keep = set(claimed)
+
+    def _restrict(value: Any) -> Any:
+        if isinstance(value, list):
+            return [
+                v for v in value
+                if (v.get("id") or v.get("name") if isinstance(v, dict) else v) in keep
+            ]
+        if isinstance(value, dict):
+            out = {}
+            for k, v in value.items():
+                if k in keep:
+                    out[k] = v
+                elif isinstance(v, (list, dict)):
+                    sub = _restrict(v)
+                    if sub:
+                        out[k] = sub
+            return out
+        return value
+
+    view: Dict[str, Any] = {k: manifest[k] for k in KIT_BRIEF_IDENTITY_KEYS if k in manifest}
+    for key in KIT_BRIEF_CONTRACT_KEYS:
+        if key in manifest:
+            view[key] = _restrict(manifest[key])
+    return view
+
+
 def render_kit_manifest(
     kit_id: str,
     block_ids: Sequence[str],

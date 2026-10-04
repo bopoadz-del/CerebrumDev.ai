@@ -70,13 +70,6 @@ WRITER_REUSE_HANDLER_HALT = (
 PERSIST_ISOLATE_NEEDLE = "tempfile.mkdtemp(prefix=\"product-gate-\")"
 FACTORY_GROUNDED_PERSIST_SOURCE = "factory-grounded persist"
 
-#: Photographed keyword-fallback Veterinary Care Platform roster.
-KEYWORD_FALLBACK_VETCARE_CAPS = (
-    "veterinary_care_core",
-    "audit",
-    "dashboard",
-)
-
 _SKIP_ALEMBIC_TABLES = {WORK_QUEUE_TABLE, IDEMPOTENCY_TABLE}
 
 
@@ -159,9 +152,14 @@ def bind_generate_artifacts(
     return bound
 
 
-def persist_accept_rules_text() -> str:
-    """BUILD cut: what PRODUCT one-record will POST and what persist means."""
-    caps = ", ".join(KEYWORD_FALLBACK_VETCARE_CAPS)
+def persist_accept_rules_text(capability_ids: Sequence[str] = ()) -> str:
+    """BUILD cut: what PRODUCT one-record will POST and what persist means.
+
+    ``capability_ids`` is THIS build's capability set, from its compiled plan.
+    Nothing else is named: a roster from another product is not a contract
+    for this one.
+    """
+    caps = ", ".join(str(c) for c in capability_ids if str(c).strip())
     return "\n".join(
         [
             "PRODUCT gate one-record round-trip (after WRITER, before STORE):",
@@ -186,9 +184,9 @@ def persist_accept_rules_text() -> str:
             "- do not rely on a leftover ./data/platform.db; PRODUCT isolates",
             "  STORAGE_PATH the same way writer_behaviour does",
             "",
-            "Keyword-fallback architect rosters (live Veterinary Care Platform):",
-            f"  {caps}",
-            "Those ids are persistable capabilities, not 'just blocks'. Each",
+            "This build's capabilities:",
+            f"  {caps or '(none planned)'}",
+            "Every one of them is persistable, not 'just blocks'. Each",
             "must remember one record. Templated execute(block_id, payload)",
             "or no_block_bound without store.save is not done.",
             "",
@@ -197,8 +195,8 @@ def persist_accept_rules_text() -> str:
             "  dispatch envelope as REUSE keep-path (the ROUTE persists)",
             "- alembic 0001 and store.COLUMNS still use spec.entity",
             "- bind factory-LLM keys onto inventory GENERATE ids (exact,",
-            "  normalize, unique leftover) so vetcare_hub_veterinary_core",
-            "  is not dropped when the LLM writes veterinary_care_core",
+            "  normalize, unique leftover) so a capability is not dropped",
+            "  when the LLM writes a shortened form of its id",
             "- empty / mismatched factory-LLM still emits the persist",
             "  envelope — not a deterministic contract template and not a",
             "  ≥2h CLI session. WRITER [check:round_trip] must not HALT",
@@ -248,23 +246,7 @@ def persist_accept_brief_contract() -> str:
         f"OperationalError: {PRODUCT_NO_SUCH_TABLE_HALT}: <entity> is a miss. "
         "WRITER isolates STORAGE_PATH; PRODUCT must too — a leftover "
         "./data/platform.db already at 0001_baseline is not a pass. "
-        f"Keyword-fallback {', '.join(KEYWORD_FALLBACK_VETCARE_CAPS)} "
-        "are persistable capabilities."
-    )
-
-
-def persist_accept_needles() -> Sequence[str]:
-    """Needles lint requires on every compiled brief."""
-    return (
-        "one-record round-trip",
-        PRODUCT_ROUND_TRIP_HALT,
-        PRODUCT_NO_SUCH_TABLE_HALT,
-        "tenant-scoped save(payload)",
-        "factory-grounded persist",
-        "STORAGE_PATH",
-        "0001_baseline",
-        f"[check:{PRODUCT_ROUND_TRIP_CHECK}]",
-        "alembic entity",
+        "Every capability the build plans is persistable."
     )
 
 

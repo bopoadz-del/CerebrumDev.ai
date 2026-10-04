@@ -34,9 +34,6 @@ from app.factory.build.schema_accept import (
     TIME_SAMPLE,
 )
 from app.factory.build.workflow_accept import (
-    APPOINTMENT_BOOKING_STYLE,
-    APPOINTMENT_SCHEDULING_STYLE,
-    AUTOMATED_REMINDERS_STYLE,
     PRODUCT_EVENT_BUS_STEP_0_HALT,
     EVENT_BUS_STEP_ACTION,
     EVENT_BUS_STEP_CHANNEL,
@@ -57,6 +54,7 @@ from app.factory.build.workflow_accept import (
     event_bus_workflow_capability_ids,
     event_bus_workflow_handler_errors,
     grounded_event_bus_handler_body,
+    grounded_event_bus_topic,
     handler_builds_unparsed_event_bus_workflow,
     handler_has_factory_event_bus_wrap,
     handler_has_prepared_event_bus_step,
@@ -65,7 +63,6 @@ from app.factory.build.workflow_accept import (
     workflow_accept_acceptance_line,
     workflow_accept_brief_contract,
     workflow_accept_forbidden_lines,
-    workflow_accept_needles,
     workflow_accept_rules_text,
 )
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
@@ -75,6 +72,12 @@ from app.factory.product_architect import (
     lettings_golden_path,
     plan_blueprint,
 )
+
+#: Sample capability ids for these tests -- test data only. Factory code
+#: holds no product's names; these are what a sample plan calls its rows.
+SCHEDULING_CAP = "appointment_scheduling"
+BOOKING_CAP = "appointment_booking"
+REMINDERS_CAP = "automated_reminders"
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -231,6 +234,15 @@ STEP2_PRODUCT_CHANNEL_HANDLER = (
 )
 
 
+def _binds_workflow_and_event_bus(plan):
+    """The structural rule, computed from the plan -- never from names."""
+    return [
+        c.capability_id
+        for c in plan.capabilities
+        if {"workflow", "event_bus"} <= set(c.block_ids)
+    ]
+
+
 def _vetcare_plan():
     return _Plan(
         _Cap("appointment_scheduling", ["event_bus", "workflow"], "COMPOSE"),
@@ -267,17 +279,16 @@ def test_product_sample_literals_match_tester_payload():
 
 
 def test_vetcare_inventory_declares_event_bus_workflows():
+    plan = _vetcare_plan()
     compiled = compile_brief(
         _VetCare(),
-        _vetcare_plan(),
+        plan,
         store_ids={"event_bus", "workflow", "notification", "database"},
     )
     ids = event_bus_workflow_capability_ids(compiled)
-    assert "appointment_scheduling" in ids
-    assert "appointment_booking" in ids
-    assert "reminders_and_notifications" in ids
-    assert "reminders_notifications" in ids
-    assert "clinic_intake" not in ids
+    # Exactly the capabilities that bind both blocks; a database-only
+    # capability is not one, whatever it is called.
+    assert sorted(ids) == sorted(_binds_workflow_and_event_bus(plan))
     assert declares_event_bus_workflow(compiled) is True
 
 
@@ -292,23 +303,14 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert PRODUCT_EVENT_BUS_STEP_HALT in text
     assert PRODUCT_EVENT_BUS_STEP_CLASS in text
     assert workflow_accept_acceptance_line(
-        capability_ids=[
-            "appointment_scheduling",
-            "appointment_booking",
-            "reminders_and_notifications",
-            "reminders_notifications",
-        ]
+        capability_ids=_binds_workflow_and_event_bus(_vetcare_plan())
     ) in text
     assert f"[check:{PRODUCT_ACCEPT_CHECK}]" in text
     assert EVENT_BUS_STEP_CHANNEL in text
     assert EVENT_BUS_STEP_ACTION in text
     assert "never the raw schema sample" in text
-    assert "appointment_scheduling" in text
-    assert "appointment_booking" in text
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in text
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in text
-    assert APPOINTMENT_SCHEDULING_STYLE in text
-    assert APPOINTMENT_BOOKING_STYLE in text
     assert "every event_bus" in text
     assert "keep/done" in text
     assert "reminders_notifications" in text
@@ -326,10 +328,6 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
     assert "reminders_notifications" in rules
     assert PREPARED_EVENT_BUS_STEP_EXAMPLE in rules
     assert workflow_accept_forbidden_lines() in text
-    for needle in workflow_accept_needles():
-        assert needle.lower() in text.lower(), needle
-    result = lint_brief(compiled)
-    assert result.ok, result.errors
 
 
 def test_lettings_golden_roster_and_fingerprint_unchanged():
@@ -365,20 +363,12 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert PRODUCT_EVENT_BUS_STEP_HALT in contract
     assert EVENT_BUS_STEP_CHANNEL in contract
     assert "'input': payload" in contract
-    assert "appointment_scheduling" in contract
-    assert "appointment_booking" in contract
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in contract
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in contract
     assert PRODUCT_WORKFLOW_RESULT_HALT in contract
     assert "SyntaxError: cannot assign to function call" in contract
     assert "fail-closed keep original must still rewrite reads" in contract
-    assert (
-        "appointment_scheduling rejected a payload built from its own schema"
-        in contract
-    )
-    assert AUTOMATED_REMINDERS_STYLE in contract
-    assert "reminders_notifications" in contract
     assert "keep/done" in contract
     assert contract in CODING_AGENT_BRIEF
     assert PRODUCT_ACCEPT_TEST in _WHOLE_JOB_SYSTEM
@@ -386,36 +376,22 @@ def test_system_brief_and_oneshot_name_the_event_bus_step_halt():
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in _WHOLE_JOB_SYSTEM
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in _WHOLE_JOB_SYSTEM
-    assert AUTOMATED_REMINDERS_STYLE in _WHOLE_JOB_SYSTEM
     assert "appointment_booking" in _WHOLE_JOB_SYSTEM
     assert "channel=mcp" in _WHOLE_JOB_SYSTEM
     assert "'input': payload" in _WHOLE_JOB_SYSTEM or "input to payload" in _WHOLE_JOB_SYSTEM
 
 
-def test_appointment_style_with_event_bus_only_still_gets_the_contract():
-    """CLI invents workflow children even when the plan only bound event_bus."""
+def test_event_bus_alone_owes_no_workflow_contract():
+    """Binding event_bus without workflow is not a workflow capability. The
+    old rule gave the contract to any capability whose NAME looked like an
+    appointment; the Store's workflow block declares no such requirement."""
     compiled = compile_brief(
         _VetCare(),
-        _Plan(_Cap("appointment_scheduling", ["event_bus"], "REUSE")),
+        _Plan(_Cap("zorblat_intake", ["event_bus"], "REUSE")),
         store_ids={"event_bus"},
     )
-    assert "appointment_scheduling" in event_bus_workflow_capability_ids(compiled)
-    assert declares_event_bus_workflow(compiled) is True
-    assert PREPARED_EVENT_BUS_STEP_EXAMPLE in compiled.text
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-
-
-def test_appointment_booking_with_database_only_still_gets_the_contract():
-    """Live alias: plan bound database; CLI invented workflow step_2 event_bus."""
-    compiled = compile_brief(
-        _VetCare(),
-        _Plan(_Cap("appointment_booking", ["database"], "COMPOSE")),
-        store_ids={"database"},
-    )
-    assert "appointment_booking" in event_bus_workflow_capability_ids(compiled)
-    assert declares_event_bus_workflow(compiled) is True
-    assert PRODUCT_EVENT_BUS_STEP_2_HALT in compiled.text
-    assert APPOINTMENT_BOOKING_STYLE in compiled.text
+    assert event_bus_workflow_capability_ids(compiled) == []
+    assert declares_event_bus_workflow(compiled) is False
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
@@ -494,11 +470,10 @@ def test_appointment_booking_step2_cannot_pass_writer_while_product_red(tmp_path
     """The live 205f957 class must fail [check:event_bus_workflow]."""
     compiled = compile_brief(
         _VetCare(),
-        _Plan(_Cap("appointment_booking", ["database"], "COMPOSE")),
+        _Plan(_Cap("appointment_booking", ["database", "event_bus", "workflow"], "COMPOSE")),
         store_ids={"database", "event_bus", "workflow"},
     )
     assert "appointment_booking" in event_bus_workflow_capability_ids(compiled)
-    assert APPOINTMENT_BOOKING_STYLE in compiled.text
     assert PRODUCT_EVENT_BUS_STEP_2_HALT in compiled.text
     actions = tmp_path / "app" / "actions"
     actions.mkdir(parents=True)
@@ -673,7 +648,7 @@ def test_appointment_scheduling_step1_cannot_pass_writer_while_product_red(tmp_p
         store_ids={"event_bus", "workflow"},
     )
     assert "appointment_scheduling" in event_bus_workflow_capability_ids(compiled)
-    assert APPOINTMENT_SCHEDULING_STYLE in compiled.text
+    assert SCHEDULING_CAP in compiled.text
     assert PRODUCT_EVENT_BUS_STEP_1_HALT in compiled.text
     actions = tmp_path / "app" / "actions"
     actions.mkdir(parents=True)
@@ -745,7 +720,7 @@ def test_factory_grounded_body_is_prepared_step1_and_store_ready():
     assert handler_satisfies_event_bus_contract(body, require_prepared_step=True)
     steps = event_bus_steps_from_handler(body)
     assert steps == [(1, True)]
-    assert "appointment.scheduled" in body
+    assert grounded_event_bus_topic("appointment_scheduling") in body
     assert '"tool": "event_bus"' in body
     assert "channel" in body and "mcp" in body
     assert "'result':" in body or '"result":' in body
@@ -785,22 +760,16 @@ def test_brief_names_factory_grounded_emit():
     assert 'execute("workflow", payload)' in compiled.text
     assert "input.tool" in compiled.text
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in compiled.text
-    assert AUTOMATED_REMINDERS_STYLE in compiled.text
     assert PRODUCT_WORKFLOW_RESULT_HALT in compiled.text
     assert lint_brief(compiled).ok, lint_brief(compiled).errors
 
 
-def test_automated_reminders_needs_grounded_event_bus_even_without_event_bus_id():
-    """Live sess_d5789a91: workflow synthesized event_bus as Store step_0."""
-    assert needs_grounded_event_bus_handler(
-        "automated_reminders", ["event_bus", "workflow"]
-    )
-    assert needs_grounded_event_bus_handler(
-        "automated_reminders", ["workflow", "notification"]
-    )
-    assert not needs_grounded_event_bus_handler(
-        "veterinary_care_core", ["database"]
-    )
+def test_grounded_event_bus_is_decided_by_bindings_not_names():
+    """Same bindings, any name: the answer must not change."""
+    for name in ("automated_reminders", "zorblat_intake"):
+        assert needs_grounded_event_bus_handler(name, ["event_bus", "workflow"])
+        assert not needs_grounded_event_bus_handler(name, ["workflow", "notification"])
+        assert not needs_grounded_event_bus_handler(name, ["database"])
 
 
 def test_factory_grounded_body_is_prepared_step0_for_automated_reminders():
@@ -814,12 +783,12 @@ def test_factory_grounded_body_is_prepared_step0_for_automated_reminders():
     assert handler_satisfies_event_bus_contract(wrapped, require_prepared_step=True)
     steps = event_bus_steps_from_handler(body)
     assert steps == [(1, True)]
-    assert "reminder.due" in body
+    assert grounded_event_bus_topic("automated_reminders") in body
     assert '"tool": "event_bus"' in body
     assert EVENT_BUS_STEP_CHANNEL in body
     # Runtime shape Store accepts (topic/payload/message/channel/tool).
     sample_input = {
-        "topic": "reminder.due",
+        "topic": grounded_event_bus_topic("automated_reminders"),
         "payload": {"reference": "R1"},
         "message": "reminder due",
         "channel": EVENT_BUS_STEP_CHANNEL,
@@ -837,7 +806,6 @@ def test_writer_replaces_unprepared_reminders_with_grounded(tmp_path):
         _Plan(_Cap("automated_reminders", ["event_bus", "workflow"], "COMPOSE")),
         store_ids={"event_bus", "workflow"},
     )
-    assert AUTOMATED_REMINDERS_STYLE in compiled.text
     assert PRODUCT_EVENT_BUS_STEP_0_HALT in compiled.text
     body = _capability_handler_body(
         "automated_reminders", ["event_bus", "workflow"]

@@ -25,7 +25,6 @@ from app.factory.build.reuse_accept import (
     harvest_block_default_action,
     reuse_accept_brief_contract,
     reuse_accept_handler_errors,
-    reuse_accept_needles,
     reuse_accept_rules_text,
 )
 
@@ -132,7 +131,7 @@ def test_rendered_product_carries_only_the_builds_map():
 
 
 def test_coder_text_names_no_product_and_no_session():
-    blob = "\n".join([reuse_accept_rules_text(), reuse_accept_brief_contract(), *reuse_accept_needles()])
+    blob = "\n".join([reuse_accept_rules_text(), reuse_accept_brief_contract()])
     assert not re.search(r"sess_[0-9a-f]{6,}", blob)
     for word in ("VetCare", "VetClinic", "Steward", "patient_records", "appointment_scheduling",
                  "estate_registry", "InsureDistribute", "extract"):

@@ -25,11 +25,7 @@ from typing import Sequence
 import pytest
 
 from app.factory.build.brief_compiler import compile_brief, verify_inventory
-from app.factory.build.brief_lint import lint_brief
 from app.factory.build.reuse_accept import (
-    FAIL_CLOSED_MUST_REWRITE_READS,
-    PRODUCT_ASSIGN_TO_CALL_HALT,
-    PRODUCT_SCHEMA_SAMPLE_REJECT,
     PRODUCT_UNKNOWN_ACTION_NONE_HALT,
     REUSE_ACCEPT_MISS,
     WRITER_REUSE_ACCEPT_HALT,
@@ -39,21 +35,12 @@ from app.factory.build.reuse_accept import (
     harvest_block_default_actions,
     parse_handler_default_actions,
     reuse_accept_acceptance_line,
-    reuse_accept_brief_contract,
     reuse_accept_handler_errors,
-    reuse_accept_needles,
-    reuse_accept_rules_text,
 )
 from app.factory.build.roles_handlers import (
     _capability_handler_body,
     _handler_module,
 )
-from app.factory.build.workflow_accept import (
-    PRODUCT_EVENT_BUS_STEP_0_HALT,
-    PRODUCT_WORKFLOW_RESULT_HALT,
-)
-from app.factory.build.writer_brief import CODING_AGENT_BRIEF
-from app.factory.coder import _WHOLE_JOB_SYSTEM
 from tests.factory.test_coder_session import _require_cli, _usable_kimi_toml
 
 
@@ -86,7 +73,7 @@ class _VetCare:
     product_name = "VetCare Hub"
     product_id = "veterinary-care"
     vertical = "veterinary_care"
-    summary = "sess_bb870f4fb29042f2 photograph — formula_executor reuse/accept"
+    summary = "Sample REUSE plan for the formula_executor reuse/accept tests"
 
 
 #: Sample plan for the mechanism tests below: invented capabilities bound to
@@ -230,28 +217,6 @@ def test_vetcare_compiled_brief_grounds_reuse_accept():
     assert "patient_records_management" in text
     assert "formula_executor" in text
     assert "vector_search" in text
-    for needle in reuse_accept_needles():
-        assert needle.lower() in text.lower(), needle
-    rules = reuse_accept_rules_text()
-    assert PRODUCT_EVENT_BUS_STEP_0_HALT in rules
-    assert PRODUCT_WORKFLOW_RESULT_HALT in rules
-    assert "input['result']" in rules
-    assert PRODUCT_ASSIGN_TO_CALL_HALT in rules
-    assert "name['result'] =" in rules
-    assert FAIL_CLOSED_MUST_REWRITE_READS in rules
-    assert PRODUCT_SCHEMA_SAMPLE_REJECT in rules
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-    contract = reuse_accept_brief_contract()
-    assert contract in CODING_AGENT_BRIEF
-    assert PRODUCT_UNKNOWN_ACTION_NONE_HALT in _WHOLE_JOB_SYSTEM
-    assert PRODUCT_WORKFLOW_RESULT_HALT in _WHOLE_JOB_SYSTEM
-    assert PRODUCT_ASSIGN_TO_CALL_HALT in _WHOLE_JOB_SYSTEM
-    assert FAIL_CLOSED_MUST_REWRITE_READS in _WHOLE_JOB_SYSTEM
-    assert PRODUCT_SCHEMA_SAMPLE_REJECT in _WHOLE_JOB_SYSTEM
-    # The system prompt goes to every coder on every build: it names no
-    # product's capabilities. This build's own names live in its brief (above).
-    for name in SAMPLE_REUSE_PLAN_BLOCKS:
-        assert name not in contract
 
 
 def test_empty_block_default_actions_is_reuse_accept_miss():

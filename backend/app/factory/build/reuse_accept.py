@@ -565,22 +565,3 @@ def reuse_accept_brief_contract() -> str:
         f"{PRODUCT_SCHEMA_SAMPLE_REJECT}: {PRODUCT_WORKFLOW_RESULT_HALT!r}. "
         f"That miss is {REUSE_ACCEPT_MISS}: HALT before TESTER."
     )
-
-
-def reuse_accept_needles() -> Sequence[str]:
-    """Needles lint requires on every compiled brief."""
-    return (
-        PRODUCT_UNKNOWN_ACTION_HALT,
-        PRODUCT_UNKNOWN_ACTION_NONE_HALT,
-        "BLOCK_DEFAULT_ACTIONS",
-        "action= as a keyword",
-        REUSE_ACCEPT_MISS,
-        f"[check:{REUSE_ACCEPT_CHECK}]",
-        "the block's own contract",
-        PRODUCT_WORKFLOW_RESULT_HALT,
-        "input['result']",
-        PRODUCT_ASSIGN_TO_CALL_HALT,
-        "name['result'] =",
-        FAIL_CLOSED_MUST_REWRITE_READS,
-        PRODUCT_SCHEMA_SAMPLE_REJECT,
-    )

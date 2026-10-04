@@ -1508,7 +1508,7 @@ def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
         product_name = "VetCare Hub"
         product_id = "veterinary-care"
         vertical = "veterinary_care"
-        summary = "sess_d5789a91 photograph"
+        summary = "Sample plan"
 
     ws = RoleWorkspace(BuildRole.WRITER, tmp_path / "build")
     ctx = RoleContext(

@@ -84,7 +84,7 @@ class _VetCare:
     product_name = "VetCare Hub"
     product_id = "veterinary-care"
     vertical = "veterinary_care"
-    summary = "sess_bc0527bad93f4c66 photograph — REUSE must emit handlers"
+    summary = "Sample plan — REUSE must emit handlers"
 
 
 def _vetcare_reuse_plan() -> _Plan:
