@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 
 def slug(value: Any) -> str:
@@ -171,3 +171,33 @@ def blocks_declaring_read(kind: str, scope: str, store_root: Any = None) -> Froz
     return frozenset(
         bid for bid, reads in _block_reads(str(root)).items() if (kind, scope) in reads
     )
+
+
+#: The vertical a product has when the user chose none. The Factory never
+#: infers one -- not from the brief's prose, not from the blocks it binds.
+NO_VERTICAL = "product"
+
+
+def chosen_vertical(value: Any) -> str:
+    """The user's vertical choice, normalised; ``NO_VERTICAL`` when absent.
+
+    The ONLY way a product gets a vertical: the user picks it on the Floor
+    (or types it). Every kit lookup downstream reads this value.
+    """
+    s = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in slug(value))
+    s = "_".join(part for part in s.split("_") if part)[:48]
+    return s or NO_VERTICAL
+
+
+def declared_verticals(store_root: Any = None) -> List[Dict[str, Any]]:
+    """The verticals the Store's domain kits DECLARE they serve, for the
+    Floor's picker: ``[{"vertical", "kit", "build_ready"}]``. Read from the
+    kits' own manifests; the Factory adds and removes nothing."""
+    out: List[Dict[str, Any]] = []
+    for kit_id, manifest in sorted(domain_kits(store_root).items()):
+        for vertical in manifest.get("serves_verticals") or []:
+            v = slug(vertical)
+            if v:
+                out.append({"vertical": v, "kit": kit_id,
+                            "build_ready": manifest.get("build_ready") is True})
+    return sorted(out, key=lambda row: (row["vertical"], row["kit"]))

@@ -155,7 +155,6 @@ brief for a software platform, draft a product blueprint as JSON.
 Return ONLY a JSON object with this shape:
 {
   "product_name": "<the name the user gave, or their own words for it>",
-  "vertical": "<one or two word vertical slug, e.g. fleet_management>",
   "summary": "<one paragraph: what the product does and who it serves>",
   "capabilities": [
     {
@@ -176,7 +175,6 @@ Rules:
 - block_ids may ONLY contain ids from the AVAILABLE BLOCKS list. Never invent ids.
 - If no available block fits a capability, use "block_ids": [] and
   "strategy_hint": "GENERATE".
-- vertical must be lowercase snake_case.
 """
 
 
@@ -367,7 +365,11 @@ def _blueprint_from_llm_payload(
     if not caps:
         raise ValueError("LLM draft produced no usable capabilities")
 
-    vertical = _snake_slug(str(data.get("vertical") or vertical_hint or "product"))
+    # The vertical is the USER's choice (the Floor's typed field), never the
+    # model's reading of the brief: a "vertical" key in the payload is ignored.
+    from app.factory.store_kits import chosen_vertical
+
+    vertical = chosen_vertical(vertical_hint)
     product_name = str(data.get("product_name", "")).strip()[:120] or vertical.replace(
         "_", " "
     ).title()
@@ -480,8 +482,23 @@ def draft_blueprint_from_brief(
 def _golden_for_draft(
     draft: ProductBlueprint, vertical_hint: Optional[str] = None
 ) -> Optional[ProductBlueprint]:
-    """The golden whose declared structure best overlaps the draft's, if any."""
-    from app.factory.golden_match import best_golden, draft_structure, goldens
+    """The golden whose declared structure best overlaps the draft's, if any.
+
+    Only goldens that declare the USER's chosen vertical (their own
+    ``serves_verticals``) are eligible, so a golden can never hand a product
+    a vertical the user did not pick. No choice, no golden.
+    """
+    from app.factory.golden_match import (
+        best_golden,
+        draft_structure,
+        eligible_for,
+        goldens,
+    )
+    from app.factory.store_kits import NO_VERTICAL, chosen_vertical
+
+    choice = chosen_vertical(vertical_hint)
+    if choice == NO_VERTICAL:
+        return None
 
     store_root = None
     try:
@@ -491,8 +508,8 @@ def _golden_for_draft(
     except Exception:  # noqa: BLE001 -- no Store: score on blueprints alone
         store_root = None
     match = best_golden(
-        draft_structure(draft, vertical_hint),
-        goldens(_repo_root() / "blueprints", store_root),
+        draft_structure(draft, choice),
+        eligible_for(choice, goldens(_repo_root() / "blueprints", store_root)),
     )
     if match is None:
         return None
@@ -548,7 +565,9 @@ def _draft_blueprint_from_brief_inner(
     # The vertical is a structured field (the Floor's vertical_hint), never
     # parsed out of the brief's prose. Without one the draft is generic and
     # golden routing (_golden_for_draft) decides on structure alone.
-    vertical = (vertical_hint or "product").replace(" ", "_").lower()
+    from app.factory.store_kits import chosen_vertical
+
+    vertical = chosen_vertical(vertical_hint)
     product_id = re.sub(r"[^a-z0-9-]+", "-", vertical)[:48].strip("-") or "product"
     product_name = (
         vertical.replace("_", " ").replace("-", " ").title() + " Platform"

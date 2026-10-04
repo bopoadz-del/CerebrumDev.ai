@@ -616,6 +616,27 @@ def set_product_mode(
     return {"ok": True, "mode": body.mode}
 
 
+@router.get("/{session_id}/product/verticals")
+def product_verticals(
+    session_id: str, principal: Principal = Depends(require_api_key)
+) -> Dict[str, Any]:
+    """The Floor's vertical picker: what the Store's kits DECLARE they serve,
+    and the user's current choice. The user picks one or types their own;
+    the Factory never infers it."""
+    from app.factory.store_kits import NO_VERTICAL, declared_verticals
+
+    state = _require_session(session_id, principal)
+    try:
+        options = declared_verticals(resolve_blocks_root())
+    except Exception:  # noqa: BLE001 -- no Store: the user can still type one
+        options = []
+    return {
+        "verticals": options,
+        "chosen": state.product_design.vertical,
+        "default": NO_VERTICAL,
+    }
+
+
 @router.post("/{session_id}/product/draft")
 def draft_product(
     session_id: str, body: DraftBody, principal: Principal = Depends(require_entitled)
@@ -626,7 +647,16 @@ def draft_product(
     _enforce_draft_quota(principal.account_id)
     require_llm_rate(principal, "draft")
     try:
-        bp = draft_blueprint_from_brief(body.brief, vertical_hint=body.vertical_hint)
+        # The user's vertical: this request's field, else the choice already
+        # on the session. Never read out of the brief.
+        if body.vertical_hint is not None:
+            from app.factory.store_kits import NO_VERTICAL, chosen_vertical
+
+            choice = chosen_vertical(body.vertical_hint)
+            state.product_design.vertical = None if choice == NO_VERTICAL else choice
+        bp = draft_blueprint_from_brief(
+            body.brief, vertical_hint=state.product_design.vertical
+        )
         if body.delivery_format in ("zip", "github_repo"):
             bp.delivery_format = body.delivery_format
         state.product_design.brief = body.brief

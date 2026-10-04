@@ -51,6 +51,15 @@ class Golden:
     path: Path
     name: str
     structure: FrozenSet[str]
+    #: The verticals this golden declares it serves (its own serves_verticals).
+    serves: FrozenSet[str] = frozenset()
+
+
+def eligible_for(vertical: Any, candidates: Iterable[Golden]) -> List[Golden]:
+    """The goldens that declare the user's chosen vertical. A golden never
+    gives a product a vertical the user did not pick."""
+    want = next(iter(_ids([vertical])), "")
+    return [g for g in candidates if want and want in g.serves]
 
 
 def draft_structure(blueprint: Any, vertical_hint: Optional[str] = None) -> FrozenSet[str]:
@@ -84,7 +93,8 @@ def goldens(blueprints_root: Path, store_root: Any = None) -> List[Golden]:
             *bp.serves_verticals,
             *_kit_capabilities(bp.vertical, store_root),
         ])
-        out.append(Golden(path=path, name=bp.product_name, structure=structure))
+        out.append(Golden(path=path, name=bp.product_name, structure=structure,
+                          serves=_ids(bp.serves_verticals)))
     return out
 
 

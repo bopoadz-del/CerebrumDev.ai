@@ -135,11 +135,10 @@ The session facts carry the STORE: ready-made blocks, CONNECTORS and MCP \
 parts that are attachable, parts that are in the store but NOT cleared for \
 factory builds, and the KITS (deep, certified domain packs). Be honest about \
 all of it and never invent an id.
-- Kits: on ask_user and draft_platform, set "kit_match" to the id of the KIT \
-that genuinely covers the user's business, or "" when none does. A kit for a \
-different domain is not a match. The factory itself tells the user when \
-there is no ready kit (a simple one is built, slower and possibly costlier), \
-so do not repeat that and never imply a kit exists when it does not.
+- Kits: the user chooses their vertical on the Floor; the factory resolves \
+the kit from that choice and tells the user itself whether a ready kit \
+exists. Do not pick a kit or a vertical for them, do not repeat the kit \
+notice, and never imply a kit exists when it does not.
 - Connectors and MCP: ask which outside systems they already use (accounting, \
 booking / PMS, ERP, drives, email, messaging) when the brief does not say. On \
 draft_platform, put the ids of attachable CONNECTORS / MCP parts the platform \
@@ -148,7 +147,7 @@ user named that is NOT attachable (not in the store, or not cleared) in \
 "missing_connectors" by its plain name, and tell the user plainly that it \
 will ship as a marked placeholder until it is built — never as working.
 
-Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message": "", "connectors": [], "missing_connectors": [], "kit_match": ""}.
+Return ONLY JSON: {"action": "...", "brief": "", "refine_message": "", "message": "", "connectors": [], "missing_connectors": []}.
 """
 
 
@@ -561,7 +560,6 @@ def decide(state: Any, message: str) -> Dict[str, Any]:
         "message": str(data.get("message") or "").strip(),
         "connectors": _str_list(data.get("connectors")),
         "missing_connectors": _str_list(data.get("missing_connectors")),
-        "kit_match": str(data.get("kit_match") or "").strip(),
     }
 
 
@@ -647,7 +645,6 @@ def enforce_elicitation_cap(
         "message": "",
         "connectors": list(decision.get("connectors") or []),
         "missing_connectors": list(decision.get("missing_connectors") or []),
-        "kit_match": decision.get("kit_match") or "",
         "coerced": True,
     }
 
@@ -756,12 +753,8 @@ KIT_NOTICE = (
     "more than a platform built on a ready kit."
 )
 
-#: Kit ids too generic to name from a message match -- they appear in nearly
-#: every brief and would turn every notice into a named-kit claim.
-_GENERIC_KIT_TOKENS = frozenset({"platform", "kit", "operations", "core", "base"})
-
-#: Said when the shelf DOES hold a kit whose own name appears in the owner's
-#: message, but that kit is not certified for domain depth. Absent and
+#: Said when a Store kit DOES serve the vertical the user chose, but the
+#: operator has not declared it ready (certified) for domain depth. Absent and
 #: uncertified are different truths (live 2026-09-30: an automotive brief was
 #: told "we don't have a kit" while an uncertified automotive kit sat on the
 #: shelf).
@@ -773,51 +766,41 @@ UNCERTIFIED_KIT_NOTICE = (
 )
 
 
-def _shelf_kit_named_in(text: str, kits) -> str:
-    """The first shelf kit whose own name appears in the owner's message.
+def _kit_notice(state: Any) -> str:
+    """The once-per-session notice, decided by the vertical the USER chose.
 
-    Token match only (kit-id parts of 4+ chars, generic tokens excluded):
-    deterministic and inspectable, never a similarity guess. Used for the
-    NOTICE wording only -- nothing is attached by this; building on the kit
-    stays the owner's word.
-    """
-    import re as _re
-
-    words = set(_re.findall(r"[a-z0-9]+", (text or "").lower()))
-    for kit in sorted(str(k) for k in kits):
-        tokens = [
-            t
-            for t in kit.lower().replace("-", "_").split("_")
-            if len(t) >= 4 and t not in _GENERIC_KIT_TOKENS
-        ]
-        if tokens and any(t in words for t in tokens):
-            return kit
-    return ""
-
-
-def _kit_notice(state: Any, decision: Dict[str, Any], text: str = "") -> str:
-    """The once-per-session notice, when no real kit covers the business.
-
-    ``kit_match`` is the model's explicit claim and is checked against the
-    shelf: an id that is not a domain kit there counts as no match, so the
-    model cannot talk the notice away by naming a kit that does not exist.
+    The kit is never guessed -- not by the model from the user's business
+    description, not by scanning the message for kit names. The user's
+    vertical (``product_design.vertical``) is resolved against the Store's own
+    kit declarations: a ready kit serves it -> no notice; a kit serves it but
+    is not declared ready -> the uncertified notice naming that kit; nothing
+    serves it (or no vertical was chosen) -> the no-ready-kit notice.
     """
     pd = getattr(state, "product_design", None)
     if pd is None or getattr(pd, "kit_notice_given", False):
         return ""
     try:
-        from app.factory.store_catalog import store_catalog
+        from app.factory.store_kits import (
+            NO_VERTICAL,
+            SERVED,
+            chosen_vertical,
+            domain_kits,
+            resolve_vertical,
+        )
 
-        kits = set(store_catalog().get("kits") or [])
+        kits = domain_kits()
     except Exception:  # noqa: BLE001 -- never claim or deny a kit we cannot see
         logger.warning("Floor chat: kit shelf unavailable; no kit notice", exc_info=True)
         return ""
-    if str(decision.get("kit_match") or "") in kits:
+    choice = chosen_vertical(getattr(pd, "vertical", None))
+    status, kit, _reason = (
+        resolve_vertical(choice, kits) if choice != NO_VERTICAL else ("", None, "")
+    )
+    if status == SERVED and kit and kits.get(kit, {}).get("build_ready") is True:
         return ""
     pd.kit_notice_given = True
-    named = _shelf_kit_named_in(text, kits)
-    if named:
-        return UNCERTIFIED_KIT_NOTICE % (named, named)
+    if status == SERVED and kit:
+        return UNCERTIFIED_KIT_NOTICE % (kit, kit)
     return KIT_NOTICE
 
 
@@ -839,7 +822,7 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         if (message or "").strip():
             pd.elicitation_turns = [*pd.elicitation_turns, message.strip()]
         pd.elicitation_rounds = int(pd.elicitation_rounds or 0) + 1
-        notice = _kit_notice(state, decision, message)
+        notice = _kit_notice(state)
         return {
             "sse": "info",
             "ok": True,
@@ -863,7 +846,7 @@ def apply_decision(state: Any, message: str, decision: Dict[str, Any]) -> Dict[s
         # says "no top-notch kit for this, a simple one takes longer and may
         # cost more". Dropping them made a draft look like a silent switch.
         said = " ".join(
-            s for s in (_kit_notice(state, decision, message), str(decision.get("message") or "").strip()) if s
+            s for s in (_kit_notice(state), str(decision.get("message") or "").strip()) if s
         )
         if said and isinstance(result.get("summary"), str):
             result["summary"] = said + " " + result["summary"]

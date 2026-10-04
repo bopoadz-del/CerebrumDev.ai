@@ -384,7 +384,12 @@ def refine_from_chat(state: Any, message: str) -> Optional[Dict[str, Any]]:
         }
 
     elif action == "set_vertical":
-        vertical = re.sub(r"[^a-z0-9_]", "_", args["vertical"].lower()).strip("_")[:48]
+        # The user TYPED the vertical (an explicit command, not inference):
+        # it becomes the session's choice, exactly like the Floor picker.
+        from app.factory.store_kits import chosen_vertical
+
+        vertical = chosen_vertical(args["vertical"])
+        pd.vertical = vertical
         bp.vertical = vertical
         bp.product_id = vertical
         pd.blueprint = bp.model_dump(mode="json")
@@ -466,8 +471,10 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
     Mutates state.product_design exactly like POST /product/draft.
     Returns the summary payload streamed back to the chat.
     """
-    bp = draft_blueprint_from_brief(message, vertical_hint=None)
     pd = state.product_design
+    # The vertical is the user's own choice from the Floor (persisted on the
+    # session), never read out of the message.
+    bp = draft_blueprint_from_brief(message, vertical_hint=getattr(pd, "vertical", None))
     pd.brief = message
     pd.blueprint = bp.model_dump(mode="json")
     pd.plan = None
