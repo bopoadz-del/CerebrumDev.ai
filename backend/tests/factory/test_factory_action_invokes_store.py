@@ -10,19 +10,19 @@ canned string and zero store calls.
 
 These tests pin the contract that would have caught it:
 - The generated action source must NOT contain the canned template string and
-  MUST route to the store's /v1/execute.
-- With no CEREBRUM_API_URL, handle() degrades to DEPENDENCY_REQUIRED honestly —
-  it never fakes ok:True.
-- With the store reachable (mocked), handle() actually POSTs /v1/execute per
-  block and returns the REAL block output, not a template.
+  MUST run its bound blocks in-process through app/block_runtime (the product
+  carries its blocks; no remote Store URL is read).
+- A block the product does not carry degrades to an error -- never ok:True.
+- With the blocks present, handle() runs each bound block once and returns
+  the REAL block output, not a template.
 """
 from __future__ import annotations
 
 import asyncio
+import sys
 import types
 from pathlib import Path
 
-import httpx
 import pytest
 
 from app.factory.blueprint import load_blueprint
@@ -56,68 +56,45 @@ def _generate_reuse_action(tmp_path: Path):
     pytest.fail("no REUSE action with blocks was generated — test needs one")
 
 
+def _fake_runtime(monkeypatch, execute_block):
+    mod = types.ModuleType("app.block_runtime")
+    mod.execute_block = execute_block
+    monkeypatch.setitem(sys.modules, "app.block_runtime", mod)
+
+
 def test_generated_action_source_is_not_a_canned_template(tmp_path):
     text, _ = _generate_reuse_action(tmp_path)
     assert _CANNED not in text, "generated action still returns the canned template string"
-    assert "/v1/execute" in text, "generated action does not route to the store"
-    assert "CEREBRUM_API_URL" in text, "generated action does not read the store URL"
+    assert "app.block_runtime" in text, "generated action does not run its blocks"
+    assert "CEREBRUM_API_URL" not in text and "/v1/execute" not in text, (
+        "generated action still depends on a remote Store")
 
 
-def test_handle_degrades_honestly_when_store_unconfigured(monkeypatch, tmp_path):
-    monkeypatch.delenv("CEREBRUM_API_URL", raising=False)
+def test_handle_degrades_honestly_when_a_block_is_not_vendored(monkeypatch, tmp_path):
     _, mod = _generate_reuse_action(tmp_path)
 
-    result = asyncio.run(mod.handle({"tenant_id": "t1"}, {"q": 1}))
+    def missing(block_id, payload):
+        raise RuntimeError(block_id + " is not vendored in this product")
 
-    # Honest degradation — NOT a fake success.
-    assert result["status"] == "dependency_required", result
-    assert result.get("error_code") == "store_unconfigured", result
-    # The canned success shape must be entirely absent.
+    _fake_runtime(monkeypatch, missing)
+    result = asyncio.run(mod.handle({"tenant_id": "t1"}, {"q": 1}))
+    assert result["status"] == "execution_error", result
+    assert result.get("error_code") == "block_invocation_failed", result
     assert result.get("output") is None or "result" not in (result.get("output") or {})
 
 
-def test_handle_invokes_store_and_returns_real_output(monkeypatch, tmp_path):
-    monkeypatch.setenv("CEREBRUM_API_URL", "https://store.example")
-    monkeypatch.delenv("CEREBRUM_API_KEY", raising=False)
-    monkeypatch.delenv("CEREBRUM_API_TOKEN", raising=False)
+def test_handle_runs_blocks_in_process_and_returns_real_output(monkeypatch, tmp_path):
     _, mod = _generate_reuse_action(tmp_path)
-
     calls = []
 
-    class _Resp:
-        def __init__(self, block):
-            self._block = block
+    def run(block_id, payload):
+        calls.append((block_id, payload))
+        return {"block_id": block_id, "result": {"real": True, "block": block_id}}
 
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"block_id": self._block, "result": {"real": True, "block": self._block}}
-
-    class _FakeClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, json=None, headers=None):
-            calls.append((url, json))
-            return _Resp(json["block"])
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
-
+    _fake_runtime(monkeypatch, run)
     result = asyncio.run(mod.handle({"tenant_id": "t1"}, {"q": 1}))
-
     assert result["status"] == "success", result
-    # The store was actually hit, once per block, at the right endpoint.
-    assert calls, "the store was never called"
-    assert all(url.endswith("/v1/execute") for url, _ in calls), calls
-    assert [c[1]["block"] for c in calls] == list(mod.BLOCK_IDS), calls
-    # Output carries REAL per-block results, not a template summary.
+    assert [c[0] for c in calls] == list(mod.BLOCK_IDS), calls
     block_results = result["output"]["result"]["block_results"]
     assert set(block_results) == set(mod.BLOCK_IDS)
     assert all(block_results[b]["result"]["real"] is True for b in mod.BLOCK_IDS)
