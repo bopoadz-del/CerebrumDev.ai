@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from app.factory.build import probe_set
 from app.factory.build.domain_acceptance import inspect_lotdesk_domain
 from app.factory.build.harvest import evaluate_harvest
 from app.factory.build.lotdesk_gate import inspect_path, reject_lotdesk_as_shipped
@@ -41,9 +42,14 @@ from app.factory.build.preflight import (
 from app.factory.generator import git_head
 
 EMITTER_ID = "app.factory.build.promotion.evaluate_promotion"
-STAGE = "S13"
-MINIMUM_REQUIRED = ("S10", "S11", "S12")
-STAGE_FILE_RE = re.compile(r"^(S(?:1[0-2]|[0-9]))_[A-Za-z0-9_]+\.json$")
+STAGE = probe_set.stage_id("PROMOTION")
+#: Stages promotion cannot proceed without, whatever evidence is present.
+MINIMUM_REQUIRED = probe_set.stage_ids_where(minimum_for_promotion=True)
+#: Every stage before this one, in pipeline order: the evidence it reads.
+PRIOR_STAGES = probe_set.stage_ids()[: probe_set.stage_ids().index(STAGE)]
+STAGE_FILE_RE = re.compile(
+    r"^(" + "|".join(re.escape(s) for s in PRIOR_STAGES) + r")_[A-Za-z0-9_]+\.json$"
+)
 CONFIGURED_MARKERS = ("configured-only", "configured only", "not performed")
 PASS_VERDICTS = {"PASS", "PERFORMED"}
 FAIL_VERDICTS = {"FAIL", "FAILED", "BLOCKED", "ERROR"}
@@ -79,13 +85,13 @@ def discover_evidence_files(stages_dir: Path) -> List[Path]:
 def required_stage_ids(present: Sequence[Path]) -> Tuple[str, ...]:
     ids = {path.name.split("_", 1)[0] for path in present}
     ids.update(MINIMUM_REQUIRED)
-    order = [f"S{i}" for i in range(13)]
-    return tuple(stage for stage in order if stage in ids)
+    return tuple(stage for stage in PRIOR_STAGES if stage in ids)
 
 
 def _files_for_stage(present: Sequence[Path], stage: str) -> List[Path]:
     files = [path for path in present if path.name.startswith(f"{stage}_")]
-    if stage == "S4":
+    # A stage whose evidence filename is pinned admits that one file only.
+    if S4_EVIDENCE_FILENAME.split("_", 1)[0] == stage:
         return [path for path in files if path.name == S4_EVIDENCE_FILENAME]
     return files
 
@@ -251,19 +257,20 @@ def collect_provenance(
     stages_dir: Path,
     records: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    s10 = s11 = s7 = None
+    spof_stages = probe_set.stage_ids_where(provenance="spof")
+    network_stages = probe_set.stage_ids_where(provenance="network")
+    spof: Dict[str, Any] = {stage: None for stage in spof_stages}
+    network = None
     for path in discover_evidence_files(stages_dir):
         stage = path.name.split("_", 1)[0]
         try:
             data = _load_json(path)
         except (OSError, json.JSONDecodeError):
             continue
-        if stage == "S10" and s10 is None:
-            s10 = _spof_from(data)
-        if stage == "S11" and s11 is None:
-            s11 = _spof_from(data)
-        if stage == "S7" and s7 is None:
-            s7 = _network_from(data)
+        if stage in spof and spof[stage] is None:
+            spof[stage] = _spof_from(data)
+        if stage in network_stages and network is None:
+            network = _network_from(data)
     return {
         "git_sha": git_head(_repo_root()),
         "emitter": EMITTER_ID,
@@ -271,15 +278,12 @@ def collect_provenance(
             item["evidence"]: item.get("verdict") for item in records if item.get("evidence")
         },
         "kernel_ownership": inspect_kernel_ownership(),
-        "network_posture": s7
+        "network_posture": network
         or {
             "chosen": NETWORK_POSTURE,
             "reason": NETWORK_POSTURE_REASON,
         },
-        "spof": {
-            "S10": s10,
-            "S11": s11,
-        },
+        "spof": spof,
     }
 
 
@@ -377,11 +381,15 @@ def reject_lotdesk_promotion(explicit: Optional[Path] = None) -> Dict[str, Any]:
     path = Path(domain["fixture"])
     findings = inspect_path(path)
     codes = sorted({*shipped["codes"], *domain["codes"], *(item.code for item in findings)})
-    required_blockers = ("F1", "F5", "F6", "F24")
-    present = {code: code in codes for code in required_blockers}
-    if not present["F1"] or not present["F5"] or not present["F6"]:
+    required = probe_set.codes_where(promotion_blocker="required")
+    reported = probe_set.codes_where(promotion_blocker="reported")
+    missing = [code for code in required if code not in codes]
+    if missing:
         raise AssertionError(
-            "GATE HOLLOW: LotDesk promotion reject missing F1/F5/F6: " + ",".join(codes)
+            "GATE HOLLOW: LotDesk promotion reject missing "
+            + "/".join(missing)
+            + ": "
+            + ",".join(codes)
         )
     return {
         "ok": False,
@@ -389,10 +397,7 @@ def reject_lotdesk_promotion(explicit: Optional[Path] = None) -> Dict[str, Any]:
         "gate": "lotdesk_promotion",
         "lotdesk": "fixture only; not patched",
         "codes": codes,
-        "f1_present": present["F1"],
-        "f5_present": present["F5"],
-        "f6_present": present["F6"],
-        "f24_present": present["F24"],
+        **probe_set.present_flags(codes, required + reported),
         "reasons": {
             "always_200": "GET /health is unconditional ok / always-200 (F1/F24)",
             "hollow_queue": "no persisted process transition (F5)",

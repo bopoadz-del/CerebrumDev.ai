@@ -82,19 +82,17 @@ def test_every_form_is_caught_in_code_and_exempt_in_prose(gate, tmp_path):
     assert ("probe_id", "R18") not in forms
 
 
-def test_probe_id_is_opt_in_and_exact_literal_only(gate, tmp_path):
+def test_probe_id_is_enforced_and_exact_literal_only(gate, tmp_path):
     """A letter+digits literal is a probe only when it IS the whole string --
-    the shape a comparison or a photographed set uses. The Factory's own
-    finding codes ride inside messages and as ledger keys; a message is prose,
-    and the form is off by default here, so the lint never rejects the
-    owner's next finding number."""
+    the shape a comparison or a photographed set uses. A message that cites a
+    code is prose, and a NAME is never a probe. The form is enforced by
+    default: probe ids live in the probe set, so code never spells one."""
     _write(tmp_path, "pkg/mod.py", "G5 = 5\nscore = G5 + 1\nlabel = 'round G5'\nprobe = 'G5'\n")
     default_hits = gate.scan_file(tmp_path / "pkg" / "mod.py")
-    assert default_hits == []
-    hits = gate.scan_file(tmp_path / "pkg" / "mod.py", ALL_FORMS)
-    assert [(f, t) for _l, f, t in hits] == [("probe_id", "G5")]  # the exact literal only
+    assert [(f, t) for _l, f, t in default_hits] == [("probe_id", "G5")]  # the exact literal only
+    assert gate.main(["--root", "pkg"]) == 1
+    _write(tmp_path, "pkg/mod.py", "G5 = 5\nscore = G5 + 1\nlabel = 'round G5'\n")
     assert gate.main(["--root", "pkg"]) == 0
-    assert gate.main(["--root", "pkg", "--form", "probe_id"]) == 1
 
 
 def test_a_byte_order_mark_does_not_turn_docstrings_into_code(gate, tmp_path):

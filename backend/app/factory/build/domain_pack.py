@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+from app.factory.build import probe_set
+
 from app.cerebrum_product_kernel.contract.runtime import execute_action
 from app.factory.build.domain_acceptance import (
     OUTCOMES,
@@ -41,8 +43,8 @@ from app.factory.delivery_standard import DOMAIN_PACK_FIELDS, _fmt, render
 from app.factory.generator import git_head
 
 EMITTER_ID = "app.factory.build.domain_pack.evaluate_domain_pack"
-STAGE = "S3"
 STAGE_NAME = "DOMAIN_PACK"
+STAGE = probe_set.stage_id(STAGE_NAME)
 SCHEMA_VERSION = "domain_pack.v1"
 PACK_REL = Path("docs") / "domain_pack.json"
 KERNEL_ENTRY = "app.cerebrum_product_kernel.contract.runtime.execute_action"
@@ -521,7 +523,7 @@ def evaluate_domain_pack(*, repo: Optional[Path] = None) -> Dict[str, Any]:
         ],
         "lotdesk": "fixture only; not patched",
         "llm_route_authorship": "not restored; _coder_route_body still returns None",
-        "not_started": ["S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13"],
+        "not_started": list(probe_set.stages_after(STAGE)),
     }
 
 

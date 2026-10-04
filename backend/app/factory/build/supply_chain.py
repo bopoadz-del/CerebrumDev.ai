@@ -29,6 +29,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from app.factory.build import probe_set
+
 # Manifest-list digest for library/python:3.12-slim (Docker Hub, 2026-08-23).
 PYTHON_312_SLIM_DIGEST = (
     "sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
@@ -73,8 +75,8 @@ _OUTBOUND_MARKERS = (
 SBOM_REL = Path("docs") / "sbom.cdx.json"
 PERMISSIONS_REL = Path("docs") / "permissions.json"
 EMITTER_ID = "app.factory.build.supply_chain.evaluate_supply_chain"
-STAGE = "S2"
 STAGE_NAME = "SUPPLY_CHAIN"
+STAGE = probe_set.stage_id(STAGE_NAME)
 SBOM_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
 #: Product-level P1 permissions. Runtime outbound is off; sqlite + alembic
@@ -87,7 +89,7 @@ P1_DECLARED_PERMISSIONS: Dict[str, Any] = {
     "network_scope": "runtime_outbound",
     "filesystem_scope": "STORAGE_PATH sqlite and alembic",
     "install_scope": "image_build pip",
-    "posture": "P1",
+    "posture": probe_set.chosen_posture()[0],
 }
 
 
@@ -476,7 +478,7 @@ def build_cyclonedx_sbom(
                 {
                     "vendor": "CerebrumDev.ai",
                     "name": "app.factory.build.supply_chain",
-                    "version": "S2",
+                    "version": STAGE,
                 }
             ],
         },
@@ -556,7 +558,7 @@ def observe_behaviour(
     else:
         posture_id = str(posture or "")
     combined = f"{dockerfile or ''}\n{entrypoint or ''}"
-    network = posture_id in {"P2", "P3"} or _text_has_outbound(combined)
+    network = probe_set.posture_egresses(posture_id) or _text_has_outbound(combined)
     filesystem = bool(_FS_RE.search(combined))
     install = bool(_INSTALL_RE.search(dockerfile or ""))
     return {

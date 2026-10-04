@@ -545,6 +545,10 @@ def _candidate_store_ids(block_id: str) -> tuple:
     return tuple(seen)
 
 
+#: A block class names itself ...Block or carries a version suffix (V2, V3...).
+_BLOCK_CLASS_SUFFIX_RE = re.compile(r"(?:Block|V\d+)$")
+
+
 def _class_name_from_block_module(path: Path) -> Optional[str]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -554,7 +558,7 @@ def _class_name_from_block_module(path: Path) -> Optional[str]:
     if not names:
         return None
     for name in names:
-        if name.endswith("Block") or name.endswith("V2"):
+        if _BLOCK_CLASS_SUFFIX_RE.search(name):
             return name
     return names[0]
 
