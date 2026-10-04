@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, FrozenSet, Optional
+from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 
 def slug(value: Any) -> str:
@@ -89,6 +89,38 @@ def serving_kit(vertical: Any, kits: Dict[str, Dict[str, Any]]) -> Optional[str]
         if want in {slug(v) for v in (manifest.get("serves_verticals") or [])}:
             return kit_id
     return None
+
+
+#: How a vertical resolves against the Store's kits.
+SERVED = "SERVED"
+UNSUPPORTED = "UNSUPPORTED"
+UNKNOWN = "UNKNOWN"
+
+
+def excluding_kit(vertical: Any, kits: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """The kit that declares this vertical OUT of its coverage
+    (``excludes_verticals``), if any."""
+    want = slug(vertical)
+    if not want:
+        return None
+    for kit_id, manifest in sorted(kits.items()):
+        if want in {slug(v) for v in (manifest.get("excludes_verticals") or [])}:
+            return kit_id
+    return None
+
+
+def resolve_vertical(
+    vertical: Any, kits: Dict[str, Dict[str, Any]]
+) -> Tuple[str, Optional[str], str]:
+    """(status, kit, reason). A kit's exclusion wins over any claim to serve:
+    the Store said this vertical must not be built on it."""
+    excluded_by = excluding_kit(vertical, kits)
+    if excluded_by:
+        return UNSUPPORTED, excluded_by, f"excluded by Store kit {excluded_by}"
+    kit = serving_kit(vertical, kits)
+    if kit:
+        return SERVED, kit, f"served by Store kit {kit}"
+    return UNKNOWN, None, "no Store kit serves or excludes this vertical"
 
 
 def domain_blocks(kit_id: str, kits: Dict[str, Dict[str, Any]]) -> FrozenSet[str]:
