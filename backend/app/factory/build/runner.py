@@ -1430,6 +1430,16 @@ class RoleRunner:
                             findings=list(snap.get("pilot_ready_blockers") or []),
                         )
 
+                # Factory-owned files (the acceptance harness, release gate,
+                # CI) are the Factory's, never the writer's. The writer edits
+                # the whole workspace and can reach older workspaces, so what
+                # it leaves there is not trusted: re-render them from the
+                # current templates every time TESTER is about to judge --
+                # a fresh run as well as a re-entered one. Live 2026-10-04: a
+                # fresh build shipped an older Factory's 21-check harness and
+                # the Store gate refused its 21/21 for not being 22/22.
+                if role is BuildRole.TESTER:
+                    self._refresh_factory_files()
                 try:
                     assert_phase_order(role, done)
                     verdict = self._run_phase(role, work_list)
