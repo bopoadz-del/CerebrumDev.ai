@@ -34,6 +34,12 @@ def test_a_vertical_runtime_directory_is_refused():
     assert found and "_runtime" in found[0]
 
 
+def test_an_embedded_product_tree_is_refused_whatever_it_is_called():
+    gate = _gate()
+    found = gate.violations(["backend/app/zorblat_gen/overlays/zorblat_core/app/routers/x.py"])
+    assert found and "embedded" in found[0]
+
+
 def test_a_kit_shaped_manifest_is_refused(tmp_path):
     gate = _gate()
     rel = "backend/app/factory/zorblat/manifest.json"

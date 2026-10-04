@@ -7,7 +7,9 @@ A kit is recognised by SHAPE, never by name:
 * any tracked ``manifest.json`` under ``backend/`` that is kit-shaped (an
   ``id`` plus a ``blocks`` declaration);
 * any tracked ``*_runtime`` directory under ``backend/app`` (a vertical's
-  runtime shipped inside the Factory).
+  runtime shipped inside the Factory);
+* any tracked path under ``backend/app`` that holds its own ``app/``
+  package (a product tree embedded in the Factory, e.g. an overlay).
 
 Kits live in the Store (Cerebrum-Blocks ``block_store/kits/``) and the
 Factory references them by registry id. Exit 1 lists file paths.
@@ -42,6 +44,9 @@ def violations(paths: Iterable[str], root: Path = ROOT) -> List[str]:
             continue
         if parts[:2] == ("backend", "app") and any(p.endswith("_runtime") for p in parts[:-1]):
             found.append(f"{rel}: inside a *_runtime directory")
+            continue
+        if parts[:2] == ("backend", "app") and "app" in parts[2:-1]:
+            found.append(f"{rel}: inside a product tree embedded under backend/app")
             continue
         if parts[-1] == "manifest.json":
             try:
