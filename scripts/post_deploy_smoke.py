@@ -139,10 +139,14 @@ def _mapping(body):
 
 
 def expected_git_sha(explicit=None):
-    """GITHUB_SHA when set (Actions), else empty. Explicit overrides env."""
+    """The commit that must be live. Explicit, then SMOKE_EXPECTED_SHA (the
+    deploy run's head sha when chained after deploy-aws), then GITHUB_SHA."""
     if explicit is not None:
         return str(explicit).strip()
-    return os.environ.get("GITHUB_SHA", "").strip()
+    return (
+        os.environ.get("SMOKE_EXPECTED_SHA", "").strip()
+        or os.environ.get("GITHUB_SHA", "").strip()
+    )
 
 
 def git_sha_matches(live_sha, expected_sha):
