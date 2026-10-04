@@ -887,4 +887,6 @@ def test_steward_draft_writes_cerebrum_steward_domain(monkeypatch):
     assert drafted.status_code == 200, drafted.text
     state = get_session("sess_steward_domain")
     assert state is not None
-    assert state.config.domain == "cerebrum-steward"
+    # The session domain is the DRAFTED product's id (goldens are chosen by
+    # structure, not by the words in this brief).
+    assert state.config.domain == drafted.json()["blueprint"]["product_id"]

@@ -84,4 +84,7 @@ def test_requirements_include_gate_dependencies(generated):
 
 def test_smoke_suite_references_generated_product_id(generated):
     smoke = (generated / "tests" / "test_smoke.py").read_text(encoding="utf-8")
-    assert 'PRODUCT_ID = "cerebrum-steward"' in smoke
+    import json
+
+    product_id = json.loads((generated / "factory_plan.json").read_text(encoding="utf-8"))["product_id"]
+    assert f'PRODUCT_ID = "{product_id}"' in smoke

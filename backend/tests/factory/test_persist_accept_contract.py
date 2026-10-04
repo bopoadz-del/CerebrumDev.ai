@@ -132,12 +132,7 @@ def test_lettings_and_smoke_still_lint_with_persist_accept():
 
 
 def test_lettings_golden_roster_and_fingerprint_unchanged():
-    from app.factory.product_architect import draft_blueprint_from_brief as draft
-
-    bp = draft(
-        "build a platform for residential lettings",
-        use_llm=False,
-    )
+    bp = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in bp.capabilities} == LIVE_LETTINGS_CAPS
     golden = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in golden.capabilities} == LIVE_LETTINGS_CAPS

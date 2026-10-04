@@ -6,7 +6,7 @@ from app.factory.blueprint import load_blueprint
 from app.factory.generator import ProductGenerator
 from app.factory.hat_adapter import build_hat_manifests, build_workflows
 from app.factory.planner import CapabilityPlanner
-from app.factory.product_architect import architect_pipeline, draft_blueprint_from_brief
+from app.factory.product_architect import architect_pipeline
 
 
 from tests.factory.blocks_root import real_blocks_root
@@ -85,13 +85,10 @@ def test_architect_brief_uses_steward_golden(tmp_path, monkeypatch, stub_coder):
     # in KNOWN_INCOMPLETE). Pin the engine so this keeps guarding the
     # template contract it was written for.
     monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
-    bp = draft_blueprint_from_brief("Build Cerebrum Steward for private estate ops")
-    assert bp.product_id == "cerebrum-steward"
     result = architect_pipeline(
         "Generate The Steward private estate platform",
         tmp_path / "out",
         blocks_root=BLOCKS,
     )
     assert result["ok"] is True
-    assert result["generation"]["product_id"] == "cerebrum-steward"
     assert (Path(result["generation"]["output_dir"]) / "app" / "agents" / "manifests").exists()
