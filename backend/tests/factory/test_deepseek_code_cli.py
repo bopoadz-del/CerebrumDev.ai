@@ -646,7 +646,7 @@ def test_dispatch_deepseek_billing_does_not_openrouter_fallthrough(
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo 'HTTP 402 from https://api.deepseek.com'\n"
+        "echo 'HTTP 429 from https://api.deepseek.com: insufficient quota'\n"
         "exit 1\n",
         encoding="utf-8",
     )

@@ -97,6 +97,7 @@ def _full_repo(root: Path) -> None:
         dest.write_text(body, encoding="utf-8")
     from app.factory.build.store_acceptance import (
         ACCEPTANCE_CHECK_NAMES,
+        ACCEPTANCE_REQUIRED,
         AcceptanceLine,
         AcceptanceReport,
         write_acceptance_report,
@@ -105,8 +106,8 @@ def _full_repo(root: Path) -> None:
     write_acceptance_report(
         root,
         AcceptanceReport(
-            passed=len(ACCEPTANCE_CHECK_NAMES),
-            total=len(ACCEPTANCE_CHECK_NAMES),
+            passed=ACCEPTANCE_REQUIRED,
+            total=ACCEPTANCE_REQUIRED,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),
@@ -376,6 +377,7 @@ def test_authorship_only_cannot_claim_store_green(tmp_path):
     _full_repo(tmp_path)
     from app.factory.build.store_acceptance import (
         ACCEPTANCE_CHECK_NAMES,
+        ACCEPTANCE_REQUIRED,
         AcceptanceLine,
         AcceptanceReport,
         write_acceptance_report,
@@ -385,7 +387,7 @@ def test_authorship_only_cannot_claim_store_green(tmp_path):
         tmp_path,
         AcceptanceReport(
             passed=5,
-            total=len(ACCEPTANCE_CHECK_NAMES),
+            total=ACCEPTANCE_REQUIRED,
             ok=False,
             lines=[
                 AcceptanceLine(
@@ -412,5 +414,5 @@ def test_authorship_only_cannot_claim_store_green(tmp_path):
         Level.FOUNDING_CUSTOMER_READY.value,
     }
     assert grade["pilot_ready"] is False
-    expected = "acceptance is 5/%d" % len(ACCEPTANCE_CHECK_NAMES)
+    expected = "acceptance is 5/%d" % ACCEPTANCE_REQUIRED
     assert any(expected in b for b in grade["blockers"])

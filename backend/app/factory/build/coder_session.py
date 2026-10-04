@@ -129,8 +129,17 @@ _CLI_ERROR_TAG_RE = re.compile(r"\[[a-z][a-z0-9-]*:([a-z_]+)\]", re.IGNORECASE)
 #: An HTTP status line, ``HTTP 429`` / ``HTTP/1.1 402``.
 _HTTP_STATUS_LINE_RE = re.compile(r"\bHTTP(?:/\d(?:\.\d)?)?\s+([45]\d\d)\b")
 _STATUS_NUMBER_RE = re.compile(r"(?<![\w.])([45]\d\d)(?![\w.])")
-#: Provider answers that mean the ACCOUNT refused: unauthenticated, unpaid.
-_BILLING_STATUSES = (HTTPStatus.UNAUTHORIZED, HTTPStatus.PAYMENT_REQUIRED)
+#: Provider answers that refuse the ACCOUNT rather than the request:
+#: unauthenticated, unpaid, or over its limit. 429 is here because a real
+#: provider answers account suspension with it (Moonshot, sess_d5789a91:
+#: "429 Too Many Requests -- suspended due to insufficient balance"), and a
+#: throttled account cannot do the work now either: both fall through to the
+#: factory LLM the same way.
+_BILLING_STATUSES = (
+    HTTPStatus.UNAUTHORIZED,
+    HTTPStatus.PAYMENT_REQUIRED,
+    HTTPStatus.TOO_MANY_REQUESTS,
+)
 #: Provider answers that mean the MODEL was refused: forbidden, not found.
 _MODEL_DENIED_STATUSES = (HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND)
 _UNRECOGNIZED_MODEL_JSON_RE = re.compile(
@@ -1569,7 +1578,8 @@ def classify_cli_exit(code: int, output: str) -> Tuple[str, str]:
             (
                 f"{NAMED_BLOCKER_CLI_BILLING}: {exit_bit} — coder account "
                 "billing/auth refused the session (the provider answered "
-                "401 Unauthorized / 402 Payment Required). Still FACTORY_CODE_CLI_FAILED "
+                "401 / 402 / 429: unauthenticated, unpaid or over its limit). "
+                "Still FACTORY_CODE_CLI_FAILED "
                 "honesty — not a ≥2h CLI session. Verified REUSE continues "
                 "factory-grounded emit + harvest; GENERATE inventory_gaps "
                 "fall through to the factory coder LLM and stay listed "

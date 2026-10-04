@@ -524,11 +524,18 @@ def test_classify_cli_exit_names_billing_by_provider_status():
     assert "FACTORY_CODE_CLI_FAILED" in detail
     assert classify_cli_exit(1, "HTTP/1.1 401 from the provider")[0] == NAMED_BLOCKER_CLI_BILLING
     assert classify_cli_exit(1, '{"error": {"code": 402}}')[0] == NAMED_BLOCKER_CLI_BILLING
+    # The recorded Moonshot answer (sess_d5789a91) is a 429: account-side.
+    photographed, _ = classify_cli_exit(
+        1,
+        "429 Too Many Requests — this account has been suspended due to "
+        "insufficient balance",
+    )
+    assert photographed == NAMED_BLOCKER_CLI_BILLING
     # Words with no status: not a billing answer.
     words, _ = classify_cli_exit(1, "error: insufficient balance, account suspended")
     assert words == NAMED_BLOCKER_CLI_FAILED
-    # 429 is Too Many Requests -- throughput, not the account.
-    generic, _ = classify_cli_exit(1, "429 Too Many Requests -- retry later")
+    # A server-side 5xx is not the account.
+    generic, _ = classify_cli_exit(1, "HTTP 503 from the provider")
     assert generic == NAMED_BLOCKER_CLI_FAILED
 
 
@@ -1480,11 +1487,12 @@ def test_run_writer_raises_on_no_model_when_inventory_gaps(tmp_path, monkeypatch
 def test_empty_gap_cli_billing_fail_harvests_factory_grounded_reuse(
     tmp_path, monkeypatch
 ):
-    """C-BRIEF sess_d5789a91: empty gaps + CLI billing refusal (402) still harvests REUSE keep-path."""
+    """C-BRIEF sess_d5789a91: empty gaps + CLI 429 still harvests REUSE keep-path."""
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo \"Error code: 402 - {'error': {'message': 'account suspended'}}\"\n"
+        "echo '429 Too Many Requests — this account has been suspended "
+        "due to insufficient balance'\n"
         "exit 1\n",
         encoding="utf-8",
     )
@@ -1576,7 +1584,8 @@ def test_nonempty_gap_cli_billing_fail_does_not_fake_keep_path(
     script = tmp_path / "kimi"
     script.write_text(
         "#!/bin/sh\n"
-        "echo \"Error code: 402 - {'error': {'message': 'account suspended'}}\"\n"
+        "echo '429 Too Many Requests — this account has been suspended "
+        "due to insufficient balance'\n"
         "exit 1\n",
         encoding="utf-8",
     )

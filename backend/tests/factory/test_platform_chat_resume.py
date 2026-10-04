@@ -188,6 +188,7 @@ def _close_pilot_ready(out: Path) -> None:
 def _write_acceptance_kk(out: Path) -> None:
     from app.factory.build.store_acceptance import (
         ACCEPTANCE_CHECK_NAMES,
+        ACCEPTANCE_REQUIRED,
         AcceptanceLine,
         AcceptanceReport,
         write_acceptance_report,
@@ -196,8 +197,8 @@ def _write_acceptance_kk(out: Path) -> None:
     write_acceptance_report(
         out,
         AcceptanceReport(
-            passed=len(ACCEPTANCE_CHECK_NAMES),
-            total=len(ACCEPTANCE_CHECK_NAMES),
+            passed=ACCEPTANCE_REQUIRED,
+            total=ACCEPTANCE_REQUIRED,
             ok=True,
             lines=[AcceptanceLine(name=n, status="PASS") for n in ACCEPTANCE_CHECK_NAMES],
         ),

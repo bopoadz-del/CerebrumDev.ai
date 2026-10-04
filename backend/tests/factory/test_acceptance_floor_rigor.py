@@ -57,11 +57,21 @@ def test_rag_check_is_skipped_when_no_retrieval_requested():
     assert "retrieval" not in brief_signals(bp)
 
 
-def test_rag_check_is_enforced_when_the_brief_asks_for_retrieval():
+def test_retrieval_is_withheld_until_a_bound_block_can_declare_it():
+    """Retrieval is a STRUCTURAL signal: a capability binds a Store block that
+    declares a retrieval capability. Store block.json carries no such typed
+    field -- only free-form ``tags``, and matching those would be the same word
+    list over different text -- and adding one means re-signing block.json
+    with the Ed25519 publisher key, which is not held. So the signal is
+    WITHHELD: neither the capability's words nor its block's name raise it,
+    and rag_roundtrip_hit is reported WITHHELD(no signing key), never a veto.
+    (Was: enforced when the brief SAID "search"/"rag" -- the removed word list.)
+    """
     bp = _bp(capabilities=[_cap("policy_search", "semantic search over SOPs",
                                 block_ids=["rag_retrieval"])])
-    assert "retrieval" in brief_signals(bp)
-    assert "rag_roundtrip_hit" in enforced_ids(bp)
+    assert "retrieval" not in brief_signals(bp)
+    assert "rag_roundtrip_hit" in advisory_ids(bp)
+    assert "rag_roundtrip_hit" not in enforced_ids(bp)
 
 
 def test_audit_scan_is_advisory_for_a_declared_test_platform():
