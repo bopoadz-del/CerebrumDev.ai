@@ -4,14 +4,14 @@ from __future__ import annotations
 
 
 from app.factory.paths import factory_repo_root
-from app.factory.product_architect import lettings_golden_path, steward_golden_path
+from app.factory.golden_match import goldens
 
 
 def test_factory_repo_root_finds_blueprints():
     root = factory_repo_root()
     assert (root / "blueprints").is_dir()
-    assert steward_golden_path().is_file()
-    assert lettings_golden_path().is_file()
+    # Goldens are found on disk by their own serves_verticals declaration.
+    assert goldens(root / "blueprints"), "no golden blueprint declares serves_verticals"
 
 
 def test_factory_repo_root_docker_layout(tmp_path):

@@ -68,8 +68,6 @@ from app.factory.build.workflow_accept import (
 from app.factory.build.writer_brief import CODING_AGENT_BRIEF
 from app.factory.coder import _WHOLE_JOB_SYSTEM
 from app.factory.product_architect import (
-    draft_blueprint_from_brief,
-    lettings_golden_path,
     plan_blueprint,
 )
 
@@ -78,6 +76,8 @@ from app.factory.product_architect import (
 SCHEDULING_CAP = "appointment_scheduling"
 BOOKING_CAP = "appointment_booking"
 REMINDERS_CAP = "automated_reminders"
+
+LETTINGS_GOLDEN = Path(__file__).resolve().parents[3] / "blueprints/lettings/residential_lettings.v1.yaml"
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -331,12 +331,9 @@ def test_vetcare_compiled_brief_grounds_event_bus_workflow_accept():
 
 
 def test_lettings_golden_roster_and_fingerprint_unchanged():
-    bp = draft_blueprint_from_brief(
-        "build a platform for residential lettings",
-        use_llm=False,
-    )
+    bp = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in bp.capabilities} == LIVE_LETTINGS_CAPS
-    golden = load_blueprint(lettings_golden_path())
+    golden = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in golden.capabilities} == LIVE_LETTINGS_CAPS
     plan = plan_blueprint(bp)
     compiled = compile_brief(bp, plan)

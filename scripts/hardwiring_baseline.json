@@ -1,16 +1,117 @@
 {
-  "files": {},
+  "files": {
+    "backend/app/factory/build/acceptance_floor.py": {
+      "word_list": {
+        "_RETRIEVAL_HINTS": 1,
+        "inline:./": 1
+      }
+    },
+    "backend/app/factory/build/block_inputs.py": {
+      "word_list": {
+        "_ROSTER_CONSULTS_PAYLOAD": 1,
+        "inline:quoted": 1
+      }
+    },
+    "backend/app/factory/build/budget_inspect.py": {
+      "word_list": {
+        "_REAL_TIMEOUT_HINTS": 1
+      }
+    },
+    "backend/app/factory/build/coder_session.py": {
+      "word_list": {
+        "_BILLING_HINTS": 1,
+        "_EMPTY_REFUSE_HINTS": 1,
+        "_MODEL_DENIED_HINTS": 1,
+        "_WORKFLOW_STEP_TOKENS": 1,
+        "inline:deepseek": 1,
+        "inline:model": 1
+      }
+    },
+    "backend/app/factory/build/codewhale_worker.py": {
+      "word_list": {
+        "inline:write": 1
+      }
+    },
+    "backend/app/factory/build/deploy.py": {
+      "word_list": {
+        "F1_ALWAYS_200_SNIPPETS": 1
+      }
+    },
+    "backend/app/factory/build/intake_blueprint.py": {
+      "word_list": {
+        "inline:product_name": 1,
+        "required": 1
+      }
+    },
+    "backend/app/factory/build/level_grade.py": {
+      "word_list": {
+        "CLI_FOUNDING_HONESTY_MISS": 1
+      }
+    },
+    "backend/app/factory/build/lotdesk_gate.py": {
+      "word_list": {
+        "REQUIRED_REJECTION_CODES": 1
+      }
+    },
+    "backend/app/factory/build/network_posture.py": {
+      "word_list": {
+        "DELIVERY_ARTIFACTS": 1,
+        "P1_FORBIDDEN": 1,
+        "inline:postgres": 1
+      }
+    },
+    "backend/app/factory/build/offline_adapters.py": {
+      "word_list": {
+        "_AUGASSIGN_OPS": 1
+      }
+    },
+    "backend/app/factory/build/supply_chain.py": {
+      "word_list": {
+        "_OUTBOUND_MARKERS": 1
+      }
+    },
+    "backend/app/factory/build/workflow_accept.py": {
+      "word_list": {
+        "EVENT_BUS_STEP_TOKENS": 1,
+        "FACTORY_WRAP_TOKENS": 1,
+        "UNPREPARED_INPUT_FORWARD_TOKENS": 1,
+        "WORKFLOW_CHILD_TOKENS": 1
+      }
+    },
+    "backend/app/factory/build/writer_behaviour.py": {
+      "word_list": {
+        "inline:CREATE TABLE": 1,
+        "inline:OperationalError": 1
+      }
+    },
+    "backend/app/factory/build_jobs.py": {
+      "word_list": {
+        "_REATTACH_NEEDS": 1
+      }
+    },
+    "backend/app/factory/delivery_standard.py": {
+      "word_list": {
+        "_LEFTOVER_MARKERS": 1
+      }
+    },
+    "backend/app/factory/platform_chat_llm.py": {
+      "word_list": {
+        "inline:design_basis": 1
+      }
+    }
+  },
   "forms": [
     "session_id",
     "live_snapshot",
     "rescue_fn",
     "needle_list",
     "rescue_knob",
-    "product_literal"
+    "product_literal",
+    "word_list"
   ],
   "roots": [
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 0
+  "total": 31
 }

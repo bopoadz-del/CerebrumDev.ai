@@ -53,8 +53,7 @@ def test_d3_generate_platform_artifact(tmp_path, monkeypatch):
     assert getattr(blueprint, "drafting_mode", None) in {
         "architect_llm",
         "keyword_fallback",
-        "golden_steward",
-        "golden_lettings",
+        "golden",
     }
 
     out = tmp_path / "warehouse-export"
