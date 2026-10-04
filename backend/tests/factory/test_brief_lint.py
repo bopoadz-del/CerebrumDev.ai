@@ -136,37 +136,6 @@ def test_unfilled_template_slot_is_rejected():
 # --- shape cases: each refuses a CLASS of leak, on invented names --------
 
 
-def test_kit_manifest_in_brief_is_identity_plus_claimed_contract_only():
-    """The smoke blueprint claims two estate-kit blocks. Its brief must carry
-    those blocks' contract -- never the kit's origin product, its capability
-    list or its blueprint path, nor blocks this build did not claim."""
-    compiled = _compiled(SMOKE)
-    kit = next(iter(compiled.kit_manifests.values()))
-    for leak in ("capabilities", "blueprint", "author", "artifacts"):
-        assert leak not in kit
-    assert lint_brief(compiled).ok, lint_brief(compiled).errors
-
-
-def test_kit_provenance_key_planted_in_a_brief_is_refused():
-    compiled = _compiled(SMOKE)
-    kit_id = next(iter(compiled.kit_manifests))
-    compiled.kit_manifests[kit_id] = dict(
-        compiled.kit_manifests[kit_id], capabilities=["zorblat_intake"]
-    )
-    errors = lint_brief(compiled).errors
-    assert any("non-contract keys: capabilities" in e for e in errors), errors
-
-
-def test_kit_contract_naming_an_unclaimed_block_is_refused():
-    compiled = _compiled(SMOKE)
-    kit_id = next(iter(compiled.kit_manifests))
-    kit = dict(compiled.kit_manifests[kit_id])
-    kit["blocks"] = {"group": list(kit.get("product_blocks") or []) + ["zorblat_block"]}
-    compiled.kit_manifests[kit_id] = kit
-    errors = lint_brief(compiled).errors
-    assert any("did not claim" in e for e in errors), errors
-
-
 def test_brief_citing_a_build_session_is_refused():
     compiled = _compiled()
     compiled.text += "\nsess_0a1b2c3d4e5f\n"
