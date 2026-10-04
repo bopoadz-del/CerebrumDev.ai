@@ -370,3 +370,45 @@ class TestSecurityHeaderProbe:
         smoke.live_headers = lambda url: None
         smoke.record_security_headers("https://api.example.test", "https://www.example.test")
         assert len(smoke.FAILURES) == 2
+
+
+class TestSmokeWaitsForTheRollout:
+    """A smoke that races the deploy measures the build queue, not the deploy.
+
+    It used to start on the same push as deploy-aws with a 5-minute window, so
+    every deploy read red and every red read as "AWS was slow". The smoke now
+    runs after the deploy, fails if the deploy failed, and waits (cap 20 min)
+    for the DEPLOYED commit; the deploy itself waits for ECS to report the
+    rollout COMPLETED.
+    """
+
+    ROOT = Path(__file__).resolve().parents[2]
+
+    def _wf(self, name):
+        return (self.ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+
+    def test_smoke_runs_after_deploy_not_beside_it(self):
+        import yaml
+
+        wf = yaml.safe_load(self._wf("post-deploy-smoke.yml"))
+        on = wf.get("on") or wf.get(True)
+        assert "push" not in on
+        assert on["workflow_run"]["workflows"] == ["deploy-aws"]
+        text = self._wf("post-deploy-smoke.yml")
+        assert "workflow_run.conclusion != 'success'" in text
+        assert 'SMOKE_READY_WAIT_S: "1200"' in text
+        assert "SMOKE_EXPECTED_SHA: ${{ github.event.workflow_run.head_sha" in text
+
+    def test_deploy_waits_for_ecs_rollout_completed_with_a_cap(self):
+        text = self._wf("deploy-aws.yml")
+        assert "rolloutState" in text
+        assert "COMPLETED) break" in text and "FAILED)" in text
+        assert "1200" in text
+
+    def test_expected_sha_prefers_the_deployed_head(self, monkeypatch):
+        mod = _load_smoke()
+        monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+        monkeypatch.setenv("SMOKE_EXPECTED_SHA", "b" * 40)
+        assert mod.expected_git_sha() == "b" * 40
+        monkeypatch.delenv("SMOKE_EXPECTED_SHA")
+        assert mod.expected_git_sha() == "a" * 40
