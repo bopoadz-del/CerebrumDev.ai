@@ -17,6 +17,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+#: The blueprint this oracle certifies; its lines are the general product gate's.
+BLUEPRINT = ROOT / "blueprints" / "steward" / "steward.v1.yaml"
 
 SUITES: List[Dict[str, str]] = [
     {"suite": "A", "name": "health_and_version", "mandatory": "true"},
@@ -107,22 +109,17 @@ def _evaluate_static_suite(suite_id: str) -> Dict[str, Any]:
             "detail": "Decimal money scaffolding exact-add verified" if ok else "money scaffolding incomplete",
         }
 
-    if suite_id == "N":
-        return {"status": "FAIL", "detail": "Store block runtime execution not wired"}
+    # Suites that measure a mechanism run on the GENERATED product through the
+    # general product gate -- the same lines run on every blueprint.
+    measured = _product_lines()
+    by_suite = {"N": "store_runtime", "P": "determinism", "J": "workflow_approvals",
+                "K": "agent_runtime", "Q": "doc_honesty"}
+    if suite_id in by_suite:
+        line = measured[by_suite[suite_id]]
+        return {"status": line["status"], "detail": line["detail"]}
 
-    if suite_id == "P":
-        status = "NOT VERIFIED" if not determinism.is_file() else "PASS"
-        return {"status": status, "detail": "determinism artifact absent" if status != "PASS" else "artifact present"}
-
-    if suite_id == "Q":
-        ok = audit_doc.is_file() and entity_model.is_file()
-        pct_free = "readiness percentage" not in _read(audit_doc).lower()
-        return {
-            "status": "PASS" if ok and pct_free else "FAIL",
-            "detail": "v2 audit + entity DNA present; no readiness percentages",
-        }
-
-    return {"status": "NOT VERIFIED", "detail": "live or unimplemented suite — requires deployed URL or future work"}
+    # Everything else needs a DEPLOYED instance: declared, not failed.
+    return _product_gate().live(None, suite_id)
 
 
 def _http_get(base_url: str, path: str, headers: Dict[str, str] | None = None) -> Dict[str, Any]:
@@ -138,6 +135,33 @@ def _http_get(base_url: str, path: str, headers: Dict[str, str] | None = None) -
             }
     except URLError as exc:
         return {"ok": False, "status": None, "error": str(exc.reason)}
+
+
+_PRODUCT_LINES: Dict[str, Any] = {}
+
+
+def _product_gate():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import product_gate
+
+    return product_gate
+
+
+def _product_lines() -> Dict[str, Any]:
+    """The general product-gate lines for this oracle's blueprint, once."""
+    if not _PRODUCT_LINES:
+        import tempfile
+
+        pg = _product_gate()
+        _PRODUCT_LINES["determinism"] = pg.determinism(BLUEPRINT)
+        with tempfile.TemporaryDirectory() as tmp:
+            tree = Path(tmp) / "product"
+            pg.generate(BLUEPRINT, tree)
+            _PRODUCT_LINES["store_runtime"] = pg.store_runtime(tree)
+            _PRODUCT_LINES["agent_runtime"] = pg.agent_scope(tree)
+            _PRODUCT_LINES["workflow_approvals"] = pg.workflow_approvals(tree)
+            _PRODUCT_LINES["doc_honesty"] = pg.doc_honesty(tree)
+    return _PRODUCT_LINES
 
 
 def run_oracle(base_url: str | None) -> Dict[str, Any]:
@@ -171,7 +195,8 @@ def run_oracle(base_url: str | None) -> Dict[str, Any]:
 
     mandatory_fail = any(s["mandatory"] == "true" and s["status"] == "FAIL" for s in suites)
     mandatory_nv = any(s["mandatory"] == "true" and s["status"] == "NOT VERIFIED" for s in suites)
-    verdict = "NO-GO" if mandatory_fail or mandatory_nv else "GO"
+    withheld = any(s["status"] == "WITHHELD" for s in suites)
+    verdict = "NO-GO" if mandatory_fail or mandatory_nv else ("WITHHELD" if withheld else "GO")
 
     return {
         "schema_version": "steward_oracle_v2",

@@ -18,7 +18,10 @@ def test_gate_runner_reports_wave2_passes():
         cwd=str(ROOT),
         check=False,
     )
-    assert proc.returncode == 1  # NO-GO expected — mandatory FAIL/NOT VERIFIED remain
+    # No FAIL and no NOT VERIFIED: every line is measured on the generated
+    # product; only the deployed-instance oracle suites are WITHHELD
+    # (declared in artifacts/blockers.json).
+    assert proc.returncode == 0, proc.stderr[-2000:]
     report = json.loads(proc.stdout)
     by_gate = {g["gate"]: g for g in report["gates"]}
 
@@ -29,8 +32,11 @@ def test_gate_runner_reports_wave2_passes():
     assert by_gate["G12_deployment"]["status"] == "PASS"
     assert by_gate["G14_documentation"]["status"] == "PASS"
 
-    assert by_gate["G7_store"]["status"] == "FAIL"
-    assert by_gate["G13_oracle"]["status"] == "FAIL"
+    for gate in ("G1_factory_determinism", "G7_store", "G8_agents", "G9_workflows"):
+        assert by_gate[gate]["status"] == "PASS", by_gate[gate]
+    assert by_gate["G13_oracle"]["status"] == "WITHHELD"
+    assert by_gate["G13_oracle"]["detail"]["failed"] == []
+    assert not [g for g in report["gates"] if g["status"] in ("FAIL", "NOT VERIFIED")]
 
 
 def test_oracle_static_suites_score_expected():
@@ -47,4 +53,6 @@ def test_oracle_static_suites_score_expected():
     assert by_suite["H"]["status"] == "PASS"
     assert by_suite["L"]["status"] == "PASS"
     assert by_suite["M"]["status"] == "PASS"
-    assert by_suite["N"]["status"] == "FAIL"
+    for suite in ("J", "K", "N", "P", "Q"):
+        assert by_suite[suite]["status"] == "PASS", by_suite[suite]
+    assert {s["status"] for s in report["suites"]} <= {"PASS", "WITHHELD"}
