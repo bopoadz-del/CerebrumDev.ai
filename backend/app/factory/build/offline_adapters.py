@@ -397,21 +397,6 @@ _DEPENDENCIES_IMPORT = re.compile(
     r"^([ \t]*)from app\.dependencies import _create_block_instance[^\n]*\n",
     re.MULTILINE,
 )
-_AUGASSIGN_OPS = (
-    "+=",
-    "-=",
-    "*=",
-    "/=",
-    "//=",
-    "%=",
-    "**=",
-    "@=",
-    "&=",
-    "|=",
-    "^=",
-    ">>=",
-    "<<=",
-)
 
 
 def _module_compiles(text: str) -> bool:
@@ -432,6 +417,25 @@ def _preceded_by_del(text: str, start: int) -> bool:
     return not (ch.isalnum() or ch == "_")
 
 
+def _starts_with_augassign(text: str) -> bool:
+    """Does ``text`` open with an augmented-assignment operator?
+
+    Asked of Python's grammar, not of a list of operators: the longest run of
+    leading operator characters that makes ``x <op> 1`` an AugAssign.
+    """
+    m = re.match(r"[^\w\s'\"(\[{]+", text)
+    if not m:
+        return False
+    run = m.group(0)
+    for end in range(len(run), 1, -1):
+        try:
+            stmt = ast.parse("x " + run[:end] + " 1").body[0]
+        except SyntaxError:
+            continue
+        return isinstance(stmt, ast.AugAssign)
+    return False
+
+
 def _is_assignment_target_suffix(rest: str) -> bool:
     """True when ``name['result']`` is a store / augassign / unpack target."""
     stripped = rest.lstrip()
@@ -439,7 +443,7 @@ def _is_assignment_target_suffix(rest: str) -> bool:
         return False
     if stripped.startswith(":="):
         return True
-    if any(stripped.startswith(op) for op in _AUGASSIGN_OPS):
+    if _starts_with_augassign(stripped):
         return True
     if stripped.startswith("=") and not stripped.startswith("=="):
         return True

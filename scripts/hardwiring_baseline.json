@@ -21,7 +21,6 @@
         "_BILLING_HINTS": 1,
         "_EMPTY_REFUSE_HINTS": 1,
         "_MODEL_DENIED_HINTS": 1,
-        "_WORKFLOW_STEP_TOKENS": 1,
         "inline:deepseek": 1,
         "inline:model": 1
       }
@@ -29,11 +28,6 @@
     "backend/app/factory/build/codewhale_worker.py": {
       "word_list": {
         "inline:write": 1
-      }
-    },
-    "backend/app/factory/build/deploy.py": {
-      "word_list": {
-        "F1_ALWAYS_200_SNIPPETS": 1
       }
     },
     "backend/app/factory/build/level_grade.py": {
@@ -47,32 +41,14 @@
         "inline:postgres": 1
       }
     },
-    "backend/app/factory/build/offline_adapters.py": {
-      "word_list": {
-        "_AUGASSIGN_OPS": 1
-      }
-    },
     "backend/app/factory/build/supply_chain.py": {
       "word_list": {
         "_OUTBOUND_MARKERS": 1
       }
     },
-    "backend/app/factory/build/workflow_accept.py": {
-      "word_list": {
-        "EVENT_BUS_STEP_TOKENS": 1,
-        "FACTORY_WRAP_TOKENS": 1,
-        "UNPREPARED_INPUT_FORWARD_TOKENS": 1,
-        "WORKFLOW_CHILD_TOKENS": 1
-      }
-    },
     "backend/app/factory/build/writer_behaviour.py": {
       "word_list": {
         "inline:CREATE TABLE": 1
-      }
-    },
-    "backend/app/factory/delivery_standard.py": {
-      "word_list": {
-        "_LEFTOVER_MARKERS": 1
       }
     }
   },
@@ -89,5 +65,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 23
+  "total": 15
 }

@@ -73,21 +73,11 @@ REQUIRED_DOMAIN_KEYS = (
     "mission",
 ) + DOMAIN_PACK_FIELDS
 
-_LEFTOVER_MARKERS = (
-    "[INSERT",
-    "[OWNER/",
-    "[MAIN_OR_MASTER]",
-    "[FEATURE_BRANCH]",
-    "[PR_NUMBER",
-    "[CURRENT_HEAD_SHA]",
-    "[BLOCK_STORE",
-    "[FACTORY_REPOSITORY",
-    "[REFERENCE_REPOSITORIES",
-    "[RENDER /",
-    "[URL_IF",
-    "[TEST_RESULT",
-    "[STATE]",
-)
+def _slot_markers() -> tuple:
+    """Every slot this renderer fills -- the leftover check reads the SAME
+    table the renderer writes from, so a new slot can never be missed."""
+    return (*_HEADER_SLOTS.values(), _MISSION_SLOT, *_PLATFORM_SLOTS.values(),
+            _DEPLOYMENT_TARGET_SLOT, "[INSERT]")
 
 
 def load_standard() -> str:
@@ -129,7 +119,7 @@ def render(platform: Mapping[str, Any], domain_pack: Mapping[str, Any]) -> str:
         text = text.replace(marker, _fmt(platform[key]))
     for field in DOMAIN_PACK_FIELDS:  # fifteen bare [INSERT] markers, in order
         text = text.replace("[INSERT]", _fmt(domain_pack[field]), 1)
-    leftovers = [m for m in _LEFTOVER_MARKERS if m in text]
+    leftovers = [m for m in _slot_markers() if m in text]
     if leftovers:  # pragma: no cover — defensive; missing keys are caught above
         raise ValueError("unfilled slots remain: " + ", ".join(leftovers))
     return text

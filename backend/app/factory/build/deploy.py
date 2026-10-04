@@ -15,6 +15,7 @@ machine-parseable stdout (F13).
 from __future__ import annotations
 
 import json
+import ast
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -31,13 +32,6 @@ REQUEST_ID_HEADER = "x-request-id"
 
 # Unconditional liveness that cannot fail when the app, disk, or schema is
 # gone. LotDesk ships this. RoleRunner must not.
-F1_ALWAYS_200_SNIPPETS = (
-    'return {"status": "ok"}',
-    "return {'status': 'ok'}",
-    'return {"ok": True}',
-    "return {'ok': True}",
-    'return {"ok": true}',
-)
 
 EMOJI_RE = re.compile(
     "["
@@ -57,13 +51,39 @@ class Finding:
     detail: str
 
 
+def _is_literal(node: ast.AST) -> bool:
+    """A value fixed at write time: constants and containers of constants."""
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Dict):
+        return all(k is not None and _is_literal(k) for k in node.keys) and all(
+            _is_literal(v) for v in node.values)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_literal(e) for e in node.elts)
+    return False
+
+
 def health_is_always_200(source: str) -> bool:
-    """True when GET /health cannot fail (LotDesk-class F1)."""
-    if "def health" not in source:
+    """True when GET /health cannot fail (LotDesk-class F1).
+
+    By shape, not by spelling: a ``health`` function that calls nothing and
+    returns only literal values cannot report a down app, a missing disk or an
+    unapplied migration -- whatever literal it returns.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
         return False
-    if "evaluate_health" in source or "health_response" in source:
-        return False
-    return any(snippet in source for snippet in F1_ALWAYS_200_SNIPPETS)
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name != "health":
+            continue
+        # The body only: the route decorator is a call, the handler's work is not.
+        body = [n for stmt in fn.body for n in ast.walk(stmt)]
+        returns = [n for n in body if isinstance(n, ast.Return)]
+        calls = [n for n in body if isinstance(n, ast.Call)]
+        if returns and not calls and all(r.value is not None and _is_literal(r.value) for r in returns):
+            return True
+    return False
 
 
 def inspect_health_source(source: str, *, path: str = "app/main.py") -> List[Finding]:
