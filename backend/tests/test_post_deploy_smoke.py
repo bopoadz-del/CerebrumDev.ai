@@ -412,3 +412,32 @@ class TestSmokeWaitsForTheRollout:
         assert mod.expected_git_sha() == "b" * 40
         monkeypatch.delenv("SMOKE_EXPECTED_SHA")
         assert mod.expected_git_sha() == "a" * 40
+
+
+def _info(payload: dict) -> str:
+    import json
+
+    return "event: info\ndata: " + json.dumps(json.dumps(payload)) + "\n\n"
+
+
+class TestChatUntilDrafted:
+    def test_answers_questions_until_the_floor_drafts(self, smoke, monkeypatch):
+        replies = iter([
+            _info({"sse": "info", "elicitation": True}),
+            _info({"sse": "info", "elicitation": True}),
+            "event: blueprint\ndata: {}\n\n",
+        ])
+        sent = []
+        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: (sent.append(msg), next(replies))[1])
+        raw, turns = smoke.chat_until_drafted("s", "t", "brief")
+        assert turns == 3 and "event: blueprint" in raw
+        assert sent[0] == "brief"
+
+    def test_a_first_turn_draft_needs_no_answer(self, smoke, monkeypatch):
+        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: "event: blueprint\ndata: {}\n\n")
+        assert smoke.chat_until_drafted("s", "t", "brief")[1] == 1
+
+    def test_a_server_that_never_stops_asking_is_bounded(self, smoke, monkeypatch):
+        monkeypatch.setattr(smoke, "chat", lambda sid, tok, msg: _info({"elicitation": True}))
+        raw, turns = smoke.chat_until_drafted("s", "t", "brief")
+        assert turns == smoke.MAX_SMOKE_ELICITATION_TURNS and "blueprint" not in raw
