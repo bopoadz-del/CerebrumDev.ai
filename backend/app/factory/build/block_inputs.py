@@ -914,7 +914,7 @@ def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _usable_table_name(value: Any) -> Optional[str]:
-    if isinstance(value, str) and re.match(r"^[A-Za-z_][\w]*$", value.strip()):
+    if isinstance(value, str) and value.strip().isidentifier():
         return value.strip()
     return None
 
@@ -1180,17 +1180,10 @@ def _mine_constraints_literal(
 
 
 def _inferred_field_shape(name: str) -> Dict[str, Any]:
-    """Type hint from a handler-required name when the body has no type check.
-
-    This is not vocabulary invention: it only picks bool/int so
-    ``_sample_payload`` does not emit the word ``sample`` for ``is_active``
-    or ``login_count``. Enums still come from handler text.
-    """
-    n = name.lower()
-    if n.startswith("is_") or n.startswith("has_"):
-        return {"type": "bool", "required": True}
-    if n.endswith("_count") or n in {"capacity", "quantity", "login_count"}:
-        return {"type": "int", "required": True, "min": 0}
+    """The shape of a handler-required field the body never type-checks: a
+    required string. A type, bound or vocabulary comes only from what the
+    handler enforces (mined into the contract, which overrides this) -- never
+    from the field's name."""
     return {"type": "str", "required": True}
 
 
@@ -1414,6 +1407,44 @@ def settings_names(source: str) -> set:
     return found
 
 
+def _key_refs_by_tokens(text: str) -> set:
+    """Key references in a fragment that does not parse as a whole module,
+    read from Python's own tokenizer: ``NAME . get ( STRING`` and
+    ``[ STRING ]``. The lexer, not a pattern over the text."""
+    import io
+    import tokenize
+
+    keys: set = set()
+    toks: list = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.NL, tokenize.NEWLINE, tokenize.COMMENT,
+                            tokenize.INDENT, tokenize.DEDENT):
+                continue
+            toks.append(tok)
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        pass
+
+    def _literal(tok):
+        try:
+            value = ast.literal_eval(tok.string)
+        except (ValueError, SyntaxError):
+            return None
+        return value if isinstance(value, str) and value.isidentifier() else None
+
+    for i, tok in enumerate(toks):
+        if tok.type != tokenize.STRING:
+            continue
+        prev = toks[i - 1].string if i >= 1 else ""
+        prev2 = toks[i - 2].string if i >= 2 else ""
+        nxt = toks[i + 1].string if i + 1 < len(toks) else ""
+        if (prev == "(" and prev2 == "get") or (prev == "[" and nxt == "]"):
+            value = _literal(tok)
+            if value:
+                keys.add(value)
+    return keys
+
+
 def _confirmed_key_refs(text: str) -> set:
     """String literals the source actually uses as a payload/record KEY.
 
@@ -1430,7 +1461,7 @@ def _confirmed_key_refs(text: str) -> set:
     except SyntaxError:
         # Un-parseable fragment: fall back to a literal-access regex so the
         # filter degrades to permissive rather than dropping real fields.
-        keys.update(re.findall(r"""(?:\.get\(\s*|\[\s*)['"]([A-Za-z_]\w*)['"]""", text))
+        keys.update(_key_refs_by_tokens(text))
         return keys
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
@@ -2198,7 +2229,7 @@ def _for_queue(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _usable_table_name(value):
-    if isinstance(value, str) and re.match(r"^[A-Za-z_][\\w]*$", value.strip()):
+    if isinstance(value, str) and value.strip().isidentifier():
         return value.strip()
     return None
 

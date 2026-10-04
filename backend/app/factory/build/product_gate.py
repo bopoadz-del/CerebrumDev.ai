@@ -115,25 +115,17 @@ def _value(cls, name):
         return 1
     if kind == "bool" or kind_l == "bool":
         return False
-    if "email" in name.lower():
-        return "sample@example.com"
+    # Declared type / format only -- never a meaning read from the field name.
+    # A vocabulary (status, channel, ...) arrives as allowed_values above.
     fmt = str(con.get("format") or "").lower().replace("-", "")
-    n = name.lower()
-    if (
-        kind_l in ("datetime", "timestamp")
-        or fmt in ("datetime", "timestamp", "iso8601")
-        or n.endswith("_at")
-        or n.endswith("_datetime")
-    ):
+    if fmt == "email":
+        return "sample@example.com"
+    if kind_l in ("datetime", "timestamp") or fmt in ("datetime", "timestamp", "iso8601"):
         return "2026-09-03T10:00:00"
-    if kind_l == "date" or fmt == "date" or n.endswith("_date"):
+    if kind_l == "date" or fmt == "date":
         return "2026-09-03"
-    if kind_l == "time" or fmt == "time" or n.endswith("_time") or n == "time":
+    if kind_l == "time" or fmt == "time":
         return "10:00:00"
-    if n == "status" or n.endswith("_status"):
-        return "open"
-    if n == "channel" or n.endswith("_channel"):
-        return "email"
     return "sample"
 
 
