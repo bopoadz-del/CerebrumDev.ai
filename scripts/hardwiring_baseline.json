@@ -21,7 +21,6 @@
         "_BILLING_HINTS": 1,
         "_EMPTY_REFUSE_HINTS": 1,
         "_MODEL_DENIED_HINTS": 1,
-        "_WORKFLOW_STEP_TOKENS": 1,
         "inline:deepseek": 1,
         "inline:model": 1
       }
@@ -47,14 +46,6 @@
         "_OUTBOUND_MARKERS": 1
       }
     },
-    "backend/app/factory/build/workflow_accept.py": {
-      "word_list": {
-        "EVENT_BUS_STEP_TOKENS": 1,
-        "FACTORY_WRAP_TOKENS": 1,
-        "UNPREPARED_INPUT_FORWARD_TOKENS": 1,
-        "WORKFLOW_CHILD_TOKENS": 1
-      }
-    },
     "backend/app/factory/build/writer_behaviour.py": {
       "word_list": {
         "inline:CREATE TABLE": 1
@@ -74,5 +65,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 20
+  "total": 15
 }

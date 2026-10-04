@@ -3183,19 +3183,6 @@ def _http_oneshot(ctx: Any, compiled: Any) -> DispatchResult:
     )
 
 
-_WORKFLOW_STEP_TOKENS = (
-    '"steps"',
-    "'steps'",
-    "steps =",
-    'execute("workflow"',
-    "execute('workflow'",
-    'execute("event_bus"',
-    "execute('event_bus'",
-    '"block": "event_bus"',
-    "'block': 'event_bus'",
-    '"block_id": "event_bus"',
-    "'block_id': 'event_bus'",
-)
 
 
 def _has_brief_workflow_steps(text: str) -> bool:
@@ -3203,7 +3190,12 @@ def _has_brief_workflow_steps(text: str) -> bool:
     blob = text or ""
     if "event_bus" not in blob and "workflow" not in blob:
         return False
-    return any(token in blob for token in _WORKFLOW_STEP_TOKENS)
+    from app.factory.build.workflow_accept import (
+        handler_builds_workflow_children,
+        handler_constructs_event_bus_step,
+    )
+
+    return handler_builds_workflow_children(blob) or handler_constructs_event_bus_step(blob)
 
 
 def _is_keepable_handler(text: str) -> bool:

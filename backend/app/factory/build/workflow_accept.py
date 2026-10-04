@@ -56,53 +56,11 @@ PRODUCT_EVENT_BUS_STEP_0_HALT = "workflow: step_0 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_1_HALT = "workflow: step_1 (event_bus): error"
 PRODUCT_EVENT_BUS_STEP_2_HALT = "workflow: step_2 (event_bus): error"
 
-#: Tokens that mean the handler built an event_bus workflow child.
-EVENT_BUS_STEP_TOKENS = (
-    '"block": "event_bus"',
-    "'block': 'event_bus'",
-    '"block_id": "event_bus"',
-    "'block_id': 'event_bus'",
-    'execute("event_bus"',
-    "execute('event_bus'",
-    '["block"] = "event_bus"',
-    "['block'] = 'event_bus'",
-    '["block_id"] = "event_bus"',
-    "['block_id'] = 'event_bus'",
-)
 
-#: Tokens that mean the handler invents a workflow ``steps`` list.
-WORKFLOW_CHILD_TOKENS = (
-    '"steps"',
-    "'steps'",
-    "steps =",
-    "steps=",
-    'execute("workflow"',
-    "execute('workflow'",
-)
 
-#: Live CLI invention: forward the schema sample as the step input.
-UNPREPARED_INPUT_FORWARD_TOKENS = (
-    "'input': payload",
-    '"input": payload',
-    "'input': dict(payload)",
-    '"input": dict(payload)',
-    "'input': dict(sample)",
-    '"input": dict(sample)',
-    "input=payload",
-    "input = payload",
-    "input=dict(payload)",
-    "input = dict(payload)",
-    "input=dict(sample)",
-    "input = dict(sample)",
-)
 
 PREPARE_BLOCK_INPUT_NEEDLE = "prepare_block_input"
 
-#: Factory WRITER wrap prepares every execute() child, including step_2+.
-FACTORY_WRAP_TOKENS = (
-    "def _watched(block_id",
-    "_prepare_block_input(",
-)
 
 #: MCP notify target on the prepared input (notification requires block/tool).
 #: Use ``tool`` — ``input.block`` is also the workflow child discriminator,
@@ -161,16 +119,67 @@ def declares_event_bus_workflow(compiled_or_inventory: Any) -> bool:
     return bool(event_bus_workflow_capability_ids(compiled_or_inventory))
 
 
+def _parse_handler(text: str) -> Optional[ast.AST]:
+    blob = text or ""
+    for src in (blob, "def handle(payload):\n" + blob):
+        try:
+            return ast.parse(src)
+        except SyntaxError:
+            continue
+    return None
+
+
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return ""
+
+
+def _executes(node: ast.AST, block_id: str) -> bool:
+    """``execute("<block_id>", ...)`` -- the dispatch call naming a block."""
+    return (isinstance(node, ast.Call) and _call_name(node) == "execute" and bool(node.args)
+            and _ast_str(node.args[0]) == block_id)
+
+
 def handler_constructs_event_bus_step(text: str) -> bool:
+    """The handler builds an event_bus step: a dict naming the block, or a
+    dispatch call to it. Read from the AST, never from spellings; source
+    that does not parse is assumed to (fail closed)."""
     blob = text or ""
     if "event_bus" not in blob:
         return False
-    return any(token in blob for token in EVENT_BUS_STEP_TOKENS)
+    tree = _parse_handler(blob)
+    if tree is None:
+        return True
+    for node in ast.walk(tree):
+        pairs = _ast_dict_map(node)
+        if pairs and _ast_is_event_bus_block(pairs):
+            return True
+        if _executes(node, "event_bus"):
+            return True
+        # step["block"] = "event_bus": the same dict, built one key at a time.
+        if isinstance(node, ast.Assign) and _ast_str(node.value) == "event_bus":
+            for target in node.targets:
+                if (isinstance(target, ast.Subscript)
+                        and _ast_is_event_bus_block({_ast_str(target.slice) or "": node.value})):
+                    return True
+    return False
 
 
 def handler_forwards_raw_sample(text: str) -> bool:
-    blob = text or ""
-    return any(token in blob for token in UNPREPARED_INPUT_FORWARD_TOKENS)
+    """A step's ``input`` is the raw payload/sample (unprepared). Source that
+    does not parse is assumed to (fail closed)."""
+    tree = _parse_handler(text)
+    if tree is None:
+        return bool((text or "").strip())
+    for node in ast.walk(tree):
+        pairs = _ast_dict_map(node)
+        if pairs and "input" in pairs and _ast_is_raw_sample(pairs["input"]):
+            return True
+    return False
 
 
 def handler_calls_prepare_block_input(text: str) -> bool:
@@ -178,9 +187,39 @@ def handler_calls_prepare_block_input(text: str) -> bool:
 
 
 def handler_has_factory_event_bus_wrap(text: str) -> bool:
-    """True when the factory execute wrap prepares every workflow child."""
-    blob = text or ""
-    return all(token in blob for token in FACTORY_WRAP_TOKENS)
+    """True when the factory execute wrap prepares every workflow child: a
+    ``_watched(block_id, ...)`` wrapper that calls ``_prepare_block_input``."""
+    tree = _parse_handler(text)
+    if tree is None:
+        return False
+    for fn in ast.walk(tree):
+        if (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name == "_watched"
+                and fn.args.args and fn.args.args[0].arg == "block_id"):
+            if any(isinstance(c, ast.Call) and _call_name(c) == "_prepare_block_input"
+                   for c in ast.walk(fn)):
+                return True
+    return False
+
+
+def handler_builds_workflow_children(text: str) -> bool:
+    """The handler builds workflow children: a ``steps`` collection (dict key,
+    assignment or keyword) or a dispatch call to the workflow block."""
+    tree = _parse_handler(text)
+    if tree is None:
+        return "steps" in (text or "") or "workflow" in (text or "")
+    for node in ast.walk(tree):
+        pairs = _ast_dict_map(node)
+        if pairs and "steps" in pairs:
+            return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(tg, ast.Name) and tg.id == "steps" for tg in targets):
+                return True
+        if isinstance(node, ast.Call) and any(k.arg == "steps" for k in node.keywords):
+            return True
+        if _executes(node, "workflow"):
+            return True
+    return False
 
 
 def _ast_str(node: Any) -> Optional[str]:
@@ -348,7 +387,7 @@ def handler_builds_unparsed_event_bus_workflow(text: str) -> bool:
     blob = text or ""
     if "event_bus" not in blob:
         return False
-    if not any(token in blob for token in WORKFLOW_CHILD_TOKENS):
+    if not handler_builds_workflow_children(blob):
         return False
     if event_bus_steps_from_handler(blob):
         return False
