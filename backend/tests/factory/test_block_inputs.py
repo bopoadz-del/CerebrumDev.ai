@@ -1509,3 +1509,31 @@ def test_a_plain_unquoted_listing_still_mines():
     body = 'raise ValueError("Missing required fields: pet_name, owner_name")'
 
     assert handler_required_fields(body) == ["owner_name", "pet_name"]
+
+
+def test_a_format_placeholder_in_a_refusal_is_never_a_field():
+    """Live 2026-10-04: a handler refused with ``"%s must be an integer >= %d"
+    % (key, lo)``; the contract miner read ``s`` as a required int field, and
+    the TESTER's own model round-trip test died on ``KeyError: 's'``. A word
+    captured from a message is a field only when the code reads it as a key."""
+    from app.factory.build.block_inputs import handler_field_contracts
+
+    src = '''
+def as_int(data, key, lo=0):
+    value = data.get(key)
+    if not isinstance(value, int):
+        raise ValueError("%s must be an integer >= %d" % (key, lo))
+    return value
+
+def handle(payload):
+    as_int(payload, "zorblat_count", lo=0)
+    if not isinstance(payload.get("quux_flag"), bool):
+        return {"ok": False, "error": "%s must be a boolean" % "quux_flag"}
+    if payload.get("grade") not in ("low", "high"):
+        return {"ok": False, "error": "grade must be one of: low, high"}
+    return {"ok": True}
+'''
+    contracts = handler_field_contracts(src)
+    assert "s" not in contracts
+    assert contracts["quux_flag"]["type"] == "bool"
+    assert contracts["grade"].get("allowed_values") == ["low", "high"]
