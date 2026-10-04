@@ -18,9 +18,6 @@ exclude = [
     ".venv",
     "storage",
     "factory_outputs",
-    # Product overlays ship their own layout and import app.* modules that
-    # only exist after generation; pytest already skips them via norecursedirs.
-    "app/platform_generator/overlays",
 ]
 
 [lint]
