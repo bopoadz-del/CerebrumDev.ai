@@ -42,6 +42,10 @@ def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path, stub
     and the build-status endpoint test below.
     """
     monkeypatch.setenv("FACTORY_BUILD_ENGINE", "template")
+    # Goldens are chosen by structural overlap, not words. The deterministic
+    # draft shares only its vertical with the golden, so this flow lowers
+    # the configured threshold to let that unique overlap select it.
+    monkeypatch.setenv("FACTORY_GOLDEN_MIN_OVERLAP", "0.05")
     create_session("sess_product_1", "tester")
     out = tmp_path / "gen"
     # draft
@@ -56,7 +60,7 @@ def test_session_product_steward_golden_flow(client, monkeypatch, tmp_path, stub
     body = r.json()
     assert body["ok"] is True
     assert body["blueprint"]["product_id"] == "cerebrum-steward"
-    assert body["source"] == "golden_steward"
+    assert body["source"] == "golden"
 
     r = client.post("/v1/sessions/sess_product_1/product/plan")
     assert r.status_code == 200, r.text
@@ -343,7 +347,6 @@ def test_product_export_zip_lists_app_blocks_and_kits(tmp_path):
     assert any(n.startswith("vendor/blocks/") for n in names) or "blocks" in tops
     assert any(n.startswith("kits/") for n in names)
     assert any(n.endswith("manifest.json") and n.startswith("kits/") for n in names)
-
 
 
 def _failed_workspace(tmp_path, session_id: str, detail: str):

@@ -208,7 +208,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
             product_name: 'Residential Lettings Platform',
             vertical: 'residential_lettings',
             summary: 'Factory golden for a residential-lettings platform.',
-            drafting_mode: 'golden_lettings',
+            drafting_mode: 'golden',
             capabilities: [
               { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
             ],
@@ -1064,7 +1064,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
               product_name: 'Residential Lettings Platform',
               vertical: 'residential_lettings',
               summary: 'Factory golden for a residential-lettings platform.',
-              drafting_mode: 'golden_lettings',
+              drafting_mode: 'golden',
               capabilities: [
                 { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
               ],
@@ -1078,7 +1078,7 @@ describe('Factory Floor — architect LLM then coding agent', () => {
       blueprint: {
         product_name: 'Residential Lettings Platform',
         vertical: 'residential_lettings',
-        drafting_mode: 'golden_lettings',
+        drafting_mode: 'golden',
         capabilities: [
           { id: 'viewing_management', description: 'Record a viewing', strategy_hint: 'COMPOSE' },
         ],

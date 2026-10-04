@@ -22,6 +22,16 @@ identifier in the path is a fixed point):
                 build on record (local workspaces and the cerebrum-builds
                 branches) and the golden blueprints
                 (scripts/known_product_literals.py). Nothing is hand-listed.
+  word_list     a literal collection of >=2 strings whose MEMBERS are searched
+                for inside other text: ``any(k in text for k in WORDS)``, a
+                loop/comprehension testing ``k in text``, ``text.find(k)`` /
+                ``re.search(k, ...)``, or ``"|".join(WORDS)`` into a regex.
+                That is classification by vocabulary -- routing, detecting or
+                deciding by words. Exact-token membership against a closed
+                vocabulary (``mode in ("zip", "github_repo")``) and key lookups
+                on a mapping (``for k in KEYS: if k in d: d[k]``) are contract
+                checks, not word lists. Members loaded from data at run time
+                are not literals and are not this form.
   probe_id      OPT-IN (``--form probe_id``): a probe / test-case id used as
                 an exact string literal (``"R18"``, ``"E1"``) -- the shape
                 of a photographed probe set. Off by default here because the
@@ -86,6 +96,7 @@ DEFAULT_FORMS = (
     "needle_list",
     "rescue_knob",
     "product_literal",
+    "word_list",
 )
 #: Forms decided by a loaded set rather than a pattern.
 DATA_FORMS = ("product_literal",)
@@ -136,6 +147,156 @@ def _in_spans(line: int, spans: Iterable[Tuple[int, int]]) -> bool:
     return any(a <= line <= b for a, b in spans)
 
 
+def _str_collection(node: ast.AST) -> Optional[List[str]]:
+    if (isinstance(node, ast.Call) and getattr(node.func, "id", None) in
+            ("frozenset", "set", "tuple", "list") and node.args):
+        node = node.args[0]
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        elts = node.elts
+        if len(elts) >= 2 and all(
+                isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elts):
+            return [e.value for e in elts]
+    return None
+
+
+_TEXT_SEARCH_CALLS = ("search", "match", "fullmatch", "findall", "finditer",
+                      "startswith", "endswith", "find", "rfind", "index", "count")
+
+
+_TEXT_CALLS = ("lower", "upper", "casefold", "strip", "lstrip", "rstrip",
+               "read_text", "join", "format", "replace", "decode", "getvalue", "sub")
+
+
+def _text_names(scope: ast.AST) -> set:
+    """Names that hold TEXT in ``scope``: str-annotated parameters and locals
+    assigned from a string-producing expression."""
+    out = set()
+    args = getattr(scope, "args", None)
+    if isinstance(args, ast.arguments):
+        for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            ann = a.annotation
+            if isinstance(ann, ast.Name) and ann.id == "str":
+                out.add(a.arg)
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Assign) and _is_text(node.value, out):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id not in out:
+                        out.add(tgt.id)
+                        changed = True
+    return out
+
+
+def _is_text(expr: ast.AST, names: set) -> bool:
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return True
+    if isinstance(expr, ast.JoinedStr):
+        return True
+    if isinstance(expr, ast.Name):
+        return expr.id in names
+    if isinstance(expr, ast.Call):
+        func = expr.func
+        if isinstance(func, ast.Attribute) and func.attr in _TEXT_CALLS:
+            return True
+        if isinstance(func, ast.Name) and func.id == "str":
+            return True
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _is_text(expr.left, names) or _is_text(expr.right, names)
+    if isinstance(expr, ast.BoolOp):
+        return any(_is_text(v, names) for v in expr.values)
+    if isinstance(expr, ast.Subscript):
+        return _is_text(expr.value, names)
+    return False
+
+
+def _searched_in_text(body: Iterable[ast.AST], var: str, text: set = frozenset()) -> bool:
+    """Is ``var`` searched for INSIDE text (substring), not looked up as a key?
+
+    Python's ``in`` is substring search only on a string. The haystack must be
+    evidently TEXT -- a string-producing call, a str-annotated parameter, or a
+    local assigned from one. Membership in a set, list or mapping is exact
+    equality against a closed vocabulary, not a word list.
+    """
+    maps = set()
+    for n in body:
+        for c in ast.walk(n):
+            if isinstance(c, ast.Subscript) and isinstance(c.slice, ast.Name) and c.slice.id == var:
+                maps.add(ast.dump(c.value))
+            if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr in ("get", "pop", "setdefault") and c.args
+                    and isinstance(c.args[0], ast.Name) and c.args[0].id == var):
+                maps.add(ast.dump(c.func.value))
+    for n in body:
+        for c in ast.walk(n):
+            if (isinstance(c, ast.Compare) and isinstance(c.left, ast.Name) and c.left.id == var
+                    and any(isinstance(op, (ast.In, ast.NotIn)) for op in c.ops)):
+                if all(ast.dump(r) in maps for r in c.comparators):
+                    continue  # key equality on a mapping, not substring
+                if any(_is_text(r, set(text)) for r in c.comparators):
+                    return True
+            if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr in _TEXT_SEARCH_CALLS
+                    and any(isinstance(a, ast.Name) and a.id == var for a in c.args)):
+                receiver = c.func.value
+                if (isinstance(receiver, ast.Name) and receiver.id == "re") or _is_text(receiver, set(text)):
+                    return True
+    return False
+
+
+def word_lists(source: str) -> List[Tuple[int, str]]:
+    """(line, name) of every literal word list searched for inside text."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    named: Dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if _str_collection(node.value):
+                for tgt in targets:
+                    if isinstance(tgt, ast.Name):
+                        named[tgt.id] = node.lineno
+
+    def resolve(it: ast.AST) -> Optional[Tuple[int, str]]:
+        vals = _str_collection(it)
+        if vals:
+            return it.lineno, "inline:" + vals[0]
+        if isinstance(it, ast.Name) and it.id in named:
+            return named[it.id], it.id
+        return None
+
+    scopes = [tree] + [n for n in ast.walk(tree)
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    text_in: Dict[int, set] = {}
+    for scope in scopes:
+        names = _text_names(scope)
+        for n in ast.walk(scope):
+            text_in.setdefault(id(n), set()).update(names)
+
+    out = set()
+    for node in ast.walk(tree):
+        gens: List[Tuple[ast.AST, List[ast.AST]]] = []
+        if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+            gens = [(g, [node.elt, *g.ifs]) for g in node.generators]
+        elif isinstance(node, ast.For):
+            gens = [(node, list(node.body))]
+        for gen, body in gens:
+            if isinstance(gen.target, ast.Name):
+                hit = resolve(gen.iter)
+                if hit and _searched_in_text(body, gen.target.id, text_in.get(id(node), set())):
+                    out.add(hit)
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "join" and node.args
+                and isinstance(node.func.value, ast.Constant) and node.func.value.value == "|"):
+            hit = resolve(node.args[0])
+            if hit:
+                out.add(hit)
+    return sorted(out)
+
+
 def scan_file(
     path: Path,
     forms: Iterable[str] = DEFAULT_FORMS,
@@ -155,6 +316,8 @@ def scan_file(
     forms = tuple(forms)
     active = [(f, FORMS[f]) for f in forms if f in FORMS]
     literals = known if (known and "product_literal" in forms) else frozenset()
+    if "word_list" in forms:
+        out.extend((line, "word_list", name) for line, name in word_lists(source))
     for tok in tokens:
         if tok.type not in (tokenize.NAME, tokenize.STRING):
             continue

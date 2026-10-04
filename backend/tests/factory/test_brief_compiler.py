@@ -23,10 +23,10 @@ from app.factory.build.brief_compiler import (
 )
 from app.factory.build.brief_lint import lint_brief
 from app.factory.product_architect import (
-    draft_blueprint_from_brief,
-    lettings_golden_path,
     plan_blueprint,
 )
+
+LETTINGS_GOLDEN = Path(__file__).resolve().parents[3] / "blueprints/lettings/residential_lettings.v1.yaml"
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -191,13 +191,9 @@ def test_false_reuse_without_handler_source_halts():
 
 def test_lettings_golden_is_unchanged_and_compiles():
     """The golden roster is the live capability set — compiler must not rewrite it."""
-    bp = draft_blueprint_from_brief(
-        "build a platform for residential lettings",
-        use_llm=False,
-    )
-    assert bp.drafting_mode == "golden_lettings"
+    bp = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in bp.capabilities} == LIVE_LETTINGS_CAPS
-    golden = load_blueprint(lettings_golden_path())
+    golden = load_blueprint(LETTINGS_GOLDEN)
     assert {c.id for c in golden.capabilities} == LIVE_LETTINGS_CAPS
     plan = plan_blueprint(bp)
     compiled = compile_brief(bp, plan)
