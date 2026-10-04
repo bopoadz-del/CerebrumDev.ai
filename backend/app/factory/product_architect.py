@@ -75,7 +75,25 @@ def session_domain_from_blueprint(blueprint: Any) -> str:
     return "construction"
 
 
-_LETTINGS_HINTS = frozenset({"residential_lettings", "lettings", "letting"})
+def golden_for_vertical(vertical_hint: Optional[str]) -> Optional[Path]:
+    """The golden blueprint that declares it serves this vertical hint.
+
+    Each golden states its own hints (``serves_verticals``); a blueprint that
+    declares none is never a golden for any hint.
+    """
+    want = str(vertical_hint or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not want:
+        return None
+    for path in sorted((_repo_root() / "blueprints").rglob("*.yaml")):
+        try:
+            bp = load_blueprint(path)
+        except Exception:  # noqa: BLE001 -- not a product blueprint
+            continue
+        if want in {str(v).strip().lower() for v in bp.serves_verticals}:
+            return path
+    return None
+
+
 _LETTINGS_STEWARD_EXCLUSIONS = ("steward", "private estate", "property readiness")
 # One of these is enough. Branded Floor briefs say "Lettings Desk" / "lettings
 # CRM", not "lettings platform" — the #294 matcher missed those and the
@@ -117,8 +135,8 @@ def _wants_lettings(text: str, vertical_hint: Optional[str] = None) -> bool:
     tenants, lettings CRM) must match too. Steward intent is excluded so
     "private estate steward" still reaches the steward golden.
     """
-    hint = (vertical_hint or "").replace("-", "_").strip().lower()
-    if hint in _LETTINGS_HINTS:
+    golden = golden_for_vertical(vertical_hint)
+    if golden is not None and golden.resolve() == lettings_golden_path().resolve():
         return True
     blob = (text or "").lower()
     if any(key in blob for key in _LETTINGS_STEWARD_EXCLUSIONS):
@@ -652,7 +670,9 @@ def _draft_blueprint_from_brief_inner(
     wants_steward = any(
         k in text for k in ("steward", "private estate", "property readiness")
     )
-    if use_golden_steward and (wants_steward or vertical_hint == "estate"):
+    golden = golden_for_vertical(vertical_hint)
+    hinted_steward = golden is not None and golden.resolve() == steward_golden_path().resolve()
+    if use_golden_steward and (wants_steward or hinted_steward):
         bp = load_blueprint(steward_golden_path())
         bp.drafting_mode = "golden_steward"
         bp.drafting_note = fallback_note
@@ -788,13 +808,14 @@ def generate_product(
         blocks_commit=git_head(blocks) if blocks else "unknown",
     )
     result = gen.generate(output_dir)
-    if blueprint.product_id == "cerebrum-steward":
-        from app.factory.build_jobs import clone_steward_canonical
+    from app.factory.build_jobs import clone_canonical
 
-        try:
-            result["canonical_output"] = str(clone_steward_canonical(output_dir))
-        except Exception:  # noqa: BLE001
-            logger.exception("Steward canonical clone failed after template generate")
+    try:
+        canonical = clone_canonical(blueprint, output_dir)
+        if canonical is not None:
+            result["canonical_output"] = str(canonical)
+    except Exception:  # noqa: BLE001
+        logger.exception("canonical clone failed after template generate")
     return result
 
 

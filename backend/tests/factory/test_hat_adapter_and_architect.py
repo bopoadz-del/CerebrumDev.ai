@@ -31,10 +31,42 @@ def test_steward_hats_adapted_from_tek_pattern():
 def test_steward_workflows_composed():
     bp = load_blueprint(ROOT / "blueprints/steward/steward.v1.yaml")
     plan = CapabilityPlanner(BLOCKS).plan(bp)
-    workflows = build_workflows(bp, plan)
+    # The workflows are the serving kit's data (Store manifest ``hats``).
+    hats = ProductGenerator(bp, plan, blocks_root=BLOCKS)._kit_hats()
+    workflows = build_workflows(bp, plan, hats)
     ids = {w["workflow_id"] for w in workflows}
     assert "estate.ops_loop" in ids
     assert "estate.portfolio_rollup" in ids
+
+
+def test_hat_builder_holds_no_kit_data():
+    """Same plan, no kit hats: a capability is its own discipline and one
+    linear workflow runs over the plan. Kit hats on invented names apply."""
+    from types import SimpleNamespace as NS
+
+    bp = NS(vertical="zorblat_yards", product_name="Zorblat Yard", human_authority=True)
+    plan = NS(capabilities=[
+        NS(capability_id="gate_in", block_ids=["database"], strategy="REUSE"),
+        NS(capability_id="gate_out", block_ids=["database"], strategy="REUSE"),
+    ])
+    bare = build_hat_manifests(bp, plan)
+    assert {h["discipline"] for h in bare if h["kind"] == "hat"} == {"gate_in", "gate_out"}
+    assert [w["workflow_id"] for w in build_workflows(bp, plan)] == ["zorblat_yards.capability_sequence"]
+
+    hats = {
+        "disciplines": {"gate_in": "yard", "gate_out": "yard_exit"},
+        "handoffs": [{"from": "yard", "to": "yard_exit", "when": "leaving"}],
+        "workflows": [{
+            "id": "turnaround", "when_all": ["gate_in", "gate_out"],
+            "steps": [{"capability_id": "gate_in", "role": "arrive", "required": "$human_authority"}],
+        }],
+    }
+    shaped = build_hat_manifests(bp, plan, hats)
+    yard = next(h for h in shaped if h.get("discipline") == "yard")
+    assert yard["handoffs"] == [{"to_agent_id": "zorblat_yards.hat.yard_exit", "when": "leaving"}]
+    wf = build_workflows(bp, plan, hats)
+    assert [w["workflow_id"] for w in wf] == ["zorblat_yards.turnaround"]
+    assert wf[0]["steps"][0]["required"] is True
 
 
 def test_generator_emits_hats_and_workflows(tmp_path):

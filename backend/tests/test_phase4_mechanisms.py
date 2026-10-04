@@ -6,14 +6,23 @@ import importlib.util
 import json
 import sys
 import types
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.core.grounding import check_scope_refusal, verdict_log_path
 
-KIT = Path("app/factory/kits/private_estate_operations/steward_runtime")
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
+KIT = (_estate_kit() / "steward_runtime")
 
 
 class TestScopeRefusalCore:

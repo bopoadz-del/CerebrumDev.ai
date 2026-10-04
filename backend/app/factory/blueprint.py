@@ -55,6 +55,12 @@ class ProductBlueprint(BaseModel):
     ui_modules: List[str] = Field(default_factory=list)
     connectors: List[str] = Field(default_factory=list)
     edge_profile: str = "standard"
+    #: A GOLDEN blueprint lists the vertical hints it answers for; the
+    #: architect routes a hint by reading these, never a Factory table.
+    serves_verticals: List[str] = Field(default_factory=list)
+    #: Directory under factory_outputs/ that keeps a stable copy of the last
+    #: finished build of this blueprint. Unset: no canonical copy.
+    canonical_output: Optional[str] = None
     #: Build rigor: prototype | light | standard | production. The acceptance
     #: floor grades THIS build against the bar it declared, not a fixed maximum.
     #: Defaults to the strictest so an unset brief is never silently lowered.

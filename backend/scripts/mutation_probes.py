@@ -44,6 +44,16 @@ WRITER_NO_OUTPUT = "writer_no_output"
 from app.factory.build.gates import GateContext, gate_writer_contract  # noqa: E402
 from app.factory.build.level_grade import Level, grade_workspace  # noqa: E402
 
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
 Probe = Callable[[], None]
 
 
@@ -129,14 +139,8 @@ def _load_kit_tenant_store():
     import importlib.util
     import types
 
-    kit = (
-        Path(__file__).resolve().parents[1]
-        / "app"
-        / "factory"
-        / "kits"
-        / "private_estate_operations"
-        / "steward_runtime"
-    )
+    kit = (_estate_kit()
+        / "steward_runtime")
     for pkg in ("app", "app.steward"):
         if pkg not in sys.modules:
             mod = types.ModuleType(pkg)

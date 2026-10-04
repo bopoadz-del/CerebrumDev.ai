@@ -100,8 +100,7 @@ class ProductGenerator:
         self._write_certification_scaffold(out)
         self._write_gates(out)
         self._write_env_example(out)
-        if self.blueprint.vertical == "estate":
-            self._write_estate_kit_surfaces(out)
+        self._write_kit_surface(out)
         self._write_runtime_packaging(out)
 
         # Product DNA after catalogs exist — sole Resident Mode understanding surface.
@@ -126,6 +125,7 @@ class ProductGenerator:
             change_events=change_events,
             product_dna_version=self.product_dna_version,
             pin_versions=self.pin_versions,
+            blocks_root=self.blocks_root,
         )
         # Resident Mode runtime package (flag-gated at runtime; always shipped)
         re_runtime = inject_resident_runtime(out)
@@ -192,11 +192,7 @@ class ProductGenerator:
                 "- Connector `" + c + "` is an honest stub (`not_implemented`) — no live "
                 "third-party integration exists in this repo."
             )
-        if bp.vertical == "estate":
-            honesty.append(
-                "- `data/demo/` fixtures are demonstration data, labeled as such — "
-                "not real estate records."
-            )
+        honesty.extend(self._surface().get("honesty") or [])
         honesty.append(
             "- This is a PILOT: production use requires separate certification. "
             "See `docs/certification/dual_certification.json`."
@@ -276,16 +272,9 @@ class ProductGenerator:
             "httpx>=0.27",
             "pytest>=8.0",
         ]
-        rag_reqs = (
-            Path(__file__).resolve().parent
-            / "kits"
-            / "private_estate_operations"
-            / "steward_runtime"
-            / "deploy"
-            / "requirements-rag.txt"
-        )
-        if self.blueprint.vertical == "estate" and rag_reqs.is_file():
-            for line in rag_reqs.read_text(encoding="utf-8").splitlines():
+        kit_reqs = self._surface_path("requirements")
+        if kit_reqs is not None and kit_reqs.is_file():
+            for line in kit_reqs.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
                 if stripped and not stripped.startswith("#"):
                     reqs.append(stripped)
@@ -310,16 +299,7 @@ class ProductGenerator:
             # empty token, so production must supply a real value.
             "PLATFORM_TOKEN=set-at-deploy",
         ]
-        if self.blueprint.vertical == "estate":
-            lines += [
-                "",
-                "# Estate vertical — dual RAG (pilot path)",
-                "# STEWARD_DATABASE_URL=postgresql://user:pass@host:5432/db",
-                "# STEWARD_EMBED_BACKEND=fastembed",
-                "# STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1",
-                "# STEWARD_REQUIRE_PERSISTENT_RAG=1",
-                "# STEWARD_ALLOW_DEMO_AUTH_BYPASS=false",
-            ]
+        lines += list(self._surface().get("env_example") or [])
         (out / ".env.example").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     def _write_gates(self, out: Path) -> None:
@@ -532,10 +512,7 @@ if __name__ == "__main__":
                 encoding="utf-8",
             )
 
-        if self.blueprint.vertical == "estate":
-            main_py = self._estate_main_py()
-        else:
-            main_py = self._basic_main_py()
+        main_py = self._kit_main_py() or self._basic_main_py()
         (app / "main.py").write_text(main_py, encoding="utf-8")
 
     # Appended to every generated main.py. Without this the action modules
@@ -666,265 +643,74 @@ def workflows():
     return json.loads(path.read_text())
 ''' + self._ACTIONS_ROUTE_PY
 
-    def _estate_main_py(self) -> str:
+    # --- the kit's declared product surface --------------------------------
+    #
+    # A Store kit that serves this build's vertical (``serves_verticals``) may
+    # declare what such a product receives: files, a main.py template,
+    # requirements, .env lines, honesty lines, hats. The Factory applies the
+    # declaration and names nothing itself -- it used to carry one vertical's
+    # surface as code and one kit as a directory.
+
+    def _serving_kit(self) -> tuple:
+        if hasattr(self, "_serving_kit_cache"):
+            return self._serving_kit_cache
+        from app.factory.kit_pack import store_kit_dir
+        from app.factory.store_kits import domain_kits, serving_kit
+
+        kits = domain_kits(self.blocks_root)
+        kit_id = serving_kit(self.blueprint.vertical, kits)
+        kit_dir = store_kit_dir(kit_id, self.blocks_root) if kit_id else None
+        manifest = kits.get(kit_id, {}) if kit_dir is not None else {}
+        self._serving_kit_cache = (kit_dir, manifest)
+        return self._serving_kit_cache
+
+    def _surface(self) -> Dict[str, Any]:
+        surface = self._serving_kit()[1].get("product_surface")
+        return surface if isinstance(surface, dict) else {}
+
+    def _surface_path(self, key: str) -> Optional[Path]:
+        kit_dir = self._serving_kit()[0]
+        rel = self._surface().get(key)
+        if kit_dir is None or not rel:
+            return None
+        return kit_dir / str(rel)
+
+    def _kit_hats(self) -> Dict[str, Any]:
+        hats = self._serving_kit()[1].get("hats")
+        return hats if isinstance(hats, dict) else {}
+
+    def _kit_main_py(self) -> Optional[str]:
+        from string import Template
+
+        path = self._surface_path("main_py")
+        if path is None or not path.is_file():
+            return None
         bp = self.blueprint
-        return f'''"""Generated FastAPI entrypoint for {bp.product_id}."""
-
-from __future__ import annotations
-
-import os
-
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
-
-from app.steward.errors import attach_request_id_middleware
-from app.steward.probes import health_payload, readiness_checks, version_payload
-
-app = FastAPI(title="{bp.product_name}", version="1.0.0")
-
-app.middleware("http")(attach_request_id_middleware)
-
-PRODUCT_ID = "{bp.product_id}"
-VERTICAL = "{bp.vertical}"
-HUMAN_AUTHORITY = {str(bp.human_authority)}
-
-
-@app.get("/health")
-def health():
-    return health_payload(
-        product_id=PRODUCT_ID,
-        vertical=VERTICAL,
-        human_authority=HUMAN_AUTHORITY,
-    )
-
-
-@app.get("/ready")
-def ready():
-    payload = readiness_checks()
-    status = 200 if payload.get("ready") else 503
-    return Response(
-        content=__import__("json").dumps(payload),
-        media_type="application/json",
-        status_code=status,
-    )
-
-
-@app.get("/version")
-def version():
-    return version_payload(product_id=PRODUCT_ID)
-
-
-@app.get("/v1/capabilities")
-def capabilities():
-    import json
-    from pathlib import Path
-    plan = json.loads((Path(__file__).resolve().parents[1] / "factory_plan.json").read_text())
-    return plan
-
-
-@app.get("/v1/agents")
-def agents():
-    import json
-    from pathlib import Path
-    root = Path(__file__).resolve().parent / "agents" / "manifests"
-    return [json.loads(p.read_text()) for p in sorted(root.glob("*.json"))]
-
-
-@app.get("/v1/workflows")
-def workflows():
-    import json
-    from pathlib import Path
-    path = Path(__file__).resolve().parent / "workflows" / "workflows.json"
-    return json.loads(path.read_text())
-
-
-# Estate kit demo fixtures (legacy /v1/rag/* gated inside router when disabled).
-try:
-    from app.estate_kit import router as estate_kit_router
-
-    app.include_router(estate_kit_router)
-except ImportError as exc:
-    raise RuntimeError(
-        "Estate kit surfaces are mandatory for estate vertical products"
-    ) from exc
-
-# Production Steward RAG (Postgres/pgvector + packs) — canonical pilot path.
-try:
-    from app.steward.api import router as steward_rag_router
-
-    app.include_router(steward_rag_router)
-except ImportError as exc:
-    raise RuntimeError(
-        "Steward production RAG runtime is mandatory for estate vertical products"
-    ) from exc
-
-# Optional pilot fixture seed for local/CI when explicitly enabled.
-if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes", "on"}}:
-    from app.steward.auth import seed_pilot_fixture
-    from app.steward.db import init_engine, session_scope
-
-    init_engine()
-    with session_scope() as session:
-        seed_pilot_fixture(session)
-''' + self._ACTIONS_ROUTE_PY
-
-    def _write_estate_kit_surfaces(self, out: Path) -> None:
-        """Emit demo fixtures + dual RAG API for estate vertical products."""
-        kit_fixtures = (
-            Path(__file__).resolve().parent
-            / "kits"
-            / "private_estate_operations"
-            / "fixtures"
-            / "demo_estate.json"
+        body = Template(path.read_text(encoding="utf-8")).safe_substitute(
+            product_id=bp.product_id,
+            product_name=bp.product_name,
+            vertical=bp.vertical,
+            human_authority=str(bp.human_authority),
         )
-        data_dir = out / "data" / "demo"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        if kit_fixtures.is_file():
-            shutil.copy2(kit_fixtures, data_dir / "estate_fixtures.json")
-        else:
-            (data_dir / "estate_fixtures.json").write_text(
-                json.dumps({"properties": [], "honesty": "fixtures missing at generate"}, indent=2)
-                + "\n",
-                encoding="utf-8",
-            )
+        return body + self._ACTIONS_ROUTE_PY
 
-        dual_rag = {
-            "schema_version": "1.1.0",
-            "layers": {
-                "1": {
-                    "id": "sop_standards",
-                    "name": "SOP / House Manual / global standards",
-                    "index": "steward_sop_v1",
-                    "project": "prebuilt_steward_core",
-                    "tenant": "platform",
-                    "source_field": "sop_corpus",
-                    "blocks": ["document_engine", "knowledge", "vector_search", "database"],
-                },
-                "2": {
-                    "id": "estate_documents",
-                    "name": "Estate documents (separately indexed)",
-                    "index": "steward_estate_docs_v1",
-                    "source_field": "estate_documents",
-                    "blocks": ["document_engine", "knowledge", "vector_search", "database"],
-                },
-            },
-            "demo_path": {
-                "embedding_provider": "local_feature_hash_v1",
-                "vector_adapter": "local_flat_json_v1",
-                "routes": ["/v1/rag/query", "/v1/rag/ingest", "/v1/rag/dual"],
-                "notes": "Zero-deps CI/local fallback when STEWARD_DATABASE_URL is unset.",
-            },
-            "pilot_path": {
-                "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
-                "vector_adapter": "postgres_jsonb_v1",
-                "routes": ["/v1/rag/query", "/v1/rag/ingest", "/v1/rag/dual", "/v1/rag/bootstrap"],
-                "env": [
-                    "STEWARD_DATABASE_URL",
-                    "STEWARD_EMBED_BACKEND=fastembed",
-                    "STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1",
-                    "STEWARD_REQUIRE_PERSISTENT_RAG=1",
-                ],
-            },
-            "production_path": {
-                "embedding_provider": "fastembed:BAAI/bge-small-en-v1.5",
-                "vector_adapter": "postgres_pgvector_v1",
-                "routes": [
-                    "/v1/steward/rag/query",
-                    "/v1/steward/rag/ingest",
-                    "/v1/steward/packs",
-                    "/v1/steward/facilities",
-                    "/v1/steward/fleet",
-                ],
-                "packs": [
-                    "steward_service_core_open_v1",
-                    "steward_hospitality_intents_v1",
-                    "steward_facilities_open_v1",
-                    "steward_fleet_open_v1",
-                ],
-            },
-            "embedding_provider": "env:STEWARD_EMBED_BACKEND",
-            "vector_adapter": "env:STEWARD_RAG_PERSISTENCE",
-            "honesty": (
-                "/v1/rag/* serves the live dual RAG path. With STEWARD_DATABASE_URL set, "
-                "chunks/embeddings persist in Postgres (postgres_jsonb_v1). With "
-                "STEWARD_EMBED_BACKEND=fastembed, live embedding_provider is "
-                "fastembed:BAAI/bge-small-en-v1.5. STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS=1 "
-                "and STEWARD_REQUIRE_PERSISTENT_RAG=1 fail closed (no silent hash/JSONL). "
-                "Full hybrid RRF + governed packs remain on /v1/steward/rag/*."
-            ),
-        }
-        rag_docs = out / "docs" / "rag"
-        rag_docs.mkdir(parents=True, exist_ok=True)
-        (rag_docs / "dual_rag.json").write_text(
-            json.dumps(dual_rag, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-
-        kit_root = Path(__file__).resolve().parent / "kits" / "private_estate_operations"
-        estate_mod = out / "app" / "estate_kit"
-        estate_mod.mkdir(parents=True, exist_ok=True)
-        (estate_mod / "__init__.py").write_text(
-            '"""Factory-generated estate kit surfaces (demo + dual RAG)."""\n'
-            "from app.estate_kit.router import router\n\n"
-            '__all__ = ["router"]\n',
-            encoding="utf-8",
-        )
-        router_src = kit_root / "estate_kit_router.py"
-        if router_src.is_file():
-            shutil.copy2(router_src, estate_mod / "router.py")
-        rag_src = kit_root / "rag"
-        rag_dst = estate_mod / "rag"
-        if rag_dst.exists():
-            shutil.rmtree(rag_dst)
-        if rag_src.is_dir():
-            shutil.copytree(
-                rag_src,
-                rag_dst,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-            )
-
-        # Production Steward RAG runtime (Postgres/pgvector + governed packs)
-        steward_src = kit_root / "steward_runtime"
-        steward_dst = out / "app" / "steward"
-        if steward_dst.exists():
-            shutil.rmtree(steward_dst)
-        if steward_src.is_dir():
-            shutil.copytree(
-                steward_src,
-                steward_dst,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-            )
-            compose_src = steward_src / "deploy" / "docker-compose.yml"
-            if compose_src.is_file():
-                deploy_dir = out / "deploy"
-                deploy_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(compose_src, deploy_dir / "docker-compose.steward-rag.yml")
-
-        # SPA deep-link stubs for estate modules (cold-start friendly)
-        spa = out / "frontend" / "src" / "routes"
-        spa.mkdir(parents=True, exist_ok=True)
-        (spa / "deepLinks.ts").write_text(
-            "// Factory-generated deep links for Steward SPA\n"
-            "export const DEEP_LINKS = {\n"
-            "  home: '/',\n"
-            "  registry: '/registry',\n"
-            "  houseManual: '/house-manual',\n"
-            "  maintenance: '/maintenance',\n"
-            "  vendors: '/vendors',\n"
-            "  staff: '/staff',\n"
-            "  principal: '/principal',\n"
-            "  onboarding: '/onboarding',\n"
-            "  rag: '/rag',\n"
-            "  resident: '/resident',\n"
-            "} as const;\n"
-            "\n"
-            "/** Cold-start retry hint for Render free-tier spin-up. */\n"
-            "export const COLD_START = {\n"
-            "  retries: 3,\n"
-            "  backoffMs: [1000, 3000, 8000],\n"
-            "  message: 'Service waking up — retrying…',\n"
-            "};\n",
-            encoding="utf-8",
-        )
+    def _write_kit_surface(self, out: Path) -> None:
+        kit_dir = self._serving_kit()[0]
+        if kit_dir is None:
+            return
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+        for item in self._surface().get("files") or []:
+            src = kit_dir / str(item.get("src") or "")
+            dest = out / str(item.get("dest") or "")
+            if not item.get("src") or not item.get("dest") or not src.exists():
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(src, dest, ignore=ignore)
+            else:
+                shutil.copy2(src, dest)
 
     def _write_runtime_packaging(self, out: Path) -> None:
         """Emit Dockerfile + Procfile so generated products are Render-deployable."""
@@ -935,13 +721,8 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
             "COPY requirements.txt .",
             "RUN pip install --no-cache-dir -r requirements.txt",
         ]
-        if self.blueprint.vertical == "estate":
-            # Warm FastEmbed ONNX weights at build time so first request is not a download.
-            docker_lines.append(
-                "RUN python -c \"from fastembed import TextEmbedding; "
-                "TextEmbedding(model_name='BAAI/bge-small-en-v1.5')\" "
-                "|| echo 'fastembed warm skipped'"
-            )
+        # Build steps the serving kit declares (e.g. warming model weights).
+        docker_lines.extend(str(x) for x in (self._surface().get("docker_build") or []))
         docker_lines.extend(
             [
                 "COPY . .",
@@ -980,43 +761,49 @@ if os.getenv("STEWARD_PILOT_SEED_FIXTURE", "0").lower() in {{"1", "true", "yes",
             "web: uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}\n",
             encoding="utf-8",
         )
-        (out / "render.yaml").write_text(
-            f"""services:
-  - type: web
-    name: {self.blueprint.product_id}
-    runtime: docker
-    plan: starter
-    healthCheckPath: /health
-    envVars:
-      - key: RESIDENT_ENGINEER_ENABLED
-        value: "false"
-      - key: PYTHONPATH
-        value: /app
-      - key: STEWARD_EMBED_BACKEND
-        value: fastembed
-      - key: STEWARD_REQUIRE_PRODUCTION_EMBEDDINGS
-        value: "1"
-      - key: STEWARD_REQUIRE_PERSISTENT_RAG
-        value: "1"
-      - key: STEWARD_LEGACY_RAG_ENABLED
-        value: "false"
-      - key: STEWARD_ALLOW_DEMO_AUTH_BYPASS
-        value: "false"
-      - key: STEWARD_ADMIN_ROUTES_ENABLED
-        value: "false"
-      - key: STEWARD_RAG_PERSISTENCE
-        value: postgres
-      - key: STEWARD_DATABASE_URL
-        fromDatabase:
-          name: {self.blueprint.product_id}-db
-          property: connectionString
-databases:
-  - name: {self.blueprint.product_id}-db
-    plan: basic-256mb
-    postgresMajorVersion: "16"
-""",
-            encoding="utf-8",
-        )
+        (out / "render.yaml").write_text(self._render_yaml(), encoding="utf-8")
+
+    def _render_yaml(self) -> str:
+        """Render blueprint. Kit runtime settings come from the serving kit's
+        declared surface; a product whose vertical no kit serves gets none."""
+        pid = self.blueprint.product_id
+        surface = self._surface()
+        lines = [
+            "services:",
+            "  - type: web",
+            f"    name: {pid}",
+            "    runtime: docker",
+            "    plan: starter",
+            "    healthCheckPath: /health",
+            "    envVars:",
+            "      - key: RESIDENT_ENGINEER_ENABLED",
+            '        value: "false"',
+            "      - key: PYTHONPATH",
+            "        value: /app",
+        ]
+        wants_db = False
+        for env in surface.get("render_env") or []:
+            key = str(env.get("key") or "").strip()
+            if not key:
+                continue
+            lines.append(f"      - key: {key}")
+            if env.get("from_database"):
+                wants_db = True
+                lines += [
+                    "        fromDatabase:",
+                    f"          name: {pid}-db",
+                    "          property: connectionString",
+                ]
+            else:
+                lines.append(f"        value: {json.dumps(str(env.get('value', '')))}")
+        if wants_db:
+            lines += [
+                "databases:",
+                f"  - name: {pid}-db",
+                "    plan: basic-256mb",
+                '    postgresMajorVersion: "16"',
+            ]
+        return "\n".join(lines) + "\n"
 
     def _write_actions(self, out: Path) -> list:
         from .coder import CoderError, coder_budget_s, coder_enabled, generate_handler_body
@@ -1282,7 +1069,7 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
 '''
 
     def _write_hats(self, out: Path) -> list:
-        manifests = build_hat_manifests(self.blueprint, self.plan)
+        manifests = build_hat_manifests(self.blueprint, self.plan, self._kit_hats())
         hats_dir = out / "app" / "agents" / "manifests"
         hats_dir.mkdir(parents=True, exist_ok=True)
         index = []
@@ -1319,7 +1106,7 @@ async def handle(context: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str
         shutil.copy2(src, static_dir / "console.html")
 
     def _write_workflows(self, out: Path) -> list:
-        workflows = build_workflows(self.blueprint, self.plan)
+        workflows = build_workflows(self.blueprint, self.plan, self._kit_hats())
         wf_dir = out / "app" / "workflows"
         wf_dir.mkdir(parents=True, exist_ok=True)
         (wf_dir / "workflows.json").write_text(

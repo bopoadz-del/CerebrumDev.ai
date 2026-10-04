@@ -213,6 +213,13 @@ jobs:
           CEREBRUM_BUILDS_TOKEN: ${{ secrets.CROSS_REPO_PAT }}
         run: python scripts/scan_hardwiring.py
 
+      # Owner rule: the Factory holds no kits. Kits live in the Store and the
+      # Factory references them by registry id; a kits/ directory, a
+      # kit-shaped manifest or a *_runtime directory under backend/ fails.
+      - name: Factory holds no kits
+        working-directory: .
+        run: python scripts/check_factory_kit_free.py
+
       - name: Forbid VITE_API_KEY in frontend/src
         working-directory: .
         run: |

@@ -61,17 +61,25 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-def _load_estate_entity_model() -> Dict[str, Any]:
-    """Load Factory-owned entity DNA stubs for estate vertical products."""
-    kit_path = (
-        Path(__file__).resolve().parents[1]
-        / "factory"
-        / "kits"
-        / "private_estate_operations"
-        / "entity_model.json"
-    )
+def _kit_entity_model(vertical: str, blocks_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Entity DNA the Store kit serving this vertical declares, if any.
+
+    The kit names its own entity model (``product_surface.entity_model``);
+    the Factory holds none.
+    """
+    from app.factory.kit_pack import store_kit_dir
+    from app.factory.store_kits import domain_kits, serving_kit
+
+    empty = {"schema_version": DNA_SCHEMA_VERSION, "entities": [], "relationships": []}
+    kits = domain_kits(blocks_root)
+    kit_id = serving_kit(vertical, kits)
+    kit_dir = store_kit_dir(kit_id, blocks_root) if kit_id else None
+    rel = ((kits.get(kit_id) or {}).get("product_surface") or {}).get("entity_model")
+    if kit_dir is None or not rel:
+        return empty
+    kit_path = kit_dir / str(rel)
     if not kit_path.is_file():
-        return {"schema_version": DNA_SCHEMA_VERSION, "entities": [], "relationships": []}
+        return empty
     data = json.loads(kit_path.read_text(encoding="utf-8"))
     data.setdefault("schema_version", DNA_SCHEMA_VERSION)
     return data
@@ -89,6 +97,7 @@ def build_dna_documents(
     change_events: Optional[Sequence[Mapping[str, Any]]] = None,
     product_dna_version: str = "1.0.0",
     pin_versions: Optional[Mapping[str, str]] = None,
+    blocks_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Build in-memory DNA documents from Factory data only."""
     bp = blueprint.model_dump(mode="json")
@@ -98,11 +107,7 @@ def build_dna_documents(
     workflow_list = list(workflows or [])
     changes = list(change_events or [])
     versions = dict(pin_versions or {})
-    entity_model = (
-        _load_estate_entity_model()
-        if blueprint.vertical == "estate"
-        else {"schema_version": DNA_SCHEMA_VERSION, "entities": [], "relationships": []}
-    )
+    entity_model = _kit_entity_model(blueprint.vertical, blocks_root)
 
     return {
         "product_blueprint.yaml": {
@@ -224,6 +229,7 @@ def emit_product_dna(
     change_events: Optional[Sequence[Mapping[str, Any]]] = None,
     product_dna_version: str = "1.0.0",
     pin_versions: Optional[Mapping[str, str]] = None,
+    blocks_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Write ``product-dna/`` under ``output_dir`` with checksum manifest.
 
@@ -245,6 +251,7 @@ def emit_product_dna(
         change_events=change_events,
         product_dna_version=product_dna_version,
         pin_versions=pin_versions,
+        blocks_root=blocks_root,
     )
 
     for filename in DNA_BUNDLE_FILES:

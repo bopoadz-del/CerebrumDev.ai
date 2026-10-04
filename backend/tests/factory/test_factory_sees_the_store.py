@@ -88,7 +88,7 @@ class TestKitsComeFromTheStore:
 
 class TestClearanceIsStillTheFactorysStatement:
     def test_vendoring_is_unchanged_by_what_the_store_holds(self):
-        """Kit FILES come from app/factory/kits/. Renaming a product's kit to
+        """Kit FILES come from the Store by registry id. Renaming a product's kit to
         one the Factory cannot vendor would ship an empty kits/."""
         assert set(load_shelf_kit_map().values()) <= {"platform", "private_estate_operations"}
 

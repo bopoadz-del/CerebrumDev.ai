@@ -2,8 +2,8 @@
 
 Floor runner exports vendored blocks under ``vendor/blocks/`` but never
 copied the kit packs those blocks belong to (Factory shelf ``kit`` field,
-``backend/app/factory/kits/``, vendor-mirror ``*_kit``, or Cerebrum-Blocks
-``block_store/kits/``). The live winery-hospitality zip therefore had an
+resolved to Cerebrum-Blocks ``block_store/kits/`` -- the Factory holds no
+kits of its own). The live winery-hospitality zip therefore had an
 app and a vendor tree and no ``kits/`` — the customer called it rubbish.
 
 Kits land at top-level ``kits/{kit_id}/`` (CLONER lane + ProductGenerator).
@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 _FACTORY_DIR = Path(__file__).resolve().parent
-_FACTORY_KITS = _FACTORY_DIR / "kits"
 _FACTORY_SHELF = _FACTORY_DIR / "shelves" / "factory_blocks.json"
 
 _SKIP_DIR_NAMES = {
@@ -75,12 +74,9 @@ def load_shelf_kit_map(shelf_path: Optional[Path] = None) -> Dict[str, str]:
     An explicit ``shelf_path`` is honoured as-is, and the bundled shelf is
     the fallback for an environment that cannot reach the Store.
     """
-    # NOT resolved from the Store: kit FILES are vendored from
-    # app/factory/kits/, which holds one kit. Taking the Store's assignment
-    # here would rename a product's kit to one the Factory cannot vendor and
-    # ship an empty kits/. What the Store holds is reported by
-    # kit_map_from_store / store_catalog["store_kits"] instead, until kits
-    # are vendored from the Store the way blocks already are.
+    # The shelf names each block's kit by registry id; the kit's FILES are
+    # vendored from the Store (find_kit_source). What the Store holds is
+    # reported by kit_map_from_store / store_catalog["store_kits"].
     if shelf_path is None:
         from app.factory.dual_registry import store_shelf_file
 
@@ -122,14 +118,33 @@ def kits_for_blocks(
     return dict(sorted(grouped.items()))
 
 
+def _store_root(blocks_root: Optional[Path]) -> Optional[Path]:
+    if blocks_root:
+        return Path(blocks_root)
+    try:
+        from app.factory.blocks_source import resolve_blocks_root
+
+        return Path(resolve_blocks_root())
+    except Exception:  # noqa: BLE001 -- no Store: no kit, synthesized pack
+        return None
+
+
+def store_kit_dir(kit_id: str, blocks_root: Optional[Path] = None) -> Optional[Path]:
+    """The Store's directory for a kit, by registry id; None when absent."""
+    root = _store_root(blocks_root)
+    if root is None or not kit_id or "/" in kit_id or "\\" in kit_id:
+        return None
+    path = root / "block_store" / "kits" / kit_id
+    return path if path.is_dir() else None
+
+
 def _kit_source_candidates(
     kit_id: str, blocks_root: Optional[Path]
 ) -> List[Path]:
-    candidates = [
-        _FACTORY_KITS / kit_id,
-    ]
-    if blocks_root:
-        root = Path(blocks_root)
+    # The Factory holds no kits (owner rule): every kit is the Store's.
+    candidates: List[Path] = []
+    root = _store_root(blocks_root)
+    if root is not None:
         candidates.extend(
             [
                 root / "block_store" / "kits" / kit_id,
@@ -327,8 +342,6 @@ def _stock_one_kit(
 
 def _classify_source(path: Path) -> str:
     resolved = path.resolve()
-    if _FACTORY_KITS in resolved.parents or resolved == _FACTORY_KITS:
-        return "factory-kits"
     if "block_store" in resolved.parts:
         return "cerebrum-blocks"
     return "kit-source"

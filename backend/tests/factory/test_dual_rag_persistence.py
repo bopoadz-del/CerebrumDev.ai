@@ -10,16 +10,19 @@ from pathlib import Path
 
 import pytest
 
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
 ROOT = Path(__file__).resolve().parents[3]
-KIT_RAG = (
-    ROOT
-    / "backend"
-    / "app"
-    / "factory"
-    / "kits"
-    / "private_estate_operations"
-    / "rag"
-)
+KIT_RAG = (_estate_kit()
+    / "rag")
 
 
 def _load_kit_module(mod_name: str, filename: str, *, deps: dict | None = None):
@@ -160,8 +163,7 @@ def test_hash_embedder_deterministic(monkeypatch):
 def test_oracle_suite_mentions_fastembed_claim():
     suite = json.loads(
         (
-            ROOT
-            / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json"
+            _estate_kit() / "evaluation/steward_live_oracle_v1.json"
         ).read_text(encoding="utf-8")
     )
     assert "fastembed" in suite["embedding_claim"].lower()

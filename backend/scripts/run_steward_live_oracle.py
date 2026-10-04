@@ -14,15 +14,23 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-SUITE_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "app"
-    / "factory"
-    / "kits"
-    / "private_estate_operations"
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
+SUITE_PATH = (_estate_kit()
     / "evaluation"
-    / "steward_live_oracle_v1.json"
-)
+    / "steward_live_oracle_v1.json")
 
 
 def _http_get(url: str, retries: int = 6) -> Tuple[int, Dict[str, Any] | str]:
