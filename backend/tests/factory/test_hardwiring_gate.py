@@ -208,7 +208,7 @@ def test_a_two_word_list_searched_in_text_is_refused(gate, tmp_path, capsys):
 
 def test_inline_word_lists_and_regex_joins_are_refused(gate, tmp_path):
     _write(tmp_path, "pkg/a.py",
-           "def f(t):\n    return [k for k in ('alpha', 'beta') if k in t]\n")
+           "def f(t: str):\n    return [k for k in ('alpha', 'beta') if k in t]\n")
     assert gate.main(["--root", "pkg"]) == 1
     _write(tmp_path, "pkg/a.py",
            "import re\nW = ['alpha', 'beta']\nR = re.compile('|'.join(W))\n")

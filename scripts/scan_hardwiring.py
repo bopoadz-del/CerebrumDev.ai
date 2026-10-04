@@ -163,8 +163,62 @@ _TEXT_SEARCH_CALLS = ("search", "match", "fullmatch", "findall", "finditer",
                       "startswith", "endswith", "find", "rfind", "index", "count")
 
 
-def _searched_in_text(body: Iterable[ast.AST], var: str) -> bool:
-    """Is ``var`` searched for INSIDE text (substring), not looked up as a key?"""
+_TEXT_CALLS = ("lower", "upper", "casefold", "strip", "lstrip", "rstrip",
+               "read_text", "join", "format", "replace", "decode", "getvalue", "sub")
+
+
+def _text_names(scope: ast.AST) -> set:
+    """Names that hold TEXT in ``scope``: str-annotated parameters and locals
+    assigned from a string-producing expression."""
+    out = set()
+    args = getattr(scope, "args", None)
+    if isinstance(args, ast.arguments):
+        for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]:
+            ann = a.annotation
+            if isinstance(ann, ast.Name) and ann.id == "str":
+                out.add(a.arg)
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Assign) and _is_text(node.value, out):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name) and tgt.id not in out:
+                        out.add(tgt.id)
+                        changed = True
+    return out
+
+
+def _is_text(expr: ast.AST, names: set) -> bool:
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        return True
+    if isinstance(expr, ast.JoinedStr):
+        return True
+    if isinstance(expr, ast.Name):
+        return expr.id in names
+    if isinstance(expr, ast.Call):
+        func = expr.func
+        if isinstance(func, ast.Attribute) and func.attr in _TEXT_CALLS:
+            return True
+        if isinstance(func, ast.Name) and func.id == "str":
+            return True
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        return _is_text(expr.left, names) or _is_text(expr.right, names)
+    if isinstance(expr, ast.BoolOp):
+        return any(_is_text(v, names) for v in expr.values)
+    if isinstance(expr, ast.Subscript):
+        return _is_text(expr.value, names)
+    return False
+
+
+def _searched_in_text(body: Iterable[ast.AST], var: str, text: set = frozenset()) -> bool:
+    """Is ``var`` searched for INSIDE text (substring), not looked up as a key?
+
+    Python's ``in`` is substring search only on a string. The haystack must be
+    evidently TEXT -- a string-producing call, a str-annotated parameter, or a
+    local assigned from one. Membership in a set, list or mapping is exact
+    equality against a closed vocabulary, not a word list.
+    """
     maps = set()
     for n in body:
         for c in ast.walk(n):
@@ -180,11 +234,14 @@ def _searched_in_text(body: Iterable[ast.AST], var: str) -> bool:
                     and any(isinstance(op, (ast.In, ast.NotIn)) for op in c.ops)):
                 if all(ast.dump(r) in maps for r in c.comparators):
                     continue  # key equality on a mapping, not substring
-                return True
+                if any(_is_text(r, set(text)) for r in c.comparators):
+                    return True
             if (isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                     and c.func.attr in _TEXT_SEARCH_CALLS
                     and any(isinstance(a, ast.Name) and a.id == var for a in c.args)):
-                return True
+                receiver = c.func.value
+                if (isinstance(receiver, ast.Name) and receiver.id == "re") or _is_text(receiver, set(text)):
+                    return True
     return False
 
 
@@ -211,6 +268,14 @@ def word_lists(source: str) -> List[Tuple[int, str]]:
             return named[it.id], it.id
         return None
 
+    scopes = [tree] + [n for n in ast.walk(tree)
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))]
+    text_in: Dict[int, set] = {}
+    for scope in scopes:
+        names = _text_names(scope)
+        for n in ast.walk(scope):
+            text_in.setdefault(id(n), set()).update(names)
+
     out = set()
     for node in ast.walk(tree):
         gens: List[Tuple[ast.AST, List[ast.AST]]] = []
@@ -221,7 +286,7 @@ def word_lists(source: str) -> List[Tuple[int, str]]:
         for gen, body in gens:
             if isinstance(gen.target, ast.Name):
                 hit = resolve(gen.iter)
-                if hit and _searched_in_text(body, gen.target.id):
+                if hit and _searched_in_text(body, gen.target.id, text_in.get(id(node), set())):
                     out.add(hit)
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "join" and node.args

@@ -8,8 +8,7 @@
     },
     "backend/app/factory/build/block_inputs.py": {
       "word_list": {
-        "_ROSTER_CONSULTS_PAYLOAD": 1,
-        "inline:quoted": 1
+        "_ROSTER_CONSULTS_PAYLOAD": 1
       }
     },
     "backend/app/factory/build/budget_inspect.py": {
@@ -37,25 +36,13 @@
         "F1_ALWAYS_200_SNIPPETS": 1
       }
     },
-    "backend/app/factory/build/intake_blueprint.py": {
-      "word_list": {
-        "inline:product_name": 1,
-        "required": 1
-      }
-    },
     "backend/app/factory/build/level_grade.py": {
       "word_list": {
         "CLI_FOUNDING_HONESTY_MISS": 1
       }
     },
-    "backend/app/factory/build/lotdesk_gate.py": {
-      "word_list": {
-        "REQUIRED_REJECTION_CODES": 1
-      }
-    },
     "backend/app/factory/build/network_posture.py": {
       "word_list": {
-        "DELIVERY_ARTIFACTS": 1,
         "P1_FORBIDDEN": 1,
         "inline:postgres": 1
       }
@@ -80,23 +67,12 @@
     },
     "backend/app/factory/build/writer_behaviour.py": {
       "word_list": {
-        "inline:CREATE TABLE": 1,
-        "inline:OperationalError": 1
-      }
-    },
-    "backend/app/factory/build_jobs.py": {
-      "word_list": {
-        "_REATTACH_NEEDS": 1
+        "inline:CREATE TABLE": 1
       }
     },
     "backend/app/factory/delivery_standard.py": {
       "word_list": {
         "_LEFTOVER_MARKERS": 1
-      }
-    },
-    "backend/app/factory/platform_chat_llm.py": {
-      "word_list": {
-        "inline:design_basis": 1
       }
     }
   },
@@ -113,5 +89,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 31
+  "total": 23
 }
