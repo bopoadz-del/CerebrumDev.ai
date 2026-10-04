@@ -1,4 +1,4 @@
-"""S3 dealership Domain Pack — bind DOMAIN_PACK_FIELDS to kernel contracts.
+"""S3 Domain Pack — the build's own pack, bound to kernel contracts.
 
 The numbered 15-field contract is ``delivery_standard.DOMAIN_PACK_FIELDS``
 (section 3 of ``product_delivery_standard.md``). This module does not invent
@@ -7,6 +7,14 @@ a second list. RoleRunner WRITER ships the pack as ``docs/domain_pack.json``.
 Each field carries a value *and* a kernel binding (ActionSpec / execute_action
 / permissions / S12 outcomes). A markdown essay without kernel bindings fails
 the gate. LotDesk-class empty packs fail the gate. The fixture is not patched.
+
+The pack is the BUILD'S OWN: its values come from the build's blueprint
+(``brief_compiler.synthesize_domain_pack`` -- empty slots stay named, never
+invented) and its kernel bindings from the 15-field contract below. This
+module used to hold one product's pack (a dealership: vehicle status machine,
+VIN schema, F&I roles) and shipped it into every product's
+``docs/domain_pack.json`` whatever its vertical. A product's domain content
+belongs to that product's Store kit, never to the Factory.
 
 Evidence: ``build/stages/S3_domain_pack.json`` + reread twin.
 Does not emit PILOT_READY.
@@ -36,7 +44,6 @@ EMITTER_ID = "app.factory.build.domain_pack.evaluate_domain_pack"
 STAGE = "S3"
 STAGE_NAME = "DOMAIN_PACK"
 SCHEMA_VERSION = "domain_pack.v1"
-DOMAIN_ID = "dealership"
 PACK_REL = Path("docs") / "domain_pack.json"
 KERNEL_ENTRY = "app.cerebrum_product_kernel.contract.runtime.execute_action"
 
@@ -48,49 +55,6 @@ FIELD_CONTRACT_SOURCES: tuple[str, ...] = (
     "backend/app/factory/standards/domain_packs/buildops_construction.md",
     "docs/PRODUCT_DELIVERY_STANDARD.md",
 )
-
-DEALERSHIP_STATUS_MACHINE: Dict[str, Any] = {
-    "entity": "vehicle",
-    "field": "status",
-    "initial": "inbound",
-    "terminal": ["delivered", "unwound"],
-    "states": [
-        "inbound",
-        "inspected",
-        "priced",
-        "listed",
-        "sold",
-        "delivered",
-        "unwound",
-    ],
-    "transitions": [
-        ["inbound", "inspected"],
-        ["inspected", "priced"],
-        ["priced", "listed"],
-        ["listed", "sold"],
-        ["sold", "delivered"],
-        ["listed", "unwound"],
-        ["sold", "unwound"],
-    ],
-    "via": "execute_action product.update",
-    "skip_is": "validation_error",
-    "closes": "F7",
-}
-
-VIN_INPUT_SCHEMA: Dict[str, Any] = {
-    "type": "object",
-    "required": ["vin"],
-    "properties": {
-        "vin": {
-            "type": "string",
-            "minLength": 17,
-            "maxLength": 17,
-            "pattern": "^[A-HJ-NPR-Z0-9]{17}$",
-            "description": "ISO 3779 VIN class; check-digit math is not claimed",
-        }
-    },
-}
-
 
 class DomainPackError(ValueError):
     """Missing field, empty pack, or unbound kernel contract."""
@@ -125,257 +89,97 @@ def _field(value: Any, kernel: Mapping[str, Any]) -> Dict[str, Any]:
     return {"value": value, "kernel": dict(kernel)}
 
 
-def dealership_domain_pack(
-    *,
-    product_id: str = "dealership",
-    product_name: str = "Cerebrum Dealership",
-) -> Dict[str, Any]:
-    """Structured dealership pack. Values are for render(); kernel binds contracts."""
-    crud = ["product.create", "product.read", "product.update", "product.delete", "product.list"]
-    write_read = [WRITE_PERMISSION, READ_PERMISSION]
-    fields: Dict[str, Dict[str, Any]] = {
-        "domain_purpose": _field(
-            "One system of record for vehicle inventory, sales desk, F&I, "
-            "and service repair orders in a retail dealership.",
-            _binding(
-                action_ids=crud,
-                permissions=write_read,
-                contracts=[KERNEL_ENTRY],
-                outcomes=["create_persists", "read_returns_persisted"],
-            ),
-        ),
-        "primary_users": _field(
-            [
-                "Sales consultant",
-                "F&I manager",
-                "Service advisor",
-                "Inventory controller",
-            ],
-            _binding(
-                action_ids=["product.read"],
-                permissions=[READ_PERMISSION],
-                contracts=[
-                    "app.cerebrum_product_kernel.contract.models.ActionContext",
-                ],
-            ),
-        ),
-        "required_roles": _field(
-            [
-                "dealership_admin",
-                "sales_manager",
-                "fi_manager",
-                "service_advisor",
-                "viewer",
-            ],
-            _binding(
-                action_ids=crud + ["product.enqueue", "product.process"],
-                permissions=[WRITE_PERMISSION, READ_PERMISSION, PROCESS_PERMISSION],
-                contracts=[
-                    "app.cerebrum_product_kernel.contract.models.ActionSpec.permissions",
-                ],
-            ),
-        ),
-        "required_product_modules": _field(
-            [
-                "Vehicle inventory / lot",
-                "Sales desk",
-                "F&I",
-                "Service repair order",
-                "Customer record",
-                "Compliance jacket",
-            ],
-            _binding(
-                action_ids=crud,
-                permissions=write_read,
-                contracts=[
-                    "app.factory.build.domain_acceptance.compact_specs",
-                    KERNEL_ENTRY,
-                ],
-                extra={"capabilities": ["analytics_surface", "dashboard_surface"]},
-            ),
-        ),
-        "core_business_workflows": _field(
-            [
-                "VIN inbound → inspect → price → list → sell → F&I → deliver",
-                "Service RO intake → diagnose → approve → close",
-            ],
-            _binding(
-                action_ids=["product.enqueue", "product.process"],
-                permissions=[WRITE_PERMISSION, PROCESS_PERMISSION],
-                contracts=[KERNEL_ENTRY],
-                outcomes=["queue_item_processed"],
-            ),
-        ),
-        "authoritative_calculations": _field(
-            [
-                "VIN character class and length (ISO 3779) via input_schema",
-                "Deal pack fees, tax, and payoff as stored fields — not HTTP 200",
-            ],
-            _binding(
-                action_ids=["product.create", "product.update"],
-                permissions=[WRITE_PERMISSION],
-                contracts=[
-                    KERNEL_ENTRY,
-                    "app.cerebrum_product_kernel.contract.schema_validation.validate",
-                ],
-                outcomes=["missing_field_rejected"],
-                input_schema=VIN_INPUT_SCHEMA,
-                extra={"closes": "F3", "check_digit_claimed": False},
-            ),
-        ),
-        "domain_rules": _field(
-            [
-                "Vehicle status follows DEALERSHIP_STATUS_MACHINE; skips are validation_error",
-                "VIN is immutable after product.create",
-                "A listed vehicle cannot jump to delivered",
-            ],
-            _binding(
-                action_ids=["product.update"],
-                permissions=[WRITE_PERMISSION],
-                contracts=[KERNEL_ENTRY],
-                extra={"status_machine": DEALERSHIP_STATUS_MACHINE},
-            ),
-        ),
-        "high_impact_actions": _field(
-            [
-                "Retail price publication",
-                "Deal finalization",
-                "F&I product add",
-                "Repair-order close",
-                "Title transfer",
-            ],
-            _binding(
-                action_ids=["product.update", "product.process"],
-                permissions=[WRITE_PERMISSION, PROCESS_PERMISSION],
-                contracts=[
-                    "app.cerebrum_product_kernel.contract.models.ActionSpec",
-                ],
-                confirmation_required=True,
-                extra={"risk_classification": "high"},
-            ),
-        ),
-        "prohibited_autonomous_actions": _field(
-            [
-                "Title transfer without a human-approved execute_action",
-                "Overwriting VIN after create",
-                "Silent deal recast",
-            ],
-            _binding(
-                action_ids=["product.refuse"],
-                permissions=[WRITE_PERMISSION],
-                contracts=[KERNEL_ENTRY],
-                outcomes=["refused_action_errors", "unauthorized_rejected"],
-                extra={"status": "permission_denied"},
-            ),
-        ),
-        "data_sources": _field(
-            [
-                "OEM invoices",
-                "VIN records (offline fixture; P1 has no live decode)",
-                "DMS exports (CSV/XLSX)",
-                "Service history files",
-            ],
-            _binding(
-                action_ids=["product.create"],
-                permissions=[WRITE_PERMISSION],
-                contracts=["app.factory.build.converge:app/connectors"],
-            ),
-        ),
-        "required_connectors": _field(
-            [
-                "File ingest (CSV, XLSX, PDF) under app/connectors",
-                "Offline VIN fixture — live NHTSA is not claimed on P1",
-            ],
-            _binding(
-                action_ids=["product.create"],
-                permissions=[WRITE_PERMISSION],
-                contracts=["app/connectors"],
-                extra={"network": False, "posture": "P1"},
-            ),
-        ),
-        "required_exports": _field(
-            [
-                "Inventory list (CSV)",
-                "Deal jacket (PDF)",
-                "RO closeout (PDF)",
-            ],
-            _binding(
-                action_ids=["product.read", "product.list"],
-                permissions=[READ_PERMISSION],
-                contracts=[KERNEL_ENTRY],
-                extra={"read_only": True},
-            ),
-        ),
-        "security_regulatory_rules": _field(
-            [
-                "Customer F&I and GLBA data stay in tenant scope",
-                "Cross-dealership access is 404-not-403",
-                "Reserved ActionContext keys cannot be set from arguments",
-            ],
-            _binding(
-                action_ids=["product.read"],
-                permissions=[READ_PERMISSION],
-                contracts=[
-                    "app.cerebrum_product_kernel.isolation",
-                    "app.cerebrum_product_kernel.contract.models.RESERVED_CONTEXT_KEYS",
-                ],
-                outcomes=["unauthorized_rejected"],
-            ),
-        ),
-        "demo_data_requirements": _field(
-            [
-                "Labeled demo VINs (not production)",
-                "One demo deal and one demo RO per required role",
-            ],
-            _binding(
-                action_ids=["product.create"],
-                permissions=[WRITE_PERMISSION],
-                contracts=[
-                    "app.cerebrum_product_kernel.contract.models.ActionSpec.evaluation_fixtures",
-                ],
-            ),
-        ),
-        "domain_acceptance_conditions": _field(
-            [
-                "Ten S12 outcomes performed through execute_action",
-                "Missing VIN fails closed (not HTTP ok:true)",
-                "Status skip is validation_error",
-                "LotDesk-class empty pack is rejected",
-            ],
-            _binding(
-                action_ids=crud + ["product.enqueue", "product.process", "product.refuse"],
-                permissions=[WRITE_PERMISSION, READ_PERMISSION, PROCESS_PERMISSION],
-                contracts=[
-                    "app.factory.build.domain_acceptance.perform_all",
-                    KERNEL_ENTRY,
-                ],
-                outcomes=list(OUTCOMES),
-            ),
-        ),
+_CRUD = ["product.create", "product.read", "product.update", "product.delete", "product.list"]
+
+#: The kernel binding each contract field carries. This is the 15-field
+#: contract's own shape (which kernel actions, permissions and contracts make a
+#: field enforceable) -- it names no product, vertical or capability.
+FIELD_BINDINGS: Dict[str, Dict[str, Any]] = {
+    "domain_purpose": dict(
+        action_ids=_CRUD, permissions=[WRITE_PERMISSION, READ_PERMISSION],
+        contracts=[KERNEL_ENTRY], outcomes=["create_persists", "read_returns_persisted"]),
+    "primary_users": dict(
+        action_ids=["product.read"], permissions=[READ_PERMISSION],
+        contracts=["app.cerebrum_product_kernel.contract.models.ActionContext"]),
+    "required_roles": dict(
+        action_ids=_CRUD + ["product.enqueue", "product.process"],
+        permissions=[WRITE_PERMISSION, READ_PERMISSION, PROCESS_PERMISSION],
+        contracts=["app.cerebrum_product_kernel.contract.models.ActionSpec.permissions"]),
+    "required_product_modules": dict(
+        action_ids=_CRUD, permissions=[WRITE_PERMISSION, READ_PERMISSION],
+        contracts=["app.factory.build.domain_acceptance.compact_specs", KERNEL_ENTRY]),
+    "core_business_workflows": dict(
+        action_ids=["product.enqueue", "product.process"],
+        permissions=[WRITE_PERMISSION, PROCESS_PERMISSION],
+        contracts=[KERNEL_ENTRY], outcomes=["queue_item_processed"]),
+    "authoritative_calculations": dict(
+        action_ids=["product.create", "product.update"], permissions=[WRITE_PERMISSION],
+        contracts=[KERNEL_ENTRY, "app.cerebrum_product_kernel.contract.schema_validation.validate"],
+        outcomes=["missing_field_rejected"]),
+    "domain_rules": dict(
+        action_ids=["product.update"], permissions=[WRITE_PERMISSION], contracts=[KERNEL_ENTRY]),
+    "high_impact_actions": dict(
+        action_ids=["product.update", "product.process"],
+        permissions=[WRITE_PERMISSION, PROCESS_PERMISSION],
+        contracts=["app.cerebrum_product_kernel.contract.models.ActionSpec"],
+        confirmation_required=True),
+    "prohibited_autonomous_actions": dict(
+        action_ids=["product.refuse"], permissions=[WRITE_PERMISSION], contracts=[KERNEL_ENTRY],
+        outcomes=["refused_action_errors", "unauthorized_rejected"]),
+    "data_sources": dict(
+        action_ids=["product.create"], permissions=[WRITE_PERMISSION],
+        contracts=["app.factory.build.converge:app/connectors"]),
+    "required_connectors": dict(
+        action_ids=["product.create"], permissions=[WRITE_PERMISSION], contracts=["app/connectors"]),
+    "required_exports": dict(
+        action_ids=["product.read", "product.list"], permissions=[READ_PERMISSION],
+        contracts=[KERNEL_ENTRY]),
+    "security_regulatory_rules": dict(
+        action_ids=["product.read"], permissions=[READ_PERMISSION],
+        contracts=["app.cerebrum_product_kernel.isolation",
+                   "app.cerebrum_product_kernel.contract.models.RESERVED_CONTEXT_KEYS"],
+        outcomes=["unauthorized_rejected"]),
+    "demo_data_requirements": dict(
+        action_ids=["product.create"], permissions=[WRITE_PERMISSION],
+        contracts=["app.cerebrum_product_kernel.contract.models.ActionSpec.evaluation_fixtures"]),
+    "domain_acceptance_conditions": dict(
+        action_ids=_CRUD + ["product.enqueue", "product.process", "product.refuse"],
+        permissions=[WRITE_PERMISSION, READ_PERMISSION, PROCESS_PERMISSION],
+        contracts=["app.factory.build.domain_acceptance.perform_all", KERNEL_ENTRY],
+        outcomes=list(OUTCOMES)),
+}
+
+_HEADER_KEYS = ("platform_name", "domain", "product_type", "target_users", "mission")
+
+
+def _slug(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def domain_pack_for(blueprint: Any, plan: Any = None) -> Dict[str, Any]:
+    """The build's own Domain Pack: blueprint values, contract bindings."""
+    from app.factory.build.brief_compiler import synthesize_domain_pack
+
+    values = synthesize_domain_pack(blueprint, plan)
+    product_id = str(getattr(blueprint, "product_id", "") or "")
+    product_name = str(getattr(blueprint, "product_name", "") or values.get("platform_name") or "")
+    domain_id = _slug(getattr(blueprint, "vertical", "") or values.get("domain"))
+    fields = {
+        # An empty slot stays NAMED ("none claimed"), never invented and
+        # never silently blank -- the same wording intake uses.
+        name: _field(values.get(name) or ["none claimed"], _binding(**FIELD_BINDINGS[name]))
+        for name in DOMAIN_PACK_FIELDS
     }
     return {
         "schema_version": SCHEMA_VERSION,
-        "domain_id": DOMAIN_ID,
+        "domain_id": domain_id,
         "product_id": product_id,
         "product_name": product_name,
         "contract": "backend/app/factory/delivery_standard.py:DOMAIN_PACK_FIELDS",
         "field_count": len(DOMAIN_PACK_FIELDS),
         "fields_order": list(DOMAIN_PACK_FIELDS),
-        "header": {
-            "platform_name": product_name,
-            "domain": "Automotive retail dealership operations",
-            "product_type": "Dealership operations platform",
-            "target_users": (
-                "Sales managers, F&I managers, service advisors, inventory controllers"
-            ),
-            "mission": (
-                "A dealership operations platform where inventory, sales, F&I and "
-                "service run through execute_action with a status machine, VIN "
-                "class validation, and human confirmation on high-impact actions."
-            ),
-        },
+        "header": {k: values.get(k) for k in _HEADER_KEYS},
         "kernel_entry": KERNEL_ENTRY,
-        "status_machine": DEALERSHIP_STATUS_MACHINE,
         "fields": fields,
         "lotdesk": "fixture only; not patched",
         "PILOT_READY": False,
@@ -452,8 +256,8 @@ def assert_pack(pack: Mapping[str, Any]) -> None:
         raise DomainPackError("empty Domain Pack")
     if pack.get("schema_version") != SCHEMA_VERSION:
         raise DomainPackError("schema_version must be domain_pack.v1")
-    if pack.get("domain_id") != DOMAIN_ID:
-        raise DomainPackError("domain_id must be dealership")
+    if not str(pack.get("domain_id") or "").strip():
+        raise DomainPackError("domain_id must name the build's vertical")
     if int(pack.get("field_count") or 0) != len(DOMAIN_PACK_FIELDS):
         raise DomainPackError(
             f"field_count must be {len(DOMAIN_PACK_FIELDS)}, got {pack.get('field_count')}"
@@ -464,7 +268,7 @@ def assert_pack(pack: Mapping[str, Any]) -> None:
     missing = missing_fields(pack)
     if missing:
         raise DomainPackError(
-            "dealership Domain Pack is incomplete: " + ", ".join(missing)
+            "Domain Pack is incomplete: " + ", ".join(missing)
         )
     names = field_names(pack)
     extra = [name for name in names if name not in DOMAIN_PACK_FIELDS]
@@ -484,16 +288,14 @@ def emit_domain_pack(
     *,
     blueprint: Any = None,
 ) -> Dict[str, Any]:
-    """WRITER ships the dealership pack into the product tree."""
-    product_id = str(getattr(blueprint, "product_id", None) or DOMAIN_ID)
-    product_name = str(getattr(blueprint, "product_name", None) or "Cerebrum Dealership")
-    pack = dealership_domain_pack(product_id=product_id, product_name=product_name)
+    """WRITER ships the BUILD'S OWN pack into the product tree."""
+    pack = domain_pack_for(blueprint)
     assert_pack(pack)
     workspace.write_text(PACK_REL, render_pack(pack))
     return {
         "path": str(PACK_REL),
         "field_count": len(DOMAIN_PACK_FIELDS),
-        "domain_id": DOMAIN_ID,
+        "domain_id": pack["domain_id"],
     }
 
 
@@ -573,6 +375,18 @@ def _missing_field_fails_closed(pack: Mapping[str, Any]) -> bool:
     return False
 
 
+def _golden_blueprints(root: Path) -> List[Any]:
+    from app.factory.blueprint import load_blueprint
+
+    out = []
+    for path in sorted((root / "blueprints").rglob("*.yaml")):
+        try:
+            out.append(load_blueprint(path))
+        except Exception:  # noqa: BLE001 -- not a product blueprint
+            continue
+    return out
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
@@ -618,14 +432,20 @@ def fingerprint_disagreements(
 
 def evaluate_domain_pack(*, repo: Optional[Path] = None) -> Dict[str, Any]:
     root = Path(repo) if repo is not None else _repo_root()
-    pack = dealership_domain_pack()
+    # Every golden blueprint on disk gets its own pack, and every one must
+    # pass: the gate holds for builds it has never seen named.
+    packs = [domain_pack_for(bp) for bp in _golden_blueprints(root)]
     pack_findings: List[str] = []
-    pack_ok = False
-    try:
-        assert_pack(pack)
-        pack_ok = True
-    except DomainPackError as exc:
-        pack_findings.append(str(exc))
+    pack_ok = bool(packs)
+    if not packs:
+        pack_findings.append("no golden blueprint found to build a pack from")
+    for candidate in packs:
+        try:
+            assert_pack(candidate)
+        except DomainPackError as exc:
+            pack_ok = False
+            pack_findings.append(f"{candidate.get('domain_id')}: {exc}")
+    pack = packs[0] if packs else {}
     missing_fails = _missing_field_fails_closed(pack) if pack_ok else False
     lotdesk = reject_lotdesk_pack()
     module_path = root / "backend" / "app" / "factory" / "build" / "domain_pack.py"
@@ -671,7 +491,7 @@ def evaluate_domain_pack(*, repo: Optional[Path] = None) -> Dict[str, Any]:
         "pack": {
             "ok": pack_ok,
             "schema_version": SCHEMA_VERSION,
-            "domain_id": DOMAIN_ID,
+            "domain_ids": sorted({str(p.get("domain_id")) for p in packs}),
             "path": str(PACK_REL),
             "module": "backend/app/factory/build/domain_pack.py",
             "findings": pack_findings,
@@ -691,7 +511,6 @@ def evaluate_domain_pack(*, repo: Optional[Path] = None) -> Dict[str, Any]:
             "module": "backend/app/factory/build/domain_pack.py",
             "emitter": "RoleRunner WRITER writes docs/domain_pack.json",
             "kernel_entry": KERNEL_ENTRY,
-            "status_machine": DEALERSHIP_STATUS_MACHINE,
         },
         "PILOT_READY": False,
         "not_claimed": [
@@ -699,8 +518,6 @@ def evaluate_domain_pack(*, repo: Optional[Path] = None) -> Dict[str, Any]:
             "S4 U4 _ensure_route_persists_payload removal",
             "S5 U7 FACTORY_SUITE_MARKER_EXPR",
             "generate-from-pack wiring",
-            "VIN check-digit math",
-            "live NHTSA connector",
         ],
         "lotdesk": "fixture only; not patched",
         "llm_route_authorship": "not restored; _coder_route_body still returns None",
@@ -749,7 +566,7 @@ def write_reread_twin(
         "disagreements": disagreements,
         "checked": [
             "DOMAIN_PACK_FIELDS has 15 names in delivery_standard.py",
-            "dealership pack emits all 15 fields with kernel bindings",
+            "every golden blueprint's own pack emits all 15 fields with kernel bindings",
             "dropping a field fails assert_pack",
             "LotDesk-class empty pack is rejected; fixture not patched",
             "_coder_route_body still returns None",
@@ -766,11 +583,11 @@ def write_reread_twin(
 
 
 SAMPLE_PLATFORM = {
-    "product_repository": "bopoadz-del/Cerebrum-Dealership",
+    "product_repository": "not created",
     "default_branch": "main",
-    "working_branch": "feat/dealership-pack",
+    "working_branch": "none",
     "pull_request": "none",
-    "head_sha": "s3domainpack0001",
+    "head_sha": "none",
     "capability_repository": "bopoadz-del/Cerebrum-Blocks",
     "factory_repository": "bopoadz-del/CerebrumDev.ai",
     "reference_repositories": "none",
@@ -781,8 +598,8 @@ SAMPLE_PLATFORM = {
 }
 
 
-def render_dealership_brief() -> str:
-    return render(SAMPLE_PLATFORM, as_delivery_domain_pack(dealership_domain_pack()))
+def render_brief_for(blueprint: Any) -> str:
+    return render(SAMPLE_PLATFORM, as_delivery_domain_pack(domain_pack_for(blueprint)))
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:

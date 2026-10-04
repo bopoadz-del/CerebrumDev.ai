@@ -14,6 +14,16 @@ from app.product_dna.emit import verify_checksum_manifest
 
 from tests.factory.blocks_root import real_blocks_root
 
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
 ROOT = Path(__file__).resolve().parents[3]
 # Prefer a live Blocks checkout when present; CI relies on vendor_blocks_mirror.
 BLOCKS = real_blocks_root()
@@ -94,8 +104,7 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
     assert len(fixtures["estate_documents"]) >= 4
     assert (out / "app" / "steward" / "api.py").is_file()
     assert (
-        ROOT
-        / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json"
+        _estate_kit() / "evaluation/steward_live_oracle_v1.json"
     ).is_file()
 
     assert (out / "docs" / "rag" / "dual_rag.json").is_file()
@@ -192,10 +201,10 @@ def test_steward_generate_emits_demo_dual_rag_and_dna(tmp_path):
 def test_kit_manifest_version():
     manifest = json.loads(
         (
-            ROOT / "backend/app/factory/kits/private_estate_operations/manifest.json"
+            _estate_kit() / "manifest.json"
         ).read_text()
     )
     assert manifest["version"] == "1.3.0"
     assert "dual_rag" in manifest
     assert "house_manual_sop" in manifest["capabilities"]
-    assert (ROOT / "backend/app/factory/kits/private_estate_operations/evaluation/steward_live_oracle_v1.json").is_file()
+    assert (_estate_kit() / "evaluation/steward_live_oracle_v1.json").is_file()

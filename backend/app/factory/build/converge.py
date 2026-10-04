@@ -168,6 +168,7 @@ def converge_writer_emitters(ctx: Any, *, fill_gaps_only: bool = False) -> Dict[
             actions=actions,
             agents=agents,
             workflows=workflows,
+            blocks_root=getattr(ctx, "blocks_root", None),
         )
         workspace = ctx.workspace
         for rel in CONVERGED_TREES:

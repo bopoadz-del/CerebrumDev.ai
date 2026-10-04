@@ -23,6 +23,16 @@ from app.core.grounding import (
 )
 
 
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
+
 class TestEvaluateGrounding:
     def test_plain_answer_with_no_claims_is_grounded(self):
         verdict = evaluate_grounding(
@@ -169,9 +179,8 @@ class TestFactoryEmitsGroundingStage:
     def test_steward_runtime_query_carries_grounding_verdict(self):
         """The emitted steward runtime must route retrieval through the stage:
         the kit source wires a grounding verdict + audit persistence."""
-        from pathlib import Path
 
-        kit = Path("app/factory/kits/private_estate_operations/steward_runtime")
+        kit = (_estate_kit() / "steward_runtime")
         api_src = (kit / "api.py").read_text(encoding="utf-8")
         assert "retrieval_verdict" in api_src, "steward query path has no grounding stage"
         assert "record_verdict" in api_src, "steward query path does not persist verdicts"
@@ -180,13 +189,10 @@ class TestFactoryEmitsGroundingStage:
 
     def test_retrieval_verdict_zero_hits_is_insufficient_with_null_answer(self):
         import importlib.util
-        from pathlib import Path
 
         spec = importlib.util.spec_from_file_location(
             "steward_grounding_under_test",
-            Path(
-                "app/factory/kits/private_estate_operations/steward_runtime/grounding.py"
-            ),
+            (_estate_kit() / "steward_runtime/grounding.py"),
         )
         module = importlib.util.module_from_spec(spec)
         # The kit imports app.steward.audit_store, absent on the platform —

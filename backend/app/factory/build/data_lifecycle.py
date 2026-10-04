@@ -772,8 +772,7 @@ def lifecycle_declaration() -> Dict[str, Any]:
         "migrations": {
             "tool": "alembic",
             "source": (
-                "RoleRunner emission, patterned on unused kit "
-                "backend/app/factory/kits/private_estate_operations/"
+                "RoleRunner emission, patterned on the Store estate kit's "
                 "steward_runtime/migrations"
             ),
             "revisions": [REVISION_0001, REVISION_0002],

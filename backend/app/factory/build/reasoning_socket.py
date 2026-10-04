@@ -1295,8 +1295,26 @@ def vendor_kit(ctx: Any) -> list:
         except Exception as exc:  # noqa: BLE001 -- an unreachable Store is not a crash
             unreachable = exc
 
+    if vertical_of(blueprint, resolved) and root is None:
+        logger.error(
+            "reasoning socket: Store unreachable (%s); no kit vendored, so this "
+            "platform will refuse every figure it needs", unreachable or "no root")
+        return []
+
     kit = kit_for_vertical(blueprint, resolved, store_root=root)
     if not kit:
+        # Half a kit named for this vertical is a broken Store kit, not an
+        # absent one: fail the build and name the missing file.
+        vertical = vertical_of(blueprint, resolved)
+        half = pathlib.Path(root) / "app" / "blocks" / vertical if root and vertical else None
+        if half is not None and half.is_dir() and half.resolve().parent == (pathlib.Path(root) / "app" / "blocks").resolve():
+            for name in ("manifest.yaml", "invariants.yaml"):
+                if not (half / name).is_file() and any(
+                        (half / other).is_file()
+                        for other in ("manifest.yaml", "invariants.yaml")):
+                    raise FileNotFoundError(
+                        f"Store kit {half.name} is missing {name}; refusing to "
+                        "build a platform on half a kit")
         logger.warning(
             "reasoning socket: no kit for this vertical. The platform will refuse "
             "every figure its rules need — that is fail-closed, not a gate.")
@@ -1376,21 +1394,18 @@ def kit_for_vertical(blueprint: Any, resolved: Optional[Dict[str, Any]] = None,
     vertical = vertical_of(blueprint, resolved)
     if not vertical:
         return None
-    alias = VERTICAL_TO_KIT.get(vertical)
-    if alias:
-        return alias
-    # Not an alias. Ask the STORE whether it publishes a kit of this name, rather
-    # than concluding from a Factory dict that no kit exists. The dict is a
-    # committed copy of the Store's kit list, and the copy is what went stale:
-    # ``stadium_venue`` shipped in the Store, was absent here, and every stadium
-    # build took the no-kit path and refused every figure -- reported as
-    # fail-closed, which is the one way for a missing kit to look correct.
-    #
-    # Only a caller holding a resolved ``store_root`` gets this leg. A caller
-    # without one is not told "no kit exists"; it is told what the alias table
-    # knows, because resolving the root can clone the Store and the chat leg
-    # calls this per message.
-    return vertical if store_publishes_kit(store_root, vertical) else None
+    # The Store's reasoning kits say which verticals they serve
+    # (``serves_verticals`` in app/blocks/<kit>/manifest.yaml). The Factory
+    # kept a copy of that list, and the copy went stale: ``stadium_venue``
+    # shipped in the Store, was absent here, and every stadium build took the
+    # no-kit path and refused every figure -- reported as fail-closed, the one
+    # way for a missing kit to look correct. No Store root, no kit: the caller's
+    # no-kit path refuses, which is honest.
+    if store_root is None:
+        return None
+    from app.factory.store_kits import reasoning_kits, serving_kit
+
+    return serving_kit(vertical, reasoning_kits(store_root))
 
 
 def vertical_of(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> str:
@@ -1401,82 +1416,6 @@ def vertical_of(blueprint: Any, resolved: Optional[Dict[str, Any]] = None) -> st
         if value:
             return str(value).strip().lower().replace(" ", "_").replace("-", "_")
     return ""
-
-
-def store_publishes_kit(store_root: Any, kit: str) -> bool:
-    """Does this Store checkout declare a kit by this name?
-
-    The Factory follows the Store's head, so this is the only answer that is
-    true at build time. A kit is its two required declarative files; a directory
-    holding neither is not a kit and must not be reported as one.
-
-    The root is PASSED IN, never resolved here: resolving it can clone the Store,
-    and the caller that already holds one is the build. No root answers False,
-    and the caller's no-kit path then refuses every figure — the same outcome the
-    Store-unreachable branch in ``emit`` produces, so nothing degrades silently.
-    """
-    import pathlib
-
-    if store_root is None or not kit:
-        return False
-    # The vertical arrives from a blueprint, so it must not be turned into a path
-    # that leaves app/blocks.
-    if "/" in kit or "\\" in kit or kit.startswith("."):
-        return False
-    directory = pathlib.Path(store_root) / "app" / "blocks" / kit
-    return (directory / "manifest.yaml").is_file() and (
-        directory / "invariants.yaml").is_file()
-
-
-#: Vertical -> kit, for verticals whose NAME differs from the kit's. A vertical
-#: that names a Store kit outright needs no entry: ``kit_for_vertical`` asks the
-#: Store. Entries whose key equals their value are kept only so a vertical still
-#: resolves with no Store reachable, which is what the Floor's chat leg does.
-VERTICAL_TO_KIT: Dict[str, str] = {
-    "datacentre": "datacentre",
-    "data_centre": "datacentre",
-    "data_center": "datacentre",
-    "offshore_marine": "offshore_marine",
-    "offshore": "offshore_marine",
-    "fitout": "fitout",
-    "fit_out": "fitout",
-    "interior_design": "fitout",
-    "facility_management": "fm",
-    "fm": "fm",
-    "fire_protection": "fire_protection",
-    "heritage": "heritage",
-    "heritage_restoration": "heritage",
-    "og_construction": "og_construction",
-    "oil_gas_construction": "og_construction",
-    "rail": "rail",
-    "railway": "rail",
-    "metro": "rail",
-    "pump_station": "pump_station",
-    "water_pump_station": "pump_station",
-    "water_treatment": "water_treatment",
-    "og_operations": "og_operations",
-    "oil_gas_operations": "og_operations",
-    "dental": "dental",
-    "aesthetic": "aesthetic",
-    "cosmetic": "aesthetic",
-    "aviation_ops": "aviation_ops",
-    "aviation_operations": "aviation_ops",
-    "architecture": "architecture",
-    "architecture_office": "architecture",
-    "ports_marine": "ports_marine",
-    "ports": "ports_marine",
-    "airport_construction": "airport_construction",
-    "airport": "airport_construction",
-    # One kit, four archetypes. A touring event is a GUEST in someone else's
-    # building, so "mega_event" and "stadium" get the SAME kit and then mean
-    # different things by the same number -- which is the distinction the kit's
-    # archetypes exist to hold, and splitting them here would hide it.
-    "stadium": "stadium_venue",
-    "stadium_venue": "stadium_venue",
-    "sports_venue": "stadium_venue",
-    "arena": "stadium_venue",
-    "mega_event": "stadium_venue",
-}
 
 
 def render_routes() -> str:

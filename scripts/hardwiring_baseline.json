@@ -1,58 +1,5 @@
 {
-  "files": {
-    "backend/app/factory/build/domain_pack.py": {
-      "product_literal": {
-        "analytics_surface": 1,
-        "dashboard_surface": 1
-      }
-    },
-    "backend/app/factory/build/reasoning_socket.py": {
-      "product_literal": {
-        "facility_management": 1,
-        "interior_design": 1
-      }
-    },
-    "backend/app/factory/build_jobs.py": {
-      "product_literal": {
-        "Cerebrum-Steward": 1,
-        "cerebrum-steward": 1
-      }
-    },
-    "backend/app/factory/hat_adapter.py": {
-      "product_literal": {
-        "audit_trail": 1,
-        "composed_ops_loop": 1,
-        "dual_rag_estate_docs": 3,
-        "dual_rag_sop": 3,
-        "evidence_capture": 3,
-        "health_surface": 1,
-        "house_manual_sop": 1,
-        "human_authority_gate": 3,
-        "preventive_maintenance": 3,
-        "principal_dashboard": 2,
-        "property_onboarding": 3,
-        "staff_scheduling": 1,
-        "vendor_budget": 1
-      }
-    },
-    "backend/app/factory/inventory.py": {
-      "product_literal": {
-        "finance_ops": 3,
-        "veterinary_clinic": 1
-      }
-    },
-    "backend/app/factory/platform_chat_flow.py": {
-      "product_literal": {
-        "cerebrum-steward": 1
-      }
-    },
-    "backend/app/factory/product_architect.py": {
-      "product_literal": {
-        "cerebrum-steward": 1,
-        "residential_lettings": 1
-      }
-    }
-  },
+  "files": {},
   "forms": [
     "session_id",
     "live_snapshot",
@@ -65,5 +12,5 @@
     "backend/app/factory"
   ],
   "schema": "hardwiring_baseline.v1",
-  "total": 39
+  "total": 0
 }

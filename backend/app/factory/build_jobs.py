@@ -1138,15 +1138,22 @@ def _refund_generation_quota(output_dir: Path) -> None:
     _clear_quota_marker(output_dir)
 
 
-def clone_steward_canonical(source_dir: Path | str) -> Path:
-    """Copy a finished Steward tree to factory_outputs/Cerebrum-Steward.
+def clone_canonical(blueprint: Any, source_dir: Path | str) -> Optional[Path]:
+    """Copy a finished tree to factory_outputs/<canonical_output>.
 
-    A second runner used to start here and double LLM spend. Clone only.
+    A blueprint that wants a stable canonical copy says so itself
+    (``canonical_output``); no product is named here. A second runner used to
+    start here and double LLM spend. Clone only.
     """
     from app.factory.paths import factory_outputs_root, is_safe_to_clean
 
+    name = str(getattr(blueprint, "canonical_output", None) or "").strip()
+    if not name:
+        return None
+    if "/" in name or "\\" in name or name.startswith("."):
+        raise RuntimeError(f"canonical_output must be a directory name, got {name!r}")
     src = Path(source_dir)
-    dest = factory_outputs_root() / "Cerebrum-Steward"
+    dest = factory_outputs_root() / name
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         if not is_safe_to_clean(dest):
@@ -1156,14 +1163,13 @@ def clone_steward_canonical(source_dir: Path | str) -> Path:
     return dest
 
 
-def _maybe_clone_steward_canonical(blueprint: Any, output_dir: Path) -> None:
-    if getattr(blueprint, "product_id", None) != "cerebrum-steward":
-        return
+def _maybe_clone_canonical(blueprint: Any, output_dir: Path) -> None:
     try:
-        dest = clone_steward_canonical(output_dir)
-        logger.info("cloned Steward canonical copy to %s", dest)
+        dest = clone_canonical(blueprint, output_dir)
+        if dest is not None:
+            logger.info("cloned canonical copy to %s", dest)
     except Exception:  # noqa: BLE001 — clone must not fail the build record
-        logger.exception("Steward canonical clone failed from %s", output_dir)
+        logger.exception("canonical clone failed from %s", output_dir)
 
 
 def _run(
@@ -1278,7 +1284,7 @@ def _run(
     if failed:
         _refund_generation_quota(output_dir)
         return
-    _maybe_clone_steward_canonical(blueprint, output_dir)
+    _maybe_clone_canonical(blueprint, output_dir)
     _clear_quota_marker(output_dir)
 
 

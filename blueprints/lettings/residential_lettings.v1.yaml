@@ -2,6 +2,7 @@ schema_version: product_blueprint.v1
 product_id: residential-lettings
 product_name: Residential Lettings Platform
 vertical: residential_lettings
+serves_verticals: [residential_lettings, lettings, letting]
 # Provenance (not product text, never sent to a coder): capability ids and
 # block bindings are the live roster of build session sess_6400b6c273414352,
 # blueprint hash b36090a424db -- not a keyword-fallback GENERATE stub.

@@ -503,10 +503,9 @@ def draft_from_chat(state: Any, message: str) -> Dict[str, Any]:
 
     capabilities = [c.id for c in bp.capabilities]
     blocks = sorted({b for c in bp.capabilities for b in c.block_ids})
-    if bp.product_id == "cerebrum-steward":
-        source = "golden_steward"
-    elif bp.drafting_mode == "golden_lettings":
-        source = "golden_lettings"
+    # The blueprint says how it was drafted; a golden one names itself.
+    if str(bp.drafting_mode or "").startswith("golden_"):
+        source = str(bp.drafting_mode)
     else:
         source = "drafted"
     # Say who drafted it. A dead LLM key must not look identical to a

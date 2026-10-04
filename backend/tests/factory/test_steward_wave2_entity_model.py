@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 from app.factory.blueprint import load_blueprint
-from app.product_dna.emit import _load_estate_entity_model, build_dna_documents
+from app.product_dna.emit import _kit_entity_model, build_dna_documents
 from app.factory.generator import ProductGenerator
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -14,7 +14,8 @@ STEWARD_BP = ROOT / "blueprints/steward/steward.v1.yaml"
 
 
 def test_estate_entity_model_kit_has_core_entities():
-    model = _load_estate_entity_model()
+    # The entity model is the Store kit's, found by the vertical it serves.
+    model = _kit_entity_model("estate")
     entity_ids = {e["id"] for e in model["entities"]}
     assert "tenant" in entity_ids
     assert "facility_asset" in entity_ids

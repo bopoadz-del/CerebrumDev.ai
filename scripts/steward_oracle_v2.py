@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,7 +41,10 @@ SUITES: List[Dict[str, str]] = [
 
 
 def _kit_path(*parts: str) -> Path:
-    return ROOT / "backend" / "app" / "factory" / "kits" / "private_estate_operations" / Path(*parts)
+    # The kit is the Store's (the Factory holds no kits): resolve it by
+    # registry id under the Store checkout the Factory builds against.
+    store = Path(os.environ.get("CEREBRUM_BLOCKS_ROOT") or ROOT.parent / "Cerebrum-Blocks")
+    return store / "block_store" / "kits" / "private_estate_operations" / Path(*parts)
 
 
 def _repo_path(*parts: str) -> Path:

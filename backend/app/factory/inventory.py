@@ -1,138 +1,72 @@
 """Factory inventory declaration: what the Store actually stocks.
 
 The writer can only be honest about domain depth where the Store carries
-domain content. READY_VERTICALS are the verticals the operator has
-declared ready for building/testing, each mapped to its real kit pack in
-the Store (Cerebrum-Blocks ``block_store/kits/``). Everything else gets an
-honest inventory note on the draft — never a silent fabrication of domain
-authority (live-factory lesson: veterinary-clinic drafted 8 REUSE
-capabilities against generic plumbing with zero veterinary domain
-content).
-
-Ground truth (Cerebrum-Blocks block_store/kits/, 2026-09-16):
-agriculture, automotive, aviation, construction, education, finance,
-finance_ops, hotel_management, hr, insurance, legal, manufacturing,
-medical, mep_coordination, oil_gas, pharma, real_estate, retail,
-supply_chain, universal_business, universal_kernel, _template.
+domain content. Which kit serves a vertical, and whether the operator declared
+it ready to build against, are facts the Store's kit manifests state about
+themselves (``serves_verticals``, ``build_ready``) -- read here through
+``store_kits``, never copied into a Factory table. A copy goes stale; a kit
+the Store ships must not read as missing because the Factory's list predates
+it. Everything not declared ready gets an honest inventory note on the draft --
+never a silent fabrication of domain authority (live-factory lesson: a
+veterinary-clinic draft carried 8 REUSE capabilities against generic plumbing
+with zero domain content).
 """
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Any, Optional
 
-#: vertical slug -> Store kit id. The five the operator declared ready.
-READY_VERTICALS: Dict[str, str] = {
-    "hotel": "hotel_management",
-    "hotels": "hotel_management",
-    "hotel_management": "hotel_management",
-    "hospitality": "hotel_management",
-    "insurance": "insurance",
-    "construction": "construction",
-    "finance": "finance",
-    "finance_ops": "finance_ops",
-    "retail": "retail",
-}
-
-#: Verticals the operator declared OUT of testing: no domain kit, and the
-#: Store carries no authoritative domain content for them.
-EXCLUDED_VERTICALS = frozenset(
-    {
-        "medical",
-        "medical_clinic",
-        "clinic",
-        "healthcare",
-        "legal",
-        "law",
-        "law_firm",
-        "legal_practice",
-        "veterinary",
-        "vet",
-        "veterinary_clinic",
-        "pharma",
-        "pharmaceutical",
-    }
-)
+from app.factory.store_kits import domain_blocks, domain_kits, serving_kit, slug
 
 
 def _slug(vertical: str) -> str:
-    return str(vertical or "").strip().replace("-", "_").replace(" ", "_").lower()
+    return slug(vertical)
 
 
-def ready_kit(vertical: str) -> Optional[str]:
-    """The Store kit for a ready vertical, or None."""
-    return READY_VERTICALS.get(_slug(vertical))
+def ready_kit(vertical: str, store_root: Any = None) -> Optional[str]:
+    """The Store kit serving a vertical the operator declared ready, or None."""
+    kits = domain_kits(store_root)
+    kit = serving_kit(vertical, kits)
+    return kit if kit and kits[kit].get("build_ready") is True else None
 
 
-def vertical_is_excluded(vertical: str) -> bool:
-    return _slug(vertical) in EXCLUDED_VERTICALS
+def vertical_is_excluded(vertical: str, store_root: Any = None) -> bool:
+    """A kit serves this vertical and the operator declared it NOT ready."""
+    kits = domain_kits(store_root)
+    kit = serving_kit(vertical, kits)
+    return bool(kit) and kits[kit].get("build_ready") is False
 
 
-def inventory_drafting_note(vertical: str) -> str:
+def _ready_names(store_root: Any = None) -> str:
+    kits = domain_kits(store_root)
+    return ", ".join(sorted(k for k, m in kits.items() if m.get("build_ready") is True)) or "none"
+
+
+def inventory_drafting_note(vertical: str, store_root: Any = None) -> str:
     """The honest note a draft carries when the vertical is not declared ready.
 
-    Excluded verticals get the stronger wording: no domain kit exists, and
-    building one means the writer synthesizes domain authority the Store
-    never supplied.
+    A vertical whose serving kit the operator declared not ready gets the
+    stronger wording: building it means the writer synthesizes domain
+    authority the Store never certified.
     """
-    slug = _slug(vertical)
-    if not slug:
+    s = _slug(vertical)
+    if not s:
         return ""
-    if vertical_is_excluded(slug):
+    ready = _ready_names(store_root)
+    if vertical_is_excluded(s, store_root):
         return (
-            f"inventory: no domain kit in the Store for '{slug}' — this "
-            "vertical is outside the declared-ready set (hotels, insurance, "
-            "construction, finance, retail); domain logic will be thin "
-            "because the Store supplies no authoritative domain content"
+            f"inventory: no domain kit in the Store for '{s}' — this "
+            f"vertical is outside the declared-ready set ({ready}); domain "
+            "logic will be thin because the Store supplies no authoritative "
+            "domain content"
         )
-    if slug not in READY_VERTICALS:
+    if not ready_kit(s, store_root):
         return (
-            f"inventory: '{slug}' is not on the declared-ready list (hotels, "
-            "insurance, construction, finance, retail); the Store kit for "
-            "this vertical is unverified — domain depth not guaranteed"
+            f"inventory: '{s}' is not on the declared-ready list ({ready}); "
+            "the Store kit for this vertical is unverified — domain depth not "
+            "guaranteed"
         )
     return ""
-
-
-#: The DOMAIN blocks each ready kit contributes, from its manifest's block
-#: list minus the shared generic core (pdf, ocr, chat, image, formula_*).
-#: Ground truth: Cerebrum-Blocks block_store/kits/<kit>/manifest.json.
-KIT_DOMAIN_BLOCKS: Dict[str, frozenset] = {
-    "hotel_management": frozenset({"hotel_v2"}),
-    "insurance": frozenset(
-        {
-            "insurance_v2",
-            "agency_hierarchy",
-            "producer_record",
-            "agency_commission_engine",
-            "channel_router",
-            "attrition_scorer",
-            "incentive_targeting",
-            "hkia_gn16_rules",
-            "bordereaux_ingest",
-            "distribution_analytics",
-        }
-    ),
-    "construction": frozenset(
-        {
-            "construction_v2",
-            "boq_processor",
-            "spec_analyzer",
-            "sympy_reasoning",
-            "drawing_qto",
-            "primavera_parser",
-            "smart_orchestrator",
-            "jetson_gateway",
-            "bim_extractor",
-            "bim",
-            "learning_engine",
-            "recommendation_template",
-            "project_reasoner",
-        }
-    ),
-    "finance": frozenset({"finance_v2"}),
-    "finance_ops": frozenset({"finance_v2"}),
-    "retail": frozenset({"retail_v2"}),
-}
 
 
 def domain_gaps(
@@ -149,7 +83,7 @@ def domain_gaps(
     kit = ready_kit(vertical)
     if not kit:
         return []
-    domain = KIT_DOMAIN_BLOCKS.get(kit)
+    domain = domain_blocks(kit, domain_kits())
     if not domain:
         return []
     gaps = []

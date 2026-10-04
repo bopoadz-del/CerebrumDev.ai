@@ -11,16 +11,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
+
+def _estate_kit():
+    """The estate kit lives in the Store (the Factory holds no kits)."""
+    from app.factory.kit_pack import store_kit_dir
+
+    kit = store_kit_dir("private_estate_operations")
+    assert kit is not None, "Store estate kit not found -- set CEREBRUM_BLOCKS_ROOT"
+    return kit
+
+
 ROOT = Path(__file__).resolve().parents[3]
-KIT = (
-    ROOT
-    / "backend"
-    / "app"
-    / "factory"
-    / "kits"
-    / "private_estate_operations"
-    / "steward_runtime"
-)
+KIT = (_estate_kit()
+    / "steward_runtime")
 
 
 def _ensure_pkg(name: str) -> None:

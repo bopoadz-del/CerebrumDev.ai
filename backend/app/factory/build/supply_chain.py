@@ -921,7 +921,7 @@ def evaluate_supply_chain(
         "not_claimed": [
             "PILOT_READY",
             "cosign / image signature verification",
-            "S3 dealership Domain Pack",
+            "S3 Domain Pack (the build's own)",
         ],
         "lotdesk": "fixture only; not patched",
         "llm_route_authorship": "not restored; _coder_route_body still returns None",

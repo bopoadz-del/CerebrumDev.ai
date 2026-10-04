@@ -1,7 +1,7 @@
 """S0 preflight — fingerprint factory + RoleRunner emission before a build.
 
 This is an inventory and identity gate, not a later-stage closer. S3
-(dealership Domain Pack) is ``build/domain_pack.py``. S2 residual: cosign
+(the build's own Domain Pack) is ``build/domain_pack.py``. S2 residual: cosign
 is not performed. Kernel ownership failure does fail S0: ``execute_action``
 must be callable and ``_coder_route_body`` must return None.
 
@@ -83,7 +83,7 @@ STAGE_MODULE_INVENTORY: Tuple[Dict[str, Any], ...] = (
     {
         "stage": "S3",
         "expected": "backend/app/factory/build/domain_pack.py",
-        "purpose": "dealership Domain Pack against DOMAIN_PACK_FIELDS (15)",
+        "purpose": "the build's own Domain Pack against DOMAIN_PACK_FIELDS (15)",
     },
     {
         "stage": "S4",

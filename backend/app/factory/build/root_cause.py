@@ -213,7 +213,7 @@ DEFECT_OWNERS: Dict[str, Dict[str, Any]] = {
     "F7": {
         "title": "no status transition machine",
         "owner_module": "backend/app/factory/build/domain_pack.py",
-        "owner_symbol": "DEALERSHIP_STATUS_MACHINE / domain_rules",
+        "owner_symbol": "domain_pack_for / FIELD_BINDINGS",
         "lane": "S3 Domain Pack + kernel",
         "status": "partial",
         "note": "S3 pack binds domain_rules to execute_action status contracts; machine not closed this stage",
