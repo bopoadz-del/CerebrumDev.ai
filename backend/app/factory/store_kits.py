@@ -139,3 +139,35 @@ def domain_blocks(kit_id: str, kits: Dict[str, Dict[str, Any]]) -> FrozenSet[str
     shared = {b for b, n in counts.items() if n * 2 > len(lists)}
     own = kits.get(kit_id, {}).get("blocks")
     return frozenset(b for b in own if b not in shared) if isinstance(own, list) else frozenset()
+
+
+@lru_cache(maxsize=8)
+def _block_reads(root: str) -> Dict[str, Tuple[Tuple[str, str], ...]]:
+    """block id -> the (kind, scope) reads its signed ``block.json`` declares."""
+    out: Dict[str, Tuple[Tuple[str, str], ...]] = {}
+    for path in sorted((Path(root) / "block_registry").glob("*/block.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        reads = data.get("reads") if isinstance(data, dict) else None
+        if not isinstance(reads, list):
+            continue
+        out[str(data.get("id") or path.parent.name)] = tuple(
+            (str(r.get("kind") or ""), str(r.get("scope") or ""))
+            for r in reads
+            if isinstance(r, dict)
+        )
+    return out
+
+
+def blocks_declaring_read(kind: str, scope: str, store_root: Any = None) -> FrozenSet[str]:
+    """The Store blocks whose ``block.json`` declares a read of ``kind`` /
+    ``scope`` -- what a block says it consumes, from the Store's own signed
+    manifests. No block is named here."""
+    root = _root(store_root)
+    if not root:
+        return frozenset()
+    return frozenset(
+        bid for bid, reads in _block_reads(str(root)).items() if (kind, scope) in reads
+    )

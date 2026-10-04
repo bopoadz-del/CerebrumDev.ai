@@ -1130,26 +1130,21 @@ def _cli_log_tailer(home: Optional[Path] = None) -> Any:
 
 
 def _tool_hint(line: str) -> str:
-    """Best-effort classification of one CLI progress line for the Floor."""
-    text = (line or "").lower()
-    if "engine turn" in text:
-        return "agent-step"
-    for name in (
-        "write",
-        "edit",
-        "create",
-        "delete",
-        "bash",
-        "exec",
-        "read",
-        "search",
-        "grep",
-        "test",
-        "pytest",
-    ):
-        if name in text:
-            return name
-    return ""
+    """The step a CLI progress line belongs to, read from the line's own
+    structure: a tracing record ``<timestamp> <LEVEL> <target>: <message>``
+    names its step in ``<target>`` (``engine.turn``). A line without that
+    structure names no step -- its words are never guessed at."""
+    parts = (line or "").split(None, 3)
+    if len(parts) < 3:
+        return ""
+    stamp, level, target = parts[0], parts[1], parts[2]
+    try:
+        datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if not (level.isalpha() and level.isupper() and target.endswith(":")):
+        return ""
+    return target[:-1]
 
 
 #: Seconds of silence before the factory speaks for a quiet agent.

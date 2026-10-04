@@ -12,7 +12,6 @@ from app.factory.build.brief_compiler import compile_brief
 from app.factory.build.coder_session import (
     CLI_EMPTY_DESCRIBED_NOT_WRITTEN,
     CLI_EMPTY_EMPTY_COMPLETION,
-    CLI_EMPTY_REFUSED,
     CLI_EMPTY_WRONG_PATH,
     LOG_REL,
     NAMED_BLOCKER_CLI_NO_AUTHORSHIP,
@@ -73,10 +72,11 @@ def test_classify_cli_empty_described_not_written():
     assert reason == "described-not-written"
 
 
-def test_classify_cli_empty_refused():
-    reason = classify_cli_empty(_refused_log())
-    assert reason == CLI_EMPTY_REFUSED
-    assert reason == "refused"
+def test_a_prose_refusal_is_classified_by_what_the_session_did():
+    """A refusal is the agent's words, which carry no structural signal: the
+    session wrote nothing and described no code, so it is an empty
+    completion -- and NO_AUTHORSHIP honesty is unchanged."""
+    assert classify_cli_empty(_refused_log()) == CLI_EMPTY_EMPTY_COMPLETION
 
 
 def test_classify_cli_empty_empty_completion():
@@ -107,7 +107,6 @@ def test_classify_cli_empty_does_not_weaken_no_authorship():
         reason = classify_cli_empty(blob)
         assert reason in {
             CLI_EMPTY_DESCRIBED_NOT_WRITTEN,
-            CLI_EMPTY_REFUSED,
             CLI_EMPTY_EMPTY_COMPLETION,
             CLI_EMPTY_WRONG_PATH,
         }

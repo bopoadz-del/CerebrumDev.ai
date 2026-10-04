@@ -17,6 +17,7 @@ from app.factory.build.budget_inspect import (
     next_stage_wall,
     should_continue_after_inspect,
 )
+from app.factory.build.failure_kinds import TIMEOUT
 from app.factory.build.ledger import BuildLedger, EventKind
 from app.factory.build.runner import BuildBudget, RoleRunner
 from app.factory.build_jobs import build_status
@@ -60,7 +61,14 @@ def test_inspect_reads_caps_timeouts_stubs_and_contract_misses(tmp_path):
         EventKind.NOTE,
         role=BuildRole.WRITER,
         detail="coder LLM timed out writing handler inventory",
-        payload={"stage": "coder", "capability": "inventory", "model_call": True},
+        # The kind travels typed beside the message, as the runner records it
+        # (failure_kinds.TIMEOUT from the exception type); the words decide nothing.
+        payload={
+            "stage": "coder",
+            "capability": "inventory",
+            "model_call": True,
+            "failure_kind": TIMEOUT,
+        },
     )
     ledger.append(
         EventKind.GATE_FAILED,

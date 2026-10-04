@@ -314,7 +314,9 @@ def test_worker_streams_cli_progress_lines(monkeypatch, tmp_path):
     assert receipt.status == "completed"
     assert any("engine turn" in ln for ln, _ in progress_lines)
     step = next(info for _, info in progress_lines if info.get("tool"))
-    assert step["tool"] == "agent-step"
+    # The step is the tracing record's own target, not a guess from words.
+    assert step["tool"] == "engine.turn"
+    assert worker_mod._tool_hint("pytest wrote edit search") == ""
     progress_file = tmp_path / "docs" / "writer_progress.jsonl"
     assert progress_file.is_file()
     assert "engine turn" in progress_file.read_text(encoding="utf-8")

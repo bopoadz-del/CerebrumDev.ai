@@ -42,24 +42,6 @@ FOUNDING_EXTRA_FILES: Sequence[str] = (
     "frontend/src/App.tsx",
 )
 
-#: Receipt honesty that is not a ≥2h writer product. Still Store-green
-#: when the three gates pass (empty-gap REUSE keep-path after a 429).
-CLI_FOUNDING_HONESTY_MISS = frozenset(
-    {
-        "FACTORY_CODE_CLI_FAILED",
-        "FACTORY_CODE_CLI_BILLING",
-        "FACTORY_CODE_CLI_CREDENTIALS_MISSING",
-        "FACTORY_CODE_CLI_NO_MODEL",
-        "FACTORY_CODE_CLI_UNAVAILABLE",
-        "FACTORY_CODE_CLI_MODEL_DENIED",
-        "FACTORY_CODE_CLI_UNUSED",
-        "FACTORY_CODE_CLI_NO_AUTHORSHIP",
-        "FACTORY_CODE_CLI_THIN_AUTHORSHIP",
-        "FACTORY_CODE_CLI_UNKEEPABLE_EVENT_BUS",
-        "FACTORY_CODE_CLI_HUNG_KILLED_BY_WALL",
-    }
-)
-
 
 class Level(str, Enum):
     SCAFFOLD = "SCAFFOLD"
@@ -102,20 +84,21 @@ def _missing_founding_files(root: Path) -> List[str]:
 
 
 def _cli_honesty_miss(status: Mapping[str, Any]) -> Optional[str]:
-    """Named CLI billing/auth miss on coder_receipt. Not founding."""
+    """Named CLI miss on coder_receipt. Not founding.
+
+    Read from the receipt's TYPED fields: a receipt that names a blocker (or
+    an honesty class) did not come from a clean ≥2h writer session, whatever
+    the blocker is called -- so a new named blocker needs no entry here, and
+    the prose ``detail`` is never searched. Still Store-green when the three
+    gates pass (empty-gap REUSE keep-path after a billing refusal).
+    """
     receipt = status.get("coder_receipt")
     if not isinstance(receipt, Mapping):
         return None
-    blobs = [
-        str(receipt.get("honesty_class") or ""),
-        str(receipt.get("blocker") or ""),
-        str(receipt.get("detail") or ""),
-    ]
-    for blob in blobs:
-        upper = blob.upper()
-        for name in CLI_FOUNDING_HONESTY_MISS:
-            if name in upper:
-                return name
+    for field in ("blocker", "honesty_class"):
+        named = str(receipt.get(field) or "").strip()
+        if named:
+            return named
     if receipt.get("ok") is False:
         return "FACTORY_CODE_CLI_FAILED"
     return None
