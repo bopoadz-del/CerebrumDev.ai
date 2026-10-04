@@ -210,3 +210,61 @@ def test_a_single_phrase_used_as_a_decision_on_text_is_caught(src):
 ])
 def test_prose_paths_keys_and_closed_vocabulary_are_not_phrases(src):
     assert _gate().phrase_matches(src) == [], src
+
+
+# -- group C: prose and log signals became typed ---------------------------
+
+
+def test_a_model_call_closes_on_a_typed_field_not_a_sentence():
+    from types import SimpleNamespace
+
+    from app.factory.build.model_call import CLOSED, MODEL_CALL_STATE
+    from app.factory.build_jobs import _open_model_call_note
+
+    opened = SimpleNamespace(detail="zorblat started", payload={"model_call": True})
+    worded = SimpleNamespace(detail="zorblat session finished", payload={})
+    closed = SimpleNamespace(detail="", payload={MODEL_CALL_STATE: CLOSED})
+    # The words of a NOTE close nothing; the typed field does.
+    assert _open_model_call_note([opened, worded]) is opened
+    assert _open_model_call_note([opened, closed]) is None
+
+
+def test_a_provenance_stamp_is_classified_by_exact_vocabulary():
+    from app.factory.build.authorship import (
+        TEMPLATED_SOURCE,
+        factory_grounded_sources,
+        is_factory_grounded_source,
+        is_templated_source,
+    )
+
+    for stamp in factory_grounded_sources():
+        assert is_factory_grounded_source(stamp)
+    assert is_templated_source(TEMPLATED_SOURCE)
+    # A stamp that merely CONTAINS the words is not one of the Factory's.
+    assert not is_factory_grounded_source("zorblat factory-grounded thing")
+    assert not is_templated_source("zorblat deterministic template copy")
+
+
+def test_a_named_blocker_is_read_by_position():
+    from app.factory.build.coder_session import named_blocker_of
+
+    assert named_blocker_of("ZORBLAT_BLOCKER: the reason, with a colon: here") == "ZORBLAT_BLOCKER"
+    assert named_blocker_of("no blocker token in this sentence") == ""
+
+
+def test_an_unreachable_github_is_typed_at_the_raise_site():
+    from app.factory.build import n3_store_gate as n3
+    from app.factory.build.builds_push import BuildsPushError
+
+    assert n3.is_infrastructure_error(BuildsPushError("zorblat", unreachable=True))
+    # The old message words carry no meaning on their own.
+    assert not n3.is_infrastructure_error(BuildsPushError("GitHub API down: HTTP 401"))
+
+
+def test_failure_ownership_parses_the_failing_assert_as_code():
+    from app.factory.build.failure_owner import _asserts_a_comparison
+
+    assert _asserts_a_comparison(">       assert zorblat(x) == quux\nE   AssertionError")
+    assert _asserts_a_comparison(">   assert ok, (key, got, want)")
+    assert not _asserts_a_comparison(">   assert False, 'zorblat broke'")
+    assert not _asserts_a_comparison("prose saying assert x == y without source")

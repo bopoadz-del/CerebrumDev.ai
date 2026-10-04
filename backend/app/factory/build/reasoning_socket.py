@@ -783,7 +783,10 @@ class ReasoningKernel:
             classes = self._classes()
             matched = any(
                 n == figure.quantity
-                or (str(n).startswith("any_") and figure.quantity in classes.get(n, ()))
+                # A name the kit declares as a quantity CLASS covers every
+                # quantity in it -- membership in the declared classes, not
+                # a naming prefix.
+                or (str(n) in classes and figure.quantity in classes[str(n)])
                 for n in names)
         if not matched:
             return False
@@ -997,7 +1000,7 @@ class ReasoningKernel:
             forbid = [str(f) for f in (record.get("forbid") or ())]
             if ("bare_number" in forbid or "unspecified" in forbid) and not figure.unit:
                 if re.search(r"(?<![\\w.])-?\\d[\\d,]*(?:\\.\\d+)?(?![\\w.%])", figure.text or ""):
-                    if not re.search(r"\\d\\s*[A-Za-z%]", figure.text or ""):
+                    if not _number_carries_a_suffix(figure.text or ""):
                         return self._finding(record, figure,
                             "bare number -- every figure carries its unit", ["unit"])
             missing = figure.missing([str(f) for f in (record.get("requires") or ())])
@@ -1041,6 +1044,22 @@ class ReasoningKernel:
             return None
 
         return None
+
+
+def _number_carries_a_suffix(text):
+    """Does a digit run continue (after optional spaces) into a letter or a
+    percent sign? A character scan of the figure's own text -- a unit attached
+    to the number -- not a match against any word."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i].isdigit():
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            if j < n and (text[j].isalpha() or text[j] == "%"):
+                return True
+        i += 1
+    return False
 
 
 _EQUATION = re.compile(

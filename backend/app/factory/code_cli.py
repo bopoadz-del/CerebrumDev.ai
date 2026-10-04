@@ -27,6 +27,8 @@ DEEPSEEK_CODE_MODEL_ENV = "DEEPSEEK_CODE_MODEL"
 DEEPSEEK_BASE_URL_ENV = "DEEPSEEK_BASE_URL"
 
 DEFAULT_KIMI_CLI = "kimi"
+#: The config.toml provider table for DeepSeek under Kimi Code.
+PROVIDER_DEEPSEEK = "deepseek"
 #: DeepSeek's vehicle is Kimi Code CLI — never Claude Code.
 DEFAULT_DEEPSEEK_CLI = "kimi"
 
@@ -45,6 +47,11 @@ DEEPSEEK_OPENAI_BASE_URL = "https://api.deepseek.com"
 LEGACY_CLAUDE_OPUS_MODEL = "claude-opus-4-6"
 LEGACY_CLAUDE_HAIKU_MODEL = "claude-haiku-4-5"
 REJECTED_DEEPSEEK_CLAUDE_MODEL = "deepseek-v4-pro[1m]"
+#: Leftover catalog ids -> the DeepSeek model of the same tier.
+_LEGACY_MODEL_REMAP = {
+    LEGACY_CLAUDE_OPUS_MODEL: DEFAULT_DEEPSEEK_MODEL,
+    LEGACY_CLAUDE_HAIKU_MODEL: DEFAULT_DEEPSEEK_FLASH_MODEL,
+}
 REJECTED_DEEPSEEK_BARE_MODEL = "deepseek-v4-pro"
 #: Leftover Claude Code Anthropic-compat URL. Not used for live DeepSeek.
 DEEPSEEK_ANTHROPIC_BASE_URL = "https://api.deepseek.com/anthropic"
@@ -146,12 +153,9 @@ def normalize_deepseek_model(model: str) -> str:
     """
     raw = (model or "").strip()
     stripped = _DEEPSEEK_CONTEXT_SUFFIX_RE.sub("", raw).strip() or raw
-    lowered = stripped.lower()
-    if lowered.startswith("claude-opus"):
-        return DEFAULT_DEEPSEEK_MODEL
-    if lowered.startswith("claude-haiku") or lowered.startswith("claude-sonnet"):
-        return DEFAULT_DEEPSEEK_FLASH_MODEL
-    return stripped
+    # The leftover ids are the configuration constants above, matched
+    # exactly -- never a model-name prefix.
+    return _LEGACY_MODEL_REMAP.get(stripped, stripped)
 
 
 def normalize_deepseek_claude_model(model: str) -> str:

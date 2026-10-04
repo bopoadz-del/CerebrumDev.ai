@@ -6,7 +6,6 @@ import pytest
 
 from app.factory import platform_chat_flow
 from app.factory.platform_chat_flow import refine_from_chat
-from app.factory.product_architect import _vertical_from_brief
 from app.models.session import ProductDesignState, SessionState
 
 
@@ -89,21 +88,18 @@ def test_refinement_set_vertical(state):
     assert result["blueprint"]["product_id"] == "boutique_retail"
 
 
-def test_vertical_extracts_domain_after_platform_for():
-    """The user's original brief must resolve to retail, not users."""
-    assert _vertical_from_brief(
-        "build me secure multi users platform for my retail business"
-    ) == "retail"
+def test_vertical_is_the_structured_hint_never_the_brief_prose():
+    """A brief's words name no vertical; the Floor's hint does."""
+    from app.factory import product_architect
 
-
-def test_vertical_prefers_descriptor_before_platform():
-    assert _vertical_from_brief(
-        "create an inventory management platform for retail stores"
-    ) == "inventory_management"
-
-
-def test_vertical_normalizes_multi_user():
-    assert _vertical_from_brief("build a multi users retail platform") == "retail"
+    bp = product_architect._draft_blueprint_from_brief_inner(
+        "build me a zorblat management platform for my quux business", use_llm=False
+    )
+    assert bp.vertical == "product"
+    hinted = product_architect._draft_blueprint_from_brief_inner(
+        "build me a platform", vertical_hint="zorblat_yards", use_llm=False
+    )
+    assert hinted.vertical == "zorblat_yards"
 
 
 def test_parse_refinement_command_variations():

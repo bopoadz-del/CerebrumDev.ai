@@ -438,65 +438,6 @@ def _draft_with_llm(
 
 # --- Deterministic keyword drafting (offline / canned demo path) --------------
 
-_VERTICAL_FILLER = {
-    "a", "an", "the", "me", "my", "our", "your", "us", "we", "i",
-    "build", "create", "make", "generate", "assemble", "design", "ship",
-    "new", "own", "custom", "secure", "multi", "user", "users", "multiuser",
-    "for", "with", "and", "that", "to", "please", "business", "company",
-    "app", "application", "tool", "solution", "service",
-}
-_VERTICAL_GERUNDS = {"managing", "tracking", "running", "handling", "monitoring"}
-
-
-def _normalize_brief(text: str) -> str:
-    """Normalize common noisy phrases before vertical extraction."""
-    text = (text or "").lower()
-    # "multi users" / "multi user" / "multi-user" → single token
-    text = re.sub(r"\bmulti[-\s]?users?\b", "multi_user", text)
-    return text
-
-
-def _vertical_from_brief(text: str) -> str:
-    """Deterministic vertical extraction from the brief (offline demo quality).
-
-    Tries, in order:
-      1. the descriptor preceding "platform/product/system/portal" (e.g.
-         "inventory management platform" → inventory_management).
-      2. the domain following "platform/product/system/portal for …" (e.g.
-         "platform for my retail business" → retail, when the descriptor is
-         only filler words like "secure multi users").
-    Falls back to "product".
-    """
-    text = _normalize_brief(text)
-
-    def _extract_words(phrase: str) -> list[str]:
-        return [
-            w
-            for w in re.split(r"[\s\-]+", phrase)
-            if w and w not in _VERTICAL_FILLER and w not in _VERTICAL_GERUNDS
-        ]
-
-    # 1) Descriptor before platform
-    m = re.search(
-        r"([a-z0-9][a-z0-9\s\-]{1,60}?)\s+(?:platform|product|system|portal)\b",
-        text,
-    )
-    phrase = m.group(1) if m else ""
-    words = _extract_words(phrase)
-
-    # 2) If the descriptor is all filler, try "platform for [domain]"
-    if not words:
-        m2 = re.search(
-            r"\b(?:platform|product|system|portal)\s+(?:for|that|to)\s+"
-            r"([a-z0-9][a-z0-9\s\-]{1,60}?)(?:\s+(?:with|using|and)\b|$)",
-            text,
-        )
-        phrase = m2.group(1) if m2 else ""
-        words = _extract_words(phrase)
-
-    return "_".join(words[:3]) or "product"
-
-
 # --- Public drafting API ------------------------------------------------------
 
 
@@ -604,7 +545,10 @@ def _draft_blueprint_from_brief_inner(
     if "audit" in dual and "audit" not in mentioned:
         mentioned.append("audit")
 
-    vertical = (vertical_hint or _vertical_from_brief(text)).replace(" ", "_").lower()
+    # The vertical is a structured field (the Floor's vertical_hint), never
+    # parsed out of the brief's prose. Without one the draft is generic and
+    # golden routing (_golden_for_draft) decides on structure alone.
+    vertical = (vertical_hint or "product").replace(" ", "_").lower()
     product_id = re.sub(r"[^a-z0-9-]+", "-", vertical)[:48].strip("-") or "product"
     product_name = (
         vertical.replace("_", " ").replace("-", " ").title() + " Platform"
