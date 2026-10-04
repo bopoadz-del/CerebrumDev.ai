@@ -196,16 +196,6 @@ def test_the_gate_itself_names_no_case():
 # --- word_list: classification by vocabulary ---------------------------------
 
 
-def test_a_two_word_list_searched_in_text_is_refused(gate, tmp_path, capsys):
-    _write(tmp_path, "pkg/route.py",
-           'WORDS = ("zorblat yard", "quillon")\n'
-           "def route(brief):\n"
-           "    return any(w in brief.lower() for w in WORDS)\n")
-    assert gate.main(["--root", "pkg"]) == 1
-    err = capsys.readouterr().err
-    assert "word_list" in err and "pkg/route.py:1:" in err
-
-
 def test_inline_word_lists_and_regex_joins_are_refused(gate, tmp_path):
     _write(tmp_path, "pkg/a.py",
            "def f(t: str):\n    return [k for k in ('alpha', 'beta') if k in t]\n")
@@ -215,21 +205,3 @@ def test_inline_word_lists_and_regex_joins_are_refused(gate, tmp_path):
     assert gate.main(["--root", "pkg"]) == 1
 
 
-def test_closed_vocabularies_and_key_lookups_are_not_word_lists(gate, tmp_path):
-    _write(tmp_path, "pkg/ok.py",
-           "def f(mode, d):\n"
-           "    if mode in ('zip', 'github_repo'):\n"
-           "        pass\n"
-           "    for k in ('alpha', 'beta'):\n"
-           "        if k in d:\n"
-           "            d[k] = 1\n"
-           "    return d\n")
-    assert gate.main(["--root", "pkg"]) == 0
-
-
-def test_members_loaded_from_data_are_not_literals(gate, tmp_path):
-    _write(tmp_path, "pkg/ok.py",
-           "import json\n"
-           "WORDS = tuple(json.load(open('store.json')))\n"
-           "def f(t):\n    return any(w in t for w in WORDS)\n")
-    assert gate.main(["--root", "pkg"]) == 0

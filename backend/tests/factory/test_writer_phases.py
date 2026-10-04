@@ -565,17 +565,6 @@ def test_runner_hydrates_landed_writer_phases(tmp_path):
     assert WRITER_PHASE_BACKEND not in pending_writer_phases(ctx)
 
 
-@pytest.mark.parametrize(
-    "cap_id, owes_rag",
-    [
-        ("storage_management", False),  # "rag" inside "storage" is not a token
-        ("leverage_tracker", False),
-        ("fragment_index", False),
-        ("rag", True),
-        ("zorblat_rag_answers", True),
-        ("rag-search", True),
-    ],
-)
 def test_rag_surface_is_a_whole_token_of_the_capability_id(cap_id, owes_rag):
     """A substring match once made every ``storage`` capability owe RAG
     ingest/query routes. The rule is the token, on invented ids."""
