@@ -60,7 +60,7 @@ class _VetCare:
     product_name = "VetCare Hub"
     product_id = "veterinary-care"
     vertical = "veterinary_care"
-    summary = "sess_c220986f photograph — GENERATE core after CLI billing"
+    summary = "Sample plan — GENERATE core after CLI billing"
 
 
 def _billing_cli(tmp_path: Path) -> Path:

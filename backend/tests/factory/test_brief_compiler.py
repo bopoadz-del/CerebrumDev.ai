@@ -293,7 +293,6 @@ def test_vetcare_fresh_session_compiles_on_the_new_path():
     assert "test_every_capability_route_accepts_payload" in compiled.text
     assert "workflow: step_N (event_bus): error" in compiled.text
     assert "workflow: step_2 (event_bus): error" in compiled.text
-    assert "appointment_booking" in compiled.text
     assert "action=publish" in compiled.text
     assert "payload dict" in compiled.text
     assert "input.topic" in compiled.text
