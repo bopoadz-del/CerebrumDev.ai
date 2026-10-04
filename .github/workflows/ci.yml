@@ -122,16 +122,14 @@ jobs:
       # uses, read from the one place that pin lives. Before this, CI ran
       # entirely off Factory-local copies, which is how five always-ok estate
       # stubs shipped inside customer platforms without a single red test.
-      # CI checks out the Store the same way the Factory resolves it: by
-      # asking the Store, not by reading a SHA out of a Factory source file.
-      # That regex was a fourth committed copy of the Store's identity -- it
-      # went stale with the constant, and it broke the moment the constant
-      # stopped being a literal. The branch is overridable so a release can
-      # still test against a fixed ref.
+      # CI checks out the Store at exactly the commit in store.pin -- the
+      # same commit the image bakes and the lock was generated from. Store
+      # main is never followed: a Store change reaches the Factory only
+      # through a PR that runs `cli bump-store <sha>` (pin + lock together),
+      # and test_store_pin fails if the lock disagrees with the pinned Store.
       - name: Check out the Store
         working-directory: .
         env:
-          STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
           # Cerebrum-Blocks is private, so the fetch must authenticate. The
           # default GITHUB_TOKEN is scoped to THIS repo only; CROSS_REPO_PAT
           # (an existing repo secret) has read access to the Store. Passed via
@@ -139,10 +137,12 @@ jobs:
           # the secret in logs.
           CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
         run: |
+          STORE_REF="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/store.pin")"
           echo "Store ref: $STORE_REF"
           git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
           cd "$RUNNER_TEMP/Cerebrum-Blocks"
           git fetch -q --depth 1 "https://x-access-token:${CROSS_REPO_PAT}@github.com/bopoadz-del/Cerebrum-Blocks.git" "$STORE_REF"
+          test "$(git rev-parse FETCH_HEAD)" = "$STORE_REF"
           git checkout -q FETCH_HEAD
           test -d block_registry
           echo "Store head: $(git rev-parse HEAD)  ($(ls block_registry | wc -l) blocks)"
@@ -325,12 +325,13 @@ jobs:
         shell: bash
         working-directory: .
         env:
-          STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
           CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
         run: |
+          STORE_REF="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/store.pin")"
           git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
           cd "$RUNNER_TEMP/Cerebrum-Blocks"
           git fetch -q --depth 1 "https://x-access-token:${CROSS_REPO_PAT}@github.com/bopoadz-del/Cerebrum-Blocks.git" "$STORE_REF"
+          test "$(git rev-parse FETCH_HEAD)" = "$STORE_REF"
           git checkout -q FETCH_HEAD
           echo "CEREBRUM_BLOCKS_ROOT=$RUNNER_TEMP/Cerebrum-Blocks" >> "$GITHUB_ENV"
 

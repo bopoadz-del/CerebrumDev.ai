@@ -653,3 +653,47 @@ def test_audit_clean_passes_only_when_the_scan_ran_and_is_clean(tmp_path, monkey
     monkeypatch.setenv("STORE_AUDIT_CLEAN", "1")
     check_fn, _ = _load_named_check(tmp_path, "check_audit_clean")
     assert check_fn()[0] == "PASS"
+
+
+def test_the_stamped_harness_judges_authorship_without_factory_code(tmp_path):
+    """A delivered product carries no Factory package; the harness's
+    authorship_floor must still decide from the product's own stamps."""
+    import subprocess
+    import sys
+    import textwrap
+
+    from app.factory.build.authorship import AGENT_SOURCE_PREFIXES
+    from app.factory.build.store_acceptance import render_acceptance_script
+
+    harness = render_acceptance_script(None)
+    assert "app.factory" not in harness
+    product = tmp_path / "product"
+    (product / "scripts").mkdir(parents=True)
+    (product / "scripts" / "acceptance.py").write_text(harness, encoding="utf-8")
+    actions = product / "app" / "actions"
+    actions.mkdir(parents=True)
+    for i in range(5):
+        (actions / f"zorblat_{i}.py").write_text(
+            f'"""Written by the factory WRITER role ({AGENT_SOURCE_PREFIXES[0]} x)."""\n',
+            encoding="utf-8",
+        )
+    probe = textwrap.dedent(
+        """
+        import importlib.util, sys
+        spec = importlib.util.spec_from_file_location("acc", "scripts/acceptance.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        print(*mod.check_authorship_floor())
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", probe], cwd=product, capture_output=True, text=True,
+        env={
+            "PATH": "",
+            "SYSTEMROOT": __import__("os").environ.get("SYSTEMROOT", ""),
+            "PYTHONIOENCODING": "utf-8",
+        },
+        encoding="utf-8",
+    )
+    assert out.returncode == 0, out.stderr[-600:]
+    assert out.stdout.startswith("PASS"), out.stdout

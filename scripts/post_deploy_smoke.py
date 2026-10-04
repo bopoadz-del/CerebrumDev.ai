@@ -314,6 +314,11 @@ def info_events(raw):
     return out
 
 
+#: Seconds the smoke waits for a build to reach a terminal state before the
+#: export check reads DEAD. Covers the Factory's writer budget plus the gate.
+BUILD_WAIT_S = int(os.environ.get("SMOKE_BUILD_WAIT_S", "5400"))
+
+
 #: Upper bound on answered question rounds. The server caps elicitation
 #: (MAX_ELICITATION_ROUNDS) and turns the next ask into a draft, so the loop
 #: ends by the product's own contract; this only stops a server that broke it.
@@ -541,7 +546,11 @@ def main():
     # build-status nests the ledger under "build".
     s, blob = 0, b""
     build = {}
-    deadline = time.time() + 900
+    # A real build runs COLLECTOR -> STORE gate in 30-45 min (the writer alone
+    # is 20-40). 900 s was shorter than any healthy build, so "export zip"
+    # read DEAD on every build that did not fail fast (2026-10-04, 080652d9:
+    # "still being built 2/5"). Wait for the build's own terminal state.
+    deadline = time.time() + BUILD_WAIT_S
     last_print = 0.0
     while time.time() < deadline:
         s, blob = req("GET", f"/v1/sessions/{sid}/product/package", token=tok, raw=True)
