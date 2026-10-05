@@ -531,6 +531,19 @@ export interface BuildActivityLine {
   text: string
 }
 
+export interface BuildDecision {
+  class: 'REWORK' | 'ADVISORY' | 'REGENERATE_TEST' | 'STOP' | string
+  gate: string
+  gate_name?: string
+  round_gate: number
+  gate_budget: number
+  round_build: number
+  build_ceiling: number
+  check: string
+  finding: string
+  reason?: string
+}
+
 export type BuildStatus = {
   state: 'not_started' | 'unknown' | 'building' | 'succeeded' | 'failed' | 'stalled' | 'waiting'
   detail?: string
@@ -575,6 +588,12 @@ export type BuildStatus = {
   failed_label?: string | null
   /** One line: what the next Continue will try to fix. */
   next_continue?: string
+  /** The runner rule's decisions, in order: gate, class (REWORK / ADVISORY /
+   *  REGENERATE_TEST / STOP), this gate's round of its budget, the build's
+   *  round of its ceiling, check, finding. */
+  decisions?: BuildDecision[]
+  /** The STOP decision that ended the build, when the rule stopped it. */
+  stopped?: BuildDecision | null
   /** The first failure of a run that went on to SUCCEED -- history, not an alert. */
   recovered_failure?: BuildFailure | null
   /** Client's delivery choice + repo URL when github_repo was delivered. */

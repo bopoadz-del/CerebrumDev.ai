@@ -208,7 +208,7 @@ def test_start_runner_build_rotates_off_a_failed_ledger_only_on_start_over(tmp_p
     resumed = start_runner_build(bp, dead)
     assert resumed["fresh_workspace"] is False
     assert Path(resumed["output_dir"]) == dead
-    from app.factory.build.ledger import REWORK_BUDGET_RESET
+    from app.factory.build.rule_decision import BUDGET_RESET_KEY as REWORK_BUDGET_RESET
 
     assert any((e.payload or {}).get(REWORK_BUDGET_RESET) for e in BuildLedger(dead / "build_ledger.jsonl").events())
     ledger.append(EventKind.RUN_FAILED, detail="failed again")

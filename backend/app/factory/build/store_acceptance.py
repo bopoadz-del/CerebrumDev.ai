@@ -27,6 +27,9 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 GATE_NAME = "store_acceptance"
 ACCEPTANCE_SCRIPT_REL = Path("scripts") / "acceptance.py"
+#: How the writer runs the Store gate's own harness on its box (the same N
+#: checks the gate scores; gate-only inputs print SKIP with the reason).
+ACCEPTANCE_SELF_CHECK_COMMAND = "python scripts/acceptance.py --self-check"
 ACCEPTANCE_REPORT_REL = Path("docs") / "store_acceptance.json"
 OPENAPI_REL = Path("docs") / "openapi.json"
 GITHUB_CI_REL = Path(".github") / "workflows" / "ci.yml"
@@ -957,6 +960,21 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
+
+#: ``python scripts/acceptance.py --self-check`` is the WRITER's run of this
+#: same harness on its own box. Three inputs exist only where the Store gate
+#: runs (a Docker daemon, a Postgres service, the bandit/pip-audit scan) and
+#: arrive as STORE_* env values the gate exports. In a self-check an UNSET one
+#: is reported SKIP with that reason -- never PASS. At the gate the flag is
+#: never passed, so unmeasured stays a FAIL; a measured bad value fails both.
+SELF_CHECK = "--self-check" in sys.argv[1:]
+
+
+def _only_the_gate_measures(var):
+    """SKIP line for a gate-only input left unset in a self-check, else None."""
+    if SELF_CHECK and not (os.environ.get(var) or "").strip():
+        return "SKIP", "%s is measured only by the Store gate (Docker/Postgres/scan); the gate still scores it" % var
+    return None
 #: sha256 of the Factory's own full-suite CI workflow (LF-normalised).
 CI_SHA256 = {ci_digest!r}
 
@@ -1840,6 +1858,9 @@ def check_postgres_boot_200(http: _Http) -> Tuple[str, str]:
             "app/store.py opens its own database beside app.db; one place must "
             "decide the backend or the two disagree",
         )
+    unmeasured = _only_the_gate_measures("STORE_POSTGRES_BOOT")
+    if unmeasured is not None:
+        return unmeasured
     measured = (os.environ.get("STORE_POSTGRES_BOOT") or "").strip()
     if measured != "200":
         return "FAIL", "STORE_POSTGRES_BOOT=%r (gate must boot it on Postgres)" % measured
@@ -1918,6 +1939,9 @@ def check_audit_clean() -> Tuple[str, str]:
     dynamic = _dynamic_sql_sites()
     if dynamic:
         return "FAIL", "dynamically built SQL reaches an execute call: " + ", ".join(dynamic[:6])
+    unmeasured = _only_the_gate_measures("STORE_AUDIT_CLEAN")
+    if unmeasured is not None:
+        return unmeasured
     measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
     if measured in ("0", "false", "dirty"):
         return "FAIL", "bandit/pip-audit reported HIGH or SQL-construction findings"
@@ -1995,6 +2019,9 @@ def check_openapi_committed() -> Tuple[str, str]:
 
 
 def check_docker_health_200(http: _Http) -> Tuple[str, str]:
+    unmeasured = _only_the_gate_measures("STORE_DOCKER_HEALTH")
+    if unmeasured is not None:
+        return unmeasured
     measured = (os.environ.get("STORE_DOCKER_HEALTH") or "").strip()
     if measured != "200":
         return "FAIL", "STORE_DOCKER_HEALTH=%r (Store gate must measure container /health=200)" % measured
@@ -2146,6 +2173,8 @@ def main() -> int:
                 pass
     satisfied = sum(1 for _n, status, _d in results if status in {{"PASS", "SKIP"}})
     print("ACCEPTANCE: %d/%d" % (satisfied, REQUIRED))
+    if SELF_CHECK:
+        print("SELF-CHECK: the same %d checks the Store gate scores; fix every FAIL before you declare done" % REQUIRED)
     print(json.dumps({{TOTAL_KEY: {{"passed": satisfied, "required": REQUIRED}}}}))
     if results and results[-1][0] != "authorship_floor":
         print("FAIL harness — authorship_floor was not last")
@@ -2218,6 +2247,20 @@ def stamp_acceptance_artifacts(
     """WRITER / ProductGenerator emit the harness and the files it measures."""
     for rel, text in factory_renders(product_name, cap_ids, blueprint).items():
         workspace.write_text(rel, text)
+
+
+def stamp_acceptance_harness(workspace: Any, *, blueprint: Any = None) -> None:
+    """Stamp scripts/acceptance.py BEFORE the writer starts.
+
+    The CodeWhale writer ran first and found no harness, so it wrote its own
+    (live 665da6da: "scripts/acceptance.py: 15 measured checks, k/k") and
+    self-verified against that; the Factory's 22-check harness was stamped
+    only afterwards, and the Store gate failed three checks the writer had
+    never measured. The same table entry the gate's stamp writes, so the
+    writer's ``--self-check`` run scores the same N checks the gate will.
+    """
+    rel = ACCEPTANCE_SCRIPT_REL
+    workspace.write_text(rel, factory_renders("platform", (), blueprint)[rel])
 
 
 def stamp_acceptance_into_path(

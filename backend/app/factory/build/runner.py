@@ -35,10 +35,10 @@ import logging
 import os
 import shutil
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 logger = logging.getLogger("cerebrumdev.factory.runner")
 
@@ -70,8 +70,59 @@ RUNNER_FLAG_ENV = "FACTORY_RUNNER_ENABLED"
 LEDGER_FILENAME = "build_ledger.jsonl"
 
 #: Phases that participate in the rework loop. A failed TESTER gate sends the
-#: WRITER back round with the findings as its work list.
+#: WRITER back round with the findings as its work list -- and so does a
+#: failed WRITER gate: its typed findings (F1, F11, schema, compile, UI) are
+#: work only the writer can do. Both share the rework budget and the
+#: same-failure-twice rule.
 REWORK_SOURCE = BuildRole.TESTER
+REWORK_SOURCES = frozenset({BuildRole.TESTER, BuildRole.WRITER, BuildRole.STORE_MANAGER})
+
+#: Owner rule: two rework rounds PER GATE (WRITER gate, TESTER, Store gate);
+#: one gate's rounds never reduce another's. A gate that has used its two and
+#: fails again stops the run.
+REWORK_BUDGET = 2
+#: Hard ceiling on rework rounds for the whole build, every gate together.
+REWORK_CEILING = 6
+
+#: The four things the runner can do with a failed phase verdict. One rule
+#: (``RoleRunner.decide``) picks one, from data, and records it.
+from app.factory.build.rule_decision import (  # noqa: E402
+    ADVISORY as DECISION_ADVISORY,
+    REGENERATE_TEST as DECISION_REGENERATE_TEST,
+    REWORK as DECISION_REWORK,
+    STOP as DECISION_STOP,
+)
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    """What ``RoleRunner.decide`` chose for one failed verdict."""
+
+    kind: str
+    work_list: Tuple[str, ...] = ()
+    outcome: Optional["Outcome"] = None
+    detail: str = ""
+    findings: Tuple[str, ...] = ()
+    record: Dict[str, Any] = field(default_factory=dict)
+
+
+def _failure_keys(verdict: Any, exclude: Sequence[str] = ()) -> List[str]:
+    """Same-failure-twice keys -- check id + finding SHAPE, never the gate.
+
+    Failing test rows carry their own (``<nodeid> [failure|error]``). A gate
+    verdict without rows gives one ``<check>:<shape>`` per brief check it
+    failed; the shape is the typed ``finding_shape`` the gate declares, else
+    ``failed``. The gate is not in the key, so the same check failing the
+    same way at two different gates is the same failure."""
+    from app.factory.build import brief_gates, failure_owner
+
+    payload = getattr(verdict, "payload", None) or {}
+    keys = failure_owner.failure_names(verdict, exclude=exclude)
+    if (payload.get("failed") or payload.get("rows") or payload.get("junit")) and keys:
+        return keys
+    shape = str(payload.get("finding_shape") or "failed")
+    checks = sorted({check for check, _ in brief_gates.failure_checks(verdict) if check})
+    return [f"{check}:{shape}" for check in checks] or keys
 REWORK_TARGET = BuildRole.WRITER
 
 
@@ -100,6 +151,24 @@ def _test_defect_items(defects: Sequence[Dict[str, Any]]) -> list:
         for d in defects
         if d.get("nodeid")
     ]
+
+
+def _writer_gate_items(verdict: Any) -> tuple:
+    """The WRITER's rework list after its OWN gate failed: one item per
+    finding, named by the check it measures (brief_gates), then the command
+    that runs the gate's probe so the writer can confirm the fix itself."""
+    from app.factory.build import brief_gates
+    from app.factory.build.writer_behaviour import SELF_CHECK_COMMAND
+
+    items = [
+        f"[{check}] {finding}" for check, finding in brief_gates.failure_checks(verdict)
+    ]
+    items.append(
+        f"[{brief_gates.WRITER_BEHAVIOUR_CHECK}] before declaring done, run "
+        f"`{SELF_CHECK_COMMAND}` (the WRITER gate's own probe) and fix every "
+        "record it prints"
+    )
+    return tuple(items)
 
 
 def landed_capability_ids(ledger: Any, inputs_hash: str) -> list:
@@ -640,26 +709,13 @@ class RoleRunner:
 
         return checkpoint(self.workspace, branch, message)
 
-    def _rework_window(self) -> list:
-        """Cycle events since the latest rework-budget reset (a Floor resume
-        of a failed platform), or the whole cycle when none was recorded."""
-        from app.factory.build.ledger import REWORK_BUDGET_RESET
-
-        events = self._cycle_events()
-        for index in range(len(events) - 1, -1, -1):
-            event = events[index]
-            if event.kind is EventKind.NOTE and (event.payload or {}).get(REWORK_BUDGET_RESET):
-                return events[index + 1 :]
-        return events
-
     def _rework_rounds_this_cycle(self) -> int:
-        return sum(1 for e in self._rework_window() if e.kind is EventKind.REWORK)
+        return sum(1 for e in self._cycle_events() if e.kind is EventKind.REWORK)
 
     def _last_rework_failures(self) -> list:
         """Failure names that triggered the most recent rework round."""
-        for event in reversed(self._rework_window()):
-            if event.kind is EventKind.REWORK:
-                return list((event.payload or {}).get("failure_names") or [])
+        for event in reversed(self._reworks()):
+            return list((event.payload or {}).get("failure_names") or [])
         return []
 
     def _brief_defined_checks(self) -> Optional[FrozenSet[str]]:
@@ -1029,6 +1085,313 @@ class RoleRunner:
             return False
         return True
 
+    def _reworks(self) -> list:
+        """Rework rounds since the last budget reset (rule_decision)."""
+        from app.factory.build.rule_decision import BUDGET_RESET_KEY
+
+        events = list(self.ledger.events()) if self.ledger.exists() else []
+        for index in range(len(events) - 1, -1, -1):
+            if (events[index].payload or {}).get(BUDGET_RESET_KEY):
+                events = events[index + 1 :]
+                break
+        return [e for e in events if e.kind is EventKind.REWORK]
+
+    def _rework_rounds_this_build(self) -> int:
+        """Rework rounds spent in this build, every gate together (ceiling)."""
+        return len(self._reworks())
+
+    def _rework_rounds_at(self, role: BuildRole) -> int:
+        """Rework rounds THIS gate has spent (its own budget)."""
+        return sum(
+            1 for e in self._reworks() if (e.payload or {}).get("source") == role.value
+        )
+
+    def _all_rework_failures(self) -> set:
+        """Every failure key any earlier rework round was opened for."""
+        keys: set = set()
+        for event in self._reworks():
+            keys.update((event.payload or {}).get("failure_names") or [])
+        return keys
+
+    def _decision_record(
+        self,
+        kind: str,
+        *,
+        role: BuildRole,
+        verdict: Any,
+        gate_round: int,
+        build_round: int,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """One decision as the ledger and the Floor carry it: gate, class,
+        round (this gate's n/2 and the build's n/6), check, finding."""
+        from app.factory.build import brief_gates
+        from app.factory.build import rule_decision as rd
+
+        pairs = brief_gates.failure_checks(verdict)
+        check, finding = pairs[0] if pairs else (str(getattr(verdict, "gate", "")), "")
+        return {
+            rd.GATE: role.value,
+            rd.CHECK: check,
+            rd.FINDING: str(finding)[:300],
+            rd.CLASS: kind,
+            rd.ROUND_GATE: gate_round,
+            rd.ROUND_BUILD: build_round,
+            "gate_budget": int(self.budget.max_rework),
+            "build_ceiling": REWORK_CEILING,
+            "gate_name": str(getattr(verdict, "gate", "") or ""),
+            "reason": reason,
+        }
+
+    def _stop(self, outcome: "Outcome", reason: str, verdict: Any, role: BuildRole) -> GateDecision:
+        rec = self._decision_record(
+            DECISION_STOP,
+            role=role,
+            verdict=verdict,
+            gate_round=self._rework_rounds_at(role),
+            build_round=self._rework_rounds_this_build(),
+            reason=reason,
+        )
+        from app.factory.build.rule_decision import stop_status
+
+        detail = f"{stop_status(rec)}: {reason}"
+        return GateDecision(
+            DECISION_STOP,
+            outcome=outcome,
+            detail=detail,
+            findings=tuple(getattr(verdict, "findings", None) or ()),
+            record=rec,
+        )
+
+    def decide(
+        self,
+        role: BuildRole,
+        verdict: Any,
+        *,
+        rework_used: int,
+        test_defect_rounds: int = 0,
+        reopen: bool = False,
+    ) -> GateDecision:
+        """THE runner rule for a failed phase verdict -- every gate, one place.
+
+        1. Classify from data: a check the brief never defined is ADVISORY
+           (logged, no rework, no budget); a writer test that demanded the
+           impossible of a declared contract is REGENERATE_TEST (no budget);
+           a brief-defined failure on product code is REWORK.
+        2. REWORK spends the build's shared budget (``budget.max_rework``,
+           REWORK_BUDGET from the Floor): the writer gets the typed findings
+           and the command that re-checks them.
+        3. The same check failing the same way twice, or a failure after the
+           budget is spent, STOPs: ``FAILED(<check>, <finding>)``.
+        4. Every decision is written to the ledger with its class and round.
+        ``reopen``: the verdict arrived after the run ended (the N3 Store
+        gate) -- the REWORK re-opens WRITER, TESTER and STORE_MANAGER.
+        """
+        from app.factory.build import brief_gates, failure_owner
+
+        split = self._split_by_brief(verdict)
+        if split is not None and split.invented:
+            self._record_advisory(role, verdict, split)
+            if not split.defined:
+                rec = self._decision_record(
+                    DECISION_ADVISORY,
+                    role=role,
+                    verdict=verdict,
+                    gate_round=self._rework_rounds_at(role),
+                    build_round=self._rework_rounds_this_build(),
+                    reason=brief_gates.REASON_NOT_DEFINED,
+                )
+                self.ledger.append(
+                    EventKind.GATE_PASSED,
+                    role=role,
+                    detail=(
+                        f"advisory: {', '.join(split.invented_checks)} "
+                        f"{brief_gates.REASON_NOT_DEFINED}"
+                    ),
+                    payload={
+                        "gate": verdict.gate,
+                        "advisory": True,
+                        "advisory_checks": split.invented_checks,
+                        "reason": brief_gates.REASON_NOT_DEFINED,
+                        "location": role.value,
+                        "decision": rec,
+                    },
+                )
+                return GateDecision(DECISION_ADVISORY, record=rec)
+            verdict = brief_gates.narrowed(verdict, split)
+
+        if role in (BuildRole.WRITER, BuildRole.STORE_MANAGER):
+            # The WRITER gate judges the writer's own tree; a Store-gate
+            # verdict reaching here carries only the lines the floor assigns
+            # to the PRODUCT (Factory-owned lines never fail the product).
+            owned = {
+                "owner": failure_owner.PRODUCT,
+                "tests": [],
+                "generator": "",
+                "test_defects": [],
+                "factory_owned": [],
+            }
+        else:
+            owned = failure_owner.classify(
+                verdict,
+                self._factory_test_files(),
+                behavior_test_files=self._behavior_test_files(),
+            )
+        defects = list(owned.get("test_defects") or [])
+        if owned["owner"] == failure_owner.TEST_DEFECT:
+            if test_defect_rounds >= self.budget.max_rework:
+                return self._stop(
+                    Outcome.FAILED_GATE,
+                    "TEST_DEFECT unresolved after "
+                    f"{test_defect_rounds} regeneration(s): " + ", ".join(owned["tests"]),
+                    verdict,
+                    role,
+                )
+            rec = self._decision_record(
+                DECISION_REGENERATE_TEST,
+                role=role,
+                verdict=verdict,
+                gate_round=self._rework_rounds_at(role),
+                build_round=self._rework_rounds_this_build(),
+                reason=f"test regeneration {test_defect_rounds + 1} (no rework budget)",
+            )
+            self.ledger.append(
+                EventKind.NOTE,
+                role=role,
+                detail="TEST_DEFECT (writer regenerates; not a product "
+                "failure): " + ", ".join(owned["tests"]),
+                payload={
+                    "owner": owned["owner"],
+                    "test_defects": defects,
+                    "round": test_defect_rounds + 1,
+                    "writer_dispatched": True,
+                    "product_failure": False,
+                    "decision": rec,
+                },
+            )
+            return GateDecision(
+                DECISION_REGENERATE_TEST,
+                work_list=tuple(_test_defect_items(defects)),
+                record=rec,
+            )
+
+        if owned["owner"] != failure_owner.PRODUCT:
+            label = (
+                "FACTORY_FAULT"
+                if owned["owner"] == failure_owner.FACTORY
+                else "ENVIRONMENT_FAULT"
+            )
+            names = ", ".join(owned["tests"]) or verdict.detail
+            where = f" (generator {owned['generator']})" if owned["generator"] else ""
+            self.ledger.append(
+                EventKind.NOTE,
+                role=role,
+                detail=f"{label}: {names}{where}",
+                payload={
+                    "owner": owned["owner"],
+                    "tests": owned["tests"],
+                    "generator": owned["generator"],
+                    "rework": rework_used,
+                    "writer_dispatched": False,
+                },
+            )
+            return self._stop(Outcome.FAILED_GATE, f"{label}: {names}{where}", verdict, role)
+
+        factory_rows = owned.get("factory_owned") or []
+        if factory_rows:
+            self.ledger.append(
+                EventKind.NOTE,
+                role=role,
+                detail="FACTORY_ALSO_OWNS (not sent to the writer): "
+                + ", ".join(str(t) for t in factory_rows),
+                payload={"factory_owned": factory_rows, "routed": "PRODUCT"},
+            )
+
+        current = _failure_keys(verdict, [d["nodeid"] for d in defects])
+        again = failure_owner.repeated(self._all_rework_failures(), current)
+        if again:
+            return self._stop(
+                Outcome.FAILED_GATE,
+                "SAME_FAILURE_TWICE: " + ", ".join(again),
+                verdict,
+                role,
+            )
+        gate_rounds = self._rework_rounds_at(role)
+        build_rounds = self._rework_rounds_this_build()
+        if gate_rounds >= self.budget.max_rework:
+            return self._stop(
+                Outcome.FAILED_BUDGET_SPENT,
+                f"{role.value} gate rework budget of {self.budget.max_rework} "
+                f"spent; still failing: {verdict.detail}",
+                verdict,
+                role,
+            )
+        if build_rounds >= REWORK_CEILING:
+            return self._stop(
+                Outcome.FAILED_BUDGET_SPENT,
+                f"build rework ceiling of {REWORK_CEILING} reached; "
+                f"{role.value} gate still failing: {verdict.detail}",
+                verdict,
+                role,
+            )
+
+        if role is BuildRole.WRITER:
+            work = tuple(_writer_gate_items(verdict))
+        elif role is BuildRole.STORE_MANAGER:
+            work = tuple(str(f) for f in verdict.findings)
+        else:
+            work = tuple(verdict.findings) + tuple(_test_defect_items(defects))
+        rec = self._decision_record(
+            DECISION_REWORK,
+            role=role,
+            verdict=verdict,
+            gate_round=gate_rounds + 1,
+            build_round=build_rounds + 1,
+        )
+        payload: Dict[str, Any] = {
+            "findings": list(verdict.findings),
+            "work_list": list(work),
+            "failure_names": current,
+            "source": role.value,
+            "gate": verdict.gate,
+            "decision": rec,
+        }
+        if reopen:
+            payload["reopen"] = [BuildRole.WRITER.value, BuildRole.TESTER.value, role.value]
+        self.ledger.append(
+            EventKind.REWORK,
+            role=REWORK_TARGET,
+            detail=(
+                f"{role.value} round {gate_rounds + 1}/{self.budget.max_rework} "
+                f"(build {build_rounds + 1}/{REWORK_CEILING}, gate '{verdict.gate}'): "
+                f"{verdict.detail}"
+            ),
+            payload=payload,
+        )
+        return GateDecision(DECISION_REWORK, work_list=work, record=rec)
+
+    def reopen_after_store_gate(self, verdict: Any) -> GateDecision:
+        """The N3 Store gate answers after the runner returned: run its verdict
+        through the same rule. A STOP is the run's verdict, written as such."""
+        decision = self.decide(
+            BuildRole.STORE_MANAGER,
+            verdict,
+            rework_used=self._rework_rounds_this_build(),
+            reopen=True,
+        )
+        if decision.kind == DECISION_STOP:
+            self.ledger.append(
+                EventKind.RUN_FAILED,
+                role=BuildRole.STORE_MANAGER,
+                detail=decision.detail,
+                payload={
+                    "outcome": decision.outcome.value if decision.outcome else "FAILED_GATE",
+                    "decision": decision.record,
+                    "findings": list(decision.findings),
+                },
+            )
+        return decision
+
     def _finish(
         self,
         outcome: Outcome,
@@ -1037,6 +1400,7 @@ class RoleRunner:
         phase: Optional[BuildRole] = None,
         rework: int = 0,
         findings: Sequence[str] = (),
+        decision: Optional[Dict[str, Any]] = None,
     ) -> BuildOutcome:
         bar = getattr(self, "level_bar", None)
         if outcome is Outcome.SUCCESS:
@@ -1126,6 +1490,11 @@ class RoleRunner:
             # this run actually stopped.
             payload.update(bar.to_json())
             payload["stopped_at"] = self._stopped_at(outcome, phase)
+        if decision is not None:
+            # The rule's STOP is this ONE terminal event (rule_decision).
+            from app.factory.build.rule_decision import DECISION_KEY
+
+            payload[DECISION_KEY] = dict(decision)
         self.ledger.append(
             kind,
             role=phase,
@@ -1538,7 +1907,7 @@ class RoleRunner:
         # G2: a resume does NOT reset the rework counter. Rounds already spent
         # in this cycle stay spent, so a re-entered run cannot buy a fresh
         # budget to repeat what already failed.
-        rework_used = self._rework_rounds_this_cycle()
+        rework_used = self._rework_rounds_this_build()
         # Writer-test regenerations for TEST_DEFECTs: their own count, never
         # the product rework budget.
         test_defect_rounds = 0
@@ -1570,6 +1939,24 @@ class RoleRunner:
             if not seeded and terminal.detail.strip():
                 seeded = [terminal.detail.strip()]
             work_list = tuple(seeded)
+        # A finished run re-opened by a REWORK (a product-owned Store-gate
+        # failure): hand the reopened phase the typed items that REWORK
+        # carries -- the same seed, from the event that re-opened the run.
+        reopened = self.ledger.reopening_rework()
+        if (
+            not work_list
+            and reopened is not None
+            and reopened.role == self.ledger.resume_point()
+        ):
+            work_list = tuple(
+                str(f)
+                for f in (
+                    reopened.payload.get("work_list")
+                    or reopened.payload.get("findings")
+                    or []
+                )
+                if str(f).strip()
+            )
 
         # A re-entered run (resume, or a pasted build link) carries the
         # Factory files of the Factory that first built it. Re-render them
@@ -1862,7 +2249,7 @@ class RoleRunner:
                             + [f"n3_handoff_failed: {exc}"],
                         )
 
-                if role is not REWORK_SOURCE:
+                if role not in REWORK_SOURCES:
                     return self._finish(
                         Outcome.FAILED_GATE,
                         f"{role.value} gate '{verdict.gate}' failed: {verdict.detail}",
@@ -1871,156 +2258,31 @@ class RoleRunner:
                         findings=verdict.findings,
                     )
 
-                # A gate exists only if a brief can turn it on (GATES.md).
-                # The round's failures are split BEFORE any writer dispatch:
-                # a failure on a check this build's brief never defined means
-                # the gate is wrong, not the product -- it goes advisory, with
-                # the reason in the ledger, and never reaches the writer.
-                split = self._split_by_brief(verdict)
-                if split is not None and split.invented:
-                    from app.factory.build import brief_gates
-
-                    self._record_advisory(role, verdict, split)
-                    if not split.defined:
-                        self.ledger.append(
-                            EventKind.GATE_PASSED,
-                            role=role,
-                            detail=(
-                                f"advisory: {', '.join(split.invented_checks)} "
-                                f"{brief_gates.REASON_NOT_DEFINED}"
-                            ),
-                            payload={
-                                "gate": verdict.gate,
-                                "advisory": True,
-                                "advisory_checks": split.invented_checks,
-                                "reason": brief_gates.REASON_NOT_DEFINED,
-                                "location": role.value,
-                            },
-                        )
-                        done.add(role)
-                        work_list = ()
-                        index += 1
-                        continue
-                    verdict = brief_gates.narrowed(verdict, split)
-
-                # G1: route by OWNER. Only a product-code failure can be fixed
-                # by a WRITER rework; the writer is forbidden to edit tests/.
-                from app.factory.build import failure_owner
-
-                owned = failure_owner.classify(
+                decision = self.decide(
+                    role,
                     verdict,
-                    self._factory_test_files(),
-                    behavior_test_files=self._behavior_test_files(),
+                    rework_used=rework_used,
+                    test_defect_rounds=test_defect_rounds,
                 )
-                defects = list(owned.get("test_defects") or [])
-                if owned["owner"] == failure_owner.TEST_DEFECT:
-                    # Only writer tests that contradict the DECLARED
-                    # placeholder contract failed. The product is right: no
-                    # rework round, no same-failure-twice. The writer is sent
-                    # back to regenerate those tests, within its own budget.
-                    if test_defect_rounds >= self.budget.max_rework:
-                        return self._finish(
-                            Outcome.FAILED_GATE,
-                            "TEST_DEFECT unresolved after "
-                            f"{test_defect_rounds} regeneration(s): "
-                            + ", ".join(owned["tests"]),
-                            phase=role,
-                            rework=rework_used,
-                            findings=verdict.findings,
-                        )
-                    test_defect_rounds += 1
-                    work_list = tuple(_test_defect_items(defects))
-                    self.ledger.append(
-                        EventKind.NOTE,
-                        role=role,
-                        detail="TEST_DEFECT (writer regenerates; not a product "
-                        "failure): " + ", ".join(owned["tests"]),
-                        payload={
-                            "owner": owned["owner"],
-                            "test_defects": defects,
-                            "round": test_defect_rounds,
-                            "writer_dispatched": True,
-                            "product_failure": False,
-                        },
-                    )
-                    done.discard(REWORK_TARGET)
-                    index = BUILD_PHASES.index(REWORK_TARGET)
+                if decision.kind == DECISION_ADVISORY:
+                    done.add(role)
+                    work_list = ()
+                    index += 1
                     continue
-
-                if owned["owner"] != failure_owner.PRODUCT:
-                    label = (
-                        "FACTORY_FAULT"
-                        if owned["owner"] == failure_owner.FACTORY
-                        else "ENVIRONMENT_FAULT"
-                    )
-                    names = ", ".join(owned["tests"]) or verdict.detail
-                    where = f" (generator {owned['generator']})" if owned["generator"] else ""
-                    self.ledger.append(
-                        EventKind.NOTE,
-                        role=role,
-                        detail=f"{label}: {names}{where}",
-                        payload={
-                            "owner": owned["owner"],
-                            "tests": owned["tests"],
-                            "generator": owned["generator"],
-                            "rework": rework_used,
-                            "writer_dispatched": False,
-                        },
-                    )
+                if decision.kind == DECISION_STOP:
                     return self._finish(
-                        Outcome.FAILED_GATE,
-                        f"{label}: {names}{where}",
+                        decision.outcome or Outcome.FAILED_GATE,
+                        decision.detail,
                         phase=role,
                         rework=rework_used,
-                        findings=verdict.findings,
+                        findings=decision.findings,
+                        decision=decision.record,
                     )
-
-                # D4: a factory-owned row rides along with the product rows.
-                # The writer is not asked to fix it, but it must not vanish --
-                # name it so the owner sees the factory still owes a fix.
-                factory_rows = owned.get("factory_owned") or []
-                if factory_rows:
-                    self.ledger.append(
-                        EventKind.NOTE,
-                        role=role,
-                        detail="FACTORY_ALSO_OWNS (not sent to the writer): "
-                        + ", ".join(str(t) for t in factory_rows),
-                        payload={"factory_owned": factory_rows, "routed": "PRODUCT"},
-                    )
-
-                # G5: the same failing check/test on two consecutive rounds
-                # stops the run. Never a third attempt at the same thing.
-                current = failure_owner.failure_names(
-                    verdict, exclude=[d["nodeid"] for d in defects]
-                )
-                again = failure_owner.repeated(self._last_rework_failures(), current)
-                if again:
-                    return self._finish(
-                        Outcome.FAILED_GATE,
-                        "SAME_FAILURE_TWICE: " + ", ".join(again),
-                        phase=role,
-                        rework=rework_used,
-                        findings=verdict.findings,
-                    )
-
-                if rework_used >= self.budget.max_rework:
-                    return self._finish(
-                        Outcome.FAILED_BUDGET_SPENT,
-                        f"rework budget of {self.budget.max_rework} exhausted; "
-                        f"{REWORK_SOURCE.value} gate still failing: {verdict.detail}",
-                        phase=role,
-                        rework=rework_used,
-                        findings=verdict.findings,
-                    )
-
-                rework_used += 1
-                work_list = tuple(verdict.findings) + tuple(_test_defect_items(defects))
-                self.ledger.append(
-                    EventKind.REWORK,
-                    role=REWORK_TARGET,
-                    detail=f"round {rework_used}: {verdict.detail}",
-                    payload={"findings": list(verdict.findings), "failure_names": current},
-                )
+                if decision.kind == DECISION_REGENERATE_TEST:
+                    test_defect_rounds += 1
+                else:
+                    rework_used += 1
+                work_list = decision.work_list
                 # Send the WRITER back round. Its earlier pass no longer counts.
                 done.discard(REWORK_TARGET)
                 index = BUILD_PHASES.index(REWORK_TARGET)
@@ -2040,7 +2302,8 @@ class RoleRunner:
             if self.cycle != "pilot" and self._should_auto_open_pilot():
                 self._open_auto_pilot()
                 deadline = self._deadline
-                rework_used = 0
+                # The rework budget is per BUILD: a pilot cycle does not refill it.
+                rework_used = self._rework_rounds_this_build()
                 work_list = ()
                 done = self.ledger.completed_roles()
                 if self._should_reopen_writer_for_cli() or BuildRole.WRITER not in done:

@@ -83,12 +83,6 @@ from app.factory.build.authority import BUILD_PHASES, BuildRole
 LEDGER_SCHEMA = "build_ledger.v1"
 
 
-#: NOTE payload key a Floor resume ("Continue", "Build again", a pasted
-#: branch link) writes before re-entering a failed run: the runner rule's
-#: rework budget counts rounds from the latest such marker, so a resumed
-#: platform gets its budget back while its history stays in the ledger.
-REWORK_BUDGET_RESET = "rework_budget_reset"
-
 #: NOTE payload keys recording a platform's identity and its branch of record.
 PLATFORM_ID_KEY = "platform_id"
 PLATFORM_BRANCH_KEY = "platform_branch"
@@ -477,6 +471,16 @@ class BuildLedger:
                 if (event.payload or {}).get("reopen_writer"):
                     state.pop(BuildRole.WRITER, None)
                 continue
+            if event.kind is EventKind.REWORK and (event.payload or {}).get("reopen"):
+                # A rework that re-opens a finished run (a product-owned
+                # Store-gate failure sends the WRITER back): every phase it
+                # names runs again.
+                for value in (event.payload or {}).get("reopen") or ():
+                    try:
+                        state.pop(BuildRole(value), None)
+                    except ValueError:
+                        pass
+                continue
             if not event.role:
                 continue
             if event.kind is EventKind.PHASE_STARTED or event.kind in TERMINAL_KINDS:
@@ -531,7 +535,8 @@ class BuildLedger:
 
         None is the honest answer for a killed run: absence of a verdict is
         not success, and callers must not infer one from "no failures seen".
-        A ``PILOT_OPENED`` after the last terminal reopens the run.
+        A ``PILOT_OPENED`` -- or a REWORK carrying ``reopen`` -- after the
+        last terminal reopens the run.
         """
         last: Optional[BuildEvent] = None
         for event in self.events():
@@ -539,7 +544,19 @@ class BuildLedger:
                 last = event
             elif event.kind is EventKind.PILOT_OPENED:
                 last = None
+            elif event.kind is EventKind.REWORK and (event.payload or {}).get("reopen"):
+                last = None
         return last
+
+    def reopening_rework(self) -> Optional[BuildEvent]:
+        """The REWORK that re-opened a finished run, while nothing has run
+        since it; None otherwise."""
+        events = self.events()
+        if events and events[-1].kind is EventKind.REWORK and (
+            events[-1].payload or {}
+        ).get("reopen"):
+            return events[-1]
+        return None
 
     def succeeded(self) -> bool:
         event = self.terminal_event()

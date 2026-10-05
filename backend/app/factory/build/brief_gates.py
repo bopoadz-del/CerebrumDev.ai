@@ -36,6 +36,23 @@ SUITE_CHECK = "gates"
 #: The compiled brief's PRODUCT-gate bullet: the pilot-marked suite.
 PRODUCT_GATE_CHECK = "product_gate"
 
+#: The WRITER gate's sub-checks -- the gate name each WRITER verdict carries.
+#: The compiled brief renders one ACCEPTANCE line per id (what to build), so
+#: a WRITER failure on any of them is brief-defined and goes back to the
+#: writer as a rework round; the gates stamp these same constants.
+WORKSPACE_COMPILES_CHECK = "workspace_compiles"
+WRITER_CONTRACT_CHECK = "writer_contract"
+WRITER_BEHAVIOUR_CHECK = "writer_behaviour"
+UI_SURFACE_CHECK = "ui_surface"
+UI_END_TO_END_CHECK = "ui_end_to_end"
+WRITER_CHECKS = (
+    WORKSPACE_COMPILES_CHECK,
+    WRITER_CONTRACT_CHECK,
+    WRITER_BEHAVIOUR_CHECK,
+    UI_SURFACE_CHECK,
+    UI_END_TO_END_CHECK,
+)
+
 #: Why a factory-invented failure is advisory -- the reason in the ledger.
 REASON_NOT_DEFINED = "not defined by the brief"
 

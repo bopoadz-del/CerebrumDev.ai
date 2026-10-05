@@ -26,6 +26,7 @@ from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from app.factory.build.authority import BuildRole
+from app.factory.build.brief_gates import WORKSPACE_COMPILES_CHECK, WRITER_CONTRACT_CHECK
 from app.factory.build.pilot_durability import gate_pilot_outcome_survives_restart
 from app.factory.build.ui_surface import gate_ui_surface
 from app.factory.build.vendored_integrity import gate_vendored_integrity
@@ -455,7 +456,7 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
     if not app_dir.is_dir():
         return GateResult(
             ok=False,
-            gate="workspace_compiles",
+            gate=WORKSPACE_COMPILES_CHECK,
             reason="writer_no_app",
             detail="app/ is missing — the writer produced nothing",
             findings=["no app/ directory"],
@@ -466,12 +467,12 @@ def gate_workspace_compiles(ctx: GateContext) -> GateResult:
         output = ((proc.stdout or "") + (proc.stderr or "")).splitlines()
         return GateResult(
             ok=False,
-            gate="workspace_compiles",
+            gate=WORKSPACE_COMPILES_CHECK,
             reason="workspace_compile_failed",
             detail="app/ does not compile",
             findings=[ln for ln in output if ln.strip()][-20:],
         )
-    return GateResult(ok=True, gate="workspace_compiles", detail="app/ compiles")
+    return GateResult(ok=True, gate=WORKSPACE_COMPILES_CHECK, detail="app/ compiles")
 
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
@@ -894,7 +895,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     if not agent_written:
         return GateResult(
             ok=False,
-            gate="writer_contract",
+            gate=WRITER_CONTRACT_CHECK,
             reason="writer_no_output",
             detail=(
                 f"{WRITER_NO_OUTPUT}: zero agent-authored artifacts in the "
@@ -938,7 +939,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     if money.status == "FAIL":
         return GateResult(
             ok=False,
-            gate="writer_contract",
+            gate=WRITER_CONTRACT_CHECK,
             reason=MONEY_ASSUMED,
             detail=f"{MONEY_ASSUMED}: {money.findings[0]}",
             findings=list(money.findings),
@@ -951,7 +952,7 @@ def gate_writer_contract(ctx: GateContext) -> GateResult:
     )
     return GateResult(
         ok=True,
-        gate="writer_contract",
+        gate=WRITER_CONTRACT_CHECK,
         detail=f"{compiled.detail}; {behaviour.detail}; {surface.detail}; {money_line}",
         findings=list(behaviour.findings),
         payload={

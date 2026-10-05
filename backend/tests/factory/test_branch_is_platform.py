@@ -23,11 +23,11 @@ from app.factory.blueprint import blueprint_to_dict, load_blueprint
 from app.factory.build.authority import BuildRole
 from app.factory.build.ledger import (
     PLATFORM_ID_KEY,
-    REWORK_BUDGET_RESET,
     BuildLedger,
     EventKind,
 )
 from app.factory.build.platform_identity import branch_of_record, mint_platform_id
+from app.factory.build.rule_decision import BUDGET_RESET_KEY as REWORK_BUDGET_RESET
 from app.factory.build.runner import blueprint_hash
 from app.main import app
 from app.core.session_store import create_session, get_session, update_session
