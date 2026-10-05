@@ -1286,7 +1286,8 @@ def test_sample_payload_covers_every_required_field_type():
 def test_sample_value_uses_truthy_int_when_min_is_zero():
     """``min=0`` is valid; 0 is falsy and fails ``if not payload.get(...)``."""
     assert _sample_value({"name": "login_count", "type": "int", "min": 0}) == 1
-    assert _sample_value({"name": "owner_id", "type": "str"}) == "id-1"
+    # A name decides nothing: an undeclared str field samples neutrally.
+    assert _sample_value({"name": "owner_id", "type": "str"}) == "sample"
 
 
 def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
@@ -1365,7 +1366,7 @@ def test_tester_late_aligns_vetconnect_handlers_into_accept_payload(tmp_path):
     assert "'role': 'veterinarian'" in routes
     assert "'access_level': 'admin'" in routes
     assert "'is_active': True" in routes
-    assert "'clinic_id': 'id-1'" in routes
+    assert "'clinic_id': 'sample'" in routes  # non-empty; the name implies no shape
     assert "login_count" in routes
     assert "'role': 'sample'" not in routes
 
