@@ -893,6 +893,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import sys
 import uuid
 from html.parser import HTMLParser

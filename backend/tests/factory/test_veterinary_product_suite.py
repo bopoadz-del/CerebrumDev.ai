@@ -732,12 +732,19 @@ def test_sess_1fd1d54c_veterinarian_availability_same_status_class():
     assert accepted.get("ok") is True, (sample, accepted)
     from app.factory.build.data_lifecycle import sample_for_spec
 
-    lifecycle = sample_for_spec(
+    # The status vocabulary is DECLARED by the record envelope; the lifecycle
+    # sample follows the declaration, never the field's name.
+    lifecycle_spec, _added = ensure_record_envelope(
+        {"fields": [{"name": "status", "type": "str", "required": True}]}
+    )
+    lifecycle = sample_for_spec(lifecycle_spec, placeholder="s10-row")
+    assert lifecycle["status"] == "open"
+    assert lifecycle["status"] != "s10-row"
+    bare = sample_for_spec(
         {"fields": [{"name": "status", "type": "str", "required": True}]},
         placeholder="s10-row",
     )
-    assert lifecycle["status"] == "open"
-    assert lifecycle["status"] != "s10-row"
+    assert bare["status"] == "s10-row"  # undeclared: the placeholder
 
 
 def test_sess_1fd1d54c_tester_bakes_open_from_route_constraints(tmp_path):

@@ -888,9 +888,11 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
 
     class Appointment:
         FIELDS = ["scheduled_time", "duration_minutes", "status", "service_type", "channel"]
+        # The channel's vocabulary is DECLARED; the sample follows it.
         CONSTRAINTS = {
             "status": {"allowed_values": ["booked", "completed"]},
             "scheduled_time": {"format": "time"},
+            "channel": {"allowed_values": ["email", "sms"]},
         }
         __annotations__ = {
             "scheduled_time": "str",
@@ -906,8 +908,15 @@ def test_probe_value_samples_appointment_fields_not_the_word_sample():
     assert payload["duration_minutes"] == 1
     assert payload["status"] == "booked"
     assert payload["service_type"] == "sample"
-    assert payload["channel"] != "sample"
-    assert payload["channel"] == "email"
+    assert payload["channel"] == "email"  # allowed_values[0]
+
+    class Undeclared:
+        """Same names, nothing declared: the name decides nothing."""
+        FIELDS = ["channel", "created_at", "visit_date", "owner_email"]
+        CONSTRAINTS = {}
+        __annotations__ = {n: "str" for n in FIELDS}
+
+    assert set(ns["_payload"](Undeclared).values()) == {"sample"}
 
     class DatetimeAnn:
         FIELDS = ["visit"]

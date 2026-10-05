@@ -64,27 +64,36 @@ class _VetCare:
 
 
 def test_probe_sample_rules_match_writer_behaviour_literals():
-    """Drift between the brief contract and the baked probe is the next halt."""
+    """Drift between the brief contract and the baked probe is the next halt.
+
+    Every non-generic sample follows a DECLARATION -- a vocabulary, a bound,
+    a type or a format -- never the field's name.
+    """
+    from app.factory.build.block_obligations import ENVELOPE_STATUS_VALUES
+
     assert SCHEMA_ACCEPT_HALT == SCHEMA_HALT
     probe = BEHAVIOUR_PROBE
-    assert 'return "open"' in probe
-    assert 'return "email"' in probe
-    assert 'return "sample"' in probe
-    assert 'return "2026-09-03T10:00:00"' in probe
-    assert 'return "2026-09-03"' in probe
-    assert 'return "10:00:00"' in probe
-    assert 'return "sample@example.com"' in probe
-    assert probe_sample_value("status") == ENVELOPE_STATUS_SAMPLE == "open"
-    assert probe_sample_value("channel") == CHANNEL_SAMPLE == "email"
-    assert probe_sample_value("pet_name") == GENERIC_STR_SAMPLE
-    assert probe_sample_value("scheduled_time") == TIME_SAMPLE
-    assert probe_sample_value("appointment_date") == DATE_SAMPLE
-    assert probe_sample_value("created_at") == DATETIME_SAMPLE
-    assert probe_sample_value("owner_email") == EMAIL_SAMPLE
-    assert probe_sample_value("quantity", annotation="int", constraints={"min": 0}) == 0
+    for literal in (GENERIC_STR_SAMPLE, DATETIME_SAMPLE, DATE_SAMPLE, TIME_SAMPLE, EMAIL_SAMPLE):
+        assert f'return "{literal}"' in probe, literal
+    # Declared vocabularies: the envelope status, a channel list, any enum.
+    assert probe_sample_value(
+        "status", constraints={"allowed_values": list(ENVELOPE_STATUS_VALUES)}
+    ) == ENVELOPE_STATUS_SAMPLE == "open"
+    assert probe_sample_value(
+        "channel", constraints={"allowed_values": [CHANNEL_SAMPLE, "sms"]}
+    ) == CHANNEL_SAMPLE
     assert probe_sample_value(
         "priority", constraints={"allowed_values": ["Critical", "Low"]}
     ) == "Critical"
+    # Declared formats and types.
+    assert probe_sample_value("scheduled_time", constraints={"format": "time"}) == TIME_SAMPLE
+    assert probe_sample_value("appointment_date", constraints={"format": "date"}) == DATE_SAMPLE
+    assert probe_sample_value("created_at", annotation="datetime") == DATETIME_SAMPLE
+    assert probe_sample_value("owner_email", constraints={"format": "email"}) == EMAIL_SAMPLE
+    assert probe_sample_value("quantity", annotation="int", constraints={"min": 0}) == 0
+    # Undeclared: the type's neutral value, whatever the field is called.
+    for name in ("status", "channel", "created_at", "owner_email", "scheduled_time", "zorblat_date"):
+        assert probe_sample_value(name) == GENERIC_STR_SAMPLE, name
 
 
 def test_envelope_accept_sample_is_what_the_gate_will_post():
