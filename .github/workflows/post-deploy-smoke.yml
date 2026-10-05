@@ -29,7 +29,9 @@ jobs:
   live-smoke:
     name: Live factory smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A real build takes 30-45 min; the export check waits for it (smoke
+    # SMOKE_BUILD_WAIT_S, default 90 min).
+    timeout-minutes: 120
     steps:
       - name: The deploy must have succeeded
         if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'success'

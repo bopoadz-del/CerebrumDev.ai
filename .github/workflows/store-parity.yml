@@ -1,17 +1,9 @@
 name: Store parity
 
-# The Factory follows the Store's live head, but pins every block's content hash
-# in blocks.lock.json. A Store commit that changes a block's bytes therefore
-# invalidates the lock -- and nothing in either repo noticed: CI here runs on
-# pull_request only, a Store-only change never touches this repo, and the Store's
-# CI does not know the lock exists. The first thing that noticed, twice on
-# 2026-09-26, was a customer's build dying in CLONER with a hash mismatch.
-#
-# This is the guard. On a schedule, check the Store out at the same ref the
-# Factory resolves in production and run the parity script. A stale lock fails
-# here, loudly, hours before it fails a build. Regenerate with
-#   python -m app.factory.cli update-lock --blocks-root "$CEREBRUM_BLOCKS_ROOT"
-# and commit the lock (and FALLBACK_CEREBRUM_BLOCKS_REF, which must agree).
+# The Factory builds from the Store commit in store.pin, and blocks.lock.json
+# is generated from that same commit (cli bump-store moves both at once). This
+# scheduled job re-checks that the committed lock still matches the pinned
+# Store -- e.g. after a force-push in the Store -- and fails loudly if not.
 on:
   schedule:
     - cron: "17 */6 * * *"
@@ -22,7 +14,7 @@ permissions:
 
 jobs:
   parity:
-    name: blocks.lock.json matches the Store's head
+    name: blocks.lock.json matches the pinned Store
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -42,16 +34,17 @@ jobs:
       # way production does, or it guards the wrong thing.
       - name: Check out the Store
         env:
-          STORE_REF: ${{ vars.CEREBRUM_BLOCKS_REF || 'main' }}
           # Cerebrum-Blocks is private; authenticate with CROSS_REPO_PAT (an
           # existing repo secret with Store read access). Token URL, never
           # persisted to remote config; GitHub masks the secret in logs.
           CROSS_REPO_PAT: ${{ secrets.CROSS_REPO_PAT }}
         run: |
+          STORE_REF="$(tr -d '[:space:]' < "$GITHUB_WORKSPACE/store.pin")"
           echo "Store ref: $STORE_REF"
           git init -q "$RUNNER_TEMP/Cerebrum-Blocks"
           cd "$RUNNER_TEMP/Cerebrum-Blocks"
           git fetch -q --depth 1 "https://x-access-token:${CROSS_REPO_PAT}@github.com/bopoadz-del/Cerebrum-Blocks.git" "$STORE_REF"
+          test "$(git rev-parse FETCH_HEAD)" = "$STORE_REF"
           git checkout -q FETCH_HEAD
           test -d block_registry
           echo "Store head: $(git rev-parse HEAD)  ($(ls block_registry | wc -l) blocks)"

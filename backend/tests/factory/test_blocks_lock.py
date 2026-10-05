@@ -8,6 +8,8 @@ no fall-through to latest.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -143,9 +145,6 @@ def test_generator_refuses_mismatched_store_hash(tmp_path):
 # is regenerated against the pinned Store (a967e0a1) after each Store change;
 # this constant pins the database block hash for that snapshot. The hash is
 # platform-deterministic (posix-path ordering + LF-normalized bytes).
-STEWARD_DATABASE_STORE_HASH = (
-    "sha256:74ea4ee982ada02f97d9cb2ee2af9c70d2ed5fc84ee61f528fb6f45feafd89c9"
-)
 
 
 def test_committed_lock_lists_every_consumed_block():
@@ -165,8 +164,20 @@ def test_committed_lock_lists_every_consumed_block():
         assert rec["content_hash"].startswith("sha256:")
         assert len(rec["content_hash"]) == len("sha256:") + 64
     assert "database" in lock["blocks"]
-    assert lock["blocks"]["database"]["content_hash"] == STEWARD_DATABASE_STORE_HASH
     assert lock["blocks"]["database"]["source"] == "cerebrum-blocks"
+    # The pinned hash is checked against the Store it names, not against a
+    # literal: a literal broke the Factory on every Store re-sign.
+    store = os.environ.get("CEREBRUM_BLOCKS_ROOT", "").strip()
+    if store and (Path(store) / ".git").exists():
+        from app.factory.blocks_lock import _block_dir_in_store, block_content_hash
+
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=store, capture_output=True, text=True
+        ).stdout.strip()
+        if head == sha:
+            block_dir = _block_dir_in_store(Path(store), "database")
+            assert block_dir is not None
+            assert lock["blocks"]["database"]["content_hash"] == block_content_hash(block_dir)
 
 
 def test_committed_lock_covers_steward_blueprint_blocks():
