@@ -48,6 +48,9 @@ from typing import Any, Optional
 #: Matched to the FastAPI sync threadpool: one writer, readers proceed.
 SQLITE_BUSY_TIMEOUT_MS = 30000
 SQLITE_CONNECT_TIMEOUT_S = 30.0
+#: The statement itself is a constant: nothing reaches execute() as a
+#: dynamically built string (the acceptance floor's audit_clean measures it).
+_BUSY_TIMEOUT_PRAGMA = "PRAGMA busy_timeout=30000"
 
 _ENGINE: Optional[Any] = None
 
@@ -108,8 +111,13 @@ def connect() -> Any:
     """A live connection on whichever backend is configured.
 
     Postgres: a SQLAlchemy connection. SQLite: a stdlib sqlite3 connection
-    with WAL and a busy timeout. Both are context managers and both are
-    closed by the caller.
+    with a busy timeout. Both are context managers and both are closed by
+    the caller.
+
+    journal_mode is NOT switched here. WAL is a persistent property of the
+    file, set once by app.migrations.upgrade_head() at boot; switching it on
+    every connection makes concurrent first-opens race for the write lock
+    and raise 'database is locked' under the FastAPI threadpool.
     """
     if is_postgres():
         return engine().connect()
@@ -120,8 +128,7 @@ def connect() -> Any:
         isolation_level="DEFERRED",
     )
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute(_BUSY_TIMEOUT_PRAGMA)
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn

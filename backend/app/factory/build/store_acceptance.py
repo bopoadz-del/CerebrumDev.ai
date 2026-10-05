@@ -1281,7 +1281,163 @@ def check_handler_bodies_distinct() -> Tuple[str, str]:
     return "PASS", "%d distinct handle() bodies" % len(bodies)
 
 
+#: The DB-API entry points a statement is handed to -- callable NAMES,
+#: compared exactly against the call's own target, never searched in text.
+_SQL_ENTRY_CALLS = frozenset(
+    ("execute", "executemany", "executescript", "exec_driver_sql", "text")
+)
+
+
+def _is_dynamic_string(node, built) -> bool:
+    """Built at run time: an f-string with fields, a + or % with a string
+    side, a .format() call, or a local name bound to one of those."""
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(v, ast.FormattedValue) for v in node.values)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        for side in (node.left, node.right):
+            if isinstance(side, ast.Constant) and isinstance(side.value, str):
+                return True
+            if _is_dynamic_string(side, built):
+                return True
+        return False
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+    ):
+        return True
+    if isinstance(node, ast.Name):
+        return node.id in built
+    return False
+
+
+def _call_target(call) -> str:
+    func = call.func
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return ""
+
+
+def _scope_nodes(scope):
+    """Every node of one scope, not descending into nested functions."""
+    out = []
+    stack = list(ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return out
+
+
+def _dynamic_sql_sites() -> List[str]:
+    """file:line of every execute()-family call handed a dynamically built
+    string. Decided on the syntax tree: the call's target plus the shape of
+    its first argument. Core statements, compiled statements and constant
+    literals with bound parameters pass."""
+    sites = []
+    app_dir = ROOT / "app"
+    if not app_dir.is_dir():
+        return sites
+    for path in sorted(app_dir.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        functions = [
+            n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        # A function that hands one of its parameters to an execute call is
+        # itself an entry point for that argument position (a writer's own
+        # _exec(conn, sql, params) wrapper) -- followed structurally, not by name.
+        sinks = dict((name, 0) for name in _SQL_ENTRY_CALLS)
+        for _ in range(3):
+            for fn in functions:
+                params = [a.arg for a in fn.args.args]
+                for n in _scope_nodes(fn):
+                    if not isinstance(n, ast.Call):
+                        continue
+                    callee = _call_target(n)
+                    position = sinks.get(callee)
+                    if position is None or len(n.args) <= position:
+                        continue
+                    arg = n.args[position]
+                    if isinstance(arg, ast.Name) and arg.id in params:
+                        sinks.setdefault(fn.name, params.index(arg.id))
+        scopes = [tree] + functions
+        for scope in scopes:
+            nodes = _scope_nodes(scope)
+            built = set()
+            for _ in range(2):
+                for n in nodes:
+                    if isinstance(n, ast.Assign) and _is_dynamic_string(n.value, built):
+                        built.update(t.id for t in n.targets if isinstance(t, ast.Name))
+                    elif (
+                        isinstance(n, ast.AugAssign)
+                        and isinstance(n.target, ast.Name)
+                        and isinstance(n.op, ast.Add)
+                    ):
+                        built.add(n.target.id)
+            for n in nodes:
+                if not isinstance(n, ast.Call):
+                    continue
+                position = sinks.get(_call_target(n))
+                if position is None or len(n.args) <= position:
+                    continue
+                if _is_dynamic_string(n.args[position], built):
+                    sites.append("%s:%s" % (path.relative_to(ROOT).as_posix(), n.lineno))
+    return sorted(set(sites))
+
+
+def _health_probes_app_db() -> Tuple[bool, str]:
+    """app/health.py asks app.db for the live database and runs a probe on
+    it -- read from the syntax tree (imports, calls), never from its text."""
+    path = ROOT / "app" / "health.py"
+    if not path.is_file():
+        return False, "app/health.py missing"
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError as exc:
+        return False, "app/health.py does not parse: %s" % exc
+    db_modules = set()
+    db_connect = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == "app":
+            for alias in n.names:
+                if alias.name == "db":
+                    db_modules.add(alias.asname or alias.name)
+        elif isinstance(n, ast.ImportFrom) and n.module == "app.db":
+            for alias in n.names:
+                if alias.name == "connect":
+                    db_connect.add(alias.asname or alias.name)
+    connects = False
+    executes = False
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        func = n.func
+        if isinstance(func, ast.Attribute) and func.attr == "connect":
+            if isinstance(func.value, ast.Name) and func.value.id in db_modules:
+                connects = True
+        if isinstance(func, ast.Name) and func.id in db_connect:
+            connects = True
+        if isinstance(func, ast.Attribute) and func.attr == "execute":
+            executes = True
+    if not connects:
+        return False, "app/health.py does not take its database connection from app.db"
+    if not executes:
+        return False, "app/health.py never runs a probe on the database"
+    return True, "health probes the database app.db selects"
+
+
 def check_health_fail_closed() -> Tuple[str, str]:
+    probes, why = _health_probes_app_db()
+    if not probes:
+        return "FAIL", why
     missing = ROOT / ".acceptance-missing-disk"
     previous = os.environ.get("STORAGE_PATH")
     os.environ["STORAGE_PATH"] = str(missing)
@@ -1523,6 +1679,9 @@ def check_audit_clean() -> Tuple[str, str]:
     missing = [t for t in ("pip-audit", "bandit") if t not in text]
     if missing:
         return "FAIL", "CI does not run " + ", ".join(missing)
+    dynamic = _dynamic_sql_sites()
+    if dynamic:
+        return "FAIL", "dynamically built SQL reaches an execute call: " + ", ".join(dynamic[:6])
     measured = (os.environ.get("STORE_AUDIT_CLEAN") or "").strip().lower()
     if measured in ("0", "false", "dirty"):
         return "FAIL", "bandit/pip-audit reported HIGH or SQL-construction findings"
