@@ -87,6 +87,12 @@ def test_cli_outliving_phase_wall_extends_logs_and_continues(blueprint, tmp_path
     continued = {"ok": False}
 
     def hanging_cli(ctx):
+        # Time moves forward from wherever THIS WRITER call starts. A rework
+        # round re-enters WRITER later in the run (TESTER or writer-gate
+        # rework); absolute values rewound the clock (1.4 -> 0.95), left the
+        # re-entered phase box (start + 1s) un-approached, and read
+        # coder_time_left == 1.0 -- a clock no live build has, not a ramp miss.
+        start = now["t"]
         ctx.note(
             "dispatching compiled brief via FACTORY_CODE_CLI (/usr/local/bin/kimi)",
             stage="dispatch",
@@ -96,12 +102,12 @@ def test_cli_outliving_phase_wall_extends_logs_and_continues(blueprint, tmp_path
             done=0,
             total=1,
         )
-        now["t"] = PHASE_WALL_S - 0.05
+        now["t"] = start + PHASE_WALL_S - 0.05
         # Pulse the same inspect hook the CLI wait loop uses.
         pulse = (ctx.deadline_box or {}).get("inspect")
         assert callable(pulse), "CLI path must share deadline_box['inspect']"
         pulse()
-        now["t"] = PHASE_WALL_S + 0.4
+        now["t"] = start + PHASE_WALL_S + 0.4
         pulse()
         left = ctx.coder_time_left()
         assert left is not None and left > 1.0, (
