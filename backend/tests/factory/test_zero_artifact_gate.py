@@ -25,7 +25,8 @@ def _stamped_handler(actions: Path, cid: str, source: str = "coder LLM") -> None
         f"Written by the factory WRITER role ({source}). Blocks are invoked "
         "through\n"
         'the local dispatch runtime -- this module makes no network call.\n'
-        '"""\n',
+        '"""\n'
+        f'AUTHORED_BY = "{source}"\n',
         encoding="utf-8",
     )
 

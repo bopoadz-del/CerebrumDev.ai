@@ -194,8 +194,8 @@
     },
     {
       "id": "authorship_floor",
-      "requirement_text": "Every action handler you author carries the authorship stamp in its module docstring.",
-      "brief_render": "- authorship_floor: Every action handler you author carries the authorship stamp in its module docstring.",
+      "requirement_text": "Every action handler you author sets a module-level AUTHORED_BY = \"<your writer source>\" assignment (a str constant, directly under its imports); the gate reads it from the syntax tree.",
+      "brief_render": "- authorship_floor: Every action handler you author sets a module-level AUTHORED_BY = \"<your writer source>\" assignment (a str constant, directly under its imports); the gate reads it from the syntax tree.",
       "gate_fn": "check_authorship_floor",
       "check": "authored handlers carry the stamp",
       "universal": true,

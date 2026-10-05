@@ -80,7 +80,8 @@ def test_writer_contract_refuses_a_workspace_that_does_not_parse(tmp_path):
         'Written by the factory WRITER role (coder LLM). Blocks are invoked '
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
-        '"""\n',
+        '"""\n'
+        'AUTHORED_BY = "coder LLM"\n',
         encoding="utf-8",
     )
     (app / "routes.py").write_text("def broken(:\n", encoding="utf-8")
@@ -103,7 +104,8 @@ def test_writer_contract_does_not_stop_at_compilation(tmp_path):
         'Written by the factory WRITER role (coder LLM). Blocks are invoked '
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
-        '"""\n',
+        '"""\n'
+        'AUTHORED_BY = "coder LLM"\n',
         encoding="utf-8",
     )
     (app / "routes.py").write_text("x = 1\n", encoding="utf-8")

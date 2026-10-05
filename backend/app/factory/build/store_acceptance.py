@@ -41,7 +41,7 @@ from app.factory.build.acceptance_floor import advisory_ids as _floor_advisory_i
 from app.factory.build.authorship import AGENT_SOURCE_EXACT as _AGENT_SOURCE_EXACT
 from app.factory.build.authorship import AGENT_SOURCE_PREFIXES as _AGENT_SOURCE_PREFIXES
 from app.factory.build.authorship import FULL_PILOT_MIN_AUTHORED_ACTIONS as _FULL_PILOT_MIN_AUTHORED
-from app.factory.build.authorship import _WRITER_ROLE_STAMP_RE as _AUTHOR_STAMP_RE
+from app.factory.build.authorship import RENDERED_MARKER_READER as _RENDERED_MARKER_READER
 from app.factory.build.acceptance_floor import check_ids as _floor_check_ids
 
 ACCEPTANCE_CHECK_NAMES: tuple[str, ...] = _floor_check_ids()
@@ -1972,15 +1972,15 @@ def check_cross_tenant_404(http: _Http) -> Tuple[str, str]:
             os.environ["TENANT_TOKENS"] = previous
 
 
+{_RENDERED_MARKER_READER}
+
 def check_authorship_floor() -> Tuple[str, str]:
-    # Judge the product by the product. The WRITER's docstring stamp is the
-    # one signal, and its vocabulary is the Factory's canonical one
-    # (the Factory's authorship module) RENDERED in here at stamp time: a
-    # delivered product never carries the Factory package, and importing it
-    # failed this line on every honest build (2026-10-04, ModuleNotFoundError;
-    # it only ever passed when a writer had copied Factory code into the
-    # product).
-    stamp_re = re.compile({_AUTHOR_STAMP_RE.pattern!r})
+    # Judge the product by the product. Each handler's module-level
+    # authorship marker, read from the syntax tree by a reader RENDERED in
+    # here from the Factory's canonical one (with its source vocabulary) at
+    # stamp time: a delivered product never carries the Factory package, and
+    # importing it failed this line on every honest build (2026-10-04). A
+    # docstring sentence decides nothing.
     agent_prefixes = {tuple(_AGENT_SOURCE_PREFIXES)!r}
     agent_exact = {sorted(_AGENT_SOURCE_EXACT)!r}
     floor_min = {_FULL_PILOT_MIN_AUTHORED}
@@ -1996,14 +1996,10 @@ def check_authorship_floor() -> Tuple[str, str]:
     authored = 0
     for path in (sorted(actions.glob("*.py")) if actions.is_dir() else []):
         try:
-            head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+            source = _authored_by(path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
-        match = stamp_re.search(head)
-        if not match:
-            continue
-        source = match.group(1).strip()
-        if source.startswith(tuple(agent_prefixes)) or source.lower() in agent_exact:
+        if source and (source.startswith(tuple(agent_prefixes)) or source.lower() in agent_exact):
             authored += 1
     n_required = receipt.get("n_required") or receipt.get("n_required_capabilities")
     try:

@@ -136,6 +136,7 @@ def _write_workspace(root: Path, route_body: str) -> None:
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'widget_intake'\n\n"
         "def handle(payload):\n"
@@ -271,6 +272,7 @@ def _write_mixed_workspace(root: Path) -> None:
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'invoice_management'\n\n"
         "def handle(payload):\n"
@@ -342,6 +344,7 @@ def test_kernel_route_does_not_report_success_over_a_failed_block(tmp_path):
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'invoice_management'\n\n"
         "def handle(payload):\n"
@@ -503,6 +506,7 @@ def _add_schema_refuser(root: Path, cap_id: str = "broken_schema") -> None:
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         f"CAPABILITY_ID = '{cap_id}'\n\n"
         "def handle(payload):\n"
         "    return {'ok': False, 'error': 'name is required'}\n",
@@ -555,6 +559,7 @@ def test_gate_fails_all_schema_with_schema_detail_not_f1(tmp_path):
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         "CAPABILITY_ID = 'widget_intake'\n\n"
         "def handle(payload):\n"
         "    return {'ok': False, 'error': 'name is required'}\n",
@@ -1005,6 +1010,7 @@ def _write_appointment_sql_workspace(root: Path, *, invalid_pk: bool = False) ->
         'through\n'
         'the local dispatch runtime -- this module makes no network call.\n'
         '"""\n'
+        'AUTHORED_BY = "coder LLM"\n'
         "from app.dispatch import execute\n\n"
         "CAPABILITY_ID = 'end_to_end_appointment_workflow'\n\n"
         "def handle(payload):\n"
