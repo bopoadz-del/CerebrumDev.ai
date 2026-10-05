@@ -94,6 +94,7 @@ def test_expired_trial_existing_session_approve_chat_402(
         "capabilities": [],
     }
     state.product_design.blueprint_approved = False
+    state.product_design.build_level = "prototype"  # the user's typed choice
     update_session(session_id, state)
     _expire_and_enforce(account_id, monkeypatch)
     res = client.post(

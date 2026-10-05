@@ -43,13 +43,6 @@ SCHEMA = "acceptance_floor.v2"
 #: lives in the floor file, as data, so a check can move between the two sets
 #: without touching code.
 
-#: Grades that mean "not a production platform": the production-only checks (the
-#: security scan) are advisory for these. Anything else — including an unset
-#: grade — is production, so nothing is silently lowered.
-_NON_PRODUCTION_GRADES = frozenset(
-    {"prototype", "light", "test", "disposable", "demo", "throwaway", "poc"}
-)
-
 #: The read a Store block declares when it retrieves: it reads the database at
 #: vector scope. A brief retrieves when any capability binds a block whose own
 #: block.json declares this read (store_kits.blocks_declaring_read).
@@ -57,10 +50,16 @@ RETRIEVAL_READ = ("database", "vector")
 
 
 def is_production_grade(blueprint: Any) -> bool:
-    """True unless the brief declared a disposable/test grade. An unset grade is
-    production, so the security bar is never lowered by omission."""
-    grade = str(getattr(blueprint, "rigor", "") or "").strip().lower()
-    return grade not in _NON_PRODUCTION_GRADES
+    """True when the floor applies in full: the user chose the production
+    level, or declared no level at all -- the production-only checks (the
+    security scan) are never lowered by omission. Read from the typed
+    build level's bar (app.factory.build.build_level), never from words."""
+    from app.factory.build.build_level import bar_for
+
+    if blueprint is None:
+        return True
+    bar = bar_for(blueprint)
+    return bar is None or bar.full_floor
 
 
 def _all_signals() -> frozenset:

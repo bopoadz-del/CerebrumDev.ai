@@ -43,6 +43,7 @@ def product_client(tmp_path, monkeypatch):
     assert state is not None
     state.product_design.blueprint = _bp().model_dump(mode="json")
     state.product_design.blueprint_approved = True
+    state.product_design.build_level = "prototype"  # the user's typed choice
     state.product_design.plan = {
         "product_id": "error-route-demo",
         "capabilities": [],

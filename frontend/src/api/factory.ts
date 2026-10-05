@@ -285,9 +285,23 @@ export interface ChatEvent {
  *  Factory never decides an action from the words in the message. */
 export type FloorAction = keyof typeof floorActionSpec.actions
 
-/** The build grades a blueprint can declare (ProductBlueprint.rigor), from
- *  the same spec's ``set_rigor`` value set. */
-export const RIGOR_LEVELS: readonly string[] = floorActionSpec.actions.set_rigor.value.one_of
+/** The build levels the user can choose (ProductBlueprint.build_level), from
+ *  the same spec's ``set_build_level`` value set. There is no default. */
+export const BUILD_LEVELS: readonly string[] = floorActionSpec.actions.set_build_level.value.one_of
+
+/** The user's typed intake as the server holds it: what they declared, and
+ *  what the chat PROPOSED from their answer (stored only on Confirm). */
+export interface IntakeFields {
+  vertical?: string | null
+  country?: string | null
+  currency?: string | null
+  build_level?: string | null
+}
+
+export interface IntakeState {
+  declared: IntakeFields
+  proposal: IntakeFields | null
+}
 
 export interface TypedFloorAction {
   action: FloorAction
@@ -425,6 +439,8 @@ export const product = {
       default: string
       country?: string | null
       currency?: string | null
+      build_level?: string | null
+      intake?: IntakeState
     }>(
       'GET',
       `/v1/sessions/${sid}/product/verticals`,
@@ -525,6 +541,9 @@ export type BuildStatus = {
   pilot_ready?: boolean
   /** True when the Floor will (or did) auto-open a pilot cycle after code SUCCESS. */
   auto_pilot?: boolean
+  /** The build level the user chose and the gate that level stops at, as the
+   *  run recorded it in its own ledger. Null for a run that declared none. */
+  build_level?: { build_level: string; stop_gate: string } | null
   /** Fail-closed founding-customer grade. SCAFFOLD when pilot_ready is false. */
   level_grade?: {
     level?: string

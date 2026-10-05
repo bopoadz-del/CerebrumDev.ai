@@ -48,8 +48,19 @@ export function LevelGradeStrip({
         ? `${testIdPrefix}-pilot-ready-pill`
         : `${testIdPrefix}-level-grade`
 
+  const builtTo = build.build_level
   return (
     <div className="level-grade-strip" data-testid={`${testIdPrefix}-level-grade`}>
+      {builtTo?.build_level && (
+        <span
+          className="gate-chip"
+          data-testid={`${testIdPrefix}-build-level`}
+          data-level={builtTo.build_level}
+          title={`The build level the user chose; it stops at the ${builtTo.stop_gate} gate`}
+        >
+          Built to: {builtTo.build_level} (stops at {builtTo.stop_gate})
+        </span>
+      )}
       {showLevel && level && (
         <span className={PILL_CLASS[level]} data-testid={levelTestId} data-level={level}>
           {levelGradeLabel(level, sourced)}

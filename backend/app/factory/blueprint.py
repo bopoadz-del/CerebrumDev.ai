@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class BlueprintError(ValueError):
@@ -81,10 +81,13 @@ class ProductBlueprint(BaseModel):
     #: Directory under factory_outputs/ that keeps a stable copy of the last
     #: finished build of this blueprint. Unset: no canonical copy.
     canonical_output: Optional[str] = None
-    #: Build rigor: prototype | light | standard | production. The acceptance
-    #: floor grades THIS build against the bar it declared, not a fixed maximum.
-    #: Defaults to the strictest so an unset brief is never silently lowered.
-    rigor: str = "production"
+    #: The BUILD LEVEL the user chose on the Floor (a typed field, like the
+    #: vertical and the locale): prototype | light | pilot | production
+    #: (app.factory.build.build_level). It decides where the run stops on the
+    #: CODE -> PRODUCT -> STORE ladder and how strict its top rung is. None
+    #: means undeclared -- the Floor refuses to start a build until the user
+    #: chooses; it is never inferred from the brief and has no default.
+    build_level: Optional[str] = None
     human_authority: bool = True
     factory_scenario: FactoryScenario = FactoryScenario.CREATE_PRODUCT
     # Provenance of the draft itself: "architect_llm" | "golden" (chosen by
@@ -103,6 +106,25 @@ class ProductBlueprint(BaseModel):
     #: None when the user declared none -- money is then WITHHELD, never
     #: guessed (money_contract).
     locale: Optional[Dict[str, str]] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_rigor(cls, data: Any) -> Any:
+        # ``rigor`` was the build grade before the user chose a level. Its
+        # stored value (defaulted to "production") was never the user's
+        # choice, so it is dropped on load -- never translated into a level.
+        if isinstance(data, dict) and "rigor" in data:
+            data = {k: v for k, v in data.items() if k != "rigor"}
+        return data
+
+    @field_validator("build_level")
+    @classmethod
+    def _build_level(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or str(v).strip() == "":
+            return None
+        from app.factory.build.build_level import parse_build_level
+
+        return parse_build_level(v).value
 
     @field_validator("locale")
     @classmethod

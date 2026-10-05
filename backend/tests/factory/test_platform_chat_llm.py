@@ -188,6 +188,7 @@ async def test_typed_approve_skips_llm_and_starts_coder(session, monkeypatch):
         }
 
     monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
+    session.product_design.build_level = "pilot"  # the user's typed choice
     events = await _collect_events(session.session_id, "", action="approve")
     assert called["decide"] == 0
     kinds = [e["event"] for e in events]

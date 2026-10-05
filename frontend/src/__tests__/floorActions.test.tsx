@@ -6,7 +6,6 @@ import { BlueprintCard, typedActionLabel } from '../floorView'
 const BLUEPRINT = {
   product_name: 'Zorblat Yard',
   vertical: 'product',
-  rigor: 'production',
   capabilities: [
     { id: 'zorblat_core', strategy_hint: 'GENERATE' },
     { id: 'quux_audit', strategy_hint: 'REUSE' },
@@ -31,13 +30,12 @@ describe('Floor controls send typed actions, never chat text', () => {
     expect(onRefine).toHaveBeenLastCalledWith({ action: 'add_capability', value: 'zorblat_payments' })
   })
 
-  it('rename and set the build grade', () => {
+  it('rename is typed; the build level is intake, not a card refinement', () => {
     const { onRefine } = renderCard()
     fireEvent.change(screen.getByTestId('bp-rename'), { target: { value: 'Quux Hub' } })
     fireEvent.click(screen.getByTestId('bp-rename-apply'))
     expect(onRefine).toHaveBeenLastCalledWith({ action: 'rename', value: 'Quux Hub' })
-    fireEvent.change(screen.getByTestId('bp-rigor'), { target: { value: 'prototype' } })
-    expect(onRefine).toHaveBeenLastCalledWith({ action: 'set_rigor', value: 'prototype' })
+    expect(screen.queryByTestId('bp-rigor')).toBeNull()
   })
 
   it('list capabilities is a typed action with no value', () => {

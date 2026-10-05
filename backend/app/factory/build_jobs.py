@@ -415,13 +415,30 @@ def _cycle_fields(ledger: Any, terminal: Any) -> Dict[str, Any]:
         ready = bool(ledger.pilot_ready())
     except Exception:  # noqa: BLE001
         ready = bool(payload.get("pilot_ready"))
+    # The level this run was built to, as the run recorded it (the
+    # BUILD_LEVEL note at its start). It, not the deployment's environment,
+    # says whether a pilot cycle follows code SUCCESS.
     try:
-        from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+        from app.factory.build.build_level import ledger_bar
 
-        auto = bool(factory_auto_pilot_enabled())
+        level = ledger_bar(ledger.events())
     except Exception:  # noqa: BLE001
-        auto = False
-    return {"cycle": cycle or "code", "pilot_ready": ready, "auto_pilot": auto}
+        level = None
+    if level is not None:
+        auto = level.get("stop_gate") not in ("", "CODE")
+    else:
+        try:
+            from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+
+            auto = bool(factory_auto_pilot_enabled())
+        except Exception:  # noqa: BLE001
+            auto = False
+    return {
+        "cycle": cycle or "code",
+        "pilot_ready": ready,
+        "auto_pilot": auto,
+        "build_level": level,
+    }
 
 
 def _authorship(
@@ -1194,9 +1211,15 @@ def _run(
     inputs_hash: str = "",
 ) -> None:
     from app.factory.build.auto_pilot import factory_auto_pilot_enabled
+    from app.factory.build.build_level import bar_for
     from app.factory.build.runner import BuildBudget, RoleRunner
 
-    auto = cycle == "code" and factory_auto_pilot_enabled()
+    # The user's build level is the single input for whether a pilot cycle
+    # follows code SUCCESS. Only a blueprint that declares no level (a direct,
+    # non-Floor caller) falls back to the operator's FACTORY_AUTO_PILOT.
+    bar = bar_for(blueprint)
+    climbs = bar.reaches_pilot if bar is not None else factory_auto_pilot_enabled()
+    auto = cycle == "code" and climbs
     # THIS BUILD's session id, resolved into a LOCAL and threaded through the
     # runner — never written back into os.environ.
     #
