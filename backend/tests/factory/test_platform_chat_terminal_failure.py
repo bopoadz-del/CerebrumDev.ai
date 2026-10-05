@@ -52,6 +52,7 @@ def _failed_lettings_state(tmp_path: Path) -> SessionState:
     bp = draft_blueprint_from_brief("build a platform for residential lettings")
     s.product_design.blueprint = bp.model_dump(mode="json")
     s.product_design.blueprint_approved = True
+    s.product_design.build_level = "pilot"  # the user's typed choice
     s.product_design.generation = {
         "output_dir": str(out),
         "inputs_hash": inputs_hash,

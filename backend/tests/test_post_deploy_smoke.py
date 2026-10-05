@@ -462,6 +462,21 @@ def test_the_smoke_approves_with_the_typed_action(smoke):
     assert 'chat(sid, tok, "approve")' not in src
 
 
+def test_the_smoke_chooses_a_build_level_before_approve(smoke):
+    """The Floor refuses to build without the user's typed level: the smoke
+    chooses one explicitly, from the shared spec, BEFORE it approves."""
+    import inspect
+
+    src = inspect.getsource(smoke)
+    choose = src.index('action="set_build_level", value=SMOKE_BUILD_LEVEL')
+    confirm = src.index('chat(sid, tok, "", action="confirm_intake")')
+    assert choose < confirm < src.index('chat(sid, tok, "", action="approve")')
+    assert smoke.typed_action("set_build_level", smoke.SMOKE_BUILD_LEVEL) == {
+        "action": "set_build_level",
+        "value": smoke.SMOKE_BUILD_LEVEL,
+    }
+
+
 def test_chat_sends_the_typed_action_in_the_body(smoke, monkeypatch):
     import json
 

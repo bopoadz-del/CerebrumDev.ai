@@ -65,7 +65,7 @@ from app.factory.build.reuse_lookup import (
     is_store_exact_id_miss,
     resolve_store_presence,
 )
-from app.factory.build.writer_brief import CODING_AGENT_BRIEF
+from app.factory.build.writer_brief import CODING_AGENT_BRIEF, level_exit_condition
 from app.factory.build.writer_phases import writer_phase_slot_bodies
 from app.factory.build.brief_lines import emitted_line_set
 from app.factory.coder import coder_budget_s
@@ -720,6 +720,27 @@ def render_slot_bodies(
     if placeholder:
         do_lines += ["", *placeholder]
 
+    # The user's BUILD LEVEL decides which rungs this run owes: a prototype
+    # stops at CODE, and the authorship floor ("thin SUCCESS is a failure")
+    # binds from pilot up. No level declared: every rung, nothing lowered.
+    from app.factory.build.build_level import bar_for
+
+    bar = bar_for(blueprint)
+    climbs = bar is None or bar.reaches_pilot
+    thin_binds = bar is None or bar.thin_success_is_failure
+    ladder_lines = (
+        [
+            f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:{PRODUCT_GATE_CHECK}]",
+            f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
+            "- scripts/acceptance.py ≥12 measured checks k/k inside the Store-built image  [check:store_acceptance]",
+            "- ledger records pilot_ready=true  [check:ledger]",
+        ]
+        if climbs
+        else [
+            f"- BUILD LEVEL {bar.level.value}: the run is DONE at CODE_GREEN; "
+            "PRODUCT and STORE are not run at this level  [check:build_level]",
+        ]
+    )
     acceptance = _section_lines(
         "Fails loud. The run is not done until ALL of these are true. "
         "ACCEPTANCE is run by the harness, not the coder.",
@@ -736,16 +757,18 @@ def render_slot_bodies(
         ),
         "- the domain pack's domain_acceptance_conditions hold  [check:domain_acceptance]",
         f"- envelope vocab {', '.join(ENVELOPE_STATUS_VALUES)} enforced by schema, not prose  [check:envelope_schema]",
-        f"- PRODUCT gate: {GATE_SCOPES['PRODUCT']}  [check:{PRODUCT_GATE_CHECK}]",
-        f"- STORE gate: {GATE_SCOPES['STORE']}  [check:store_gate]",
-        "- scripts/acceptance.py ≥12 measured checks k/k inside the Store-built image  [check:store_acceptance]",
-        "- ledger records pilot_ready=true  [check:ledger]",
-        full_pilot_authorship_acceptance_line(n_required),
+        *ladder_lines,
+        *([full_pilot_authorship_acceptance_line(n_required)] if thin_binds else []),
         writer_phase_slot_bodies()["ACCEPTANCE"],
         "",
         "The harness's acceptance IS the tester. Do not write decorative tests. "
-        "Do not treat thin SUCCESS / templates-only / stubbed capabilities / "
-        "authorship below the launching-ready full-pilot floor as done.",
+        + (
+            "Do not treat thin SUCCESS / templates-only / stubbed capabilities / "
+            "authorship below the launching-ready full-pilot floor as done."
+            if thin_binds
+            else "Stubbed capabilities are not done; Factory-template handlers "
+            "are accepted at this build level."
+        ),
         "",
         "Block-level acceptance (from block.json, report-only until flip):",
         "\n".join(
@@ -763,8 +786,8 @@ def render_slot_bodies(
         "ba_allowed_globs / Hybrid C for BA; prefer docs/openapi.json and "
         "root openapi.json only — never vendor/**; never patch vendored "
         "blocks — call Store blocks via execute(action=)",
-        "- thin SUCCESS (code-cycle green, pilot_ready=false)",
-        full_pilot_authorship_forbidden_lines(n_required),
+        *(["- thin SUCCESS (code-cycle green, pilot_ready=false)"] if climbs else []),
+        *([full_pilot_authorship_forbidden_lines(n_required)] if thin_binds else []),
         "- decorative tests",
         "- reserved-keyword fields (action inside the payload dict, id as a domain field)",
         "- unlisted blocks (ids not in the Store registry / inventory)",
@@ -819,6 +842,7 @@ def _line_sources_for(
     domain_pack: Mapping[str, Any],
     inventory: Sequence[InventoryItem],
     store_ids: Sequence[str],
+    exit_condition: str = "",
 ) -> Dict[str, str]:
     sources = field_source_index(intake)
     for key, value in domain_pack.items():
@@ -848,6 +872,11 @@ def _line_sources_for(
         stripped = line.strip()
         if stripped:
             sources[stripped[:80]] = "standard.CODING_AGENT_BRIEF"
+    # The exit condition is rendered from the blueprint's typed build level.
+    for line in exit_condition.splitlines():
+        stripped = line.strip()
+        if stripped:
+            sources[stripped[:80]] = "blueprint.build_level"
     return sources
 
 
@@ -880,7 +909,13 @@ def render_gated_brief(
         budget_s=budget_s,
     )
     filled = fill_template(load_brief_template(), slots)
-    return CODING_AGENT_BRIEF + "\n\n" + filled
+    return (
+        CODING_AGENT_BRIEF
+        + "\n\n"
+        + level_exit_condition(blueprint)
+        + "\n\n"
+        + filled
+    )
 
 
 def compile_brief(
@@ -946,13 +981,21 @@ def compile_brief(
         reuse_records=records,
         budget_s=wall,
     )
-    text = CODING_AGENT_BRIEF + "\n\n" + fill_template(load_brief_template(), slots)
+    exit_condition = level_exit_condition(blueprint)
+    text = (
+        CODING_AGENT_BRIEF
+        + "\n\n"
+        + exit_condition
+        + "\n\n"
+        + fill_template(load_brief_template(), slots)
+    )
     line_sources = _line_sources_for(
         slots,
         intake=packed_intake,
         domain_pack=pack,
         inventory=inventory,
         store_ids=sorted(known),
+        exit_condition=exit_condition,
     )
     return CompiledBrief(
         text=text,

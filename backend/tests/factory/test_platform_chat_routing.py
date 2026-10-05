@@ -136,6 +136,7 @@ async def test_approval_generation_emitted_exactly_once(session, monkeypatch):
         return {"ok": True, "summary": "Platform generated.", "product_id": "p1"}
 
     monkeypatch.setattr(platform_chat_flow, "approve_and_generate", fake_approve)
+    session.product_design.build_level = "pilot"  # the user's typed choice
     events = await _collect_events(session.session_id, "", action="approve")
     kinds = [e["event"] for e in events]
     assert kinds.count("generation") == 1

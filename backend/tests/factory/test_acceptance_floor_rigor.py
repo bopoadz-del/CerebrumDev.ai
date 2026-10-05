@@ -2,7 +2,7 @@
 for. Universal checks apply to every platform; conditional checks apply only
 when the brief declares their subject, so a build is never rejected over a
 capability it never asked for (e.g. a RAG round-trip with no retrieval, or a
-security scan on a declared test platform).
+security scan on a build whose chosen level is below production).
 
 No brief in hand == the strictest reading (every signal raised), so a bare
 re-render never silently lowers the bar.
@@ -46,7 +46,7 @@ def test_universal_checks_apply_to_every_brief():
         "postgres_boot_200", "ui_served_200", "authorship_floor",
         "no_token_literal", "cross_tenant_404",
     }
-    for bp in (_bp(), _bp(rigor="test"), _bp(capabilities=[_cap("x")])):
+    for bp in (_bp(), _bp(build_level="prototype"), _bp(capabilities=[_cap("x")])):
         assert core <= set(enforced_ids(bp)), core - set(enforced_ids(bp))
 
 
@@ -97,26 +97,28 @@ def test_rag_check_is_enforced_when_a_bound_block_declares_the_vector_read(
 
 
 def test_audit_scan_is_advisory_for_a_declared_test_platform():
-    assert "audit_clean" in advisory_ids(_bp(rigor="test"))
-    assert "audit_clean" in advisory_ids(_bp(rigor="prototype"))
+    assert "audit_clean" in advisory_ids(_bp(build_level="prototype"))
+    assert "audit_clean" in advisory_ids(_bp(build_level="light"))
+    # Production adds the floor in full; pilot is still below it.
+    assert "audit_clean" in advisory_ids(_bp(build_level="pilot"))
 
 
 def test_audit_scan_is_enforced_for_a_production_brief():
-    assert is_production_grade(_bp())  # unset grade == production
+    assert is_production_grade(_bp())  # no level declared == the full floor
     assert "audit_clean" in enforced_ids(_bp())
-    assert "audit_clean" in enforced_ids(_bp(rigor="production"))
+    assert "audit_clean" in enforced_ids(_bp(build_level="production"))
 
 
 def test_always_advisory_checks_stay_advisory_under_any_brief():
-    for bp in (None, _bp(), _bp(rigor="production", connectors=["x"])):
+    for bp in (None, _bp(), _bp(build_level="production", connectors=["x"])):
         adv = set(advisory_ids(bp))
         assert {"one_live_connector", "backup_restore_roundtrip", "bench_p95"} <= adv
 
 
 def test_the_prompt_marks_what_this_brief_does_not_require():
-    proto = render_for_prompt(_bp(rigor="test"))
+    proto = render_for_prompt(_bp(build_level="prototype"))
     assert "[not required by this brief]" in proto
     # a production brief with retrieval requires audit and rag -> fewer marks
-    full = render_for_prompt(_bp(rigor="production",
+    full = render_for_prompt(_bp(build_level="production",
                                  capabilities=[_cap("s", block_ids=["rag"])]))
     assert proto != full

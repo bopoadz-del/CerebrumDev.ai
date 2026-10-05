@@ -26,15 +26,18 @@
     "set_vertical": {
       "value": "string"
     },
-    "set_rigor": {
+    "set_build_level": {
       "value": {
         "one_of": [
           "prototype",
           "light",
-          "standard",
+          "pilot",
           "production"
         ]
       }
+    },
+    "confirm_intake": {
+      "value": null
     },
     "list_capabilities": {
       "value": null

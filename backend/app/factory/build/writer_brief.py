@@ -4,17 +4,18 @@ The Factory coder (Kimi HTTP or an agentic CLI) is not a swarm of tiny
 product stories. Each handle()/spec/route packet is a task. The *system*
 context is this single brief: gates, contracts, and what done means.
 
-``pilot_ready`` is the exit. Code-cycle SUCCESS, templates-only handlers,
-and stubbed capabilities are not a finished product.
+The exit is the BUILD LEVEL the user chose (app.factory.build.build_level):
+prototype is DONE at CODE_GREEN; light, pilot and production climb to the
+STORE gate, and thin SUCCESS is a failure from pilot up.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from app.factory.build.authority import kernel_seat_brief
-from app.factory.build.level_grade import Level
-from app.factory.build.product_gate import GATE_SCOPES
+from app.factory.build.build_level import render_exit_condition
 from app.factory.build.persist_accept import persist_accept_brief_contract
 from app.factory.build.reuse_accept import reuse_accept_brief_contract
 from app.factory.build.schema_accept import schema_accept_brief_contract
@@ -47,22 +48,9 @@ def testing_errors_protocol() -> str:
 CODING_AGENT_BRIEF = f"""
 FACTORY CODING-AGENT BRIEF (one prompt — this is the product story)
 
-You are manufacturing a full pilot repo, not a thin scaffold.
-
-Exit condition — the run is DONE only when ALL of these are true:
-- the PRODUCT gate passes (pytest -m pilot on the booted product)
-- the STORE gate passes
-- the ledger records pilot_ready=true
-- the level grade is {Level.STORE_GREEN.value} or {Level.FOUNDING_CUSTOMER_READY.value}
-
-Three gates (fail-closed; a gate that did not run is NOT a pass):
-- CODE → {Level.CODE_GREEN.value}: {GATE_SCOPES["CODE"]}
-- PRODUCT → {Level.STORE_GREEN.value} (with STORE): {GATE_SCOPES["PRODUCT"]}
-- STORE → {Level.FOUNDING_CUSTOMER_READY.value} when founding files + contracts hold: {GATE_SCOPES["STORE"]}
-
-{Level.CODE_GREEN.value} (code-cycle SUCCESS, pilot_ready=false) is a prototype, not Finished.
-Do not treat templates-only output, stub handlers, skipped capabilities, or
-pilot_ready=false as a finished product. Thin SUCCESS is a failure to finish.
+You are manufacturing the platform to the BUILD LEVEL the user chose. The
+exit condition and the CODE → PRODUCT → STORE ladder for that level open the
+compiled brief below; the level is the user's typed choice, never inferred.
 
 Contracts you must honour on every capability you write:
 - Blocks are action-dispatched. Pass action= as a keyword, never inside the
@@ -107,3 +95,9 @@ that stop is not permission to ship a scaffold.
 def writer_system_brief() -> str:
     """Seat JD plus the one gated brief. This is what the coder receives."""
     return kernel_seat_brief("WRITER") + "\n\n" + CODING_AGENT_BRIEF + "\n"
+
+
+def level_exit_condition(blueprint: Any) -> str:
+    """The exit condition and ladder for the blueprint's BUILD LEVEL -- the
+    head of every compiled brief, so the writer knows where THIS run stops."""
+    return render_exit_condition(blueprint)

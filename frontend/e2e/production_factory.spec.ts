@@ -199,6 +199,15 @@ test('verified account: Floor brief, feature list, live Approve, billing honesty
 
   await expect(approve).toBeEnabled()
   await expect(page.getByText(/architect LLM|Capabilities/i).first()).toBeVisible()
+  // The build waits for the user's typed level (no default): choose it on
+  // the intake line, as a user would, before Approve.
+  await page.getByTestId('intake-change').click()
+  await page.getByTestId('intake-build-level').selectOption('prototype')
+  // Change only proposes; Confirm stores it.
+  await page.getByTestId('intake-confirm').click()
+  await expect(page.getByText(/Confirmed: build level prototype/).first()).toBeVisible({
+    timeout: 30_000,
+  })
   await approve.click()
   await expect(takeover).toBeVisible({ timeout: 90_000 })
   await expect(page.getByText('COLLECTOR')).toBeVisible()

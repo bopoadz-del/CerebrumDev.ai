@@ -350,6 +350,9 @@ def info_events(raw):
 #: Seconds the smoke waits for a build to reach a terminal state before the
 #: export check reads DEAD. Covers the Factory's writer budget plus the gate.
 BUILD_WAIT_S = int(os.environ.get("SMOKE_BUILD_WAIT_S", "5400"))
+#: The build level the smoke chooses, as the user would on the Floor -- an
+#: explicit typed choice (production: the full ladder, the full floor).
+SMOKE_BUILD_LEVEL = "production"
 
 
 #: Upper bound on answered question rounds. The server caps elicitation
@@ -568,6 +571,20 @@ def main():
           f"(fallback fingerprint: caps=2 populated=0)")
     if not drafting_ok:
         return finish()
+
+    # The build level is the user's typed choice and the Floor refuses to
+    # start without one. The smoke chooses production -- the full ladder and
+    # the full acceptance floor -- so "export zip" below measures the
+    # strictest bar, never a lowered one.
+    # Change proposes the level; only the typed Confirm stores it.
+    chat(sid, tok, "", action="set_build_level", value=SMOKE_BUILD_LEVEL)
+    raw_level = chat(sid, tok, "", action="confirm_intake")
+    # The intake event echoes the session's declared fields back.
+    check(
+        "build level confirmed",
+        f'"build_level": "{SMOKE_BUILD_LEVEL}"' in raw_level and '"proposal": null' in raw_level,
+        raw_level[:160].replace("\n", " "),
+    )
 
     raw2 = chat(sid, tok, "", action="approve")
     check("approve -> generation event", "generation" in raw2)

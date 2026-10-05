@@ -48,6 +48,7 @@ def _state_with_approved_run(tmp_path: Path, *, succeeded: bool = False) -> Sess
     bp = draft_blueprint_from_brief("build a dealership command center")
     s.product_design.blueprint = bp.model_dump(mode="json")
     s.product_design.blueprint_approved = True
+    s.product_design.build_level = "pilot"  # the user's typed choice
     s.product_design.generation = {
         "output_dir": str(out),
         "inputs_hash": inputs_hash,
