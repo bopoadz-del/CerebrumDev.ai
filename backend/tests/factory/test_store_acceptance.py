@@ -18,6 +18,8 @@ from app.factory.build.store_acceptance import (
     acceptance_is_kk,
     acceptance_surface_incomplete,
     gate_store_acceptance,
+    harness_record,
+    harness_total,
     parse_acceptance_output,
     read_acceptance_report,
     render_acceptance_script,
@@ -38,9 +40,9 @@ class _Proc:
 
 
 def _kk_output() -> str:
-    lines = [f"PASS {name} — ok" for name in ACCEPTANCE_CHECK_NAMES]
-    lines[-1] = "PASS authorship_floor — need≥5"
-    lines.append(f"ACCEPTANCE: {ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}")
+    lines = [harness_record(name, "PASS", "ok") for name in ACCEPTANCE_CHECK_NAMES]
+    lines[-1] = harness_record("authorship_floor", "PASS", "need≥5")
+    lines.append(harness_total(ACCEPTANCE_REQUIRED, ACCEPTANCE_REQUIRED))
     return "\n".join(lines) + "\n"
 
 
@@ -62,12 +64,12 @@ def test_parse_counts_skip_as_satisfied_but_fail_is_not_kk():
             # A line per check the floor holds, not a transcript typed out
             # when it held thirteen. The one SKIP is what this test is about.
             *(
-                "SKIP rag_roundtrip_hit — no-rag-surface"
+                harness_record("rag_roundtrip_hit", "SKIP", "no-rag-surface")
                 if name == "rag_roundtrip_hit"
-                else f"PASS {name} — measured"
+                else harness_record(name, "PASS", "measured")
                 for name in ACCEPTANCE_CHECK_NAMES
             ),
-            f"ACCEPTANCE: {len(ACCEPTANCE_CHECK_NAMES)}/{len(ACCEPTANCE_CHECK_NAMES)}",
+            harness_total(len(ACCEPTANCE_CHECK_NAMES), len(ACCEPTANCE_CHECK_NAMES)),
         ]
     )
     report = parse_acceptance_output(text)
@@ -80,20 +82,20 @@ def test_parse_counts_skip_as_satisfied_but_fail_is_not_kk():
 
 def test_parse_does_not_pass_on_ok_true_or_partial():
     text = (
-        "FAIL no_token_401 — HTTP 200 ok:False\n"
-        "FAIL missing_field_422 — HTTP 200\n"
-        "FAIL enum_422 — HTTP 200\n"
-        "FAIL ui_served_200 — HTTP 404\n"
-        "FAIL rag_roundtrip_hit — empty\n"
-        "PASS single_persistence_root — one root\n"
-        "FAIL ci_present_and_full_suite — missing\n"
-        "PASS handler_bodies_distinct — 2\n"
-        "PASS health_fail_closed — 503\n"
-        "FAIL openapi_committed — missing\n"
-        "FAIL cross_tenant_404 — HTTP 200\n"
-        "FAIL docker_health_200 — STORE_DOCKER_HEALTH=''\n"
-        "PASS authorship_floor — need≥5\n"
-        f"ACCEPTANCE: 4/{len(ACCEPTANCE_CHECK_NAMES)}\n"
+        harness_record('no_token_401', 'FAIL', 'HTTP 200 ok:False') + "\n"
+        + harness_record('missing_field_422', 'FAIL', 'HTTP 200') + "\n"
+        + harness_record('enum_422', 'FAIL', 'HTTP 200') + "\n"
+        + harness_record('ui_served_200', 'FAIL', 'HTTP 404') + "\n"
+        + harness_record('rag_roundtrip_hit', 'FAIL', 'empty') + "\n"
+        + harness_record('single_persistence_root', 'PASS', 'one root') + "\n"
+        + harness_record('ci_present_and_full_suite', 'FAIL', 'missing') + "\n"
+        + harness_record('handler_bodies_distinct', 'PASS', '2') + "\n"
+        + harness_record('health_fail_closed', 'PASS', '503') + "\n"
+        + harness_record('openapi_committed', 'FAIL', 'missing') + "\n"
+        + harness_record('cross_tenant_404', 'FAIL', 'HTTP 200') + "\n"
+        + harness_record('docker_health_200', 'FAIL', "STORE_DOCKER_HEALTH=''") + "\n"
+        + harness_record('authorship_floor', 'PASS', 'need≥5') + "\n"
+        + harness_total(4, len(ACCEPTANCE_CHECK_NAMES)) + "\n"
     )
     report = parse_acceptance_output(text)
     assert report.passed == 4
@@ -177,8 +179,8 @@ def test_store_gate_fails_when_image_is_not_kk(tmp_path):
         if "acceptance.py" in " ".join(argv):
             return _Proc(
                 1,
-                "FAIL no_token_401 — HTTP 200 ok:False\n"
-                f"ACCEPTANCE: 0/{len(ACCEPTANCE_CHECK_NAMES)}\n",
+                harness_record('no_token_401', 'FAIL', 'HTTP 200 ok:False') + "\n"
+                + harness_total(0, len(ACCEPTANCE_CHECK_NAMES)) + "\n",
             )
         if "-c" in argv:
             return _Proc(0, "200\n")

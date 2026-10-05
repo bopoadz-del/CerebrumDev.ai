@@ -43,7 +43,15 @@ COMPARE_404_SLEEP_S = 2.0
 GIT_NAME = "cerebrum-factory"
 GIT_EMAIL = "factory@cerebrum.dev"
 
-_URL_CREDENTIAL_RE = re.compile(r"(https?://)[^/\s@]+@")
+#: The Factory's own identifier formats. routers/sessions.py mints session
+#: ids as SESSION_ID_PREFIX + hex; every build branch is BRANCH_PREFIX + the
+#: session id + "-" + a tag (make_branch_name). Parsers below read these
+#: shapes; nothing searches a message for words.
+SESSION_ID_PREFIX = "sess_"
+BRANCH_PREFIX = "build/"
+#: Characters that wrap a pasted token (quotes, brackets, trailing
+#: punctuation a phone keyboard adds) -- stripped from both ends.
+_TOKEN_WRAPPERS = "\"'`()[]{}<>.,;:!?"
 _SESSION_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
@@ -193,9 +201,64 @@ def parse_builds_repo(env: Mapping[str, str]) -> Tuple[str, str, str]:
     return owner, name, f"https://github.com/{owner}/{name}"
 
 
+def _id_part(text: str) -> bool:
+    return bool(text) and all(ch.isascii() and ch.isalnum() for ch in text)
+
+
+def is_build_branch(name: str) -> bool:
+    """``build/sess_<id>[-<tag>...]`` -- the shape make_branch_name emits."""
+    head = BRANCH_PREFIX + SESSION_ID_PREFIX
+    if not isinstance(name, str) or not name.startswith(head):
+        return False
+    return all(_id_part(part) for part in name[len(head):].split("-"))
+
+
+def session_token(word: str) -> Optional[Tuple[str, str]]:
+    """``(session_id, "-tag" or "")`` when ``word`` is a session id or build
+    branch, however it was wrapped; ``None`` otherwise. Case-insensitive:
+    ids are lowercase hex and a phone may capitalise the paste."""
+    low = str(word or "").strip(_TOKEN_WRAPPERS).lower()
+    if low.startswith(BRANCH_PREFIX):
+        low = low[len(BRANCH_PREFIX):]
+    if not low.startswith(SESSION_ID_PREFIX):
+        return None
+    head, _, tail = low[len(SESSION_ID_PREFIX):].partition("-")
+    if len(head) < 6 or not _id_part(head):
+        return None
+    tag = tail.split("-", 1)[0] if tail else ""
+    if tail and not _id_part(tag):
+        return None
+    return SESSION_ID_PREFIX + head, ("-" + tag) if tag else ""
+
+
+def redact_url_credentials(text: Optional[str]) -> str:
+    """Replace the userinfo of every URL in ``text`` with ``<redacted>`` --
+    each whitespace-separated token parsed by urllib.parse and rebuilt."""
+    from itertools import groupby
+    from urllib.parse import urlsplit
+
+    out = []
+    for is_space, run in groupby(str(text or ""), str.isspace):
+        piece = "".join(run)
+        if is_space:
+            out.append(piece)
+            continue
+        core = piece.strip(_TOKEN_WRAPPERS)
+        if core:
+            try:
+                parts = urlsplit(core)
+            except ValueError:
+                parts = None
+            if parts is not None and parts.scheme and "@" in parts.netloc:
+                host = parts.netloc.rsplit("@", 1)[1]
+                clean = parts._replace(netloc="<redacted>@" + host).geturl()
+                piece = piece.replace(core, clean, 1)
+        out.append(piece)
+    return "".join(out)
+
+
 def _scrub(text: Optional[str], token: str = "") -> str:
-    blob = text or ""
-    blob = _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", blob)
+    blob = redact_url_credentials(text)
     if token:
         blob = blob.replace(token, "<redacted>")
     return blob

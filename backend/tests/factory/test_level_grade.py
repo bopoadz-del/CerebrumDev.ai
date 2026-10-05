@@ -7,18 +7,27 @@ from pathlib import Path
 from app.factory.build.converge import FOURTEEN_ARTIFACT_CLASSES
 from app.factory.build.level_grade import (
     Level,
-    parse_three_gate_verdict,
+    three_gate_verdict,
     grade_workspace,
 )
 from app.factory.build.product_gate import GATE_SCOPES
 
 
-def test_verdict_parser_reads_the_three_named_gates():
-    gates = parse_three_gate_verdict(
-        "CODE PASS — imports; PRODUCT NOT RUN — round-trip; STORE NOT RUN — restart"
-    )
-    assert gates == {"CODE": "PASS", "PRODUCT": "NOT_RUN", "STORE": "NOT_RUN"}
+def test_the_three_gates_come_from_the_typed_state_not_the_sentence():
+    """state + cycle (+ the failed phase) decide; the printed sentence does not."""
     assert set(GATE_SCOPES) == {"CODE", "PRODUCT", "STORE"}
+    code = {"state": "succeeded", "cycle": "code",
+            "detail": "CODE FAIL — zorblat; PRODUCT PASS — zorblat; STORE PASS — zorblat"}
+    assert three_gate_verdict(code) == {"CODE": "PASS", "PRODUCT": "NOT_RUN", "STORE": "NOT_RUN"}
+    assert three_gate_verdict({"state": "succeeded", "cycle": "pilot"}) == {
+        "CODE": "PASS", "PRODUCT": "PASS", "STORE": "PASS"}
+    tester = {"state": "failed", "cycle": "pilot", "failure": {"phase": "TESTER"}}
+    assert three_gate_verdict(tester) == {"CODE": "PASS", "PRODUCT": "FAIL", "STORE": "NOT_RUN"}
+    store = {"state": "failed", "cycle": "pilot", "failure": {"phase": "STORE_MANAGER"}}
+    assert three_gate_verdict(store)["STORE"] == "FAIL"
+    writer = {"state": "failed", "cycle": "code", "failure": {"phase": "WRITER"}}
+    assert three_gate_verdict(writer)["CODE"] == "FAIL"
+    assert set(three_gate_verdict({"state": "building"}).values()) == {"UNKNOWN"}
 
 
 def test_code_cycle_success_is_code_green_not_founding(tmp_path):
@@ -62,7 +71,8 @@ def test_failed_build_is_scaffold(tmp_path):
             "state": "failed",
             "cycle": "pilot",
             "pilot_ready": False,
-            "detail": "CODE PASS — x; PRODUCT FAIL — suite is red; STORE NOT RUN — z",
+            "failure": {"phase": "TESTER", "reason": "suite_red"},
+            "detail": "TESTER failed: suite is red",
         },
     )
     assert grade["level"] == Level.SCAFFOLD.value

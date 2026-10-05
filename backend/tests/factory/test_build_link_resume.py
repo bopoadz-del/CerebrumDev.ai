@@ -19,6 +19,7 @@ from app.factory.build import branch_attach
 from app.factory.build.branch_attach import (
     NOT_A_BUILD_LINK,
     attach,
+    checkpoint_message,
     checkpointed_phases,
     parse_build_link,
 )
@@ -159,7 +160,7 @@ def test_the_same_head_re_enters_the_same_workspace(tmp_path, local_remote):
 
 def test_checkpoints_at_the_tip_count_as_passed(tmp_path, local_remote):
     local_remote(_remote_with_a_finished_writer(
-        tmp_path, extra_commits=("factory: TESTER passed", "factory: STORE_MANAGER passed")
+        tmp_path, extra_commits=(checkpoint_message("TESTER"), checkpoint_message("STORE_MANAGER"))
     ))
 
     got = attach(BRANCH, tmp_path / "attached", env={})
@@ -171,10 +172,22 @@ def test_a_later_tree_change_invalidates_older_checkpoints(tmp_path):
     repo = tmp_path / "r"
     repo.mkdir()
     _git(["init", "-q"], repo)
-    for message in ("factory: TESTER passed", "writer: rework round"):
+    for message in (checkpoint_message("TESTER"), "writer: rework round"):
         _git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message], repo)
 
     assert checkpointed_phases(repo) == ()
+
+
+def test_a_checkpoint_is_the_trailer_not_the_subject(tmp_path):
+    """The phase is a typed trailer; a subject that merely reads like a
+    checkpoint records nothing."""
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(["init", "-q"], repo)
+    for message in ("factory: ZORBLAT passed", checkpoint_message("TESTER")):
+        _git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message], repo)
+
+    assert checkpointed_phases(repo) == ("TESTER",)
 
 
 def test_a_branch_without_a_finished_writer_is_not_attached(tmp_path, local_remote, monkeypatch):

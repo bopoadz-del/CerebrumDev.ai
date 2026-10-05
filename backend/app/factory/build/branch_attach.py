@@ -20,7 +20,6 @@ evidence again, and never earlier.
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -31,28 +30,43 @@ from app.factory.build.builds_push import (
     BuildsPushError,
     builds_token,
     github_request,
+    is_build_branch,
     list_session_build_refs,
     parse_builds_repo,
+    session_token,
 )
 
 NOT_A_BUILD_LINK = "Not a cerebrum-builds session link"
 STORE_GATE_PATH = ".github/workflows/store-gate.yml"
 DERIVED_DONE = ("COLLECTOR", "CLONER", "WRITER")
 
-_TREE_LINK = re.compile(
-    r"github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/tree/(\S+)"
-)
-_BRANCH = re.compile(r"^build/sess_[0-9A-Za-z]+(?:-[0-9A-Za-z]+)*$")
-#: A session token ANYWHERE in the message, however wrapped. The old form
-#: full-matched the whole message, so "build/sess_...-2a1daefe." -- the
-#: branch pasted from a phone whose keyboard appended a period -- was "not
-#: a link", fell through to the terminal-failure resume door, and a fresh
-#: build re-ran COLLECTOR/CLONER/WRITER over a tree whose store gate was
-#: already green (live, sess_ee6997342dbb405a, 2026-09-29). A message that
-#: carries a session token means THAT session: attach it or refuse it by
-#: name; it must never read as ordinary chat, because ordinary chat can
-#: start a fresh generation.
-_TOKEN = re.compile(r"(?i)(?:build/)?\b(sess_[0-9A-Za-z]{6,})(-[0-9A-Za-z]+)?\b")
+#: A session token anywhere in the message, however wrapped, means THAT
+#: session: attach it or refuse it by name. It must never read as ordinary
+#: chat, which can start a fresh generation (live 2026-09-29: a phone added
+#: a period after "build/sess_...-2a1daefe" and a full build re-ran over a
+#: tree whose gate was already green). Tokens are read by shape
+#: (builds_push.session_token), links by their URL structure.
+
+
+def _tree_link(message: str, env: Mapping[str, str]) -> Optional[Tuple[str, str, str]]:
+    """``(owner, repo, branch)`` for a link on the builds repo's host shaped
+    ``/<owner>/<repo>/<view>/<branch...>``; ``None`` when no token is one."""
+    from urllib.parse import urlsplit
+
+    host = urlsplit(parse_builds_repo(env)[2]).hostname
+    for word in message.split():
+        try:
+            parts = urlsplit(word.strip("<>()[]{}'\""))
+        except ValueError:
+            continue
+        if not parts.scheme or parts.hostname != host:
+            continue
+        segments = [s for s in parts.path.split("/") if s]
+        if len(segments) < 4:
+            continue
+        branch = "/".join(segments[3:]).rstrip("/.,)")
+        return segments[0], segments[1], branch
+    return None
 
 
 class AttachError(RuntimeError):
@@ -67,24 +81,22 @@ def parse_build_link(text: str, env: Mapping[str, str] | None = None) -> Tuple[O
     """
     env = env if env is not None else os.environ
     message = str(text or "").strip()
-    link = _TREE_LINK.search(message)
+    link = _tree_link(message, env)
     if link:
-        owner, repo, branch = link.group(1), link.group(2), link.group(3).rstrip("/.,)")
+        owner, repo, branch = link
         want_owner, want_repo, _ = parse_builds_repo(env)
         if (owner.lower(), repo.lower().removesuffix(".git")) != (want_owner.lower(), want_repo.lower()):
             return None, NOT_A_BUILD_LINK
-        if not _BRANCH.match(branch):
+        if not is_build_branch(branch):
             return None, NOT_A_BUILD_LINK
         return branch, None
-    token = _TOKEN.search(message)
-    if token:
-        # Factory session ids and branch suffixes are lowercase hex; a
-        # phone that capitalizes the paste must not 404 a real branch.
-        session = token.group(1).lower()
-        suffix = (token.group(2) or "").lower()
-        if suffix:
-            return f"build/{session}{suffix}", None
-        return resolve_session_branch(session, env), None
+    for word in message.split():
+        found = session_token(word)
+        if found:
+            session, suffix = found
+            if suffix:
+                return f"build/{session}{suffix}", None
+            return resolve_session_branch(session, env), None
     if _links_into_builds_repo(message, env):
         # A link into the builds repo that names no build branch.
         return None, NOT_A_BUILD_LINK
@@ -143,23 +155,35 @@ class Attached:
     passed: tuple = DERIVED_DONE
 
 
-_CHECKPOINT_MSG = re.compile(r"^factory: ([A-Z_]+) passed$")
+#: Git trailer key a checkpoint commit carries. The phase is a typed record
+#: in the commit, read back with git's own trailer parser -- never parsed
+#: out of the subject line.
+CHECKPOINT_TRAILER = "Factory-Checkpoint"
+
+
+def checkpoint_message(phase: str) -> str:
+    """The commit message for a passed-phase checkpoint: a human subject plus
+    the trailer checkpointed_phases reads."""
+    return "factory: %s passed\n\n%s: %s" % (phase, CHECKPOINT_TRAILER, phase)
 
 
 def checkpointed_phases(workspace: Path) -> tuple:
     """Phases recorded as passed by checkpoint commits at the branch tip.
 
-    Walks newest to oldest and stops at the first commit that is not a
-    checkpoint: any later change to the tree invalidates what it recorded.
+    Walks newest to oldest and stops at the first commit without the
+    checkpoint trailer: any later change to the tree invalidates what it
+    recorded. The phase is read with git's own trailer parser.
     """
-    proc = _git(["log", "--format=%s", "-n", "50"], workspace)
+    fmt = "%%(trailers:key=%s,valueonly,separator=%%x2C)%%x00" % CHECKPOINT_TRAILER
+    proc = _git(["log", "--format=" + fmt, "-n", "50"], workspace)
     found = []
-    for subject in (proc.stdout or "").splitlines():
-        m = _CHECKPOINT_MSG.match(subject.strip())
-        if not m:
+    for record in (proc.stdout or "").split(chr(0))[:-1]:
+        phases = [p.strip() for p in record.strip().split(",") if p.strip()]
+        if not phases:
             break
-        if m.group(1) not in found:
-            found.append(m.group(1))
+        for phase in phases:
+            if phase not in found:
+                found.append(phase)
     return tuple(found)
 
 
@@ -229,7 +253,7 @@ def _branch_blueprint(workspace: Path) -> Optional[Dict[str, Any]]:
 def attach(branch: str, parent: Path, env: Mapping[str, str] | None = None) -> Attached:
     """Clone (or re-enter) ``branch`` under ``parent``; return what was attached."""
     env = env if env is not None else os.environ
-    if not _BRANCH.match(branch or ""):
+    if not is_build_branch(branch or ""):
         raise AttachError(NOT_A_BUILD_LINK)
     sha = head_sha(branch, env)
     slug = branch.split("/", 1)[1]

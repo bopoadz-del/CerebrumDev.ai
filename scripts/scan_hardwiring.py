@@ -355,6 +355,43 @@ def _module_compiled_patterns(tree: ast.AST) -> Dict[str, str]:
     return out
 
 
+#: The one data file whose patterns may be applied to text (owner ruling
+#: 2026-10-05): the secret scrubber's redaction formats. A module that loads
+#: it may only SUBSTITUTE with them; a match used to decide anything is a
+#: phrase check like any other.
+SECRET_PATTERNS_FILE = "secret_patterns.json"
+_MATCH_DECISION_METHODS = ("search", "match", "fullmatch", "findall", "finditer")
+
+
+def _loads_secret_patterns(tree: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Constant) and isinstance(n.value, str)
+        and n.value.endswith(SECRET_PATTERNS_FILE)
+        for n in ast.walk(tree)
+    )
+
+
+def _match_decisions(tree: ast.AST) -> List[Tuple[int, str]]:
+    """(line, method) of every regex match call whose result sits in a test
+    position -- if/while/elif, a conditional expression, assert, a boolean
+    operator or a comprehension filter."""
+    tests: List[ast.AST] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
+            tests.append(node.test)
+        elif isinstance(node, ast.BoolOp):
+            tests.extend(node.values)
+        elif isinstance(node, ast.comprehension):
+            tests.extend(node.ifs)
+    out: List[Tuple[int, str]] = []
+    for test in tests:
+        for node in ast.walk(test):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _MATCH_DECISION_METHODS):
+                out.append((node.lineno, f"secret pattern used as a decision: .{node.func.attr}()"))
+    return out
+
+
 def _code_templates(tree: ast.AST) -> List[Tuple[int, str]]:
     """(line offset, source) of every string constant that is itself Python
     code the Factory emits -- a probe, a harness -- so a phrase check hidden
@@ -447,6 +484,8 @@ def phrase_matches(source: str, offset: int = 0) -> List[Tuple[int, str]]:
                     list(first.elts) if isinstance(first, ast.Tuple) else [])
                 out.extend((node.lineno, lit.value) for lit in lits
                            if isinstance(lit, ast.Constant) and _is_phrase(lit.value))
+    if _loads_secret_patterns(tree):
+        out.extend(_match_decisions(tree))
     hits = [(ln + offset, lit) for ln, lit in out if not _in_spans(ln, spans)]
     for off, src in _code_templates(tree):
         hits.extend(phrase_matches(src, offset + off))

@@ -306,9 +306,9 @@ class TestAdvisoryLinesReportButDoNotVeto:
             assert repr(name) in rendered.split("ADVISORY = [", 1)[1].split("]", 1)[0]
 
     def test_an_advisory_fail_parses_as_a_skip_that_keeps_its_reason(self):
-        from app.factory.build.store_acceptance import parse_acceptance_output
+        from app.factory.build.store_acceptance import harness_record, parse_acceptance_output
 
-        text = "FAIL bench_p95 — STORE_BENCH_P95_MS unset: p95 was not measured\n"
+        text = harness_record("bench_p95", "FAIL", "STORE_BENCH_P95_MS unset: p95 was not measured")
         report = parse_acceptance_output(text)
         line = next(l for l in report.lines if l.name == "bench_p95")
         assert line.status == "SKIP"
@@ -319,9 +319,9 @@ class TestAdvisoryLinesReportButDoNotVeto:
     def test_a_floor_fail_still_fails_the_build(self):
         """The companion: demotion must not have quietly softened the floor.
         A non-advisory FAIL is untouched and still vetoes."""
-        from app.factory.build.store_acceptance import parse_acceptance_output
+        from app.factory.build.store_acceptance import harness_record, parse_acceptance_output
 
-        report = parse_acceptance_output("FAIL no_token_401 — HTTP 200 without a token\n")
+        report = parse_acceptance_output(harness_record("no_token_401", "FAIL", "HTTP 200 without a token"))
         line = next(l for l in report.lines if l.name == "no_token_401")
         assert line.status == "FAIL"
         assert not line.satisfied
@@ -330,14 +330,15 @@ class TestAdvisoryLinesReportButDoNotVeto:
     def test_all_three_advisory_lines_failing_does_not_veto_an_otherwise_green_build(self):
         """The whole point: a build red ONLY on the three unproducible lines is green."""
         from app.factory.build.store_acceptance import (
-            ACCEPTANCE_ADVISORY_NAMES, ACCEPTANCE_CHECK_NAMES, parse_acceptance_output,
+            ACCEPTANCE_ADVISORY_NAMES, ACCEPTANCE_CHECK_NAMES, harness_record, harness_total,
+            parse_acceptance_output,
         )
 
         lines = []
         for name in ACCEPTANCE_CHECK_NAMES:
             status = "FAIL" if name in ACCEPTANCE_ADVISORY_NAMES else "PASS"
-            lines.append(f"{status} {name} — synthetic")
-        lines.append(f"ACCEPTANCE: {ACCEPTANCE_REQUIRED}/{ACCEPTANCE_REQUIRED}")
+            lines.append(harness_record(name, status, "synthetic"))
+        lines.append(harness_total(ACCEPTANCE_REQUIRED, ACCEPTANCE_REQUIRED))
         report = parse_acceptance_output("\n".join(lines) + "\n")
         assert report.ok, [l for l in report.lines if not l.satisfied]
 

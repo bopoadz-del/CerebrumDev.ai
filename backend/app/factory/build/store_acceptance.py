@@ -72,11 +72,35 @@ def demote_if_advisory(name: str, status: str, detail: str) -> tuple:
 assert len(ACCEPTANCE_CHECK_NAMES) >= ACCEPTANCE_REQUIRED
 assert ACCEPTANCE_CHECK_NAMES[-1] == "authorship_floor"
 
-LINE_RE = re.compile(
-    r"^(PASS|FAIL|SKIP)\s+([a-z0-9_]+)\s*(?:—|-|:)?\s*(.*)$",
-    re.IGNORECASE,
-)
-SUMMARY_RE = re.compile(r"ACCEPTANCE:\s*(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+#: The harness prints a human line per check AND a typed JSON record; the
+#: Factory reads only the records (never the human text).
+ACCEPTANCE_RECORD_KEY = "acceptance_record"
+ACCEPTANCE_TOTAL_KEY = "acceptance_total"
+_STATUSES = ("PASS", "FAIL", "SKIP")
+
+
+def harness_record(name: str, status: str, detail: str = "") -> str:
+    """One check's typed record, exactly as the stamped harness prints it."""
+    return json.dumps({ACCEPTANCE_RECORD_KEY: {"name": name, "status": status, "detail": detail}})
+
+
+def harness_total(passed: int, required: int) -> str:
+    """The harness's typed score record."""
+    return json.dumps({ACCEPTANCE_TOTAL_KEY: {"passed": passed, "required": required}})
+
+
+def _records(text: str):
+    """Every JSON object line in ``text`` (the harness's typed records)."""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 @dataclass
@@ -194,12 +218,22 @@ def parse_acceptance_output(text: str) -> AcceptanceReport:
     """Parse harness stdout. Presence of ok:true in a product is not a pass."""
     lines: List[AcceptanceLine] = []
     seen: set[str] = set()
-    for raw in (text or "").splitlines():
-        match = LINE_RE.match(raw.strip())
-        if not match:
+    total = ACCEPTANCE_REQUIRED
+    for record in _records(text):
+        summary = record.get(ACCEPTANCE_TOTAL_KEY)
+        if isinstance(summary, dict):
+            try:
+                total = max(int(summary.get("required") or 0), ACCEPTANCE_REQUIRED)
+            except (TypeError, ValueError):
+                pass
             continue
-        status, name, detail = match.group(1).upper(), match.group(2), match.group(3).strip()
-        if name not in ACCEPTANCE_CHECK_NAMES or name in seen:
+        item = record.get(ACCEPTANCE_RECORD_KEY)
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").upper()
+        name = str(item.get("name") or "")
+        detail = str(item.get("detail") or "").strip()
+        if status not in _STATUSES or name not in ACCEPTANCE_CHECK_NAMES or name in seen:
             continue
         seen.add(name)
         status, detail = demote_if_advisory(name, status, detail)
@@ -213,10 +247,6 @@ def parse_acceptance_output(text: str) -> AcceptanceReport:
         for name in ACCEPTANCE_CHECK_NAMES
     ]
     satisfied = sum(1 for line in ordered if line.satisfied)
-    summary = SUMMARY_RE.search(text or "")
-    total = ACCEPTANCE_REQUIRED
-    if summary:
-        total = max(int(summary.group(2)), ACCEPTANCE_REQUIRED)
     ok = (
         satisfied >= ACCEPTANCE_REQUIRED
         and total >= ACCEPTANCE_REQUIRED
@@ -386,9 +416,9 @@ def acceptance_export_blocker(
     grade = status.get("level_grade")
     gates = grade.get("three_gate") if isinstance(grade, Mapping) else None
     if not isinstance(gates, Mapping):
-        from app.factory.build.level_grade import parse_three_gate_verdict
+        from app.factory.build.level_grade import three_gate_verdict
 
-        gates = parse_three_gate_verdict(str(status.get("detail") or ""))
+        gates = three_gate_verdict(status)
     claiming = cycle == "pilot" or (
         str(gates.get("PRODUCT") or "") == "PASS" and str(gates.get("STORE") or "") == "PASS"
     )
@@ -893,6 +923,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import sys
 import uuid
 from html.parser import HTMLParser
@@ -998,6 +1029,10 @@ CHECKS = [{names}]
 # Reported and scored, never a veto -- same source as CHECKS (the floor file).
 ADVISORY = [{advisory}]
 REQUIRED = {ACCEPTANCE_REQUIRED}
+# Keys of the typed records the Factory reads from this harness's stdout --
+# the same constants the Factory's parser uses (store_acceptance.py).
+RECORD_KEY = {ACCEPTANCE_RECORD_KEY!r}
+TOTAL_KEY = {ACCEPTANCE_TOTAL_KEY!r}
 # The build's retrieval contract, rendered by the Factory from its blueprint:
 # whether a capability binds a block that declares the vector-store read, and
 # the platform's RAG routes. Never inferred from names or words at run time.
@@ -2056,6 +2091,8 @@ def main() -> int:
                 status, detail = "SKIP", "advisory (not on the floor yet): " + detail
             results.append((name, status, detail))
             print("%s %s — %s" % (status, name, detail))
+            # The typed record the Factory reads; the line above is for people.
+            print(json.dumps({{RECORD_KEY: {{"name": name, "status": status, "detail": detail}}}}))
     finally:
         if cm is not None:
             try:
@@ -2064,6 +2101,7 @@ def main() -> int:
                 pass
     satisfied = sum(1 for _n, status, _d in results if status in {{"PASS", "SKIP"}})
     print("ACCEPTANCE: %d/%d" % (satisfied, REQUIRED))
+    print(json.dumps({{TOTAL_KEY: {{"passed": satisfied, "required": REQUIRED}}}}))
     if results and results[-1][0] != "authorship_floor":
         print("FAIL harness — authorship_floor was not last")
         return 1
