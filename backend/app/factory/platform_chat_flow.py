@@ -594,28 +594,9 @@ def approve_and_generate(
     # download, so the runner engine gets its own honest message.
     if result.get("engine") == "runner":
         caps = len((pd.plan or {}).get("capabilities", []) or [])
-        from app.factory.build.build_level import bar_for
+        from app.factory.build.build_level import start_expectation
 
-        bar = bar_for(bp)
-        if bar is not None and bar.reaches_pilot:
-            expect = (
-                f"Build level {bar.level.value}: code cycle, then a pilot cycle "
-                "(pytest -m pilot and WRITER rework) and the Store gate on the "
-                "same workspace. Watch it here — Finished / Download ready "
-                "unlocks only when the platform is pilot-ready."
-            )
-        elif bar is not None:
-            expect = (
-                "Build level prototype: a code-cycle pass (pytest -m 'not "
-                "pilot'). The build is DONE at CODE_GREEN; the download is "
-                "labeled as a code-cycle prototype."
-            )
-        else:
-            expect = (
-                "No build level declared: every gate the run reaches is "
-                "enforced in full. A code-cycle SUCCESS is a prototype, not "
-                "pilot-ready."
-            )
+        expect = start_expectation(bp)
         takeover = (
             f"{trigger_line}Build started for {result['product_id']}: the coding agent "
             "has taken over the floor and is "

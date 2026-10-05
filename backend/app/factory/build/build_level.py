@@ -137,6 +137,30 @@ def ledger_bar(events: Iterable[Any]) -> Optional[dict]:
     return found
 
 
+def start_expectation(blueprint: Any) -> str:
+    """What the build-start message promises, rendered from the level's ONE
+    declared value -- its stop gate: where the run stops, and that Finished /
+    Download unlocks only when that gate is green."""
+    from app.factory.build.level_grade import Level
+
+    bar = bar_for(blueprint)
+    if bar is None:
+        return (
+            "No build level declared: every gate the run reaches is enforced "
+            "in full, and Finished / Download unlocks only when the last gate "
+            "it runs is green."
+        )
+    # The grade a green stop gate earns: CODE -> CODE_GREEN, STORE -> STORE_GREEN.
+    finish = (
+        Level.CODE_GREEN.value if bar.stop_gate == "CODE" else Level.STORE_GREEN.value
+    )
+    return (
+        f"Build level {bar.level.value}: the run stops at the {bar.stop_gate} "
+        f"gate. Watch it here — Finished / Download unlocks only when the "
+        f"{bar.stop_gate} gate is green ({finish})."
+    )
+
+
 def render_exit_condition(blueprint: Any) -> str:
     """The writer brief's exit condition and the CODE -> PRODUCT -> STORE
     ladder, rendered for the blueprint's declared level."""

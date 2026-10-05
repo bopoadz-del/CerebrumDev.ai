@@ -119,6 +119,20 @@ def test_the_exit_condition_is_rendered_for_the_chosen_level():
         assert "CODE ->" in text and "PRODUCT ->" in text and "STORE ->" in text
 
 
+def test_the_start_message_states_the_stop_gate_and_when_download_unlocks():
+    from app.factory.build.build_level import start_expectation
+
+    bp = load_blueprint(SMOKE)
+    for level in BuildLevel:
+        text = start_expectation(_with_level(bp, level.value))
+        gate = BARS[level].stop_gate
+        assert f"stops at the {gate} gate" in text, level
+        assert f"Download unlocks only when the {gate} gate is green" in text, level
+    assert "(CODE_GREEN)" in start_expectation(_with_level(bp, "prototype"))
+    assert "(STORE_GREEN)" in start_expectation(_with_level(bp, "light"))
+    assert "download" in start_expectation(bp).lower()
+
+
 def test_the_compiled_brief_owes_only_the_rungs_its_level_climbs():
     from app.factory.build.brief_compiler import compile_brief
     from app.factory.build.brief_lint import lint_brief
