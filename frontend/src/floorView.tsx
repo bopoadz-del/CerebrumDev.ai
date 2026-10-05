@@ -1132,6 +1132,17 @@ export function Floor({
                 {' — rework in progress.'}
               </p>
             ))}
+          {(liveCoderBuild?.decisions?.length ?? 0) > 0 && (
+            <ol className="coder-decisions" data-testid="floor-decisions">
+              {liveCoderBuild!.decisions!.map((d, i) => (
+                <li key={i} data-testid="floor-decision" data-class={d.class}>
+                  <strong>{d.class}</strong> {d.gate} round {d.round_gate}/{d.gate_budget} (build{' '}
+                  {d.round_build}/{d.build_ceiling}) — {d.check}
+                  {d.finding ? `: ${d.finding}` : ''}
+                </li>
+              ))}
+            </ol>
+          )}
           {!liveCoderBuild?.failure && liveCoderBuild?.recovered_failure && (
             <p className="coder-recovered-line" data-testid="floor-recovered-line">
               Recovered in rework —{' '}

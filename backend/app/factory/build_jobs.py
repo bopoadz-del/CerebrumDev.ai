@@ -137,11 +137,11 @@ def _max_rework(cycle: str = "code", auto_pilot: bool = False) -> int:
             return max(0, int(raw))
         except ValueError:
             pass
-    if _uses_pilot_budget(cycle, auto_pilot):
-        from app.factory.build.auto_pilot import AUTO_PILOT_MAX_REWORK
+    # Owner rule: two rework rounds per build, shared by every gate, at every
+    # cycle -- the runner's one rule (RoleRunner.decide) spends them.
+    from app.factory.build.runner import REWORK_BUDGET
 
-        return AUTO_PILOT_MAX_REWORK
-    return _DEFAULT_MAX_REWORK
+    return REWORK_BUDGET
 
 
 def _phase_wall_clock_s(cycle: str = "code", auto_pilot: bool = False) -> float:
@@ -368,6 +368,20 @@ def reattach_point(output_dir: Path | str) -> tuple:
     if point is None:
         return None, "nothing left to run"
     return (point.value if isinstance(point, BuildRole) else str(point)), ""
+
+
+def stopped_by_rule(output_dir: Path | str) -> Optional[Dict[str, Any]]:
+    """The runner rule's STOP record when it ended this build, else None --
+    read from the ONE terminal event (rule_decision)."""
+    from app.factory.build.ledger import BuildLedger
+    from app.factory.build.rule_decision import stop_record
+
+    try:
+        ledger = BuildLedger(_ledger_path(output_dir))
+        terminal = ledger.terminal_event() if ledger.exists() else None
+    except Exception:  # noqa: BLE001 -- a torn ledger is not a stop record
+        return None
+    return stop_record(terminal) if terminal is not None else None
 
 
 def next_fresh_output(requested: Path | str) -> Path:
@@ -912,6 +926,14 @@ def build_status(
         # Every check this build moved to advisory -- a gate its brief never
         # defined -- with the reason, so none is silenced out of sight.
         "advisory_checks": _advisory_checks(events),
+        # The runner rule's every decision (gate, class, round n/2 and build
+        # n/6, check, finding) and, when it stopped the build, the stop.
+        "decisions": [
+            dict((e.payload or {})["decision"])
+            for e in events
+            if isinstance((e.payload or {}).get("decision"), dict)
+        ],
+        "stopped": stopped_by_rule(output_dir),
         **monitor,
         **_cycle_fields(ledger, terminal),
         **session_status(Path(output_dir)),
@@ -1243,13 +1265,14 @@ def _run(
         or session_id_from_output(output_dir)
         or ""
     )
+    max_rework = _max_rework(cycle, auto_pilot=auto)
     try:
         runner = RoleRunner(
             blueprint,
             output_dir,
             blocks_root=blocks_root,
             budget=BuildBudget(
-                max_rework=_max_rework(cycle, auto_pilot=auto),
+                max_rework=max_rework,
                 wall_clock_s=_wall_clock_s(cycle, auto_pilot=auto),
                 phase_wall_clock_s=_phase_wall_clock_s(
                     cycle, auto_pilot=auto
@@ -1284,6 +1307,36 @@ def _run(
                 wait_and_ingest_n3(output_dir)
             except Exception:  # noqa: BLE001 — waiter crash must not kill the thread
                 logger.exception("n3 store-gate ingest failed for %s", output_dir)
+                return
+            # The N3 Store gate answered after the runner returned. Its
+            # product-owned verdict goes through the runner's ONE rule
+            # (RoleRunner.decide): advisory / rework / stop, per-gate budget,
+            # global same-failure-twice. A REWORK re-opens WRITER, TESTER and
+            # STORE_MANAGER on this workspace and the runner runs again.
+            from app.factory.build.ledger import BuildLedger, EventKind
+            from app.factory.build.n3_store_gate import store_gate_verdict
+            from app.factory.build.runner import DECISION_REWORK
+
+            terminal = BuildLedger(_ledger_path(output_dir)).terminal_event()
+            verdict = (
+                store_gate_verdict(terminal.payload or {})
+                if terminal is not None and terminal.kind is EventKind.RUN_FAILED
+                else None
+            )
+            if (
+                verdict is not None
+                and runner.reopen_after_store_gate(verdict).kind == DECISION_REWORK
+            ):
+                logger.info("store-gate rework: WRITER re-opened at %s", output_dir)
+                _run(
+                    blueprint,
+                    output_dir,
+                    blocks_root,
+                    cycle,
+                    tenant_store,
+                    brief,
+                    inputs_hash,
+                )
             return
     except Exception as exc:  # noqa: BLE001
         # The thread must never die silently: without this the ledger's last

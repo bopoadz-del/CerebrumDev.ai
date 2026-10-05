@@ -196,7 +196,11 @@ def test_the_same_writer_gate_failure_twice_stops_the_run(
 
     assert not outcome.ok
     assert outcome.outcome is Outcome.FAILED_GATE
-    assert outcome.detail.startswith("SAME_FAILURE_TWICE"), outcome.detail
+    # The owner's stop status: FAILED(<gate>, <check>, <finding>): <reason>.
+    assert outcome.detail.startswith(
+        f"FAILED(WRITER, {brief_gates.WRITER_BEHAVIOUR_CHECK}, "
+    ), outcome.detail
+    assert "SAME_FAILURE_TWICE" in outcome.detail, outcome.detail
     assert outcome.rework_used == 1
     assert len(captured) == 2, "one first pass, one rework -- never a third"
 

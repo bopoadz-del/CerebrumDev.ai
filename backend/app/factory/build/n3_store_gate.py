@@ -851,6 +851,13 @@ def apply_store_gate_failure(
                 for line in report.lines
                 if line.owner == PRODUCT and not line.satisfied
             ],
+            # What each failed line said, so a re-opened WRITER is told the
+            # gate's own evidence, not just a name.
+            "product_failed_detail": {
+                line.name: str(getattr(line, "detail", "") or "")
+                for line in report.lines
+                if line.owner == PRODUCT and not line.satisfied
+            },
         }
     ledger.append(
         EventKind.RUN_FAILED,
@@ -869,6 +876,58 @@ def apply_store_gate_failure(
             "state": snap.state,
             **extra,
         },
+    )
+
+
+def _what_to_build(check_id: str) -> str:
+    """The floor's own line for a check: what the writer must build."""
+    from app.factory.build.acceptance_floor import checks
+
+    for row in checks():
+        if str(row.get("id") or "") == check_id:
+            line = str(row.get("brief_render") or row.get("requirement_text") or "")
+            prefix = f"- {check_id}:"
+            return line[len(prefix):].strip() if line.startswith(prefix) else line.strip()
+    return ""
+
+
+def store_rework_item(check_id: str, detail: str) -> str:
+    """One typed work item: the check, what the gate saw, what to build, and
+    the command that re-checks it (the same harness the gate runs)."""
+    from app.factory.build.store_acceptance import ACCEPTANCE_SELF_CHECK_COMMAND
+
+    build = _what_to_build(check_id)
+    text = f"[{check_id}] Store gate FAIL"
+    if detail.strip():
+        text += f": {detail.strip()}"
+    if build:
+        text += f". Build: {build}"
+    return text + f" (re-check: `{ACCEPTANCE_SELF_CHECK_COMMAND}`)"
+
+
+def store_gate_verdict(payload: Mapping[str, Any]) -> Optional[Any]:
+    """The N3 Store gate's PRODUCT-owned failure as a phase verdict, for the
+    runner's one rule (RoleRunner.reopen_after_store_gate). None when the
+    terminal is not a product-owned Store-gate failure (a Factory-owned miss
+    never reaches the writer)."""
+    from app.factory.build.acceptance_floor import PRODUCT
+    from app.factory.build.gates import GateResult
+    from app.factory.build.store_acceptance import GATE_NAME
+
+    if (payload or {}).get("failure_owner") != PRODUCT:
+        return None
+    failed = [str(c) for c in payload.get("product_failed") or [] if str(c).strip()]
+    if not failed:
+        return None
+    details = payload.get("product_failed_detail") or {}
+    return GateResult(
+        ok=False,
+        gate=GATE_NAME,
+        reason="store_gate_failed",
+        detail=f"store-gate {payload.get('score') or ''}: product failed "
+        + ", ".join(failed),
+        findings=[store_rework_item(c, str(details.get(c) or "")) for c in failed],
+        payload={"check": GATE_NAME, "finding_checks": failed},
     )
 
 

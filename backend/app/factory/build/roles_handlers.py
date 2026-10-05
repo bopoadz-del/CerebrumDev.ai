@@ -4220,6 +4220,12 @@ def run_writer(
     # The WRITER gate's own probe, so the writer can run what the gate runs
     # (F1/F11/schema) before it declares done -- its own suite cannot.
     emit_self_check(ctx.workspace)
+    # The Store gate's own harness, stamped before ANY writer path: the writer
+    # measures itself with the N checks the gate scores (``--self-check``),
+    # never a script of its own. Re-stamped before TESTER (factory_refresh).
+    from app.factory.build.store_acceptance import stamp_acceptance_harness
+
+    stamp_acceptance_harness(ctx.workspace, blueprint=ctx.blueprint)
     if writer_uses_codewhale(env):
         return _run_writer_via_codewhale_worker(ctx)
     writer_roster = _writer_block_roster(ctx.state)

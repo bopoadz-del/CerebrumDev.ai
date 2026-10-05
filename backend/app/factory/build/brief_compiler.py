@@ -400,6 +400,28 @@ def _section_lines(*parts: str) -> str:
     return "\n".join(part for part in parts if part is not None)
 
 
+def store_gate_acceptance_line() -> str:
+    """The Store gate scores the product on its floor checks with the harness
+    the Factory stamps before the writer starts. Tell the writer to run THAT
+    harness -- not a script of its own -- and fix every FAIL; the gate's id
+    makes a product-owned Store-gate failure brief-defined."""
+    from app.factory.build.store_acceptance import (
+        ACCEPTANCE_SCRIPT_REL,
+        ACCEPTANCE_SELF_CHECK_COMMAND,
+        GATE_NAME,
+    )
+
+    script = ACCEPTANCE_SCRIPT_REL.as_posix()
+    return (
+        f"- the Store gate scores this product with {script}, the Factory's harness "
+        "stamped before you start: run "
+        f"`{ACCEPTANCE_SELF_CHECK_COMMAND}` (the same checks the gate scores; inputs "
+        "only the gate can measure print SKIP) and fix every FAIL before declaring "
+        f"done; never edit or replace {script} -- the Factory re-stamps it  "
+        f"[check:{GATE_NAME}]"
+    )
+
+
 def writer_gate_acceptance_lines() -> Tuple[str, ...]:
     """What the WRITER gate measures, as what to build -- one line per sub-check,
     tagged with the id its verdict carries, so a WRITER-gate failure is
@@ -784,6 +806,7 @@ def render_slot_bodies(
         persist_accept_acceptance_line(),
         schema_accept_acceptance_line(),
         *writer_gate_acceptance_lines(),
+        store_gate_acceptance_line(),
         reuse_accept_acceptance_line(),
         workflow_accept_acceptance_line(
             capability_ids=event_bus_workflow_capability_ids(inventory)
