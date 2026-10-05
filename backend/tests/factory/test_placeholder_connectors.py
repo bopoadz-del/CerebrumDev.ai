@@ -95,6 +95,7 @@ class _Resp:
         self.status_code = status
         self._body = body
         self.text = json.dumps(body)
+        self.headers = {}
 
     def json(self):
         return self._body
@@ -108,7 +109,11 @@ def _run_route_suite(lines, post_answer):
         post=lambda path, json=None, headers=None: post_answer,
         get=lambda path, headers=None: _Resp(200, {"items": []}),
     )
+    from app.factory.build.payload_helpers import render_payload_helpers
+
+    # The emitted suite defines the shared payload helpers at module level.
     ns = {"client": client, "AUTH": {}}
+    exec("\n".join(render_payload_helpers()), ns)
     exec(src, ns)
     return ns["_suite"]()
 

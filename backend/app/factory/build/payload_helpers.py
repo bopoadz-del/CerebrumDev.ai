@@ -1,0 +1,182 @@
+"""The ONE request-payload builder every Factory-emitted suite uses.
+
+Two emitted suites post to a capability route: ``tests/test_routes.py`` (the
+route answers) and ``tests/test_placeholder_contract.py`` (a capability
+calling a declared placeholder connector answers the typed 503 refusal). The
+route checks the token (401), then the payload (422), then -- for a declared
+placeholder -- refuses with 503. A contract test whose payload the route
+refuses at 422 never reaches the refusal it is the authority on (live
+2026-10-05: "Missing required field: member_id").
+
+Both suites therefore build and correct their payloads with these helpers,
+rendered from this module (product tests are not a package, so the source is
+emitted into each file rather than imported):
+
+* the Factory's spec sample is the base;
+* every field the PRODUCT'S OWN model (``app.models.MODELS``) declares
+  required and the base lacks is filled from that model -- its declared
+  vocabulary, else its default when that is a real value, else the neutral
+  sample of the default's type (``SAMPLE_VALUES``, the same table the
+  Factory's spec sampler uses);
+* a rejection the product states as data (``rejection_contract``) is
+  corrected in the named field and retried, each (field, value) once.
+
+Nothing here knows a capability, a field or a vocabulary by name.
+"""
+
+from __future__ import annotations
+
+from typing import List
+
+from app.factory.build.rejection_contract import (
+    ALLOWED_VALUES_HEADER,
+    ALLOWED_VALUES_KEY,
+    MISSING_REQUIRED,
+    NOT_ALLOWED,
+    REJECTED_FIELD_HEADER,
+    REJECTED_FIELD_KEY,
+    REJECTION_REASON_HEADER,
+    REJECTION_REASON_KEY,
+)
+from app.factory.build.roles_constants import _SAMPLE_VALUES
+
+
+def render_payload_helpers() -> List[str]:
+    """Source lines defining ``_sample_payload_for``, ``_rejection`` and
+    ``_post_accepting``. They use the module-global ``client``."""
+    by_type = {k: v for k, v in _SAMPLE_VALUES.items() if k in ("str", "int", "float", "bool")}
+    return [
+        "import dataclasses as _dataclasses",
+        "import json as _json",
+        "",
+        f"_SAMPLE_BY_TYPE = {by_type!r}",
+        "",
+        "",
+        "def _model_of(capability_id):",
+        "    try:",
+        "        from app.models import MODELS",
+        "    except Exception:",
+        "        return None",
+        "    return MODELS.get(capability_id)",
+        "",
+        "",
+        "def _field_sample(capability_id, field):",
+        '    """A value the product\'s own model declares acceptable for ``field``."""',
+        "    cls = _model_of(capability_id)",
+        "    if cls is None:",
+        "        return None",
+        "    rules = (getattr(cls, 'CONSTRAINTS', {}) or {}).get(field) or {}",
+        "    allowed = rules.get('allowed_values')",
+        "    if allowed:",
+        "        return allowed[0]",
+        "    default = None",
+        "    if _dataclasses.is_dataclass(cls):",
+        "        attr = (getattr(cls, '_FIELD_PY', {}) or {}).get(field, field)",
+        "        for f in _dataclasses.fields(cls):",
+        "            if f.name != attr:",
+        "                continue",
+        "            if f.default is not _dataclasses.MISSING:",
+        "                default = f.default",
+        "            elif f.default_factory is not _dataclasses.MISSING:",
+        "                default = f.default_factory()",
+        "    low = rules.get('min')",
+        "    if default not in (None, '') and not isinstance(default, bool):",
+        "        if not isinstance(default, (int, float)) or default:",
+        "            if low is None or not isinstance(default, (int, float)) or default >= low:",
+        "                return default",
+        "    sample = _SAMPLE_BY_TYPE.get(type(default).__name__, _SAMPLE_BY_TYPE['str'])",
+        "    if low is not None and isinstance(sample, (int, float)) and sample < low:",
+        "        sample = low",
+        "    return sample",
+        "",
+        "",
+        "def _sample_payload_for(capability_id, base):",
+        '    """The Factory spec sample, completed with every field the product\'s',
+        '    own model declares required and the sample lacks."""',
+        "    payload = dict(base or {})",
+        "    cls = _model_of(capability_id)",
+        "    if cls is None:",
+        "        return payload",
+        "    constraints = getattr(cls, 'CONSTRAINTS', {}) or {}",
+        "    for name in list(getattr(cls, 'FIELDS', []) or []):",
+        "        if not (constraints.get(name) or {}).get('required'):",
+        "            continue",
+        "        if payload.get(name) in (None, ''):",
+        "            value = _field_sample(capability_id, name)",
+        "            if value not in (None, ''):",
+        "                payload[name] = value",
+        "    return payload",
+        "",
+        "",
+        "def _rejection(resp):",
+        '    """The rejection as data: (field, reason, allowed) or None. Read from',
+        "    the structured rejection the product states -- headers on a 422,",
+        "    keys on an ok:false body -- never from prose or JSON text, so no",
+        '    token in a response body can leak into a payload."""',
+        f"    field = resp.headers.get({REJECTED_FIELD_HEADER!r})",
+        "    if field is not None:",
+        "        try:",
+        "            field = _json.loads(field)",
+        "        except ValueError:",
+        "            return None",
+        f"        reason = resp.headers.get({REJECTION_REASON_HEADER!r})",
+        f"        allowed = resp.headers.get({ALLOWED_VALUES_HEADER!r})",
+        "        try:",
+        "            allowed = _json.loads(allowed) if allowed is not None else None",
+        "        except ValueError:",
+        "            allowed = None",
+        "        return field, reason, allowed",
+        "    try:",
+        "        body = resp.json()",
+        "    except Exception:",
+        "        return None",
+        f"    if not isinstance(body, dict) or {REJECTED_FIELD_KEY!r} not in body:",
+        "        return None",
+        f"    return (body.get({REJECTED_FIELD_KEY!r}), body.get({REJECTION_REASON_KEY!r}),",
+        f"            body.get({ALLOWED_VALUES_KEY!r}))",
+        "",
+        "",
+        "def _post_accepting(path, payload, headers, capability_id=None):",
+        '    """POST the completed payload; when the product refuses a field AS',
+        "    DATA, adopt the value its own model declares and retry. Returns",
+        "    (response, corrections). Each (field, value) is tried at most once,",
+        "    so the loop converges or stops. A refusal that is not a field",
+        '    rejection (a 503 placeholder refusal, a 401) is returned as is."""',
+        "    payload = _sample_payload_for(capability_id, payload)",
+        "    corrections = []",
+        "    tried = set()",
+        "    resp = client.post(path, json=payload, headers=headers)",
+        "    for _ in range(len(payload) + 2):",
+        "        failed = resp.status_code != 200",
+        "        if not failed:",
+        "            try:",
+        '                failed = resp.json().get("ok") is False',
+        "            except Exception:",
+        "                failed = False",
+        "        if not failed:",
+        "            break",
+        "        rejection = _rejection(resp)",
+        "        if rejection is None:",
+        "            break",
+        "        field, reason, allowed = rejection",
+        "        if not isinstance(field, str) or not field:",
+        "            break",
+        f"        if reason == {NOT_ALLOWED!r} and isinstance(allowed, list) and allowed:",
+        "            value = allowed[0]",
+        f"        elif reason == {MISSING_REQUIRED!r}:",
+        "            value = _field_sample(capability_id, field)",
+        "            if value in (None, ''):",
+        "                break",
+        "        else:",
+        "            break",
+        "        key = (field, repr(value))",
+        "        if key in tried:",
+        "            break",
+        "        tried.add(key)",
+        "        corrections.append(",
+        "            str(field) + '=' + repr(payload.get(field)) + '->' + repr(value)",
+        "        )",
+        "        payload[field] = value",
+        "        resp = client.post(path, json=payload, headers=headers)",
+        "    return resp, corrections",
+    ]
