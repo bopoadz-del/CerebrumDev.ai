@@ -79,7 +79,13 @@ NAMED_BLOCKER_CLI_NO_AUTHORSHIP = "FACTORY_CODE_CLI_NO_AUTHORSHIP"
 #: honesty classes). Fail-closed stays FACTORY_CODE_CLI_NO_AUTHORSHIP.
 CLI_EMPTY_DESCRIBED_NOT_WRITTEN = "described-not-written"
 CLI_EMPTY_EMPTY_COMPLETION = "empty-completion"
-CLI_EMPTY_WRONG_PATH = "wrong-path"
+#: Why "wrong-path" is no longer a named reason: it was read from the CLI's
+#: prose (``Write(...)`` / ``Wrote ...``), and the CLI log carries no typed
+#: tool record to read it from. The classifier is advisory -- it names a
+#: reason inside NO_AUTHORSHIP, never a class -- and says so in the detail.
+CLI_EMPTY_WRITE_TARGETS_UNREAD = (
+    "write targets not itemised: the CLI log carries no typed tool record"
+)
 FACTORY_STAGING_DIRNAME = ".factory-staging"
 #: CLI/LLM wrote some handlers, but below the launching-ready full-pilot
 #: floor (need = min(5, max(1, n_required)); unknown n_required keeps
@@ -139,8 +145,9 @@ KEEP_PATH_FACTORY_GROUNDED_REUSE = "factory_grounded_reuse"
 UNRECOGNIZED_MODEL_HINT = "unrecognized_model"
 #: A coder CLI that tags its own error: ``[claude-code:unrecognized_model]``.
 _CLI_ERROR_TAG_RE = re.compile(r"\[[a-z][a-z0-9-]*:([a-z_]+)\]", re.IGNORECASE)
-#: An HTTP status line, ``HTTP 429`` / ``HTTP/1.1 402``.
-_HTTP_STATUS_LINE_RE = re.compile(r"\bHTTP(?:/\d(?:\.\d)?)?\s+([45]\d\d)\b")
+#: The protocol token that opens an HTTP status line (RFC 9112:
+#: ``HTTP-version SP status-code``): ``HTTP`` or ``HTTP/<version>``.
+HTTP_PROTOCOL_TOKEN = "HTTP"
 _STATUS_NUMBER_RE = re.compile(r"(?<![\w.])([45]\d\d)(?![\w.])")
 #: Provider answers that refuse the ACCOUNT rather than the request:
 #: unauthenticated, unpaid, or over its limit. 429 is here because a real
@@ -155,10 +162,6 @@ _BILLING_STATUSES = (
 )
 #: Provider answers that mean the MODEL was refused: forbidden, not found.
 _MODEL_DENIED_STATUSES = (HTTPStatus.FORBIDDEN, HTTPStatus.NOT_FOUND)
-_UNRECOGNIZED_MODEL_JSON_RE = re.compile(
-    r"\[claude-code:unrecognized_model\]\s*(\{.*?\})",
-    re.IGNORECASE | re.DOTALL,
-)
 
 #: Moonshot Open Platform ids for ``[providers.kimi]`` +
 #: ``https://api.moonshot.ai/v1``. Kimi Code CLI 0.41 config-files still
@@ -190,12 +193,8 @@ _BROKEN_MANAGED_IDS = frozenset(
     {"k3", "kimi-for-coding", "kimi-for-coding-highspeed"}
 )
 _MODEL_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
-_DEFAULT_MODEL_RE = re.compile(
-    r'(?m)^\s*default_model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
-)
-_DEFAULT_MODEL_LINE_RE = re.compile(
-    r'(?m)^\s*default_model\s*=\s*(?:"[^"]*"|\'[^\']*\'|\S+)\s*\n?'
-)
+#: The top-level TOML key a Kimi Code config names its model with.
+DEFAULT_MODEL_KEY = "default_model"
 _MODEL_FIELD_RE = re.compile(
     r'(?m)^\s*model\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
 )
@@ -1196,11 +1195,45 @@ def kimi_code_model_id(alias: Optional[str] = None) -> str:
     return _moonshot_model_id(name)
 
 
+def _top_level_key_lines(text: str, key: str) -> List[Tuple[int, str]]:
+    """``(line index, value)`` for every top-level ``key = value`` line, read
+    by the TOML grammar: the root table ends at the first ``[table]`` header,
+    a line's key is what precedes ``=``, its value is what ``tomllib`` reads
+    from that line ("" when the value is empty or not valid TOML)."""
+    import tomllib
+
+    out: List[Tuple[int, str]] = []
+    for index, raw in enumerate((text or "").split("\n")):
+        line = raw.strip()
+        if line.startswith("["):
+            break
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name = line.partition("=")[0].strip().strip("\"'")
+        if name != key:
+            continue
+        try:
+            value = tomllib.loads(line).get(key)
+        except tomllib.TOMLDecodeError:
+            value = None
+        out.append((index, str(value).strip() if isinstance(value, str) else ""))
+    return out
+
+
+def _set_top_level_key(text: str, key: str, value: str) -> str:
+    """Write ``key = "value"`` as the first line, dropping every existing
+    top-level assignment of *key* (empty or not)."""
+    lines = (text or "").split("\n")
+    drop = {index for index, _ in _top_level_key_lines(text, key)}
+    body = "\n".join(line for i, line in enumerate(lines) if i not in drop).lstrip("\n")
+    return f'{key} = "{value}"\n' + ("\n" + body if body else "")
+
+
 def config_default_model(text: str) -> str:
-    match = _DEFAULT_MODEL_RE.search(text or "")
-    if not match:
-        return ""
-    return (match.group(1) or match.group(2) or match.group(3) or "").strip()
+    for _, value in _top_level_key_lines(text, DEFAULT_MODEL_KEY):
+        if value:
+            return value
+    return ""
 
 
 def _config_providers(text: str) -> frozenset:
@@ -1354,14 +1387,11 @@ def apply_kimi_code_default_model(
     current = config_default_model(out)
     mutated = False
     if not current:
-        out = re.sub(r"(?m)^\s*default_model\s*=\s*(?:\"\"|''|\s*)\s*\n?", "", out)
-        prefix = f'default_model = "{alias}"\n'
-        body = out.lstrip("\n")
-        out = prefix + ("\n" + body if body else "")
+        out = _set_top_level_key(out, DEFAULT_MODEL_KEY, alias)
         current = alias
         mutated = True
     elif current != alias:
-        out = _DEFAULT_MODEL_LINE_RE.sub(f'default_model = "{alias}"\n', out, count=1)
+        out = _set_top_level_key(out, DEFAULT_MODEL_KEY, alias)
         out = _model_table_pattern(current).sub("", out)
         current = alias
         mutated = True
@@ -1383,14 +1413,8 @@ def apply_deepseek_kimi_backend(
     out = text or ""
     mutated = False
     current = config_default_model(out)
-    if not current:
-        out = re.sub(r"(?m)^\s*default_model\s*=\s*(?:\"\"|''|\s*)\s*\n?", "", out)
-        prefix = f'default_model = "{alias}"\n'
-        body = out.lstrip("\n")
-        out = prefix + ("\n" + body if body else "")
-        mutated = True
-    elif current != alias:
-        out = _DEFAULT_MODEL_LINE_RE.sub(f'default_model = "{alias}"\n', out, count=1)
+    if current != alias:
+        out = _set_top_level_key(out, DEFAULT_MODEL_KEY, alias)
         mutated = True
     if not config_has_deepseek_provider(out):
         out = _ensure_trailing_newline(out)
@@ -1446,8 +1470,13 @@ def provider_statuses(output: str) -> List[int]:
         if 400 <= code <= 599 and code not in found:
             found.append(code)
 
-    for match in _HTTP_STATUS_LINE_RE.finditer(blob):
-        _keep(match.group(1))
+    for line in blob.splitlines():
+        tokens = line.split()
+        for word, after in zip(tokens, tokens[1:]):
+            protocol, _, version = word.partition("/")
+            if protocol == HTTP_PROTOCOL_TOKEN and (not version or version.replace(".", "").isdigit()):
+                if len(after) == 3 and after.isdigit():
+                    _keep(after)
     for match in _STATUS_NUMBER_RE.finditer(blob):
         code = int(match.group(1))
         rest = blob[match.end():]
@@ -1501,24 +1530,15 @@ def _cli_tagged_kind(blob: str) -> str:
 
 
 def _extract_unrecognized_model_id(blob: str) -> str:
-    """Pull the rejected id from ``[claude-code:unrecognized_model] {…}``."""
-    match = _UNRECOGNIZED_MODEL_JSON_RE.search(blob or "")
-    if match:
-        try:
-            payload = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            payload = {}
-        mid = str(payload.get("model") or "").strip()
-        if mid:
-            return mid
-    # Any JSON object the CLI printed that names a model -- read as JSON,
-    # never by searching its prose.
+    """The rejected id from the JSON object the CLI printed with its
+    ``[<cli>:unrecognized_model]`` tag -- decoded as JSON, never searched."""
+    decoder = json.JSONDecoder()
     for line in (blob or "").splitlines():
         start = line.find("{")
         if start < 0:
             continue
         try:
-            obj = json.loads(line[start:])
+            obj, _ = decoder.raw_decode(line[start:])
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict) and str(obj.get("model") or "").strip():
@@ -1619,56 +1639,14 @@ def classify_cli_exit(
     return NAMED_BLOCKER_CLI_FAILED, exit_bit
 
 
-_WRITE_TOOL_RE = re.compile(
-    r"(?:"
-    r"Write\s*\("
-    r"|write_file\b"
-    r"|str_replace\b"
-    r'|(?:^|[\s\[{,])Edit\s*\('
-    r'|["\']name["\']\s*:\s*["\']Write["\']'
-    r"|tool(?:_name)?[\"']?\s*[:=]\s*[\"']?Write\b"
-    r"|Using tool Write\b"
-    r")",
-    re.IGNORECASE | re.MULTILINE,
-)
 _FENCE_RE = re.compile(r"```(?:[A-Za-z0-9_+-]*)\s*\n")
-_WRITE_PATH_RE = re.compile(
-    r"(?:"
-    r"(?:Write|write_file|Edit|str_replace)\s*\(\s*[\"']?([^\"')\s,]+)"
-    r"|Wrote\s+(\S+)"
-    r")",
-    re.IGNORECASE,
-)
 _CLI_CMD_LINE_RE = re.compile(r"^\$\s+\S+.*$", re.MULTILINE)
 
 
-def _cli_used_write_tool(blob: str) -> bool:
-    return bool(_WRITE_TOOL_RE.search(blob or ""))
-
-
-def _cli_write_paths(blob: str) -> List[str]:
-    found: List[str] = []
-    for match in _WRITE_PATH_RE.finditer(blob or ""):
-        path = next((g for g in match.groups() if g), "")
-        if path:
-            found.append(path)
-    return found
-
-
-def _is_harvest_handler_path(path: str) -> bool:
-    norm = path.replace("\\", "/").lstrip("./")
-    return norm.startswith("app/actions/") and norm.endswith(".py")
-
-
 def _cli_described_not_written(blob: str) -> bool:
-    return bool(_FENCE_RE.search(blob or "")) and not _cli_used_write_tool(blob)
-
-
-def _cli_wrote_wrong_path(blob: str) -> bool:
-    paths = _cli_write_paths(blob)
-    if not paths:
-        return False
-    return not any(_is_harvest_handler_path(p) for p in paths)
+    """The session printed a fenced code block and the harvest is empty (the
+    only caller runs on an empty harvest): code described, not written."""
+    return bool(_FENCE_RE.search(blob or ""))
 
 
 def _cli_empty_completion(blob: str) -> bool:
@@ -1680,17 +1658,14 @@ def _cli_empty_completion(blob: str) -> bool:
 def classify_cli_empty(log_text: str) -> str:
     """Named reason for CLI exit 0 + empty harvest.
 
-    Returns one of ``described-not-written``, ``empty-completion``,
-    ``wrong-path``. Does not change the
-    ``FACTORY_CODE_CLI_NO_AUTHORSHIP`` honesty class.
+    Returns ``described-not-written`` or ``empty-completion``. Advisory:
+    it does not change the ``FACTORY_CODE_CLI_NO_AUTHORSHIP`` honesty class.
     """
     blob = log_text or ""
     # A prose refusal has no structural signal (it is the agent's words), so
-    # it is not told apart here: an exit-0 session that wrote nothing is
-    # classified by what it DID -- wrong path, described-not-written, or
-    # empty -- and the NO_AUTHORSHIP honesty class is unchanged.
-    if _cli_wrote_wrong_path(blob):
-        return CLI_EMPTY_WRONG_PATH
+    # it is not told apart here; neither is where the session wrote (see
+    # CLI_EMPTY_WRITE_TARGETS_UNREAD). An exit-0 session that wrote nothing
+    # is classified by what its log structurally shows.
     if _cli_described_not_written(blob):
         return CLI_EMPTY_DESCRIBED_NOT_WRITTEN
     if _cli_empty_completion(blob):
@@ -1700,7 +1675,7 @@ def classify_cli_empty(log_text: str) -> str:
 
 def _no_authorship_detail(log_text: str) -> str:
     empty_reason = classify_cli_empty(log_text)
-    reason_bit = f" ({empty_reason})" if empty_reason else ""
+    reason_bit = f" ({empty_reason}; {CLI_EMPTY_WRITE_TARGETS_UNREAD})"
     return (
         f"{NAMED_BLOCKER_CLI_NO_AUTHORSHIP}: FACTORY_CODE_CLI "
         f"kimi/deepseek exited 0 without harvested "

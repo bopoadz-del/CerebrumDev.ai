@@ -848,9 +848,9 @@ def thin_store_green_export_blocker(
     grade = status.get("level_grade")
     gates = grade.get("three_gate") if isinstance(grade, Mapping) else None
     if not isinstance(gates, Mapping):
-        from app.factory.build.level_grade import parse_three_gate_verdict
+        from app.factory.build.level_grade import three_gate_verdict
 
-        gates = parse_three_gate_verdict(str(status.get("detail") or ""))
+        gates = three_gate_verdict(status)
     cycle = str(status.get("cycle") or "").strip().lower()
     claiming_store_green = (
         cycle == "pilot"

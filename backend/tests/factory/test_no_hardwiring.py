@@ -408,3 +408,22 @@ def test_source_questions_are_answered_by_the_syntax_tree():
     # The prepared-step keys must be BOUND in code, not mentioned in text.
     mention = "# 'topic' 'message' payload={ channel='mcp' action='publish' 'event_bus'\n"
     assert handler_has_prepared_event_bus_step(mention) is False
+
+
+def test_the_secret_scrubber_passes_and_a_match_decision_on_its_patterns_is_rejected():
+    """Owner ruling 2026-10-05: the scrubber's patterns are data
+    (secret_patterns.json) used only to substitute. The same patterns used to
+    DECIDE something are a phrase check."""
+    gate = _gate()
+    scrubber = (
+        Path(__file__).resolve().parents[2] / "app" / "factory" / "build" / "sanitize.py"
+    ).read_text(encoding="utf-8")
+    assert gate.phrase_matches(scrubber) == []
+    decision = scrubber + (
+        "\n\ndef zorblat_leaks(text):\n"
+        "    if _rules()['long_blob'].search(text):\n"
+        "        return True\n"
+        "    return False\n"
+    )
+    hits = gate.phrase_matches(decision)
+    assert hits and "decision" in hits[0][1]

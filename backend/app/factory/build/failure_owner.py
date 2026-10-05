@@ -20,7 +20,6 @@ Only PRODUCT dispatches a WRITER rework.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -29,39 +28,17 @@ ENVIRONMENT = "ENVIRONMENT"
 PRODUCT = "PRODUCT"
 
 _BUILD_DIR = Path(__file__).resolve().parent
-_FAILED_LINE = re.compile(r"^(FAILED|ERROR)\s+(\S+?\.py)(?:::(\S+))?")
-#: pytest's short-summary status token -> the failure SHAPE.
-_STATUS_KIND = {"FAILED": "failure", "ERROR": "error"}
 
 
 def _failing(verdict: Any) -> List[Dict[str, str]]:
+    """The failing tests a verdict carries as TYPED rows (built from pytest's
+    JUnit report in gates.failing_tests_from_junit). A verdict without them
+    -- an older ledger, or a run whose report was never written -- yields
+    none: the failure is then unclassified, never guessed from summary text.
+    """
     payload = getattr(verdict, "payload", None) or {}
     rows = payload.get("failing_tests")
-    if rows:
-        return [dict(r) for r in rows]
-    out = []
-    for line in getattr(verdict, "findings", None) or []:
-        text = str(line)
-        m = _FAILED_LINE.match(text)
-        if m:
-            name = (m.group(3) or "").split("::")[-1]
-            # Keep the "- <ExcType>: ..." tail: it is the only signal in the
-            # fallback path of whether the product failed an assertion (its
-            # fault) or the test code itself broke (the factory's).
-            _, _, tail = text.partition(" - ")
-            # pytest prints ERROR for a collection/setup error and FAILED for a
-            # test that ran and failed. That distinction is the failure SHAPE
-            # G5 must not collapse (D3): a stripped stub that errors at import
-            # and a real assertion carry the same nodeid but are not the same
-            # failure.
-            kind = _STATUS_KIND[m.group(1)]
-            # pytest's summary tail is "<ExcType>: <message>": the class is
-            # the token before the first colon, read by position.
-            exc_type = tail.strip().partition(":")[0].strip()
-            out.append({"file": m.group(2), "nodeid": m.group(2) + ("::" + m.group(3) if m.group(3) else ""),
-                        "name": name, "innermost": "", "message": tail.strip(), "text": text,
-                        "kind": kind, "exc_type": exc_type})
-    return out
+    return [dict(r) for r in rows] if rows else []
 
 
 def _row_kind(row: Dict[str, str]) -> str:
@@ -245,8 +222,13 @@ def classify(
             "generator": generator_location(str(first.get("name") or ""), str(first.get("file") or "")),
             "reason": reason,
         }
-    return {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in failing],
-            "generator": "", "reason": reason}
+    out = {"owner": PRODUCT, "tests": [r.get("nodeid") or r.get("name") for r in failing],
+           "generator": "", "reason": reason}
+    if not failing:
+        # No typed rows: ownership cannot be attributed by construction. Said
+        # so in the record, so the routing is visibly a default, not a finding.
+        out["attribution"] = "unclassified: the verdict carries no typed failing_tests (no JUnit report)"
+    return out
 
 
 def failure_names(verdict: Any) -> List[str]:

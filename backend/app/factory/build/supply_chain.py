@@ -49,16 +49,63 @@ REGISTRY_MANIFEST_URL = (
     "https://registry-1.docker.io/v2/library/python/manifests/{digest}"
 )
 
-_FROM_RE = re.compile(r"^\s*FROM\s+(\S+)", re.MULTILINE | re.IGNORECASE)
 _REQ_RE = re.compile(r"^([A-Za-z0-9_.-]+)(.*)$")
-_INSTALL_RE = re.compile(
-    r"^\s*RUN\s+.*(pip install|apt-get\s+install|apk add)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_FS_RE = re.compile(
-    r"STORAGE_PATH|mkdir -p\s+/app/data|alembic upgrade|/app/data",
-    re.IGNORECASE,
-)
+
+
+def dockerfile_instructions(text: str) -> List[tuple]:
+    """``(INSTRUCTION, args)`` per logical Dockerfile line, by the Dockerfile
+    grammar: ``#`` lines are comments, a trailing backslash continues the
+    instruction, the first word is the instruction (case-insensitive)."""
+    out: List[tuple] = []
+    pending = ""
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not pending and (not line or line.startswith("#")):
+            continue
+        if pending and line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1] + " "
+            continue
+        logical = (pending + line).strip()
+        pending = ""
+        if logical:
+            word, _, args = logical.partition(" ")
+            out.append((word.upper(), args.strip()))
+    if pending.strip():
+        word, _, args = pending.strip().partition(" ")
+        out.append((word.upper(), args.strip()))
+    return out
+
+
+def _from_image(args: str) -> str:
+    """The image of a FROM: the first argument that is not a ``--flag``."""
+    for token in args.split():
+        if not token.startswith("--"):
+            return token
+    return ""
+
+
+def _env_values(args: str) -> List[str]:
+    """Values an ENV sets: ``K=V ...`` pairs, or the legacy ``K V`` form."""
+    import shlex
+
+    try:
+        tokens = shlex.split(args)
+    except ValueError:
+        tokens = args.split()
+    if tokens and "=" not in tokens[0]:
+        return [" ".join(tokens[1:])]
+    return [t.partition("=")[2] for t in tokens if "=" in t]
+
+
+def _arg_tokens(args: str) -> List[str]:
+    import shlex
+
+    try:
+        return shlex.split(args.strip("[]").replace(",", " "))
+    except ValueError:
+        return args.split()
 
 
 SBOM_REL = Path("docs") / "sbom.cdx.json"
@@ -116,9 +163,10 @@ def is_sha256_digest(value: str) -> bool:
 
 def scan_dockerfile(text: str, *, loc: str = "Dockerfile") -> List[str]:
     findings: List[str] = []
-    for match in _FROM_RE.finditer(text or ""):
-        findings.extend(findings_for_image_ref(match.group(1), loc=f"{loc} FROM"))
-    if not findings and not _FROM_RE.search(text or ""):
+    refs = from_refs(text)
+    for ref in refs:
+        findings.extend(findings_for_image_ref(ref, loc=f"{loc} FROM"))
+    if not findings and not refs:
         findings.append(f"{loc}: no FROM line")
     return findings
 
@@ -130,7 +178,11 @@ def assert_generated_dockerfile(text: str, *, loc: str = "Dockerfile") -> None:
 
 
 def from_refs(text: str) -> List[str]:
-    return [match.group(1) for match in _FROM_RE.finditer(text or "")]
+    return [
+        _from_image(args)
+        for instruction, args in dockerfile_instructions(text)
+        if instruction == "FROM" and _from_image(args)
+    ]
 
 
 def extract_digest(ref: str) -> str:
@@ -589,6 +641,27 @@ def _text_has_outbound(text: str) -> bool:
     return False
 
 
+def _declares_data_path(dockerfile: str) -> bool:
+    """True when the image declares a writable data location: a VOLUME, or an
+    absolute path an ENV configures that a build step also materialises (the
+    path is an argument of a RUN). Read from the Dockerfile grammar -- not
+    from which variable name or which directory a line mentions."""
+    instructions = dockerfile_instructions(dockerfile)
+    if any(i == "VOLUME" for i, _ in instructions):
+        return True
+    configured = {
+        value
+        for i, args in instructions
+        if i == "ENV"
+        for value in _env_values(args)
+        if value.startswith("/")
+    }
+    built = {
+        token for i, args in instructions if i == "RUN" for token in _arg_tokens(args)
+    }
+    return bool(configured & built)
+
+
 def observe_behaviour(
     dockerfile: str,
     entrypoint: str,
@@ -601,8 +674,10 @@ def observe_behaviour(
         posture_id = str(posture or "")
     combined = f"{dockerfile or ''}\n{entrypoint or ''}"
     network = probe_set.posture_egresses(posture_id) or _text_has_outbound(combined)
-    filesystem = bool(_FS_RE.search(combined))
-    install = bool(_INSTALL_RE.search(dockerfile or ""))
+    filesystem = _declares_data_path(dockerfile)
+    # A RUN step executes at build time and writes the image: that IS the
+    # install permission, whichever tool the step names.
+    install = any(i == "RUN" for i, _ in dockerfile_instructions(dockerfile))
     return {
         "network": bool(network),
         "filesystem": bool(filesystem),

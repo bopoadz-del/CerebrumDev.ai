@@ -7,18 +7,21 @@ here and nowhere else.
 
 from __future__ import annotations
 
-import re
 from typing import FrozenSet, List
-
-HEADING_RE = re.compile(r"^(=+|CUT \d|TARGET|STEP 0|DO\b|ACCEPTANCE|FORBIDDEN|PHASE \d|# )")
 
 
 def content_lines(text: str) -> List[str]:
-    """Non-blank, non-rule, non-heading lines, stripped."""
+    """Non-blank, non-rule lines, stripped.
+
+    Headings count as content: the compiler records every line it writes
+    (headings included) with this same function, and the lint checks a
+    brief's lines against that record -- so no line needs classifying by its
+    words.
+    """
     lines: List[str] = []
     for raw in (text or "").splitlines():
         line = raw.strip()
-        if not line or set(line) <= {"=", "-", " "} or HEADING_RE.match(line):
+        if not line or set(line) <= {"=", "-", " "}:
             continue
         lines.append(line)
     return lines

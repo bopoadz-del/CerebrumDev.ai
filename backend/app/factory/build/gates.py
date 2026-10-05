@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 from app.factory.build.authority import BuildRole
@@ -480,7 +480,23 @@ _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 #: dependency, not the product being wrong.
 _MISSING_DEP = re.compile(r"No module named ['\"]?([A-Za-z0-9_.]+)")
 #: ``path/to/file.py:123:`` -- a traceback frame in pytest's long format.
-_FRAME = re.compile(r"(?m)^([^\s:][^:\n]*\.py):\d+:")
+def _frame_locations(text: str) -> List[str]:
+    """Source files of a pytest traceback's frames, in order.
+
+    pytest writes each frame's location as ``<path>:<lineno>: ...`` at the
+    start of a line (its ReprFileLocation grammar). A line is a frame when
+    the part before the first ``:`` is a Python source path and the part
+    before the second is a line number -- read by that grammar, not matched.
+    """
+    out: List[str] = []
+    for line in (text or "").splitlines():
+        if not line or line[0].isspace():
+            continue
+        path, sep, rest = line.partition(":")
+        lineno, sep2, _ = rest.partition(":")
+        if sep and sep2 and lineno.isdigit() and PurePath(path).suffix == ".py":
+            out.append(path)
+    return out
 
 
 def _strip_ansi(text: str) -> str:
@@ -518,7 +534,7 @@ def failing_tests_from_junit(workspace: Path, junit_path: Path) -> Optional[List
             continue
         nodeid, rel = _nodeid(workspace, case.get("classname") or "", case.get("name") or "")
         message = (problem.get("message") or problem.text or "").strip().splitlines()
-        frames = _FRAME.findall(problem.text or "")
+        frames = _frame_locations(problem.text or "")
         out.append(
             {
                 "nodeid": nodeid,

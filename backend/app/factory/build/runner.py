@@ -1515,11 +1515,14 @@ class RoleRunner:
                     # branch never lags the run it belongs to.
                     attached = str(self.state.get("attached_branch") or "")
                     if attached:
-                        from app.factory.build.branch_attach import checkpoint
+                        from app.factory.build.branch_attach import (
+                            checkpoint,
+                            checkpoint_message,
+                        )
 
                         try:
                             sha = checkpoint(
-                                self.workspace, attached, f"factory: {role.value} passed"
+                                self.workspace, attached, checkpoint_message(role.value)
                             )
                         except Exception as exc:  # noqa: BLE001 -- named, never silent
                             return self._finish(
