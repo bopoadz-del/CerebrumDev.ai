@@ -87,20 +87,24 @@ def find_adoptable_branch(
     """Newest ``build/<session>-*`` branch that passed the gate AND equals the
     workspace. None when there is none, or when anything cannot be verified."""
     from app.factory.build.builds_push import (
+        build_refs_of_record,
         builds_token,
-        list_session_build_refs,
         parse_builds_repo,
     )
+    from app.factory.build.platform_identity import recorded_platform_id
     from app.factory.build.n3_store_gate import BuildsTarget, fetch_store_gate_status
 
     blob = env if env is not None else os.environ
     token = builds_token(blob)
-    if not token or not session_id:
+    pid = recorded_platform_id(workspace)
+    if not token or not (session_id or pid):
         return None
     owner, repo, _url = parse_builds_repo(blob)
     root = Path(workspace)
     try:
-        refs = list_session_build_refs(owner, repo, session_id, token=token, opener=opener)
+        refs = build_refs_of_record(
+            owner, repo, platform_id=pid, session_id=session_id, token=token, opener=opener
+        )
     except Exception:  # noqa: BLE001 -- GitHub down means "cannot adopt", not an error
         logger.warning("adopt_green: cannot list branches for %s", session_id, exc_info=True)
         return None

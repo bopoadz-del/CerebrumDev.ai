@@ -94,3 +94,24 @@ def platform_id_from_branch(branch: str) -> Optional[str]:
         return None
     tail = text[len(BRANCH_PREFIX):]
     return tail if is_platform_id(tail) else None
+
+
+def recorded_platform_id(output_dir: Any) -> Optional[str]:
+    """The platform id a run's ledger records (start_runner_build writes it
+    once), or None for a run from before platforms existed."""
+    from pathlib import Path
+
+    from app.factory.build.ledger import PLATFORM_ID_KEY, BuildLedger
+
+    path = Path(output_dir) / "build_ledger.jsonl"
+    if not path.is_file():
+        return None
+    try:
+        events = list(BuildLedger(path).events())
+    except Exception:  # noqa: BLE001 -- an unreadable ledger records nothing
+        return None
+    for event in reversed(events):
+        pid = (getattr(event, "payload", None) or {}).get(PLATFORM_ID_KEY)
+        if is_platform_id(pid):
+            return str(pid)
+    return None

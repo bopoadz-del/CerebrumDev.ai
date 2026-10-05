@@ -31,7 +31,6 @@ from app.factory.build.builds_push import (
     builds_token,
     fetch_commit_sha,
     github_request,
-    list_session_build_refs,
     parse_builds_repo,
 )
 HANDOFF_TO_N3 = "HANDOFF_TO_N3"
@@ -349,16 +348,21 @@ def resolve_builds_target(
         return BuildsTarget(
             owner=owner, repo=repo, sha=resolved, branch=branch, session_id=sid
         )
-    if not sid:
+    from app.factory.build.builds_push import build_refs_of_record
+    from app.factory.build.platform_identity import branch_of_record, recorded_platform_id
+
+    pid = recorded_platform_id(output_dir)
+    if not sid and not pid:
         raise BuildsPushError(
-            "N3 store-gate: no builds SHA/branch on the ledger and no session id"
+            "N3 store-gate: no builds SHA/branch on the ledger, no platform and no session id"
         )
-    refs = list_session_build_refs(
-        owner, repo, sid, token=token, opener=opener
+    refs = build_refs_of_record(
+        owner, repo, platform_id=pid, session_id=sid, token=token, opener=opener
     )
     if not refs:
+        wanted = branch_of_record(pid) if pid else f"build/{sid}-*"
         raise BuildsPushError(
-            f"N3 store-gate: no build/{sid}-* branch on {owner}/{repo}"
+            f"N3 store-gate: no {wanted} branch on {owner}/{repo}"
         )
     branch, sha = refs[-1]
     return BuildsTarget(
