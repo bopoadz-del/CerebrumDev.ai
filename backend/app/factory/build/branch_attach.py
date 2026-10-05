@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from app.factory.build.builds_push import (
+    STORE_GATE_PATH,
     BuildsPushError,
     builds_token,
     github_request,
@@ -37,7 +38,6 @@ from app.factory.build.builds_push import (
 )
 
 NOT_A_BUILD_LINK = "Not a cerebrum-builds session link"
-STORE_GATE_PATH = ".github/workflows/store-gate.yml"
 DERIVED_DONE = ("COLLECTOR", "CLONER", "WRITER")
 
 #: A session token anywhere in the message, however wrapped, means THAT
