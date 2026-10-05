@@ -83,6 +83,11 @@ from app.factory.build.authority import BUILD_PHASES, BuildRole
 LEDGER_SCHEMA = "build_ledger.v1"
 
 
+#: NOTE payload keys recording a platform's identity and its branch of record.
+PLATFORM_ID_KEY = "platform_id"
+PLATFORM_BRANCH_KEY = "platform_branch"
+
+
 class EventKind(str, Enum):
     RUN_STARTED = "RUN_STARTED"
     PHASE_STARTED = "PHASE_STARTED"

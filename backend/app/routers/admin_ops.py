@@ -97,3 +97,43 @@ def reboot(_admin: Principal = Depends(require_master_key)) -> Dict[str, Any]:
         "message": "Rebooting now — the service will be back in a moment. "
         "Refresh in ~30–60s.",
     }
+
+
+@router.get("/builds-hygiene")
+def get_builds_hygiene(_admin: Principal = Depends(require_master_key)) -> Dict[str, Any]:
+    """cerebrum-builds at a glance: repo size and the nightly hygiene ledger.
+
+    The size is GitHub's own figure for the repo (KB); the ledger is the
+    ``hygiene-ledger`` branch the nightly branch-hygiene workflow appends one
+    line to per action (archive tag + branch delete) and one per run."""
+    import base64
+    import json as _json
+
+    from app.factory.build.builds_push import builds_token, github_request, parse_builds_repo
+
+    env = dict(os.environ)
+    token = builds_token(env)
+    if not token:
+        return {"ok": False, "detail": "CEREBRUM_BUILDS_GITHUB_TOKEN unset: cerebrum-builds not armed"}
+    owner, repo, _url = parse_builds_repo(env)
+    status, body = github_request("GET", f"/repos/{owner}/{repo}", token=token)
+    size_kb = body.get("size") if status < 400 and isinstance(body, dict) else None
+    status, body = github_request(
+        "GET", f"/repos/{owner}/{repo}/contents/ledger.jsonl?ref=hygiene-ledger", token=token
+    )
+    lines: list = []
+    if status < 400 and isinstance(body, dict) and body.get("content"):
+        text = base64.b64decode(body["content"]).decode("utf-8", errors="replace")
+        for raw in text.splitlines()[-50:]:
+            try:
+                lines.append(_json.loads(raw))
+            except ValueError:
+                continue
+    runs = [line for line in lines if line.get("action") == "run"]
+    return {
+        "ok": True,
+        "repo": f"{owner}/{repo}",
+        "repo_size_kb": size_kb,
+        "last_run": runs[-1] if runs else None,
+        "recent_actions": [line for line in lines if line.get("action") != "run"][-20:],
+    }

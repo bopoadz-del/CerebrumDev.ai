@@ -932,6 +932,42 @@ describe('Factory Floor — architect LLM then coding agent', () => {
     await waitFor(() => expect(onNewSession).toHaveBeenCalledTimes(1))
   })
 
+  it('names the FAILED gate, says what Continue will fix, and offers Start over', async () => {
+    watchBuildMock.mockImplementation(async (_sid: string, onProgress: (s: object) => void) => {
+      onProgress({
+        state: 'failed',
+        cycle: 'code',
+        pilot_ready: false,
+        certified: false,
+        detail: 'FAILED(STORE_MANAGER, metrics_served, GET /metrics is 404)',
+        failed: { gate: 'STORE_MANAGER', check: 'metrics_served', finding: 'GET /metrics is 404' },
+        failed_label: 'FAILED(STORE_MANAGER, metrics_served, GET /metrics is 404)',
+        next_continue:
+          'Continue will resume this platform\'s branch at STORE_MANAGER and send the writer the failing check metrics_served: GET /metrics is 404',
+      })
+    })
+    getMock.mockResolvedValue({
+      blueprint: LLM_BLUEPRINT,
+      blueprint_approved: true,
+      generation: { engine: 'runner', product_id: 'vineyard', triggered_by: 'chat_llm' },
+    })
+    render(<Floor sessionId="sess_failed_platform" goPlatforms={() => {}} />)
+    expect(await screen.findByTestId('floor-failed-label')).toHaveTextContent(
+      'FAILED(STORE_MANAGER, metrics_served, GET /metrics is 404)',
+    )
+    expect(screen.getByTestId('floor-next-continue')).toHaveTextContent(/Continue will resume/)
+    // Never green: the only export is the labelled as-is download.
+    expect(screen.queryByRole('button', { name: 'Download platform export (.zip)' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download as-is (failed gates)' })).toBeEnabled()
+    const startOver = screen.getByTestId('floor-start-over')
+    fireEvent.click(startOver)
+    await waitFor(() =>
+      expect(chatStreamMock).toHaveBeenCalledWith(
+        'sess_failed_platform', '', expect.any(Function), undefined, undefined, { action: 'start_over' },
+      ),
+    )
+  })
+
   it('names missing coding-agent credentials from /health on the Floor', async () => {
     getHealthMock.mockResolvedValue({
       factory_code_cli: {
