@@ -554,10 +554,13 @@ def test_sess_5dfb4a3_appointment_status_vocab_follows_the_handler_guard():
 
 
 def test_sess_5dfb4a3_bare_status_samples_open_not_the_word_sample():
+    """The record envelope DECLARES the status vocabulary; the sample follows
+    the declaration, never the field's name."""
     field = {"name": "status", "type": "str", "required": True}
-    assert _sample_payload({"fields": [field]})["status"] == "open"
-    assert _sample_value(field) == "open"
-    assert _sample_value({"name": "job_status", "type": "str"}) == "open"
+    spec, _ = ensure_record_envelope({"fields": [field]})
+    assert _sample_payload(spec)["status"] == "open"
+    # Undeclared, a name samples neutrally -- whatever it is called.
+    assert _sample_value({"name": "job_status", "type": "str"}) == "sample"
 
 
 def test_sess_5dfb4a3_e2e_smoke_dumps_bytes_without_typeerror(tmp_path):
@@ -912,9 +915,12 @@ def test_sess_67fe60f_automated_reminders_schema_sample_is_not_channel_sample():
 
     llm, _ = ensure_record_envelope(llm)
     sample = _sample_payload(llm)
-    assert sample["channel"] != "sample"
-    assert sample["channel"] in STORE_NOTIFICATION_CHANNELS
-    assert _sample_value({"name": "channel", "type": "str"}) != "sample"
+    # The spec declared no vocabulary, so the schema sample is neutral; the
+    # block boundary (prepare_block_input) owns the channel rewrite -- see
+    # test_sess_67fe60f_notification_and_event_bus_rewrite_sample_channel.
+    assert sample["channel"] == "sample"
+    declared = {"name": "channel", "type": "str", "allowed_values": ["sms", "email"]}
+    assert _sample_value(declared) in STORE_NOTIFICATION_CHANNELS
 
 
 def test_sess_67fe60f_notification_and_event_bus_rewrite_sample_channel():

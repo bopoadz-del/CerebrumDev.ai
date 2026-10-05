@@ -245,7 +245,12 @@ def package_session(state: SessionState, api_key: str = None) -> Dict[str, Any]:
     engine_repo = os.getenv(
         "CEREBRUM_BLOCKS_REPO", "https://github.com/bopoadz-del/Cerebrum-Blocks.git"
     )
-    engine_ref = os.getenv("CEREBRUM_BLOCKS_REF", "main")
+    # The Store commit this Factory is pinned to (store.pin), never a
+    # floating "main": a packaged product builds from the Store it was
+    # verified against.
+    from app.core.engine_discovery import _effective_ref
+
+    engine_ref = _effective_ref()
     _write_dockerfile(package_root, engine_repo, engine_ref)
     _write_bootstrap(package_root)
     _write_probe_script(package_root)

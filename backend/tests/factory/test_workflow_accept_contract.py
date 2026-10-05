@@ -254,24 +254,33 @@ def _vetcare_plan():
 
 
 def test_product_sample_literals_match_tester_payload():
-    """Drift between the brief contract and PRODUCT _sample_value is the next halt."""
-    assert _sample_value({"name": "status", "type": "str"}) == ENVELOPE_STATUS_SAMPLE == "open"
-    assert _sample_value({"name": "channel", "type": "str"}) == CHANNEL_SAMPLE == "email"
+    """Drift between the brief contract and PRODUCT _sample_value is the next
+    halt. The samples follow what each field DECLARES (type, format,
+    vocabulary, the record envelope); a name alone shapes nothing."""
+    from app.factory.build.block_obligations import ensure_record_envelope
+
+    assert _sample_value(
+        {"name": "zorblat", "type": "str", "allowed_values": ["open", "closed"]}
+    ) == ENVELOPE_STATUS_SAMPLE == "open"
+    assert _sample_value(
+        {"name": "zorblat", "type": "str", "allowed_values": ["sms", "email"]}
+    ) == CHANNEL_SAMPLE == "email"
     assert _sample_value({"name": "pet_name", "type": "str"}) == GENERIC_STR_SAMPLE
-    assert _sample_value({"name": "owner_email", "type": "str"}) == PRODUCT_EMAIL_SAMPLE
-    assert _sample_value({"name": "created_at", "type": "str"}) == DATETIME_SAMPLE
-    assert _sample_value({"name": "appointment_date", "type": "str"}) == DATE_SAMPLE
-    assert _sample_value({"name": "scheduled_time", "type": "str"}) == TIME_SAMPLE
-    sample = _sample_payload(
+    assert _sample_value({"name": "zorblat", "type": "str", "format": "email"}) == PRODUCT_EMAIL_SAMPLE
+    assert _sample_value({"name": "zorblat", "type": "datetime"}) == DATETIME_SAMPLE
+    assert _sample_value({"name": "zorblat", "type": "date"}) == DATE_SAMPLE
+    assert _sample_value({"name": "zorblat", "type": "time"}) == TIME_SAMPLE
+    spec, _ = ensure_record_envelope(
         {
             "fields": [
                 {"name": "reference", "type": "str"},
                 {"name": "status", "type": "str"},
-                {"name": "channel", "type": "str"},
-                {"name": "owner_email", "type": "str"},
+                {"name": "channel", "type": "str", "allowed_values": ["sms", "email"]},
+                {"name": "owner_email", "type": "str", "format": "email"},
             ]
         }
     )
+    sample = _sample_payload(spec)
     assert sample["status"] == "open"
     assert sample["channel"] == "email"
     assert sample["owner_email"] == PRODUCT_EMAIL_SAMPLE
@@ -506,18 +515,23 @@ def test_disk_alias_booking_handler_is_scanned_even_if_plan_used_scheduling(tmp_
 
 
 def _product_accept_sample():
-    """Same payload PRODUCT bakes into test_every_capability_route_accepts_payload."""
-    return _sample_payload(
+    """Same payload PRODUCT bakes into test_every_capability_route_accepts_payload
+    for a spec that DECLARES its status envelope, channel vocabulary, email
+    format and date type."""
+    from app.factory.build.block_obligations import ensure_record_envelope
+
+    spec, _ = ensure_record_envelope(
         {
             "fields": [
                 {"name": "reference", "type": "str"},
                 {"name": "status", "type": "str"},
-                {"name": "channel", "type": "str"},
-                {"name": "owner_email", "type": "str"},
-                {"name": "appointment_date", "type": "str"},
+                {"name": "channel", "type": "str", "allowed_values": ["sms", "email"]},
+                {"name": "owner_email", "type": "str", "format": "email"},
+                {"name": "appointment_date", "type": "date"},
             ]
         }
     )
+    return _sample_payload(spec)
 
 
 def test_mutation_step1_only_prepared_fails_when_step2_forwards_product_sample(tmp_path):

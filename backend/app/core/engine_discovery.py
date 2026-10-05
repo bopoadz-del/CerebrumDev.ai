@@ -8,15 +8,13 @@ Supports two resolution paths:
    ``CEREBRUM_BLOCKS_REPO`` at the effective ref into a temp cache. The cache
    is keyed by ref so repeated packagings reuse the checkout.
 
-The effective ref FOLLOWS THE STORE. The Factory is not a warehouse: what the
-Store publishes is what the Factory can build from, with no commit in between.
-So the default is the Store's live head, not a SHA typed into this file --
-that constant is only the floor for an environment that cannot reach the Store,
-and it goes stale by definition (it sat four days behind ``main`` while the
-shelf could not offer a pack the Store had already certified).
-
-``CEREBRUM_BLOCKS_REF`` still pins when a build must be reproducible, and
-``CEREBRUM_BLOCKS_TRACK=0`` makes the lock authoritative instead.
+The effective ref is the Store commit named in ``store.pin`` (see
+app.factory.store_pin): the Factory builds from exactly the Store its
+``blocks.lock.json`` was generated from, never from a floating ``main``.
+Following the Store's head let a Store re-sign reach production before the
+lock was re-pinned (2026-10-04: every build died in CLONER). A Store change
+now reaches the Factory only through ``cli bump-store <sha>``, which moves
+the pin and the lock together.
 """
 
 from __future__ import annotations
@@ -36,8 +34,6 @@ CEREBRUM_BLOCKS_REPO = os.getenv(
     "https://github.com/bopoadz-del/Cerebrum-Blocks.git",
 )
 
-# The Store branch the Factory follows when nothing pins it.
-CEREBRUM_BLOCKS_BRANCH = os.getenv("CEREBRUM_BLOCKS_BRANCH", "main").strip() or "main"
 
 # Last-resort ref for an environment that cannot reach the Store at all: no
 # network, no git, and no lock to read. It is a floor, NOT the pin -- a commit
@@ -50,66 +46,8 @@ FALLBACK_CEREBRUM_BLOCKS_REF = "de40dd2dab6a66c565752942935839abfb81f5fa"
 #: Kept for callers that import the old name. Same value, honest meaning.
 DEFAULT_CEREBRUM_BLOCKS_REF = FALLBACK_CEREBRUM_BLOCKS_REF
 
-#: Seconds a resolved Store head is reused before it is looked up again. The
-#: Store moves several times a day, not several times a second; without this
-#: every shelf read would be a network round trip.
-STORE_HEAD_TTL_SECONDS = 300.0
-
-_head_cache: dict = {"ref": None, "sha": None, "at": 0.0}
-
-
 class EngineDiscoveryError(Exception):
     """Raised when the engine checkout cannot be discovered or fetched."""
-
-
-def store_head_sha(branch: Optional[str] = None) -> Optional[str]:
-    """The Store's current head on *branch*, or ``None`` when unreachable.
-
-    ``git ls-remote`` against the Store, cached for ``STORE_HEAD_TTL_SECONDS``.
-    This is what makes the Factory follow the Store instead of a number
-    somebody has to remember to bump: the Store publishes, the Factory sees it.
-
-    Never raises and never blocks for long. An unreachable Store, a missing
-    git, a timeout -- all return ``None``, and the caller falls back to the
-    lock and then to the constant.
-    """
-    import time
-
-    ref = (branch or CEREBRUM_BLOCKS_BRANCH).strip()
-    now = time.monotonic()
-    if _head_cache["ref"] == ref and now - float(_head_cache["at"]) < STORE_HEAD_TTL_SECONDS:
-        return _head_cache["sha"]
-    sha: Optional[str] = None
-    try:
-        result = subprocess.run(
-            ["git", "ls-remote", _authenticated_repo_url(CEREBRUM_BLOCKS_REPO), f"refs/heads/{ref}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=20,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-        )
-        if result.returncode == 0:
-            first = (result.stdout or "").split()
-            if first and len(first[0]) == 40:
-                sha = first[0]
-        else:
-            logger.info(
-                "store head lookup failed for %s: %s",
-                ref,
-                _sanitize_stderr(result.stderr or "")[-200:],
-            )
-    except (OSError, subprocess.SubprocessError) as exc:  # no git, no network, timeout
-        logger.info("store head lookup unavailable (%s); falling back", type(exc).__name__)
-    _head_cache.update({"ref": ref, "sha": sha, "at": now})
-    return sha
-
-
-def tracking_enabled() -> bool:
-    """Whether the Factory follows the Store's head. ``CEREBRUM_BLOCKS_TRACK=0``
-    turns it off for a build that must resolve exactly what the lock records."""
-    flag = (os.getenv("CEREBRUM_BLOCKS_TRACK") or "").strip().lower()
-    return flag not in {"0", "false", "no", "off"}
 
 
 def _effective_ref() -> str:
@@ -118,20 +56,25 @@ def _effective_ref() -> str:
     Order, most explicit first:
 
     1. ``CEREBRUM_BLOCKS_REF`` -- an operator pinning a ref on purpose.
-    2. The Store's live head, unless ``CEREBRUM_BLOCKS_TRACK=0``. This is the
-       normal path: what the Store publishes is what the Factory builds from,
-       with no commit in between.
-    3. ``blocks.lock.json`` store SHA -- the last Store the Factory recorded,
-       for an environment that cannot reach it now.
+    2. ``store.pin`` -- the Store commit this Factory is built and locked
+       against (app.factory.store_pin). The Factory never follows Store
+       ``main``: a Store change reaches it only through a PR that bumps the
+       pin and re-locks in the same commit.
+    3. ``blocks.lock.json`` store SHA -- agrees with the pin by CI rule; read
+       only when the pin file is absent from this environment.
     4. The module fallback constant.
     """
     explicit = os.getenv("CEREBRUM_BLOCKS_REF")
     if explicit:
         return explicit
-    if tracking_enabled():
-        head = store_head_sha()
-        if head:
-            return head
+    try:
+        from app.factory.store_pin import pinned_sha_or_none
+
+        pinned = pinned_sha_or_none()
+        if pinned:
+            return pinned
+    except Exception:  # noqa: BLE001 -- discovery must still have a default
+        pass
     try:
         from app.factory.blocks_lock import load_lock_if_present
 
