@@ -75,7 +75,11 @@ LEDGER_FILENAME = "build_ledger.jsonl"
 #: work only the writer can do. Both share the rework budget and the
 #: same-failure-twice rule.
 REWORK_SOURCE = BuildRole.TESTER
-REWORK_SOURCES = frozenset({BuildRole.TESTER, BuildRole.WRITER, BuildRole.STORE_MANAGER})
+#: Phases whose in-runner gate failure can be reworked. The N3 Store gate's
+#: product-owned verdict reaches the same rule through
+#: ``reopen_after_store_gate``; the in-runner STORE_MANAGER gate (docker
+#: unavailable, store contract) is never product work and stays terminal.
+REWORK_SOURCES = frozenset({BuildRole.TESTER, BuildRole.WRITER})
 
 #: Owner rule: two rework rounds PER GATE (WRITER gate, TESTER, Store gate);
 #: one gate's rounds never reduce another's. A gate that has used its two and
@@ -118,7 +122,10 @@ def _failure_keys(verdict: Any, exclude: Sequence[str] = ()) -> List[str]:
 
     payload = getattr(verdict, "payload", None) or {}
     keys = failure_owner.failure_names(verdict, exclude=exclude)
-    if (payload.get("failed") or payload.get("rows") or payload.get("junit")) and keys:
+    gate = str(getattr(verdict, "gate", "") or "")
+    bare = [f"{gate}:{getattr(verdict, 'reason', '') or 'failed'}"] if gate else []
+    if keys and keys != bare:
+        # Typed failing-test rows (or a caller's own keys): already the shape.
         return keys
     shape = str(payload.get("finding_shape") or "failed")
     checks = sorted({check for check, _ in brief_gates.failure_checks(verdict) if check})
@@ -1766,10 +1773,10 @@ class RoleRunner:
         Extra time is inspect-and-ramp only. A leftover high wall is left
         alone (never slashed).
         """
-        from app.factory.build.auto_pilot import AUTO_PILOT_MAX_REWORK
-
+        # The rework budget is the owner's rule (REWORK_BUDGET per gate),
+        # the same at every cycle: opening the pilot cycle does not raise it.
         self.budget = BuildBudget(
-            max_rework=max(int(self.budget.max_rework), AUTO_PILOT_MAX_REWORK),
+            max_rework=int(self.budget.max_rework),
             wall_clock_s=self.budget.wall_clock_s,
             phase_wall_clock_s=self.budget.phase_wall_clock_s,
         )
